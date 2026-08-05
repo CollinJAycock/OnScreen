@@ -65,9 +65,12 @@ object PlaybackHelper {
             return PlaybackMode.Remux
         }
 
-        // Everything else needs full transcode.
+        // Everything else needs full transcode. Cap at the PANEL height —
+        // asking a 1080p stick's server for a 2160 rung wastes encoder work
+        // on rows the display throws away.
         val sourceH = file.resolution_h ?: 1080
-        val defaultHeight = if (sourceH >= 2160) 2160 else 1080
+        val defaultHeight = (if (sourceH >= 2160) 2160 else 1080)
+            .coerceAtMost(displayHeightCap())
         return PlaybackMode.Transcode(defaultHeight)
     }
 
@@ -210,6 +213,35 @@ object PlaybackHelper {
 
     fun clientCapabilitiesHeader(): String = capabilitiesHeader
 
+    // Real panel resolution, initialised from OnScreenApp.onCreate (before
+    // any request can build the header). Defaults keep the old 4K claim for
+    // the unlikely path where init never ran. A 1080p Fire TV stick used to
+    // claim maxHeight=2160 unconditionally — the server then happily
+    // direct-played 4K files the panel can't show and the stick can't
+    // smoothly decode, and the one-shot direct-play fallback re-requested
+    // the SOURCE height, dead-ending instead of getting 1080p.
+    @Volatile private var displayWidth: Int = 3840
+    @Volatile private var displayHeight: Int = 2160
+
+    fun initDisplayCaps(context: android.content.Context) {
+        try {
+            val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE)
+                as? android.view.WindowManager ?: return
+            @Suppress("DEPRECATION")
+            val mode = wm.defaultDisplay?.mode ?: return
+            if (mode.physicalWidth > 0 && mode.physicalHeight > 0) {
+                displayWidth = mode.physicalWidth
+                displayHeight = mode.physicalHeight
+            }
+        } catch (_: Exception) {
+            // Keep the defaults — over-claiming is the old behaviour.
+        }
+    }
+
+    /** Height ceiling for transcode requests: never ask for more rows than
+     *  the panel has. */
+    fun displayHeightCap(): Int = displayHeight
+
     private fun buildClientCapabilitiesHeader(): String {
         val video = mutableListOf("h264", "vp9")
         if (supportsHevc()) video.add("h265")
@@ -229,8 +261,8 @@ object PlaybackHelper {
             // container would otherwise fall to a (broken) audio-only transcode.
             // ExoPlayer plays all of these natively, so claim them for passthrough.
             "protocols=mp4:mkv:webm:mov:ts:flac:mp3:ogg:wav:aac:aiff:m4a",
-            "maxWidth=3840",
-            "maxHeight=2160",
+            "maxWidth=$displayWidth",
+            "maxHeight=$displayHeight",
             "maxAudioChannels=8",
             // 10-bit/HDR only when a decoder actually reports a Main10/HDR profile.
             "maxbitdepth=" + if (tenBit) "10" else "8",

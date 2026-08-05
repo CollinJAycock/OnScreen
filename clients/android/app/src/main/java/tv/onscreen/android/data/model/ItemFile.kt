@@ -25,5 +25,23 @@ data class ItemFile(
     val faststart: Boolean = false,
     val audio_streams: List<AudioStream> = emptyList(),
     val subtitle_streams: List<SubtitleStream> = emptyList(),
+    /** Server-side downloaded/uploaded subtitle files (OpenSubtitles etc.) —
+     *  a SEPARATE array from the container's embedded subtitle_streams.
+     *  Until this field existed Moshi silently dropped it, which made the
+     *  whole in-player "Download subtitles" flow inert: the download
+     *  succeeded server-side, the toast said "Downloaded", and the track
+     *  could never be selected. */
+    val external_subtitles: List<ExternalSubtitle> = emptyList(),
     val chapters: List<Chapter> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
+data class ExternalSubtitle(
+    val id: String,
+    val language: String = "",
+    val title: String? = null,
+    val forced: Boolean = false,
+    val sdh: Boolean = false,
+    /** Server-relative fetch URL (`/media/external-subtitles/{id}`). */
+    val url: String = "",
 )

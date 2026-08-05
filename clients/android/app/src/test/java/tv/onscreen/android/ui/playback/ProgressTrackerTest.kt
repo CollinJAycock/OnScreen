@@ -2,9 +2,12 @@ package tv.onscreen.android.ui.playback
 
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
@@ -31,7 +34,7 @@ class ProgressTrackerTest {
      * Minimal fake [ItemRepository]: records every `updateProgress` invocation
      * and can be configured to throw on the next call.
      */
-    private class FakeRepo : ItemRepository(FakeApi, ClientName()) {
+    private class FakeRepo : ItemRepository(FakeApi, ClientName(null)) {
         val calls = mutableListOf<Call>()
         var throwNext: Throwable? = null
 
@@ -256,4 +259,53 @@ class ProgressTrackerTest {
             executor.shutdownNow()
         }
     }
+
+    @Test
+    fun `PARENTAL_LIMIT 403 on a heartbeat fires onBlocked and stops the tracker`() =
+        runTest(StandardTestDispatcher()) {
+            // The callback dispatches on terminalScope + Dispatchers.Main —
+            // point Main at the test scheduler so the launch is observable.
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                val repo = FakeRepo()
+                val tracker = newTracker(repo, this)
+                var blockedReason: String? = null
+                tracker.onBlocked = { blockedReason = it }
+
+                tracker.start("item-1")
+                advanceTimeBy(10_001)
+                runCurrent()
+                assertThat(repo.calls.filter { it.state == "playing" }).hasSize(1)
+
+                // Server rejects the next heartbeat: daily cap reached.
+                repo.throwNext = retrofit2.HttpException(
+                    retrofit2.Response.error<Unit>(
+                        403,
+                        okhttp3.ResponseBody.create(
+                            null,
+                            """{"error":{"code":"PARENTAL_LIMIT","message":"daily_limit_reached"}}""",
+                        ),
+                    ),
+                )
+                advanceTimeBy(10_000)
+                runCurrent()
+
+                // The regression this pins: stop() cancels the heartbeat
+                // coroutine the handler is RUNNING IN, and the old code then
+                // dispatched the callback via withContext from that same
+                // coroutine — ensureActive() threw and onBlocked never fired,
+                // so a restricted profile crossing its cap mid-episode saw
+                // nothing at all.
+                assertThat(blockedReason).isEqualTo("daily_limit_reached")
+
+                // Tracker stopped itself: no further heartbeats.
+                repo.throwNext = null
+                val before = repo.calls.size
+                advanceTimeBy(30_000)
+                runCurrent()
+                assertThat(repo.calls.size).isEqualTo(before)
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
 }

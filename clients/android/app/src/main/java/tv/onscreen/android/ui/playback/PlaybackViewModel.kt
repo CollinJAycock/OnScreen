@@ -73,6 +73,15 @@ data class SubtitleTrackSource(
     val language: String,
     val label: String,
     val forced: Boolean,
+    val sdh: Boolean = false,
+    /** Stable side-load format id — `sub:emb:{absIndex}` for an embedded
+     *  stream, `sub:ext:{id}` for an external file. Stamped onto the
+     *  Media3 SubtitleConfiguration so the fragment can select and
+     *  identify the track by TrackGroup format id instead of by language
+     *  string (which made same-language duplicates unreachable). */
+    val trackId: String,
+    /** Absolute embedded stream index; null for external files. */
+    val embeddedIndex: Int? = null,
 )
 
 data class PlaybackUiState(
@@ -275,20 +284,22 @@ class PlaybackViewModel @Inject constructor(
                     }
                 }
             } catch (e: Exception) {
-                val msg = when {
-                    e is HttpException && e.code() == 403 -> {
-                        // 403 covers two distinct gates: the content-rating
-                        // ceiling and the parental watch limit. Parse the error
-                        // code so each shows the right message.
-                        val err = e.apiError()
-                        if (err?.code == "PARENTAL_LIMIT") "watch_limit:${err.message ?: ""}"
-                        else "content_restricted"
-                    }
-                    else -> e.message
-                }
-                _uiState.value = PlaybackUiState(error = msg)
+                _uiState.value = PlaybackUiState(error = playbackErrorMessage(e))
             }
         }
+    }
+
+    /** Map a playback-start failure onto the fragment's error sentinels.
+     *  403 covers two distinct gates: the content-rating ceiling and the
+     *  parental watch limit — parse the error code so each shows the right
+     *  message instead of a raw "HTTP 403". */
+    private fun playbackErrorMessage(e: Exception): String? = when {
+        e is HttpException && e.code() == 403 -> {
+            val err = e.apiError()
+            if (err?.code == "PARENTAL_LIMIT") "watch_limit:${err.message ?: ""}"
+            else "content_restricted"
+        }
+        else -> e.message
     }
 
     private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
@@ -311,22 +322,45 @@ class PlaybackViewModel @Inject constructor(
      * asset-token route group and ExoPlayer can't send a Bearer header).
      */
     private suspend fun buildSubtitleSources(serverUrl: String, file: ItemFile): List<SubtitleTrackSource> {
-        if (file.subtitle_streams.isEmpty()) return emptyList()
+        if (file.subtitle_streams.isEmpty() && file.external_subtitles.isEmpty()) return emptyList()
         val token = file.stream_token?.takeIf { it.isNotEmpty() } ?: serverPrefs.getAssetToken()
         if (token.isNullOrEmpty()) return emptyList()
-        return file.subtitle_streams.map { s ->
+        val tok = java.net.URLEncoder.encode(token, "UTF-8")
+        // Image-based tracks (PGS/VOBSUB/DVB) can't be rendered as WebVTT —
+        // the server 415s the extraction and SingleSampleMediaSource's
+        // treat-errors-as-EOS swallowed the failure, so the picker offered
+        // tracks that silently never displayed. Skip them here; on direct
+        // play ExoPlayer renders them natively from the container.
+        val embedded = file.subtitle_streams
+            .filterNot { isImageBasedSubtitle(it.codec) }
+            .map { s ->
+                SubtitleTrackSource(
+                    // ABSOLUTE stream index here — /media/subtitles/{fileId}/{index}
+                    // uses the API convention, NOT the relative one ffmpeg's
+                    // -map 0:s:N takes. See internal/transcode/ffmpeg.go:181.
+                    url = "$serverUrl/media/subtitles/${file.id}/${s.index}?token=$tok",
+                    language = s.language,
+                    label = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } },
+                    forced = s.forced,
+                    sdh = s.sdh,
+                    trackId = "sub:emb:${s.index}",
+                    embeddedIndex = s.index,
+                )
+            }
+        val external = file.external_subtitles.map { e ->
             SubtitleTrackSource(
-                // ABSOLUTE stream index here — /media/subtitles/{fileId}/{index}
-                // uses the API convention, NOT the relative one ffmpeg's
-                // -map 0:s:N takes. See internal/transcode/ffmpeg.go:181.
-                url = "$serverUrl/media/subtitles/${file.id}/${s.index}" +
-                    "?token=${java.net.URLEncoder.encode(token, "UTF-8")}",
-                language = s.language,
-                label = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } },
-                forced = s.forced,
+                url = "$serverUrl${e.url}?token=$tok",
+                language = e.language,
+                label = (e.title ?: "").ifBlank { e.language.ifBlank { "External" } },
+                forced = e.forced,
+                sdh = e.sdh,
+                trackId = "sub:ext:${e.id}",
+                embeddedIndex = null,
             )
         }
+        return embedded + external
     }
+
 
     private suspend fun startTranscode(
         itemId: String,
@@ -510,7 +544,10 @@ class PlaybackViewModel @Inject constructor(
         directPlayContext = null
         viewModelScope.launch {
             try {
-                val height = if (ctx.sourceHeight >= 2160) 2160 else 1080
+                // Cap by the PANEL: re-requesting the source height on a
+                // 1080p stick dead-ended 4K titles instead of getting 1080p.
+                val height = (if (ctx.sourceHeight >= 2160) 2160 else 1080)
+                    .coerceAtMost(PlaybackHelper.displayHeightCap())
                 val source = startTranscode(
                     itemId = ctx.itemId,
                     height = height,
@@ -521,7 +558,14 @@ class PlaybackViewModel @Inject constructor(
                 )
                 _uiState.value = _uiState.value.copy(source = source, error = null)
             } catch (e: Exception) {
-                _uiState.value = _uiState.value.copy(error = e.message ?: "Playback failed")
+                // Route through the same sentinel mapping as prepare(): when
+                // the server cuts a direct-play stream for a watch limit, this
+                // fallback's re-issue is refused by the transcode-start gate
+                // with the SAME 403 — the user must see the watch-limit
+                // message, not a raw "HTTP 403".
+                _uiState.value = _uiState.value.copy(
+                    error = playbackErrorMessage(e) ?: "Playback failed",
+                )
             }
         }
     }
@@ -593,5 +637,13 @@ class PlaybackViewModel @Inject constructor(
             kotlinx.coroutines.CoroutineScope(
                 kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
             )
+
+        /** Mirrors the server's ocr.IsImageBased — the codecs whose VTT
+         *  extraction is refused with 415 IMAGE_SUBTITLE. */
+        fun isImageBasedSubtitle(codec: String): Boolean =
+            when (codec.trim().lowercase()) {
+                "hdmv_pgs_subtitle", "dvd_subtitle", "dvb_subtitle", "xsub", "pgssub" -> true
+                else -> false
+            }
     }
 }

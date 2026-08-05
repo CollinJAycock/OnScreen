@@ -239,7 +239,10 @@ class LibraryFragment : VerticalGridSupportFragment() {
         }?.third ?: "Sort"
         val genre = viewModel.genre.value
         val genrePart = if (genre != null) "  ·  $genre" else ""
-        title = "$baseTitle  ·  $label$genrePart  (MENU sort / X filter)"
+        // No key hint here: the singleLine 44sp TitleView ellipsized it (and
+        // on Fire TV the named keys don't even exist on the remote). The
+        // Sort/Filter orb is the discoverable entry point.
+        title = "$baseTitle  ·  $label$genrePart"
     }
 
     /** Two-step chooser shown when the user activates the title-bar

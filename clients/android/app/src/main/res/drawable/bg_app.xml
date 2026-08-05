@@ -1,17 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Window background: SOLID only. The old layer-list decoded the 512px
+     bg_logo.png as a density-scaled bitmap (4-16 MB) held for the life of
+     every window, then hid 85% of it behind a scrim. Screens that want the
+     logo draw it themselves with a bounded ImageView. -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Solid dark background -->
     <item>
         <color android:color="@color/bg_primary" />
-    </item>
-    <!-- Centered logo -->
-    <item android:gravity="center">
-        <bitmap
-            android:src="@drawable/bg_logo"
-            android:gravity="center" />
-    </item>
-    <!-- Dark overlay to dim the logo -->
-    <item>
-        <color android:color="#D907070d" />
     </item>
 </layer-list>

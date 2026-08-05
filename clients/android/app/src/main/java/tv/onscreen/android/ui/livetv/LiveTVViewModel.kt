@@ -38,7 +38,11 @@ class LiveTVViewModel @Inject constructor(
 
     fun load() {
         viewModelScope.launch {
-            _uiState.value = LiveTVUiState(isLoading = true)
+            // Keep-content refresh (the HomeViewModel pattern): mark loading
+            // without discarding the current list, and keep it on failure.
+            // Blanking here on every onResume destroyed grid focus + scroll
+            // and replaced a populated screen with an error on one blip.
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 val channels = repo.getChannels()
                 val nowNext = repo.nowNextByChannel()
@@ -48,7 +52,12 @@ class LiveTVViewModel @Inject constructor(
                 }
                 _uiState.value = LiveTVUiState(channels = entries)
             } catch (e: Exception) {
-                _uiState.value = LiveTVUiState(error = e.message ?: "Failed to load channels")
+                val prev = _uiState.value
+                _uiState.value = if (prev.channels.isNotEmpty()) {
+                    prev.copy(isLoading = false, error = null)
+                } else {
+                    LiveTVUiState(error = e.message ?: "Failed to load channels")
+                }
             }
         }
     }

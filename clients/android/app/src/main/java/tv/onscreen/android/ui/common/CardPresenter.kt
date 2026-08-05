@@ -40,8 +40,14 @@ import tv.onscreen.android.data.model.MediaCollection
 class CardPresenter(private val context: Context, private val serverUrl: String = "") : Presenter() {
 
     companion object {
-        private const val CARD_WIDTH = 240
-        private const val CARD_HEIGHT = 360
+        // dp — converted at inflate time. These were raw PIXELS while every
+        // text size inside the card is sp, so on tvdpi/hdpi panels the card
+        // box shrank relative to its own title and the layout collapsed.
+        //
+        // 120x180dp = the exact 240x360px the card always was on the xhdpi
+        // reference density, now scaling correctly on tvdpi/hdpi panels.
+        private const val CARD_WIDTH_DP = 120
+        private const val CARD_HEIGHT_DP = 180
         private const val FOCUS_SCALE = 1.05f
         private const val ANIM_DURATION = 180L
         private const val CARD_RADIUS_DP = 12f
@@ -53,6 +59,8 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
         val density = context.resources.displayMetrics.density
         val cornerPx = CARD_RADIUS_DP * density
         val focusedElevPx = FOCUSED_ELEVATION_DP * density
+        val cardWidth = (CARD_WIDTH_DP * density).toInt()
+        val cardHeight = (CARD_HEIGHT_DP * density).toInt()
 
         val container = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
@@ -61,14 +69,14 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
             setBackgroundColor(Color.TRANSPARENT)
             clipChildren = false
             clipToPadding = false
-            layoutParams = ViewGroup.LayoutParams(CARD_WIDTH, ViewGroup.LayoutParams.WRAP_CONTENT)
+            layoutParams = ViewGroup.LayoutParams(cardWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
         }
 
         // Poster + focus ring stack. The ring is the FrameLayout's
         // foreground, so it draws on top of the image when focused
         // (state_focused selector) and is transparent otherwise.
         val posterFrame = FrameLayout(context).apply {
-            layoutParams = LinearLayout.LayoutParams(CARD_WIDTH, CARD_HEIGHT)
+            layoutParams = LinearLayout.LayoutParams(cardWidth, cardHeight)
             clipToOutline = true
             outlineProvider = object : ViewOutlineProvider() {
                 override fun getOutline(view: View, outline: Outline) {
@@ -98,7 +106,7 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
         posterFrame.addView(imageView)
 
         val titleView = TextView(context).apply {
-            layoutParams = LinearLayout.LayoutParams(CARD_WIDTH, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            layoutParams = LinearLayout.LayoutParams(cardWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = (10 * density).toInt()
             }
             gravity = Gravity.CENTER_HORIZONTAL

@@ -35,3 +35,25 @@ fun AlertDialog.focusableOnTv(): AlertDialog = apply {
             ?: getButton(AlertDialog.BUTTON_NEUTRAL))?.requestFocus()
     }
 }
+
+/**
+ * Dismiss this dialog when [fragment]'s VIEW is destroyed.
+ *
+ * AlertDialogs attach to the ACTIVITY window, so they survive fragment
+ * replacement — and MainActivity's SCREEN_OFF/SCREEN_ON home reset replaces
+ * fragments out from under whatever is on screen. An orphaned confirm dialog
+ * then sits over a fresh Home, and its positive handler fires against a
+ * DETACHED fragment: anything touching `viewLifecycleOwner` or the fragment
+ * manager throws IllegalStateException. Every dialog a resettable screen
+ * shows must pass through here.
+ */
+fun AlertDialog.dismissOnViewDestroyed(fragment: androidx.fragment.app.Fragment): AlertDialog = apply {
+    val lifecycle = fragment.viewLifecycleOwner.lifecycle
+    val observer = object : androidx.lifecycle.DefaultLifecycleObserver {
+        override fun onDestroy(owner: androidx.lifecycle.LifecycleOwner) {
+            runCatching { dismiss() }
+        }
+    }
+    lifecycle.addObserver(observer)
+    setOnDismissListener { lifecycle.removeObserver(observer) }
+}

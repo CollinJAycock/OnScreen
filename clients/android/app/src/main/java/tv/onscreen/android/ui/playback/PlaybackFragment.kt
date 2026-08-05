@@ -90,6 +90,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     // (direct play) or has to re-issue the transcode session
     // (HLS / remux). null until the first source emission.
     private var currentSource: PlaybackSource? = null
+
+    /** Last-seen side-load list, for detecting a subtitle download that
+     *  changed the sources without changing the playback source. */
+    private var lastSubtitleSources: List<SubtitleTrackSource>? = null
     private var nextEpisode: ChildItem? = null
     private var serverUrl: String = ""
 
@@ -245,26 +249,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // D-pad center is intentionally NOT intercepted here — the
         // Leanback overlay handles "press to show, second press to
         // activate" which is the standard Android TV UX.
-        view.isFocusableInTouchMode = true
-        view.setOnKeyListener { _, keyCode, event ->
-            if (event.action != android.view.KeyEvent.ACTION_DOWN) {
-                return@setOnKeyListener false
-            }
-            when (keyCode) {
-                android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayPause(); true }
-                android.view.KeyEvent.KEYCODE_MEDIA_PLAY       -> { player?.play(); true }
-                android.view.KeyEvent.KEYCODE_MEDIA_PAUSE      -> { player?.pause(); true }
-                android.view.KeyEvent.KEYCODE_MEDIA_STOP       -> { player?.pause(); true }
-                android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekRelative(SKIP_FORWARD_MS); true }
-                android.view.KeyEvent.KEYCODE_MEDIA_REWIND       -> { seekRelative(-SKIP_BACK_MS); true }
-                // Track skip for music (the NEXT/PREV keys on most remotes). NEXT
-                // advances to the resolved next sibling; PREVIOUS restarts the
-                // current track (no previous-sibling resolver yet).
-                android.view.KeyEvent.KEYCODE_MEDIA_NEXT     -> { nextEpisode?.let { goToNextEpisode(it) }; true }
-                android.view.KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { player?.seekTo(0); true }
-                else -> false
-            }
-        }
+        // NOTE: hardware media keys are handled in onActivityKeyEvent, NOT a
+        // view-level OnKeyListener. The old listener sat on the fragment root,
+        // which never holds focus under Leanback (the transport row and video
+        // surface do), so MEDIA_NEXT / PREVIOUS / STOP were dead on every
+        // remote that has them. Activity dispatch runs regardless of focus.
 
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
         val startMs = arguments?.getLong(ARG_START_MS, 0) ?: 0
@@ -297,7 +286,20 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // progress tracker.
                 val sourceChanged = source !== currentSource
                 currentSource = source
+                // A freshly-downloaded external subtitle updates
+                // subtitleSources WITHOUT changing the source. The running
+                // media source was built from the old list, so the new track
+                // has no TrackGroup to select — re-attach at the current
+                // position to make it materialize.
+                val subsChanged = state.subtitleSources !== lastSubtitleSources
+                lastSubtitleSources = state.subtitleSources
                 when {
+                    !sourceChanged && subsChanged && !playerWasReused &&
+                        source != null && player != null -> {
+                        val pos = player?.currentPosition ?: 0L
+                        playSource(source)
+                        if (pos > 0) player?.seekTo(pos)
+                    }
                     playerWasReused -> {
                         playerWasReused = false
                         installProgressTracker(itemId)
@@ -314,7 +316,17 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     sourceChanged && player == null -> Unit
                     sourceChanged -> {
                         playSource(source)
-                        applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang, state.forcedSubtitlesOnly)
+                        // An explicit in-session choice (picked from the
+                        // subtitle dialog) outranks the saved preference: a
+                        // source re-emit here is usually an audio-track
+                        // switch re-issuing the session, and re-applying the
+                        // SAVED pref silently undid what the user just chose.
+                        if (userSubtitleChoice != null) {
+                            applyPreferredTracks(state.preferredAudioLang, null, false)
+                            applySubtitleChoice()
+                        } else {
+                            applyPreferredTracks(state.preferredAudioLang, state.preferredSubtitleLang, state.forcedSubtitlesOnly)
+                        }
                         installProgressTracker(itemId)
                     }
                 }
@@ -889,6 +901,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             ensureSubtitleView()?.setCues(cueGroup.cues)
         }
 
+        override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
+            // Re-resolve the user's explicit subtitle choice against the NEW
+            // track groups: selection overrides bind to concrete TrackGroup
+            // instances, so after an audio-switch re-issues the session (or
+            // any re-prepare) the old override silently stops matching.
+            applySubtitleChoice()
+        }
+
         override fun onIsPlayingChanged(isPlaying: Boolean) {
             // Screen-on flag tracks active playback so the Fire TV
             // / Android TV screensaver doesn't kick in mid-show.
@@ -982,7 +1002,21 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val exo = player ?: return
         when (source) {
             is PlaybackSource.DirectPlay -> {
-                exo.setMediaItem(MediaItem.fromUri(Uri.parse(source.url)))
+                // Container subtitle tracks come from ExoPlayer's own
+                // extractor; side-load only the EXTERNAL files (OpenSubtitles
+                // downloads), which live server-side, not in the container.
+                // Direct play goes through DefaultMediaSourceFactory, which —
+                // unlike the hand-built HlsMediaSource below — honours
+                // subtitleConfigurations.
+                val externalSubs = subtitleConfigurations(
+                    viewModel.uiState.value.subtitleSources.filter { it.embeddedIndex == null },
+                )
+                exo.setMediaItem(
+                    MediaItem.Builder()
+                        .setUri(Uri.parse(source.url))
+                        .setSubtitleConfigurations(externalSubs)
+                        .build(),
+                )
                 exo.prepare()
                 if (source.startMs > 0) exo.seekTo(source.startMs)
                 exo.playWhenReady = true
@@ -1004,9 +1038,21 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // the HlsMediaSource directly — HlsMediaSource.createMediaSource
                 // ignores subtitleConfigurations entirely, so setting it there
                 // would silently do nothing.
+                // Re-base cue timestamps for a resumed session: the server's
+                // cached VTT is absolute content time, but this HLS timeline
+                // starts at zero at the resume point — unshifted, the cues
+                // shown were from hlsOffsetMs EARLIER in the film.
+                val vttOffset = viewModel.hlsOffsetMs
+                val subFactory = if (vttOffset > 0) {
+                    androidx.media3.datasource.DataSource.Factory {
+                        ShiftedVttDataSource(factory.createDataSource(), vttOffset)
+                    }
+                } else {
+                    factory
+                }
                 val subtitleSources = subtitleConfigurations().map { cfg ->
                     androidx.media3.exoplayer.source.SingleSampleMediaSource
-                        .Factory(factory)
+                        .Factory(subFactory)
                         .setTreatLoadErrorsAsEndOfStream(true)
                         .createMediaSource(cfg, C.TIME_UNSET)
                 }
@@ -1045,12 +1091,19 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      * container's own subtitle streams and side-loading would duplicate every
      * track in the picker.
      */
-    private fun subtitleConfigurations(): List<MediaItem.SubtitleConfiguration> =
-        viewModel.uiState.value.subtitleSources.map { s ->
+    private fun subtitleConfigurations(
+        sources: List<SubtitleTrackSource> = viewModel.uiState.value.subtitleSources,
+    ): List<MediaItem.SubtitleConfiguration> =
+        sources.map { s ->
             MediaItem.SubtitleConfiguration.Builder(Uri.parse(s.url))
                 .setMimeType(androidx.media3.common.MimeTypes.TEXT_VTT)
                 .setLanguage(s.language.ifBlank { null })
                 .setLabel(s.label)
+                // The id survives into the TrackGroup's Format, letting the
+                // picker select THIS track rather than "any track with the
+                // same language" — same-language duplicates (SDH + full,
+                // forced + full) were unreachable before.
+                .setId(s.trackId)
                 .setSelectionFlags(if (s.forced) C.SELECTION_FLAG_FORCED else 0)
                 .build()
         }
@@ -1158,6 +1211,21 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      */
     override fun onActivityKeyEvent(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) return false
+        // Hardware media keys work regardless of which overlay has focus —
+        // that's their contract on every TV platform.
+        when (event.keyCode) {
+            KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayPause(); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { player?.play(); return true }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> { player?.pause(); return true }
+            KeyEvent.KEYCODE_MEDIA_STOP -> { player?.pause(); return true }
+            KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekRelative(SKIP_FORWARD_MS); return true }
+            KeyEvent.KEYCODE_MEDIA_REWIND -> { seekRelative(-SKIP_BACK_MS); return true }
+            // Track skip for music (the NEXT/PREV keys on most remotes). NEXT
+            // advances to the resolved next sibling; PREVIOUS restarts the
+            // current track (no previous-sibling resolver yet).
+            KeyEvent.KEYCODE_MEDIA_NEXT -> { nextEpisode?.let { goToNextEpisode(it) }; return true }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { player?.seekTo(0); return true }
+        }
         if (isControlsOverlayVisible) return false
         // The Skip (intro/credits) and Up Next overlays own focus while visible but
         // are NOT the controls overlay, so without this LEFT/RIGHT would seek the
@@ -1200,7 +1268,19 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 .build()
             builder.setLoadControl(loadControl)
         }
-        return builder.build()
+        return builder.build().apply {
+            // Declare the usage and let Media3 manage audio focus. Without
+            // this the fragment player never REQUESTED focus, so other
+            // apps' audio kept playing underneath, and nothing paused us
+            // when another app took the output.
+            setAudioAttributes(
+                androidx.media3.common.AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus= */ true,
+            )
+        }
     }
 
     private fun showSpeedPicker() {
@@ -1313,21 +1393,55 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             val pos = player?.currentPosition ?: 0L
             viewModel.switchAudioStream(idx, pos)
         } else {
-            // Direct play — let ExoPlayer pick the matching track.
-            selectAudioByLanguage(stream.language)
+            // Direct play — pick the exact track by its ordinal (container
+            // order matches audio_streams order). Selecting by language made
+            // same-language duplicates (5.1 + stereo, commentary) unreachable.
+            selectAudioByOrdinal(idx)
+        }
+    }
+
+    /** One selectable subtitle row: either a container track ExoPlayer
+     *  extracted itself (direct play — addressed by its ordinal among
+     *  non-side-loaded text groups) or a side-loaded VTT (addressed by the
+     *  format id stamped in subtitleConfigurations). */
+    private data class SubtitleRow(
+        val label: String,
+        val trackId: String?,      // side-load format id, null = container track
+        val containerOrdinal: Int, // ordinal among container text groups, -1 = side-load
+    )
+
+    private fun subtitleRows(): List<SubtitleRow> {
+        val sources = viewModel.uiState.value.subtitleSources
+        val isHls = viewModel.uiState.value.source is PlaybackSource.Hls
+        fun decorate(name: String, forced: Boolean, sdh: Boolean, external: Boolean) = buildString {
+            append(name)
+            if (forced) append(" (forced)")
+            if (sdh) append(" (SDH)")
+            if (external) append(" (downloaded)")
+        }
+        return if (isHls) {
+            // Every renderable track is a side-load (the session playlist
+            // carries no text streams). Image-based tracks are already
+            // filtered out — the server can't serve them as VTT.
+            sources.map { s ->
+                SubtitleRow(decorate(s.label, s.forced, s.sdh, s.embeddedIndex == null), s.trackId, -1)
+            }
+        } else {
+            // Direct play: container tracks render natively (PGS included) in
+            // container order, plus any external side-loads on the end.
+            subtitleStreams.mapIndexed { ord, s ->
+                val name = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } }
+                SubtitleRow(decorate(name, s.forced, s.sdh, false), null, ord)
+            } + sources.filter { it.embeddedIndex == null }.map { s ->
+                SubtitleRow(decorate(s.label, s.forced, s.sdh, true), s.trackId, -1)
+            }
         }
     }
 
     private fun showSubtitlePicker() {
+        val rows = subtitleRows()
         val labels = mutableListOf(getString(R.string.off))
-        labels.addAll(subtitleStreams.map { s ->
-            val name = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } }
-            buildString {
-                append(name)
-                if (s.forced) append(" (forced)")
-                if (s.sdh) append(" (SDH)")
-            }
-        })
+        labels.addAll(rows.map { it.label })
         // "Find more online…" entry tacks an OpenSubtitles search on
         // the end of the picker. Index = labels.size — beyond every
         // track row — so the radio-row indices for real tracks don't
@@ -1335,18 +1449,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val findMoreIdx = labels.size
         labels.add(getString(R.string.subtitles_find_more))
 
-        // Best-effort active-row detection: pull the current
-        // preferred-text-language from ExoPlayer's track-selection
-        // params. -1 (off) maps to row 0; an unmatched language
-        // also maps to "Off" so the dialog always has a checked row.
-        val preferred = player?.trackSelectionParameters?.preferredTextLanguages?.firstOrNull()
-        val textDisabled = player?.trackSelectionParameters?.disabledTrackTypes?.contains(C.TRACK_TYPE_TEXT) == true
-        val checked = if (textDisabled || preferred.isNullOrBlank()) {
-            0
-        } else {
-            val match = subtitleStreams.indexOfFirst { it.language.equals(preferred, ignoreCase = true) }
-            if (match < 0) 0 else match + 1
-        }
+        // Active-row detection from the player's ACTUAL selection state
+        // (Tracks.Group.isSelected), not from preferred-language params —
+        // the old raw-string compare against normalized selector state
+        // showed "Off" checked while subtitles were rendering.
+        val selected = selectedSubtitleRow(rows)
+        val checked = if (selected < 0) 0 else selected + 1
 
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.subtitles)
@@ -1355,7 +1463,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 when (idx) {
                     0 -> disableSubtitles()
                     findMoreIdx -> showOnlineSubtitleSearch()
-                    else -> selectSubtitleByLanguage(subtitleStreams[idx - 1].language)
+                    else -> selectSubtitleRow(rows[idx - 1])
                 }
             }
             .show()
@@ -1460,36 +1568,102 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         exo.trackSelectionParameters = params
     }
 
-    private fun selectAudioByLanguage(language: String) {
+    /** Direct-play audio selection by ORDINAL among the player's audio
+     *  groups (container order matches `audio_streams` order), not by
+     *  language — two same-language tracks (5.1 + stereo, commentary)
+     *  were unreachable when selected by language string. */
+    private fun selectAudioByOrdinal(ordinal: Int) {
         val exo = player ?: return
-        val params = exo.trackSelectionParameters.buildUpon()
-            .setPreferredAudioLanguage(language.ifBlank { null })
+        val group = exo.currentTracks.groups
+            .filter { it.type == C.TRACK_TYPE_AUDIO }
+            .getOrNull(ordinal) ?: return
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setOverrideForType(
+                androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
+            )
             .build()
-        exo.trackSelectionParameters = params
         // Keep the picker's checkmark in sync. Unlike HLS (where
         // switchAudioStream re-issues the session and the source re-emit
         // carries the new active track), direct-play swaps happen entirely
         // client-side, so nothing else updates activeAudioIndex — without
         // this the radio dialog re-opens checked on the old track.
-        val idx = audioStreams.indexOfFirst { it.language.equals(language, ignoreCase = true) }
-        if (idx >= 0) activeAudioIndex = idx
+        activeAudioIndex = ordinal
     }
 
-    private fun selectSubtitleByLanguage(language: String) {
-        val exo = player ?: return
-        val params = exo.trackSelectionParameters.buildUpon()
-            .setPreferredTextLanguage(language.ifBlank { null })
-            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-            .build()
-        exo.trackSelectionParameters = params
+    /** The user's explicit in-session subtitle choice: a SubtitleRow key
+     *  ("id:<formatId>" / "ord:<n>"), "off", or null = no explicit choice
+     *  (saved preferences apply). Re-applied after every player rebuild —
+     *  an audio-track switch re-issues the HLS session, and before this
+     *  existed the rebuild silently re-applied the SAVED preference,
+     *  undoing whatever the user had picked minutes earlier. */
+    private var userSubtitleChoice: String? = null
+
+    /** Text track groups that came from the source itself, in order —
+     *  excludes our side-loads (identified by the stamped id prefix). */
+    private fun containerTextGroups(): List<androidx.media3.common.Tracks.Group> =
+        player?.currentTracks?.groups
+            ?.filter { it.type == C.TRACK_TYPE_TEXT }
+            ?.filterNot { it.mediaTrackGroup.getFormat(0).id?.startsWith("sub:") == true }
+            ?: emptyList()
+
+    private fun sideLoadedTextGroup(trackId: String): androidx.media3.common.Tracks.Group? =
+        player?.currentTracks?.groups
+            ?.filter { it.type == C.TRACK_TYPE_TEXT }
+            ?.firstOrNull { it.mediaTrackGroup.getFormat(0).id == trackId }
+
+    /** Index into [rows] of the currently-rendering track, or -1 for off. */
+    private fun selectedSubtitleRow(rows: List<SubtitleRow>): Int {
+        val groups = player?.currentTracks?.groups
+            ?.filter { it.type == C.TRACK_TYPE_TEXT } ?: return -1
+        val active = groups.firstOrNull { it.isSelected } ?: return -1
+        val id = active.mediaTrackGroup.getFormat(0).id
+        if (id?.startsWith("sub:") == true) {
+            return rows.indexOfFirst { it.trackId == id }
+        }
+        val ordinal = containerTextGroups().indexOfFirst { it.mediaTrackGroup == active.mediaTrackGroup }
+        return rows.indexOfFirst { it.containerOrdinal == ordinal }
+    }
+
+    private fun selectSubtitleRow(row: SubtitleRow) {
+        userSubtitleChoice = row.trackId?.let { "id:$it" } ?: "ord:${row.containerOrdinal}"
+        applySubtitleChoice()
     }
 
     private fun disableSubtitles() {
+        userSubtitleChoice = "off"
         val exo = player ?: return
-        val params = exo.trackSelectionParameters.buildUpon()
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .clearOverridesOfType(C.TRACK_TYPE_TEXT)
             .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
             .build()
-        exo.trackSelectionParameters = params
+    }
+
+    /** Apply [userSubtitleChoice] against the player's CURRENT track groups.
+     *  Called on pick, and again from onTracksChanged after a rebuild —
+     *  overrides bind to concrete TrackGroup instances, so a re-issued
+     *  session needs the choice re-resolved against its new groups. */
+    private fun applySubtitleChoice() {
+        val exo = player ?: return
+        val choice = userSubtitleChoice ?: return
+        if (choice == "off") {
+            exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+                .clearOverridesOfType(C.TRACK_TYPE_TEXT)
+                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                .build()
+            return
+        }
+        val group = when {
+            choice.startsWith("id:") -> sideLoadedTextGroup(choice.removePrefix("id:"))
+            choice.startsWith("ord:") ->
+                containerTextGroups().getOrNull(choice.removePrefix("ord:").toIntOrNull() ?: -1)
+            else -> null
+        } ?: return // groups not loaded yet — onTracksChanged retries
+        exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
+            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+            .setOverrideForType(
+                androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
+            )
+            .build()
     }
 
     private fun startUpNextWatcher() {
@@ -1505,6 +1679,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             while (isActive) {
                 delay(1000)
                 val exo = player ?: continue
+                // Pause = "I'm stepping away", the same gate the skip-marker
+                // watcher applies. Without it, pausing during the credits
+                // still popped the overlay and auto-started the next episode
+                // while the user was out of the room.
+                if (!exo.isPlaying) continue
                 val pos = exo.currentPosition
                 val dur = exo.duration
                 if (dur > 0 && dur != Long.MAX_VALUE) {
@@ -1573,10 +1752,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // cancel this job.
         countdownJob?.cancel()
         countdownJob = viewLifecycleOwner.lifecycleScope.launch {
-            for (sec in UP_NEXT_COUNTDOWN_SEC downTo 1) {
+            var sec = UP_NEXT_COUNTDOWN_SEC
+            while (sec >= 1) {
                 labelView.text = "UP NEXT · ${sec}s"
                 delay(1000)
                 if (!isActive) return@launch
+                // Hold the countdown while paused — the user who catches the
+                // card and hits pause has explicitly asked to stay.
+                if (player?.isPlaying != false) sec--
             }
             goToNextEpisode(next)
         }
@@ -1796,7 +1979,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // been torn down in onStop; the release call below is a
         // safety net for state-restore edge cases where onStop ran
         // but the player was rebuilt before reaching here.
-        val handedOff = handOffAudioPlayerToService()
+        //
+        // NEVER park a finished player. onStop already gates on
+        // !playbackEnded, but this path didn't — and ExoPlayer keeps
+        // playWhenReady == true at STATE_ENDED, so the handoff's
+        // liveness check waved the ended player through: the last track
+        // of an album ended, the fragment popped, and the service
+        // adopted a dead player — leaked instance, phantom "playing"
+        // notification, endless heartbeat against a finished item.
+        val handedOff = !playbackEnded && handOffAudioPlayerToService()
         if (!handedOff) {
             player?.release()
         }
@@ -1922,6 +2113,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val exo = player ?: return false
         val isAudio = currentItemType == "track" || currentItemType == "audiobook"
         if (!isAudio) return false
+        // A finished player must never be parked: ExoPlayer keeps
+        // playWhenReady == true at STATE_ENDED, so the playWhenReady gate
+        // below cannot catch end-of-stream on its own.
+        if (exo.playbackState == Player.STATE_ENDED) return false
         if (!exo.playWhenReady && exo.currentPosition == 0L) return false
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
         val ctx = activity?.applicationContext ?: return false

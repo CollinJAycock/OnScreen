@@ -5,86 +5,103 @@
     line that flips between "Waiting for sign-in...", "Code expired",
     and "Couldn't reach server" while the fragment polls
     /api/v1/auth/pair/poll in the background.
+
+    Sized for the 960x540dp TV design viewport WITH overscan margins:
+    the previous fixed budget (160dp padding + 248dp margins + 210sp of
+    text) came to ~666dp of children in a 540dp-tall window, so
+    LinearLayout's centering absorbed all the padding and pushed the
+    title and Cancel button into the ~5% overscan band some panels
+    crop. ScrollView keeps everything reachable even on odd densities.
 -->
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:gravity="center"
-    android:padding="80dp"
+    android:fillViewport="true"
     android:background="@color/bg_primary">
 
-    <TextView
-        android:id="@+id/pair_title"
-        android:layout_width="wrap_content"
+    <LinearLayout
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="@string/pair_title"
-        android:textColor="@color/text_primary"
-        android:textSize="32sp"
-        android:textStyle="bold" />
-
-    <TextView
-        android:id="@+id/pair_instructions"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="32dp"
-        android:textColor="@color/text_secondary"
-        android:textSize="20sp"
+        android:orientation="vertical"
         android:gravity="center"
-        android:text="@string/pair_instructions" />
+        android:paddingHorizontal="48dp"
+        android:paddingVertical="27dp">
 
-    <TextView
-        android:id="@+id/pair_url"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="24dp"
-        android:textColor="@color/accent"
-        android:textSize="28sp"
-        android:fontFamily="monospace" />
+        <TextView
+            android:id="@+id/pair_title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/pair_title"
+            android:textColor="@color/text_primary"
+            android:textSize="32sp"
+            android:textStyle="bold" />
 
-    <TextView
-        android:id="@+id/pair_pin_label"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="60dp"
-        android:textColor="@color/text_secondary"
-        android:textSize="16sp"
-        android:textAllCaps="true"
-        android:letterSpacing="0.15"
-        android:text="@string/pair_pin_label" />
+        <TextView
+            android:id="@+id/pair_instructions"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="20sp"
+            android:gravity="center"
+            android:text="@string/pair_instructions" />
 
-    <!-- The PIN is the headline element. Render large, monospaced,
-         and tracked-out so it reads from the couch. -->
-    <TextView
-        android:id="@+id/pair_pin"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="12dp"
-        android:textColor="@color/text_primary"
-        android:textSize="96sp"
-        android:textStyle="bold"
-        android:fontFamily="monospace"
-        android:letterSpacing="0.2" />
+        <TextView
+            android:id="@+id/pair_url"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="12dp"
+            android:textColor="@color/accent"
+            android:textSize="28sp"
+            android:fontFamily="monospace" />
 
-    <TextView
-        android:id="@+id/pair_status"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="60dp"
-        android:textColor="@color/text_secondary"
-        android:textSize="18sp"
-        android:gravity="center" />
+        <TextView
+            android:id="@+id/pair_pin_label"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="28dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="16sp"
+            android:textAllCaps="true"
+            android:letterSpacing="0.15"
+            android:text="@string/pair_pin_label" />
 
-    <Button
-        android:id="@+id/pair_back"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_marginTop="60dp"
-        android:minWidth="200dp"
-        android:background="@drawable/btn_secondary"
-        android:textColor="@color/text_primary"
-        android:focusable="true"
-        android:focusableInTouchMode="true"
-        android:text="@android:string/cancel" />
+        <!-- The PIN is the headline element. Render large, monospaced,
+             and tracked-out so it reads from the couch. 64sp still reads
+             across the room and buys back 32sp of the vertical budget. -->
+        <TextView
+            android:id="@+id/pair_pin"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:textColor="@color/text_primary"
+            android:textSize="64sp"
+            android:textStyle="bold"
+            android:fontFamily="monospace"
+            android:letterSpacing="0.2" />
 
-</LinearLayout>
+        <TextView
+            android:id="@+id/pair_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="18sp"
+            android:gravity="center"
+            android:maxLines="2"
+            android:ellipsize="end" />
+
+        <Button
+            android:id="@+id/pair_back"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="24dp"
+            android:minWidth="200dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:focusable="true"
+            android:focusableInTouchMode="true"
+            android:text="@android:string/cancel" />
+
+    </LinearLayout>
+</ScrollView>

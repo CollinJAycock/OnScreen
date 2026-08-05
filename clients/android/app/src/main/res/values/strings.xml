@@ -56,7 +56,8 @@
     <string name="empty_history_message">Anything you play will show up here automatically.</string>
     <string name="empty_collection_title">Empty collection</string>
     <string name="empty_collection_message">No items in this collection yet.</string>
-    <string name="empty_home_title">Nothing to watch yet — add a library from the web interface, or check Settings below</string>
+    <string name="empty_home_title">Nothing to watch yet</string>
+    <string name="empty_home_hint">Add a library from the web app</string>
     <string name="empty_home_message">No libraries have been set up on this server, or they haven\'t finished scanning. Add a library from the web interface, then come back.</string>
     <string name="empty_library_title">Nothing here yet</string>
     <string name="empty_library_message">This library has no items, or nothing matches the current sort/filter.</string>
@@ -117,6 +118,10 @@
     <string name="preferred_audio_language">Preferred audio language</string>
     <string name="preferred_subtitle_language">Preferred subtitle language</string>
     <string name="max_content_rating">Maximum content rating</string>
+    <string name="no_limit">No limit</string>
+    <string name="unlink_listenbrainz">Unlink ListenBrainz</string>
+    <string name="confirm_unlink_listenbrainz">Stop submitting listens and forget the linked account? You\'ll need your token to link again.</string>
+    <string name="max_rating_admin_managed">This limit is managed by the server administrator and can\'t be changed from this device.</string>
     <string name="account">Account</string>
     <string name="scrobbling">Scrobbling</string>
     <string name="change_server">Change server</string>

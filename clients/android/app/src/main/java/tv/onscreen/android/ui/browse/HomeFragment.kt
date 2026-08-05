@@ -20,6 +20,7 @@ import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
+import tv.onscreen.android.ui.common.dismissOnViewDestroyed
 import tv.onscreen.android.ui.common.focusableOnTv
 import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.NavCard
@@ -27,7 +28,6 @@ import tv.onscreen.android.ui.common.NavCardPresenter
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.ViewAllCard
 import tv.onscreen.android.ui.common.ViewAllCardPresenter
-import tv.onscreen.android.ui.common.focusableOnTv
 import tv.onscreen.android.ui.favorites.FavoritesFragment
 import tv.onscreen.android.ui.history.HistoryFragment
 import tv.onscreen.android.ui.livetv.LiveTVFragment
@@ -121,6 +121,7 @@ class HomeFragment : BrowseSupportFragment() {
                                 .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
                                 .create()
                                 .focusableOnTv()
+                                .dismissOnViewDestroyed(this@HomeFragment)
                                 .show()
                         },
                     )
@@ -329,9 +330,18 @@ class HomeFragment : BrowseSupportFragment() {
             state.libraryPreviews.any { it.second.isNotEmpty() } ||
             state.collections.isNotEmpty()
         if (!hasContent) {
+            // Two SHORT header rows: Leanback's header dock is ~270dp and
+            // hard-clips with no ellipsis, so the old one-line 84-char
+            // sentence cut off mid-word. Each of these fits the dock.
             rowsAdapter.add(
                 ListRow(
                     HeaderItem(headerId++, getString(R.string.empty_home_title)),
+                    ArrayObjectAdapter(cardPresenter),
+                ),
+            )
+            rowsAdapter.add(
+                ListRow(
+                    HeaderItem(headerId++, getString(R.string.empty_home_hint)),
                     ArrayObjectAdapter(cardPresenter),
                 ),
             )
@@ -354,13 +364,14 @@ class HomeFragment : BrowseSupportFragment() {
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.resume_watching)
             .setPositiveButton(getString(R.string.resume_from, tc)) { d, _ ->
-                d.dismiss(); onChoice(resumeMs)
+                d.dismiss(); if (isAdded) onChoice(resumeMs)
             }
             .setNegativeButton(R.string.start_over) { d, _ ->
-                d.dismiss(); onChoice(0)
+                d.dismiss(); if (isAdded) onChoice(0)
             }
             .create()
             .focusableOnTv()
+            .dismissOnViewDestroyed(this)
             .show()
     }
 

@@ -38,6 +38,9 @@ class OnScreenApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         disableStrictRevocationChecking()
+        // Before any request: the capabilities header is built lazily on the
+        // first API call and bakes in the panel resolution read here.
+        tv.onscreen.android.ui.playback.PlaybackHelper.initDisplayCaps(this)
     }
 
     override fun newImageLoader(): ImageLoader =

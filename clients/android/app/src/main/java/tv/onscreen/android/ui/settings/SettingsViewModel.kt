@@ -27,6 +27,10 @@ data class SettingsUiState(
     val saved: Boolean = false,
     val error: String? = null,
     val loading: Boolean = true,
+    /** True only after a real preferences GET succeeded. The form stays
+     *  read-only until then — editing the all-null defaults fed fabricated
+     *  values into a full-object PUT that reverted other clients' changes. */
+    val prefsLoaded: Boolean = false,
     // Per-user ListenBrainz scrobble link. The token is write-only, so we only
     // track whether one is linked and whether export is on.
     val scrobbleLinked: Boolean = false,
@@ -49,8 +53,12 @@ class SettingsViewModel @Inject constructor(
         _uiState.value = _uiState.value.copy(username = username, serverUrl = serverUrl, loading = true)
         viewModelScope.launch {
             try {
-                val prefs = prefsRepo.get()
-                _uiState.value = _uiState.value.copy(preferences = prefs, loading = false)
+                // Bypass the process-lifetime cache: Settings is where the
+                // user LOOKS at their preferences, so it must show what the
+                // server has now — the cached snapshot could predate changes
+                // made on the web, and editing it PUT those stale values back.
+                val prefs = prefsRepo.refresh()
+                _uiState.value = _uiState.value.copy(preferences = prefs, loading = false, prefsLoaded = true)
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message, loading = false)
             }
@@ -73,6 +81,8 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun savePreferences(prefs: UserPreferences) {
+        // Refuse to write until a real load succeeded — see prefsLoaded.
+        if (!_uiState.value.prefsLoaded) return
         viewModelScope.launch {
             try {
                 val saved = prefsRepo.set(prefs)
@@ -150,7 +160,11 @@ class SettingsViewModel @Inject constructor(
      *     MediaSession service holds the player independently of the UI.
      */
     suspend fun logout() {
-        watchNext.removeAll()
+        // Provider query + one delete per row = cross-process binder IPC —
+        // off the main thread, or sign-out visibly janks on a loaded strip.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            watchNext.removeAll()
+        }
         stopBackgroundAudio()
         authRepo.logout()
     }

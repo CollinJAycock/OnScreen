@@ -105,12 +105,24 @@ class LibraryViewModel @Inject constructor(
         resetAndReload()
     }
 
+    /** Bumped whenever sort/genre changes. In-flight page fetches capture
+     *  the generation they were issued under and drop their results if it
+     *  moved — without this, changing sort while page 1 was in flight (a)
+     *  hit the `loading` guard and silently discarded the NEW query, and
+     *  (b) let the stale response append old-sort items into the new list,
+     *  interleaving two sort orders in one grid. */
+    private var queryGeneration = 0
+
     private fun resetAndReload() {
         libraryId ?: return
+        queryGeneration++
         offset = 0
         total = Int.MAX_VALUE
         _items.value = emptyList()
         _loaded.value = false
+        // Unblock immediately: the in-flight request now belongs to a dead
+        // generation and must not gate the fresh query.
+        loading = false
         loadMore()
     }
 
@@ -121,18 +133,24 @@ class LibraryViewModel @Inject constructor(
 
         val s = _sort.value
         val g = _genre.value
+        val gen = queryGeneration
         viewModelScope.launch {
             try {
                 val (page, count) = libraryRepo.getItems(id, pageSize, offset, s.sort, s.sortDir, g)
+                if (gen != queryGeneration) return@launch // stale sort/genre
                 total = count
                 offset += page.size
                 _items.value = _items.value + page
                 _error.value = null
             } catch (e: Exception) {
-                if (_items.value.isEmpty()) _error.value = e.message ?: "Failed to load"
+                if (gen == queryGeneration && _items.value.isEmpty()) {
+                    _error.value = e.message ?: "Failed to load"
+                }
             } finally {
-                loading = false
-                _loaded.value = true
+                if (gen == queryGeneration) {
+                    loading = false
+                    _loaded.value = true
+                }
             }
         }
     }

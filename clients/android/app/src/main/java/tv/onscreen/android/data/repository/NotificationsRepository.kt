@@ -6,6 +6,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.flow.shareIn
@@ -56,10 +57,27 @@ open class NotificationsRepository @Inject constructor(
      * Callers keep their own outer reconnect loops, but those now just
      * re-attach to this shared flow rather than opening a new socket.
      */
+    /** Bumped on every identity transition (sign-in, sign-out, pairing).
+     *  flatMapLatest cancels the current SSE call — closing the socket that
+     *  was authenticated as the PREVIOUS user — and re-dials with the
+     *  current bearer. Without this the singleton stream stayed bound to
+     *  user A across a sign-out/sign-in on a shared TV: B got no
+     *  cross-device sync, and A's "play on this TV" events kept driving
+     *  B's session until the stale-stream watchdog happened to fire. */
+    private val generation = kotlinx.coroutines.flow.MutableStateFlow(0)
+
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
     private val events: Flow<NotificationItem> =
-        stream.subscribe()
-            .retry { delay(5_000); true }
+        generation
+            .flatMapLatest {
+                stream.subscribe().retry { delay(5_000); true }
+            }
             .shareIn(scope, SharingStarted.WhileSubscribed(5_000), replay = 0)
+
+    /** Tear down and re-dial the shared SSE under the current identity. */
+    fun restartForIdentityChange() {
+        generation.value++
+    }
 
     /** Cross-device progress sync. Emits whenever the same user posts
      *  new progress on any item from any device, so the active player

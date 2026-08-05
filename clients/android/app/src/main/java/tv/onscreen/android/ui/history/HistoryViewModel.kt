@@ -28,11 +28,18 @@ class HistoryViewModel @Inject constructor(
 
     fun load() {
         viewModelScope.launch {
-            _uiState.value = HistoryUiState(isLoading = true)
+            // Keep-content refresh (the HomeViewModel pattern): mark loading
+            // without discarding the current list, and keep it on failure.
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 _uiState.value = HistoryUiState(items = repo.list(limit = 100))
             } catch (e: Exception) {
-                _uiState.value = HistoryUiState(error = e.message ?: "load failed")
+                val prev = _uiState.value
+                _uiState.value = if (prev.items.isNotEmpty()) {
+                    prev.copy(isLoading = false, error = null)
+                } else {
+                    HistoryUiState(error = e.message ?: "load failed")
+                }
             }
         }
     }

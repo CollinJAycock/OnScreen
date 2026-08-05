@@ -28,7 +28,13 @@ import javax.inject.Singleton
  * with a custom name (e.g. "Living Room TV") — same shape Plex uses.
  */
 @Singleton
-class ClientName @Inject constructor() {
+class ClientName @Inject constructor(
+    // Nullable so tests can construct ClientName(null) without a Context;
+    // Hilt injects the (non-null) application context. No default value —
+    // Kotlin defaults generate a second constructor, which Dagger rejects.
+    @dagger.hilt.android.qualifiers.ApplicationContext
+    private val context: android.content.Context?,
+) {
 
     /** Computed once at construction. Build.* is set when zygote
      *  forks the process, so this never changes for a given install. */
@@ -58,9 +64,25 @@ class ClientName @Inject constructor() {
             else -> " — $manufacturer $model"
         }
 
-        // Cap defensively at 60 chars (server caps at 64; leave room
-        // for a future "(2)" disambiguator without truncation).
-        val combined = (platform + suffix).take(60)
+        // Per-install disambiguator: two identical sticks (same
+        // manufacturer + model — common: one per TV) used to produce the
+        // SAME client_name, so cross-device "play here" fired on both and
+        // the device picker listed only one. ANDROID_ID is stable per
+        // install and differs across devices.
+        val installTag = context?.let {
+            try {
+                android.provider.Settings.Secure.getString(
+                    it.contentResolver, android.provider.Settings.Secure.ANDROID_ID,
+                )?.takeLast(4)
+            } catch (_: Exception) {
+                null
+            }
+        }
+        val tag = if (installTag.isNullOrBlank()) "" else " #$installTag"
+
+        // Cap defensively at 60 chars (server caps at 64). The install tag
+        // survives the cap — it's the part that disambiguates.
+        val combined = ((platform + suffix).take(60 - tag.length)) + tag
         return combined.ifBlank { platform }
     }
 }

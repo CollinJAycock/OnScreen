@@ -53,6 +53,15 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     // yet" from "searched and found nothing" and show a No-results state.
     private var lastQuery: String = ""
 
+    /** Persistent top-row adapters, mutated in place across rebuilds so
+     *  chip focus survives a filter toggle. Null until first build; reset
+     *  in onDestroyView with the rows they live in. */
+    private var scopeAdapter: ArrayObjectAdapter? = null
+    private var chipAdapter: ArrayObjectAdapter? = null
+
+    private fun scopeLabel(): String =
+        "${getString(R.string.search_in)}: ${viewModel.scope.value?.name ?: getString(R.string.all_libraries)}"
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setSearchResultProvider(this)
@@ -98,6 +107,10 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             shadowEnabled = false
             selectEffectEnabled = false
         })
+        // Fresh rowsAdapter → the persistent top-row adapters belong to the
+        // OLD view's rows and must be rebuilt into this one.
+        scopeAdapter = null
+        chipAdapter = null
 
         // Re-render whenever any of the input streams change.
         // collectLatest keeps the most recent state; rebuildRows is
@@ -176,35 +189,51 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         val searchError = viewModel.searchError.value
         val filters = viewModel.filters.value
 
-        rowsAdapter.clear()
-
-        // Scope row first — a focusable on-screen affordance to open the library
-        // picker, so users on basic Fire TV remotes (no MENU / Y key) can still
-        // narrow the search. Only when there are libraries to scope to.
+        // The scope + chip rows are built ONCE and mutated in place from
+        // then on. rebuildRows used to rowsAdapter.clear() and recreate
+        // everything, which destroyed the focused chip on every toggle —
+        // the user's D-pad position reset to the top of the screen per
+        // click. Data-class equality makes replace() rebind only the chip
+        // whose checked state actually changed, preserving focus; the
+        // result rows below are still rebuilt wholesale (their content
+        // legitimately changed).
         val libs = viewModel.libraries.value
-        if (libs.isNotEmpty()) {
-            val scopeName = viewModel.scope.value?.name ?: getString(R.string.all_libraries)
-            val scopeAdapter = ArrayObjectAdapter(ScopeChipPresenter(requireContext()))
-            scopeAdapter.add(ScopeChipPresenter.ScopeChip("${getString(R.string.search_in)}: $scopeName"))
-            rowsAdapter.add(ListRow(HeaderItem(SCOPE_HEADER_ID, getString(R.string.search_in)), scopeAdapter))
+        if (scopeAdapter == null && libs.isNotEmpty()) {
+            val a = ArrayObjectAdapter(ScopeChipPresenter(requireContext()))
+            a.add(ScopeChipPresenter.ScopeChip(scopeLabel()))
+            scopeAdapter = a
+            rowsAdapter.add(0, ListRow(HeaderItem(SCOPE_HEADER_ID, getString(R.string.search_in)), a))
+        } else {
+            scopeAdapter?.replace(0, ScopeChipPresenter.ScopeChip(scopeLabel()))
         }
 
-        // Filter chip row first — always visible so the user can
-        // toggle types regardless of whether anything matched. Order
-        // (Movies, TV Shows, Episodes, Tracks) matches the web
-        // /search page so the visual mental model carries across
-        // surfaces.
-        val chipPresenter = FilterChipPresenter(requireContext())
-        val chipAdapter = ArrayObjectAdapter(chipPresenter)
-        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.MOVIE,
-            getString(R.string.filter_movies), filters.movie))
-        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.SHOW,
-            getString(R.string.filter_shows), filters.show))
-        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.EPISODE,
-            getString(R.string.filter_episodes), filters.episode))
-        chipAdapter.add(FilterChipPresenter.Chip(SearchViewModel.FilterType.TRACK,
-            getString(R.string.filter_tracks), filters.track))
-        rowsAdapter.add(ListRow(HeaderItem(FILTER_HEADER_ID, getString(R.string.filter_label)), chipAdapter))
+        val chips = listOf(
+            FilterChipPresenter.Chip(SearchViewModel.FilterType.MOVIE,
+                getString(R.string.filter_movies), filters.movie),
+            FilterChipPresenter.Chip(SearchViewModel.FilterType.SHOW,
+                getString(R.string.filter_shows), filters.show),
+            FilterChipPresenter.Chip(SearchViewModel.FilterType.EPISODE,
+                getString(R.string.filter_episodes), filters.episode),
+            FilterChipPresenter.Chip(SearchViewModel.FilterType.TRACK,
+                getString(R.string.filter_tracks), filters.track),
+        )
+        val existingChips = chipAdapter
+        if (existingChips == null) {
+            val a = ArrayObjectAdapter(FilterChipPresenter(requireContext()))
+            chips.forEach { a.add(it) }
+            chipAdapter = a
+            rowsAdapter.add(ListRow(HeaderItem(FILTER_HEADER_ID, getString(R.string.filter_label)), a))
+        } else {
+            chips.forEachIndexed { i, c ->
+                if (existingChips.get(i) != c) existingChips.replace(i, c)
+            }
+        }
+
+        // Rebuild only the rows below the persistent scope/chip rows.
+        val stableRows = (if (scopeAdapter != null) 1 else 0) + 1
+        if (rowsAdapter.size() > stableRows) {
+            rowsAdapter.removeItems(stableRows, rowsAdapter.size() - stableRows)
+        }
 
         if (library.isNotEmpty()) {
             val cardPresenter = CardPresenter(requireContext(), serverUrl)

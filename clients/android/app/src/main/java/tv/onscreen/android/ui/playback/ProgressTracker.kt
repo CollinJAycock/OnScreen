@@ -120,9 +120,18 @@ class ProgressTracker(
             if (state == "playing" && e is HttpException && e.code() == 403) {
                 val err = e.apiError()
                 if (err?.code == "PARENTAL_LIMIT") {
-                    stop()
+                    // Dispatch the callback on terminalScope, NOT from this
+                    // coroutine: this code runs inside the heartbeat job that
+                    // stop() is about to cancel, and withContext() begins with
+                    // ensureActive() — so dispatching from here after stop()
+                    // threw CancellationException before the callback ever ran,
+                    // and the block screen never appeared. terminalScope
+                    // outlives the job by design.
                     val cb = onBlocked
-                    if (cb != null) withContext(Dispatchers.Main) { cb(err.message ?: "") }
+                    if (cb != null) {
+                        terminalScope.launch(Dispatchers.Main) { cb(err.message ?: "") }
+                    }
+                    stop()
                 }
             }
         }

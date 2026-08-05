@@ -9,6 +9,8 @@ import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
+import kotlinx.coroutines.flow.first
+import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.AuthRepository
 import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
@@ -19,9 +21,12 @@ class ServerSetupFragment : GuidedStepSupportFragment() {
 
     @Inject lateinit var authRepo: AuthRepository
 
+    @Inject lateinit var prefs: ServerPrefs
+
     companion object {
         private const val ACTION_URL = 1L
         private const val ACTION_CONNECT = 2L
+        private const val ACTION_CANCEL = 3L
     }
 
     override fun onCreateGuidance(savedInstanceState: Bundle?): GuidanceStylist.Guidance {
@@ -64,6 +69,32 @@ class ServerSetupFragment : GuidedStepSupportFragment() {
                 .title(getString(R.string.connect))
                 .build()
         )
+        // Escape hatch + prefill for an install that ALREADY has a server:
+        // reached from Login's "Change server", this screen used to arrive
+        // empty with no way back — BACK exited the app, making a mistaken
+        // click a full re-type of the URL. Prefill the current URL (editing
+        // beats re-typing on a D-pad) and offer an explicit Cancel.
+        lifecycleScope.launch {
+            val stored = prefs.serverUrl.first()
+            if (!stored.isNullOrBlank()) {
+                findActionById(ACTION_URL)?.let { a ->
+                    if (a.description.isNullOrEmpty()) {
+                        a.description = stored
+                        notifyActionChanged(findActionPositionById(ACTION_URL))
+                    }
+                }
+                if (findActionById(ACTION_CANCEL) == null) {
+                    actions.add(
+                        GuidedAction.Builder(requireContext())
+                            .id(ACTION_CANCEL)
+                            .title(getString(R.string.cancel))
+                            .build()
+                    )
+                    setActionsDiffCallback(null)
+                    setActions(actions)
+                }
+            }
+        }
     }
 
     /** True while a connect probe is in flight. Guards against the second press
@@ -71,6 +102,12 @@ class ServerSetupFragment : GuidedStepSupportFragment() {
     private var connecting = false
 
     override fun onGuidedActionClicked(action: GuidedAction) {
+        if (action.id == ACTION_CANCEL) {
+            // Only offered when a server is already configured — return to
+            // the sign-in screen for it.
+            (activity as? MainActivity)?.navigateTo(NavigationDestination.LOGIN)
+            return
+        }
         if (action.id != ACTION_CONNECT) return
         if (connecting) return
 

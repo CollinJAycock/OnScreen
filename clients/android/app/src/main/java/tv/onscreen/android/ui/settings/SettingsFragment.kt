@@ -21,6 +21,7 @@ import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.MainActivity
 import tv.onscreen.android.ui.NavigationDestination
+import tv.onscreen.android.ui.common.dismissOnViewDestroyed
 import tv.onscreen.android.ui.common.focusableOnTv
 import javax.inject.Inject
 
@@ -33,37 +34,39 @@ class SettingsFragment : Fragment() {
     private var currentPrefs: UserPreferences = UserPreferences()
 
     companion object {
-        // ISO 639-1 two-letter codes; null = system default.
+        // ISO 639-2/T three-letter codes — the SAME values the web settings
+        // page writes and the closest match to ffprobe's stream languages.
+        // This picker used to write 639-1 two-letter codes, which nothing
+        // else in the system produces or consumes: a web-set "eng" rendered
+        // here as "System default", and a TV-set "en" then overwrote it.
         private val LANGUAGE_OPTIONS = listOf(
             null to "System default",
-            "en" to "English",
-            "es" to "Spanish",
-            "fr" to "French",
-            "de" to "German",
-            "it" to "Italian",
-            "pt" to "Portuguese",
-            "ja" to "Japanese",
-            "ko" to "Korean",
-            "zh" to "Chinese",
-            "ru" to "Russian",
-            "hi" to "Hindi",
-            "ar" to "Arabic",
+            "eng" to "English",
+            "spa" to "Spanish",
+            "fra" to "French",
+            "deu" to "German",
+            "ita" to "Italian",
+            "por" to "Portuguese",
+            "jpn" to "Japanese",
+            "kor" to "Korean",
+            "zho" to "Chinese",
+            "rus" to "Russian",
+            "hin" to "Hindi",
+            "ara" to "Arabic",
         )
 
-        private val RATING_OPTIONS = listOf(
-            null to "No limit",
-            "G" to "G",
-            "PG" to "PG",
-            "PG-13" to "PG-13",
-            "R" to "R",
-            "NC-17" to "NC-17",
-            "TV-Y" to "TV-Y",
-            "TV-Y7" to "TV-Y7",
-            "TV-G" to "TV-G",
-            "TV-PG" to "TV-PG",
-            "TV-14" to "TV-14",
-            "TV-MA" to "TV-MA",
+        /** Legacy migration for values this screen itself wrote before the
+         *  639-2 switch. Applied on READ so an old install displays and
+         *  re-saves correctly. */
+        private val LEGACY_LANG = mapOf(
+            "en" to "eng", "es" to "spa", "fr" to "fra", "de" to "deu",
+            "it" to "ita", "pt" to "por", "ja" to "jpn", "ko" to "kor",
+            "zh" to "zho", "ru" to "rus", "hi" to "hin", "ar" to "ara",
         )
+
+        private fun canonicalLang(code: String?): String? =
+            code?.let { LEGACY_LANG[it.lowercase()] ?: it }
+
     }
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View =
@@ -93,7 +96,14 @@ class SettingsFragment : Fragment() {
                 accountText.text = formatAccountLine(state.username, state.serverUrl)
                 audioBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_audio_lang)
                 subtitleBtn.text = labelFor(LANGUAGE_OPTIONS, state.preferences.preferred_subtitle_lang)
-                ratingBtn.text = labelFor(RATING_OPTIONS, state.preferences.max_content_rating)
+                ratingBtn.text = state.preferences.max_content_rating ?: getString(R.string.no_limit)
+                // Gate every preference-editing row until a real load
+                // succeeded: the form used to be fully interactive over the
+                // all-null defaults, and the next save PUT those nulls back —
+                // wiping preferences set from other clients.
+                val editable = state.prefsLoaded
+                audioBtn.isEnabled = editable
+                subtitleBtn.isEnabled = editable
 
                 scrobbleStatus.text = when {
                     !state.scrobbleLinked -> "ListenBrainz · Not linked"
@@ -120,40 +130,60 @@ class SettingsFragment : Fragment() {
         }
 
         audioBtn.setOnClickListener {
-            showOptionPicker(R.string.preferred_audio_language, LANGUAGE_OPTIONS, currentPrefs.preferred_audio_lang) { code ->
+            showOptionPicker(R.string.preferred_audio_language, LANGUAGE_OPTIONS, canonicalLang(currentPrefs.preferred_audio_lang)) { code ->
                 viewModel.savePreferences(currentPrefs.copy(preferred_audio_lang = code))
             }
         }
         subtitleBtn.setOnClickListener {
-            showOptionPicker(R.string.preferred_subtitle_language, LANGUAGE_OPTIONS, currentPrefs.preferred_subtitle_lang) { code ->
+            showOptionPicker(R.string.preferred_subtitle_language, LANGUAGE_OPTIONS, canonicalLang(currentPrefs.preferred_subtitle_lang)) { code ->
                 viewModel.savePreferences(currentPrefs.copy(preferred_subtitle_lang = code))
             }
         }
+        // Read-only: the ceiling is the ADMIN-set parental control. The
+        // server's preferences PUT never persisted this field, but the row
+        // was wired as a picker that reported "Saved" — a parental control
+        // giving false assurance. Display the value; explain on click.
         ratingBtn.setOnClickListener {
-            showOptionPicker(R.string.max_content_rating, RATING_OPTIONS, currentPrefs.max_content_rating) { code ->
-                viewModel.savePreferences(currentPrefs.copy(max_content_rating = code))
-            }
+            AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+                .setTitle(R.string.max_content_rating)
+                .setMessage(R.string.max_rating_admin_managed)
+                .setPositiveButton(android.R.string.ok) { d, _ -> d.dismiss() }
+                .create()
+                .focusableOnTv()
+                .dismissOnViewDestroyed(this)
+                .show()
         }
 
         scrobbleBtn.setOnClickListener {
             if (viewModel.uiState.value.scrobbleLinked) showScrobbleManage() else showLinkDialog()
         }
 
+        // Both teardown flows run on the ACTIVITY scope, not the view scope.
+        // logout() flips isLoggedIn while server_url is still set — exactly
+        // the predicate MainActivity's mid-session logout watcher navigates
+        // to LOGIN on — and that navigation destroys THIS fragment's view,
+        // cancelling a view-scoped coroutine mid-flow: clearAll() and the
+        // SERVER_SETUP navigation were abandoned, landing the user on Login
+        // for the server they were trying to leave (with its URL still
+        // persisted). The activity outlives the fragment swap, so the full
+        // sequence completes and the last navigation wins.
         changeServerBtn.setOnClickListener {
             confirm(R.string.change_server, R.string.confirm_change_server) {
-                viewLifecycleOwner.lifecycleScope.launch {
+                val act = activity as? MainActivity ?: return@confirm
+                act.lifecycleScope.launch {
                     viewModel.logout()
                     prefs.clearAll()
-                    (activity as? MainActivity)?.navigateTo(NavigationDestination.SERVER_SETUP)
+                    act.navigateTo(NavigationDestination.SERVER_SETUP)
                 }
             }
         }
 
         logoutBtn.setOnClickListener {
             confirm(R.string.log_out, R.string.confirm_log_out) {
-                viewLifecycleOwner.lifecycleScope.launch {
+                val act = activity as? MainActivity ?: return@confirm
+                act.lifecycleScope.launch {
                     viewModel.logout()
-                    (activity as? MainActivity)?.navigateTo(NavigationDestination.LOGIN)
+                    act.navigateTo(NavigationDestination.LOGIN)
                 }
             }
         }
@@ -172,17 +202,26 @@ class SettingsFragment : Fragment() {
     }
 
     private fun labelFor(options: List<Pair<String?, String>>, code: String?): String {
-        return options.firstOrNull { it.first == code }?.second ?: options.first().second
+        val canon = canonicalLang(code)
+        // Unknown-but-set values display AS the code — falling back to the
+        // first option claimed "System default" for a perfectly good value
+        // set from another client.
+        return options.firstOrNull { it.first == canon }?.second ?: (code ?: options.first().second)
     }
 
     private fun confirm(titleRes: Int, messageRes: Int, onConfirm: () -> Unit) {
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(titleRes)
             .setMessage(messageRes)
-            .setPositiveButton(titleRes) { d, _ -> d.dismiss(); onConfirm() }
+            // isAdded: the dialog outlives fragment replacement (it's on the
+            // activity window), so a click can arrive after the SCREEN_OFF
+            // home reset detached us — dismissOnViewDestroyed closes that
+            // window, and this guard covers a dismiss already in flight.
+            .setPositiveButton(titleRes) { d, _ -> d.dismiss(); if (isAdded) onConfirm() }
             .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
             .create()
             .focusableOnTv()
+            .dismissOnViewDestroyed(this)
             .show()
     }
 
@@ -200,6 +239,8 @@ class SettingsFragment : Fragment() {
                 onSelect(options[idx].first)
                 d.dismiss()
             }
+            .create()
+            .dismissOnViewDestroyed(this)
             .show()
     }
 
@@ -227,6 +268,7 @@ class SettingsFragment : Fragment() {
             .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
             .create()
             .focusableOnTv()
+            .dismissOnViewDestroyed(this)
             .show()
     }
 
@@ -236,10 +278,21 @@ class SettingsFragment : Fragment() {
             .setTitle("ListenBrainz")
             .setMessage("Your ListenBrainz account is linked. Listens are submitted when you finish a music track.")
             .setPositiveButton("Replace token") { d, _ -> d.dismiss(); showLinkDialog() }
-            .setNegativeButton("Unlink") { d, _ -> d.dismiss(); viewModel.unlinkListenBrainz() }
+            // Unlink is irreversible (the token is discarded server-side) and
+            // sits one D-pad press from the focused button — confirm it, like
+            // every other destructive action on this screen.
+            .setNegativeButton("Unlink") { d, _ ->
+                d.dismiss()
+                if (isAdded) {
+                    confirm(R.string.unlink_listenbrainz, R.string.confirm_unlink_listenbrainz) {
+                        viewModel.unlinkListenBrainz()
+                    }
+                }
+            }
             .setNeutralButton(R.string.cancel) { d, _ -> d.dismiss() }
             .create()
             .focusableOnTv()
+            .dismissOnViewDestroyed(this)
             .show()
     }
 }

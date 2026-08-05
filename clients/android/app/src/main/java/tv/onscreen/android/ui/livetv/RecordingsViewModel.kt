@@ -28,7 +28,11 @@ class RecordingsViewModel @Inject constructor(
 
     fun load() {
         viewModelScope.launch {
-            _uiState.value = RecordingsUiState(isLoading = true)
+            // Keep-content refresh (the HomeViewModel pattern): mark loading
+            // without discarding the current list, and keep it on failure.
+            // Blanking here on every onResume destroyed grid focus + scroll
+            // and replaced a populated screen with an error on one blip.
+            _uiState.value = _uiState.value.copy(isLoading = true, error = null)
             try {
                 // Show completed first, then in-flight + scheduled.
                 // Failed and cancelled recordings go to the bottom so
@@ -41,7 +45,12 @@ class RecordingsViewModel @Inject constructor(
                 )
                 _uiState.value = RecordingsUiState(items = sorted)
             } catch (e: Exception) {
-                _uiState.value = RecordingsUiState(error = e.message ?: "Failed to load recordings")
+                val prev = _uiState.value
+                _uiState.value = if (prev.items.isNotEmpty()) {
+                    prev.copy(isLoading = false, error = null)
+                } else {
+                    RecordingsUiState(error = e.message ?: "Failed to load recordings")
+                }
             }
         }
     }

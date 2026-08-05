@@ -112,6 +112,16 @@ class LiveChannelPlayerFragment : Fragment() {
                 return@launch
             }
             streamUrl = "$serverUrl/api/v1/tv/channels/$channelId/stream.m3u8?token=$token"
+            // The two DataStore reads above are real disk I/O — on a slow
+            // stick the user can press HOME before this resumes. The view
+            // scope survives to DESTROYED (not STOPPED), so this used to
+            // start a player from the background: live audio behind the
+            // launcher and the tuner held until the next full re-entry.
+            // Leave streamUrl set and let onStart's `player == null &&
+            // streamUrl != null` guard start it on return instead.
+            if (!viewLifecycleOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)) {
+                return@launch
+            }
             startPlayer()
         }
     }

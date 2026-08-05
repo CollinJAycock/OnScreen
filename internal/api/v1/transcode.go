@@ -989,6 +989,21 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	playlistURL := fmt.Sprintf("/api/v1/transcode/sessions/%s/playlist.m3u8?token=%s",
 		sessionID, segTok)
 
+	// Client vanished while we were creating the session (BACK during the
+	// buffering spinner cancels OkHttp's call, which closes the connection):
+	// the response below would go nowhere, the client never learns the
+	// session id, and its teardown paths have nothing to DELETE — the
+	// session runs orphaned until the idle reaper. Reap it now instead.
+	if r.Context().Err() != nil {
+		bg := context.WithoutCancel(r.Context())
+		h.logger.InfoContext(bg,
+			"transcode: client disconnected during start — reaping orphan", "session_id", sessionID)
+		if sess, gerr := h.sessions.Get(bg, sessionID); gerr == nil && sess != nil {
+			h.tearDown(bg, sess, segTok)
+		}
+		return
+	}
+
 	respond.Success(w, r, transcodeStartResponse{
 		SessionID:       sessionID,
 		PlaylistURL:     playlistURL,

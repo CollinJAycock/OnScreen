@@ -19,6 +19,16 @@ open class PreferencesRepository @Inject constructor(
         return fresh
     }
 
+    /** Force a server round-trip, replacing the cached snapshot. Settings
+     *  uses this on open: the process-lifetime cache is fine for playback
+     *  decisions, but an EDITING surface must start from the server's
+     *  current state or its full-object PUT reverts changes made on other
+     *  clients since this process first cached. */
+    open suspend fun refresh(): UserPreferences {
+        cached = null
+        return get()
+    }
+
     open suspend fun set(prefs: UserPreferences): UserPreferences {
         api.setPreferences(prefs)
         // Re-read rather than caching what we sent. The PUT deliberately

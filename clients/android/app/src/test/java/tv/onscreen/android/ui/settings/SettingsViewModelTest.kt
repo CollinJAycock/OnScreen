@@ -56,7 +56,7 @@ class SettingsViewModelTest {
         val prefsRepo = mockk<PreferencesRepository>()
         val authRepo = mockk<AuthRepository>()
         val saved = UserPreferences(preferred_audio_lang = "en")
-        coEvery { prefsRepo.get() } returns saved
+        coEvery { prefsRepo.refresh() } returns saved
 
         val vm = newViewModel(prefsRepo, authRepo)
         vm.load(username = "alice", serverUrl = "http://server")
@@ -74,7 +74,7 @@ class SettingsViewModelTest {
     fun `load reflects linked scrobble status`() = runTest(dispatcher) {
         val prefsRepo = mockk<PreferencesRepository>()
         val authRepo = mockk<AuthRepository>()
-        coEvery { prefsRepo.get() } returns UserPreferences()
+        coEvery { prefsRepo.refresh() } returns UserPreferences()
 
         val vm = SettingsViewModel(
             prefsRepo,
@@ -94,7 +94,7 @@ class SettingsViewModelTest {
     fun `load records error when preferences fetch fails`() = runTest(dispatcher) {
         val prefsRepo = mockk<PreferencesRepository>()
         val authRepo = mockk<AuthRepository>()
-        coEvery { prefsRepo.get() } throws RuntimeException("boom")
+        coEvery { prefsRepo.refresh() } throws RuntimeException("boom")
 
         val vm = newViewModel(prefsRepo, authRepo)
         vm.load(null, null)
@@ -112,7 +112,12 @@ class SettingsViewModelTest {
         val returned = UserPreferences(preferred_audio_lang = "ja", max_content_rating = "PG-13")
         coEvery { prefsRepo.set(input) } returns returned
 
+        coEvery { prefsRepo.refresh() } returns UserPreferences()
         val vm = newViewModel(prefsRepo, authRepo)
+        // savePreferences refuses to write until a load succeeded (the
+        // form is read-only over unloaded defaults) — load first.
+        vm.load(null, null)
+        advanceUntilIdle()
         vm.savePreferences(input)
         // runCurrent (not advanceUntilIdle) runs the save body but does NOT advance
         // past the 2s scheduleSavedClear() delay, so the transient saved=true is observable.
@@ -128,8 +133,11 @@ class SettingsViewModelTest {
         val authRepo = mockk<AuthRepository>()
         val input = UserPreferences()
         coEvery { prefsRepo.set(input) } returns input
+        coEvery { prefsRepo.refresh() } returns UserPreferences()
 
         val vm = newViewModel(prefsRepo, authRepo)
+        vm.load(null, null)
+        advanceUntilIdle()
         vm.clearSavedFlag()
         assertThat(vm.uiState.value.saved).isFalse()
 

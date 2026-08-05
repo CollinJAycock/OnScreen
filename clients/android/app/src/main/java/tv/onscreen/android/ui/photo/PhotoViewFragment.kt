@@ -335,6 +335,10 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
             text = getString(R.string.slideshow_on)
             visibility = View.VISIBLE
         }
+        // Hold the screen while the slideshow runs: photos are static, so
+        // nothing else resets the idle timer, and Fire TV slept mid-show —
+        // whereupon the SCREEN_OFF home reset destroyed the viewer.
+        activity?.window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         slideshowJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 delay(SLIDESHOW_INTERVAL_MS)
@@ -345,6 +349,7 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
     }
 
     private fun stopSlideshow() {
+        activity?.window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         slideshowJob?.cancel()
         slideshowJob = null
         statusLabel?.visibility = View.GONE

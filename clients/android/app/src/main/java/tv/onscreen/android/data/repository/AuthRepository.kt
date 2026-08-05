@@ -23,12 +23,16 @@ class AuthRepository @Inject constructor(
     // so there is no Hilt cycle.
     private val preferences: PreferencesRepository,
     private val capabilities: CapabilitiesRepository,
+    private val notifications: NotificationsRepository,
 ) {
     /** Clear per-identity caches. Called from every sign-in, sign-out and
      *  pairing completion — the four points where "who is signed in" changes. */
     private fun invalidateIdentityCaches() {
         preferences.invalidate()
         capabilities.invalidate()
+        // Re-dial the shared SSE — it authenticated with the PREVIOUS
+        // user's bearer at connect time and never re-reads it.
+        notifications.restartForIdentityChange()
     }
 
     suspend fun login(username: String, password: String): TokenPair {
