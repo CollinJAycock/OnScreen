@@ -267,6 +267,24 @@ export class ApiClient {
     }
   }
 
+  /** When fetch transparently followed a cleartext→TLS redirect, persist the
+   *  https origin the server actually answered on. Same-host upgrades only —
+   *  a redirect can never downgrade the scheme or move us to another host.
+   *  Returns true when the stored origin changed. */
+  private adoptTlsUpgrade(origin: string, resp: Response): boolean {
+    if (!resp.redirected || !resp.url) return false;
+    try {
+      const asked = new URL(origin);
+      const answered = new URL(resp.url);
+      if (asked.protocol !== 'http:' || answered.protocol !== 'https:') return false;
+      if (asked.hostname.toLowerCase() !== answered.hostname.toLowerCase()) return false;
+      this.setOrigin(answered.origin);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
   private async raw<T>(method: string, path: string, body?: unknown, auth = false): Promise<T> {
     const origin = this.getOrigin();
     if (!origin) throw new Error('API origin not configured');
@@ -303,6 +321,17 @@ export class ApiClient {
       throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
     } finally {
       clearTimeout(timer);
+    }
+
+    // A cleartext→TLS 301 is followed by fetch with the METHOD REWRITTEN to
+    // GET (per-spec behavior for 301/302), so a POST arrives at the server as
+    // a bodyless GET and 405s — observed as the pairing screen that never
+    // shows a code when the stored origin is a stale http:// for a server
+    // that answers on https. Adopt the upgraded origin (heals installs set up
+    // before setup started persisting the answered origin) and replay non-GET
+    // requests against it once; the adoption makes the retry loop-free.
+    if (this.adoptTlsUpgrade(origin, resp) && method !== 'GET') {
+      return this.raw<T>(method, path, body, auth);
     }
 
     if (resp.status === 401) throw new Unauthorized();

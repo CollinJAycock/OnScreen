@@ -29,6 +29,20 @@
       // echoes the right Access-Control-Allow-Origin header.
       const resp = await fetch(`${clean}/api/v1/system/capabilities`);
       if (!resp.ok) throw new Error(`server replied ${resp.status}`);
+      // Persist the origin the server ANSWERED on, not the one we asked with.
+      // fetch follows a cleartext→TLS 301 transparently, so this probe (a
+      // safe GET) succeeds against `http://host` — but persisting that http
+      // origin breaks every later POST (login, pair/code): the redirect
+      // rewrites POST to GET and the API 405s. Same-host https upgrades only.
+      try {
+        const answered = new URL(resp.url);
+        if (clean.startsWith('http://') && answered.protocol === 'https:' &&
+            new URL(clean).hostname.toLowerCase() === answered.hostname.toLowerCase()) {
+          clean = answered.origin;
+        }
+      } catch {
+        // keep the typed origin
+      }
       api.setOrigin(clean);
       goto('#/login');
     } catch (e) {

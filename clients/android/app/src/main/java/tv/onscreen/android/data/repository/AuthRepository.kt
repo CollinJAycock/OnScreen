@@ -32,6 +32,7 @@ class AuthRepository @Inject constructor(
     }
 
     suspend fun login(username: String, password: String): TokenPair {
+        ensureTlsUpgradedOrigin()
         val pair = api.login(LoginRequest(username, password)).data
         persistIfComplete(pair)
         return pair
@@ -121,12 +122,44 @@ class AuthRepository @Inject constructor(
     private fun portSuffix(u: HttpUrl): String =
         if (u.port == HttpUrl.defaultPort(u.scheme)) "" else ":" + u.port
 
+    /** Upgrade a stale cleartext origin to TLS before an unauthenticated POST.
+     *
+     *  Pairing and login both open with a POST. When the stored origin is
+     *  http but the server actually answers on TLS, the edge 301s and OkHttp
+     *  follows it by RFC-downgrading the POST to a GET — the API replies 405,
+     *  and the caller's retry loop spins forever. On the pairing screen that
+     *  looks like "the code never shows up" (server log: GET /auth/pair/code
+     *  405 every 5 s, the retry cadence). checkServer() already adopts the
+     *  TLS origin during first-run setup, but an install that persisted http
+     *  BEFORE that fix landed — or whose server moved behind TLS later —
+     *  never re-runs setup, so the stored origin stays cleartext for life.
+     *
+     *  The probe is a safe GET (redirect-following can't corrupt it) and
+     *  reuses adoptRedirectedOrigin, so only a same-host upgrade to https is
+     *  ever persisted. A plain-http LAN server answers without a redirect and
+     *  nothing changes. Probe failures are swallowed — the caller's own
+     *  request will surface the real reachability error. */
+    private suspend fun ensureTlsUpgradedOrigin() {
+        val stored = prefs.serverUrl.first()?.toHttpUrlOrNull() ?: return
+        if (stored.isHttps) return
+        try {
+            val resp = api.healthCheck()
+            if (resp.isSuccessful) {
+                adoptRedirectedOrigin(prefs.serverUrl.first(), resp.raw().request.url)
+            }
+        } catch (_: Exception) {
+            // Unreachable — let the caller's request report it.
+        }
+    }
+
     // ── Device pairing ────────────────────────────────────────────────────────
 
     /** Start a device-pairing session. The PIN is shown on the TV
      *  while the user signs in via /pair on a phone / laptop. */
-    suspend fun startPairing(): PairCodeResponse =
-        api.createPairCode().data
+    suspend fun startPairing(): PairCodeResponse {
+        ensureTlsUpgradedOrigin()
+        return api.createPairCode().data
+    }
 
     /** One poll tick. Returns:
      *   - [PollResult.Pending] while the server says 202 (user hasn't
