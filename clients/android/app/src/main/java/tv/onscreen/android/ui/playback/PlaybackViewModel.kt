@@ -137,6 +137,10 @@ class PlaybackViewModel @Inject constructor(
         val height: Int,
         val videoCopy: Boolean,
         val serverUrl: String,
+        /** The audio track the CURRENT session was started with — a seek
+         *  re-issue must carry it forward or the user's language choice
+         *  silently resets to the server default. */
+        val audioStreamIndex: Int? = null,
     )
 
     // Set while the active source is a direct play, so a fatal ExoPlayer
@@ -414,7 +418,7 @@ class PlaybackViewModel @Inject constructor(
         val seg0SkipMs = (session.seg0_audio_gap_sec * 1000.0).toLong()
 
         hlsOffsetMs = openOffsetMs
-        lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
+        lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl, audioStreamIndex)
 
         // New session is live — now retire the one it replaces.
         if (priorSessionId != null && priorToken != null && priorSessionId != session.session_id) {
@@ -475,6 +479,46 @@ class PlaybackViewModel @Inject constructor(
                 _uiState.value = _uiState.value.copy(source = source)
             } catch (_: Exception) {
                 // Best-effort — leave the existing session running.
+            }
+        }
+    }
+
+    /** Guard against overlapping seek re-issues — Leanback commits one
+     *  seek per scrub, but a user can commit again while the first
+     *  round-trip is in flight. */
+    private var reissueInFlight = false
+
+    /**
+     * Re-issue the active transcode session at [contentPositionMs] —
+     * the seek path for targets OUTSIDE the current session's transcoded
+     * window (before the resume point, or beyond the growing live edge).
+     * An in-window seek never comes through here, and direct play never
+     * needs to (its window IS the full timeline). Carries forward the
+     * height, video-copy mode and audio-track choice of the session it
+     * replaces; startTranscode's supersede path retires the old session.
+     */
+    fun reissueAt(contentPositionMs: Long) {
+        val req = lastTranscodeRequest ?: return
+        if (reissueInFlight) return
+        reissueInFlight = true
+        viewModelScope.launch {
+            try {
+                val dur = _uiState.value.item?.duration_ms ?: Long.MAX_VALUE
+                val source = startTranscode(
+                    itemId = req.itemId,
+                    height = req.height,
+                    posMs = contentPositionMs.coerceIn(0L, dur),
+                    fileId = req.fileId,
+                    videoCopy = req.videoCopy,
+                    serverUrl = req.serverUrl,
+                    audioStreamIndex = req.audioStreamIndex,
+                )
+                _uiState.value = _uiState.value.copy(source = source)
+            } catch (_: Exception) {
+                // Best-effort — leave the existing session running; the bar
+                // snaps back to the real position on the next tick.
+            } finally {
+                reissueInFlight = false
             }
         }
     }

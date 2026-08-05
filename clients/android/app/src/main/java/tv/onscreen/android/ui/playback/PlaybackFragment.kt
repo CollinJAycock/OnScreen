@@ -453,7 +453,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 cues = cues,
                 repo = trickplayRepo,
                 scope = viewLifecycleOwner.lifecycleScope,
-                hlsOffsetMs = viewModel.hlsOffsetMs,
+                // The transport bar is CONTENT time now (see
+                // ContentTimeForwardingPlayer), so the provider's cue
+                // positions stay content-absolute — no session offset.
+                hlsOffsetMs = 0L,
             )
             glue?.seekProvider = provider
         }
@@ -641,27 +644,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     /** Show/hide a centered indeterminate spinner while the player buffers — the
      *  transcode warm-up on a cold start would otherwise be a black screen with
      *  no sign anything is happening. */
-    // NOTE — the transport bar shows SESSION time, not content time.
-    //
-    // A transcode/HLS session started at a resume point begins its own timeline
-    // at zero, so resuming a 2-hour film at 0:45:00 shows "0:00 / 1:15:00": the
-    // position looks like the start of the movie and the runtime has become the
-    // leftover 75 minutes. viewModel.hlsOffsetMs is applied to progress
-    // reporting, markers and trickplay, but NOT here.
-    //
-    // This is not fixable behind the Leanback API. LeanbackPlayerAdapter is
-    // final, and on PlaybackTransportControlGlue getDuration(),
-    // getBufferedPosition() and seekTo() are all final (verified against
-    // leanback-1.0.0 with javap) — only getCurrentPosition() is overridable.
-    // Offsetting the position alone would leave the bar disagreeing with its
-    // own scrub: a seek to the right-hand end would render past the stated
-    // duration. That is worse than the current consistent-but-wrong display.
-    //
-    // The real fix is a product decision, not a patch: either the server emits
-    // a full-timeline playlist for a resumed session (correct bar, more
-    // transcoding), or the client starts the session at 0 and seeks after
-    // prepare (correct bar, transcode from the top). Left as-is deliberately
-    // rather than shipping a half-translation.
+    // The transport bar shows CONTENT time — the glue is fed a
+    // ContentTimeForwardingPlayer that translates position/duration/seeks,
+    // while the fragment, tracker, markers and handoff keep the raw player.
+    // Seeks outside the session window re-issue the session at the target
+    // (PlaybackViewModel.reissueAt).
 
     /** Lazily attach the cue renderer above the video surface. */
     private fun ensureSubtitleView(): androidx.media3.ui.SubtitleView? {
@@ -826,7 +813,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         exo.setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL)
         player = exo
 
-        val adapter = LeanbackPlayerAdapter(requireContext(), exo, UPDATE_PERIOD_MS)
+        // The glue sees CONTENT time; everything else keeps the raw player.
+        // See ContentTimeForwardingPlayer for why this is the one legal way
+        // through Leanback's final adapter/glue methods.
+        val glueFacingPlayer = ContentTimeForwardingPlayer(
+            exo,
+            offsetMs = { viewModel.hlsOffsetMs },
+            contentDurationMs = { contentDurationMs() },
+            onSeekOutsideWindow = { target -> viewModel.reissueAt(target) },
+        )
+        val adapter = LeanbackPlayerAdapter(requireContext(), glueFacingPlayer, UPDATE_PERIOD_MS)
         val host = VideoSupportFragmentGlueHost(this)
 
         glue = object : PlaybackTransportControlGlue<LeanbackPlayerAdapter>(requireContext(), adapter) {
@@ -1181,7 +1177,20 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  → here once the actions exist on the controls row. */
     private fun seekRelative(deltaMs: Long) {
         val exo = player ?: return
-        val target = (exo.currentPosition + deltaMs).coerceAtLeast(0L)
+        val offset = viewModel.hlsOffsetMs
+        val rawTarget = exo.currentPosition + deltaMs
+        // Rewinding past the head of a resumed session: the earlier content
+        // is not in this session's window at all, so seekTo could only clamp
+        // to the resume point — "rewind" appeared to do nothing at the exact
+        // moment a user wants it (they resumed too far in). Re-issue the
+        // session at the content target instead. Leanback's scrub bar is only
+        // focusable when a trickplay provider exists, so on most titles these
+        // keys are the ONLY seek affordance.
+        if (rawTarget < 0 && offset > 0) {
+            viewModel.reissueAt((offset + rawTarget).coerceAtLeast(0L))
+            return
+        }
+        val target = rawTarget.coerceAtLeast(0L)
         val dur = exo.duration
         val clamped = if (dur > 0 && dur != Long.MAX_VALUE && target > dur) dur else target
         exo.seekTo(clamped)
