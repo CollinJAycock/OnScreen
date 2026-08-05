@@ -9,12 +9,13 @@ The server API is frozen as of **v2.2.0** — see [docs/server-lock.md](docs/ser
 for the lock posture and what's expected to land in v2.3+ minor
 releases without breaking v2.2 clients.
 
-## [v2.4.0] — unreleased
+## [v2.4.0] — 2026-08-05
 
 The server lock was lifted after v2.3.0 (see [docs/server-lock.md](docs/server-lock.md)).
 v2.4 adds new auth surface and a multi-node transcode fleet alongside an
 on-demand adaptive-bitrate pipeline; first-party clients move in lockstep for
-the asset-token migration.
+the asset-token migration — **update clients alongside the server**: store
+builds shipped since June 2026 already handle the asset token.
 
 ### Added — server
 
