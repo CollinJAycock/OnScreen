@@ -358,7 +358,15 @@ func TestHLSProxy_ActiveSessionsReportsLiveCount(t *testing.T) {
 // the CORPSE's refcount, destroyed the working session it had just built —
 // burning a tuner tune — and returned a session whose directory was gone.
 func TestHLSProxy_AcquireReplacesCorpseInsteadOfSharingIt(t *testing.T) {
-	svc := &stubProxyService{stream: &stubChannelStream{Reader: strings.NewReader("MPEGTS-PAYLOAD")}}
+	// The stream must BLOCK, not EOF: with a finite reader the fresh
+	// session's fake-ffmpeg drains it and exits, the reaper tears the
+	// session down — delete(p.sessions, …) — and on a loaded runner that
+	// races ahead of the assertions below, failing "the fresh session did
+	// not take the map slot" spuriously. A pipe holds the session live
+	// until the test closes it.
+	pr, pw := io.Pipe()
+	t.Cleanup(func() { _ = pw.Close() })
+	svc := &stubProxyService{stream: &stubChannelStream{Reader: pr}}
 	p, _ := newTestProxy(t, svc)
 	ch := uuid.New()
 
