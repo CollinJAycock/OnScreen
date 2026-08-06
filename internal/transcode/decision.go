@@ -31,6 +31,14 @@ const (
 	// client surfaces a clear "Dolby Vision is not supported" message instead of
 	// playing a mangled stream.
 	DecisionUnsupported
+	// DecisionDamaged — the integrity probe marked the FILE damaged
+	// (media_files.integrity_status, migration 00018): its bitstream fails
+	// software decode at one or more offsets even though the container
+	// header parses. No client and no server pipeline can fix that — direct
+	// play stalls, remux feeds the client garbage, hardware transcode emits
+	// dead-chroma green frames (the chromacheck kill path). Clients surface
+	// "this file is damaged" instead of letting the user retry.
+	DecisionDamaged
 )
 
 func (d Decision) String() string {
@@ -41,6 +49,8 @@ func (d Decision) String() string {
 		return "directStream"
 	case DecisionUnsupported:
 		return "unsupported"
+	case DecisionDamaged:
+		return "damaged"
 	default:
 		return "transcode"
 	}
@@ -59,6 +69,13 @@ func (d Decision) String() string {
 // here — it isn't on media.File; clients refine a DirectPlay verdict with their
 // own faststart check (see docs/capability-profiles.md).
 func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Decision {
+	// Damaged file (integrity-probe verdict): client-independent, so it
+	// pre-empts every capability check — there is no client for which an
+	// undecodable bitstream plays, and no escape hatch like DV's dovi=1.
+	if file.IntegrityStatus == media.IntegrityDamaged {
+		return DecisionDamaged
+	}
+
 	videoCodec := deref(file.VideoCodec)
 	audioCodec := deref(file.AudioCodec)
 	container := deref(file.Container)

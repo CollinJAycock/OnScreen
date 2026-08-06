@@ -336,6 +336,15 @@ func (m *mockQuerier) UpdateMediaFileItemID(_ context.Context, _ uuid.UUID, _ uu
 func (m *mockQuerier) UpdateMediaFileTechnicalMetadata(_ context.Context, _ uuid.UUID, _ CreateFileParams) error {
 	return nil
 }
+func (m *mockQuerier) UpdateMediaFileIntegrity(_ context.Context, _ uuid.UUID, _ string, _ *string) error {
+	return nil
+}
+func (m *mockQuerier) ListFilesForIntegrityCheck(_ context.Context, _ *uuid.UUID, _ int32) ([]File, error) {
+	return nil, nil
+}
+func (m *mockQuerier) CountFilesForIntegrityCheck(_ context.Context, _ *uuid.UUID) (int64, error) {
+	return 0, nil
+}
 func (m *mockQuerier) ListMissingFilesOlderThan(_ context.Context, _ time.Time) ([]File, error) {
 	if m.missingOlderErr != nil {
 		return nil, m.missingOlderErr

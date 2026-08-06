@@ -1227,6 +1227,23 @@ func run() error {
 				_, err := artworkMgr.Store().Stat(ctx, absPath)
 				return err
 			}))
+	// Deep-decode integrity probe: spot-decodes a few frames at several
+	// offsets of each video file with the software decoder and marks the
+	// media_files row ok/damaged, so fake/damaged releases (header parses,
+	// bitstream doesn't — the "green movie" QA case) get a clear "file is
+	// damaged" verdict instead of users retrying an unplayable title.
+	// Seeded DISABLED below — opt-in via the Tasks UI, since spot-decoding
+	// costs real CPU+I/O per file on large libraries.
+	schedRegistry.Register("integrity_probe", scheduler.NewIntegrityProbeHandler(
+		mediaSvc,
+		func(ctx context.Context, path string, durationMS int64) (string, *string, error) {
+			rep, err := scanner.CheckIntegrity(ctx, path, durationMS)
+			if err != nil {
+				return "", nil, err
+			}
+			return rep.Status, rep.Detail, nil
+		},
+		logger))
 	// Rebuild the watch_plays materialized view off the request path so the
 	// analytics dashboard reads a cheap indexed copy instead of recomputing a
 	// full-history lead() window on every load (migration 00004).

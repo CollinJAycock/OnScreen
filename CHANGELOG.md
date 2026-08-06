@@ -192,6 +192,17 @@ builds shipped since June 2026 already handle the asset token.
 - **Split segment serving** (`PUBLIC_SEGMENT_BASE_URL`) — optional distinct
   base URL for HLS segment fetches, so a CDN or separate ingress can carry the
   segment bandwidth.
+- **Opt-in file integrity probe** — a new `integrity_probe` scheduled task
+  (seeded disabled; enable in **Settings → Tasks**) spot-decodes ~15 frames at
+  the 10/50/90% offsets of each video file with the software decoder and marks
+  `media_files.integrity_status` ok/damaged. Damaged/fake releases whose
+  headers parse but whose bitstream doesn't (the kind that green-frames
+  hardware decoders and stalls browsers) get a **"file may be damaged"** badge
+  on the item page, a `damaged` playback-decision verdict, and a
+  422 `FILE_DAMAGED` refusal on transcode start — instead of users retrying an
+  unplayable title. Verdicts reset automatically when a file's content changes
+  on disk; probe failures (unreachable share, missing ffmpeg) leave files
+  unchecked rather than branding them.
 
 ### Changed — server
 

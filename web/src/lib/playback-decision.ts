@@ -84,6 +84,9 @@ export function videoBitDepthOK(file: ItemFile | undefined, caps: ClientCaps): b
  *  codecs + bit depth + faststart, and not HDR-on-SDR. */
 export function canDirectPlay(file: ItemFile | undefined, caps: ClientCaps): boolean {
   if (!file) return false;
+  // Damaged bitstream (integrity probe verdict) — nothing can play it; the
+  // page pre-empts with a message, this guard just keeps the heuristic honest.
+  if (file.integrity_status === 'damaged') return false;
   // HDR content on an SDR display needs tonemapping — can't direct play.
   if (file.hdr_type && !caps.hdr) return false;
   // 10-bit video the browser can't decode (Hi10P H.264, HEVC Main10 on a
@@ -108,6 +111,8 @@ export function canDirectPlay(file: ItemFile | undefined, caps: ClientCaps): boo
  *  instead of re-encoded. */
 export function canRemuxVideo(file: ItemFile | undefined, caps: ClientCaps): boolean {
   if (!file) return false;
+  // Damaged bitstream stays damaged after a stream copy.
+  if (file.integrity_status === 'damaged') return false;
   // HDR content on an SDR display needs tonemapping — can't remux.
   if (file.hdr_type && !caps.hdr) return false;
   // Remux preserves the source bit depth — a 10-bit stream the browser can't

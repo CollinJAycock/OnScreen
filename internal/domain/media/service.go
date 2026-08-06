@@ -127,6 +127,16 @@ type Item struct {
 	DeletedAt             *time.Time
 }
 
+// Integrity verdict values for File.IntegrityStatus, mirroring the
+// media_files_integrity_status_check constraint (migration 00018). Written
+// by the integrity probe (scanner.CheckIntegrity via the integrity_probe
+// scheduler task), read by the play-decision path.
+const (
+	IntegrityUnchecked = "unchecked"
+	IntegrityOK        = "ok"
+	IntegrityDamaged   = "damaged"
+)
+
 // File represents one physical media file attached to an Item.
 // An Item may have multiple Files (multi-version, ADR-031).
 type File struct {
@@ -167,6 +177,19 @@ type File struct {
 	MissingSince        *time.Time
 	ScannedAt           time.Time
 	CreatedAt           time.Time
+	// IntegrityStatus is the verdict of the opt-in deep-decode probe (the
+	// "integrity_probe" scheduler task): "unchecked" until the probe runs,
+	// then "ok" or "damaged". Damaged makes Decide return DecisionDamaged and
+	// transcode-start refuse with FILE_DAMAGED. The scanner resets it to
+	// "unchecked" whenever it re-writes technical metadata (file content
+	// changed on disk), so a replaced release gets re-verified.
+	IntegrityStatus string
+	// IntegrityCheckedAt is when the probe last ran; nil while unchecked.
+	IntegrityCheckedAt *time.Time
+	// IntegrityDetail is the human-readable failure summary behind a
+	// "damaged" verdict (offset, frames decoded, first decoder error);
+	// nil otherwise. Admin-facing.
+	IntegrityDetail *string
 }
 
 // FilterParams holds optional filter/sort parameters for listing items.
@@ -265,6 +288,9 @@ type Querier interface {
 	UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
+	UpdateMediaFileIntegrity(ctx context.Context, id uuid.UUID, status string, detail *string) error
+	ListFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]File, error)
+	CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error)
 	ListMissingFilesOlderThan(ctx context.Context, before time.Time) ([]File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]File, error)
 	DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error)
@@ -757,6 +783,35 @@ func (s *Service) GetFileByPath(ctx context.Context, path string) (*File, error)
 // MarkFileActive marks a media file as active (used by the scanner fast path).
 func (s *Service) MarkFileActive(ctx context.Context, id uuid.UUID) error {
 	return s.rw.MarkMediaFileActive(ctx, id)
+}
+
+// SetFileIntegrity records the integrity-probe verdict ("ok" | "damaged")
+// for a file. detail carries the failure summary for damaged verdicts.
+func (s *Service) SetFileIntegrity(ctx context.Context, id uuid.UUID, status string, detail *string) error {
+	if err := s.rw.UpdateMediaFileIntegrity(ctx, id, status, detail); err != nil {
+		return fmt.Errorf("set file integrity %s: %w", id, err)
+	}
+	return nil
+}
+
+// ListFilesForIntegrityCheck returns active video files still awaiting an
+// integrity verdict, newest first. A nil libraryID sweeps all libraries.
+func (s *Service) ListFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]File, error) {
+	files, err := s.ro.ListFilesForIntegrityCheck(ctx, libraryID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list files for integrity check: %w", err)
+	}
+	return files, nil
+}
+
+// CountFilesForIntegrityCheck reports how many files still await an
+// integrity verdict — backs the probe task's progress output.
+func (s *Service) CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error) {
+	n, err := s.ro.CountFilesForIntegrityCheck(ctx, libraryID)
+	if err != nil {
+		return 0, fmt.Errorf("count files for integrity check: %w", err)
+	}
+	return n, nil
 }
 
 // GetFile returns a single media file by its ID.

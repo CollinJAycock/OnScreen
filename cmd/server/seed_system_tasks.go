@@ -97,6 +97,19 @@ var requiredSystemTasks = []systemTask{
 		cronExpr: "0 4 * * 0",
 		enabled:  false,
 	},
+	{
+		name:     "Video integrity probe",
+		taskType: "integrity_probe",
+		// Nightly at 3:41am local (prime-offset like the other off-peak
+		// jobs). Spot-decodes ~15 frames per file at three offsets to catch
+		// damaged/fake releases before playback does; ~2-10 s of CPU+I/O
+		// per file, so each run drains a bounded batch (default 250) of
+		// still-unchecked files and continues the next night. Seeded
+		// DISABLED per the OCR precedent: a heavy opt-in sweep that must be
+		// one click discoverable in the Tasks UI but never run unprompted.
+		cronExpr: "41 3 * * *",
+		enabled:  false,
+	},
 }
 
 // seedSystemTasks inserts any missing required task rows. Idempotent —

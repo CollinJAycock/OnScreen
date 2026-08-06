@@ -391,6 +391,9 @@ func GenMediaFileToFile(f gen.MediaFile) media.File {
 		MissingSince:        pgtimeTZ(f.MissingSince),
 		ScannedAt:           mustTimeTZ(f.ScannedAt),
 		CreatedAt:           mustTimeTZ(f.CreatedAt),
+		IntegrityStatus:     f.IntegrityStatus,
+		IntegrityCheckedAt:  pgtimeTZ(f.IntegrityCheckedAt),
+		IntegrityDetail:     f.IntegrityDetail,
 	}
 }
 

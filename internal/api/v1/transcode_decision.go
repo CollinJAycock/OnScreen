@@ -21,8 +21,12 @@ import (
 // transcode. Centralizing the decision here (was: each client deciding
 // locally) is Phase 2 of docs/capability-profiles.md.
 type playbackDecisionResponse struct {
-	Decision string `json:"decision"` // directPlay | directStream | transcode
-	FileID   string `json:"file_id"`  // the file the decision applies to
+	// Decision: directPlay | directStream | transcode | unsupported | damaged.
+	// unsupported = content the server refuses to transcode for this client
+	// (Dolby Vision); damaged = the integrity probe marked the file's
+	// bitstream undecodable — no playback path exists on any client.
+	Decision string `json:"decision"`
+	FileID   string `json:"file_id"` // the file the decision applies to
 }
 
 // Decision handles POST /api/v1/items/{id}/playback-decision. It resolves the

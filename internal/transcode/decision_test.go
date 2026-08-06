@@ -250,6 +250,32 @@ func TestDecide_DirectPlay_DolbyVision_ClientSupportsDV(t *testing.T) {
 	}
 }
 
+func TestDecide_Damaged_PreemptsEverything(t *testing.T) {
+	// A damaged verdict is client-independent: even a client that could
+	// direct-play the file's codec/container gets Damaged, and unlike DV
+	// there is no capability escape hatch.
+	file := baseFile() // h264 / aac / mkv — fully supported below
+	file.IntegrityStatus = media.IntegrityDamaged
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4")
+	if got := Decide(file, caps, defaultServerCaps); got != DecisionDamaged {
+		t.Errorf("want Damaged for damaged file on capable client, got %s", got)
+	}
+}
+
+func TestDecide_UncheckedAndOKIntegrityAreNeutral(t *testing.T) {
+	// Only an explicit damaged verdict changes the decision; unchecked
+	// (probe never ran — the default for every pre-probe row) and ok must
+	// leave the normal decision tree untouched.
+	for _, status := range []string{"", media.IntegrityUnchecked, media.IntegrityOK} {
+		file := baseFile()
+		file.IntegrityStatus = status
+		caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4")
+		if got := Decide(file, caps, defaultServerCaps); got != DecisionDirectPlay {
+			t.Errorf("integrity %q: want DirectPlay, got %s", status, got)
+		}
+	}
+}
+
 func TestDecide_Transcode_ResolutionExceedsClient(t *testing.T) {
 	file := baseFile()
 	*file.ResolutionW = 3840
@@ -320,6 +346,11 @@ func TestDecision_String(t *testing.T) {
 		{DecisionDirectPlay, "directPlay"},
 		{DecisionDirectStream, "directStream"},
 		{DecisionTranscode, "transcode"},
+		{DecisionUnsupported, "unsupported"},
+		// Regression guard: String()'s default arm returns "transcode", so a
+		// verdict added without its own case silently serializes as a
+		// playable decision. Damaged must never do that.
+		{DecisionDamaged, "damaged"},
 	}
 	for _, tc := range cases {
 		if got := tc.d.String(); got != tc.want {

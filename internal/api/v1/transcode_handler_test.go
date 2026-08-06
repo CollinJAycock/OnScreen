@@ -153,6 +153,45 @@ func TestStart_SourceUnreadableReturns422(t *testing.T) {
 	}
 }
 
+func TestStart_DamagedFileReturns422(t *testing.T) {
+	// The integrity probe marked this file damaged → Start must refuse with
+	// FILE_DAMAGED, mirroring the DecisionDamaged verdict the
+	// playback-decision endpoint returns, so decision-following clients and
+	// decision-skipping clients end at the same clear message.
+	h, _ := newTestHandler(t)
+	h.media = &mockTranscodeMedia{
+		item: &media.Item{ID: uuid.New(), Type: "movie", Title: "Fake Release"},
+		files: []media.File{{
+			ID:              uuid.New(),
+			FilePath:        "/media/fake.mkv",
+			VideoCodec:      strPtr("hevc"),
+			AudioCodec:      strPtr("eac3"),
+			IntegrityStatus: media.IntegrityDamaged,
+		}},
+	}
+	// The gate is a free DB-field read and sits BEFORE the ffprobe
+	// pre-flight; a damaged file must not cost a probe.
+	h.verifySource = func(context.Context, string) (scanner.SourceStatus, error) {
+		t.Error("verifySource must not run for a damaged file")
+		return scanner.SourceOK, nil
+	}
+	body, _ := json.Marshal(transcodeStartRequest{Height: 1080})
+
+	req := httptest.NewRequest("POST", "/api/v1/items/"+uuid.New().String()+"/transcode", bytes.NewReader(body))
+	req = withChiParam(req, "id", uuid.New().String())
+	req = withClaims(req)
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status: got %d, want %d (body: %s)", rec.Code, http.StatusUnprocessableEntity, rec.Body.String())
+	}
+	if !bytes.Contains(rec.Body.Bytes(), []byte(`"FILE_DAMAGED"`)) {
+		t.Errorf("response should carry code=FILE_DAMAGED; got %s", rec.Body.String())
+	}
+}
+
 // ── Start: height validation ─────────────────────────────────────────────────
 
 func TestStart_NegativeHeight(t *testing.T) {

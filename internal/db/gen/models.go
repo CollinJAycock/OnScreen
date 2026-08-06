@@ -228,6 +228,9 @@ type MediaFile struct {
 	ReplaygainAlbumGain pgtype.Numeric     `json:"replaygain_album_gain"`
 	ReplaygainAlbumPeak pgtype.Numeric     `json:"replaygain_album_peak"`
 	VideoBitDepth       *int32             `json:"video_bit_depth"`
+	IntegrityStatus     string             `json:"integrity_status"`
+	IntegrityCheckedAt  pgtype.Timestamptz `json:"integrity_checked_at"`
+	IntegrityDetail     *string            `json:"integrity_detail"`
 }
 
 type MediaItem struct {

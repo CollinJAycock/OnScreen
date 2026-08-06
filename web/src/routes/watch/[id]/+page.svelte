@@ -790,6 +790,27 @@
   function unsupportedReactive(file: ItemFile | undefined, _verdict: unknown): boolean {
     return isUnsupported(file);
   }
+  // Damaged file: the scan-time integrity probe found the bitstream
+  // undecodable mid-stream (fake/broken release). No playback path exists —
+  // direct play stalls, remux feeds MSE garbage, transcode green-frames —
+  // so show a clear message instead of letting the user retry. The server
+  // returns decision 'damaged'; the file row's integrity_status covers the
+  // window before that verdict resolves (and decision-fetch failures).
+  // Set when transcode-start rejects with FILE_DAMAGED — the authoritative
+  // server gate. Kept separate from serverDecision so the panel still shows
+  // if the decision fetch failed or the verdict is ignored (codec demotion).
+  let serverSaidDamaged = false;
+  function isDamaged(file: ItemFile | undefined): boolean {
+    if (!file) return false;
+    if (serverSaidDamaged) return true;
+    if (serverDecisionFor(file) === 'damaged') return true;
+    return file.integrity_status === 'damaged';
+  }
+  // _verdict is the serverDecision reactivity dependency (read inside isDamaged);
+  // _flag is serverSaidDamaged, likewise only read indirectly.
+  function damagedReactive(file: ItemFile | undefined, _verdict: unknown, _flag: unknown): boolean {
+    return isDamaged(file);
+  }
 
   async function fetchServerDecision(file: ItemFile) {
     if (!item) return;
@@ -883,11 +904,13 @@
   // Pass serverDecision so Svelte re-evaluates canAuto when the verdict resolves
   // (the wrappers read it internally, which Svelte can't see through the call).
   $: dvUnsupported = unsupportedReactive(sourceFile, serverDecision);
-  $: canAuto = !dvUnsupported && autoPlayable(sourceFile, serverDecision);
+  $: fileDamaged = damagedReactive(sourceFile, serverDecision, serverSaidDamaged);
+  $: canAuto = !dvUnsupported && !fileDamaged && autoPlayable(sourceFile, serverDecision);
   // Fetch the server play decision once per item (sourceFile is item.files[0]).
   $: if (sourceFile && item && decisionFetchedFor !== item.id) {
     decisionFetchedFor = item.id;
     serverDecision = null; // reset until the new item's verdict resolves
+    serverSaidDamaged = false; // per-file gate result; new item starts clean
     void fetchServerDecision(sourceFile);
   }
   $: availableQualities = qualityOptions.filter(
@@ -1732,6 +1755,13 @@
       paused = true;
       return;
     }
+    // Damaged file — the fileDamaged player branch shows the message; a
+    // stream attempt would only reproduce the stall/green-frame failure the
+    // integrity probe already diagnosed.
+    if (isDamaged(file)) {
+      paused = true;
+      return;
+    }
     // Signal intent to auto-play so controls don't flash a paused state.
     paused = false;
     // Non-default audio track selected — must go through transcode even for direct-playable files.
@@ -1804,6 +1834,8 @@
     if (f.hdr_type) parts.push(f.hdr_type.replace(/_/g, ' ').toUpperCase());
     if (f.video_codec) parts.push(f.video_codec.toUpperCase());
     if (f.container) parts.push(f.container.toUpperCase());
+    // Integrity verdict, so a multi-version item warns before the switch.
+    if (f.integrity_status === 'damaged') parts.push('DAMAGED');
     return parts.join(' · ') || 'Source';
   }
 
@@ -1817,6 +1849,7 @@
     item = { ...item, files: [f, ...item.files.filter(x => x.id !== f.id)] };
     selectedQuality = qualityOptions[0];
     decisionFetchedFor = ''; // force the server play-decision to refetch for the new file
+    serverSaidDamaged = false; // the gate verdict belonged to the previous file
     const posMs = Math.floor(currentTime * 1000);
     skipAutoSeek = true;
     const file = item.files[0];
@@ -1991,6 +2024,13 @@
     } catch (e) {
       if (e instanceof ApiRequestError && e.code === 'PARENTAL_LIMIT') {
         handleParentalBlock(e.message);
+      } else if (e instanceof ApiRequestError && e.code === 'FILE_DAMAGED') {
+        // Server integrity gate (422): flip to the fileDamaged panel — a
+        // decision-skipping start attempt ends at the same message a
+        // decision-following one pre-empts with.
+        serverSaidDamaged = true;
+        paused = true;
+        buffering = false;
       } else {
         error = e instanceof Error ? e.message : 'Transcode failed';
         buffering = false;
@@ -3059,6 +3099,20 @@
       <p class="blocked-text">{blockedMessage}</p>
       <button class="back-btn" on:click={goBack}>← Back</button>
     </div>
+  {:else if fileDamaged}
+    <div class="center-msg">
+      <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
+        <path d="M12 3l10 18H2L12 3z"/>
+        <path d="M12 10v5"/>
+        <path d="M12 18.5v.01"/>
+      </svg>
+      <p class="blocked-title">This file appears to be damaged</p>
+      <p class="blocked-text">The integrity check could not decode parts of this file, so playback would stall or show broken video. Replace the file with a good copy and re-scan the library.</p>
+      {#if sourceFile?.integrity_detail}
+        <p class="blocked-text damaged-detail">{sourceFile.integrity_detail}</p>
+      {/if}
+      <button class="back-btn" on:click={goBack}>← Back</button>
+    </div>
   {:else if dvUnsupported}
     <div class="center-msg">
       <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
@@ -3897,6 +3951,12 @@
           {#if item.rating}<span title="Critic rating">&#9733; {item.rating.toFixed(1)}</span>{/if}
           {#if item.audience_rating}<span title="Audience rating">&#128101; {item.audience_rating.toFixed(1)}</span>{/if}
           {#if item.community_rating}<span title="OnScreen users ({item.rating_count})">OnScreen {item.community_rating.toFixed(1)}</span>{/if}
+          {#if fileDamaged}
+            <span class="damaged-pill"
+              title={sourceFile?.integrity_detail ?? 'The integrity check could not decode parts of this file'}>
+              ⚠ file may be damaged
+            </span>
+          {/if}
         </div>
         <div class="detail-tags" aria-label="Your rating" style="align-items:center;gap:2px;">
           <span style="margin-right:4px;opacity:0.7;">Your rating</span>
@@ -5083,6 +5143,9 @@
     font-size: 0.88rem; color: #b7b7c8; margin: 0;
     max-width: 28rem; line-height: 1.5; text-align: center;
   }
+  /* Probe forensics under the damaged-file message (admins only — the
+     server omits integrity_detail for non-admins). */
+  .damaged-detail { font-size: 0.72rem; opacity: 0.6; max-width: 34rem; }
 
   .spinner {
     width: 36px; height: 36px;
@@ -5214,6 +5277,17 @@
     display: flex; gap: 0.75rem;
     font-size: 0.8rem; color: var(--text-muted);
     margin-bottom: 0.4rem;
+  }
+  /* Integrity-probe verdict badge (same hue family as .ep-kind-movie). The
+     title attribute carries the probe detail for admins. */
+  .damaged-pill {
+    display: inline-flex; align-items: center;
+    padding: 0.05rem 0.5rem 0.1rem;
+    background: #d63031; color: white;
+    border-radius: 999px;
+    font-size: 0.65rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: 0.04em;
+    cursor: help;
   }
   .detail-genres { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.75rem; }
   .detail-summary {

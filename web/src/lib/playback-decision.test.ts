@@ -70,6 +70,12 @@ describe('canDirectPlay', () => {
     expect(canDirectPlay(file, { ...BASIC, hdr: false })).toBe(false);
     expect(canDirectPlay(file, { ...BASIC, hdr: true })).toBe(true);
   });
+  it('damaged file → false regardless of caps; ok/unchecked stay playable', () => {
+    const base = { container: 'mp4', video_codec: 'h264', audio_codec: 'aac', faststart: true };
+    expect(canDirectPlay(f({ ...base, integrity_status: 'damaged' }), FULL)).toBe(false);
+    expect(canDirectPlay(f({ ...base, integrity_status: 'ok' }), BASIC)).toBe(true);
+    expect(canDirectPlay(f({ ...base, integrity_status: 'unchecked' }), BASIC)).toBe(true);
+  });
 });
 
 describe('canRemuxVideo', () => {
@@ -88,6 +94,9 @@ describe('canRemuxVideo', () => {
   });
   it('HDR on SDR display → false', () => {
     expect(canRemuxVideo(f({ video_codec: 'h264', hdr_type: 'hdr10' }), { ...BASIC, hdr: false })).toBe(false);
+  });
+  it('damaged file → false (broken bitstream survives a stream copy)', () => {
+    expect(canRemuxVideo(f({ video_codec: 'h264', integrity_status: 'damaged' }), FULL)).toBe(false);
   });
 });
 

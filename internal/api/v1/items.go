@@ -491,29 +491,38 @@ type ItemFileResponse struct {
 	// fetch token-authenticator paths the other clients run on.
 	// Falls back to the access token client-side when this field is
 	// empty (older server build).
-	StreamToken         string                 `json:"stream_token,omitempty"`
-	Container           *string                `json:"container,omitempty"`
-	VideoCodec          *string                `json:"video_codec,omitempty"`
-	AudioCodec          *string                `json:"audio_codec,omitempty"`
-	ResolutionW         *int                   `json:"resolution_w,omitempty"`
-	ResolutionH         *int                   `json:"resolution_h,omitempty"`
-	Bitrate             *int64                 `json:"bitrate,omitempty"`
-	HDRType             *string                `json:"hdr_type,omitempty"`
-	DurationMS          *int64                 `json:"duration_ms,omitempty"`
-	Faststart           bool                   `json:"faststart"`
-	BitDepth            *int                   `json:"bit_depth,omitempty"`
-	VideoBitDepth       *int                   `json:"video_bit_depth,omitempty"`
-	SampleRate          *int                   `json:"sample_rate,omitempty"`
-	ChannelLayout       *string                `json:"channel_layout,omitempty"`
-	Lossless            *bool                  `json:"lossless,omitempty"`
-	ReplayGainTrackGain *float64               `json:"replaygain_track_gain,omitempty"`
-	ReplayGainTrackPeak *float64               `json:"replaygain_track_peak,omitempty"`
-	ReplayGainAlbumGain *float64               `json:"replaygain_album_gain,omitempty"`
-	ReplayGainAlbumPeak *float64               `json:"replaygain_album_peak,omitempty"`
-	AudioStreams        []AudioStreamJSON      `json:"audio_streams"`
-	SubtitleStreams     []SubtitleStreamJSON   `json:"subtitle_streams"`
-	ExternalSubtitles   []ExternalSubtitleJSON `json:"external_subtitles,omitempty"`
-	Chapters            []ChapterJSON          `json:"chapters"`
+	StreamToken         string   `json:"stream_token,omitempty"`
+	Container           *string  `json:"container,omitempty"`
+	VideoCodec          *string  `json:"video_codec,omitempty"`
+	AudioCodec          *string  `json:"audio_codec,omitempty"`
+	ResolutionW         *int     `json:"resolution_w,omitempty"`
+	ResolutionH         *int     `json:"resolution_h,omitempty"`
+	Bitrate             *int64   `json:"bitrate,omitempty"`
+	HDRType             *string  `json:"hdr_type,omitempty"`
+	DurationMS          *int64   `json:"duration_ms,omitempty"`
+	Faststart           bool     `json:"faststart"`
+	BitDepth            *int     `json:"bit_depth,omitempty"`
+	VideoBitDepth       *int     `json:"video_bit_depth,omitempty"`
+	SampleRate          *int     `json:"sample_rate,omitempty"`
+	ChannelLayout       *string  `json:"channel_layout,omitempty"`
+	Lossless            *bool    `json:"lossless,omitempty"`
+	ReplayGainTrackGain *float64 `json:"replaygain_track_gain,omitempty"`
+	ReplayGainTrackPeak *float64 `json:"replaygain_track_peak,omitempty"`
+	ReplayGainAlbumGain *float64 `json:"replaygain_album_gain,omitempty"`
+	ReplayGainAlbumPeak *float64 `json:"replaygain_album_peak,omitempty"`
+	// IntegrityStatus is the opt-in deep-decode probe's verdict:
+	// "unchecked" | "ok" | "damaged" (migration 00018). Clients badge
+	// damaged files and pre-empt playback with a clear message instead of
+	// letting users retry an unplayable title.
+	IntegrityStatus string `json:"integrity_status,omitempty"`
+	// IntegrityDetail is the failure summary behind a damaged verdict
+	// (offsets, frames decoded, first decoder error). Admin-only: users get
+	// the badge, admins get the forensics.
+	IntegrityDetail   *string                `json:"integrity_detail,omitempty"`
+	AudioStreams      []AudioStreamJSON      `json:"audio_streams"`
+	SubtitleStreams   []SubtitleStreamJSON   `json:"subtitle_streams"`
+	ExternalSubtitles []ExternalSubtitleJSON `json:"external_subtitles,omitempty"`
+	Chapters          []ChapterJSON          `json:"chapters"`
 }
 
 // ChapterJSON is the API representation of a chapter marker.
@@ -826,9 +835,13 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			ReplayGainTrackPeak: f.ReplayGainTrackPeak,
 			ReplayGainAlbumGain: f.ReplayGainAlbumGain,
 			ReplayGainAlbumPeak: f.ReplayGainAlbumPeak,
+			IntegrityStatus:     f.IntegrityStatus,
 			AudioStreams:        parseJSONBAudioStreams(f.AudioStreams),
 			SubtitleStreams:     parseJSONBSubtitleStreams(f.SubtitleStreams),
 			Chapters:            parseJSONBChapters(f.Chapters),
+		}
+		if claims != nil && claims.IsAdmin {
+			fr.IntegrityDetail = f.IntegrityDetail
 		}
 		if h.subs != nil {
 			if rows, err := h.subs.List(r.Context(), f.ID); err == nil && len(rows) > 0 {

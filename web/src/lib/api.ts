@@ -1427,6 +1427,11 @@ export interface ItemFile {
   // Video bit depth (8/10/12) of the primary video stream, from pix_fmt.
   // Distinct from bit_depth (audio). Undefined until the file is (re)probed.
   video_bit_depth?: number;
+  // Deep-decode integrity probe verdict: 'unchecked' | 'ok' | 'damaged'.
+  // Damaged files get a "file is damaged" badge + playback pre-empt.
+  integrity_status?: string;
+  // Failure summary behind a damaged verdict. Server sends it to admins only.
+  integrity_detail?: string;
   // Audio quality fields (music libraries — undefined for video).
   bit_depth?: number;
   sample_rate?: number;

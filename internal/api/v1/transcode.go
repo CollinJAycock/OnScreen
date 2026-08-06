@@ -451,6 +451,23 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		file = &files[0] // already sorted best quality first
 	}
 
+	// Integrity gate: the opt-in deep-decode probe (integrity_probe task)
+	// marked this file damaged — its bitstream fails software decode
+	// mid-stream even though the header parses, so a transcode would only
+	// produce the garbage/green output the worker's chroma check kills
+	// anyway. Refuse up-front with a structured code, mirroring the
+	// DecisionDamaged verdict the playback-decision endpoint returns, so a
+	// decision-following client and one that skips the decision end at the
+	// same clear message. Checked before VerifySource: this is a free DB
+	// field read, and the probe's verdict subsumes the header-level check.
+	if file.IntegrityStatus == media.IntegrityDamaged {
+		h.logger.InfoContext(ctx, "transcode: refusing damaged file",
+			"item_id", itemID, "file_id", file.ID)
+		respond.Error(w, r, http.StatusUnprocessableEntity, "FILE_DAMAGED",
+			"This file is damaged — parts of it can't be decoded. Replace the file and re-scan the library.")
+		return
+	}
+
 	// Pre-flight source verification — bounds the "spinner forever" case
 	// where ffmpeg would otherwise hang trying to demux a corrupt or
 	// missing file. Catches the bad input in ~1 s with a structured error

@@ -1339,7 +1339,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak, video_bit_depth
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth,
+       integrity_status, integrity_checked_at, integrity_detail
 FROM media_files
 WHERE id = $1;
 
@@ -1350,7 +1351,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak, video_bit_depth
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth,
+       integrity_status, integrity_checked_at, integrity_detail
 FROM media_files
 WHERE file_path = $1;
 
@@ -1361,7 +1363,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak, video_bit_depth
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth,
+       integrity_status, integrity_checked_at, integrity_detail
 FROM media_files
 -- Move detection only matches against status='missing' rows now —
 -- the 'deleted' arm went away when "delete = hard delete" landed
@@ -1377,7 +1380,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak, video_bit_depth
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth,
+       integrity_status, integrity_checked_at, integrity_detail
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best quality first (ADR-031)
@@ -1406,7 +1410,8 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           status, missing_since, scanned_at, created_at, duration_ms,
           bit_depth, sample_rate, channel_layout, lossless,
           replaygain_track_gain, replaygain_track_peak,
-          replaygain_album_gain, replaygain_album_peak, video_bit_depth;
+          replaygain_album_gain, replaygain_album_peak, video_bit_depth,
+          integrity_status, integrity_checked_at, integrity_detail;
 
 -- name: UpdateMediaFilePath :exec
 UPDATE media_files
@@ -1451,22 +1456,80 @@ SET media_item_id = $2,
 WHERE id = $1;
 
 -- name: UpdateMediaFileTechnicalMetadata :exec
+-- Also resets the integrity verdict: this update only runs when the scanner
+-- decided the file needs re-probing (content changed on disk, or an admin
+-- forced a metadata refresh) — unchanged files take the stat/hash fast paths
+-- and never reach here. A stale 'ok'/'damaged' verdict for replaced bytes is
+-- worse than re-checking, so the file goes back to 'unchecked' and the next
+-- integrity pass (if enabled) picks it up again.
 UPDATE media_files
-SET container        = $2,
-    video_codec      = $3,
-    audio_codec      = $4,
-    resolution_w     = $5,
-    resolution_h     = $6,
-    bitrate          = $7,
-    hdr_type         = $8,
-    frame_rate       = $9,
-    audio_streams    = $10,
-    subtitle_streams = $11,
-    chapters         = $12,
-    duration_ms      = $13,
-    video_bit_depth  = $14,
-    scanned_at       = NOW()
+SET container            = $2,
+    video_codec          = $3,
+    audio_codec          = $4,
+    resolution_w         = $5,
+    resolution_h         = $6,
+    bitrate              = $7,
+    hdr_type             = $8,
+    frame_rate           = $9,
+    audio_streams        = $10,
+    subtitle_streams     = $11,
+    chapters             = $12,
+    duration_ms          = $13,
+    video_bit_depth      = $14,
+    integrity_status     = 'unchecked',
+    integrity_checked_at = NULL,
+    integrity_detail     = NULL,
+    scanned_at           = NOW()
 WHERE id = $1;
+
+-- name: UpdateMediaFileIntegrity :exec
+-- Records the integrity-probe verdict. detail is NULL for 'ok' and carries
+-- the human-readable failure summary for 'damaged'.
+UPDATE media_files
+SET integrity_status     = $2,
+    integrity_detail     = $3,
+    integrity_checked_at = NOW()
+WHERE id = $1;
+
+-- name: ListFilesForIntegrityCheck :many
+-- Work queue for the opt-in integrity probe: active video files whose
+-- verdict is still 'unchecked', newest first (fresh downloads are the most
+-- likely to be fakes, so they get checked before back-catalog). Restricted
+-- to video library types — music/audiobook/photo files never carry a real
+-- video stream worth spot-decoding (embedded cover art is skipped at probe
+-- time and never sets video_codec, but belt-and-braces here too). The
+-- library_id narg scopes an admin-triggered per-library pass; NULL sweeps
+-- everything.
+SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
+       mf.audio_codec, mf.resolution_w, mf.resolution_h, mf.bitrate, mf.hdr_type, mf.frame_rate,
+       mf.audio_streams, mf.subtitle_streams, mf.chapters, mf.file_hash,
+       mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms,
+       mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
+       mf.replaygain_track_gain, mf.replaygain_track_peak,
+       mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+JOIN libraries l ON l.id = mi.library_id
+WHERE mf.status = 'active'
+  AND mf.integrity_status = 'unchecked'
+  AND mf.video_codec IS NOT NULL
+  AND l.type IN ('movie', 'show', 'dvr', 'home_video', 'anime', 'cartoons')
+  AND (sqlc.narg('library_id')::uuid IS NULL OR mi.library_id = sqlc.narg('library_id')::uuid)
+ORDER BY mf.created_at DESC
+LIMIT sqlc.arg('lim')::int;
+
+-- name: CountFilesForIntegrityCheck :one
+-- Same filter as ListFilesForIntegrityCheck; backs job progress reporting.
+SELECT COUNT(*)
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+JOIN libraries l ON l.id = mi.library_id
+WHERE mf.status = 'active'
+  AND mf.integrity_status = 'unchecked'
+  AND mf.video_codec IS NOT NULL
+  AND l.type IN ('movie', 'show', 'dvr', 'home_video', 'anime', 'cartoons')
+  AND (sqlc.narg('library_id')::uuid IS NULL OR mi.library_id = sqlc.narg('library_id')::uuid);
 
 -- name: ListActiveFilesForLibrary :many
 SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.video_codec,
@@ -1475,7 +1538,8 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.status, mf.missing_since, mf.scanned_at, mf.created_at, mf.duration_ms,
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
-       mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth
+       mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';
@@ -1549,7 +1613,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        status, missing_since, scanned_at, created_at, duration_ms,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
-       replaygain_album_gain, replaygain_album_peak, video_bit_depth
+       replaygain_album_gain, replaygain_album_peak, video_bit_depth,
+       integrity_status, integrity_checked_at, integrity_detail
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000;

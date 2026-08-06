@@ -502,6 +502,41 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 	})
 }
 
+func (a *mediaAdapter) UpdateMediaFileIntegrity(ctx context.Context, id uuid.UUID, status string, detail *string) error {
+	return a.q.UpdateMediaFileIntegrity(ctx, gen.UpdateMediaFileIntegrityParams{
+		ID:              id,
+		IntegrityStatus: status,
+		IntegrityDetail: detail,
+	})
+}
+
+func (a *mediaAdapter) ListFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]media.File, error) {
+	var libParam pgtype.UUID
+	if libraryID != nil {
+		libParam = pgtype.UUID{Bytes: [16]byte(*libraryID), Valid: true}
+	}
+	fs, err := a.q.ListFilesForIntegrityCheck(ctx, gen.ListFilesForIntegrityCheckParams{
+		LibraryID: libParam,
+		Lim:       limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.File, len(fs))
+	for i, f := range fs {
+		out[i] = genMediaFileToFile(f)
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error) {
+	var libParam pgtype.UUID
+	if libraryID != nil {
+		libParam = pgtype.UUID{Bytes: [16]byte(*libraryID), Valid: true}
+	}
+	return a.q.CountFilesForIntegrityCheck(ctx, libParam)
+}
+
 func (a *mediaAdapter) MarkMediaFileMissing(ctx context.Context, id uuid.UUID) error {
 	return a.q.MarkMediaFileMissing(ctx, id)
 }
