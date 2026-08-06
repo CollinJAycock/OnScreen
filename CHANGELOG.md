@@ -9,6 +9,40 @@ The server API is frozen as of **v2.2.0** — see [docs/server-lock.md](docs/ser
 for the lock posture and what's expected to land in v2.3+ minor
 releases without breaking v2.2 clients.
 
+## [v2.4.1] — 2026-08-05
+
+Server-only patch release. Recommended for every deployment that TV
+clients pair against — the v1.1.0 store apps (Amazon Appstore, Google
+Play) walk new users straight into the flow the first fix repairs.
+
+### Fixed
+- **Pairing no longer rate-limits its own household out of logging
+  in.** `/auth/pair/code` and `/auth/pair/poll` moved out of the
+  shared per-IP auth bucket (10/min) into their own (60/min). A TV
+  sitting on the pairing screen polls every 5 s — 12/min — which
+  alone exhausted the household's entire login budget, so the phone
+  trying to *claim* the PIN got 429s and the flow deadlocked itself.
+  Polling is not a brute-force surface (the device token is the
+  credential; the PIN claim runs on the authenticated web session),
+  so the wider bucket gives up nothing.
+- **The notifications SSE stream now sends a keepalive every 30 s**
+  (previously one at connect, then silence). A NAT or router that
+  drops an idle mapping without an RST left clients' reads parked
+  forever — no error, so no reconnect, and cross-device sync +
+  "play on this TV" stayed dead until an app restart. The periodic
+  write also makes the server notice a vanished peer and end the
+  handler. Client-side liveness watchdogs (shipped in the TV 1.1.0
+  apps) time out against a multiple of this cadence.
+- **Transcode sessions are no longer orphaned when the client
+  disconnects during start.** Backing out during the buffering
+  spinner cancels the HTTP call after the session was created but
+  before the client learned its id — nothing could ever DELETE it.
+  The handler now reaps the session inline when the request context
+  is gone by the time the response would be written.
+- Deflaked `TestHLSProxy_AcquireReplacesCorpseInsteadOfSharingIt`
+  (the fake stream now blocks instead of EOF-ing, so the fresh
+  session can't tear itself down before the assertions run).
+
 ## [v2.4.0] — 2026-08-05
 
 The server lock was lifted after v2.3.0 (see [docs/server-lock.md](docs/server-lock.md)).
