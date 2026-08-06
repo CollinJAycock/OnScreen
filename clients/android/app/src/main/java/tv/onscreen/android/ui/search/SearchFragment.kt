@@ -127,29 +127,39 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         // the prefs read as a separate coroutine that raced against the
         // state collectors — same race that made hub posters render as
         // flat colour tiles on Fire TV.
+        // ONE combined collector, ONE rebuild per state change. This used
+        // to be six separate collectors, and on every view recreation each
+        // replayed its current value — six full rebuilds back to back, each
+        // removing and re-adding the result rows. Leanback's own
+        // focus-to-results handoff (and our post-detail restore) kept
+        // firing into that churn and losing: focus fell through to the
+        // search frame and the D-pad went dead.
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first() ?: ""
-            viewModel.visibleResults.collectLatest { rebuildRows() }
+            kotlinx.coroutines.flow.combine(
+                viewModel.visibleResults,
+                viewModel.discover,
+                viewModel.discoverError,
+                viewModel.searchError,
+                viewModel.scope,
+                viewModel.filters,
+            ) { _ -> Unit }.collectLatest { rebuildRows() }
         }
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.discover.collectLatest { rebuildRows() }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.discoverError.collectLatest { rebuildRows() }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.searchError.collectLatest { rebuildRows() }
-        }
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.scope.collectLatest { rebuildRows() }
-        }
-        // Filter changes flow through visibleResults too, but binding
-        // here as well so the chip row repaints with the new check
-        // marks immediately (visibleResults only changes if the
-        // filter's mask differs against an existing result set).
-        viewLifecycleOwner.lifecycleScope.launch {
-            viewModel.filters.collectLatest { rebuildRows() }
-        }
+
+        // Focus backstop. Leanback's SearchSupportFragment hands focus to
+        // the results on submit / resume via its internal focusOnResults(),
+        // but when that runs while our rows are still (re)binding — six
+        // collectors replay on every view recreation — the request finds no
+        // laid-out child and focus falls back to lb_search_frame, a plain
+        // full-screen FrameLayout. Nothing ever moves it again: no highlight,
+        // D-pad dead. Diagnosed live on the Firestick (dumpsys showed the
+        // frame focused at 0,0-1920,1080 after submit AND after a detail
+        // round-trip). Whenever the frame ends up holding focus, hand it to
+        // the rows once they exist.
+        view.findViewById<View>(androidx.leanback.R.id.lb_search_frame)
+            ?.setOnFocusChangeListener { _, hasFocus ->
+                if (hasFocus) rescueFocusFromFrame(0)
+            }
 
         view.isFocusableInTouchMode = true
         view.setOnKeyListener { _, keyCode, event ->
@@ -176,14 +186,40 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         }
     }
 
+    /** Retry loop for the frame backstop: the rows may still be binding
+     *  when the frame grabs focus, so poll briefly until requestFocus on
+     *  the rows sticks (or something else legitimately takes focus). */
+    private fun rescueFocusFromFrame(attempt: Int) {
+        if (attempt > 6) return
+        view?.postDelayed({
+            if (!isAdded) return@postDelayed
+            val focused = view?.findFocus()
+            if (focused != null && focused.id != androidx.leanback.R.id.lb_search_frame) {
+                return@postDelayed // something real has focus — done
+            }
+            val rowsView = rowsSupportFragment?.view
+            if (rowsAdapter.size() == 0 || rowsView?.requestFocus() != true) {
+                rescueFocusFromFrame(attempt + 1)
+            }
+        }, 150)
+    }
+
     /** Re-apply [pendingFocusRow] once rows exist again after a detail
      *  round-trip. Called at the end of rebuildRows. */
     private fun restoreFocusIfPending() {
         if (pendingFocusRow < 0 || rowsAdapter.size() == 0) return
         val target = pendingFocusRow.coerceAtMost(rowsAdapter.size() - 1)
         pendingFocusRow = -1
-        rowsSupportFragment?.setSelectedPosition(target, false)
-        rowsSupportFragment?.view?.requestFocus()
+        val rowsFrag = rowsSupportFragment ?: return
+        // The selection is a pending op Leanback honors at layout, but
+        // requestFocus() needs an ALREADY-laid-out focusable child — called
+        // synchronously here the rows exist only as adapter items, so the
+        // request found nothing and focus stayed lost (the first fix's
+        // mistake). Defer past the layout pass.
+        rowsFrag.setSelectedPosition(target, false)
+        rowsFrag.view?.postDelayed({
+            if (isAdded) rowsFrag.view?.requestFocus()
+        }, 200)
     }
 
     override fun getResultsAdapter(): ObjectAdapter = rowsAdapter
