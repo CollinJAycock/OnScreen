@@ -53,6 +53,12 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     // yet" from "searched and found nothing" and show a No-results state.
     private var lastQuery: String = ""
 
+    /** Row index to re-focus after returning from a detail screen. The
+     *  view (and rowsAdapter) is destroyed on navigation; the rebuilt rows
+     *  claim no focus on their own, so BACK used to land the user on a
+     *  screen where the D-pad was dead until they hunted for focus. */
+    private var pendingFocusRow: Int = -1
+
     /** Persistent top-row adapters, mutated in place across rebuilds so
      *  chip focus survives a filter toggle. Null until first build; reset
      *  in onDestroyView with the rows they live in. */
@@ -155,8 +161,11 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
 
         setOnItemViewClickedListener { _, item, _, _ ->
             when (item) {
-                is SearchResult ->
+                is SearchResult -> {
+                    // Remember where we were BEFORE the view is torn down.
+                    pendingFocusRow = rowsSupportFragment?.selectedPosition ?: -1
                     Navigator.open(parentFragmentManager, item.id, item.type, 0)
+                }
                 is DiscoverItem ->
                     onDiscoverClicked(item)
                 is FilterChipPresenter.Chip ->
@@ -165,6 +174,16 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                     showScopeMenu()
             }
         }
+    }
+
+    /** Re-apply [pendingFocusRow] once rows exist again after a detail
+     *  round-trip. Called at the end of rebuildRows. */
+    private fun restoreFocusIfPending() {
+        if (pendingFocusRow < 0 || rowsAdapter.size() == 0) return
+        val target = pendingFocusRow.coerceAtMost(rowsAdapter.size() - 1)
+        pendingFocusRow = -1
+        rowsSupportFragment?.setSelectedPosition(target, false)
+        rowsSupportFragment?.view?.requestFocus()
     }
 
     override fun getResultsAdapter(): ObjectAdapter = rowsAdapter
@@ -292,6 +311,8 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             val emptyAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             rowsAdapter.add(ListRow(HeaderItem(NO_RESULTS_HEADER_ID, getString(R.string.no_results)), emptyAdapter))
         }
+
+        restoreFocusIfPending()
     }
 
     companion object {
