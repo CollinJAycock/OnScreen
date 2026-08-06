@@ -43,8 +43,8 @@ android {
         // 14: versionCode 13 was uploaded against the API-35 target and
         // blocked by the Play floor — codes are burned on upload, not
         // release, so the re-target gets a fresh one.
-        versionCode = 14
-        versionName = "1.1.0"
+        versionCode = 15
+        versionName = "1.1.1"
     }
 
     // Per-store flavor split. Both stores ship the same app and code; they
