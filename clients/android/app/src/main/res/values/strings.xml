@@ -155,18 +155,18 @@
 
     <!-- Search + request -->
     <string name="search_in_library">In your library</string>
-    <string name="search_request_more">Request more</string>
+    <string name="search_request_more">Ask your admin to add</string>
     <string name="filter_label">Filter</string>
     <string name="filter_movies">Movies</string>
     <string name="filter_shows">TV Shows</string>
     <string name="filter_episodes">Episodes</string>
     <string name="filter_tracks">Tracks</string>
     <string name="filter_all_hidden">%1$d match(es) hidden by the type filters above</string>
-    <string name="request_confirm_title">Add to your library?</string>
-    <string name="request_confirm_message">"%1$s" will be sent to your media server for download.</string>
-    <string name="request_confirm_yes">Request</string>
-    <string name="request_success">Requested: %1$s</string>
+    <string name="request_confirm_title">Request for admin to acquire?</string>
+    <string name="request_confirm_message">Send a request asking the administrator of your server to acquire \"%1$s\". This app does not download or obtain any media itself — your admin decides whether to add it.</string>
+    <string name="request_confirm_yes">Send request</string>
+    <string name="request_success">Request sent to your admin: %1$s</string>
     <string name="request_failed">Request failed</string>
     <string name="request_status_pending">Pending</string>
-    <string name="request_status_already">Already requested — status: %1$s</string>
+    <string name="request_status_already">Already requested from your admin — status: %1$s</string>
 </resources>

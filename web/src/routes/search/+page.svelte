@@ -222,7 +222,7 @@
         </svg>
       </div>
       <p class="empty-title">Search your library</p>
-      <p class="empty-sub">Type above to find something — if it's not in your library, you can request it.</p>
+      <p class="empty-sub">Type above to find something in your library. If it's not there, you can ask your server's administrator to acquire it.</p>
     </div>
   {:else}
     <!-- ── In your library ─────────────────────────────────────────────── -->
@@ -293,7 +293,7 @@
 
     <!-- ── Request from outside library ────────────────────────────────── -->
     <section class="result-section">
-      <h2 class="section-title">Request</h2>
+      <h2 class="section-title">Ask your admin to add</h2>
       {#if discoverError}
         <div class="banner-error">{discoverError}</div>
       {:else if discoverLoading}
@@ -332,7 +332,7 @@
                     disabled={creatingFor.has(item.tmdb_id)}
                     on:click={() => requestItem(item)}
                   >
-                    {creatingFor.has(item.tmdb_id) ? 'Requesting…' : 'Request'}
+                    {creatingFor.has(item.tmdb_id) ? 'Sending…' : 'Request for admin to acquire'}
                   </button>
                 {/if}
               </div>
