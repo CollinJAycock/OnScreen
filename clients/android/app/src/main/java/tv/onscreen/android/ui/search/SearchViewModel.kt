@@ -15,12 +15,10 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
-import tv.onscreen.android.data.model.DiscoverItem
 import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.SearchResult
 import tv.onscreen.android.data.prefs.SearchFilters
 import tv.onscreen.android.data.prefs.ServerPrefs
-import tv.onscreen.android.data.repository.DiscoverRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.LibraryRepository
 import javax.inject.Inject
@@ -29,7 +27,6 @@ import javax.inject.Inject
 class SearchViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val libraryRepo: LibraryRepository,
-    private val discoverRepo: DiscoverRepository,
     private val prefs: ServerPrefs,
 ) : ViewModel() {
 
@@ -70,26 +67,13 @@ class SearchViewModel @Inject constructor(
         initialValue = emptyList(),
     )
 
-    /** TMDB-discover matches — titles the user could request. The
-     *  list is filtered to drop in_library entries client-side
-     *  (they're already in [results]; rendering both would duplicate). */
-    private val _discover = MutableStateFlow<List<DiscoverItem>>(emptyList())
-    val discover: StateFlow<List<DiscoverItem>> = _discover
-
-    /** Reason TMDB discover came back empty — surfaced in the UI so
-     *  the user knows whether requests are even possible on this
-     *  server. Empty = no error (either succeeded or simply has no
-     *  TMDB matches). Non-empty = a configurable problem worth
-     *  showing. */
-    private val _discoverError = MutableStateFlow<String?>(null)
-    val discoverError: StateFlow<String?> = _discoverError
 
     /** Why the LIBRARY search failed, or null. Without this a failed search was
      *  indistinguishable from an empty one: the exception was swallowed, an
      *  empty list was published, and the screen said "No results found" — the
      *  app asserting the user does not own a title that is sitting in their
      *  library, with no error and no retry. Worst on a library-scoped search,
-     *  where discover is skipped entirely so there was no other signal at all. */
+     *  where there would otherwise be no signal at all. */
     private val _searchError = MutableStateFlow<String?>(null)
     val searchError: StateFlow<String?> = _searchError
 
@@ -137,8 +121,6 @@ class SearchViewModel @Inject constructor(
 
         if (query.length < 2) {
             _results.value = emptyList()
-            _discover.value = emptyList()
-            _discoverError.value = null
             _searchError.value = null
             return
         }
@@ -156,28 +138,17 @@ class SearchViewModel @Inject constructor(
                 }
             }
 
-            // Discover (TMDB) is skipped when scoped to a single
-            // library — cross-library suggestions are noise when the
-            // user has narrowed to a specific shelf. Failures are
-            // surfaced via [discoverError] so the user knows the
-            // Request row is unavailable and why; previously they
-            // were swallowed silently and the row just never
-            // appeared, leaving the user assuming nothing matched.
-            val discoverDeferred = async {
-                if (libraryId != null) {
-                    DiscoverResult(emptyList(), null)
-                } else {
-                    try {
-                        DiscoverResult(discoverRepo.search(query), null)
-                    } catch (e: Exception) {
-                        val reason = explainDiscoverFailure(e)
-                        Log.w(TAG, "discover search failed: $reason", e)
-                        DiscoverResult(emptyList(), reason)
-                    }
-                }
-            }
+            // Content requests were REMOVED from the TV client (2026-08-06).
+            // The Amazon Appstore rejected 1.1.0-1.1.2 under its Deceptive
+            // and Malicious Behavior policy — "facilitates the ability to
+            // save, convert, stream or download media from third-party
+            // sources" — because Search surfaced TMDB titles the user does
+            // not own alongside an action to have them acquired. Rewording
+            // it changed nothing: the objection is to the capability, not
+            // the label. Search is now strictly a search of the user's own
+            // library. The request flow still exists on the web app, where
+            // the operator (not a store reviewer) is the audience.
             val libResult = libraryDeferred.await()
-            val discoverResult = discoverDeferred.await()
             // On failure CLEAR the results. Keeping them was meant to survive a
             // transient blip mid-typing, but it left the previous query's hits
             // sitting under the "In your library" header while the error row
@@ -187,8 +158,6 @@ class SearchViewModel @Inject constructor(
             // explains why, and "No results found" is separately suppressed.
             _results.value = libResult.items
             _searchError.value = libResult.error
-            _discover.value = discoverResult.items.filter { !it.in_library }
-            _discoverError.value = discoverResult.errorReason
         }
     }
 
@@ -197,18 +166,12 @@ class SearchViewModel @Inject constructor(
         val error: String?,
     )
 
-    private data class DiscoverResult(
-        val items: List<DiscoverItem>,
-        val errorReason: String?,
-    )
 
-    /** Map a discover-call exception to a short human-readable
-     *  reason. The most common cases are TMDB-not-configured (404
-     *  / 503 from the server) — for those we use a friendlier
-     *  message; otherwise return the raw exception text. */
-    /** Human-readable reason a LIBRARY search failed. Deliberately phrased
-     *  about the user's own library — the discover copy ("TMDB not configured")
-     *  is about a different subsystem and, shown here, misleads the user into
+
+
+    /** Map a library-search exception to a short human-readable reason. The
+     *  raw exception text is unhelpful on a 10-foot screen, and an error that
+     *  is about a different subsystem, shown here, misleads the user into
      *  concluding their search legitimately found nothing. */
     private fun explainSearchFailure(e: Exception): String {
         if (e is HttpException) {
@@ -220,42 +183,7 @@ class SearchViewModel @Inject constructor(
         return "Couldn't reach the server to search your library"
     }
 
-    private fun explainDiscoverFailure(e: Exception): String {
-        if (e is HttpException) {
-            return when (e.code()) {
-                404, 503 -> "Discover unavailable — TMDB not configured on this server"
-                401, 403 -> "Discover requires sign-in"
-                else -> "Discover failed (HTTP ${e.code()})"
-            }
-        }
-        return e.message ?: "Discover failed"
-    }
-
     companion object {
         private const val TAG = "SearchViewModel"
-    }
-
-    /** Create a media request for a discover item. Updates the
-     *  [discover] state so the row's chip flips from "Request" to
-     *  "Pending" without a re-search. Failures bubble up to the
-     *  caller for toast surfacing. */
-    fun request(item: DiscoverItem, onResult: (Result<Unit>) -> Unit) {
-        viewModelScope.launch {
-            try {
-                val created = discoverRepo.createRequest(item.type, item.tmdb_id)
-                _discover.value = _discover.value.map { d ->
-                    if (d.tmdb_id == item.tmdb_id && d.type == item.type) {
-                        d.copy(
-                            has_active_request = true,
-                            active_request_id = created.id,
-                            active_request_status = created.status,
-                        )
-                    } else d
-                }
-                onResult(Result.success(Unit))
-            } catch (e: Exception) {
-                onResult(Result.failure(e))
-            }
-        }
     }
 }

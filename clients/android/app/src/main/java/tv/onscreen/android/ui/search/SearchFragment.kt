@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
-import tv.onscreen.android.data.model.DiscoverItem
 import tv.onscreen.android.data.model.SearchResult
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
@@ -32,10 +31,11 @@ import javax.inject.Inject
  * Two rows render under the search field:
  *   - "In your library": local matches (SearchResult), routes via
  *     Navigator on click.
- *   - "Request": TMDB-discover matches (DiscoverItem) for titles
- *     not yet in the library. Click prompts a confirm dialog;
- *     accepting fires POST /api/v1/requests so an admin (or auto-
- *     fulfilment via the configured Sonarr/Radarr) can pull it in.
+ * Search covers the user's OWN library only. The TMDB-backed request
+ * row was removed on 2026-08-06: the Amazon Appstore read "titles you
+ * do not own, with a button to have them acquired" as facilitating
+ * third-party acquisition, and rejected three builds over it. The
+ * request flow remains on the web app.
  *
  * Library-scoped searches (the Y / menu key opens a picker) skip
  * the TMDB row — the user has narrowed to a specific shelf and
@@ -138,8 +138,6 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             serverUrl = prefs.serverUrl.first() ?: ""
             kotlinx.coroutines.flow.combine(
                 viewModel.visibleResults,
-                viewModel.discover,
-                viewModel.discoverError,
                 viewModel.searchError,
                 viewModel.scope,
                 viewModel.filters,
@@ -176,8 +174,6 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                     pendingFocusRow = rowsSupportFragment?.selectedPosition ?: -1
                     Navigator.open(parentFragmentManager, item.id, item.type, 0)
                 }
-                is DiscoverItem ->
-                    onDiscoverClicked(item)
                 is FilterChipPresenter.Chip ->
                     viewModel.toggleFilter(item.type)
                 is ScopeChipPresenter.ScopeChip ->
@@ -239,8 +235,6 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     private fun rebuildRows() {
         val library = viewModel.visibleResults.value
         val rawCount = viewModel.results.value.size
-        val discover = viewModel.discover.value
-        val discoverError = viewModel.discoverError.value
         val searchError = viewModel.searchError.value
         val filters = viewModel.filters.value
 
@@ -307,25 +301,6 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
             rowsAdapter.add(ListRow(HeaderItem(HIDDEN_HEADER_ID, msg), hiddenAdapter))
         }
 
-        if (discover.isNotEmpty()) {
-            val discoverPresenter = DiscoverCardPresenter(requireContext())
-            val listAdapter = ArrayObjectAdapter(discoverPresenter)
-            discover.forEach { listAdapter.add(it) }
-            rowsAdapter.add(
-                ListRow(HeaderItem(DISCOVER_HEADER_ID, getString(R.string.search_request_more)), listAdapter),
-            )
-        } else if (discoverError != null) {
-            // Surface the discover failure in the row label itself so
-            // the user can see why the Request row is empty without
-            // needing to dig into logcat. Hidden when discover
-            // succeeded with no results (the "no TMDB matches"
-            // case shouldn't render any chrome at all).
-            val emptyAdapter = ArrayObjectAdapter(DiscoverCardPresenter(requireContext()))
-            rowsAdapter.add(
-                ListRow(HeaderItem(DISCOVER_ERROR_HEADER_ID, discoverError), emptyAdapter),
-            )
-        }
-
         // The library search itself failed — say so, in the row label, rather
         // than letting the "No results" header below claim the user's library
         // does not contain what they asked for.
@@ -341,8 +316,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         // filter chips would otherwise render). Suppressed before the first query.
         // searchError included: saying "No results found" when the search
         // actually FAILED asserts something false about the user's own library.
-        val nothing = library.isEmpty() && rawCount == 0 && discover.isEmpty() &&
-            discoverError == null && searchError == null
+        val nothing = library.isEmpty() && rawCount == 0 && searchError == null
         if (nothing && lastQuery.isNotBlank()) {
             val emptyAdapter = ArrayObjectAdapter(CardPresenter(requireContext(), serverUrl))
             rowsAdapter.add(ListRow(HeaderItem(NO_RESULTS_HEADER_ID, getString(R.string.no_results)), emptyAdapter))
@@ -358,47 +332,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         private const val FILTER_HEADER_ID = 0L
         private const val LIBRARY_HEADER_ID = 1L
         private const val HIDDEN_HEADER_ID = 2L
-        private const val DISCOVER_HEADER_ID = 3L
-        private const val DISCOVER_ERROR_HEADER_ID = 4L
         private const val NO_RESULTS_HEADER_ID = 6L
-    }
-
-    private fun onDiscoverClicked(item: DiscoverItem) {
-        if (item.has_active_request) {
-            // Already requested — show a status dialog so the user
-            // sees where it is in the pipeline (pending / approved /
-            // downloading / available / failed).
-            val status = item.active_request_status?.replaceFirstChar { it.uppercase() }
-                ?: getString(R.string.request_status_pending)
-            AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
-                .setTitle(item.title)
-                .setMessage(getString(R.string.request_status_already, status))
-                .setPositiveButton(android.R.string.ok, null)
-                .create()
-                .focusableOnTv()
-                .show()
-            return
-        }
-
-        // Confirm before firing the POST so a stray D-pad press on
-        // a discover row doesn't accidentally request a movie.
-        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
-            .setTitle(getString(R.string.request_confirm_title))
-            .setMessage(getString(R.string.request_confirm_message, item.title))
-            .setPositiveButton(R.string.request_confirm_yes) { _, _ ->
-                viewModel.request(item) { result ->
-                    val ctx = context ?: return@request
-                    val msg = result.fold(
-                        onSuccess = { ctx.getString(R.string.request_success, item.title) },
-                        onFailure = { e -> e.message ?: ctx.getString(R.string.request_failed) },
-                    )
-                    Toast.makeText(ctx, msg, Toast.LENGTH_LONG).show()
-                }
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .create()
-            .focusableOnTv()
-            .show()
     }
 
     private fun showScopeMenu() {
