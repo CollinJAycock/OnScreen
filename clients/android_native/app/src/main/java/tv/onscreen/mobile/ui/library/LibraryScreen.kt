@@ -112,7 +112,9 @@ class LibraryViewModel @Inject constructor(
         val libraryId = currentLibrary ?: return
         if (s.loading || s.loadingMore || s.items.size >= s.total) return
         viewModelScope.launch {
-            _state.value = _state.value.copy(loadingMore = true)
+            // Clear loadMoreFailed on start so the screen's retry-arming
+            // LaunchedEffect (keyed on it) can fire again after a prior fail.
+            _state.value = _state.value.copy(loadingMore = true, loadMoreFailed = false)
             try {
                 val (more, total) = repo.getItems(libraryId, limit = PAGE_SIZE, offset = s.items.size)
                 // distinctBy: server pages can overlap when the sort column
@@ -127,8 +129,12 @@ class LibraryViewModel @Inject constructor(
                     total = if (merged.size == s.items.size) merged.size else total,
                 )
             } catch (_: Exception) {
-                // Leave loaded items in place; the next scroll re-attempts.
-                _state.value = _state.value.copy(loadingMore = false)
+                // Leave loaded items in place and flip loadMoreFailed so the
+                // screen re-arms. Without this signal, shouldLoadMore stayed
+                // true (items/total unchanged) but never transitioned, so its
+                // LaunchedEffect never re-fired and pagination stalled
+                // permanently after a single failed page.
+                _state.value = _state.value.copy(loadingMore = false, loadMoreFailed = true)
             }
         }
     }
@@ -141,6 +147,9 @@ class LibraryViewModel @Inject constructor(
 data class LibraryUi(
     val loading: Boolean = false,
     val loadingMore: Boolean = false,
+    /** Set when the last loadMore() page threw. Purely a re-trigger signal
+     *  for the screen's LaunchedEffect — cleared the moment a load starts. */
+    val loadMoreFailed: Boolean = false,
     val items: List<MediaItem> = emptyList(),
     val total: Int = 0,
     /** Server origin needed to build the per-item artwork URL — same pattern
@@ -171,7 +180,10 @@ fun LibraryScreen(
             ui.items.isNotEmpty() && ui.items.size < ui.total && last >= ui.items.size - 8
         }
     }
-    LaunchedEffect(shouldLoadMore) { if (shouldLoadMore) vm.loadMore() }
+    // Key on loadMoreFailed too: after a failed page shouldLoadMore stays
+    // true without transitioning, so keying on it alone would never re-fire.
+    // The catch flips loadMoreFailed, which re-runs this effect and retries.
+    LaunchedEffect(shouldLoadMore, ui.loadMoreFailed) { if (shouldLoadMore) vm.loadMore() }
 
     Scaffold(
         topBar = {

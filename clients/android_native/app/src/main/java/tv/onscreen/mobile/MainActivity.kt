@@ -13,6 +13,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import javax.inject.Inject
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.CompositionLocalProvider
@@ -20,7 +21,12 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.lifecycleScope
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.data.repository.AuthRepository
 import tv.onscreen.mobile.playback.ActiveVideoTracker
 import tv.onscreen.mobile.ui.LocalInPipMode
 import tv.onscreen.mobile.ui.nav.AppNav
@@ -28,6 +34,13 @@ import tv.onscreen.mobile.ui.theme.OnScreenTheme
 
 @AndroidEntryPoint
 class MainActivity : ComponentActivity() {
+
+    /** Self-heals a stale cleartext origin once per launch — see
+     *  [AuthRepository.healStaleOrigin]. Only the sign-in paths probed
+     *  before, which a signed-in session never revisits. */
+    @Inject lateinit var authRepo: AuthRepository
+
+    @Inject lateinit var prefs: ServerPrefs
 
     // PiP state hoisted to Compose via LocalInPipMode. Updated only
     // from onPictureInPictureModeChanged so the source of truth stays
@@ -61,6 +74,16 @@ class MainActivity : ComponentActivity() {
                 this, Manifest.permission.POST_NOTIFICATIONS,
             ) == PackageManager.PERMISSION_GRANTED
             if (!granted) requestNotifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+        // Wait for a signed-in state rather than sampling once: on a cold
+        // start this activity is alive through pairing, so a single read
+        // would see false and never run again. Once signed in, upgrade a
+        // stale http origin if the server has since moved behind TLS —
+        // otherwise every request 401s (GET) or 405s (POST) for the life
+        // of the install, with no self-heal and no visible cause.
+        lifecycleScope.launch {
+            prefs.isLoggedIn.first { it }
+            authRepo.healStaleOrigin()
         }
         setContent {
             OnScreenTheme {

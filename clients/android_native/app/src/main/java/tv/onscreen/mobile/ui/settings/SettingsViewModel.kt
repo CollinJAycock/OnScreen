@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AuthRepository
@@ -15,6 +16,7 @@ class SettingsViewModel @Inject constructor(
     private val prefs: PlaybackPrefs,
     private val server: ServerPrefs,
     private val auth: AuthRepository,
+    private val downloads: OnScreenDownloadManager,
 ) : ViewModel() {
 
     val downloadOnWifiOnly: Flow<Boolean> = prefs.downloadOnWifiOnly
@@ -46,7 +48,10 @@ class SettingsViewModel @Inject constructor(
      *  out — and left the next user on this phone inheriting the previous
      *  one's cached preferences. */
     fun signOut() {
-        auth.logoutDetached()
+        // Downloads are erased too: the manifest is a process-wide singleton
+        // with no owner field, so anything left behind is listed — and
+        // playable offline — for whoever signs in next.
+        auth.logoutDetached(andThen = { downloads.cancelAllAndClear() })
     }
 
     /** Forget the server entirely (URL + tokens + user). Used when
@@ -55,7 +60,11 @@ class SettingsViewModel @Inject constructor(
      *  routes back to /pair, which then asks for the URL again. */
     fun disconnectServer() {
         // Revoke + drop caches while the server URL still resolves, THEN
-        // forget the URL — order matters, the logout call needs it.
-        auth.logoutDetached(andThen = { server.clearAll() })
+        // forget the URL — order matters, the logout call needs it. Media
+        // downloaded from this server goes with it.
+        auth.logoutDetached(andThen = {
+            downloads.cancelAllAndClear()
+            server.clearAll()
+        })
     }
 }

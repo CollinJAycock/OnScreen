@@ -163,6 +163,15 @@ class BookReaderViewModel @Inject constructor(
         val dir = File(appContext.cacheDir, "book-epubs").apply { mkdirs() }
         val out = File(dir, "$itemId.epub")
         if (out.exists() && out.length() > 0) return@withContext out
+        // Download into a temp sibling and only promote it to the final
+        // path after the copy fully succeeds. Streaming straight into
+        // `out` meant an interrupted download (process killed, dropped
+        // connection) left a truncated-but-non-empty {itemId}.epub there;
+        // the exists() && length() > 0 fast-path above then served that
+        // corrupt file forever and epub.js rendered a blank book. With
+        // temp+rename the final path only ever appears complete, and any
+        // failure deletes the partial so the next open retries cleanly.
+        val tmp = File(dir, "$itemId.epub.tmp")
         val req = Request.Builder()
             // /media/stream/{fileId} is the same endpoint the player
             // hits — server's asset-route middleware accepts the
@@ -172,14 +181,25 @@ class BookReaderViewModel @Inject constructor(
             // header path is the one that works.
             .url("$serverUrl/media/stream/$fileId")
             .build()
-        okHttpClient.newCall(req).execute().use { resp ->
-            if (!resp.isSuccessful) {
-                throw IllegalStateException("EPUB fetch failed: ${resp.code}")
+        try {
+            okHttpClient.newCall(req).execute().use { resp ->
+                if (!resp.isSuccessful) {
+                    throw IllegalStateException("EPUB fetch failed: ${resp.code}")
+                }
+                val body = resp.body ?: throw IllegalStateException("EPUB body empty")
+                tmp.outputStream().use { os -> body.byteStream().copyTo(os) }
             }
-            val body = resp.body ?: throw IllegalStateException("EPUB body empty")
-            out.outputStream().use { os -> body.byteStream().copyTo(os) }
+            // A stale final file (e.g. a prior corrupt download) can block
+            // renameTo, so clear it first.
+            if (out.exists()) out.delete()
+            if (!tmp.renameTo(out)) {
+                throw IllegalStateException("EPUB promote failed: ${tmp.absolutePath}")
+            }
+            out
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
         }
-        out
     }
 }
 

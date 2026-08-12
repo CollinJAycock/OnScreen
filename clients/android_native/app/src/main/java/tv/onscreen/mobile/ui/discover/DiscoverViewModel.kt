@@ -12,6 +12,15 @@ import tv.onscreen.mobile.data.repository.DiscoverRepository
 import javax.inject.Inject
 
 /**
+ * Stable per-result identity for the submit-tracking sets and grid keys.
+ * TMDB movie and show id spaces are independent, so a bare Int collides
+ * across types (movie 550 and show 550 are different titles). Keying by
+ * `type:tmdb_id` keeps them distinct — otherwise requesting the movie
+ * flipped the show's card to "Requested" and blocked requesting the show.
+ */
+internal fun DiscoverItem.requestKey(): String = "$type:$tmdb_id"
+
+/**
  * Discover screen state. Three flavours of error shape it cares about:
  *   - empty query (just don't fetch)
  *   - TMDB key not configured server-side (show a hint, not a stack trace)
@@ -26,13 +35,14 @@ data class DiscoverUi(
     val results: List<DiscoverItem> = emptyList(),
     val loading: Boolean = false,
     val error: String? = null,
-    /** TMDB IDs currently submitting a request — drives per-card
-     *  button disable. */
-    val submitting: Set<Int> = emptySet(),
-    /** TMDB IDs with a successful submit during this session — flips
-     *  the button label to "Requested" so the user gets local feedback
-     *  without re-fetching the discover list. */
-    val submitted: Set<Int> = emptySet(),
+    /** `type:tmdb_id` keys currently submitting a request — drives
+     *  per-card button disable. Compound key so a movie and a show that
+     *  share a numeric TMDB id don't disable each other's card. */
+    val submitting: Set<String> = emptySet(),
+    /** `type:tmdb_id` keys with a successful submit during this session —
+     *  flips the button label to "Requested" so the user gets local
+     *  feedback without re-fetching the discover list. */
+    val submitted: Set<String> = emptySet(),
 )
 
 @HiltViewModel
@@ -72,8 +82,12 @@ class DiscoverViewModel @Inject constructor(
      * so the user knows the request didn't reach the server.
      */
     fun request(item: DiscoverItem) {
-        if (item.tmdb_id in _state.value.submitting) return
-        if (item.tmdb_id in _state.value.submitted) return
+        // Compound key throughout: a bare tmdb_id collides across the
+        // movie/show namespaces, so keying by Int alone let one type's
+        // in-flight/submitted state leak onto the other type's card.
+        val key = item.requestKey()
+        if (key in _state.value.submitting) return
+        if (key in _state.value.submitted) return
         if (item.has_active_request) return
         // Defence-in-depth: the UI also greys the button on in_library
         // items, but the VM no-ops too so a programmatic call (e.g. a
@@ -81,18 +95,18 @@ class DiscoverViewModel @Inject constructor(
         // duplicate POST per existing title.
         if (item.in_library) return
         _state.value = _state.value.copy(
-            submitting = _state.value.submitting + item.tmdb_id,
+            submitting = _state.value.submitting + key,
         )
         viewModelScope.launch {
             try {
                 repo.createRequest(item.type, item.tmdb_id)
                 _state.value = _state.value.copy(
-                    submitting = _state.value.submitting - item.tmdb_id,
-                    submitted = _state.value.submitted + item.tmdb_id,
+                    submitting = _state.value.submitting - key,
+                    submitted = _state.value.submitted + key,
                 )
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
-                    submitting = _state.value.submitting - item.tmdb_id,
+                    submitting = _state.value.submitting - key,
                     error = e.message ?: "Request failed",
                 )
             }

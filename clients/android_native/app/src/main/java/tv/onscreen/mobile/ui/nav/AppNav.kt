@@ -114,9 +114,13 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         composable(Routes.SETTINGS) {
             SettingsScreen(
                 onBack = { nav.popBackStack() },
-                onOpenAbout = { nav.navigate(Routes.ABOUT) },
-                onOpenSecurity = { nav.navigate(Routes.SECURITY) },
-                onOpenScrobble = { nav.navigate(Routes.SCROBBLE) },
+                // WHY: route these through navigateDebounced like every
+                // other tap target. Raw navigate() let a fast double-tap on
+                // a settings row fire twice before the entry reached RESUMED,
+                // pushing the same sub-screen onto the stack twice.
+                onOpenAbout = { nav.navigateDebounced(Routes.ABOUT) },
+                onOpenSecurity = { nav.navigateDebounced(Routes.SECURITY) },
+                onOpenScrobble = { nav.navigateDebounced(Routes.SCROBBLE) },
             )
         }
         composable(Routes.ABOUT) {
@@ -145,6 +149,15 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
             DownloadsScreen(
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
+                // WHY: "Go online" is only correct when Downloads is the
+                // offline cold-start ROOT (nothing beneath it on the back
+                // stack) — then onGoOnline's popUpTo(DOWNLOADS)+navigate(HUB)
+                // cleanly swaps the root for Hub. When Downloads was opened
+                // over Hub via overflow there IS an entry beneath it, so this
+                // is false and the screen hides the button; without the gate
+                // that path stacked a duplicate Hub (and Back already returns
+                // to Hub there anyway).
+                isOfflineRoot = nav.previousBackStackEntry == null,
                 onGoOnline = {
                     // From offline-mode start: replace Downloads on
                     // the back stack with Hub so Back exits the app

@@ -148,6 +148,11 @@ class PlaybackService : MediaSessionService() {
                 val dur = player.duration
                 if (dur <= 0 || dur == C.TIME_UNSET) continue
                 val pos = player.currentPosition.coerceAtLeast(0)
+                // Publish locally BEFORE the write: the server fans this
+                // back out over SSE, and the now-playing screen must
+                // recognise it as our own echo rather than a remote device
+                // telling it to seek.
+                LocalProgressTracker.record(id, pos)
                 try {
                     itemRepo.updateProgress(id, pos, dur, "playing")
                 } catch (_: Exception) {
@@ -167,6 +172,7 @@ class PlaybackService : MediaSessionService() {
         if (dur <= 0 || dur == C.TIME_UNSET) return
         val pos = player.currentPosition.coerceAtLeast(0)
         reportedStoppedFor = id
+        LocalProgressTracker.record(id, pos)
         // Detached, NOT scope.launch: the caller that matters is onDestroy,
         // which cancels `scope` on the very next line — the PUT would die at
         // its first suspension point and the terminal position + scrobble

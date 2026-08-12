@@ -96,6 +96,26 @@ class DownloadStore @Inject constructor(
         }
     }
 
+    /** Drop every download — files and manifest.
+     *
+     *  Downloads belong to the identity that fetched them, but the manifest
+     *  is a process-wide singleton with no user or server field, so without
+     *  this an identity change left the previous user's media on disk and
+     *  listed in the Downloads screen. Offline playback deliberately falls
+     *  back to the local file when the item fetch fails, which is exactly
+     *  what a restricted profile hits — so the next user could play media
+     *  their own account is forbidden to fetch, and a "forgotten" server's
+     *  content survived on the device.
+     *
+     *  Called from every identity transition (sign-out, server switch). */
+    suspend fun clearAll() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            _state.value.entries.forEach { runCatching { fileFor(it).delete() } }
+            runCatching { manifestFile.delete() }
+            _state.value = DownloadManifest()
+        }
+    }
+
     /** Local on-disk path for an entry — `<downloadsDir>/<file_id>.<ext>`.
      *  Container falls back to "bin" when the server didn't supply one
      *  (rare; ffprobe should always set this). */

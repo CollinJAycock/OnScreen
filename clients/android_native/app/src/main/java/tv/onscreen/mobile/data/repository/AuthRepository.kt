@@ -119,17 +119,37 @@ open class AuthRepository @Inject constructor(
      *  set — caller skips the launch. */
     open suspend fun getServerUrl(): String? = prefs.getServerUrl()?.trimEnd('/')
 
+    /** Sign out: wipe locally FIRST, then revoke server-side.
+     *
+     *  The revoke used to run first, which made the local wipe hostage to a
+     *  network attempt (15 s connect / 60 s read). "Forget server" exists
+     *  precisely for servers that are gone, so the common case was: tap,
+     *  nothing visibly happens for up to a minute, user force-kills the app —
+     *  and because the detached scope dies with the process, the phone
+     *  relaunches still signed in to the dead server. Clearing first means
+     *  sign-out is immediate and durable; the revoke is best-effort after.
+     *
+     *  The refresh token is read before the wipe and the revoke is sent with
+     *  an explicit bearer: the server only honours the body's refresh_token
+     *  when the request carries VALID claims (the logout route runs under
+     *  Optional auth and still answers 204 either way), so a stale cached
+     *  bearer meant the session silently survived a "successful" sign-out. */
     suspend fun logout() {
-        try {
-            val refreshToken = prefs.getRefreshToken()
-            if (!refreshToken.isNullOrEmpty()) {
-                api.logout(LogoutRequest(refreshToken))
-            }
-        } catch (_: Exception) {
-            // Best-effort — server may be unreachable.
-        }
+        val refreshToken = prefs.getRefreshToken()
+        val accessToken = prefs.getAccessToken()
         invalidateIdentityCaches()
         prefs.clearAuth()
+        try {
+            if (!refreshToken.isNullOrEmpty()) {
+                api.logout(
+                    LogoutRequest(refreshToken),
+                    accessToken?.takeIf { it.isNotEmpty() }?.let { "Bearer $it" },
+                )
+            }
+        } catch (_: Exception) {
+            // Best-effort — server may be unreachable. Local state is
+            // already clear, so the user is signed out regardless.
+        }
     }
 
     /** Fire-and-forget [logout] on the app-lifetime scope, with an optional
@@ -216,6 +236,23 @@ open class AuthRepository @Inject constructor(
             // Unreachable — let the caller's request surface it.
         }
     }
+
+    /** Public entry point for the same upgrade, for an ALREADY-SIGNED-IN
+     *  session. MainActivity runs it once per launch.
+     *
+     *  Every caller of [ensureTlsUpgradedOrigin] above is a sign-in path, and
+     *  those are unreachable while signed in — so a phone that paired over
+     *  http and whose server LATER moved behind TLS (reverse proxy, Cloudflare,
+     *  Tailscale cert) had no way back. The failure is total and silent:
+     *  OkHttp follows the 301 but drops the Authorization header when the
+     *  scheme changes, so every GET arrives unauthenticated and 401s, while
+     *  every POST is rewritten to GET and 405s. Nothing clears the tokens, so
+     *  `isLoggedIn` stays true across restarts and the app is bricked until
+     *  the user manually signs out and re-pairs.
+     *
+     *  Cheap: a no-op once the origin is https. Same upgrade-only, same-host
+     *  adoption as setup, so a plain-http LAN server is unaffected. */
+    suspend fun healStaleOrigin() = ensureTlsUpgradedOrigin()
 
     // ── Device pairing ────────────────────────────────────────────────────────
 

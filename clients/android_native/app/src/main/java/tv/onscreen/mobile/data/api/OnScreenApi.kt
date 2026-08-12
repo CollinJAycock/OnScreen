@@ -32,8 +32,17 @@ interface OnScreenApi {
     @POST("api/v1/auth/refresh")
     suspend fun refresh(@Body body: RefreshRequest): ApiResponse<TokenPair>
 
+    /** Revoke a refresh token. The bearer is passed explicitly because
+     *  sign-out clears local auth BEFORE this call (so a dead server can't
+     *  strand the user signed in) — AuthInterceptor would then attach
+     *  nothing, and the server's logout route runs under Optional auth:
+     *  without valid claims it skips revocation and still answers 204, so
+     *  the session would survive a "successful" sign-out. */
     @POST("api/v1/auth/logout")
-    suspend fun logout(@Body body: LogoutRequest)
+    suspend fun logout(
+        @Body body: LogoutRequest,
+        @Header("Authorization") authorization: String? = null,
+    )
 
     // ── Federated auth discovery ────────────────────────────────────────────
 
@@ -142,14 +151,21 @@ interface OnScreenApi {
 
     // ── Watching-status mirror (anime track, but works on every type) ───────
 
+    // NOTE: bare WatchStatusResponse, NOT the ApiResponse<…> envelope. The
+    // watch-status handler (internal/api/v1/watch_status.go) replies via
+    // respond.JSON — a plain `{status,created_at,updated_at}` body — while
+    // every other endpoint uses respond.Success (`{data:{…}}`). Declaring
+    // these as ApiResponse<…> made Moshi throw on the missing `data` key, so
+    // both read and write silently failed. Keep these un-enveloped unless the
+    // server switches this route to respond.Success.
     @GET("api/v1/items/{id}/watch-status")
-    suspend fun getWatchStatus(@Path("id") id: String): ApiResponse<WatchStatusResponse>
+    suspend fun getWatchStatus(@Path("id") id: String): WatchStatusResponse
 
     @PUT("api/v1/items/{id}/watch-status")
     suspend fun setWatchStatus(
         @Path("id") id: String,
         @Body body: WatchStatusRequest,
-    ): ApiResponse<WatchStatusResponse>
+    ): WatchStatusResponse
 
     @DELETE("api/v1/items/{id}/watch-status")
     suspend fun clearWatchStatus(@Path("id") id: String)

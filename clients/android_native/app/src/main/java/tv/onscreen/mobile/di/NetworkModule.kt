@@ -140,7 +140,7 @@ object NetworkModule {
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(authInterceptor)
             .addInterceptor(loggingInterceptor())
-            .authenticator(TokenAuthenticator(prefs) { authApi })
+            .authenticator(TokenAuthenticator(prefs, { authApi }, authInterceptor))
             .sslSocketFactory(tls.socketFactory, tls.trustManager)
 
         return builder.build()

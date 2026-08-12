@@ -109,14 +109,24 @@ open class ItemRepository @Inject constructor(
      * the screen surfaces it like every other fetch failure.
      */
     open suspend fun getWatchStatus(itemId: String): WatchStatus? {
-        return WatchStatus.fromWire(api.getWatchStatus(itemId).data.status)
+        // .status, not .data.status: the watch-status server handler writes
+        // a BARE `{status,created_at,updated_at}` body (respond.JSON), not
+        // the `{data:{…}}` envelope the rest of the API uses. The Retrofit
+        // type is now WatchStatusResponse (not ApiResponse<…>) to match —
+        // parsing the envelope made Moshi throw "Required value 'data'
+        // missing" on every read, so a set status never loaded.
+        return WatchStatus.fromWire(api.getWatchStatus(itemId).status)
     }
 
     /** PUT a new status. Returns the post-write value so the UI can
      *  reflect it without a follow-up GET. */
     open suspend fun setWatchStatus(itemId: String, status: WatchStatus): WatchStatus? {
         val body = WatchStatusRequest(status.wire)
-        return WatchStatus.fromWire(api.setWatchStatus(itemId, body).data.status)
+        // .status, not .data.status (see getWatchStatus): the PUT succeeds
+        // server-side but returns the same bare body. Parsing it as an
+        // envelope threw AFTER the row had already changed, so the caller's
+        // optimistic UI flip was reverted even though the write landed.
+        return WatchStatus.fromWire(api.setWatchStatus(itemId, body).status)
     }
 
     /** Clear the row. Server is idempotent — 204 either way. */

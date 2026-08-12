@@ -222,19 +222,31 @@ private fun PlayerHost(
         else -> codec.isNullOrEmpty()
     }
 
-    // Audio (music / audiobook / podcast) plays through the
+    // Who OWNS playback (distinct from which LAYOUT renders, which stays
+    // keyed on isAudioOnly). The background PlaybackService only plays
+    // direct URLs — its auto-advance chains direct URLs too — so only
+    // direct-play audio rides the service. Transcoded/remuxed audio
+    // (PlaybackSource.Hls: DSD, ALAC, anything the device can't direct-
+    // play) uses the screen-owned player exactly like video: correct HLS
+    // handling, offset-aware progress, session teardown via the VM. The
+    // trade is that it stops when the screen closes instead of playing in
+    // the background. Before this gate, audio+Hls built NO player at all:
+    // an eternal spinner with an orphaned server ffmpeg session behind it.
+    val serviceAudio = isAudioOnly && source is PlaybackSource.DirectPlay
+
+    // Direct-play audio (music / audiobook / podcast) plays through the
     // background-capable PlaybackService via a MediaController, so it
     // survives this screen leaving the back stack and gets lockscreen /
     // Bluetooth / Android Auto controls + the OS now-playing widget.
     // Video keeps a screen-owned ExoPlayer (PiP is its background story).
     val audioController = rememberAudioController(
-        enabled = isAudioOnly,
+        enabled = serviceAudio,
         source = source,
         itemId = itemId,
         item = ui.item,
     )
-    val videoPlayer: ExoPlayer? = remember(source, isAudioOnly) {
-        if (isAudioOnly) {
+    val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
+        if (serviceAudio) {
             null
         } else ExoPlayer.Builder(context).build().apply {
             // DefaultDataSource dispatches by URI scheme — file://
@@ -363,18 +375,39 @@ private fun PlayerHost(
     // but overlays / dialogs / the built-in controller would just
     // clutter the floating frame.
     val inPip = LocalInPipMode.current
+
+    // Pause screen-owned VIDEO when the app stops (screen off, or the user
+    // switches apps without PiP). The screen-owned player publishes no
+    // MediaSession and no notification, so audio kept playing from a black
+    // screen with no lockscreen control and no way to stop it short of
+    // returning to the app — while still burning a transcode session. PiP
+    // is exempt: it is on screen with its own controls. Service audio is
+    // exempt too — background playback is the point there, and it has a
+    // real notification.
+    if (!serviceAudio) {
+        val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+        DisposableEffect(lifecycleOwner, player, inPip) {
+            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !inPip) {
+                    player.pause()
+                }
+            }
+            lifecycleOwner.lifecycle.addObserver(observer)
+            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+        }
+    }
     // Closing the player ends playback for every item type. The
     // earlier audio-handoff to a MediaSessionService was removed —
     // the simpler "back stops playback" model matches what users
     // expect (and avoided a class of foreground-service-startup
     // crashes the handoff was introducing).
-    DisposableEffect(player, isAudioOnly) {
+    DisposableEffect(player, serviceAudio) {
         onDispose {
-            // Video: free the screen-owned ExoPlayer. Audio: the
-            // MediaController is released by rememberAudioController's
-            // awaitDispose, and leaving the screen must NOT stop the
-            // background service player.
-            if (!isAudioOnly) player.release()
+            // Screen-owned players (video AND transcoded audio) are freed
+            // here. Service audio: the MediaController is released by
+            // rememberAudioController's awaitDispose, and leaving the
+            // screen must NOT stop the background service player.
+            if (!serviceAudio) player.release()
         }
     }
 
@@ -394,10 +427,13 @@ private fun PlayerHost(
     // the back stack if there's no next), tracks chain silently to
     // the next track without an overlay (the lead-in countdown
     // would clip the song's outro fade).
-    DisposableEffect(player, itemType, nextSibling, isAudioOnly) {
-        if (isAudioOnly) {
-            // Audio auto-advances inside PlaybackService (it owns the
-            // queue + chaining); the screen doesn't drive end-of-track.
+    DisposableEffect(player, itemType, nextSibling, serviceAudio) {
+        if (serviceAudio) {
+            // Service-owned audio auto-advances inside PlaybackService (it
+            // owns the queue + chaining); the screen doesn't drive
+            // end-of-track. Screen-owned audio (HLS) falls through to the
+            // listener below — its "track" branch chains via onNext, which
+            // re-decides the next item and correctly tears down this one.
             onDispose { }
         } else {
             val listener = object : Player.Listener {
@@ -420,8 +456,15 @@ private fun PlayerHost(
     // Lead-in Up Next overlay for episodes — surfaces in the last
     // ~25s of the stream so the user can confirm before the credits
     // finish. Skipped for tracks (see EOS handler).
-    LaunchedEffect(player, itemType, nextSibling) {
+    // Dismissing the overlay has to STICK for the rest of the item. The
+    // poll below re-evaluates every second inside the same 25 s window, so
+    // without this the overlay reappeared immediately after every dismiss —
+    // it could not be closed at all until the episode ended. Reset when the
+    // item changes so the next episode gets its own lead-in.
+    var upNextDismissed by remember(itemId) { mutableStateOf(false) }
+    LaunchedEffect(player, itemType, nextSibling, upNextDismissed) {
         if (itemType != "episode" || nextSibling == null) return@LaunchedEffect
+        if (upNextDismissed) return@LaunchedEffect
         while (isActive) {
             delay(1000)
             val dur = player.duration
@@ -443,11 +486,13 @@ private fun PlayerHost(
     // auto-advances pops this screen — cancelling the VM scope — at
     // the same instant we report, and that's the event the server
     // scrobbles on, so it must outlive the teardown.
-    DisposableEffect(itemId, source, isAudioOnly) {
-        if (isAudioOnly) {
+    DisposableEffect(itemId, source, serviceAudio) {
+        if (serviceAudio) {
             // PlaybackService owns 'playing'/'stopped' reporting for
-            // audio so it survives this screen — and the whole app —
-            // going away while music keeps playing in the background.
+            // service audio so it survives this screen — and the whole
+            // app — going away while music keeps playing in the
+            // background. Screen-owned audio (HLS) reports below, where
+            // offsetAtStart makes the positions content-absolute.
             onDispose { }
         } else {
             // Capture the offset THIS player was started with. Reading
@@ -464,7 +509,15 @@ private fun PlayerHost(
                     delay(10_000)
                     if (player.playWhenReady && player.duration > 0) {
                         val pos = player.currentPosition + offsetAtStart
-                        vm.reportProgress(itemId, pos, player.duration, "playing")
+                        // Content duration, not the player's: a resumed HLS
+                        // playlist covers only the remainder, so pairing a
+                        // content-absolute position with the session duration
+                        // reads as far further through the file than it is —
+                        // enough to trip the server's watched threshold (and
+                        // scrobble) early.
+                        vm.reportProgress(
+                            itemId, pos, vm.contentDurationMs(player.duration), "playing",
+                        )
                     }
                 }
             }
@@ -472,7 +525,9 @@ private fun PlayerHost(
                 job.cancel()
                 if (player.duration > 0) {
                     val pos = player.currentPosition + offsetAtStart
-                    vm.reportProgressFinal(itemId, pos, player.duration)
+                    vm.reportProgressFinal(
+                        itemId, pos, vm.contentDurationMs(player.duration),
+                    )
                 }
             }
         }
@@ -523,6 +578,14 @@ private fun PlayerHost(
     // sleepTimerFired edge. We pause the player from the UI side
     // (the VM doesn't reach into ExoPlayer), then ack so the next
     // timer can fire cleanly.
+    // Also hand the VM a direct pause action: the flow below is collected
+    // with lifecycle awareness, so with the screen off (the timer's whole
+    // point) nothing consumes the edge and playback runs on. The VM calls
+    // this from its own coroutine, independent of UI lifecycle.
+    DisposableEffect(player) {
+        vm.setPauseAction { player.pause() }
+        onDispose { vm.setPauseAction(null) }
+    }
     LaunchedEffect(sleepTimerFired) {
         if (sleepTimerFired) {
             player.pause()
@@ -604,18 +667,31 @@ private fun PlayerHost(
                 val timeBar = findViewById<androidx.media3.ui.DefaultTimeBar?>(
                     androidx.media3.ui.R.id.exo_progress,
                 )
+                // The TimeBar reports SESSION-relative positions; trickplay
+                // cues are indexed against the whole file. Without the
+                // offset, scrubbing a resumed transcode previews frames
+                // hlsOffsetMs earlier than the thumb — the further into the
+                // file the session started, the more wrong the preview.
                 timeBar?.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
                     override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) {
-                        vm.onScrubMove(position)
+                        vm.onScrubMove(position + vm.hlsOffsetMs)
                     }
                     override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) {
-                        vm.onScrubMove(position)
+                        vm.onScrubMove(position + vm.hlsOffsetMs)
                     }
                     override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) {
                         vm.onScrubStop()
                     }
                 })
             }
+        },
+        // factory runs ONCE for this composable node, so a player created
+        // later — an audio-track switch re-issues the transcode session and
+        // builds a new ExoPlayer — never reached the view: PlayerView kept
+        // rendering (and controlling) the released one, leaving a frozen
+        // frame and dead transport controls for the rest of playback.
+        update = { view ->
+            if (view.player !== player) view.player = player
         },
     )
 
@@ -792,6 +868,13 @@ private fun PlayerHost(
                         ),
                         castFile,
                         origin,
+                        // WHY: hand the receiver the current playhead so it
+                        // resumes where we are instead of at 0:00. Adding
+                        // hlsOffsetMs makes the position content-absolute on
+                        // transcoded sessions (it's 0 on direct play) — the
+                        // same reason the web client adds hlsOffsetSec to
+                        // videoEl.currentTime. Cast wants seconds.
+                        positionSeconds = (player.currentPosition + vm.hlsOffsetMs) / 1000.0,
                     ) ?: return@IconButton
                     if (CastSender.load(context, payload)) {
                         // Stop local audio/video so we don't double-play.
@@ -920,10 +1003,15 @@ private fun PlayerHost(
             chapters = activeChapters,
             currentPositionMs = player.currentPosition + vm.hlsOffsetMs,
             onSeek = { ms ->
-                // Seek into the chapter; the small +1 ms keeps us
-                // strictly inside the chapter (matches activeIndex's
-                // inclusive-start contract).
-                player.seekTo(ms + 1)
+                // Chapter marks are CONTENT-absolute, the player's timeline
+                // is session-relative — so on a resumed transcode/remux the
+                // raw value lands hlsOffsetMs too late, or past the end of
+                // the playlist entirely. Translate, and clamp at 0 for a
+                // chapter that starts before this session's window.
+                // The small +1 ms keeps us strictly inside the chapter
+                // (matches activeIndex's inclusive-start contract).
+                val target = (ms - vm.hlsOffsetMs + 1).coerceAtLeast(0L)
+                player.seekTo(target)
                 showChapters = false
             },
             onDismiss = { showChapters = false },
@@ -968,7 +1056,10 @@ private fun PlayerHost(
         UpNextOverlay(
             title = nextSibling.title,
             onPlay = { onNext(nextSibling.id) },
-            onDismiss = { showUpNext = false },
+            onDismiss = {
+                showUpNext = false
+                upNextDismissed = true
+            },
         )
     }
 
@@ -988,9 +1079,15 @@ private fun PlayerHost(
     playbackError?.let {
         PlaybackErrorOverlay(
             onRetry = {
+                // Resume where the failure happened. seekToDefaultPosition()
+                // sends the player back to the START of the window, so
+                // retrying a network blip 40 minutes into a film restarted
+                // the film — the comment above always claimed "at the
+                // current position", the code did the opposite.
+                val resumeAt = player.currentPosition.coerceAtLeast(0L)
                 playbackError = null
-                player.seekToDefaultPosition()
                 player.prepare()
+                player.seekTo(resumeAt)
                 player.playWhenReady = true
             },
             onClose = onClose,
@@ -1087,9 +1184,26 @@ private fun applyAudioSelection(
         // the source container.
         vm.switchAudioStream(stream.index, player.currentPosition)
     } else {
-        player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
-            .setPreferredAudioLanguage(stream.language)
-            .build()
+        // Select the exact track, not just its language. Preferring a
+        // language is a no-op when the user is choosing BETWEEN tracks that
+        // share one (commentary vs 5.1 vs stereo, all "eng") — the picker
+        // showed the new row as selected while playback never changed.
+        // Fall back to the language preference when the container's track
+        // order doesn't line up with the server's stream list.
+        val group = player.currentTracks.groups
+            .filter { it.type == androidx.media3.common.C.TRACK_TYPE_AUDIO }
+            .getOrNull(idx)
+        if (group != null) {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setOverrideForType(
+                    androidx.media3.common.TrackSelectionOverride(group.mediaTrackGroup, 0),
+                )
+                .build()
+        } else {
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setPreferredAudioLanguage(stream.language)
+                .build()
+        }
     }
 }
 
@@ -1325,7 +1439,12 @@ private fun SkipMarkerOverlay(
     // (intro + credits on a clip-show episode) don't shadow each other.
     val dismissed = remember { mutableStateOf(setOf<String>()) }
 
-    LaunchedEffect(markers) {
+    // Keyed on player + offset as well as markers: an audio-track switch
+    // re-issues the transcode session, which builds a NEW ExoPlayer and a
+    // new hlsOffsetMs. Keyed on markers alone, this loop kept polling the
+    // released player with the old offset, so the Skip button stopped
+    // appearing (or appeared at the wrong time) for the rest of playback.
+    LaunchedEffect(markers, player, hlsOffsetMs) {
         while (isActive) {
             val contentPos = player.currentPosition + hlsOffsetMs
             activeMarker = SkipMarkers.activeAt(markers, contentPos, dismissed.value)

@@ -27,6 +27,7 @@ import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 import tv.onscreen.mobile.data.repository.TrickplayRepository
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
+import tv.onscreen.mobile.playback.LocalProgressTracker
 import tv.onscreen.mobile.trickplay.TrickplayVtt
 import javax.inject.Inject
 
@@ -301,8 +302,7 @@ class PlayerViewModel @Inject constructor(
                         remaining -= 1_000
                         _sleepTimer.value = _sleepTimer.value?.copy(remainingMs = remaining)
                     }
-                    _sleepTimerFired.value = true
-                    _sleepTimer.value = null
+                    firePause()
                 }
             }
         }
@@ -314,14 +314,35 @@ class PlayerViewModel @Inject constructor(
      *  doesn't pause early — auto-advance handles next-track). */
     fun onPlayerEnded() {
         if (_sleepTimer.value?.mode == SleepTimer.EndOfTrack) {
-            _sleepTimerFired.value = true
-            _sleepTimer.value = null
+            firePause()
         }
     }
 
     /** Acknowledge the fired signal so it can edge-trigger again. */
     fun consumeSleepTimerFired() {
         _sleepTimerFired.value = false
+    }
+
+    /** Pause action registered by the screen while a player is bound.
+     *
+     *  The fired edge used to be delivered ONLY through a state flow the
+     *  screen collected with collectAsStateWithLifecycle — which stops
+     *  collecting below STARTED. So with the screen off, the timer counted
+     *  down, raised the edge, and nothing ever consumed it: playback ran on.
+     *  That is the timer's whole purpose (fall asleep to a show), so the
+     *  primary path was the broken one. Invoking a registered action from
+     *  the VM's own coroutine works regardless of UI lifecycle state. */
+    private var pauseAction: (() -> Unit)? = null
+
+    fun setPauseAction(action: (() -> Unit)?) {
+        pauseAction = action
+    }
+
+    /** Fire the pause directly AND raise the edge for an attached screen. */
+    private fun firePause() {
+        _sleepTimerFired.value = true
+        _sleepTimer.value = null
+        pauseAction?.invoke()
     }
 
     /** Server origin used to build absolute URLs that Cast receivers
@@ -361,6 +382,21 @@ class PlayerViewModel @Inject constructor(
     private var transcodeToken: String? = null
     var hlsOffsetMs: Long = 0L
         private set
+
+    /** Full CONTENT duration in ms, independent of the current session.
+     *
+     *  A resumed transcode/remux playlist only covers the remainder of the
+     *  file, so `player.duration` on an HLS session is (content − offset).
+     *  Progress beacons send a content-ABSOLUTE position (position + offset)
+     *  — pairing that with the session duration makes the server see a
+     *  ratio far past the real one, marking things watched (and scrobbling)
+     *  early, and writing a resume marker other devices can't interpret.
+     *  Falls back to the player-reported value only when the item carries
+     *  no duration. */
+    fun contentDurationMs(playerDurationMs: Long): Long {
+        val known = _state.value.item?.duration_ms ?: 0L
+        return if (known > 0) known else playerDurationMs
+    }
 
     // Cache the inputs needed to re-issue a transcode session when
     // the user picks a different audio track. ExoPlayer's
@@ -696,8 +732,14 @@ class PlayerViewModel @Inject constructor(
         videoCopy: Boolean,
         serverUrl: String,
         audioStreamIndex: Int? = null,
+        // Audio-track switching passes false: stopping the live session
+        // before the replacement exists means a failed re-issue leaves the
+        // player bound to a session the server has already reaped, so
+        // playback dies at the next segment. The caller stops the old
+        // session itself once the new one is in hand.
+        stopPrevious: Boolean = true,
     ): PlaybackSource {
-        stopActiveTranscode()
+        if (stopPrevious) stopActiveTranscode()
 
         val session = transcodeRepo.start(
             itemId = itemId,
@@ -727,6 +769,13 @@ class PlayerViewModel @Inject constructor(
     fun switchAudioStream(audioStreamIndex: Int, currentPositionMs: Long) {
         val req = lastTranscodeRequest ?: return
         viewModelScope.launch {
+            // Hold the live session open across the request. Only once the
+            // replacement is in hand is the old one retired — a failed
+            // switch then really is benign (playback continues on the old
+            // track), which is what the previous comment claimed while the
+            // code had already killed it.
+            val prevSession = transcodeSessionId
+            val prevToken = transcodeToken
             try {
                 val source = startTranscode(
                     itemId = req.itemId,
@@ -736,13 +785,13 @@ class PlayerViewModel @Inject constructor(
                     videoCopy = req.videoCopy,
                     serverUrl = req.serverUrl,
                     audioStreamIndex = audioStreamIndex,
+                    stopPrevious = false,
                 )
                 _state.value = _state.value.copy(source = source)
+                if (prevSession != null && prevToken != null) {
+                    transcodeRepo.stopDetached(prevSession, prevToken)
+                }
             } catch (e: Exception) {
-                // Re-issue failed. We only swap `source` on success, so the
-                // existing session keeps playing on the old audio track —
-                // benign for the user beyond the track not changing. Log it so
-                // the failure is diagnosable instead of silently swallowed.
                 android.util.Log.w("PlayerViewModel", "audio stream switch failed", e)
             }
         }
@@ -767,6 +816,7 @@ class PlayerViewModel @Inject constructor(
     fun reportProgress(itemId: String, positionMs: Long, durationMs: Long, state: String) {
         if (durationMs <= 0) return
         localProgressMs = positionMs
+        LocalProgressTracker.record(itemId, positionMs)
         viewModelScope.launch {
             try {
                 itemRepo.updateProgress(itemId, positionMs, durationMs, state, activeDecision)
@@ -859,7 +909,15 @@ class PlayerViewModel @Inject constructor(
             try {
                 notifications.subscribeProgressUpdates().collect { ev ->
                     if (ev.item_id != itemId) return@collect
-                    val delta = kotlin.math.abs(ev.position_ms - localProgressMs)
+                    // Compare against the last position ANY component of this
+                    // app published for the item, not just this VM's own
+                    // writes. Background audio is reported by PlaybackService,
+                    // which this VM never sees — so its 10 s heartbeats echoed
+                    // back looking like a remote device and seeked the player
+                    // to where it already was, every tick, undoing any scrub
+                    // the user made in between.
+                    val localMs = LocalProgressTracker.lastFor(itemId) ?: localProgressMs
+                    val delta = kotlin.math.abs(ev.position_ms - localMs)
                     if (delta < 3_000L) return@collect
                     _remoteResumeMs.value = ev.position_ms
                 }

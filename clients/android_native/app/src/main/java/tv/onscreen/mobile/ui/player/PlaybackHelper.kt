@@ -86,7 +86,11 @@ object PlaybackHelper {
         return listOf(
             "videoDecoder=" + video.joinToString(":"),
             "audioDecoder=aac:mp3:opus:flac:vorbis:ac3:eac3:dts",
-            "protocols=mp4:mkv:webm:mov:ts",
+            // Audio containers must be declared or the server's Decide
+            // routes every plain FLAC/MP3/OGG/WAV to an audio-HLS remux
+            // (decision.go falls to directStream for audio-only files whose
+            // container the client omits). Same list the TV client sends.
+            "protocols=mp4:mkv:webm:mov:ts:flac:mp3:ogg:wav:aac:aiff:m4a",
             "maxWidth=3840",
             "maxHeight=2160",
             "maxAudioChannels=8",

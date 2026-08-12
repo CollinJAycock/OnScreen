@@ -44,6 +44,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -75,6 +76,7 @@ import tv.onscreen.mobile.ui.components.EmptyState
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
 import tv.onscreen.mobile.ui.discover.DiscoverViewModel
+import tv.onscreen.mobile.ui.discover.requestKey
 import javax.inject.Inject
 
 @HiltViewModel
@@ -203,8 +205,16 @@ fun SearchScreen(
     val filters by vm.filters.collectAsStateWithLifecycle()
     val discoverUi by discoverVm.state.collectAsStateWithLifecycle()
 
-    var query by remember { mutableStateOf("") }
-    var tabIndex by remember { mutableIntStateOf(0) }
+    // Read the query from the ViewModel's state instead of a plain
+    // remember. The SearchViewModel outlives this composable, so opening a
+    // result and pressing Back re-enters SearchScreen with an empty local
+    // field even though the VM still holds the query (and its results).
+    // Sourcing the field from ui.query restores the text on return; the VM
+    // already stores every keystroke via onQueryChange. tabIndex has no VM
+    // home, so rememberSaveable persists the selected tab across the same
+    // leave/re-enter.
+    val query = ui.query
+    var tabIndex by rememberSaveable { mutableIntStateOf(0) }
 
     Scaffold(
         topBar = {
@@ -237,7 +247,10 @@ fun SearchScreen(
                 OutlinedTextField(
                     value = query,
                     onValueChange = { q ->
-                        query = q
+                        // Push to both VMs: SearchViewModel is now the
+                        // source of truth for the field (value = ui.query),
+                        // and DiscoverViewModel keeps its own copy for the
+                        // Discover tab's explicit-fire search.
                         vm.onQueryChange(q)
                         discoverVm.onQueryChanged(q)
                     },
@@ -421,11 +434,16 @@ private fun DiscoverTab(
                     horizontalArrangement = Arrangement.spacedBy(12.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp),
                 ) {
-                    items(ui.results, key = { it.tmdb_id }) { item ->
+                    // Compound key: movie and show TMDB id namespaces are
+                    // independent, so a mixed result set can hold the same
+                    // numeric id twice — LazyVerticalGrid throws on duplicate
+                    // keys. type:tmdb_id is unique, and matches the keys the
+                    // submitting/submitted sets use.
+                    items(ui.results, key = { it.requestKey() }) { item ->
                         DiscoverCard(
                             item = item,
-                            submitting = item.tmdb_id in ui.submitting,
-                            submitted = item.tmdb_id in ui.submitted,
+                            submitting = item.requestKey() in ui.submitting,
+                            submitted = item.requestKey() in ui.submitted,
                             onRequest = { onRequest(item) },
                         )
                     }

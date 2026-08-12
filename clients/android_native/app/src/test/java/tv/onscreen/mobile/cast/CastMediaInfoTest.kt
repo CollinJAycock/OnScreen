@@ -24,7 +24,11 @@ class CastMediaInfoTest {
         id = "item-uuid",
         type = "movie",
         title = "The Movie",
-        posterPath = "/artwork/poster.jpg",
+        // Server-relative artwork path as the API actually returns it: no
+        // leading slash and no /artwork prefix (every other consumer feeds
+        // this straight into artworkUrl()). The old fixture used an
+        // already-prefixed value, which hid the malformed-URL bug.
+        posterPath = "Movies/Inception (2010)/poster.jpg",
         parentTitle = null,
     )
 
@@ -190,7 +194,10 @@ class CastMediaInfoTest {
     @Test
     fun `includes poster as absolute URL when posterPath is present`() {
         val got = CastMediaInfo.build(goodItem, goodFile, "https://o.example")
-        assertThat(got!!.imageUrls).containsExactly("https://o.example/artwork/poster.jpg")
+        // Prefixed with /artwork and per-segment encoded — mirrors what
+        // artworkUrl() produces for every other consumer of poster_path.
+        assertThat(got!!.imageUrls)
+            .containsExactly("https://o.example/artwork/Movies/Inception%20%282010%29/poster.jpg?w=500")
     }
 
     @Test

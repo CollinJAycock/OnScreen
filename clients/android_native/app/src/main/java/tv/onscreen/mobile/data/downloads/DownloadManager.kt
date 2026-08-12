@@ -99,6 +99,18 @@ class OnScreenDownloadManager @Inject constructor(
         store.remove(fileId)
     }
 
+    /** Cancel every in-flight download and erase all downloaded media.
+     *
+     *  Called on identity transitions (sign-out, server switch). Cancelling
+     *  matters as much as deleting: a queued worker holds a baked ?token=
+     *  URL that stays valid for hours, so without this an in-flight download
+     *  keeps transferring the previous identity's media after sign-out — and
+     *  would re-create manifest entries just after they were wiped. */
+    suspend fun cancelAllAndClear() {
+        store.state.value.entries.forEach { cancel(it.file_id) }
+        store.clearAll()
+    }
+
     /** Live work info for one file's download. Emits as the worker
      *  reports progress, succeeds, or fails. Uses WorkManager's native Flow
      *  API (2.9+) rather than a LiveData→Flow bridge — the old

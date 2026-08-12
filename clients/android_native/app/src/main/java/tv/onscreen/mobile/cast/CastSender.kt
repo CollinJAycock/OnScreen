@@ -82,6 +82,13 @@ object CastSender {
 
         val request = MediaLoadRequestData.Builder()
             .setMediaInfo(info)
+            // WHY: without a start position the receiver plays from 0:00,
+            // dropping the local playhead on hand-off. Payload carries a
+            // content-absolute position in SECONDS; the Cast Android SDK's
+            // setCurrentTime takes MILLISECONDS (same unit as the sibling
+            // setStreamDuration above, and unlike the web chrome.cast SDK
+            // whose currentTime is seconds), so convert here.
+            .setCurrentTime((payload.positionSeconds * 1000).toLong())
             .build()
 
         return try {

@@ -62,6 +62,11 @@ object CastMediaInfo {
         val subtitle: String?,
         val imageUrls: List<String>,
         val durationSeconds: Long?,
+        // WHY: content-absolute resume position, in seconds, handed to the
+        // receiver so a hand-off continues from the local playhead instead
+        // of restarting at 0:00. Double keeps sub-second accuracy and
+        // mirrors the web client's LoadRequest.currentTime (also seconds).
+        val positionSeconds: Double,
         val customData: Map<String, String>,
     )
 
@@ -125,13 +130,27 @@ object CastMediaInfo {
      *
      * Returns null if the file isn't castable.
      */
-    fun build(item: Item, file: File, baseUrl: String): Payload? {
+    fun build(item: Item, file: File, baseUrl: String, positionSeconds: Double = 0.0): Payload? {
         if (!isCastable(file)) return null
         val origin = baseUrl.trimEnd('/')
         val token = file.streamToken!!
         val url = "$origin/media/stream/${urlEncode(file.id)}?token=${urlEncode(token)}"
         val type = metadataType(item)
-        val images = if (item.posterPath != null) listOf("$origin${item.posterPath}") else emptyList()
+        // WHY: posterPath is a bare, server-relative artwork path — no
+        // leading slash, no /artwork prefix, and it may contain spaces or
+        // sub-directories. The old "$origin$posterPath" fused the origin
+        // straight onto the path (no separator, unencoded), yielding a
+        // malformed URL. Mirror data/artworkUrl()'s output shape,
+        // "{origin}/artwork/{per-segment-encoded}?w=", encoding each
+        // segment while preserving '/'. We can't call artworkUrl() itself:
+        // it uses android.net.Uri, and this module is deliberately
+        // Android-free so its unit tests run on the plain JVM.
+        val images = if (item.posterPath != null) {
+            val encodedPath = item.posterPath.split("/").joinToString("/") { urlEncode(it) }
+            listOf("$origin/artwork/$encodedPath?w=500")
+        } else {
+            emptyList()
+        }
         return Payload(
             contentId = url,
             contentType = contentType(file),
@@ -141,6 +160,7 @@ object CastMediaInfo {
             subtitle = item.parentTitle,
             imageUrls = images,
             durationSeconds = file.durationSeconds,
+            positionSeconds = positionSeconds,
             customData = mapOf("itemId" to item.id, "fileId" to file.id),
         )
     }

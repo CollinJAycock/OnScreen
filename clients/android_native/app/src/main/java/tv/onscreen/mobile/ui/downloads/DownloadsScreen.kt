@@ -80,6 +80,9 @@ class DownloadsViewModel @Inject constructor(
 fun DownloadsScreen(
     onOpenItem: (String) -> Unit,
     onPlay: (String) -> Unit,
+    // True only when Downloads is the offline cold-start root of the back
+    // stack. Gates the "Go online" action (see the actions block below).
+    isOfflineRoot: Boolean,
     onGoOnline: () -> Unit,
     onBack: () -> Unit,
     vm: DownloadsViewModel = hiltViewModel(),
@@ -105,9 +108,14 @@ fun DownloadsScreen(
                 actions = {
                     // "Go online" surfaces only when network has come
                     // back AND the user landed here as the offline-mode
-                    // start destination. Tap routes to Hub so they pick
-                    // up where the live library begins.
-                    if (online) {
+                    // start destination. WHY the isOfflineRoot gate: when
+                    // Downloads is opened over Hub (online, via overflow)
+                    // the button's onGoOnline would push a DUPLICATE Hub —
+                    // and Back already returns to Hub there — so it must
+                    // only show when Downloads is the back-stack root. Tap
+                    // routes to Hub so an offline-start user picks up the
+                    // live library.
+                    if (online && isOfflineRoot) {
                         IconButton(onClick = onGoOnline) {
                             Icon(Icons.Default.Home, contentDescription = "Go to library")
                         }

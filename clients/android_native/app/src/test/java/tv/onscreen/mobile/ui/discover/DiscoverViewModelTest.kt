@@ -95,10 +95,11 @@ class DiscoverViewModelTest {
         val vm = DiscoverViewModel(repo)
         vm.request(item(42))
         // Optimistic flip happens synchronously before the coroutine runs.
-        assertThat(vm.state.value.submitting).contains(42)
+        // Sets are now keyed by the compound "type:tmdb_id" (item() is a movie).
+        assertThat(vm.state.value.submitting).contains("movie:42")
         advanceUntilIdle()
-        assertThat(vm.state.value.submitting).doesNotContain(42)
-        assertThat(vm.state.value.submitted).contains(42)
+        assertThat(vm.state.value.submitting).doesNotContain("movie:42")
+        assertThat(vm.state.value.submitted).contains("movie:42")
         assertThat(vm.state.value.error).isNull()
     }
 
@@ -109,9 +110,9 @@ class DiscoverViewModelTest {
         val vm = DiscoverViewModel(repo)
         vm.request(item(99))
         advanceUntilIdle()
-        assertThat(vm.state.value.submitting).doesNotContain(99)
-        // Submitted set must NOT have the id — request failed.
-        assertThat(vm.state.value.submitted).doesNotContain(99)
+        assertThat(vm.state.value.submitting).doesNotContain("movie:99")
+        // Submitted set must NOT have the key — request failed.
+        assertThat(vm.state.value.submitted).doesNotContain("movie:99")
         assertThat(vm.state.value.error).isEqualTo("boom")
     }
 

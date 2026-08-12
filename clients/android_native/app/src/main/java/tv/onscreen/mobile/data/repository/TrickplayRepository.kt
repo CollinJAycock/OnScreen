@@ -2,6 +2,8 @@ package tv.onscreen.mobile.data.repository
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import tv.onscreen.mobile.data.api.OnScreenApi
@@ -44,14 +46,19 @@ open class TrickplayRepository @Inject constructor(
      *  Returns null on any failure (network, parse) so the caller
      *  silently falls back to no-preview seek. Parsing is delegated
      *  to [TrickplayVtt.parse] — pure module, fully unit-tested. */
-    open suspend fun fetchCues(itemId: String): List<TrickplayCue>? {
-        return try {
+    open suspend fun fetchCues(itemId: String): List<TrickplayCue>? = withContext(Dispatchers.IO) {
+        // withContext(IO): execute() is a blocking network call. The
+        // Leanback seek provider invokes this from the main thread, so
+        // without dispatching off it OkHttp throws
+        // NetworkOnMainThreadException — swallowed by the catch below,
+        // which is exactly why trickplay thumbnails never appeared.
+        try {
             val req = Request.Builder()
                 .url("http://localhost/trickplay/$itemId/index.vtt")
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val body = resp.body?.string() ?: return null
+                if (!resp.isSuccessful) return@use null
+                val body = resp.body?.string() ?: return@use null
                 TrickplayVtt.parse(body).takeIf { it.isNotEmpty() }
             }
         } catch (_: Exception) { null }
@@ -60,14 +67,18 @@ open class TrickplayRepository @Inject constructor(
     /** Fetches /trickplay/{id}/{file} and decodes to a Bitmap. The
      *  caller crops to the cue's x/y/w/h via Bitmap.createBitmap.
      *  Returns null on any failure. */
-    open suspend fun fetchSprite(itemId: String, file: String): Bitmap? {
-        return try {
+    open suspend fun fetchSprite(itemId: String, file: String): Bitmap? = withContext(Dispatchers.IO) {
+        // withContext(IO): both execute() (blocking network) and
+        // BitmapFactory.decodeByteArray (CPU-bound decode) must stay off
+        // the main thread. Same failure mode as fetchCues — a swallowed
+        // NetworkOnMainThreadException left every cue without its bitmap.
+        try {
             val req = Request.Builder()
                 .url("http://localhost/trickplay/$itemId/$file")
                 .build()
             client.newCall(req).execute().use { resp ->
-                if (!resp.isSuccessful) return null
-                val bytes = resp.body?.bytes() ?: return null
+                if (!resp.isSuccessful) return@use null
+                val bytes = resp.body?.bytes() ?: return@use null
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
             }
         } catch (_: Exception) { null }
