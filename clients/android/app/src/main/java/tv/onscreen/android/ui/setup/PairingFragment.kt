@@ -103,6 +103,15 @@ class PairingFragment : Fragment() {
                 return@launch
             }
 
+            // startPairing() may have healed a stale cleartext origin to TLS
+            // (AuthRepository.ensureTlsUpgradedOrigin), and urlView was drawn
+            // from the PRE-heal prefs. Re-read so the address we tell the user
+            // to type is the origin we actually talk to — a field report
+            // showed "http://…/pair" on glass for a server that answers on
+            // https. A browser survives the redirect, but the screen
+            // shouldn't instruct users to type a URL the app itself refuses
+            // to use.
+            urlView.text = "${prefs.serverUrl.first().orEmpty()}/pair"
             pinView.text = code.pin
             // If we just rotated an expired code, say so loudly — otherwise the
             // displayed PIN silently changes under a user who's mid-typing the old
