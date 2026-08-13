@@ -387,13 +387,44 @@ private fun PlayerHost(
     if (!serviceAudio) {
         val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
         DisposableEffect(lifecycleOwner, player, inPip) {
+            // Two triggers, because neither covers the other.
+            //
+            // ON_STOP handles leaving the app (home, app switch). It does NOT
+            // fire on screen-off for every device: one with an always-on
+            // display goes to "Dozing" with the activity still STARTED, and a
+            // Galaxy S24 kept emitting progress beacons for the entire
+            // screen-off window — video playing audibly to a dark screen, the
+            // reported bug.
+            //
+            // ACTION_SCREEN_OFF closes that gap and is deliberately used
+            // INSTEAD of ON_PAUSE: entering PiP also delivers ON_PAUSE, and
+            // isInPictureInPictureMode is not yet true at that moment, so an
+            // ON_PAUSE handler pauses the video exactly as the PiP window
+            // opens. A real screen-off never races PiP, since PiP only
+            // matters while the screen is on.
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                 if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !inPip) {
                     player.pause()
                 }
             }
             lifecycleOwner.lifecycle.addObserver(observer)
-            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+
+            val screenOff = object : android.content.BroadcastReceiver() {
+                override fun onReceive(c: android.content.Context?, i: android.content.Intent?) {
+                    player.pause()
+                }
+            }
+            androidx.core.content.ContextCompat.registerReceiver(
+                context,
+                screenOff,
+                android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF),
+                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+
+            onDispose {
+                lifecycleOwner.lifecycle.removeObserver(observer)
+                runCatching { context.unregisterReceiver(screenOff) }
+            }
         }
     }
     // Closing the player ends playback for every item type. The
