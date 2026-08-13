@@ -121,9 +121,15 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
                 )
             }
             IconButton(onClick = {
-                // stop() only — clearing first would drop currentMediaItem
-                // before the service can publish the terminal progress.
-                controller?.stop()
+                // stop() FIRST — the service's STATE_IDLE handler publishes
+                // the terminal progress from currentMediaItem, so the item
+                // must still exist at that moment. THEN clear, which drops
+                // currentMediaItem and hides this bar (verified on device:
+                // stop() alone left the bar lingering in a stopped state).
+                controller?.run {
+                    stop()
+                    clearMediaItems()
+                }
             }) {
                 Icon(Icons.Default.Close, contentDescription = "Stop")
             }
