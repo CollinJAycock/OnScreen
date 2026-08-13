@@ -1269,13 +1269,13 @@ private fun AudioPickerDialog(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            // Whole row tappable (same fix as the subtitle
+                            // sheet): taps beside the radio were dead.
+                            .clickable(onClick = { onPick(i) })
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(
-                            selected = i == activeIndex,
-                            onClick = { onPick(i) },
-                        )
+                        RadioButton(selected = i == activeIndex, onClick = null)
                         Spacer(Modifier.width(8.dp))
                         Text(formatAudioLabel(s))
                     }
@@ -1303,44 +1303,48 @@ private fun SubtitlePickerDialog(
         title = { Text("Subtitles") },
         text = {
             Column {
+                // Rows are clickable end-to-end (radio onClick = null, the
+                // Row owns the action): on device, taps in the gap between
+                // the radio and the label registered nothing, which reads
+                // as a broken sheet. "Off" also shows selected when NO text
+                // preference is set yet — the sheet used to open with no
+                // selection at all, not even Off.
+                val chooseOff = {
+                    player.trackSelectionParameters =
+                        player.trackSelectionParameters.buildUpon()
+                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
+                            .build()
+                    onDismiss()
+                }
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clickable(onClick = chooseOff)
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RadioButton(
-                        selected = disabled,
-                        onClick = {
-                            player.trackSelectionParameters =
-                                player.trackSelectionParameters.buildUpon()
-                                    .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                                    .build()
-                            onDismiss()
-                        },
-                    )
+                    RadioButton(selected = disabled || activeLang == null, onClick = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Off")
                 }
                 streams.forEach { s ->
                     val selected = !disabled && s.language == activeLang
+                    val choose = {
+                        player.trackSelectionParameters =
+                            player.trackSelectionParameters.buildUpon()
+                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                                .setPreferredTextLanguage(s.language)
+                                .build()
+                        onDismiss()
+                    }
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
+                            .clickable(onClick = choose)
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(
-                            selected = selected,
-                            onClick = {
-                                player.trackSelectionParameters =
-                                    player.trackSelectionParameters.buildUpon()
-                                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                        .setPreferredTextLanguage(s.language)
-                                        .build()
-                                onDismiss()
-                            },
-                        )
+                        RadioButton(selected = selected, onClick = null)
                         Spacer(Modifier.width(8.dp))
                         Text(formatSubtitleLabel(s))
                     }

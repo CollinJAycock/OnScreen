@@ -91,11 +91,15 @@ fun PairScreen(
         Text("OnScreen", style = MaterialTheme.typography.headlineLarge)
         Spacer(Modifier.height(32.dp))
 
+        val knownServerUrl by vm.knownServerUrl.collectAsStateWithLifecycle()
         when (val s = state) {
             PairState.NeedsServer, PairState.ServerUnreachable, is PairState.Error ->
                 ServerEntry(
                     error = (s as? PairState.Error)?.message
                         ?: ("server unreachable".takeIf { s is PairState.ServerUnreachable }),
+                    // Prefill with the kept URL (sign-out keeps it; so does a
+                    // failed auto-resume) so the user edits, never retypes.
+                    initialUrl = knownServerUrl.orEmpty(),
                     onSubmit = vm::submitServerUrl,
                 )
 
@@ -105,6 +109,8 @@ fun PairScreen(
                 val providers by vm.providers.collectAsStateWithLifecycle()
                 ServerReadyChoice(
                     providers = providers,
+                    serverUrl = knownServerUrl,
+                    onChangeServer = vm::editServer,
                     loginError = s.loginError,
                     useLdap = useLdap,
                     onUseLdapChange = { useLdap = it },
@@ -146,8 +152,12 @@ private fun Loading(label: String) {
 }
 
 @Composable
-private fun ServerEntry(error: String?, onSubmit: (String) -> Unit) {
-    var url by rememberSaveable { mutableStateOf("") }
+private fun ServerEntry(error: String?, initialUrl: String, onSubmit: (String) -> Unit) {
+    // Keyed on initialUrl: the kept URL loads async from DataStore, so the
+    // field starts empty and re-seeds when the value arrives. User edits
+    // survive recomposition via the saveable; a changed seed re-seeds only
+    // because the key changes (first arrival), not on every keystroke.
+    var url by rememberSaveable(initialUrl) { mutableStateOf(initialUrl) }
     Text("Connect to your server", style = MaterialTheme.typography.titleLarge)
     Spacer(Modifier.height(16.dp))
     OutlinedTextField(
@@ -184,6 +194,8 @@ private fun ServerEntry(error: String?, onSubmit: (String) -> Unit) {
 @Composable
 private fun ServerReadyChoice(
     providers: tv.onscreen.mobile.data.model.AuthProviders?,
+    serverUrl: String?,
+    onChangeServer: () -> Unit,
     loginError: String?,
     useLdap: Boolean,
     onUseLdapChange: (Boolean) -> Unit,
@@ -199,6 +211,21 @@ private fun ServerReadyChoice(
     onSsoBridge: () -> Unit,
 ) {
     Text("Sign in", style = MaterialTheme.typography.titleLarge)
+    // Which server we're signing in to, with an escape hatch. Auto-resume
+    // (init in the VM) means sign-out lands here directly — without this
+    // row there'd be no way to point the app at a different deployment
+    // while signed out, since Settings ▸ Forget server needs a session.
+    if (!serverUrl.isNullOrEmpty()) {
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                serverUrl.removePrefix("https://").removePrefix("http://"),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            TextButton(onClick = onChangeServer) { Text("Change") }
+        }
+    }
     Spacer(Modifier.height(16.dp))
     Button(onClick = onPair) { Text("Pair this phone") }
     // SSO bridge — when the server has OIDC or SAML enabled, offer
