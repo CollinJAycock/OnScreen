@@ -85,6 +85,12 @@ func (m *mockQuerier) ListMediaItemsMissingArt(_ context.Context, _ int32) ([]It
 func (m *mockQuerier) CountMediaItemsMissingArt(_ context.Context) (int32, error) {
 	return 0, nil
 }
+func (m *mockQuerier) ListTopLevelItemsWithArt(_ context.Context, _ uuid.UUID, _ int32) ([]ArtPathsItem, error) {
+	return nil, nil
+}
+func (m *mockQuerier) ClearMediaItemArtPaths(_ context.Context, _ uuid.UUID, _, _ bool) error {
+	return nil
+}
 func (m *mockQuerier) CountUnmatchedTopLevelItems(_ context.Context) (int32, error) {
 	return 0, nil
 }

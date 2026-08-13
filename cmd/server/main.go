@@ -1199,8 +1199,20 @@ func run() error {
 	// agent recovered from a transient outage, etc. Runs every couple
 	// of hours so the recovery window is "by morning" not "operator
 	// goes hunting for an admin endpoint".
+	//
+	// WithArtVerification adds the dangling-reference sweep: a stored
+	// poster_path whose file has since vanished (release upgrade rewrote
+	// the folder, operator deleted poster.jpg) 404s on every client until
+	// cleared — and neither the missing-art query (poster IS NULL) nor the
+	// scanner's enrich gate (poster set ⇒ enriched) can see it. The stat
+	// goes through the artwork manager's media store so object-storage
+	// installs resolve the same backend the /artwork/* route serves from.
 	schedRegistry.Register("refresh_missing_art",
-		scheduler.NewRefreshMissingArtHandler(mediaSvc, metaAgent, logger))
+		scheduler.NewRefreshMissingArtHandler(mediaSvc, metaAgent, logger).
+			WithArtVerification(mediaSvc, scanPathsFn, func(ctx context.Context, absPath string) error {
+				_, err := artworkMgr.Store().Stat(ctx, absPath)
+				return err
+			}))
 	// Rebuild the watch_plays materialized view off the request path so the
 	// analytics dashboard reads a cheap indexed copy instead of recomputing a
 	// full-history lead() window on every load (migration 00004).

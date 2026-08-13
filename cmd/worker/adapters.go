@@ -148,6 +148,29 @@ func (a *mediaAdapter) CountMediaItemsMissingArt(ctx context.Context) (int32, er
 	return a.q.CountMediaItemsMissingArt(ctx)
 }
 
+func (a *mediaAdapter) ListTopLevelItemsWithArt(ctx context.Context, afterID uuid.UUID, limit int32) ([]media.ArtPathsItem, error) {
+	rows, err := a.q.ListTopLevelItemsWithArt(ctx, gen.ListTopLevelItemsWithArtParams{
+		AfterID:    afterID,
+		BatchLimit: limit,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.ArtPathsItem, len(rows))
+	for i, r := range rows {
+		out[i] = media.ArtPathsItem{ID: r.ID, Type: r.Type, PosterPath: r.PosterPath, FanartPath: r.FanartPath}
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ClearMediaItemArtPaths(ctx context.Context, id uuid.UUID, clearPoster, clearFanart bool) error {
+	return a.q.ClearMediaItemArtPaths(ctx, gen.ClearMediaItemArtPathsParams{
+		ID:          id,
+		ClearPoster: clearPoster,
+		ClearFanart: clearFanart,
+	})
+}
+
 func (a *mediaAdapter) CountUnmatchedTopLevelItems(ctx context.Context) (int32, error) {
 	return a.q.CountUnmatchedTopLevelItems(ctx)
 }

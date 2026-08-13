@@ -436,6 +436,34 @@ WHERE type IN ('movie', 'show')
   AND poster_path IS NULL
   AND deleted_at IS NULL;
 
+-- name: ListTopLevelItemsWithArt :many
+-- Keyset-paged walk over top-level items (movies + shows) that CLAIM artwork,
+-- for the dangling-artwork verification sweep: a poster_path can outlive its
+-- file (a release upgrade replaces the movie folder's contents, the operator
+-- deletes poster.jpg, a sync tool drops it) and nothing else ever re-checks —
+-- the missing-art queries above only see poster_path IS NULL. Narrow
+-- projection on purpose: the sweep only stats paths, it doesn't render items.
+SELECT id, type, poster_path, fanart_path
+FROM media_items
+WHERE type IN ('movie', 'show')
+  AND deleted_at IS NULL
+  AND (poster_path IS NOT NULL OR fanart_path IS NOT NULL)
+  AND id > sqlc.arg(after_id)
+ORDER BY id
+LIMIT sqlc.arg(batch_limit);
+
+-- name: ClearMediaItemArtPaths :exec
+-- Selectively NULLs artwork paths whose files were verified missing on disk,
+-- so clients fall back to a titled placeholder instead of a 404 tile and the
+-- missing-art backfill can re-enrich the item. A dedicated statement because
+-- UpdateMediaItemMetadata deliberately COALESCEs art paths (nil = keep) and
+-- so can never clear one.
+UPDATE media_items
+SET poster_path = CASE WHEN sqlc.arg(clear_poster)::boolean THEN NULL ELSE poster_path END,
+    fanart_path = CASE WHEN sqlc.arg(clear_fanart)::boolean THEN NULL ELSE fanart_path END,
+    updated_at  = NOW()
+WHERE id = sqlc.arg(id);
+
 -- name: CountUnmatchedTopLevelItems :one
 -- Snapshot count of top-level rows with no provider IDs at all. Drives the
 -- "N shows need manual matching" surface; same predicate as

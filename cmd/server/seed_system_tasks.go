@@ -63,11 +63,14 @@ var requiredSystemTasks = []systemTask{
 		taskType: "refresh_missing_art",
 		// Every 2 hours: covers the "scanned before the API key was
 		// configured" case, transient TMDB outages, and any other
-		// path that leaves a top-level item with no poster. Scoped
-		// query (only items with poster_path IS NULL), so the cost
-		// is proportional to the actual gap, not the library size —
-		// healthy libraries see the run finish in milliseconds with
-		// "no items missing art".
+		// path that leaves a top-level item with no poster. The
+		// enrich loop is scoped (only items with poster_path IS
+		// NULL), so its cost is proportional to the actual gap. Each
+		// run also verifies that claimed artwork still exists on
+		// disk — one stat per stored poster/fanart path across the
+		// library's movies + shows, cheap enough at this cadence —
+		// and clears confirmed-dangling references so they re-enter
+		// the missing-art pool instead of 404ing on every client.
 		cronExpr: "23 */2 * * *",
 		enabled:  true,
 	},

@@ -36,6 +36,30 @@ func (q *Queries) ClearActiveFileHashesForReprobe(ctx context.Context, libraryID
 	return result.RowsAffected(), nil
 }
 
+const clearMediaItemArtPaths = `-- name: ClearMediaItemArtPaths :exec
+UPDATE media_items
+SET poster_path = CASE WHEN $1::boolean THEN NULL ELSE poster_path END,
+    fanart_path = CASE WHEN $2::boolean THEN NULL ELSE fanart_path END,
+    updated_at  = NOW()
+WHERE id = $3
+`
+
+type ClearMediaItemArtPathsParams struct {
+	ClearPoster bool      `json:"clear_poster"`
+	ClearFanart bool      `json:"clear_fanart"`
+	ID          uuid.UUID `json:"id"`
+}
+
+// Selectively NULLs artwork paths whose files were verified missing on disk,
+// so clients fall back to a titled placeholder instead of a 404 tile and the
+// missing-art backfill can re-enrich the item. A dedicated statement because
+// UpdateMediaItemMetadata deliberately COALESCEs art paths (nil = keep) and
+// so can never clear one.
+func (q *Queries) ClearMediaItemArtPaths(ctx context.Context, arg ClearMediaItemArtPathsParams) error {
+	_, err := q.db.Exec(ctx, clearMediaItemArtPaths, arg.ClearPoster, arg.ClearFanart, arg.ID)
+	return err
+}
+
 const countMediaItems = `-- name: CountMediaItems :one
 SELECT COUNT(*) FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
@@ -4161,6 +4185,60 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 			&i.DeletedAt,
 			&i.FallbackPoster,
 			&i.ShowTitle,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listTopLevelItemsWithArt = `-- name: ListTopLevelItemsWithArt :many
+SELECT id, type, poster_path, fanart_path
+FROM media_items
+WHERE type IN ('movie', 'show')
+  AND deleted_at IS NULL
+  AND (poster_path IS NOT NULL OR fanart_path IS NOT NULL)
+  AND id > $1
+ORDER BY id
+LIMIT $2
+`
+
+type ListTopLevelItemsWithArtParams struct {
+	AfterID    uuid.UUID `json:"after_id"`
+	BatchLimit int32     `json:"batch_limit"`
+}
+
+type ListTopLevelItemsWithArtRow struct {
+	ID         uuid.UUID `json:"id"`
+	Type       string    `json:"type"`
+	PosterPath *string   `json:"poster_path"`
+	FanartPath *string   `json:"fanart_path"`
+}
+
+// Keyset-paged walk over top-level items (movies + shows) that CLAIM artwork,
+// for the dangling-artwork verification sweep: a poster_path can outlive its
+// file (a release upgrade replaces the movie folder's contents, the operator
+// deletes poster.jpg, a sync tool drops it) and nothing else ever re-checks —
+// the missing-art queries above only see poster_path IS NULL. Narrow
+// projection on purpose: the sweep only stats paths, it doesn't render items.
+func (q *Queries) ListTopLevelItemsWithArt(ctx context.Context, arg ListTopLevelItemsWithArtParams) ([]ListTopLevelItemsWithArtRow, error) {
+	rows, err := q.db.Query(ctx, listTopLevelItemsWithArt, arg.AfterID, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListTopLevelItemsWithArtRow{}
+	for rows.Next() {
+		var i ListTopLevelItemsWithArtRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Type,
+			&i.PosterPath,
+			&i.FanartPath,
 		); err != nil {
 			return nil, err
 		}

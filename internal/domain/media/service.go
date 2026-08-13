@@ -200,6 +200,17 @@ type YearCount struct {
 	Count int64
 }
 
+// ArtPathsItem is the narrow projection the dangling-artwork verification
+// sweep walks: just enough to resolve each claimed artwork path on disk.
+// Deliberately not a full Item — the sweep touches every art-bearing
+// movie/show row and only ever stats paths.
+type ArtPathsItem struct {
+	ID         uuid.UUID
+	Type       string
+	PosterPath *string
+	FanartPath *string
+}
+
 // Querier defines the DB operations this service needs.
 type Querier interface {
 	GetMediaItem(ctx context.Context, id uuid.UUID) (Item, error)
@@ -207,6 +218,8 @@ type Querier interface {
 	ListMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32) ([]Item, error)
 	ListMediaItemsMissingArt(ctx context.Context, limit int32) ([]Item, error)
 	CountMediaItemsMissingArt(ctx context.Context) (int32, error)
+	ListTopLevelItemsWithArt(ctx context.Context, afterID uuid.UUID, limit int32) ([]ArtPathsItem, error)
+	ClearMediaItemArtPaths(ctx context.Context, id uuid.UUID, clearPoster, clearFanart bool) error
 	CountUnmatchedTopLevelItems(ctx context.Context) (int32, error)
 	ListMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, limit, offset int32, f FilterParams) ([]Item, error)
 	ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]Item, error)
@@ -595,6 +608,36 @@ func (s *Service) ListItemsMissingArt(ctx context.Context, limit int32) ([]Item,
 		return nil, fmt.Errorf("list media items missing art: %w", err)
 	}
 	return items, nil
+}
+
+// ListItemsWithArt returns one keyset page of top-level items (movies +
+// shows) that have a poster_path or fanart_path set, ordered by id, starting
+// strictly after afterID (uuid.Nil for the first page). The scheduled
+// artwork-verification sweep walks these pages and stats each claimed path —
+// a stored path can outlive its file (release upgrades replacing a folder's
+// contents, manual deletion) and the missing-art queries can't see that.
+func (s *Service) ListItemsWithArt(ctx context.Context, afterID uuid.UUID, limit int32) ([]ArtPathsItem, error) {
+	items, err := s.ro.ListTopLevelItemsWithArt(ctx, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list media items with art: %w", err)
+	}
+	return items, nil
+}
+
+// ClearItemArtPaths NULLs the selected artwork paths on an item whose files
+// were verified missing on disk. Clearing (rather than leaving the dangling
+// reference) lets clients fall back to a titled placeholder instead of a 404
+// tile, and moves the item into the missing-art pool so the scheduled
+// backfill re-enriches it. UpdateItemMetadata can't do this: it COALESCEs
+// art paths by design, so a nil there preserves the stale value.
+func (s *Service) ClearItemArtPaths(ctx context.Context, id uuid.UUID, clearPoster, clearFanart bool) error {
+	if !clearPoster && !clearFanart {
+		return nil
+	}
+	if err := s.rw.ClearMediaItemArtPaths(ctx, id, clearPoster, clearFanart); err != nil {
+		return fmt.Errorf("clear media item art paths %s: %w", id, err)
+	}
+	return nil
 }
 
 // CountItemsMissingArt returns a snapshot count of top-level movies/shows
