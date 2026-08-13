@@ -402,10 +402,28 @@ private fun PlayerHost(
             // ON_PAUSE handler pauses the video exactly as the PiP window
             // opens. A real screen-off never races PiP, since PiP only
             // matters while the screen is on.
+            // ON_PAUSE is the only signal that reliably fires here. ON_STOP
+            // does not: an always-on display goes to "Dozing" with the
+            // activity still STARTED. An ACTION_SCREEN_OFF receiver never
+            // registered on the test handset, and a DisplayManager listener
+            // did not pause either — all three were tried on device and all
+            // three left video playing audibly to a dark screen.
+            //
+            // The reason ON_PAUSE was avoided is real but fixable: entering
+            // PiP also delivers ON_PAUSE, and isInPictureInPictureMode is
+            // still false at that instant, so pausing immediately would
+            // freeze the PiP window as it opens. Re-checking after a short
+            // delay resolves it — by then the PiP transition has reported
+            // itself, and a genuine screen-off is still paused ~200 ms in.
+            val activity = context as? android.app.Activity
+            val handler = android.os.Handler(android.os.Looper.getMainLooper())
             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP && !inPip) {
-                    player.pause()
-                }
+                if (event != androidx.lifecycle.Lifecycle.Event.ON_PAUSE) return@LifecycleEventObserver
+                handler.postDelayed({
+                    val pip = android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N &&
+                        activity?.isInPictureInPictureMode == true
+                    if (!pip) player.pause()
+                }, 200L)
             }
             lifecycleOwner.lifecycle.addObserver(observer)
 
