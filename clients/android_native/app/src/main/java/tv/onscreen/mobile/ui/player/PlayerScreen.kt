@@ -409,21 +409,33 @@ private fun PlayerHost(
             }
             lifecycleOwner.lifecycle.addObserver(observer)
 
-            val screenOff = object : android.content.BroadcastReceiver() {
-                override fun onReceive(c: android.content.Context?, i: android.content.Intent?) {
-                    player.pause()
+            // DisplayManager, not an ACTION_SCREEN_OFF BroadcastReceiver: the
+            // receiver registration silently never took (dumpsys showed the
+            // app absent from SCREEN_OFF's receiver list — the flag semantics
+            // for protected system broadcasts differ across OEM builds), so
+            // playback kept running with the screen dark. The display state
+            // is the fact we actually care about, and reading it directly has
+            // no registration caveats.
+            //
+            // != STATE_ON covers OFF, DOZE and DOZE_SUSPEND: an always-on
+            // display sits in DOZE, which is exactly the case that defeated
+            // the ON_STOP handler on the test handset.
+            val dm = context.getSystemService(android.content.Context.DISPLAY_SERVICE)
+                as android.hardware.display.DisplayManager
+            val displayListener = object : android.hardware.display.DisplayManager.DisplayListener {
+                override fun onDisplayAdded(displayId: Int) {}
+                override fun onDisplayRemoved(displayId: Int) {}
+                override fun onDisplayChanged(displayId: Int) {
+                    if (displayId != android.view.Display.DEFAULT_DISPLAY) return
+                    val state = dm.getDisplay(displayId)?.state ?: return
+                    if (state != android.view.Display.STATE_ON) player.pause()
                 }
             }
-            androidx.core.content.ContextCompat.registerReceiver(
-                context,
-                screenOff,
-                android.content.IntentFilter(android.content.Intent.ACTION_SCREEN_OFF),
-                androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
-            )
+            dm.registerDisplayListener(displayListener, null)
 
             onDispose {
                 lifecycleOwner.lifecycle.removeObserver(observer)
-                runCatching { context.unregisterReceiver(screenOff) }
+                dm.unregisterDisplayListener(displayListener)
             }
         }
     }
