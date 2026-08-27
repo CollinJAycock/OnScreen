@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Google Play (googletv) flavor overlay.
+
+    Require android.software.leanback so Play's device targeting limits this
+    artifact to actual TV devices. The main manifest keeps required="false"
+    for Fire OS (many Fire TV devices don't report leanback, and the Amazon
+    Appstore filters on it — see the comment there), but on Google Play that
+    same "false" made this AAB eligible for PHONES: it installed cleanly and
+    then had nothing to launch, because MainActivity only declares
+    LEANBACK_LAUNCHER. That is exactly how the early-access testers ended up
+    with an Uninstall-only listing and no app icon — the closed/internal
+    testing tracks served the TV bundle to their phones. Phones are served by
+    the separate phone client (clients/android_native, versionCode band
+    1000+) in the same tv.onscreen.android listing; this requirement makes
+    the split enforceable on Play's side.
+
+    Every Android TV / Google TV certified device reports leanback, so this
+    costs no TV coverage on Play. uses-feature is store-filtering metadata
+    only — adb sideloads to test devices are unaffected.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
+    <uses-feature
+        android:name="android.software.leanback"
+        android:required="true"
+        tools:node="replace" />
+</manifest>
