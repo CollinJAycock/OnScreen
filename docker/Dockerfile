@@ -13,7 +13,7 @@ RUN npm run build
 # Use the minor-version tag (1.26-alpine) rather than a pinned patch so the
 # image picks up patch releases that match go.mod's `go 1.26.x` directive
 # without requiring a Dockerfile bump on every Go security release.
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 WORKDIR /app
 
 COPY go.mod go.sum ./
