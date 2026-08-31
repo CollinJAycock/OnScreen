@@ -138,6 +138,14 @@ class PlaybackService : MediaSessionService() {
                 reportStopped(player)
                 maybeAutoAdvance(player)
             }
+            if (state == Player.STATE_IDLE) {
+                // stop() — the mini-player's ✕ (or a fatal player error).
+                // Publish the terminal position while currentMediaItem still
+                // exists, then tear the service down so the notification
+                // doesn't linger as a paused ghost the user can't dismiss.
+                reportStopped(player)
+                stopSelf()
+            }
         }
     }
 

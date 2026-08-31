@@ -27,6 +27,36 @@ class PairViewModel @Inject constructor(
     private val _state = MutableStateFlow<PairState>(PairState.NeedsServer)
     val state: StateFlow<PairState> = _state.asStateFlow()
 
+    /** The persisted server URL, when one exists. Prefills the entry
+     *  field when auto-resume can't complete (server unreachable) and
+     *  labels the "Change server" affordance on the sign-in step. */
+    private val _knownServerUrl = MutableStateFlow<String?>(null)
+    val knownServerUrl: StateFlow<String?> = _knownServerUrl.asStateFlow()
+
+    init {
+        // Sign-out deliberately KEEPS the server URL — the Settings copy
+        // promises "the server URL is kept so you can sign in again". This
+        // VM used to open at NeedsServer regardless, so the kept URL was
+        // invisible and the user retyped it: on-device, sign-out was
+        // indistinguishable from Forget server. Resume the stored URL and
+        // jump straight to the sign-in step; a failed probe falls back to
+        // the entry screen with the URL prefilled instead of blank.
+        viewModelScope.launch {
+            val stored = authRepo.getServerUrl()
+            if (stored.isNullOrEmpty()) return@launch // true first run
+            _knownServerUrl.value = stored
+            submitServerUrl(stored)
+        }
+    }
+
+    /** "Change server" on the sign-in step: back to the entry screen
+     *  (prefilled from [knownServerUrl]) without touching stored state —
+     *  nothing is forgotten unless the user submits a different URL. */
+    fun editServer() {
+        pollJob?.cancel()
+        _state.value = PairState.NeedsServer
+    }
+
     /** Discovered auth-provider availability for the currently-bound
      *  server. Null until the server is reachable; the choice screen
      *  reads this to decide whether to show the LDAP toggle and the

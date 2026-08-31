@@ -1,6 +1,12 @@
 package tv.onscreen.mobile.ui.nav
 
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
+import androidx.navigation.compose.currentBackStackEntryAsState
+import tv.onscreen.mobile.ui.components.MiniPlayerBar
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -90,6 +96,26 @@ fun AppNav(vm: RootViewModel = hiltViewModel()) {
         false -> Routes.PAIR
     }
 
+    // Mini-player bar: visible on shell destinations while background audio
+    // is active; hidden on immersive routes (player, reader, photo viewer)
+    // and pre-auth. Column layout (not an overlay) so screens shrink rather
+    // than get covered when the bar appears.
+    val backStackEntry by nav.currentBackStackEntryAsState()
+    val currentRoute = backStackEntry?.destination?.route
+    val immersive = currentRoute == Routes.PLAYER || currentRoute == Routes.PAIR ||
+        currentRoute == Routes.PHOTO || currentRoute == Routes.BOOK
+    Column(modifier = Modifier.fillMaxSize()) {
+        Box(modifier = Modifier.weight(1f)) {
+            AppNavHost(nav, start)
+        }
+        if (!immersive) {
+            MiniPlayerBar(onOpen = { id -> nav.navigateDebounced(Routes.player(id)) })
+        }
+    }
+}
+
+@Composable
+private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String) {
     NavHost(navController = nav, startDestination = start) {
         composable(Routes.PAIR) {
             PairScreen(onPaired = {

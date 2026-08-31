@@ -25,6 +25,13 @@ class PairViewModelTest {
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After  fun tearDown() { Dispatchers.resetMain() }
 
+    /** VM with the stored-URL auto-resume quiesced (fresh install: no URL).
+     *  Tests that exercise the resume itself stub getServerUrl explicitly. */
+    private fun vm(auth: AuthRepository): PairViewModel {
+        coEvery { auth.getServerUrl() } returns null
+        return PairViewModel(auth)
+    }
+
     private fun tokenPair() = TokenPair(
         access_token = "at", refresh_token = "rt", expires_at = "2026-01-01T00:00:00Z",
         user_id = "u1", username = "user", is_admin = false,
@@ -35,7 +42,7 @@ class PairViewModelTest {
         val auth = mockk<AuthRepository>()
         coEvery { auth.checkServer("https://onscreen.tv") } returns AuthRepository.CheckResult.Ok
 
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.submitServerUrl("onscreen.tv")
         advanceUntilIdle()
 
@@ -47,7 +54,7 @@ class PairViewModelTest {
         val auth = mockk<AuthRepository>()
         coEvery { auth.checkServer(any()) } returns AuthRepository.CheckResult.Failed("UnknownHostException: broken.example")
 
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.submitServerUrl("https://broken.example")
         advanceUntilIdle()
 
@@ -62,7 +69,7 @@ class PairViewModelTest {
     @Test
     fun `submitServerUrl ignores blank input`() = runTest(dispatcher) {
         val auth = mockk<AuthRepository>()
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.submitServerUrl("   ")
         advanceUntilIdle()
 
@@ -74,7 +81,7 @@ class PairViewModelTest {
         val auth = mockk<AuthRepository>()
         coEvery { auth.login("u", "p") } returns tokenPair()
 
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.loginWithPassword("u", "p")
         advanceUntilIdle()
 
@@ -86,7 +93,7 @@ class PairViewModelTest {
         val auth = mockk<AuthRepository>()
         coEvery { auth.login(any(), any()) } throws RuntimeException("bad credentials")
 
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.loginWithPassword("u", "p")
         advanceUntilIdle()
 
@@ -107,7 +114,7 @@ class PairViewModelTest {
         coEvery { auth.pollPairing("dt") } returns AuthRepository.PollResult.Done(tokenPair())
         coEvery { auth.completePairing(any()) } returns Unit
 
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.startPairing()
         advanceUntilIdle()
 
@@ -122,7 +129,7 @@ class PairViewModelTest {
         )
         coEvery { auth.pollPairing("dt") } returns AuthRepository.PollResult.Expired
 
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.startPairing()
         advanceUntilIdle()
 
@@ -135,7 +142,7 @@ class PairViewModelTest {
         val auth = mockk<AuthRepository>()
         coEvery { auth.checkServer(any()) } returns AuthRepository.CheckResult.Ok
 
-        val vm = PairViewModel(auth)
+        val vm = vm(auth)
         vm.submitServerUrl("https://srv")
         advanceUntilIdle()
         assertThat(vm.state.value).isEqualTo(PairState.ServerReady())
@@ -161,6 +168,10 @@ class PairViewModelTest {
             coEvery { auth.pollPairing("dev-tok") } returns
                 AuthRepository.PollResult.Done(tokenPair())
             coEvery { auth.completePairing(any()) } returns Unit
+            // Init auto-resumes the stored URL (see the resume tests); give
+            // it a deterministic landing so the SSO flow starts from
+            // ServerReady like it does in the app.
+            coEvery { auth.checkServer("https://server.example") } returns AuthRepository.CheckResult.Ok
 
             val vm = PairViewModel(auth)
             vm.startSsoBridge(deviceName = "Pixel 8")
@@ -180,7 +191,7 @@ class PairViewModelTest {
             val auth = mockk<AuthRepository>()
             coEvery { auth.getServerUrl() } returns null
 
-            val vm = PairViewModel(auth)
+            val vm = vm(auth)
             vm.startSsoBridge()
             advanceUntilIdle()
 
@@ -196,6 +207,7 @@ class PairViewModelTest {
         // something weird).
         val auth = mockk<AuthRepository>()
         coEvery { auth.getServerUrl() } returns "file:///etc/hosts"
+        coEvery { auth.checkServer(any()) } returns AuthRepository.CheckResult.Failed("unsupported scheme")
 
         val vm = PairViewModel(auth)
         vm.startSsoBridge()
@@ -217,6 +229,7 @@ class PairViewModelTest {
         // runTest's end-of-body advanceUntilIdle would skip the virtual
         // delay forever and allocate until OOM.
         coEvery { auth.pollPairing(any()) } returns AuthRepository.PollResult.Pending
+        coEvery { auth.checkServer("https://server.example") } returns AuthRepository.CheckResult.Ok
 
         val vm = PairViewModel(auth)
         vm.startSsoBridge()
@@ -230,5 +243,48 @@ class PairViewModelTest {
         assertThat(vm.ssoLaunchUrl.value).isNull()
 
         vm.reset()
+    }
+
+    @Test
+    fun `init auto-resumes a kept server URL to the sign-in step`() = runTest(dispatcher) {
+        // Sign-out keeps the URL; the VM must consume it instead of opening
+        // at NeedsServer (which made sign-out look like Forget server).
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.getServerUrl() } returns "https://onscreen.tv"
+        coEvery { auth.checkServer("https://onscreen.tv") } returns AuthRepository.CheckResult.Ok
+
+        val vm = PairViewModel(auth)
+        advanceUntilIdle()
+
+        assertThat(vm.state.value).isEqualTo(PairState.ServerReady())
+        assertThat(vm.knownServerUrl.value).isEqualTo("https://onscreen.tv")
+    }
+
+    @Test
+    fun `init with unreachable kept URL falls back to entry with the URL known`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.getServerUrl() } returns "https://gone.example"
+        coEvery { auth.checkServer(any()) } returns AuthRepository.CheckResult.Failed("UnknownHostException: gone.example")
+
+        val vm = PairViewModel(auth)
+        advanceUntilIdle()
+
+        assertThat(vm.state.value).isInstanceOf(PairState.Error::class.java)
+        // knownServerUrl feeds the prefill so the user edits, never retypes.
+        assertThat(vm.knownServerUrl.value).isEqualTo("https://gone.example")
+    }
+
+    @Test
+    fun `editServer returns to the entry step without forgetting the URL`() = runTest(dispatcher) {
+        val auth = mockk<AuthRepository>()
+        coEvery { auth.getServerUrl() } returns "https://onscreen.tv"
+        coEvery { auth.checkServer("https://onscreen.tv") } returns AuthRepository.CheckResult.Ok
+
+        val vm = PairViewModel(auth)
+        advanceUntilIdle()
+        vm.editServer()
+
+        assertThat(vm.state.value).isEqualTo(PairState.NeedsServer)
+        assertThat(vm.knownServerUrl.value).isEqualTo("https://onscreen.tv")
     }
 }
