@@ -37,6 +37,11 @@ import (
 type ArtworkRoot struct {
 	LibraryID uuid.UUID
 	Paths     []string
+	// IsPrivate mirrors the library's visibility flag. A private library's
+	// artwork passed a PER-USER ACL check to be served, so its response must
+	// never be marked shared-cacheable — see the PublicAssetCache handling in
+	// the /artwork route.
+	IsPrivate bool
 }
 
 // Handlers groups all handler dependencies.
@@ -203,13 +208,25 @@ func NewRouter(h *Handlers) http.Handler {
 	// Native HLS playlist + segment endpoints — auth via segment token in query param,
 	// not Bearer header, because HLS.js cannot attach arbitrary headers to segment fetches.
 	if h.NativeTranscode != nil {
-		r.Get("/api/v1/transcode/sessions/{sid}/playlist.m3u8", h.NativeTranscode.Playlist)
-		r.Get("/api/v1/transcode/sessions/{sid}/seg/{name}", h.NativeTranscode.Segment)
-		// Adaptive-bitrate: per-rung media playlist (server-predicted) +
-		// on-demand per-rung segments. The parent playlist.m3u8 above
-		// serves the master when the session is ABR.
-		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", h.NativeTranscode.ABRVariantPlaylist)
-		r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", h.NativeTranscode.ABRVariantSegment)
+		// Rate-limited despite living outside the auth groups. These four are
+		// the only delivery routes with no limiter at all, and an ABR segment
+		// fetch is not a cheap read: an out-of-range index makes
+		// ensureRungChild kill the running ffmpeg, delete its directory and
+		// dispatch a fresh job, all before the blocking wait — so a client
+		// that aborts after ~100 ms still queues the work. Keyed per-IP, since
+		// the caller's identity here is a segment token rather than a session
+		// (SessionKey falls back to IPKey anyway when no session is present).
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
+				middleware.IPKey("ratelimit:hls")))
+			r.Get("/api/v1/transcode/sessions/{sid}/playlist.m3u8", h.NativeTranscode.Playlist)
+			r.Get("/api/v1/transcode/sessions/{sid}/seg/{name}", h.NativeTranscode.Segment)
+			// Adaptive-bitrate: per-rung media playlist (server-predicted) +
+			// on-demand per-rung segments. The parent playlist.m3u8 above
+			// serves the master when the session is ABR.
+			r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", h.NativeTranscode.ABRVariantPlaylist)
+			r.Get("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", h.NativeTranscode.ABRVariantSegment)
+		})
 		// NOTE: static (pre-encoded) ABR routes are registered in the
 		// RequiredAllowQueryToken group below, NOT here. Unlike the session
 		// routes above (which self-authenticate via the segment token), the
@@ -288,29 +305,68 @@ func NewRouter(h *Handlers) http.Handler {
 						// the library; this stops a restricted profile from pulling
 						// the poster of an over-ceiling item by direct URL. Keyed by
 						// the library-relative slash path (the form stored at scan
-						// time). Fails open when the art maps to no rated item.
+						// time).
+						//
+						// FAILS CLOSED. This used to serve whenever the lookup found
+						// no row, which merged three very different cases into
+						// "allowed": an unrated item (rank 4 — the MOST restrictive
+						// everywhere else in the product), a path whose case differs
+						// from the DB copy (routine on NTFS/APFS/SMB), and extra
+						// artwork the item columns never reference (banner.jpg,
+						// clearlogo.png, extrafanart/*, which Kodi and the arr apps
+						// write as a matter of course). A capped profile could pull
+						// any of those, plus use the 200/404 split as an existence
+						// oracle over guessable directory names. The query now
+						// returns '' for an unrated owner and matches case-
+						// insensitively, so the only remaining miss is "no owning
+						// item in this library at all" — which we now also refuse
+						// for a capped caller, matching trickplay.go.
 						rated := false
 						if h.ArtworkContentRating != nil && claims != nil && claims.MaxContentRating != "" {
 							rating, found := h.ArtworkContentRating(req.Context(), root.LibraryID, filepath.ToSlash(clean))
-							rated = found
-							if found && !contentrating.IsAllowed(rating, claims.MaxContentRating) {
+							if !found {
+								// Unknown provenance under a capped profile: treat as
+								// unrated, i.e. most restrictive.
+								rating = ""
+							}
+							// Any response a ceiling was evaluated against is a
+							// per-user decision and must never be shared-cached.
+							rated = true
+							if !contentrating.IsAllowed(rating, claims.MaxContentRating) {
 								continue
 							}
 						}
+						// Shared-cacheability. A response may only be marked
+						// `public` when it is the SAME for every caller who could
+						// legitimately request it — byte-identity is not enough,
+						// entitlement-identity is what matters.
+						//
+						// Two things used to get this wrong. `rated` was a property
+						// of the CALLER (it was only ever set for a profile that has
+						// a ceiling), so for an admin or any unrestricted adult it
+						// was false even for rated art, and the reassuring comment
+						// here — "rated art stays private regardless of the toggle" —
+						// was simply untrue for the household's main accounts. And
+						// the route enforces a per-library ACL, so art from a private
+						// library is entitlement-dependent no matter what its rating
+						// is, while `Vary: Authorization` named neither credential
+						// this route actually accepts (the onscreen_at cookie or
+						// ?token=). A CDN therefore stored an admin's fetch and
+						// replayed it to a capped child, a revoked member, or an
+						// anonymous client, none of whom ever reached the origin.
+						shareable := !rated && !root.IsPrivate &&
+							h.PublicAssetCache != nil && h.PublicAssetCache()
 						// Serve resized variant if dimensions requested.
 						if (wParam > 0 || hParam > 0) && h.Artwork != nil {
 							w.Header().Set("Content-Type", "image/jpeg")
-							// Resized variants are immutable and identical for every
-							// user, so a CDN/shared cache can hold them when enabled —
-							// EXCEPT art that carries a content rating: whether a
-							// given caller may see that poster is a per-user
-							// decision, and a shared cache would happily replay an
-							// allowed user's copy to a restricted profile. Rated art
-							// stays private regardless of the toggle.
 							resizedCC := "private, max-age=604800, immutable"
-							if !rated && h.PublicAssetCache != nil && h.PublicAssetCache() {
+							if shareable {
 								resizedCC = "public, max-age=604800, immutable"
+								// Both carriers, always: a cache keyed on only one
+								// of them will happily serve a cookie-authenticated
+								// response to a token-authenticated caller.
 								w.Header().Add("Vary", "Authorization")
+								w.Header().Add("Vary", "Cookie")
 							}
 							w.Header().Set("Cache-Control", resizedCC)
 							if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
@@ -329,9 +385,10 @@ func NewRouter(h *Handlers) http.Handler {
 							return
 						}
 						fullCC := "private, max-age=86400, must-revalidate"
-						if !rated && h.PublicAssetCache != nil && h.PublicAssetCache() {
+						if shareable {
 							fullCC = "public, max-age=86400, must-revalidate"
 							w.Header().Add("Vary", "Authorization")
+							w.Header().Add("Vary", "Cookie")
 						}
 						w.Header().Set("Cache-Control", fullCC)
 						// Clear WriteTimeout — the 60 s server default
@@ -610,6 +667,11 @@ func NewRouter(h *Handlers) http.Handler {
 				// Rate-limit PIN-claim guessing (6-digit code) per session.
 				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pairclaim"))).
 					Post("/auth/pair/claim", h.Pair.Claim)
+				// Attestation read for the confirmation screen: what device
+				// asked for this PIN. Same bucket as the claim itself, since it
+				// also answers "does this PIN exist".
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pairclaim"))).
+					Get("/auth/pair/pending", h.Pair.Pending)
 			}
 
 			// Notifications.

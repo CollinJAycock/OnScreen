@@ -70,6 +70,10 @@ func (f *fakeThrottle) ResetFailures(_ context.Context, _ string)               
 // ── mock user DB ────────────────────────────────────────────────────────────
 
 type mockUserDB struct {
+	// profileIDs are the managed profiles SetContentRating must cascade its
+	// revocation to. Empty in most fixtures.
+	profileIDs []uuid.UUID
+
 	hubLayout     []byte
 	listUsersRows []gen.ListUsersRow
 	listUsersErr  error
@@ -146,6 +150,12 @@ func (m *mockUserDB) UpdateUserHubLayout(_ context.Context, arg gen.UpdateUserHu
 
 func (m *mockUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUserContentRatingParams) error {
 	return nil
+}
+
+// No managed profiles in the unit fixtures — the cascade is exercised by the
+// SetContentRating tests that need it, which set profileIDs directly.
+func (m *mockUserDB) ListManagedProfileIDs(_ context.Context, _ pgtype.UUID) ([]uuid.UUID, error) {
+	return m.profileIDs, nil
 }
 
 func (m *mockUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStreamCapsParams) error {

@@ -41,19 +41,28 @@ const countCollectionItems = `-- name: CountCollectionItems :one
 SELECT COUNT(*) FROM collection_items ci
 JOIN media_items mi ON mi.id = ci.media_item_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
-  AND ($2::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND ($2::uuid[] IS NULL
+       OR mi.library_id = ANY($2::uuid[]))
+  AND ($3::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $3::int)
 `
 
 type CountCollectionItemsParams struct {
-	CollectionID  uuid.UUID `json:"collection_id"`
-	MaxRatingRank *int32    `json:"max_rating_rank"`
+	CollectionID  uuid.UUID   `json:"collection_id"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
 }
 
 // Backs meta.total for the static collection/playlist listing so a paginating
 // client sees the real collection size, not the current page length.
+//
+// The library_ids filter must mirror ListCollectionItems exactly. Without it
+// the paged rows were correctly ACL-filtered (so the list came back empty for
+// a caller with no grant) while the count was computed over the whole
+// collection — which handed that caller the exact item count of a private
+// library's folder. NULL = admin / no filtering.
 func (q *Queries) CountCollectionItems(ctx context.Context, arg CountCollectionItemsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countCollectionItems, arg.CollectionID, arg.MaxRatingRank)
+	row := q.db.QueryRow(ctx, countCollectionItems, arg.CollectionID, arg.LibraryIds, arg.MaxRatingRank)
 	var count int64
 	err := row.Scan(&count)
 	return count, err

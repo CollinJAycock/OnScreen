@@ -16,6 +16,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 )
 
 // PairStore is the small key/value contract the pairing flow needs. Backed
@@ -40,6 +41,7 @@ const (
 	pairCodeTTL    = 10 * time.Minute // pending code lifespan
 	pairClaimTTL   = 5 * time.Minute  // window for native client to fetch tokens after claim
 	pairPINMaxTry  = 8                // how many times we retry on PIN collision before failing
+	pairPINDigits  = 6                // PIN length, as displayed on the device
 	pairKeyDev     = "pair:dev:"
 	pairKeyPIN     = "pair:pin:"
 	pairStatusOpen = "pending"
@@ -53,6 +55,28 @@ type pairRecord struct {
 	UserID     string    `json:"user_id,omitempty"`
 	DeviceName string    `json:"device_name,omitempty"`
 	ExpiresAt  time.Time `json:"expires_at"`
+	// Attestation about the device that REQUESTED the code, captured at
+	// creation from the request itself rather than supplied by the claimer.
+	//
+	// None of this was recorded, so the confirmation page had nothing true to
+	// show: the PIN is a bare number, and the only "device name" in the record
+	// came from whoever was claiming, not from the device being authorised.
+	// That made the flow trivially phishable — "OnScreen support: your Living
+	// Room TV lost its link, go to /pair and enter 481920" — with nothing on
+	// screen to contradict the story. Surfacing the requesting IP and client
+	// lets a user notice that the request came from somewhere they are not.
+	RequestIP   string    `json:"request_ip,omitempty"`
+	UserAgent   string    `json:"user_agent,omitempty"`
+	RequestedAt time.Time `json:"requested_at,omitempty"`
+}
+
+// truncate bounds an attacker-supplied header before it is persisted, so a
+// pathological User-Agent cannot bloat the pair record.
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n]
 }
 
 // PairHandler implements the device-pairing endpoints.
@@ -60,11 +84,21 @@ type PairHandler struct {
 	store  PairStore
 	issuer PairTokenIssuer
 	logger *slog.Logger
+	audit  *audit.Logger
 }
 
 // NewPairHandler constructs a PairHandler.
 func NewPairHandler(store PairStore, issuer PairTokenIssuer, logger *slog.Logger) *PairHandler {
 	return &PairHandler{store: store, issuer: issuer, logger: logger}
+}
+
+// WithAudit attaches an audit logger. Pairing mints a 30-day session — the
+// same durable credential a password login produces — and was the only such
+// path writing no audit row at all, so an operator reviewing "how did this
+// device get access" found nothing. Returns the handler for chaining.
+func (h *PairHandler) WithAudit(a *audit.Logger) *PairHandler {
+	h.audit = a
+	return h
 }
 
 // CreateCode handles POST /api/v1/auth/pair/code.
@@ -79,7 +113,13 @@ func (h *PairHandler) CreateCode(w http.ResponseWriter, r *http.Request) {
 	// Retry on PIN collision; with ~10⁶ PINs and 10-min TTL collisions are
 	// rare but not impossible on a busy server.
 	var pin string
-	rec := pairRecord{Status: pairStatusOpen, ExpiresAt: expires}
+	rec := pairRecord{
+		Status:      pairStatusOpen,
+		ExpiresAt:   expires,
+		RequestIP:   audit.ClientIP(r),
+		UserAgent:   truncate(r.UserAgent(), 200),
+		RequestedAt: time.Now(),
+	}
 	for i := 0; i < pairPINMaxTry; i++ {
 		candidate, err := randomPIN()
 		if err != nil {
@@ -195,6 +235,50 @@ func (h *PairHandler) Poll(w http.ResponseWriter, r *http.Request) {
 
 // Claim handles POST /api/v1/auth/pair/claim — authenticated user binds the
 // PIN they typed in their browser to their account, authorising the device.
+// Pending handles GET /api/v1/auth/pair/pending?pin=NNNNNN.
+//
+// Returns ONLY descriptive facts about the device that requested a pending
+// code, so the confirmation page can tell the user what they are about to
+// authorise instead of showing them a bare six-digit number. Authenticated and
+// on the same throttle as Claim, because it answers "does this PIN exist" —
+// which is not free information even though the PIN space is already
+// rate-limited.
+//
+// Deliberately returns NO token, no user id, and nothing that advances the
+// pairing: it is a read for the human in the loop.
+func (h *PairHandler) Pending(w http.ResponseWriter, r *http.Request) {
+	if middleware.ClaimsFromContext(r.Context()) == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	pin := strings.TrimSpace(r.URL.Query().Get("pin"))
+	if len(pin) != pairPINDigits {
+		respond.BadRequest(w, r, "invalid pin")
+		return
+	}
+	raw, err := h.store.Get(r.Context(), pairKeyPIN+pin)
+	if err != nil {
+		// 404 for both "no such PIN" and a store error — the caller learns
+		// nothing either way.
+		respond.NotFound(w, r)
+		return
+	}
+	var rec pairRecord
+	if jerr := json.Unmarshal([]byte(raw), &rec); jerr != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if rec.Status != pairStatusOpen || time.Now().After(rec.ExpiresAt) {
+		respond.NotFound(w, r)
+		return
+	}
+	respond.Success(w, r, map[string]any{
+		"ip":           rec.RequestIP,
+		"user_agent":   rec.UserAgent,
+		"requested_at": rec.RequestedAt,
+	})
+}
+
 func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -276,6 +360,21 @@ func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	// Drop the PIN reverse-index immediately — the code is spent, even if
 	// the device hasn't picked up its tokens yet.
 	_ = h.store.Del(r.Context(), pairKeyPIN+body.PIN)
+
+	// Audit: this authorises a 30-day session for the caller's account, which
+	// is the same durable grant a password login produces. Record who
+	// authorised it and what the requesting device looked like, so "when did
+	// this device get access, and from where" is answerable after the fact.
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionLoginSuccess, claims.UserID.String(),
+			map[string]any{
+				"method":         "device_pair",
+				"device_name":    rec.DeviceName,
+				"device_ip":      rec.RequestIP,
+				"device_agent":   rec.UserAgent,
+				"code_requested": rec.RequestedAt,
+			}, audit.ClientIP(r))
+	}
 
 	respond.Success(w, r, map[string]any{
 		"status":      rec.Status,

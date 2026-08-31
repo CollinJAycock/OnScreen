@@ -101,11 +101,79 @@ func TestTrustedRealIP_RewritesFromXFFWhenPeerIsLoopback(t *testing.T) {
 
 	req := httptest.NewRequest("GET", "/", nil)
 	req.RemoteAddr = "127.0.0.1:1234" // trusted (loopback proxy)
+	// Shape a real reverse proxy produces: the client's own value first, then
+	// each hop appended. 10.0.0.1 is our proxy; 203.0.113.5 is the client it
+	// observed. The RIGHTMOST NON-PROXY element is the answer.
 	req.Header.Set("X-Forwarded-For", "203.0.113.5, 10.0.0.1")
 	h.ServeHTTP(httptest.NewRecorder(), req)
 
 	if got != "203.0.113.5" {
-		t.Errorf("RemoteAddr after TrustedRealIP = %q, want 203.0.113.5 (first XFF)", got)
+		t.Errorf("RemoteAddr after TrustedRealIP = %q, want 203.0.113.5", got)
+	}
+}
+
+// The regression this whole right-to-left walk exists for: proxies APPEND, so
+// a client that sends its own X-Forwarded-For gets its value placed leftmost.
+// Reading the leftmost element let any caller choose its own rate-limit bucket
+// and stamp arbitrary addresses into the audit log.
+func TestTrustedRealIP_IgnoresClientSuppliedLeftmostXFF(t *testing.T) {
+	var got string
+	h := TrustedRealIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:1234" // trusted (loopback proxy)
+	// The attacker sent "1.2.3.4"; nginx appended the address it actually saw.
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, 198.51.100.9, 10.0.0.1")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got == "1.2.3.4" {
+		t.Fatal("took the client-supplied leftmost XFF element — rate-limit and audit spoofing regression")
+	}
+	if got != "198.51.100.9" {
+		t.Errorf("RemoteAddr = %q, want 198.51.100.9 (rightmost non-proxy element)", got)
+	}
+}
+
+func TestTrustedRealIP_FallsBackToXRealIPWhenEveryXFFElementIsAProxy(t *testing.T) {
+	var got string
+	h := TrustedRealIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("X-Forwarded-For", "10.0.0.2, 10.0.0.1")
+	// X-Real-IP is a REPLACING directive, so a trusted peer's value is its own
+	// observation rather than anything the client could set.
+	req.Header.Set("X-Real-IP", "203.0.113.77")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got != "203.0.113.77" {
+		t.Errorf("RemoteAddr = %q, want 203.0.113.77 (X-Real-IP fallback)", got)
+	}
+}
+
+func TestTrustedRealIP_StopsAtAMalformedXFFElement(t *testing.T) {
+	var got string
+	h := TrustedRealIP(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		got = r.RemoteAddr
+	}))
+
+	req := httptest.NewRequest("GET", "/", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	// Garbage to the right of a plausible-looking client value: positional
+	// reasoning is dead past it, so we must NOT keep walking left into the
+	// attacker-controlled part of the list.
+	req.Header.Set("X-Forwarded-For", "1.2.3.4, not-an-ip")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if got == "1.2.3.4" {
+		t.Error("walked past a malformed element into client-controlled data")
+	}
+	if got != "127.0.0.1:1234" {
+		t.Errorf("RemoteAddr = %q, want the untouched peer address", got)
 	}
 }
 

@@ -103,9 +103,41 @@ func (h *CollectionHandler) List(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	out := make([]collectionResponse, len(cols))
-	for i, c := range cols {
-		out[i] = toCollectionResponse(c)
+
+	// Library ACL. The query returns `user_id IS NULL OR user_id = $1`, and the
+	// NULL branch was written for auto_genre rows, which are server-wide and
+	// harmless. But event_folder rows are ALSO NULL-owned and they are
+	// library-scoped: the scanner creates one per top-level directory in a
+	// home_video library, named with the verbatim on-disk folder name. Serving
+	// them unfiltered handed every authenticated user the folder taxonomy of
+	// every private home-video library on the server — names people choose for
+	// footage, which frequently describe it directly. The items endpoint for
+	// the same rows has always gated on this; the list did not.
+	var allowed map[uuid.UUID]struct{}
+	if h.access != nil {
+		if claims == nil {
+			respond.Unauthorized(w, r)
+			return
+		}
+		var aerr error
+		allowed, aerr = h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+		if aerr != nil {
+			h.logger.ErrorContext(r.Context(), "collections: allowed libraries", "err", aerr)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+
+	out := make([]collectionResponse, 0, len(cols))
+	for _, c := range cols {
+		// allowed == nil means admin (or no ACL wired) → no filtering.
+		// A collection with no library_id is server-wide (auto_genre).
+		if allowed != nil && c.LibraryID.Valid {
+			if _, ok := allowed[uuid.UUID(c.LibraryID.Bytes)]; !ok {
+				continue
+			}
+		}
+		out = append(out, toCollectionResponse(c))
 	}
 	respond.Success(w, r, out)
 }
@@ -407,9 +439,13 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Position:   row.Position,
 		})
 	}
+	// Same ACL the rows above are filtered by, or meta.total reports the size
+	// of a collection the caller cannot see into — which for an event_folder
+	// collection is the clip count of a private library's folder.
 	total, _ := h.db.CountCollectionItems(r.Context(), gen.CountCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: collMaxRank,
+		LibraryIds:    allowedLibIDs,
 	})
 	respond.List(w, r, out, total, "")
 }

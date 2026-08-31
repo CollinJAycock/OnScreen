@@ -460,6 +460,9 @@ func (s *stubUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUse
 func (s *stubUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUserContentRatingParams) error {
 	return nil
 }
+func (s *stubUserDB) ListManagedProfileIDs(_ context.Context, _ pgtype.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
 func (s *stubUserDB) SetProfileInheritLibraryAccess(_ context.Context, _ gen.SetProfileInheritLibraryAccessParams) (int64, error) {
 	return 1, nil
 }

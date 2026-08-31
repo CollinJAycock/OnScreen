@@ -586,7 +586,14 @@ export const authApi = {
   resetPassword: (token: string, password: string) => api.post<{ message: string }>('/auth/reset-password', { token, password }),
   // Native client device pairing.
   claimPair: (pin: string, device_name?: string) =>
-    api.post<{ status: string; device_name: string }>('/auth/pair/claim', { pin, device_name })
+    api.post<{ status: string; device_name: string }>('/auth/pair/claim', { pin, device_name }),
+  // What the server knows about the device that requested a pending PIN, so
+  // the confirmation screen can describe what is being authorised rather than
+  // showing a bare six-digit number. Returns 404 for an unknown or spent code.
+  pendingPair: (pin: string) =>
+    api.get<{ ip?: string; user_agent?: string; requested_at?: string }>(
+      `/auth/pair/pending?pin=${encodeURIComponent(pin)}`
+    )
 };
 
 // ── Email (admin) ─────────────────────────────────────────────────────────────

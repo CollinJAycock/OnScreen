@@ -14,10 +14,11 @@ import (
 )
 
 const createSession = `-- name: CreateSession :one
-INSERT INTO sessions (user_id, token_hash, client_id, client_name, device_id, platform, ip_addr, expires_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+INSERT INTO sessions (user_id, token_hash, client_id, client_name, device_id, platform, ip_addr, expires_at, absolute_expires_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW() + interval '90 days')
 RETURNING id, user_id, token_hash, client_id, client_name, device_id, platform,
-          ip_addr, created_at, expires_at, last_seen
+          ip_addr, created_at, expires_at, last_seen, prev_token_hash,
+          absolute_expires_at
 `
 
 type CreateSessionParams struct {
@@ -31,6 +32,9 @@ type CreateSessionParams struct {
 	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
 }
 
+// absolute_expires_at anchors a hard ceiling to creation time. Rotation slides
+// expires_at forward on every refresh, so without this a continuously-refreshed
+// chain never ends.
 func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (Session, error) {
 	row := q.db.QueryRow(ctx, createSession,
 		arg.UserID,
@@ -55,6 +59,8 @@ func (q *Queries) CreateSession(ctx context.Context, arg CreateSessionParams) (S
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.LastSeen,
+		&i.PrevTokenHash,
+		&i.AbsoluteExpiresAt,
 	)
 	return i, err
 }
@@ -86,11 +92,70 @@ func (q *Queries) DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) e
 	return err
 }
 
+const getSessionByAnyTokenHash = `-- name: GetSessionByAnyTokenHash :one
+SELECT id, user_id, token_hash, client_id, client_name, device_id, platform,
+       ip_addr, created_at, expires_at, last_seen,
+       (token_hash = $1)::boolean AS is_current
+FROM sessions
+WHERE (token_hash = $1 OR prev_token_hash = $1)
+  AND expires_at > NOW()
+`
+
+type GetSessionByAnyTokenHashRow struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	TokenHash  string             `json:"token_hash"`
+	ClientID   *string            `json:"client_id"`
+	ClientName *string            `json:"client_name"`
+	DeviceID   *string            `json:"device_id"`
+	Platform   *string            `json:"platform"`
+	IpAddr     *netip.Addr        `json:"ip_addr"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+	IsCurrent  bool               `json:"is_current"`
+}
+
+// Resolves a refresh token to its session by EITHER the current hash or the
+// immediately-previous one, returning which matched.
+//
+// This is what makes reuse detection reachable. Rotation rewrites token_hash in
+// place, so a superseded token used to match nothing and die as a plain
+// "session not found" — indistinguishable from garbage, and identical to what a
+// thief's victim sees minutes after the theft. Resolving it here lets the caller
+// take the theft branch (wipe the family, bump the epoch, log it) instead of
+// returning a bare 401 and letting the attacker's chain live on.
+//
+// The absolute cap is deliberately NOT applied here: an expired-by-ceiling
+// session presenting a superseded hash is still a reuse signal worth acting on.
+func (q *Queries) GetSessionByAnyTokenHash(ctx context.Context, tokenHash string) (GetSessionByAnyTokenHashRow, error) {
+	row := q.db.QueryRow(ctx, getSessionByAnyTokenHash, tokenHash)
+	var i GetSessionByAnyTokenHashRow
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.TokenHash,
+		&i.ClientID,
+		&i.ClientName,
+		&i.DeviceID,
+		&i.Platform,
+		&i.IpAddr,
+		&i.CreatedAt,
+		&i.ExpiresAt,
+		&i.LastSeen,
+		&i.IsCurrent,
+	)
+	return i, err
+}
+
 const getSessionByTokenHash = `-- name: GetSessionByTokenHash :one
 SELECT id, user_id, token_hash, client_id, client_name, device_id, platform,
-       ip_addr, created_at, expires_at, last_seen
+       ip_addr, created_at, expires_at, last_seen, prev_token_hash,
+       absolute_expires_at
 FROM sessions
-WHERE token_hash = $1 AND expires_at > NOW()
+WHERE token_hash = $1
+  AND expires_at > NOW()
+  AND (absolute_expires_at IS NULL OR absolute_expires_at > NOW())
 `
 
 func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash string) (Session, error) {
@@ -108,6 +173,8 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash string) (
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.LastSeen,
+		&i.PrevTokenHash,
+		&i.AbsoluteExpiresAt,
 	)
 	return i, err
 }
@@ -121,15 +188,29 @@ ORDER BY last_seen DESC
 LIMIT 1000
 `
 
-func (q *Queries) ListUserSessions(ctx context.Context, userID uuid.UUID) ([]Session, error) {
+type ListUserSessionsRow struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	TokenHash  string             `json:"token_hash"`
+	ClientID   *string            `json:"client_id"`
+	ClientName *string            `json:"client_name"`
+	DeviceID   *string            `json:"device_id"`
+	Platform   *string            `json:"platform"`
+	IpAddr     *netip.Addr        `json:"ip_addr"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+}
+
+func (q *Queries) ListUserSessions(ctx context.Context, userID uuid.UUID) ([]ListUserSessionsRow, error) {
 	rows, err := q.db.Query(ctx, listUserSessions, userID)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Session{}
+	items := []ListUserSessionsRow{}
 	for rows.Next() {
-		var i Session
+		var i ListUserSessionsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.UserID,
@@ -160,7 +241,8 @@ SET token_hash = $2,
     last_seen  = NOW()
 WHERE id = $1
 RETURNING id, user_id, token_hash, client_id, client_name, device_id, platform,
-          ip_addr, created_at, expires_at, last_seen
+          ip_addr, created_at, expires_at, last_seen, prev_token_hash,
+          absolute_expires_at
 `
 
 type RotateSessionParams struct {
@@ -184,15 +266,18 @@ func (q *Queries) RotateSession(ctx context.Context, arg RotateSessionParams) (S
 		&i.CreatedAt,
 		&i.ExpiresAt,
 		&i.LastSeen,
+		&i.PrevTokenHash,
+		&i.AbsoluteExpiresAt,
 	)
 	return i, err
 }
 
 const rotateSessionConditional = `-- name: RotateSessionConditional :execrows
 UPDATE sessions
-SET token_hash = $2,
-    expires_at = $3,
-    last_seen  = NOW()
+SET token_hash      = $2,
+    prev_token_hash = token_hash,
+    expires_at      = LEAST($3, COALESCE(absolute_expires_at, $3)),
+    last_seen       = NOW()
 WHERE id = $1 AND token_hash = $4
 `
 
@@ -209,6 +294,8 @@ type RotateSessionConditionalParams struct {
 // match, somebody else has already rotated the token (i.e. a thief
 // used it before the legitimate client could), and the row count is 0.
 // The caller then invalidates the entire session family for the user.
+// prev_token_hash records the hash being retired so a later presentation of it
+// is recognisable as reuse rather than as an unknown token.
 func (q *Queries) RotateSessionConditional(ctx context.Context, arg RotateSessionConditionalParams) (int64, error) {
 	result, err := q.db.Exec(ctx, rotateSessionConditional,
 		arg.ID,

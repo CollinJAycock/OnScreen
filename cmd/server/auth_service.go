@@ -34,6 +34,10 @@ type authQuerier interface {
 	GrantAutoLibrariesToUser(ctx context.Context, userID uuid.UUID) error
 	CreateSession(ctx context.Context, arg gen.CreateSessionParams) (gen.Session, error)
 	GetSessionByTokenHash(ctx context.Context, tokenHash string) (gen.Session, error)
+	// Matches the current OR the immediately-previous hash, so a superseded
+	// refresh token resolves to its session instead of looking like garbage.
+	// That is what makes reuse detection reachable — see Refresh.
+	GetSessionByAnyTokenHash(ctx context.Context, tokenHash string) (gen.GetSessionByAnyTokenHashRow, error)
 	RotateSession(ctx context.Context, arg gen.RotateSessionParams) (gen.Session, error)
 	// RotateSessionConditional is the compare-and-swap rotation used by
 	// refresh-token reuse detection. Returns the rows affected (1 = ok,
@@ -276,10 +280,35 @@ func (s *authService) LoginLocal(ctx context.Context, username, password string)
 
 func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.TokenPair, error) {
 	hash := auth.HashToken(refreshToken)
-	session, err := s.db.GetSessionByTokenHash(ctx, hash)
+	// Resolve by the current hash OR the immediately-previous one. Rotation
+	// rewrites token_hash in place, so a SUPERSEDED token used to match no row
+	// and exit here as a plain "not found" — which is exactly what the real
+	// theft case looks like: the attacker refreshes first, and the victim's
+	// client presents the retired token minutes later. That path returned a
+	// bare 401 and left the attacker's chain untouched, so the compromise was
+	// both permanent and invisible. Matching the previous hash is what makes
+	// the theft branch below reachable outside a sub-millisecond race.
+	found, err := s.db.GetSessionByAnyTokenHash(ctx, hash)
 	if err != nil {
 		return nil, fmt.Errorf("refresh: session not found or expired")
 	}
+	if !found.IsCurrent {
+		// A retired token was presented. The legitimate client always holds
+		// the newest one, so this is reuse: burn the family exactly as the
+		// CAS-miss branch below does.
+		s.logger.WarnContext(ctx, "refresh token reuse detected (superseded hash presented); invalidating session family",
+			"user_id", found.UserID, "session_id", found.ID)
+		if derr := s.db.DeleteSessionsForUser(ctx, found.UserID); derr != nil {
+			s.logger.ErrorContext(ctx, "refresh reuse: failed to delete session family; thief may retain refresh access",
+				"user_id", found.UserID, "err", derr)
+		}
+		if berr := s.db.BumpSessionEpoch(ctx, found.UserID); berr != nil {
+			s.logger.ErrorContext(ctx, "refresh reuse: failed to bump session epoch; outstanding access tokens not invalidated",
+				"user_id", found.UserID, "err", berr)
+		}
+		return nil, fmt.Errorf("refresh: token already used; session invalidated")
+	}
+	session := found
 	user, err := s.db.GetUser(ctx, session.UserID)
 	if err != nil {
 		return nil, fmt.Errorf("refresh: get user: %w", err)

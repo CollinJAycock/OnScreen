@@ -48,6 +48,16 @@ func abrChildLock(childID string) *sync.Mutex {
 	return mu.(*sync.Mutex)
 }
 
+// abrLastRestart stamps the last FORCED restart per child ID, so a client
+// cannot span-kill encodes by alternating segment indices. Cleared alongside
+// the child's lock in abrForget.
+var abrLastRestart sync.Map // childID -> time.Time
+
+// abrMinRestartInterval floors the gap between forced restarts of one child.
+// Comfortably above human scrub cadence and far below the cost of an encode
+// respawn, so legitimate seeking never notices it.
+const abrMinRestartInterval = 2 * time.Second
+
 // startABR creates an ABR parent session (no ffmpeg) and responds with
 // the master playlist URL. Called from Start when ABR is enabled, the
 // decision is a full re-encode, and the source has a usable ladder.
@@ -182,8 +192,7 @@ func (h *NativeTranscodeHandler) ABRVariantPlaylist(w http.ResponseWriter, r *ht
 	rungLabel := chi.URLParam(r, "rung")
 	token := r.URL.Query().Get("token")
 
-	if !h.abrTokenOK(ctx, token, sessionID) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !h.authorizeSegmentToken(w, r, token, sessionID) {
 		return
 	}
 	sess, err := h.sessions.Get(ctx, sessionID)
@@ -240,6 +249,35 @@ func abrSegmentBoundarySec(segIdx int, fps float64) float64 {
 // will actually cut (see abrSegmentBoundarySec); the last segment carries the
 // remainder. Segment URIs are global indices the segment handler maps to
 // on-demand transcode offsets.
+// predictedSegmentCount returns how many segments the predicted variant
+// playlist advertises for this session, i.e. the exclusive upper bound on a
+// legitimate global segment index. Returns 0 when the duration is unknown, in
+// which case the caller must not bound (a 0 duration is a probe failure, not
+// an empty file, and refusing everything would break playback).
+//
+// Shares abrSegmentBoundarySec with buildPredictedVariantPlaylist so the
+// ceiling can never drift from the playlist the client was handed.
+func predictedSegmentCount(sess *transcode.Session) int {
+	if sess == nil || sess.DurationMS <= 0 {
+		return 0
+	}
+	total := float64(sess.DurationMS) / 1000.0
+	for i := 0; ; i++ {
+		start := abrSegmentBoundarySec(i, sess.FrameRate)
+		if i > 0 && start >= total {
+			return i
+		}
+		// Hard stop so a nonsense duration can't spin here.
+		if i > maxPredictedSegments {
+			return i
+		}
+	}
+}
+
+// maxPredictedSegments bounds the loop above: at the 4 s segment duration this
+// is well over 24 hours of content, far past any real media file.
+const maxPredictedSegments = 50_000
+
 func buildPredictedVariantPlaylist(durationMS int64, fps float64, sid, rung, token string, fmp4 bool, baseURL string) string {
 	segDur := transcode.SegmentDuration
 	total := float64(durationMS) / 1000.0
@@ -289,8 +327,7 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	name := filepath.Base(chi.URLParam(r, "name"))
 	token := r.URL.Query().Get("token")
 
-	if !h.abrTokenOK(ctx, token, sessionID) {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !h.authorizeSegmentToken(w, r, token, sessionID) {
 		return
 	}
 	parent, err := h.sessions.Get(ctx, sessionID)
@@ -338,6 +375,19 @@ func (h *NativeTranscodeHandler) ABRVariantSegment(w http.ResponseWriter, r *htt
 	globalSeg, err := strconv.Atoi(strings.TrimSuffix(name, ext))
 	if err != nil || globalSeg < 0 {
 		http.Error(w, "bad segment", http.StatusBadRequest)
+		return
+	}
+	// Reject indices past the end of the media. Any non-negative integer used
+	// to be accepted, and an unreachable one is not a cheap 404 — it routes
+	// straight into the forced-restart branch below, which kills the running
+	// ffmpeg, wipes its directory and dispatches a new job. Alternating an
+	// in-range and an out-of-range index therefore span-killed encodes at
+	// whatever rate the client could issue requests, across every rung label
+	// (separate mutexes) and every permitted parent session. The predicted
+	// playlist length is already computed for the variant playlist; reuse it
+	// as the ceiling so a bogus index costs a 404 instead of a respawn.
+	if total := predictedSegmentCount(parent); total > 0 && globalSeg >= total {
+		http.Error(w, "segment out of range", http.StatusNotFound)
 		return
 	}
 
@@ -566,6 +616,27 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 	if child != nil && !forceRestart && globalSeg >= child.StartSeg {
 		return // existing child covers this point (forward-sequential)
 	}
+	// Minimum interval between FORCED restarts of the same child.
+	//
+	// A restart is expensive and destructive — kill ffmpeg, os.RemoveAll the
+	// directory, dispatch a fresh job — and it happens before the blocking
+	// wait, so a client that disconnects immediately still pays the server the
+	// full cost. Without a floor, alternating segment requests span-killed
+	// encodes as fast as HTTP allowed, and the queued jobs outlived the
+	// attacker. A seek-happy player reaches this non-maliciously too.
+	//
+	// Held under the same per-child mutex as the restart itself, so the check
+	// and the stamp cannot race. Legitimate seeking is unaffected: a human
+	// cannot scrub faster than this, and a rejected restart simply serves from
+	// the existing child (possibly with a longer wait) rather than erroring.
+	if forceRestart && child != nil {
+		if last, ok := abrLastRestart.Load(childID); ok {
+			if t, _ := last.(time.Time); time.Since(t) < abrMinRestartInterval {
+				return
+			}
+		}
+		abrLastRestart.Store(childID, time.Now())
+	}
 	startSeg := globalSeg
 	if startSeg == abrAnySeg {
 		startSeg = 0
@@ -699,6 +770,7 @@ func (h *NativeTranscodeHandler) cleanupRungChildren(ctx context.Context, parent
 		// served. This is the natural reap point: the child session is being
 		// torn down, so nothing can be waiting on its lock.
 		abrChildLocks.Delete(childID)
+		abrLastRestart.Delete(childID)
 		go func(d string) { time.Sleep(30 * time.Second); _ = os.RemoveAll(d) }(dir)
 	}
 }
@@ -712,11 +784,16 @@ func (h *NativeTranscodeHandler) cleanupRungChildren(ctx context.Context, parent
 // beacon-stopped ABR playback leaked one mutex per rung forever.
 func releaseABRChildLocks(parent *transcode.Session) {
 	for _, rd := range parent.ABRRenditions {
-		abrChildLocks.Delete(abrChildID(parent.ID, rd.Label))
+		childID := abrChildID(parent.ID, rd.Label)
+		abrChildLocks.Delete(childID)
+		abrLastRestart.Delete(childID)
 	}
 }
 
-// abrTokenOK validates the segment token is bound to this session.
+// abrTokenOK validates the segment token is bound to this session, WITHOUT
+// the parental gate or usage accrual. Only for internal checks that are not a
+// delivery path; request handlers must use authorizeSegmentToken so no live
+// entry point can exist without the gate.
 func (h *NativeTranscodeHandler) abrTokenOK(ctx context.Context, token, sessionID string) bool {
 	tokSession, _, err := h.segToken.Validate(ctx, token)
 	return err == nil && tokSession == sessionID

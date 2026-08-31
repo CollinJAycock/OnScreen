@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -21,6 +22,12 @@ import (
 // ── mock PasswordResetDB ─────────────────────────────────────────────────────
 
 type mockPasswordResetDB struct {
+	// mu guards the *Called flags. ForgotPassword now does its token
+	// creation + SMTP send on a detached goroutine (the synchronous version
+	// leaked account existence through response latency), so the test
+	// goroutine and the handler's goroutine touch these concurrently.
+	mu sync.Mutex
+
 	// GetUserByEmail
 	user    PRUser
 	userErr error
@@ -63,7 +70,9 @@ func (m *mockPasswordResetDB) GetUserByEmail(_ context.Context, _ *string) (PRUs
 }
 
 func (m *mockPasswordResetDB) CreateResetToken(_ context.Context, _ uuid.UUID, _ string, _ time.Time) error {
+	m.mu.Lock()
 	m.createTokenCalled = true
+	m.mu.Unlock()
 	return m.createTokenErr
 }
 
@@ -162,6 +171,26 @@ func decodeData(t *testing.T, rec *httptest.ResponseRecorder) dataEnvelope {
 
 // ── ForgotPassword ───────────────────────────────────────────────────────────
 
+// tokenCreated reads the flag under the lock.
+func (m *mockPasswordResetDB) tokenCreated() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createTokenCalled
+}
+
+// waitTokenCreated polls for the detached send path to reach CreateResetToken.
+// Returns false if it never does within the budget.
+func (m *mockPasswordResetDB) waitTokenCreated(d time.Duration) bool {
+	deadline := time.Now().Add(d)
+	for time.Now().Before(deadline) {
+		if m.tokenCreated() {
+			return true
+		}
+		time.Sleep(2 * time.Millisecond)
+	}
+	return false
+}
+
 func TestForgotPassword_Success(t *testing.T) {
 	uid := uuid.New()
 	e := "alice@example.com"
@@ -185,7 +214,9 @@ func TestForgotPassword_Success(t *testing.T) {
 	if !strings.Contains(msg, "If an account") {
 		t.Errorf("unexpected message: %q", msg)
 	}
-	if !db.createTokenCalled {
+	// Async now: the response is written before the work starts, so that the
+	// reply latency is identical for a known and an unknown address.
+	if !db.waitTokenCreated(2 * time.Second) {
 		t.Error("expected CreateResetToken to be called")
 	}
 }
@@ -212,7 +243,8 @@ func TestForgotPassword_UserNotFound(t *testing.T) {
 	if !strings.Contains(msg, "If an account") {
 		t.Errorf("unexpected message: %q", msg)
 	}
-	if db.createTokenCalled {
+	time.Sleep(50 * time.Millisecond) // let any detached send goroutine run
+	if db.tokenCreated() {
 		t.Error("CreateResetToken should not be called when user not found")
 	}
 }
@@ -237,7 +269,8 @@ func TestForgotPassword_SMTPNotConfigured(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusOK)
 	}
-	if db.createTokenCalled {
+	time.Sleep(50 * time.Millisecond) // let any detached send goroutine run
+	if db.tokenCreated() {
 		t.Error("CreateResetToken should NOT be called when SMTP disabled")
 	}
 }

@@ -474,6 +474,13 @@ func pollOCRJob(t *testing.T, h *SubtitleHandler, itemID uuid.UUID, jobID string
 	return ocrJobJSON{}
 }
 
+
+// pgsStreamsJSON is a PGS (image-based) subtitle stream at index 2 — the index
+// the OCR tests request. OCR now refuses a stream that does not exist or is
+// not image-based, matching the two other entry points into the same pipeline;
+// without a matching stream in the fixture the handler correctly 404s.
+var pgsStreamsJSON = []byte(`[{"index":2,"codec":"hdmv_pgs_subtitle","language":"eng","forced":false,"sdh":false}]`)
+
 func TestSubtitles_OCR_AcceptsAndCompletes(t *testing.T) {
 	itemID := uuid.New()
 	fileID := uuid.New()
@@ -488,7 +495,7 @@ func TestSubtitles_OCR_AcceptsAndCompletes(t *testing.T) {
 	}
 	mm := &mockSubsMedia{
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie", Title: "X"}},
-		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/movies/x.mkv"}}},
+		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/movies/x.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
 	h := NewSubtitleHandler(svc, mm, slog.Default())
 
@@ -553,7 +560,7 @@ func TestSubtitles_OCR_NotConfiguredJobFails(t *testing.T) {
 	svc := &mockSubtitleService{ocrErr: subtitles.ErrNoOCR}
 	mm := &mockSubsMedia{
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
-		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv"}}},
+		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
 	h := NewSubtitleHandler(svc, mm, slog.Default())
 
@@ -590,7 +597,7 @@ func TestSubtitles_OCR_EngineErrorJobFails(t *testing.T) {
 	svc := &mockSubtitleService{ocrErr: errors.New("tesseract crashed")}
 	mm := &mockSubsMedia{
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
-		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv"}}},
+		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
 	h := NewSubtitleHandler(svc, mm, slog.Default())
 
@@ -642,7 +649,7 @@ func TestSubtitles_OCRStatus_LibraryAccessDenied(t *testing.T) {
 	svc := &mockSubtitleService{ocrRow: gen.ExternalSubtitle{ID: uuid.New(), FileID: fileID}}
 	mm := &mockSubsMedia{
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
-		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv"}}},
+		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
 	// Allow access only to a *different* library — POST should be 403.
 	h := NewSubtitleHandler(svc, mm, slog.Default()).
@@ -740,7 +747,7 @@ func TestSubtitles_OCR_LibraryAccessDeniedReturns404(t *testing.T) {
 	svc := &mockSubtitleService{}
 	mm := &mockSubsMedia{
 		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
-		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv"}}},
+		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID, FilePath: "/m.mkv", SubtitleStreams: pgsStreamsJSON}}},
 	}
 	acc := &mockAccess{allow: map[uuid.UUID]struct{}{}}
 	h := NewSubtitleHandler(svc, mm, slog.Default()).WithLibraryAccess(acc)

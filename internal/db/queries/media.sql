@@ -402,14 +402,24 @@ LIMIT $3 OFFSET $4;
 -- Returns the (id, library_id, tmdb_id) for every top-level media item that
 -- matches one of the supplied TMDB IDs for the given type. Used by Discover
 -- to mark search results as already-in-library in a single round-trip rather
--- than per-result. Library scope is library-agnostic — Discover surfaces
--- "available somewhere" regardless of which specific library the title is in.
+-- than per-result.
+--
+-- Scoped to what the CALLER can see. It used to be deliberately
+-- library-agnostic — "available somewhere" — but "somewhere" included
+-- libraries the caller has no grant on and titles above their rating ceiling,
+-- so the in_library flag was a one-bit existence oracle per TMDB title that no
+-- other endpoint would answer. Every sibling listing injects both predicates;
+-- this one now does too. NULL on either arg = admin / unrestricted.
 SELECT id, library_id, tmdb_id
 FROM media_items
 WHERE type = $1
   AND tmdb_id = ANY(sqlc.arg('tmdb_ids')::int[])
   AND parent_id IS NULL
-  AND deleted_at IS NULL;
+  AND deleted_at IS NULL
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int);
 
 -- name: ListMediaItemsMissingArt :many
 -- Returns top-level items (movies + shows) that have no poster so the
@@ -1653,12 +1663,25 @@ LIMIT 1;
 -- per-user content-rating ceiling so a restricted profile with library access
 -- can't pull an over-ceiling item's poster by direct URL. Scoped to the owning
 -- library so a path that collides across libraries can't cross-match.
-SELECT content_rating
+--
+-- Returns a row (with a NULL/'' rating) whenever the path belongs to a known
+-- item, so the caller can distinguish "unrated item" from "no owning item".
+-- `AND content_rating IS NOT NULL` used to be here and made those two cases
+-- indistinguishable, which the route then treated as permission to serve —
+-- the opposite of every other surface, where content_rating_rank(NULL) is 4,
+-- the MOST restrictive. An unrated title's poster was therefore served to a
+-- profile that could not see the title anywhere else.
+--
+-- Comparison is case-insensitive on the path: the filesystem check upstream
+-- runs on the real volume, and on NTFS/APFS/SMB (the common self-hosted
+-- shapes) `POSTER.JPG` opens the file that is stored as `poster.jpg`. An
+-- exact `=` therefore missed, returned no row, and failed open — even for a
+-- correctly rated item.
+SELECT COALESCE(content_rating, '')::text AS content_rating
 FROM media_items
 WHERE library_id = sqlc.arg(library_id)
   AND deleted_at IS NULL
-  AND content_rating IS NOT NULL
-  AND (poster_path = sqlc.arg(art_path)
-       OR fanart_path = sqlc.arg(art_path)
-       OR thumb_path = sqlc.arg(art_path))
+  AND (lower(poster_path) = lower(sqlc.arg(art_path))
+       OR lower(fanart_path) = lower(sqlc.arg(art_path))
+       OR lower(thumb_path) = lower(sqlc.arg(art_path)))
 LIMIT 1;

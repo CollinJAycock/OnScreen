@@ -32,6 +32,7 @@ import (
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/transcode"
+	"github.com/onscreen/onscreen/internal/valkey"
 )
 
 // workerClient is shared across all segment/playlist proxy requests to the
@@ -79,11 +80,16 @@ type NativeTranscodeHandler struct {
 	media      NativeTranscodeMediaService
 	access     LibraryAccessChecker
 	watchLimit ItemWatchLimit // optional; when set, Start blocks playback that's outside allowed hours / past the daily cap
-	audit      *audit.Logger
-	cfg        *config.Config
-	logger     *slog.Logger
-	killer     SessionKiller        // optional — set for embedded worker deployments
-	userCaps   UserStreamCapsReader // optional — per-user admin concurrent/bitrate caps
+	// accruer charges watch-limit usage from segment fetches. Live HLS has no
+	// progress beacon it can rely on — a client can simply not send one — so
+	// the segment fetch itself is the accounting signal, exactly as it is the
+	// liveness signal for TouchActivity.
+	accruer  *usageAccruer
+	audit    *audit.Logger
+	cfg      *config.Config
+	logger   *slog.Logger
+	killer   SessionKiller        // optional — set for embedded worker deployments
+	userCaps UserStreamCapsReader // optional — per-user admin concurrent/bitrate caps
 	// tokens mints the per-file stream token embedded in a job's SourceURL
 	// so a remote worker without shared storage can pull the source over
 	// HTTP. Optional — when nil, jobs carry no SourceURL and workers must
@@ -163,6 +169,10 @@ func (h *NativeTranscodeHandler) WithAudit(a *audit.Logger) *NativeTranscodeHand
 // gate now runs on rung playlists and segments, which are hot.
 func (h *NativeTranscodeHandler) WithWatchLimit(wl ItemWatchLimit) *NativeTranscodeHandler {
 	h.watchLimit = newWatchLimitMemo(wl)
+	// Accrue against the UNMEMOISED store: the memo exists to make the
+	// read-side gate cheap on hot routes, but writes must not be deduped or
+	// the daily counter would under-count.
+	h.accruer = newUsageAccruer(wl)
 	return h
 }
 
@@ -1196,15 +1206,10 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	sessionID := chi.URLParam(r, "sid")
 	token := r.URL.Query().Get("token")
 
-	tokSession, _, err := h.segToken.Validate(ctx, token)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	// Bind the token to the requested session — otherwise a token issued for
-	// session A would let the holder fetch any other session's playlist.
-	if tokSession != sessionID {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	// Binds the token to the requested session (otherwise a token issued for
+	// session A would let the holder fetch any other session's playlist) AND
+	// applies the parental gate + usage accrual.
+	if !h.authorizeSegmentToken(w, r, token, sessionID) {
 		return
 	}
 
@@ -1227,9 +1232,21 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	var workerAddr string
 	deadline := time.Now().Add(60 * time.Second)
 	for time.Now().Before(deadline) {
-		if sess, err := h.sessions.Get(ctx, sessionID); err == nil && sess.WorkerAddr != "" {
+		sess, err := h.sessions.Get(ctx, sessionID)
+		if err == nil && sess.WorkerAddr != "" {
 			workerAddr = sess.WorkerAddr
 			break
+		}
+		// A MISSING session will never gain a worker address, so waiting the
+		// full 60 s is pure cost: it used to run ~600 Valkey GETs and hold the
+		// request open for the entire write timeout. That state is reachable
+		// on demand — the progress-beacon stop path deletes the session while
+		// its segment token stays valid — which made this the one handler that
+		// could pin a request with unbounded concurrency. Fail fast; a session
+		// that genuinely has not been created yet returns a different error.
+		if errors.Is(err, valkey.ErrNotFound) {
+			http.Error(w, "session not found", http.StatusNotFound)
+			return
 		}
 		select {
 		case <-ctx.Done():
@@ -1317,6 +1334,43 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	_, _ = w.Write(rewritten)
 }
 
+// authorizeSegmentToken validates a segment token against the session it must
+// be bound to, then applies the parental watch-limit gate and accrues usage
+// for the owning user. Returns false having written the response on failure.
+//
+// EVERY live-delivery entry point must go through this. The gate used to run
+// only in Start, and the live playlist/segment handlers threw away the userID
+// Validate hands back — so live HLS was the one playback path with neither a
+// gate nor accrual, while direct play, download, live TV and static ABR all
+// had both. Two consequences, and the second is the worse one: a session begun
+// inside the allowed window kept serving segments indefinitely after it
+// closed (each fetch also stamping TouchActivity, so the idle reaper never
+// fired), and because nothing ever accrued, the daily-minutes budget sat at
+// zero forever — so it was never reached on any later day either. The comment
+// on the direct-play gate puts it best: a control a client can decline to
+// trigger is not a control.
+//
+// The per-request cost is bounded by the same short-TTL read memo the store is
+// wrapped in (newWatchLimitMemo), which is what made gating the hot static
+// rung routes acceptable there.
+func (h *NativeTranscodeHandler) authorizeSegmentToken(
+	w http.ResponseWriter, r *http.Request, token, sessionID string,
+) bool {
+	ctx := r.Context()
+	tokSession, userID, err := h.segToken.Validate(ctx, token)
+	if err != nil || tokSession != sessionID {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return false
+	}
+	if watchLimitBlocks(w, r, h.watchLimit, h.logger, userID) {
+		return false
+	}
+	if h.accruer != nil {
+		h.accruer.Tick(ctx, h.logger, userID)
+	}
+	return true
+}
+
 // Segment handles GET /api/v1/transcode/sessions/{sid}/seg/{name}.
 func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -1324,13 +1378,7 @@ func (h *NativeTranscodeHandler) Segment(w http.ResponseWriter, r *http.Request)
 	segName := chi.URLParam(r, "name")
 	token := r.URL.Query().Get("token")
 
-	tokSession, _, err := h.segToken.Validate(ctx, token)
-	if err != nil {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
-		return
-	}
-	if tokSession != sessionID {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	if !h.authorizeSegmentToken(w, r, token, sessionID) {
 		return
 	}
 

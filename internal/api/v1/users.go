@@ -72,6 +72,9 @@ type UserDB interface {
 	UpdateUserHubLayout(ctx context.Context, arg gen.UpdateUserHubLayoutParams) error
 	UpdateUserQualityProfile(ctx context.Context, arg gen.UpdateUserQualityProfileParams) error
 	UpdateUserContentRating(ctx context.Context, arg gen.UpdateUserContentRatingParams) error
+	// ListManagedProfileIDs backs the revocation cascade that must accompany
+	// the content-rating cascade — see SetContentRating.
+	ListManagedProfileIDs(ctx context.Context, parentUserID pgtype.UUID) ([]uuid.UUID, error)
 	UpdateUserStreamCaps(ctx context.Context, arg gen.UpdateUserStreamCapsParams) error
 	GetUserStreamCaps(ctx context.Context, id uuid.UUID) (gen.GetUserStreamCapsRow, error)
 	SetProfileInheritLibraryAccess(ctx context.Context, arg gen.SetProfileInheritLibraryAccessParams) (int64, error)
@@ -775,6 +778,16 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "username is required")
 		return
 	}
+	// Same username rule registration enforces. This endpoint accepted any
+	// string the UNIQUE constraint would take, which let a caller mint a
+	// profile shaped like anything at all — including a directory principal's
+	// name, which mattered while federated login could adopt a profile row.
+	// That door is closed in isStubUser now; this keeps the namespace sane and
+	// stops the two creation paths from disagreeing about what a username is.
+	if !usernameRe.MatchString(body.Username) {
+		respond.BadRequest(w, r, "username must be 2-32 letters, numbers, or underscores")
+		return
+	}
 
 	// Determine the owning user: admin may specify any user; regular users always own the profile themselves.
 	ownerID := claims.UserID
@@ -1328,6 +1341,34 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(r.Context(), "revoke segment tokens after content-rating change",
 				"target_id", targetID, "err", err)
 		}
+	}
+	// The UPDATE above cascades to managed profiles, so the revocation has to
+	// as well — otherwise a child whose ceiling just tightened keeps a live
+	// session and 24 h asset tokens carrying the OLD, looser value, which is
+	// precisely the escape the cascade was added to close. Best-effort per
+	// child: a failure here leaves that profile on stale claims until its
+	// tokens expire, which is worth a log but not worth failing the admin's
+	// request after the parent has already been revoked.
+	if kids, kerr := h.db.ListManagedProfileIDs(r.Context(), pgtype.UUID{Bytes: [16]byte(targetID), Valid: true}); kerr == nil {
+		for _, kid := range kids {
+			if err := h.db.BumpSessionEpoch(r.Context(), kid); err != nil && h.logger != nil {
+				h.logger.ErrorContext(r.Context(), "bump session epoch for managed profile after content-rating change",
+					"profile_id", kid, "err", err)
+			}
+			if err := h.db.DeleteSessionsForUser(r.Context(), kid); err != nil && h.logger != nil {
+				h.logger.ErrorContext(r.Context(), "delete sessions for managed profile after content-rating change",
+					"profile_id", kid, "err", err)
+			}
+			if h.segTokens != nil {
+				if err := h.segTokens.RevokeAllForUser(r.Context(), kid); err != nil && h.logger != nil {
+					h.logger.WarnContext(r.Context(), "revoke segment tokens for managed profile after content-rating change",
+						"profile_id", kid, "err", err)
+				}
+			}
+		}
+	} else if h.logger != nil {
+		h.logger.ErrorContext(r.Context(), "list managed profiles after content-rating change; their tokens not revoked",
+			"target_id", targetID, "err", kerr)
 	}
 	if h.audit != nil {
 		rating := "none"

@@ -29,13 +29,38 @@ type Store struct {
 // NewStore builds a Store over the read-write pool.
 func NewStore(db *pgxpool.Pool) *Store { return &Store{db: db} }
 
+// effectiveOwnerSQL resolves the id whose watch-limit policy and usage budget
+// apply to a given user: the user itself when it has a policy row of its own,
+// otherwise its parent when it is a managed profile, otherwise itself.
+//
+// Creating a managed profile is open to every authenticated user, and the
+// INSERT copies max_content_rating but NOT the watch limit — which lives in a
+// separate table with no row for the new profile. Every gate short-circuits on
+// an unrestricted policy, so a child with a 60-minute cap could create a
+// second profile, PIN-switch into it, and watch without limit. Nothing
+// cascades: there are no triggers in the schema.
+//
+// Resolving here rather than copying at INSERT keeps the child correct when
+// the parent's policy changes later, and — because usage keys off the same
+// expression — makes the household share ONE budget instead of one per
+// profile. An admin who wants a child on its own budget sets a policy on the
+// child, which gives it a row and makes it its own effective owner. Mirrors
+// the effective-owner CASE the library ACL already uses.
+const effectiveOwnerSQL = `
+	SELECT CASE
+	    WHEN EXISTS (SELECT 1 FROM user_watch_limit wl WHERE wl.user_id = u.id) THEN u.id
+	    WHEN u.parent_user_id IS NOT NULL THEN u.parent_user_id
+	    ELSE u.id
+	END
+	FROM users u WHERE u.id = `
+
 // GetPolicy returns the user's policy. A missing row is the unrestricted zero
 // value, not an error.
 func (s *Store) GetPolicy(ctx context.Context, userID uuid.UUID) (Policy, error) {
 	var p Policy
 	err := s.db.QueryRow(ctx,
 		`SELECT daily_limit_minutes, allowed_start_minute, allowed_end_minute
-		   FROM user_watch_limit WHERE user_id = $1`, userID).
+		   FROM user_watch_limit WHERE user_id = (`+effectiveOwnerSQL+`$1)`, userID).
 		Scan(&p.DailyLimitMinutes, &p.AllowedStartMinute, &p.AllowedEndMinute)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -70,8 +95,11 @@ func (s *Store) SetPolicy(ctx context.Context, userID uuid.UUID, p Policy) error
 // local day. A missing row is 0.
 func (s *Store) TodayUsageSeconds(ctx context.Context, userID uuid.UUID, day time.Time) (int, error) {
 	var sec int
+	// Same effective owner as GetPolicy, so a household shares one daily
+	// budget and a user cannot mint a fresh allowance per profile.
 	err := s.db.QueryRow(ctx,
-		`SELECT watched_seconds FROM user_watch_usage WHERE user_id = $1 AND day = $2`,
+		`SELECT watched_seconds FROM user_watch_usage
+		  WHERE user_id = (`+effectiveOwnerSQL+`$1) AND day = $2`,
 		userID, day).Scan(&sec)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {

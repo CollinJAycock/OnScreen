@@ -79,6 +79,17 @@ func (m *SegmentTokenManager) Validate(ctx context.Context, token string) (sessi
 		return "", uuid.UUID{}, fmt.Errorf("decode seg token: %w", err)
 	}
 	_ = m.v.Expire(ctx, segTokenKey(token), segTokenTTL)
+	// Refresh the OWNING INDEX on the same beat as the token itself.
+	//
+	// Issue gives the index a one-shot TTL while this function refreshed only
+	// the token key, so on any stream that outlived segTokenTTL the index
+	// expired out from under a token that was still perfectly valid. That made
+	// RevokeAllForUser silently useless: SMembers on a missing key returns an
+	// empty slice and a nil error, so every caller — password reset, admin
+	// demote, content-rating tighten — got "success" having revoked nothing,
+	// and the orphaned token kept streaming. The index has to live at least as
+	// long as the tokens it indexes.
+	_ = m.v.Expire(ctx, userIndexKey(data.UserID), segTokenTTL)
 	return data.SessionID, data.UserID, nil
 }
 

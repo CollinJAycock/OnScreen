@@ -636,7 +636,7 @@ type smtpSettingDTO struct {
 func toSMTPDTO(cfg settings.SMTPConfig) smtpSettingDTO {
 	pw := ""
 	if cfg.Password != "" {
-		pw = "****"
+		pw = maskedSecret
 	}
 	return smtpSettingDTO{
 		Enabled:  cfg.Enabled,
@@ -664,7 +664,7 @@ type oidcSettingDTO struct {
 func toOIDCDTO(cfg settings.OIDCConfig) oidcSettingDTO {
 	cs := ""
 	if cfg.ClientSecret != "" {
-		cs = "****"
+		cs = maskedSecret
 	}
 	return oidcSettingDTO{
 		Enabled:       cfg.Enabled,
@@ -699,7 +699,7 @@ type ldapSettingDTO struct {
 func toLDAPDTO(cfg settings.LDAPConfig) ldapSettingDTO {
 	pw := ""
 	if cfg.BindPassword != "" {
-		pw = "****"
+		pw = maskedSecret
 	}
 	return ldapSettingDTO{
 		Enabled:        cfg.Enabled,
@@ -737,7 +737,7 @@ type samlSettingDTO struct {
 func toSAMLDTO(cfg settings.SAMLConfig) samlSettingDTO {
 	pk := ""
 	if cfg.SPPrivateKeyPEM != "" {
-		pk = "****"
+		pk = maskedSecret
 	}
 	return samlSettingDTO{
 		Enabled:           cfg.Enabled,
@@ -766,7 +766,7 @@ type openSubtitlesSettingDTO struct {
 func toOpenSubtitlesDTO(cfg settings.OpenSubtitlesConfig) openSubtitlesSettingDTO {
 	pw := ""
 	if cfg.Password != "" {
-		pw = "****"
+		pw = maskedSecret
 	}
 	return openSubtitlesSettingDTO{
 		APIKey:    maskAPIKey(cfg.APIKey),
@@ -776,6 +776,14 @@ func toOpenSubtitlesDTO(cfg settings.OpenSubtitlesConfig) openSubtitlesSettingDT
 		Enabled:   cfg.Enabled,
 	}
 }
+
+// maskedSecret is the placeholder every secret-returning field emits instead
+// of its real value. It is also the write-side sentinel: a PATCH carrying
+// exactly this string means "leave the stored secret alone". Both directions
+// must use this one constant — the arr/TMDB/TVDB keys were briefly writable
+// with the literal mask because the read side and the write side were spelled
+// separately and only the read side got updated.
+const maskedSecret = "****"
 
 // maskAPIKey returns "****" when a key is set, "" when not.
 //
@@ -790,7 +798,7 @@ func maskAPIKey(key string) string {
 	if key == "" {
 		return ""
 	}
-	return "****"
+	return maskedSecret
 }
 
 // generateAPIKey creates a random 32-character hex API key. Returns the
@@ -937,21 +945,33 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
-	if body.TMDBAPIKey != nil {
+	// maskedSecret is the sentinel GET writes in place of every stored secret
+	// (see maskAPIKey). A PATCH carrying it back means "unchanged" — the admin
+	// UI round-trips whatever GET handed it, so treating the mask as a new
+	// value OVERWRITES the real secret with four asterisks.
+	//
+	// That is not hypothetical: it is how the arr webhook credential became a
+	// published string. GET returns "****", the settings page binds it to a
+	// text input, Save sends it straight back, and the unconditional writes
+	// below sealed it. The webhook route authenticates with a constant-time
+	// compare against that value and is mounted OUTSIDE user auth, so any
+	// unauthenticated caller who sent `X-Api-Key: ****` was accepted. Every
+	// other secret on this handler already had this guard; these three did not.
+	if body.TMDBAPIKey != nil && *body.TMDBAPIKey != maskedSecret {
 		if err := h.svc.SetTMDBAPIKey(ctx, *body.TMDBAPIKey); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "tmdb_api_key", "err", err)
 			respond.InternalError(w, r)
 			return
 		}
 	}
-	if body.TVDBAPIKey != nil {
+	if body.TVDBAPIKey != nil && *body.TVDBAPIKey != maskedSecret {
 		if err := h.svc.SetTVDBAPIKey(ctx, *body.TVDBAPIKey); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "tvdb_api_key", "err", err)
 			respond.InternalError(w, r)
 			return
 		}
 	}
-	if body.ArrAPIKey != nil {
+	if body.ArrAPIKey != nil && *body.ArrAPIKey != maskedSecret {
 		if err := h.svc.SetArrAPIKey(ctx, *body.ArrAPIKey); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "arr_api_key", "err", err)
 			respond.InternalError(w, r)
@@ -996,7 +1016,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if body.OpenSubtitles.Username != nil {
 			cur.Username = *body.OpenSubtitles.Username
 		}
-		if body.OpenSubtitles.Password != nil && *body.OpenSubtitles.Password != "****" {
+		if body.OpenSubtitles.Password != nil && *body.OpenSubtitles.Password != maskedSecret {
 			cur.Password = *body.OpenSubtitles.Password
 		}
 		if body.OpenSubtitles.Languages != nil {
@@ -1025,7 +1045,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if body.OIDC.ClientID != nil {
 			cur.ClientID = *body.OIDC.ClientID
 		}
-		if body.OIDC.ClientSecret != nil && *body.OIDC.ClientSecret != "****" {
+		if body.OIDC.ClientSecret != nil && *body.OIDC.ClientSecret != maskedSecret {
 			cur.ClientSecret = *body.OIDC.ClientSecret
 		}
 		if body.OIDC.Scopes != nil {
@@ -1069,7 +1089,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if body.LDAP.BindDN != nil {
 			cur.BindDN = *body.LDAP.BindDN
 		}
-		if body.LDAP.BindPassword != nil && *body.LDAP.BindPassword != "****" {
+		if body.LDAP.BindPassword != nil && *body.LDAP.BindPassword != maskedSecret {
 			cur.BindPassword = *body.LDAP.BindPassword
 		}
 		if body.LDAP.UserSearchBase != nil {
@@ -1113,7 +1133,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if body.SAML.SPCertificatePEM != nil {
 			cur.SPCertificatePEM = *body.SAML.SPCertificatePEM
 		}
-		if body.SAML.SPPrivateKeyPEM != nil && *body.SAML.SPPrivateKeyPEM != "****" {
+		if body.SAML.SPPrivateKeyPEM != nil && *body.SAML.SPPrivateKeyPEM != maskedSecret {
 			cur.SPPrivateKeyPEM = *body.SAML.SPPrivateKeyPEM
 		}
 		if body.SAML.EmailAttribute != nil {
@@ -1167,7 +1187,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		if body.SMTP.Username != nil {
 			cur.Username = *body.SMTP.Username
 		}
-		if body.SMTP.Password != nil && *body.SMTP.Password != "****" {
+		if body.SMTP.Password != nil && *body.SMTP.Password != maskedSecret {
 			cur.Password = *body.SMTP.Password
 		}
 		if body.SMTP.From != nil {

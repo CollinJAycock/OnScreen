@@ -147,6 +147,13 @@ type LibraryAccessChecker interface {
 	AllowedLibraryIDs(ctx context.Context, userID uuid.UUID, isAdmin bool) (map[uuid.UUID]struct{}, error)
 }
 
+// SessionSegmentTokenRevoker revokes ONE segment token, as opposed to
+// SegmentTokenRevoker which revokes every token for a user. Satisfied by
+// *transcode.SegmentTokenManager.
+type SessionSegmentTokenRevoker interface {
+	Revoke(ctx context.Context, token string) error
+}
+
 // ItemWatchLimit is the parental watch-limit surface the Progress handler uses
 // to gate + account playback. Satisfied by *watchlimit.Store. nil = no limits
 // enforced (the pre-feature behaviour).
@@ -180,6 +187,9 @@ type ItemHandler struct {
 	access      LibraryAccessChecker
 	watchLimit  ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
 	usageAccrue *usageAccruer  // byte-serving accrual companion to watchLimit (see WithWatchLimit)
+	// segTokens revokes the segment token belonging to a session this handler
+	// deletes, so the progress-beacon stop path matches tearDown. Optional.
+	segTokens SessionSegmentTokenRevoker
 	subs        ExternalSubLister
 	tracker     *streaming.Tracker
 	sync        *notification.Broker
@@ -286,6 +296,15 @@ func (h *ItemHandler) WithWatchLimit(wl ItemWatchLimit) *ItemHandler {
 	// signal the server always sees. Delta-based AddTick makes the two sources
 	// safely additive.
 	h.usageAccrue = newUsageAccruer(h.watchLimit)
+	return h
+}
+
+// WithSegmentTokenRevoker wires the per-token revoker so the progress-beacon
+// stop path can retire the segment token of each session it deletes, matching
+// what the Stop route's tearDown already does. Returns the handler for
+// chaining. nil leaves the tokens to age out on their idle TTL.
+func (h *ItemHandler) WithSegmentTokenRevoker(r SessionSegmentTokenRevoker) *ItemHandler {
+	h.segTokens = r
 	return h
 }
 
@@ -1683,6 +1702,21 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			for i := range deleted {
 				if deleted[i].ABR {
 					releaseABRChildLocks(&deleted[i])
+				}
+				// Revoke the segment token too, matching what tearDown does on
+				// the Stop route. This path deleted the session but left its
+				// token live, and Validate refreshes the token's TTL on every
+				// use — so the orphan never aged out either. It authenticated
+				// nothing useful (the session was gone), but it kept the
+				// playlist handler's 60-second wait loop reachable, which is
+				// the one handler that can pin a request for the full write
+				// timeout. The comment above already claims this path
+				// reconciles with tearDown; now it does.
+				if h.segTokens != nil && deleted[i].SegToken != "" {
+					if rerr := h.segTokens.Revoke(r.Context(), deleted[i].SegToken); rerr != nil {
+						h.logger.WarnContext(r.Context(), "revoke segment token on stop",
+							"session_id", deleted[i].ID, "err", rerr)
+					}
 				}
 			}
 		} else {

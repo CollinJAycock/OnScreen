@@ -47,6 +47,9 @@ type DiscoverHandler struct {
 	tmdb     DiscoverTMDB
 	requests DiscoverRequestLookup
 	logger   *slog.Logger
+	// access scopes the in-library lookup to what the caller may actually
+	// see. nil = no ACL wired (tests / minimal deployments) → no filtering.
+	access LibraryAccessChecker
 }
 
 // NewDiscoverHandler builds a handler. tmdb may be nil — the endpoint will
@@ -54,6 +57,16 @@ type DiscoverHandler struct {
 // "configure TMDB to enable Discover" copy.
 func NewDiscoverHandler(db DiscoverDB, t DiscoverTMDB, reqs DiscoverRequestLookup, logger *slog.Logger) *DiscoverHandler {
 	return &DiscoverHandler{db: db, tmdb: t, requests: reqs, logger: logger}
+}
+
+// WithAccess wires the library ACL so `in_library` reflects the caller's own
+// view. Without it the flag answered for the whole catalogue, which made it a
+// one-bit existence oracle for titles in libraries the caller has no grant on
+// and titles above their content-rating ceiling — something no other endpoint
+// will tell them. Returns the handler for chaining.
+func (h *DiscoverHandler) WithAccess(a LibraryAccessChecker) *DiscoverHandler {
+	h.access = a
+	return h
 }
 
 // DiscoverItem is one row in the Discover response. The shape is flat on
@@ -182,9 +195,35 @@ func (h *DiscoverHandler) lookupLibrary(ctx context.Context, mediaType string, i
 	if len(ids) == 0 {
 		return nil
 	}
+	// Scope to the caller's own view: their granted libraries and their
+	// content-rating ceiling. A hit they cannot see must report as "not in
+	// library" with no id, exactly as it would from every other endpoint.
+	var libIDs []uuid.UUID
+	var maxRank *int32
+	if claims := middleware.ClaimsFromContext(ctx); claims != nil {
+		maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+		if h.access != nil {
+			allowed, aerr := h.access.AllowedLibraryIDs(ctx, claims.UserID, claims.IsAdmin)
+			if aerr != nil {
+				// Fail CLOSED: degrade to "nothing is in your library" rather
+				// than answering across the whole catalogue.
+				h.logger.WarnContext(ctx, "discover: allowed libraries failed; suppressing in-library flags",
+					"err", aerr)
+				return nil
+			}
+			if allowed != nil {
+				libIDs = make([]uuid.UUID, 0, len(allowed))
+				for id := range allowed {
+					libIDs = append(libIDs, id)
+				}
+			}
+		}
+	}
 	rows, err := h.db.ListMediaItemsByTMDBIDs(ctx, gen.ListMediaItemsByTMDBIDsParams{
-		Type:    libraryItemType(mediaType),
-		TmdbIds: ids,
+		Type:          libraryItemType(mediaType),
+		TmdbIds:       ids,
+		LibraryIds:    libIDs,
+		MaxRatingRank: maxRank,
 	})
 	if err != nil {
 		// Log and degrade — Discover still returns TMDB rows without the

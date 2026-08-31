@@ -55,9 +55,17 @@ LIMIT NULLIF(sqlc.arg('lim')::int, 0) OFFSET sqlc.arg('off')::int;
 -- name: CountCollectionItems :one
 -- Backs meta.total for the static collection/playlist listing so a paginating
 -- client sees the real collection size, not the current page length.
+--
+-- The library_ids filter must mirror ListCollectionItems exactly. Without it
+-- the paged rows were correctly ACL-filtered (so the list came back empty for
+-- a caller with no grant) while the count was computed over the whole
+-- collection — which handed that caller the exact item count of a private
+-- library's folder. NULL = admin / no filtering.
 SELECT COUNT(*) FROM collection_items ci
 JOIN media_items mi ON mi.id = ci.media_item_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int);
 

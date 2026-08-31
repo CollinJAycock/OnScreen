@@ -435,17 +435,19 @@ type ServerSetting struct {
 }
 
 type Session struct {
-	ID         uuid.UUID          `json:"id"`
-	UserID     uuid.UUID          `json:"user_id"`
-	TokenHash  string             `json:"token_hash"`
-	ClientID   *string            `json:"client_id"`
-	ClientName *string            `json:"client_name"`
-	DeviceID   *string            `json:"device_id"`
-	Platform   *string            `json:"platform"`
-	IpAddr     *netip.Addr        `json:"ip_addr"`
-	CreatedAt  pgtype.Timestamptz `json:"created_at"`
-	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
-	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+	ID                uuid.UUID          `json:"id"`
+	UserID            uuid.UUID          `json:"user_id"`
+	TokenHash         string             `json:"token_hash"`
+	ClientID          *string            `json:"client_id"`
+	ClientName        *string            `json:"client_name"`
+	DeviceID          *string            `json:"device_id"`
+	Platform          *string            `json:"platform"`
+	IpAddr            *netip.Addr        `json:"ip_addr"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	ExpiresAt         pgtype.Timestamptz `json:"expires_at"`
+	LastSeen          pgtype.Timestamptz `json:"last_seen"`
+	PrevTokenHash     *string            `json:"prev_token_hash"`
+	AbsoluteExpiresAt pgtype.Timestamptz `json:"absolute_expires_at"`
 }
 
 type TaskRun struct {

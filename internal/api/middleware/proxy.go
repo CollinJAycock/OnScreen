@@ -140,10 +140,10 @@ func RemoteAddrIsTrusted(r *http.Request) bool {
 	return ip.IsLoopback() || ip.IsPrivate()
 }
 
-// TrustedRealIP rewrites r.RemoteAddr from the first IP in X-Forwarded-For (or
-// the X-Real-IP header) ONLY when the immediate peer is a trusted private
-// address. Public peers can spoof these headers freely, so we ignore them and
-// keep the real RemoteAddr — preventing rate-limit / audit-log spoofing.
+// TrustedRealIP rewrites r.RemoteAddr from the forwarded client address ONLY
+// when the immediate peer is a trusted private address. Public peers can spoof
+// these headers freely, so we ignore them and keep the real RemoteAddr —
+// preventing rate-limit / audit-log spoofing.
 //
 // This replaces chi's middleware.RealIP, which honours the headers
 // unconditionally.
@@ -164,15 +164,46 @@ func TrustedRealIP(next http.Handler) http.Handler {
 	})
 }
 
+// firstForwardedIP resolves the client address a trusted peer is reporting.
+//
+// It walks X-Forwarded-For RIGHT TO LEFT and returns the first element that is
+// not itself a trusted proxy. This is the only correct direction. Proxies
+// APPEND to XFF — the bundled nginx sample uses $proxy_add_x_forwarded_for
+// (docker/nginx.conf) — so the LEFTMOST element is whatever the original
+// client sent, i.e. fully attacker-controlled, while each successive element
+// to the right was appended by a hop that observed the one before it. Reading
+// the leftmost element let any client pick its own rate-limit bucket by
+// sending `X-Forwarded-For: <random>`, which removed the only volumetric
+// control on the pre-auth surface (login, password reset, pairing) and put an
+// attacker-chosen address in every audit row.
+//
+// TRUSTED_PROXIES does not substitute for this: that allowlist decides WHETHER
+// to believe the header at all (see RemoteAddrIsTrusted), not WHICH element of
+// it to believe. Both checks are needed.
+//
+// X-Real-IP is consulted only as a fallback, because it is a replacing
+// directive: an intermediary that sets it overwrites any client-supplied
+// value, so when a trusted peer sends it, it is the peer's own observation.
 func firstForwardedIP(r *http.Request) string {
 	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-		if i := strings.IndexByte(xff, ','); i >= 0 {
-			xff = xff[:i]
+		parts := strings.Split(xff, ",")
+		for i := len(parts) - 1; i >= 0; i-- {
+			candidate := strings.TrimSpace(parts[i])
+			ip := net.ParseIP(candidate)
+			if ip == nil {
+				// A malformed element means we can no longer trust the
+				// positional reasoning for anything further left — stop rather
+				// than skipping over it into client-controlled territory.
+				break
+			}
+			if isTrustedProxyIP(ip) {
+				continue // a hop, not the client — keep walking left
+			}
+			return candidate
 		}
-		xff = strings.TrimSpace(xff)
-		if net.ParseIP(xff) != nil {
-			return xff
-		}
+		// Every element was a trusted proxy (or the list was malformed at the
+		// right-hand end). Fall through to X-Real-IP rather than returning a
+		// proxy address as the client.
 	}
 	if xri := strings.TrimSpace(r.Header.Get("X-Real-IP")); xri != "" {
 		if net.ParseIP(xri) != nil {
@@ -180,4 +211,24 @@ func firstForwardedIP(r *http.Request) string {
 		}
 	}
 	return ""
+}
+
+// isTrustedProxyIP reports whether ip is one of our own hops, using the same
+// rule RemoteAddrIsTrusted applies to the peer: the configured allowlist when
+// one exists, else loopback / RFC1918 / unique-local.
+func isTrustedProxyIP(ip net.IP) bool {
+	if len(trustedProxyNets) > 0 {
+		addr, ok := netip.AddrFromSlice(ip)
+		if !ok {
+			return false
+		}
+		addr = addr.Unmap()
+		for _, p := range trustedProxyNets {
+			if p.Contains(addr) {
+				return true
+			}
+		}
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
 }

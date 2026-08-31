@@ -14,6 +14,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/photoimage"
@@ -545,17 +546,30 @@ func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Snap every cache-key input to a small fixed set.
+	//
+	// All four of these (w, h, fit, q) are hashed into the resize cache key,
+	// and the cache is never evicted — no scheduler task touches this
+	// directory. Clamping w/h to 0..4096 and q to 1..95 bounded each value but
+	// left the KEY SPACE at roughly 4097 x 4097 x 2 x 95 ≈ 3.2e9 entries per
+	// source image, every one of which is a decode + resize + encode + write
+	// on first request. A read grant was therefore an unbounded, unevictable
+	// write primitive against a volume shared with subtitles, live TV and DVR.
+	//
+	// This is the same defect, and the same fix, as the /artwork route:
+	// artwork.SnapDim rounds up to a ladder so real traffic maps to itself and
+	// the key space is bounded by ladder-size squared. Quality is quantised
+	// rather than dropped so the few callers that ask for a specific value
+	// still get a sensible one. Rounding UP means a client never receives
+	// fewer pixels than it asked for.
 	q := r.URL.Query()
-	width := clampDim(parseInt(q.Get("w"), 0))
-	height := clampDim(parseInt(q.Get("h"), 0))
+	width := artwork.SnapDim(clampDim(parseInt(q.Get("w"), 0)))
+	height := artwork.SnapDim(clampDim(parseInt(q.Get("h"), 0)))
 	fit := photoimage.Fit(q.Get("fit"))
 	if fit != photoimage.FitCover {
 		fit = photoimage.FitContain
 	}
-	quality := parseInt(q.Get("q"), defaultImageQty)
-	if quality < 1 || quality > maxImageQty {
-		quality = defaultImageQty
-	}
+	quality := snapQuality(parseInt(q.Get("q"), defaultImageQty))
 
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=3600, immutable")
@@ -727,4 +741,26 @@ func clampDim(n int) int {
 		return maxImageDimension
 	}
 	return n
+}
+
+// qualityLadder is the set of JPEG quality values the photo route will encode
+// at. Quality is part of the resize cache key, so accepting all 95 legal
+// values multiplied the never-evicted key space by 95 for no visible benefit —
+// the difference between q=82 and q=83 is not perceptible, but it is two
+// separate files on disk forever.
+var qualityLadder = [...]int{50, 65, 75, 82, 90, 95}
+
+// snapQuality rounds a requested JPEG quality UP to the next ladder value, so
+// a caller never gets fewer bits than they asked for. Out-of-range and
+// unparseable values fall back to the default.
+func snapQuality(qty int) int {
+	if qty < 1 || qty > maxImageQty {
+		return defaultImageQty
+	}
+	for _, v := range qualityLadder {
+		if qty <= v {
+			return v
+		}
+	}
+	return qualityLadder[len(qualityLadder)-1]
 }

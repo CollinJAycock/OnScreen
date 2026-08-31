@@ -951,7 +951,18 @@ func TestArtwork_ContentRatingGate(t *testing.T) {
 	}{
 		{"over-ceiling blocked", "R", true, http.StatusNotFound},
 		{"within-ceiling served", "PG", true, http.StatusOK},
-		{"unrated fails open", "", false, http.StatusOK},
+		// FAILS CLOSED. An unrated owner ranks most-restrictive everywhere
+		// else in the product (content_rating_rank(NULL) = 4, and the Go twin
+		// ranks "" the same), so serving its poster to a capped profile leaked
+		// exactly the titles the ceiling hides — plus a 200/404 existence
+		// oracle over guessable folder names.
+		{"unrated blocked for a capped profile", "", true, http.StatusNotFound},
+		// Lookup miss = unknown provenance. Same verdict: a capped caller must
+		// not receive art we cannot attribute to an item they may see. This is
+		// what covers extra artwork (banner.jpg, clearlogo.png, extrafanart/*)
+		// that the item columns never reference, and a case-mismatched path on
+		// a case-insensitive volume.
+		{"unknown provenance blocked for a capped profile", "", false, http.StatusNotFound},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

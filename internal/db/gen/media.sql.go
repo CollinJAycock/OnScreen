@@ -788,20 +788,19 @@ func (q *Queries) FindTopLevelItemsByTitleFlexible(ctx context.Context, arg Find
 }
 
 const getArtworkContentRating = `-- name: GetArtworkContentRating :one
-SELECT content_rating
+SELECT COALESCE(content_rating, '')::text AS content_rating
 FROM media_items
 WHERE library_id = $1
   AND deleted_at IS NULL
-  AND content_rating IS NOT NULL
-  AND (poster_path = $2
-       OR fanart_path = $2
-       OR thumb_path = $2)
+  AND (lower(poster_path) = lower($2)
+       OR lower(fanart_path) = lower($2)
+       OR lower(thumb_path) = lower($2))
 LIMIT 1
 `
 
 type GetArtworkContentRatingParams struct {
 	LibraryID uuid.UUID `json:"library_id"`
-	ArtPath   *string   `json:"art_path"`
+	ArtPath   string    `json:"art_path"`
 }
 
 // Resolves the content_rating of the item that owns a given artwork file,
@@ -810,9 +809,23 @@ type GetArtworkContentRatingParams struct {
 // per-user content-rating ceiling so a restricted profile with library access
 // can't pull an over-ceiling item's poster by direct URL. Scoped to the owning
 // library so a path that collides across libraries can't cross-match.
-func (q *Queries) GetArtworkContentRating(ctx context.Context, arg GetArtworkContentRatingParams) (*string, error) {
+//
+// Returns a row (with a NULL/” rating) whenever the path belongs to a known
+// item, so the caller can distinguish "unrated item" from "no owning item".
+// `AND content_rating IS NOT NULL` used to be here and made those two cases
+// indistinguishable, which the route then treated as permission to serve —
+// the opposite of every other surface, where content_rating_rank(NULL) is 4,
+// the MOST restrictive. An unrated title's poster was therefore served to a
+// profile that could not see the title anywhere else.
+//
+// Comparison is case-insensitive on the path: the filesystem check upstream
+// runs on the real volume, and on NTFS/APFS/SMB (the common self-hosted
+// shapes) `POSTER.JPG` opens the file that is stored as `poster.jpg`. An
+// exact `=` therefore missed, returned no row, and failed open — even for a
+// correctly rated item.
+func (q *Queries) GetArtworkContentRating(ctx context.Context, arg GetArtworkContentRatingParams) (string, error) {
 	row := q.db.QueryRow(ctx, getArtworkContentRating, arg.LibraryID, arg.ArtPath)
-	var content_rating *string
+	var content_rating string
 	err := row.Scan(&content_rating)
 	return content_rating, err
 }
@@ -2823,11 +2836,17 @@ WHERE type = $1
   AND tmdb_id = ANY($2::int[])
   AND parent_id IS NULL
   AND deleted_at IS NULL
+  AND ($3::uuid[] IS NULL
+       OR library_id = ANY($3::uuid[]))
+  AND ($4::int IS NULL
+       OR content_rating_rank(content_rating) <= $4::int)
 `
 
 type ListMediaItemsByTMDBIDsParams struct {
-	Type    string  `json:"type"`
-	TmdbIds []int32 `json:"tmdb_ids"`
+	Type          string      `json:"type"`
+	TmdbIds       []int32     `json:"tmdb_ids"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
 }
 
 type ListMediaItemsByTMDBIDsRow struct {
@@ -2839,10 +2858,21 @@ type ListMediaItemsByTMDBIDsRow struct {
 // Returns the (id, library_id, tmdb_id) for every top-level media item that
 // matches one of the supplied TMDB IDs for the given type. Used by Discover
 // to mark search results as already-in-library in a single round-trip rather
-// than per-result. Library scope is library-agnostic — Discover surfaces
-// "available somewhere" regardless of which specific library the title is in.
+// than per-result.
+//
+// Scoped to what the CALLER can see. It used to be deliberately
+// library-agnostic — "available somewhere" — but "somewhere" included
+// libraries the caller has no grant on and titles above their rating ceiling,
+// so the in_library flag was a one-bit existence oracle per TMDB title that no
+// other endpoint would answer. Every sibling listing injects both predicates;
+// this one now does too. NULL on either arg = admin / unrestricted.
 func (q *Queries) ListMediaItemsByTMDBIDs(ctx context.Context, arg ListMediaItemsByTMDBIDsParams) ([]ListMediaItemsByTMDBIDsRow, error) {
-	rows, err := q.db.Query(ctx, listMediaItemsByTMDBIDs, arg.Type, arg.TmdbIds)
+	rows, err := q.db.Query(ctx, listMediaItemsByTMDBIDs,
+		arg.Type,
+		arg.TmdbIds,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+	)
 	if err != nil {
 		return nil, err
 	}

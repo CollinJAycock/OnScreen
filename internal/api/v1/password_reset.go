@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +18,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // PasswordResetDB is the database interface for the password reset flow.
@@ -59,11 +62,76 @@ type PasswordResetHandler struct {
 	logger    *slog.Logger
 	segTokens SegmentTokenRevoker // optional; nil means HLS tokens age out via TTL
 	audit     *audit.Logger       // optional; nil disables audit on successful reset
+
+	// resetThrottle bounds how often a reset mail may be sent to one address,
+	// independent of who asked. The route's IP limiter cannot do this job: it
+	// budgets per CALLER, so rotating source addresses multiplied the budget
+	// and let an attacker mailbomb a known member and burn the operator's SMTP
+	// quota.
+	resetThrottle *emailThrottle
 }
+
+// emailThrottle is a tiny per-key fixed-window limiter. In-process and
+// non-persistent on purpose: it exists to blunt a flood, and a restart
+// clearing it is not a security property anyone relies on.
+type emailThrottle struct {
+	mu     sync.Mutex
+	window time.Duration
+	limit  int
+	seen   map[string][]time.Time
+}
+
+func newEmailThrottle(window time.Duration, limit int) *emailThrottle {
+	return &emailThrottle{window: window, limit: limit, seen: make(map[string][]time.Time)}
+}
+
+// allow reports whether another send to key is permitted now, recording it if
+// so. Keys are normalised so casing/whitespace variants share one budget.
+func (t *emailThrottle) allow(key string) bool {
+	k := strings.ToLower(strings.TrimSpace(key))
+	now := time.Now()
+	cutoff := now.Add(-t.window)
+
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	// Opportunistic sweep so the map cannot grow without bound from an
+	// attacker cycling addresses.
+	if len(t.seen) > emailThrottleMaxKeys {
+		for k2, ts := range t.seen {
+			if len(ts) == 0 || ts[len(ts)-1].Before(cutoff) {
+				delete(t.seen, k2)
+			}
+		}
+	}
+	kept := t.seen[k][:0]
+	for _, ts := range t.seen[k] {
+		if ts.After(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	if len(kept) >= t.limit {
+		t.seen[k] = kept
+		return false
+	}
+	t.seen[k] = append(kept, now)
+	return true
+}
+
+const (
+	// Three mails an hour to one address: enough for a user who fumbles the
+	// flow, far short of a mailbomb.
+	resetThrottleWindow = time.Hour
+	resetThrottleLimit  = 3
+	// Bound on distinct tracked addresses before the sweep runs.
+	emailThrottleMaxKeys = 10_000
+)
 
 // NewPasswordResetHandler creates a PasswordResetHandler.
 func NewPasswordResetHandler(db PasswordResetDB, sender *email.Sender, baseURL string, logger *slog.Logger) *PasswordResetHandler {
-	return &PasswordResetHandler{db: db, sender: sender, baseURL: baseURL, logger: logger}
+	return &PasswordResetHandler{
+		db: db, sender: sender, baseURL: baseURL, logger: logger,
+		resetThrottle: newEmailThrottle(resetThrottleWindow, resetThrottleLimit),
+	}
 }
 
 // WithSegmentTokenRevoker attaches the HLS segment-token revoker so a
@@ -106,45 +174,81 @@ func (h *PasswordResetHandler) ForgotPassword(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Always respond success to prevent email + SMTP-state enumeration.
-	defer respond.Success(w, r, map[string]string{"message": "If an account with that email exists, a password reset link has been sent."})
+	// Answer NOW, identically, before doing any work whose duration depends on
+	// whether the address exists.
+	//
+	// This used to be a deferred Success, which runs at return — so the body
+	// was uniform but the LATENCY was not. An unknown address returned after a
+	// single SELECT; a known one additionally inserted a token and ran a fully
+	// synchronous SMTP session (dial, TLS, AUTH, DATA). Against a hosted relay
+	// that is routinely 300 ms to 3 s, so one probe classified an address with
+	// no statistics required — the only pre-auth email-existence oracle in the
+	// API, since login takes a username and registration needs an admin.
+	respond.Success(w, r, map[string]string{"message": "If an account with that email exists, a password reset link has been sent."})
 
 	// Email disabled on this server: log so the operator can spot the
-	// stuck flow, but return generic success so the response shape is
-	// indistinguishable from "user doesn't exist."
+	// stuck flow. The response above already went out unchanged.
 	if !h.sender.Enabled(r.Context()) {
 		h.logger.InfoContext(r.Context(), "forgot password: SMTP not configured; silently dropping request")
 		return
 	}
 
-	user, err := h.db.GetUserByEmail(r.Context(), &body.Email)
-	if err != nil {
-		return // user not found — silently succeed
-	}
-
-	// Generate a secure random token.
-	tokenBytes := make([]byte, 32)
-	if _, err := rand.Read(tokenBytes); err != nil {
-		h.logger.ErrorContext(r.Context(), "password reset: generate token", "err", err)
-		return
-	}
-	rawToken := hex.EncodeToString(tokenBytes)
-
-	// Store the hash (not the raw token) in the DB.
-	hash := sha256.Sum256([]byte(rawToken))
-	tokenHash := hex.EncodeToString(hash[:])
-
-	if err := h.db.CreateResetToken(r.Context(), user.ID, tokenHash, time.Now().Add(time.Hour)); err != nil {
-		h.logger.ErrorContext(r.Context(), "password reset: store token", "err", err)
+	// Per-account send throttle. There was none, so an attacker who knew one
+	// member's address could mailbomb them and burn the operator's SMTP quota
+	// at whatever rate the IP limiter allowed — and that limiter was itself
+	// bypassable until the X-Forwarded-For fix. Keyed on the address rather
+	// than the caller, so rotating source IPs does not multiply the budget.
+	if !h.resetThrottle.allow(body.Email) {
+		h.logger.InfoContext(r.Context(), "forgot password: per-account send throttle hit; dropping",
+			"email_hash", hashEmailForLog(body.Email))
 		return
 	}
 
-	// Send the email with the raw token (user clicks link, we hash and look up).
-	resetURL := h.baseURL + "/reset-password?token=" + rawToken
-	subject, htmlBody := email.PasswordResetEmail(user.Username, resetURL)
-	if err := h.sender.Send(r.Context(), []string{body.Email}, subject, htmlBody); err != nil {
-		h.logger.ErrorContext(r.Context(), "password reset: send email", "to", body.Email, "err", err)
-	}
+	// Everything past here runs detached: the client already has its
+	// response, and the work must not be cancellable by the caller
+	// disconnecting (which would also reintroduce a timing signal).
+	// context.WithoutCancel keeps request-scoped values — same pattern the arr
+	// webhook uses for its detached scan.
+	ctx := context.WithoutCancel(r.Context())
+	emailAddr := body.Email
+	observability.SafeGo(h.logger, "auth:password-reset-send", func() {
+		user, err := h.db.GetUserByEmail(ctx, &emailAddr)
+		if err != nil {
+			return // user not found — nothing to do, and nothing observable
+		}
+
+		// Generate a secure random token.
+		tokenBytes := make([]byte, 32)
+		if _, err := rand.Read(tokenBytes); err != nil {
+			h.logger.ErrorContext(ctx, "password reset: generate token", "err", err)
+			return
+		}
+		rawToken := hex.EncodeToString(tokenBytes)
+
+		// Store the hash (not the raw token) in the DB.
+		hash := sha256.Sum256([]byte(rawToken))
+		tokenHash := hex.EncodeToString(hash[:])
+
+		if err := h.db.CreateResetToken(ctx, user.ID, tokenHash, time.Now().Add(time.Hour)); err != nil {
+			h.logger.ErrorContext(ctx, "password reset: store token", "err", err)
+			return
+		}
+
+		// Send the email with the raw token (user clicks link, we hash and look up).
+		resetURL := h.baseURL + "/reset-password?token=" + rawToken
+		subject, htmlBody := email.PasswordResetEmail(user.Username, resetURL)
+		if err := h.sender.Send(ctx, []string{emailAddr}, subject, htmlBody); err != nil {
+			h.logger.ErrorContext(ctx, "password reset: send email", "err", err)
+		}
+	})
+}
+
+// hashEmailForLog returns a short, stable, non-reversible tag for an address
+// so throttle hits are correlatable in logs without writing the address
+// itself into logcat/journald.
+func hashEmailForLog(addr string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(strings.TrimSpace(addr))))
+	return hex.EncodeToString(sum[:6])
 }
 
 // ResetPassword handles POST /api/v1/auth/reset-password.

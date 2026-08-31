@@ -602,7 +602,14 @@ func run() error {
 		}
 		roots := make([]api.ArtworkRoot, 0, len(libs))
 		for _, lib := range libs {
-			roots = append(roots, api.ArtworkRoot{LibraryID: lib.ID, Paths: lib.Paths})
+			roots = append(roots, api.ArtworkRoot{
+				LibraryID: lib.ID,
+				Paths:     lib.Paths,
+				// Carried so the artwork route can refuse to mark a private
+				// library's art shared-cacheable — that response passed a
+				// per-user ACL check and must not sit in a CDN.
+				IsPrivate: lib.IsPrivate,
+			})
 		}
 		return roots
 	}
@@ -681,7 +688,7 @@ func run() error {
 		&pairStore{v: valkeyClient},
 		pairTokenIssuer(authSvc, gen.New(rwPool)),
 		logger,
-	)
+	).WithAudit(auditLogger)
 
 	userSvc := newUserService(gen.New(rwPool))
 
@@ -864,6 +871,9 @@ func run() error {
 		WithEpisodePoster(gen.New(roPool)).
 		WithLibraryAccess(libSvc).
 		WithWatchLimit(watchLimitStore).
+		// So the progress-beacon "stopped" path retires each deleted session's
+		// segment token, the way the Stop route's tearDown does.
+		WithSegmentTokenRevoker(segTokenMgr).
 		WithMarkers(intromarker.NewStore(rwPool)).
 		WithExternalSubtitles(subtitleSvc).
 		WithSubtitleCache(subtitleCacheRoot).
@@ -1154,7 +1164,11 @@ func run() error {
 		WithEncryptor(encryptor)
 	// Discover reuses the same adapter so admins toggling the TMDB key
 	// flow through to search results without a server restart.
-	discoverHandler := v1.NewDiscoverHandler(gen.New(roPool), requestsTMDB, requestsSvc, logger)
+	discoverHandler := v1.NewDiscoverHandler(gen.New(roPool), requestsTMDB, requestsSvc, logger).
+		// Scope the in-library flag to the caller's grants + rating ceiling,
+		// so Discover can't answer "does this title exist on the server" for
+		// content the caller has no other way to see.
+		WithAccess(libSvc)
 	// Back-fill the scan enqueuer so post-scan goroutines can settle
 	// any media-requests whose download just landed, and let the arr
 	// webhook also fire a reconcile on Download events.
@@ -1333,17 +1347,22 @@ func run() error {
 		LibraryAccess:   libSvc,
 		// Resolves an artwork file's owning content rating so the artwork
 		// server can enforce the per-user ceiling (see router.go). Read-only
-		// pool; fails open (found=false) on miss or query error.
+		// pool. Returns found=false only when the path maps to no item in the
+		// library — the route treats that as unrated (rank 4, most
+		// restrictive) for a capped caller rather than as permission to serve.
+		// A query error is reported the same way, so a database blip cannot
+		// silently open the ceiling.
 		ArtworkContentRating: func(ctx context.Context, libraryID uuid.UUID, relPath string) (string, bool) {
-			rel := relPath
 			rating, err := gen.New(roPool).GetArtworkContentRating(ctx, gen.GetArtworkContentRatingParams{
 				LibraryID: libraryID,
-				ArtPath:   &rel,
+				ArtPath:   relPath,
 			})
-			if err != nil || rating == nil {
+			if err != nil {
 				return "", false
 			}
-			return *rating, true
+			// The query COALESCEs NULL to '', so a row means "known item";
+			// '' means "known but unrated", which ranks most-restrictive.
+			return rating, true
 		},
 		// Closure (not a static bool copy) so the artwork handler picks
 		// up admin-UI toggles of public_asset_cache without a restart —

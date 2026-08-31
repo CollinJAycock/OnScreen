@@ -235,10 +235,32 @@ SET max_video_bitrate_kbps = $2,
 WHERE id = $1;
 
 -- name: UpdateUserContentRating :exec
+-- Applies to the target AND every managed profile beneath it.
+--
+-- The ceiling is copied into a child at creation time, so scoping the write to
+-- `id = $1` left pre-existing children on whatever value they inherited. An
+-- account that started unrestricted and made a profile kept an unrestricted
+-- child forever; a later tightening killed the parent's sessions and never
+-- touched the child, which the owner could still PIN-switch into. Since
+-- imposing a ceiling in reaction to behaviour is exactly when a profile
+-- already exists, the general case (any tightening) was the common one.
+--
+-- Cascading keeps the invariant the inheriting INSERT was written to
+-- establish: a profile can never be less restricted than its owner. An admin
+-- who wants a child looser than its parent still sets that on the child
+-- afterwards, which is the intended grant path.
 UPDATE users
 SET max_content_rating = $2,
     updated_at = NOW()
-WHERE id = $1;
+WHERE id = $1 OR parent_user_id = $1;
+
+-- name: ListManagedProfileIDs :many
+-- IDs of every managed profile owned by a user. Callers that revoke
+-- credentials after a policy change need these so the cascade above is
+-- matched by a cascade of session/epoch/segment-token revocation — a child
+-- whose ceiling just tightened must not keep streaming on a token minted
+-- under the old one.
+SELECT id FROM users WHERE parent_user_id = $1;
 
 -- name: GetUserForImpersonation :one
 -- Narrow lookup the view-as middleware uses to synthesize the

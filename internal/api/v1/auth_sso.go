@@ -47,6 +47,22 @@ func randomState() (string, error) {
 // are allowed by most providers), sign in once, and silently take over the
 // local account that owns that email. Same risk for LDAP when its tree is not
 // fully trusted.
+// A MANAGED PROFILE is never a stub, however empty its auth columns look.
+// CreateManagedProfile inserts no password, no email and no SSO link, so every
+// household profile satisfied the "nobody can prove ownership" test and was
+// adoptable by a federated login. Two directions fell out of that: any
+// authenticated non-admin could create a profile named after a colleague and
+// capture their identity when they first signed in via LDAP, and a directory
+// user whose sanitised username happened to match an existing profile
+// ("guest", "kids", "mom") was logged straight into it — PIN never consulted,
+// and handed a refresh token, which is strictly stronger than a legitimate
+// PIN-switch. A profile is a household-owned identity, not an admin-created
+// placeholder; parent_user_id is what tells them apart.
+//
+// The PIN is also a real bcrypt-verified authenticator, so its presence alone
+// disproves "no one can prove ownership of this row". Both checks are here:
+// the parent check is the one that closes the class, the PIN check keeps the
+// stated invariant honest for any future caller.
 func isStubUser(u gen.User) bool {
 	return u.PasswordHash == nil &&
 		u.OidcSubject == nil &&
@@ -54,5 +70,7 @@ func isStubUser(u gen.User) bool {
 		u.SamlSubject == nil &&
 		u.GoogleID == nil &&
 		u.GithubID == nil &&
-		u.DiscordID == nil
+		u.DiscordID == nil &&
+		u.Pin == nil &&
+		!u.ParentUserID.Valid
 }

@@ -20,6 +20,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/subtitles"
+	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/subtitles/opensubtitles"
 )
 
@@ -377,14 +378,50 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var inputPath string
-	for _, f := range files {
-		if f.ID == fileID {
-			inputPath = f.FilePath
+	var ocrFile *media.File
+	for i := range files {
+		if files[i].ID == fileID {
+			inputPath = files[i].FilePath
+			ocrFile = &files[i]
 			break
 		}
 	}
-	if inputPath == "" {
+	if inputPath == "" || ocrFile == nil {
 		respond.NotFound(w, r)
+		return
+	}
+
+	// The requested stream must EXIST and must be image-based.
+	//
+	// stream_index arrived as a bare int and went straight to ffmpeg as
+	// `[0:N]` in an overlay filter with no -frames:v, no -t and no size cap.
+	// Pointed at the video stream (index 0 on essentially every file), the
+	// mpdecimate frac that exists to skip static subtitle canvases never
+	// fires on real video, so the job wrote one full-resolution PNG per
+	// decoded frame into the cache volume — which is shared with artwork,
+	// trickplay and DVR recordings, has no free-space check anywhere, and is
+	// only swept for transcode directories. The job also runs on a
+	// server-lifetime context, so the client cannot stop it by disconnecting.
+	//
+	// Both other entry points to this pipeline already enforce exactly this
+	// (items.go's text-subtitle path and the scheduled OCR handler), and
+	// ocr.ErrNoStream was declared for it and never returned. Same shape as
+	// items.go so the three stay comparable.
+	var ocrStream *SubtitleStreamJSON
+	for _, s := range parseJSONBSubtitleStreams(ocrFile.SubtitleStreams) {
+		if s.Index == body.StreamIndex {
+			s := s
+			ocrStream = &s
+			break
+		}
+	}
+	if ocrStream == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if !ocr.IsImageBased(ocrStream.Codec) {
+		respond.Error(w, r, http.StatusUnsupportedMediaType, "NOT_IMAGE_SUBTITLE",
+			"OCR only applies to image-based subtitles (PGS/VOBSUB/DVB); this stream is already text")
 		return
 	}
 

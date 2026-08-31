@@ -1434,6 +1434,35 @@ func (q *Queries) ListAllManagedProfiles(ctx context.Context) ([]ListAllManagedP
 	return items, nil
 }
 
+const listManagedProfileIDs = `-- name: ListManagedProfileIDs :many
+SELECT id FROM users WHERE parent_user_id = $1
+`
+
+// IDs of every managed profile owned by a user. Callers that revoke
+// credentials after a policy change need these so the cascade above is
+// matched by a cascade of session/epoch/segment-token revocation — a child
+// whose ceiling just tightened must not keep streaming on a token minted
+// under the old one.
+func (q *Queries) ListManagedProfileIDs(ctx context.Context, parentUserID pgtype.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listManagedProfileIDs, parentUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedProfiles = `-- name: ListManagedProfiles :many
 SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at,
        max_content_rating, inherit_library_access
@@ -1726,7 +1755,7 @@ const updateUserContentRating = `-- name: UpdateUserContentRating :exec
 UPDATE users
 SET max_content_rating = $2,
     updated_at = NOW()
-WHERE id = $1
+WHERE id = $1 OR parent_user_id = $1
 `
 
 type UpdateUserContentRatingParams struct {
@@ -1734,6 +1763,20 @@ type UpdateUserContentRatingParams struct {
 	MaxContentRating *string   `json:"max_content_rating"`
 }
 
+// Applies to the target AND every managed profile beneath it.
+//
+// The ceiling is copied into a child at creation time, so scoping the write to
+// `id = $1` left pre-existing children on whatever value they inherited. An
+// account that started unrestricted and made a profile kept an unrestricted
+// child forever; a later tightening killed the parent's sessions and never
+// touched the child, which the owner could still PIN-switch into. Since
+// imposing a ceiling in reaction to behaviour is exactly when a profile
+// already exists, the general case (any tightening) was the common one.
+//
+// Cascading keeps the invariant the inheriting INSERT was written to
+// establish: a profile can never be less restricted than its owner. An admin
+// who wants a child looser than its parent still sets that on the child
+// afterwards, which is the intended grant path.
 func (q *Queries) UpdateUserContentRating(ctx context.Context, arg UpdateUserContentRatingParams) error {
 	_, err := q.db.Exec(ctx, updateUserContentRating, arg.ID, arg.MaxContentRating)
 	return err

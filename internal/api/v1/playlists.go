@@ -319,9 +319,19 @@ func (h *PlaylistHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Position:   row.Position,
 		})
 	}
+	// Mirror the row-level ACL applied above, so meta.total cannot report
+	// items the caller is not allowed to see.
+	var allowedLibIDs []uuid.UUID
+	if allowed != nil {
+		allowedLibIDs = make([]uuid.UUID, 0, len(allowed))
+		for lid := range allowed {
+			allowedLibIDs = append(allowedLibIDs, lid)
+		}
+	}
 	total, _ := h.db.CountCollectionItems(r.Context(), gen.CountCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: maxRank,
+		LibraryIds:    allowedLibIDs,
 	})
 	respond.List(w, r, out, total, "")
 }

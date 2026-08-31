@@ -8,6 +8,13 @@
   let success = false;
   let submittedDevice = '';
   let loading = false;
+  // Device name passed in the deep link by the requesting client. A hint
+  // only — it is attacker-controllable in the same way the PIN is, so it is
+  // labelled as "claims to be" rather than presented as verified fact.
+  let hintedDevice = '';
+  // Server-attested facts about the device that asked for this PIN, fetched
+  // from /auth/pair/pending. This is the part the user can actually trust.
+  let pending: { ip?: string; user_agent?: string; requested_at?: string } | null = null;
 
   // Pre-fill the PIN from a query param so a TV-app QR code can deep-link
   // straight to the pre-filled form.
@@ -20,21 +27,53 @@
     const params = new URLSearchParams(window.location.search);
     const seed = params.get('pin') ?? params.get('code') ?? '';
     pin = seed.replace(/\D/g, '').slice(0, 6);
-    // Auto-claim path: native client opens Custom Tabs to
-    // /pair?code=N&auto=1 and polls the pair-poll endpoint in the
-    // background. With a 6-digit PIN already present and the user
-    // signed in, there's no good reason to make them tap "Authorize"
-    // — fire it now and surface the success card. The polling app
-    // sees the claim land and takes the user to the home hub.
-    if (params.get('auto') === '1' && pin.length === 6) {
-      await submit();
-    }
+    // The device name the requesting client passed along, shown on the
+    // Authorise button so the user can see what they are approving.
+    const dn = (params.get('device_name') ?? '').trim();
+    if (dn) hintedDevice = dn.slice(0, 64);
+    // NO AUTO-CLAIM. There used to be an `auto=1` branch here that called
+    // submit() straight from onMount, on the reasoning that a signed-in user
+    // with a 6-digit PIN already present had no reason to tap "Authorize".
+    //
+    // That tap IS the consent, and it was the only thing standing between a
+    // legitimate pairing and an attacker-supplied one. POST /auth/pair/code
+    // needs no credential, so anyone can mint a PIN; the session cookie is
+    // SameSite=Lax, so it rides along on a top-level GET navigation; and the
+    // poll endpoint hands the code's creator a full token pair including a
+    // 30-day refresh token and the account's is_admin flag. One forced
+    // navigation to /pair?code=NNNNNN&auto=1 therefore converted a victim's
+    // live session into a durable attacker session for their account, with no
+    // click, no dialog, and no audit row. Being signed out did not help — the
+    // redirect above returns the user right back here after login.
+    //
+    // It also broke the invariant internal/api/middleware/auth.go states for
+    // the whole product: no top-level GET may have side effects. The server
+    // route is correctly a POST; this page was turning a Lax-permitted
+    // navigation into exactly the side effect that invariant exists to stop.
+    //
+    // The native flow still works: the user lands on a pre-filled form and
+    // taps once. Do not reintroduce a parameter that skips the tap.
   });
 
   function onPinInput(e: Event) {
     const v = (e.target as HTMLInputElement).value.replace(/\D/g, '').slice(0, 6);
     pin = v;
     if (error) error = '';
+    pending = null;
+    if (v.length === 6) void loadPending(v);
+  }
+
+  /** Fetch what the server knows about the device that requested this PIN, so
+   *  the user is approving something described rather than a bare number. A
+   *  failure here is not an error the user needs to see — the form still
+   *  works, they just get less context. */
+  async function loadPending(code: string) {
+    try {
+      const p = await authApi.pendingPair(code);
+      if (pin === code) pending = p;
+    } catch {
+      if (pin === code) pending = null;
+    }
   }
 
   async function submit() {
@@ -106,6 +145,26 @@
             maxlength="64"
           />
         </div>
+        {#if pending}
+          <div class="attest">
+            <strong>You are about to authorise:</strong>
+            <dl>
+              {#if hintedDevice}
+                <dt>Claims to be</dt><dd>{hintedDevice}</dd>
+              {/if}
+              {#if pending.ip}
+                <dt>Requested from</dt><dd>{pending.ip}</dd>
+              {/if}
+              {#if pending.user_agent}
+                <dt>Device</dt><dd>{pending.user_agent}</dd>
+              {/if}
+            </dl>
+            <p class="attest-warn">
+              If you did not start this on a device you own, do not continue —
+              whoever requested this code gets access to your account.
+            </p>
+          </div>
+        {/if}
         {#if error}
           <div class="error-banner">{error}</div>
         {/if}
@@ -254,5 +313,31 @@
     margin: 0.4rem 0 0;
     color: var(--text-muted);
     font-size: 0.85rem;
+  }
+
+  .attest {
+    background: var(--bg-secondary, #1a1d23);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent, #4a9eff);
+    border-radius: 6px;
+    padding: 0.85rem 1rem;
+    margin-bottom: 1rem;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+  }
+  .attest strong { display: block; margin-bottom: 0.5rem; }
+  .attest dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 0.75rem;
+    margin: 0;
+  }
+  .attest dt { color: var(--text-muted); }
+  .attest dd { margin: 0; word-break: break-word; }
+  .attest-warn {
+    margin: 0.65rem 0 0;
+    color: var(--text-muted);
+    font-size: 0.82rem;
+    line-height: 1.45;
   }
 </style>
