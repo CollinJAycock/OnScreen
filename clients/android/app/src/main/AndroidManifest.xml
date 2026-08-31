@@ -29,15 +29,31 @@
     <uses-permission android:name="com.android.providers.tv.permission.WRITE_EPG_DATA" />
     <uses-permission android:name="com.android.providers.tv.permission.READ_EPG_DATA" />
 
-    <!-- required="false", NOT true: a number of Amazon Fire TV / Fire OS devices
-         do not report android.software.leanback, so requiring it lets the Amazon
-         Appstore filter the app off those devices (and can block sideload). The
-         LEANBACK_LAUNCHER intent-filter below is what classifies us as a TV app on
-         Google TV / Android TV, so dropping the hard requirement costs nothing
-         there while widening Fire TV coverage. -->
+    <!-- required="true" is the DEFAULT (googletv / Play) posture, and it lives
+         here rather than in a flavor overlay on purpose.
+
+         Play uses this for device targeting. With required="false" the AAB was
+         eligible for PHONES, where it installs and then has nothing to launch,
+         because MainActivity below declares only LEANBACK_LAUNCHER — that is
+         how early-access testers ended up with an Uninstall-only listing and
+         no app icon. Every certified Android TV / Google TV device reports
+         leanback, so requiring it costs no coverage there.
+
+         The firetv flavor overrides this back to false
+         (src/firetv/AndroidManifest.xml): a number of Amazon Fire TV / Fire OS
+         devices do not report leanback, so requiring it lets the Amazon
+         Appstore filter the app off them and can block sideload.
+
+         The value is a per-flavor manifest placeholder rather than a flavor
+         OVERLAY so that this declaration, the touchscreen line below, and the
+         LEANBACK_LAUNCHER activity all stay in ONE source set. Lint evaluates
+         an overlay in isolation and cannot see across source sets, so putting
+         the leanback flag in a flavor manifest trips MissingLeanbackLauncher
+         and ImpliedTouchscreenHardware as false positives on whichever flavor
+         carries it. See productFlavors in app/build.gradle.kts. -->
     <uses-feature
         android:name="android.software.leanback"
-        android:required="false" />
+        android:required="${leanbackRequired}" />
     <uses-feature
         android:name="android.hardware.touchscreen"
         android:required="false" />

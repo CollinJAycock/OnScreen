@@ -15,8 +15,32 @@
     Google TV / Android TV. See clients/firetv/README.md and
     app/build.gradle.kts (productFlavors) for the build wiring.
 -->
+<!--
+    tools:ignore — two false positives, both verified against the merge output,
+    both the same root cause.
+
+    Lint evaluates a flavor overlay in ISOLATION. This file contains only two
+    permission removals: no activity, so MissingLeanbackLauncher concludes the
+    app has no LEANBACK_LAUNCHER entry point; and no uses-feature, so
+    ImpliedTouchscreenHardware concludes touchscreen was never marked optional.
+    Both anchor their report to <manifest> here. The firetvRelease MERGED
+    manifest has all three elements and is correct:
+
+        uses-feature android.software.leanback  required=false
+        uses-feature android.hardware.touchscreen required=false
+        activity tv.onscreen.android.ui.MainActivity
+          categories: LEANBACK_LAUNCHER, DEFAULT, BROWSABLE
+
+    This predates the leanback work — the same merge shape (and the same lint
+    failure) existed when src/main declared leanback required="false". It went
+    unnoticed because the Android TV CI job runs only
+    :app:testGoogletvDebugUnitTest, never lint. Suppressed at this element
+    rather than in lint.xml so a genuine instance of either check anywhere else
+    still fails the build.
+-->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+    xmlns:tools="http://schemas.android.com/tools"
+    tools:ignore="MissingLeanbackLauncher,ImpliedTouchscreenHardware">
 
     <uses-permission
         android:name="com.android.providers.tv.permission.WRITE_EPG_DATA"
@@ -24,4 +48,5 @@
     <uses-permission
         android:name="com.android.providers.tv.permission.READ_EPG_DATA"
         tools:node="remove" />
+
 </manifest>

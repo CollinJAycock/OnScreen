@@ -30,15 +30,28 @@ android {
 
     defaultConfig {
         applicationId = "tv.onscreen.android"
-        // minSdk 23 — the codebase already uses API-23+ APIs (Context.getColor,
-        // Resources.getColor(int, Theme), View.setForeground) directly, without
-        // Build.VERSION.SDK_INT guards, so an install on API 21–22 would crash
-        // the moment a card presenter painted. Android TV API 21–22 (Lollipop)
-        // is effectively dead as a target — the active boxes are Chromecast w/
-        // Google TV, Fire TV, Shield, all on API 23+. Bumping the floor matches
-        // what the code already requires and silences the 31 NewApi lint errors
-        // those calls trigger.
-        minSdk = 23
+        // minSdk 24 — a SECURITY floor, not just an API-availability one.
+        //
+        // android:networkSecurityConfig is honored from API 24 only. Below
+        // that the whole res/xml/network_security_config.xml file is ignored
+        // and the platform default applies — and on API 23 that default still
+        // TRUSTS THE USER CA STORE. So the deliberate removal of
+        // `<certificates src="user" />` bought nothing on Android 6: a planted
+        // CA (sideloaded "helper" app, MDM enrolment, a few minutes of ADB —
+        // all routine on Fire TV) could still read every HTTPS call, including
+        // the login password and the PASETO tokens. The file even documented
+        // that gap; this closes it rather than describing it.
+        //
+        // Cost: drops Android 6 Fire TV hardware. Accepted deliberately — the
+        // alternative is shipping a TLS story that silently does not hold on
+        // that slice. Everything the client actually targets (Chromecast w/
+        // Google TV, current Fire TV, Shield) is API 24+.
+        //
+        // The previous rationale still applies underneath: the codebase calls
+        // API-23+ APIs (Context.getColor, Resources.getColor(int, Theme),
+        // View.setForeground) with no SDK_INT guards, so 21–22 would crash on
+        // first paint regardless.
+        minSdk = 24
         targetSdk = 36
         // 14: versionCode 13 was uploaded against the API-35 target and
         // blocked by the Play floor — codes are burned on upload, not
@@ -55,14 +68,32 @@ android {
     // `googletv` keeps them for the Google TV Continue-Watching row.
     // googletv is the default — it's the Play / direct-build variant, so
     // unflavored habits map to it (assembleGoogletvRelease, etc.).
+    //
+    // The flavors also drive `leanbackRequired`, substituted into the single
+    // android.software.leanback declaration in src/main/AndroidManifest.xml.
+    // A placeholder rather than a flavor manifest overlay: lint evaluates an
+    // overlay in isolation, so a leanback declaration living in a flavor
+    // manifest reports MissingLeanbackLauncher (the activity is in src/main)
+    // and ImpliedTouchscreenHardware (the touchscreen line is in src/main) as
+    // false positives. Keeping one declaration keeps lint honest.
     flavorDimensions += "store"
     productFlavors {
         create("googletv") {
             dimension = "store"
             isDefault = true
+            // REQUIRED on Play: with leanback optional the AAB is eligible for
+            // phones, where the app installs and has nothing to launch —
+            // MainActivity declares only LEANBACK_LAUNCHER. Every certified
+            // Android TV / Google TV device reports leanback, so this costs no
+            // coverage.
+            manifestPlaceholders["leanbackRequired"] = "true"
         }
         create("firetv") {
             dimension = "store"
+            // OPTIONAL on Amazon: a number of Fire TV / Fire OS devices don't
+            // report leanback, so requiring it lets the Appstore filter the app
+            // off them and can block sideload.
+            manifestPlaceholders["leanbackRequired"] = "false"
         }
     }
 
@@ -147,6 +178,14 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // java.time is API 26+; minSdk is 24. LiveTVRepository.parseIso calls
+        // OffsetDateTime.parse, and on API 24-25 that resolves to a
+        // NoClassDefFoundError — an Error, NOT an Exception, so the
+        // `catch (_: Exception)` around it does not catch it and the Live TV
+        // guide hard-crashes. Desugaring backports the java.time classes
+        // instead of patching the one call site, so the next java.time use is
+        // safe by default rather than a latent crash on the same devices.
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -173,6 +212,9 @@ android {
 }
 
 dependencies {
+    // Backports java.time (and friends) to the API 24 floor — see
+    // isCoreLibraryDesugaringEnabled in compileOptions.
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     // Leanback (TV UI framework)
     implementation("androidx.leanback:leanback:1.0.0")
     implementation("androidx.recyclerview:recyclerview:1.3.2")
