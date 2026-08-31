@@ -92,7 +92,11 @@ class DownloadStore @Inject constructor(
             val next = DownloadManifest(entries = _state.value.entries.filterNot { it.file_id == fileId })
             persist(next)
             _state.value = next
-            entry?.let { fileFor(it).delete() }
+            // runCatching: fileFor now rejects a malformed server-supplied
+            // id/container. A bad entry must still leave the manifest, so the
+            // user can clear it from the UI rather than being stuck with a row
+            // that throws on every removal attempt.
+            entry?.let { e -> runCatching { fileFor(e).delete() } }
         }
     }
 
@@ -107,10 +111,21 @@ class DownloadStore @Inject constructor(
      *  their own account is forbidden to fetch, and a "forgotten" server's
      *  content survived on the device.
      *
-     *  Called from every identity transition (sign-out, server switch). */
+     *  Called from every identity transition (sign-out, server switch).
+     *
+     *  DIRECTORY-driven, not manifest-driven. Iterating `_state` looked
+     *  equivalent but was not: nothing loads the store at startup, and the
+     *  default route (launch → Settings → Sign out) never touches it — so the
+     *  wipe iterated ZERO entries, deleted no media, and then destroyed the
+     *  index that named it, leaving unreclaimable orphans. Listing the
+     *  directory also sweeps the other two orphan sources: the corrupt-manifest
+     *  reset in load(), and a changed `container` writing `<id>.<old>` while
+     *  every reader computes `<id>.<new>`. */
     suspend fun clearAll() = withContext(Dispatchers.IO) {
         mutex.withLock {
-            _state.value.entries.forEach { runCatching { fileFor(it).delete() } }
+            downloadsDir.listFiles()?.forEach { runCatching { it.delete() } }
+            // listFiles() already covered manifest.json; this is the
+            // belt-and-braces path for a listFiles() that returned null.
             runCatching { manifestFile.delete() }
             _state.value = DownloadManifest()
         }
@@ -118,10 +133,39 @@ class DownloadStore @Inject constructor(
 
     /** Local on-disk path for an entry — `<downloadsDir>/<file_id>.<ext>`.
      *  Container falls back to "bin" when the server didn't supply one
-     *  (rare; ffprobe should always set this). */
+     *  (rare; ffprobe should always set this).
+     *
+     *  BOTH components are server-controlled strings off the wire, so both are
+     *  validated here rather than trusted. Previously they were interpolated
+     *  raw: `File(File, String)` does not resolve `..`, so a hostile or
+     *  MITM'd item response could aim the download writer (which mkdirs() the
+     *  parent chain and, on a 200-answers-a-Range, opens the sink TRUNCATING)
+     *  at any path in the app sandbox. The reachable target that mattered was
+     *  `<filesDir>/datastore/server_prefs.preferences_pb` two levels up —
+     *  forgeable without the Keystore key, because TokenCrypto.decrypt passes
+     *  through anything lacking the `enc:v1:` prefix as legacy plaintext. That
+     *  turns a transient LAN position into a client permanently pointed at
+     *  attacker infrastructure, which is NOT what the accepted cleartext
+     *  trade-off signed up for.
+     *
+     *  Reject loudly instead of sanitising: a name that fails these rules is a
+     *  server bug or an attack, and silently rewriting it would hide both. All
+     *  three callers (this, remove(), clearAll()) get the containment assert. */
     fun fileFor(entry: DownloadEntry): File {
-        val ext = (entry.container ?: "bin").lowercase()
-        return File(downloadsDir, "${entry.file_id}.$ext")
+        // file_id is a server-side UUID on every real response. Parsing it is
+        // both the format check and the traversal check — no separator, dot,
+        // or encoded byte survives UUID.fromString.
+        val id = runCatching { java.util.UUID.fromString(entry.file_id) }.getOrNull()
+        require(id != null) { "download file_id is not a UUID: ${entry.file_id}" }
+        val raw = (entry.container ?: "bin").lowercase()
+        val ext = if (CONTAINER_RE.matches(raw)) raw else "bin"
+        val out = File(downloadsDir, "$id.$ext")
+        // Belt-and-braces: even if the rules above are ever loosened, nothing
+        // may resolve outside downloadsDir.
+        require(out.canonicalPath.startsWith(downloadsDir.canonicalPath + File.separator)) {
+            "download path escapes downloadsDir: ${out.path}"
+        }
+        return out
     }
 
     private fun persist(manifest: DownloadManifest) {
@@ -134,5 +178,14 @@ class DownloadStore @Inject constructor(
             manifestFile.writeText(json)
             tmp.delete()
         }
+    }
+
+    private companion object {
+        /** Container extensions we will write to disk. Deliberately a short
+         *  allowlist shape rather than a denylist of dangerous characters:
+         *  alphanumeric only, so no separator, dot, NUL, or percent-encoded
+         *  byte can reach the path. Real values are mkv/mp4/m4v/webm/flac/
+         *  mp3/opus/epub and friends; anything else falls back to "bin". */
+        val CONTAINER_RE = Regex("^[a-z0-9]{1,8}$")
     }
 }

@@ -39,6 +39,17 @@
           deployment model. This was not — it had no rationale, and it silently
           voided the protection the TLS path exists to provide.
         -->
+        <!--
+          KNOWN GAP — API 23. android:networkSecurityConfig is honored from
+          API 24 only, and this module's minSdk is 23 (app/build.gradle.kts).
+          On an Android 6 device this whole file is ignored, and the platform
+          default there still trusts the user CA store — so the removal above
+          buys nothing on that slice of Fire TV hardware. Closing it means
+          minSdk 24, which drops those devices; that is a reach decision, not
+          a code one. Scope of the residual risk is narrow: it needs an
+          Android 6 TV, a server reached over HTTPS (LAN installs are
+          cleartext by design and unaffected), and a planted CA.
+        -->
         <trust-anchors>
             <certificates src="system" />
         </trust-anchors>

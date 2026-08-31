@@ -78,7 +78,12 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
-        val dsFactory = DefaultDataSource.Factory(this, DefaultHttpDataSource.Factory())
+        // Resolver wrapper: the player's MediaItems carry CLEAN urls, and the
+        // `?token=` is re-attached here, below the session, so it never
+        // reaches the platform MediaSession metadata. See StreamTokenVault.
+        val dsFactory = StreamTokenVault.resolverFactory(
+            DefaultDataSource.Factory(this, DefaultHttpDataSource.Factory()),
+        )
         val player = ExoPlayer.Builder(this)
             .setMediaSourceFactory(DefaultMediaSourceFactory(dsFactory))
             .setAudioAttributes(
@@ -224,13 +229,17 @@ class PlaybackService : MediaSessionService() {
 
     /** Mirrors PlayerViewModel.buildDirectPlayUrl: prefer the per-file
      *  stream token, else the purpose=asset token (the access token is
-     *  rejected in a query string by the asset-route middleware). */
+     *  rejected in a query string by the asset-route middleware).
+     *
+     *  Returns the url WITHOUT the credential and stashes the credential in
+     *  [StreamTokenVault], which the player's data source re-attaches at
+     *  request time. The token must not ride in the MediaItem uri — this is a
+     *  MediaSession player, and media3 republishes that uri into the platform
+     *  session's METADATA_KEY_MEDIA_URI where any notification-listener app
+     *  can read it. */
     private suspend fun buildDirectPlayUrl(streamPath: String, streamToken: String?): String? {
         val server = prefs.getServerUrl()?.trimEnd('/') ?: return null
         val token = if (!streamToken.isNullOrEmpty()) streamToken else prefs.getAssetToken()
-        val base = "$server$streamPath"
-        if (token.isNullOrEmpty()) return base
-        val sep = if (streamPath.contains("?")) "&" else "?"
-        return "$base${sep}token=$token"
+        return StreamTokenVault.register("$server$streamPath", token)
     }
 }

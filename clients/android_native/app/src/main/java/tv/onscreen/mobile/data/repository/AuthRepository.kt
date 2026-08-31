@@ -15,6 +15,7 @@ import tv.onscreen.mobile.data.model.AuthProviderStatus
 import tv.onscreen.mobile.data.model.LoginRequest
 import tv.onscreen.mobile.data.model.LogoutRequest
 import tv.onscreen.mobile.data.model.PairCodeResponse
+import tv.onscreen.mobile.data.model.RefreshRequest
 import tv.onscreen.mobile.data.model.TokenPair
 import tv.onscreen.mobile.data.model.TotpActivateResponse
 import tv.onscreen.mobile.data.model.TotpCodeRequest
@@ -141,9 +142,37 @@ open class AuthRepository @Inject constructor(
         prefs.clearAuth()
         try {
             if (!refreshToken.isNullOrEmpty()) {
+                // Rotate BEFORE revoking. Sending the stored access token is
+                // only sufficient while that token is still live: the logout
+                // route runs under Optional auth, which never rejects, so an
+                // EXPIRED bearer yields nil claims and the handler clears
+                // cookies and answers 204 having revoked nothing — the 30-day
+                // refresh session survives a sign-out that reported success,
+                // and the client cannot tell (the response is identical). The
+                // access token lapses after an hour and nothing refreshes it
+                // while the app idles, so "backgrounded overnight, then Sign
+                // out" hit this every time.
+                //
+                // This is exactly when it matters: refresh-reuse detection
+                // normally burns a stolen refresh token the moment the real
+                // client refreshes again, and sign-out is the point where that
+                // protection would otherwise stop.
+                // Refresh ROTATES the refresh token, so revoke the one the
+                // rotation just issued — presenting the superseded token would
+                // trip the server's reuse detection and be recorded as a
+                // replay rather than a clean sign-out. Falls back to the
+                // stored pair when the rotation fails (offline, server down),
+                // which is no worse than the previous behaviour.
+                val rotated = runCatching {
+                    api.refresh(RefreshRequest(refreshToken)).data
+                }.getOrNull()
+                val bearer = rotated?.access_token?.takeIf { it.isNotEmpty() }
+                    ?: accessToken?.takeIf { it.isNotEmpty() }
+                val revokeToken = rotated?.refresh_token?.takeIf { it.isNotEmpty() }
+                    ?: refreshToken
                 api.logout(
-                    LogoutRequest(refreshToken),
-                    accessToken?.takeIf { it.isNotEmpty() }?.let { "Bearer $it" },
+                    LogoutRequest(revokeToken),
+                    bearer?.let { "Bearer $it" },
                 )
             }
         } catch (_: Exception) {

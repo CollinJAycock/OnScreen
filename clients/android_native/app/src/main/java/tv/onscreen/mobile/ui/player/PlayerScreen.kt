@@ -254,9 +254,15 @@ private fun PlayerHost(
             // DefaultHttpDataSource. The bare HTTP factory we used
             // before crashed with ClassCastException the first time
             // an offline file:// URL hit it (downloaded items).
-            val dsFactory = androidx.media3.datasource.DefaultDataSource.Factory(
-                context,
-                DefaultHttpDataSource.Factory(),
+            // Wrapped in the vault resolver so direct-play URLs — which are
+            // now built WITHOUT their `?token=` (see StreamTokenVault) —
+            // regain the credential as the request leaves. file:// offline
+            // sources are registered with no token and pass straight through.
+            val dsFactory = tv.onscreen.mobile.playback.StreamTokenVault.resolverFactory(
+                androidx.media3.datasource.DefaultDataSource.Factory(
+                    context,
+                    DefaultHttpDataSource.Factory(),
+                ),
             )
             // MIME hint when we know the container — helps ExoPlayer
             // pick the right extractor for offline files where the

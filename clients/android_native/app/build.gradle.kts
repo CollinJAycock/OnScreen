@@ -254,4 +254,9 @@ dependencies {
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
     testImplementation("io.mockk:mockk:1.13.11")
     testImplementation("com.google.truth:truth:1.4.4")
+    // The auth-scoping guards live in the COMPOSITION of interceptor +
+    // authenticator + OkHttp's retry loop, so they need a real client against
+    // a real socket — a mock-based test passes while the app leaks. Matches
+    // the TV client's suite (clients/android/app/build.gradle.kts).
+    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
 }

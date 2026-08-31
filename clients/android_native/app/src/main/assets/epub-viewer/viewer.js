@@ -75,11 +75,25 @@
         height: h,
         flow: 'scrolled-doc',
         manager: 'default',
-        // Inline resources are served as blob:; the rendition iframe
-        // sandbox needs allow-scripts + allow-same-origin for them
-        // to load, otherwise images and stylesheets inside the EPUB
-        // resolve to broken placeholders.
-        allowScriptedContent: true,
+        // FALSE, deliberately. A book is untrusted content.
+        //
+        // This was `true`, justified by "the sandbox needs allow-scripts +
+        // allow-same-origin or blob: images and stylesheets break". That
+        // reading of epub.js is wrong: its IframeView sets
+        // sandbox="allow-same-origin" UNCONDITIONALLY, and allowScriptedContent
+        // only appends allow-scripts. Inline resources need the former, which
+        // we still get; the flag's sole effect is executing the book's own
+        // JavaScript. And because the chapter frame is created via srcdoc it
+        // inherits this origin, so allow-scripts + allow-same-origin together
+        // are the self-defeating-sandbox case — book JS could reach `top` and
+        // append a script into the host document, making every remaining
+        // sandbox token moot. There is no sanitisation in epub.min.js.
+        //
+        // The web client reached this same conclusion already, over the same
+        // stale comment: web/src/routes/books/[id]/+page.svelte sets false and
+        // notes "Standard reflowable EPUBs are static XHTML and render fine
+        // without it." Keep the three surfaces in step.
+        allowScriptedContent: false,
       });
 
       // Belt + suspenders: an EPUB stylesheet that omits a body

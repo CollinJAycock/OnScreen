@@ -107,6 +107,13 @@ class OnScreenDownloadManager @Inject constructor(
      *  keeps transferring the previous identity's media after sign-out — and
      *  would re-create manifest entries just after they were wiped. */
     suspend fun cancelAllAndClear() {
+        // load() first: nothing populates the store at app start, and the
+        // common sign-out route (launch → Settings → Sign out) never touches
+        // it, so `state` was empty here and every in-flight worker survived
+        // the "cancel everything" call. clearAll() is directory-driven and so
+        // erases the media regardless, but the workers have to be cancelled by
+        // id or they keep transferring on the previous identity's baked token.
+        runCatching { store.load() }
         store.state.value.entries.forEach { cancel(it.file_id) }
         store.clearAll()
     }

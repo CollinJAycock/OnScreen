@@ -28,6 +28,7 @@ import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.model.TranscodeSession
 import tv.onscreen.mobile.data.model.UserPreferences
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.playback.StreamTokenVault
 import kotlinx.coroutines.flow.emptyFlow
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.NotificationsRepository
@@ -201,7 +202,15 @@ class PlayerViewModelTest {
             assertThat(s.error).isNull()
             assertThat(s.loading).isFalse()
             val src = s.source as PlaybackSource.DirectPlay
-            assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4?token=st-24h")
+            // The url is CLEAN — the credential lives in StreamTokenVault and
+            // is re-attached by the player's resolving data source. It must
+            // not be in the url, because for audio this becomes a MediaSession
+            // MediaItem whose uri media3 republishes into the platform
+            // session's METADATA_KEY_MEDIA_URI, readable by any
+            // notification-listener app.
+            assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4")
+            assertThat(src.url).doesNotContain("token=")
+            assertThat(StreamTokenVault.tokenForTest(src.url)).isEqualTo("st-24h")
             assertThat(src.startMs).isEqualTo(12_000L)
             assertThat(vm.hlsOffsetMs).isEqualTo(0L)
             assertThat(s.audioStreams).hasSize(1)
@@ -225,7 +234,10 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         val src = vm.state.value.source as PlaybackSource.DirectPlay
-        assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4?token=as-24h")
+        // Clean url + vaulted credential — see the stream-token test above.
+        assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4")
+        assertThat(src.url).doesNotContain("token=")
+        assertThat(StreamTokenVault.tokenForTest(src.url)).isEqualTo("as-24h")
     }
 
     @Test

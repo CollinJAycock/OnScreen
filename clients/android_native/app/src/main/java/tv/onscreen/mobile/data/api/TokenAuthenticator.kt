@@ -2,10 +2,12 @@ package tv.onscreen.mobile.data.api
 
 import kotlinx.coroutines.runBlocking
 import okhttp3.Authenticator
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Request
 import okhttp3.Response
 import okhttp3.Route
 import retrofit2.HttpException
+import tv.onscreen.mobile.data.downloads.DownloadStore
 import tv.onscreen.mobile.data.model.RefreshRequest
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 
@@ -28,17 +30,67 @@ class TokenAuthenticator(
     // bearer, 401s, and serializes back through this authenticator; after
     // a definitive rejection the revoked bearer keeps being sent.
     private val authInterceptor: AuthInterceptor,
+    // Involuntary sign-out has to erase offline media too — see
+    // clearAuthAndCache. Lazy provider rather than the store itself: this
+    // class is constructed inside the OkHttp graph, and DownloadStore pulls
+    // in Moshi, which would close a Hilt dependency cycle.
+    private val downloadStoreProvider: () -> DownloadStore,
 ) : Authenticator {
 
     private val lock = Any()
 
-    /** Clear auth AND the bearer cache, so the next request re-reads. */
+    /** Clear auth AND the bearer cache, so the next request re-reads.
+     *
+     *  This is the INVOLUNTARY sign-out path (no refresh token, or a
+     *  definitively-rejected refresh) — the one a remote revoke after a phone
+     *  is lost, sold, or handed on actually travels down. It must erase
+     *  downloads for the same reason the voluntary path in SettingsViewModel
+     *  does: DownloadEntry carries no user or server field, and offline
+     *  playback deliberately falls back to the local file whenever the item
+     *  fetch throws — which a content-rating 403 does, indistinguishably from
+     *  a network blip. Leaving the media meant the next person to pair, a
+     *  second household member or a restricted child profile, could open
+     *  Downloads and play everything the previous account had. */
     private suspend fun clearAuthAndCache() {
         prefs.clearAuth()
         authInterceptor.invalidateCache()
+        runCatching { downloadStoreProvider().clearAll() }
     }
 
     override fun authenticate(route: Route?, response: Response): Request? {
+        // Scope auth to our own server — the same guard AuthInterceptor
+        // applies, and it must be repeated here. This client is also Coil's
+        // image backend and fetches third-party URLs (TMDB Discover posters
+        // arrive as absolute foreign URLs in DiscoverItem.poster_url, and
+        // BaseUrlInterceptor passes those through untouched). AuthInterceptor
+        // correctly withholds the Bearer from them, but OkHttp invokes the
+        // client Authenticator on a 401 from ANY host, and the follow-up
+        // request it returns is dispatched from inside
+        // RetryAndFollowUpInterceptor — BELOW the application interceptors —
+        // so AuthInterceptor never gets a second chance to strip what we add
+        // here. Without this check, any non-server host that answers 401
+        // receives the user's full-scope OnScreen access token, delivered to
+        // an internet host the attacker controls and logs.
+        // Parsed with OkHttp's HttpUrl rather than android.net.Uri: this is a
+        // security boundary and must be exercisable in JVM unit tests, where
+        // android.jar is stubbed and Uri.parse() returns null — which would
+        // silently disable the check under test while it still worked in
+        // production, i.e. exactly the kind of guard that rots unnoticed.
+        // Host AND port: on a home LAN the media server shares a host with
+        // whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
+        // Jellyfin, `:32400` Plex), so a host-only match would hand the token
+        // to a neighbouring service that answered 401.
+        // Ported from clients/android/.../TokenAuthenticator.kt — keep in step.
+        val serverUrl = runBlocking { prefs.getServerUrl()?.toHttpUrlOrNull() }
+        if (serverUrl != null) {
+            val target = response.request.url
+            if (!target.host.equals(serverUrl.host, ignoreCase = true) ||
+                target.port != serverUrl.port
+            ) {
+                return null
+            }
+        }
+
         // Don't retry refresh or login failures.
         val path = response.request.url.encodedPath
         if (path.contains("auth/refresh") || path.contains("auth/login")) {

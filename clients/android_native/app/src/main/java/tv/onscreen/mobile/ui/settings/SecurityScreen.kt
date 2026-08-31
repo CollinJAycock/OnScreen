@@ -1,7 +1,15 @@
 package tv.onscreen.mobile.ui.settings
 
+import android.app.Activity
+import android.content.ClipData
+import android.content.ClipDescription
+import android.content.ClipboardManager
+import android.content.Context
 import android.graphics.BitmapFactory
+import android.os.Build
+import android.os.PersistableBundle
 import android.util.Base64
+import android.view.WindowManager
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -31,6 +39,7 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,6 +47,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.ImeAction
@@ -53,6 +63,40 @@ fun SecurityScreen(
 ) {
     val state by vm.state.collectAsStateWithLifecycle()
     val busy by vm.busy.collectAsStateWithLifecycle()
+
+    // FLAG_SECURE while the TOTP seed or the recovery codes are on screen.
+    //
+    // Both are login credentials the server will not reissue: SetupTOTP
+    // returns ErrTOTPAlreadyEnabled once 2FA is on, so a captured seed
+    // discloses material otherwise unobtainable from the running app, and a
+    // recovery code is accepted in place of a TOTP at the login challenge.
+    // Capture is the platform DEFAULT — FLAG_SECURE is the opt-out — and this
+    // screen's own step 1 tells the user to scan the QR in an authenticator
+    // app, i.e. to background OnScreen, at which point system_server snapshots
+    // the visible window and renders it in the task switcher.
+    //
+    // Scoped to the two sensitive states rather than the whole screen so the
+    // rest of Settings still screenshots normally for support.
+    val sensitive = state is SecurityUiState.Enrolling || state is SecurityUiState.Recovery
+    val view = LocalView.current
+    DisposableEffect(sensitive, view) {
+        val window = (view.context as? Activity)?.window
+        if (sensitive) {
+            window?.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            // API 33+ also has an explicit recents opt-out; FLAG_SECURE
+            // already covers the snapshot, this is belt and braces for OEMs
+            // that special-case it.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                (view.context as? Activity)?.setRecentsScreenshotEnabled(false)
+            }
+        }
+        onDispose {
+            window?.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                (view.context as? Activity)?.setRecentsScreenshotEnabled(true)
+            }
+        }
+    }
 
     Scaffold(
         topBar = {
@@ -188,6 +232,9 @@ private fun EnrollBody(
 
 @Composable
 private fun RecoveryBody(codes: List<String>, onDone: () -> Unit) {
+    val context = LocalView.current.context
+    var copied by remember { mutableStateOf(false) }
+
     Text(
         "2FA is on. Save these recovery codes — each works once and they " +
             "won't be shown again.",
@@ -199,6 +246,24 @@ private fun RecoveryBody(codes: List<String>, onDone: () -> Unit) {
         Spacer(Modifier.height(4.dp))
     }
     Spacer(Modifier.height(20.dp))
+    // Give them a way to save these that isn't a screenshot. Without a copy
+    // affordance the natural response to "save these" is a screen capture into
+    // shared media storage, where any app holding READ_MEDIA_IMAGES can read
+    // bypass codes for the account. EXTRA_IS_SENSITIVE keeps the values out of
+    // the clipboard preview toast on Android 13+ and hints to the OS not to
+    // sync them.
+    OutlinedButton(
+        onClick = {
+            val clip = ClipData.newPlainText("OnScreen recovery codes", codes.joinToString("\n"))
+            clip.description.extras = PersistableBundle().apply {
+                putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+            }
+            (context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager)
+                ?.setPrimaryClip(clip)
+            copied = true
+        },
+    ) { Text(if (copied) "Copied" else "Copy codes") }
+    Spacer(Modifier.height(12.dp))
     Button(onClick = onDone) { Text("I've saved them") }
 }
 

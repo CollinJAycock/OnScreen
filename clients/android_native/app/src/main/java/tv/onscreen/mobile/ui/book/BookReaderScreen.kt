@@ -161,7 +161,20 @@ class BookReaderViewModel @Inject constructor(
         serverUrl: String,
     ): File = withContext(Dispatchers.IO) {
         val dir = File(appContext.cacheDir, "book-epubs").apply { mkdirs() }
-        val out = File(dir, "$itemId.epub")
+        // Name the cache file from a hash of the id, never the raw string.
+        // itemId is a nav argument, and Navigation URL-DECODES path arguments
+        // before handing them over — while Routes.book() interpolates the id
+        // without encoding it. A double-encoded id from a hostile server
+        // therefore decoded twice and resolved outside this directory, letting
+        // the delete+rename below destroy and replace another book's cache
+        // entry. Hashing removes the whole class: the output is fixed-charset
+        // and fixed-length whatever the server sends.
+        val out = File(dir, "${cacheKey(itemId)}.epub")
+        // Containment assert — cheap, and it keeps this true if the naming
+        // scheme is ever changed back to something id-derived.
+        require(out.canonicalPath.startsWith(dir.canonicalPath + File.separator)) {
+            "epub cache path escapes book-epubs: ${out.path}"
+        }
         if (out.exists() && out.length() > 0) return@withContext out
         // Download into a temp sibling and only promote it to the final
         // path after the copy fully succeeds. Streaming straight into
@@ -171,7 +184,7 @@ class BookReaderViewModel @Inject constructor(
         // corrupt file forever and epub.js rendered a blank book. With
         // temp+rename the final path only ever appears complete, and any
         // failure deletes the partial so the next open retries cleanly.
-        val tmp = File(dir, "$itemId.epub.tmp")
+        val tmp = File(dir, "${cacheKey(itemId)}.epub.tmp")
         val req = Request.Builder()
             // /media/stream/{fileId} is the same endpoint the player
             // hits — server's asset-route middleware accepts the
@@ -199,6 +212,18 @@ class BookReaderViewModel @Inject constructor(
         } catch (e: Exception) {
             tmp.delete()
             throw e
+        }
+    }
+
+    private companion object {
+        /** SHA-256 of the item id, hex-truncated — a filesystem-safe,
+         *  collision-resistant stand-in for a server string we do not
+         *  control. Not a security boundary on its own (the containment
+         *  assert is); it is what makes the boundary trivially true. */
+        fun cacheKey(itemId: String): String {
+            val digest = java.security.MessageDigest.getInstance("SHA-256")
+                .digest(itemId.toByteArray(Charsets.UTF_8))
+            return digest.take(16).joinToString("") { "%02x".format(it) }
         }
     }
 }
@@ -375,17 +400,26 @@ private fun EpubReader(ui: BookReaderUi) {
                 WebView.setWebContentsDebuggingEnabled(true)
             }
             WebView(ctx).apply {
+                // The .epub bundles internal stylesheets / fonts / images;
+                // epub.js resolves them through blob: URLs inside the
+                // rendition iframe, and needs JS in the HOST page to do it.
                 settings.javaScriptEnabled = true
-                settings.domStorageEnabled = true
-                // The .epub bundles internal stylesheets / fonts /
-                // images; epub.js resolves them through blob: URLs
-                // inside the rendition iframe. Without DOM storage
-                // and JS, the rendition silently falls back to a
-                // blank chapter.
+                // domStorageEnabled stays OFF. It was on, justified by the
+                // same blob:-resources reasoning as the line above — but
+                // setDomStorageEnabled controls localStorage/sessionStorage
+                // and has nothing to do with blob: URLs. epub.js only touches
+                // localStorage through its localforage wrapper, reachable via
+                // Book.store(), which viewer.js never calls. So it bought no
+                // functionality while giving every book a shared, never-cleared
+                // writable store: all books render under the one fixed
+                // appassets origin, so book A could leave a UUID that book B
+                // reads back — a supercookie inside the app that survived book
+                // close, restart, sign-out, and re-pairing to another server.
+                settings.domStorageEnabled = false
                 settings.allowFileAccess = false
                 settings.allowContentAccess = false
-                // No addJavascriptInterface here. epub.js renders UNTRUSTED book
-                // JS same-origin (allowScriptedContent), so any registered
+                // No addJavascriptInterface here. Book JS is UNTRUSTED, so any
+                // registered
                 // @JavascriptInterface object would be reachable from a
                 // malicious .epub — a latent JS→native RCE surface. The
                 // viewer-side calls are guarded (`if (window.AndroidBridge…)`)
@@ -411,24 +445,33 @@ private fun EpubReader(ui: BookReaderUi) {
                         if (resp != null) {
                             return resp
                         }
-                        // Sandbox the book: deny any off-origin http(s) request a
-                        // malicious EPUB might issue (tracking pixels, data exfil,
+                        // Sandbox the book: deny anything the asset loader above
+                        // didn't already answer (tracking pixels, data exfil,
                         // SSRF-from-device). shouldInterceptRequest fires for every
                         // request including main-frame navigation, so this also
                         // blocks a book trying to navigate the reader off-origin.
                         // Legit EPUB resources resolve via blob:/data: inside the
-                        // rendition iframe or through the appassets loader above —
-                        // never external http(s).
+                        // rendition iframe or through the appassets loader — never
+                        // anything external.
+                        //
+                        // ALLOWLIST, not a denylist. This used to refuse exactly
+                        // http and https and return null (proceed) for everything
+                        // else, which is the wrong default for untrusted content:
+                        // any scheme nobody thought of was permitted. Inverting it
+                        // means a new scheme is refused until someone deliberately
+                        // adds it. (The CSP in assets/epub-viewer/index.html is the
+                        // layer that actually stops WebSocket, which never reaches
+                        // shouldInterceptRequest at all — belt and braces.)
                         val scheme = request.url.scheme?.lowercase()
-                        if (scheme == "http" || scheme == "https") {
-                            Log.d("EpubReader", "blocked off-origin request ${request.url}")
-                            return WebResourceResponse(
-                                "text/plain", "utf-8", 403, "Blocked",
-                                emptyMap(), ByteArray(0).inputStream(),
-                            )
+                        if (scheme == "data" || scheme == "blob" || scheme == "about") {
+                            // Handled internally by the WebView.
+                            return null
                         }
-                        // data:/blob:/about: — handled internally by the WebView.
-                        return null
+                        Log.d("EpubReader", "blocked off-origin request ${request.url}")
+                        return WebResourceResponse(
+                            "text/plain", "utf-8", 403, "Blocked",
+                            emptyMap(), ByteArray(0).inputStream(),
+                        )
                     }
                 }
                 loadUrl(

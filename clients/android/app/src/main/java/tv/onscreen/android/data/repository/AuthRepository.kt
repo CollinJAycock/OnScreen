@@ -1,9 +1,11 @@
 package tv.onscreen.android.data.repository
 
+import tv.onscreen.android.data.api.AuthInterceptor
 import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.model.LoginRequest
 import tv.onscreen.android.data.model.LogoutRequest
 import tv.onscreen.android.data.model.PairCodeResponse
+import tv.onscreen.android.data.model.RefreshRequest
 import tv.onscreen.android.data.model.TokenPair
 import tv.onscreen.android.data.model.TotpVerifyRequest
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -24,6 +26,9 @@ class AuthRepository @Inject constructor(
     private val preferences: PreferencesRepository,
     private val capabilities: CapabilitiesRepository,
     private val notifications: NotificationsRepository,
+    // Bearer cache with a 5 s TTL. Sign-out has to drop it or the revoked
+    // token keeps being attached for the rest of the window.
+    private val authInterceptor: AuthInterceptor,
 ) {
     /** Clear per-identity caches. Called from every sign-in, sign-out and
      *  pairing completion — the four points where "who is signed in" changes. */
@@ -59,17 +64,46 @@ class AuthRepository @Inject constructor(
         prefs.setUser(pair.user_id, pair.username)
     }
 
+    /** Revoke the session server-side, then drop local identity state.
+     *
+     *  The revoke has to run under VALID claims or it is a silent no-op: the
+     *  logout route runs under Optional auth, which never rejects, so an
+     *  expired bearer yields nil claims and the handler clears cookies and
+     *  answers 204 having revoked nothing — leaving the 30-day refresh session
+     *  alive after a sign-out that reported success. The access token lapses
+     *  after an hour and nothing refreshes it while the app idles, so we
+     *  rotate first and send the resulting token explicitly rather than
+     *  relying on AuthInterceptor's (up to 5 s stale, and never invalidated on
+     *  this client) cache. */
     suspend fun logout() {
         try {
             val refreshToken = prefs.getRefreshToken()
             if (!refreshToken.isNullOrEmpty()) {
-                api.logout(LogoutRequest(refreshToken))
+                // Refresh rotates the refresh token, so revoke the one the
+                // rotation issued — replaying the superseded token would trip
+                // the server's reuse detection instead of reading as a clean
+                // sign-out. Fall back to the stored pair if rotation fails.
+                val rotated = runCatching {
+                    api.refresh(RefreshRequest(refreshToken)).data
+                }.getOrNull()
+                val bearer = rotated?.access_token?.takeIf { it.isNotEmpty() }
+                    ?: prefs.getAccessToken()?.takeIf { it.isNotEmpty() }
+                val revokeToken = rotated?.refresh_token?.takeIf { it.isNotEmpty() }
+                    ?: refreshToken
+                api.logout(
+                    LogoutRequest(revokeToken),
+                    bearer?.let { "Bearer $it" },
+                )
             }
         } catch (_: Exception) {
             // Best-effort — server may be unreachable.
         }
         invalidateIdentityCaches()
         prefs.clearAuth()
+        // Drop the bearer cache too. This client never called it, so for up to
+        // the 5 s TTL after sign-out every new request still carried the
+        // just-revoked token.
+        authInterceptor.invalidateCache()
     }
 
     /** Check server reachability by hitting the health endpoint.

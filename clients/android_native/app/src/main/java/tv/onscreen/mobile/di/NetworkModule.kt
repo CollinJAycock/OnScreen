@@ -120,6 +120,10 @@ object NetworkModule {
         baseUrlInterceptor: BaseUrlInterceptor,
         authInterceptor: AuthInterceptor,
         @AuthClient authApi: OnScreenApi,
+        // Provider, not the instance: DownloadStore needs Moshi, and Moshi's
+        // Retrofit converter needs this client. Deferring the lookup to the
+        // moment of an involuntary sign-out breaks that cycle.
+        downloadStore: dagger.Lazy<tv.onscreen.mobile.data.downloads.DownloadStore>,
     ): OkHttpClient {
         val tls = buildTls()
         // OkHttp's default Dispatcher caps concurrent requests per
@@ -136,11 +140,20 @@ object NetworkModule {
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(60, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
+            // Whole-call ceiling, matching the TV client. Without it the
+            // per-stage timeouts above can be renewed indefinitely by a server
+            // that keeps dribbling bytes, so a call never terminates and the
+            // coroutine awaiting it never resumes. 120 s is far above any
+            // legitimate API round-trip; media bytes do not go through this
+            // client's Retrofit surface.
+            .callTimeout(120, TimeUnit.SECONDS)
             .dispatcher(dispatcher)
             .addInterceptor(baseUrlInterceptor)
             .addInterceptor(authInterceptor)
             .addInterceptor(loggingInterceptor())
-            .authenticator(TokenAuthenticator(prefs, { authApi }, authInterceptor))
+            .authenticator(
+                TokenAuthenticator(prefs, { authApi }, authInterceptor) { downloadStore.get() },
+            )
             .sslSocketFactory(tls.socketFactory, tls.trustManager)
 
         return builder.build()

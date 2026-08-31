@@ -38,6 +38,47 @@ class ServerPrefs(private val context: Context) {
         private val KEY_FILTER_SHOW = booleanPreferencesKey("search_filter_show")
         private val KEY_FILTER_EPISODE = booleanPreferencesKey("search_filter_episode")
         private val KEY_FILTER_TRACK = booleanPreferencesKey("search_filter_track")
+
+        /**
+         * Pick a scheme for a bare-host URL the user typed into the server
+         * field. Ported from the phone client's normalizeServerUrl
+         * (clients/android_native/.../ui/pair/PairViewModel.kt) — keep in step.
+         *
+         * Hosts that look like RFC1918 / loopback / `.local` / `localhost`
+         * default to `http://`, because the typical HomeLab box isn't running
+         * TLS. Everything else defaults to `https://`, because a public DNS
+         * name almost always has a cert (Cloudflare Tunnel, Tailscale Funnel,
+         * Let's Encrypt).
+         *
+         * This used to be an unconditional `http://`. The compensating control
+         * — adopting an https origin when the server redirects — only fires if
+         * the server CHOOSES to redirect, so an on-path attacker answering the
+         * cleartext probe with a plain 200 pinned the origin to http for the
+         * life of the install, and `POST /auth/login` then carried the
+         * password in the clear. The same thing happened with no attacker at
+         * all whenever an operator's reverse proxy served content on :80
+         * instead of redirecting. Choosing the safer default up front makes
+         * redirect-adoption an upgrade path rather than the only defence.
+         *
+         * Internal so the unit suite can exercise the heuristic directly.
+         */
+        internal fun defaultSchemeFor(hostish: String): String {
+            // Strip path / port to isolate the host portion: `host:port/path`
+            // → `host`. IPv6 literals would arrive bracketed (`[::1]:7070`);
+            // that path is unusual enough to leave to the user.
+            val host = hostish
+                .substringBefore('/')
+                .substringBefore(':')
+                .lowercase()
+            val isPrivate = host == "localhost" ||
+                host.endsWith(".local") ||
+                host.matches(Regex("""^127\.\d+\.\d+\.\d+$""")) ||
+                host.matches(Regex("""^10\.\d+\.\d+\.\d+$""")) ||
+                host.matches(Regex("""^192\.168\.\d+\.\d+$""")) ||
+                host.matches(Regex("""^172\.(1[6-9]|2\d|3[01])\.\d+\.\d+$""")) ||
+                host == "::1"
+            return if (isPrivate) "http" else "https"
+        }
     }
 
     val serverUrl: Flow<String?> = context.dataStore.data.map { it[KEY_SERVER_URL] }
@@ -72,10 +113,9 @@ class ServerPrefs(private val context: Context) {
         // (192.168.1.50:7070, media.lan). Without a scheme, toHttpUrlOrNull()
         // returns null, the request silently stays on the localhost default, and
         // the user sees only "Could not connect" — dead-ending first-run on the
-        // exact LAN/HTTP shape this app targets. Default to http:// (LAN servers
-        // are plain HTTP) when no scheme is present; an explicit https:// is kept.
+        // exact LAN/HTTP shape this app targets. An explicit scheme is kept.
         if (trimmed.isNotEmpty() && !trimmed.matches(Regex("^[a-zA-Z][a-zA-Z0-9+.-]*://.*"))) {
-            trimmed = "http://$trimmed"
+            trimmed = "${defaultSchemeFor(trimmed)}://$trimmed"
         }
         val canonical = tv.onscreen.android.data.normaliseScheme(trimmed)
         context.dataStore.edit { it[KEY_SERVER_URL] = canonical }

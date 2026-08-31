@@ -16,18 +16,45 @@
   serve over HTTPS get certificate validation on the client
   automatically.
 
-  Matches the TV-client posture (clients/android/.../network_security_config.xml).
+  Matches the TV-client posture (clients/android/.../network_security_config.xml)
+  — including the system-only trust store. Keep the two files in step; a
+  divergence here is invisible at runtime and voids TLS on whichever side lags.
 -->
 <network-security-config xmlns:tools="http://schemas.android.com/tools">
     <base-config cleartextTrafficPermitted="true"
         tools:ignore="InsecureBaseConfiguration">
         <trust-anchors>
+            <!--
+              SYSTEM CAs ONLY. `<certificates src="user" />` used to be here; it is
+              deliberately gone, mirroring the TV client.
+
+              Android stopped trusting the user CA store by default in API 24
+              precisely because it is the easiest MITM foothold on the platform: a
+              sideloaded "helper" app that walks the owner through installing a
+              profile, an MDM / work-profile enrolment, or a few minutes of ADB
+              access is enough to plant one. With that anchor in place every HTTPS
+              call to the server was interceptable, which means the login password
+              and the PASETO access / stream / asset tokens were all readable by
+              whoever planted the CA.
+
+              This mattered more on the phone than anywhere else. normalizeServerUrl
+              (ui/pair/PairViewModel.kt) deliberately routes every non-RFC1918 host
+              to https for Cloudflare-tunnel / Tailscale-Funnel deployments, so for
+              those users TLS is the ONLY confidentiality control — and the first
+              thing on the wire is POST /auth/login carrying the plaintext account
+              password, which unlike a token cannot be revoked.
+
+              The anchor's old rationale (an admin with a self-signed cert gets
+              chain validation) did not hold: it sat in base-config, so the planted
+              CA was trusted for EVERY host the app dials, and no self-signed-cert
+              flow exists in the app to depend on it. If one is ever added, it
+              belongs in a <domain-config> scoped to the operator's own host, not
+              here.
+
+              The cleartext allowance above is a considered trade for the LAN
+              deployment model. This was not.
+            -->
             <certificates src="system" />
-            <!-- Trust user-installed CAs so an admin who installed a self-signed
-                 server cert via Settings ▸ Security ▸ Trusted credentials gets
-                 chain validation through it. Acceptable widening of the trust
-                 store given the self-hosted-LAN deployment shape. -->
-            <certificates src="user" tools:ignore="AcceptsUserCertificates" />
         </trust-anchors>
     </base-config>
 </network-security-config>

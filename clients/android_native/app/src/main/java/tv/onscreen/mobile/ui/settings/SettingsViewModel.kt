@@ -1,14 +1,19 @@
 package tv.onscreen.mobile.ui.settings
 
+import android.content.Context
+import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AuthRepository
+import tv.onscreen.mobile.playback.PlaybackService
+import tv.onscreen.mobile.playback.StreamTokenVault
 import javax.inject.Inject
 
 @HiltViewModel
@@ -17,6 +22,7 @@ class SettingsViewModel @Inject constructor(
     private val server: ServerPrefs,
     private val auth: AuthRepository,
     private val downloads: OnScreenDownloadManager,
+    @ApplicationContext private val appContext: Context,
 ) : ViewModel() {
 
     val downloadOnWifiOnly: Flow<Boolean> = prefs.downloadOnWifiOnly
@@ -48,6 +54,14 @@ class SettingsViewModel @Inject constructor(
      *  out — and left the next user on this phone inheriting the previous
      *  one's cached preferences. */
     fun signOut() {
+        // Stop background audio FIRST and synchronously — not inside the
+        // detached andThen. Sign-out is the user's stop-everything control,
+        // and PlaybackService is a process-lifetime MediaSessionService that
+        // nothing else tears down: without this, music kept coming out of the
+        // speaker with the signed-out account's title and artwork on the lock
+        // screen. Doing it ahead of the network call means an unreachable
+        // server cannot leave playback running.
+        stopBackgroundAudio()
         // Downloads are erased too: the manifest is a process-wide singleton
         // with no owner field, so anything left behind is listed — and
         // playable offline — for whoever signs in next.
@@ -59,6 +73,7 @@ class SettingsViewModel @Inject constructor(
      *  Same nav effect as signOut — the absence of a server URL
      *  routes back to /pair, which then asks for the URL again. */
     fun disconnectServer() {
+        stopBackgroundAudio()
         // Revoke + drop caches while the server URL still resolves, THEN
         // forget the URL — order matters, the logout call needs it. Media
         // downloaded from this server goes with it.
@@ -66,5 +81,22 @@ class SettingsViewModel @Inject constructor(
             downloads.cancelAllAndClear()
             server.clearAll()
         })
+    }
+
+    /** Tear down the background-audio service and drop any cached playback
+     *  credentials. Mirrors the TV client's SettingsViewModel.stopBackgroundAudio.
+     *
+     *  stopService rather than a controller command: PlayerScreen deliberately
+     *  releases only its MediaController on back-out ("backing out keeps audio
+     *  playing"), so the service outlives every UI surface and nothing else in
+     *  the app stops it. */
+    private fun stopBackgroundAudio() {
+        runCatching {
+            appContext.stopService(Intent(appContext, PlaybackService::class.java))
+        }
+        // The vault holds stream/asset tokens keyed by URL. They are
+        // short-lived and in-memory only, but there is no reason for the next
+        // account on this device to inherit them.
+        StreamTokenVault.clear()
     }
 }

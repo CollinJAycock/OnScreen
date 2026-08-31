@@ -28,6 +28,7 @@ import tv.onscreen.mobile.data.repository.TranscodeRepository
 import tv.onscreen.mobile.data.repository.TrickplayRepository
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
 import tv.onscreen.mobile.playback.LocalProgressTracker
+import tv.onscreen.mobile.playback.StreamTokenVault
 import tv.onscreen.mobile.trickplay.TrickplayVtt
 import javax.inject.Inject
 
@@ -949,17 +950,23 @@ class PlayerViewModel @Inject constructor(
      *  purpose=asset token (NOT the access token, which the server
      *  rejects in a URL). ExoPlayer can't refresh on a 401 mid-stream,
      *  so either long-lived token keeps a 90-min movie from dying with
-     *  ERROR_CODE_IO_BAD_HTTP_STATUS. */
+     *  ERROR_CODE_IO_BAD_HTTP_STATUS.
+     *
+     *  The returned url carries NO credential — the token goes into
+     *  [StreamTokenVault] and the player's resolving data source re-attaches
+     *  it as the request leaves. For the audio branch this url becomes a
+     *  MediaSession MediaItem, and media3 copies that uri into the platform
+     *  session's METADATA_KEY_MEDIA_URI, readable by any notification-listener
+     *  app; keeping the token out of the uri is what closes that. The video
+     *  branch shares the builder and gets the same treatment via the resolver
+     *  wrapper in PlayerScreen. */
     private suspend fun buildDirectPlayUrl(
         serverUrl: String,
         streamPath: String,
         streamToken: String?,
     ): String {
         val token = if (!streamToken.isNullOrEmpty()) streamToken else serverPrefs.getAssetToken()
-        val base = "$serverUrl$streamPath"
-        if (token.isNullOrEmpty()) return base
-        val sep = if (streamPath.contains("?")) "&" else "?"
-        return "$base${sep}token=$token"
+        return StreamTokenVault.register("$serverUrl$streamPath", token)
     }
 
     override fun onCleared() {

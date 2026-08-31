@@ -19,8 +19,17 @@ interface OnScreenApi {
     @POST("api/v1/auth/refresh")
     suspend fun refresh(@Body body: RefreshRequest): ApiResponse<TokenPair>
 
+    /** Revoke a refresh token. The bearer is passed explicitly (matching the
+     *  phone client) rather than left to AuthInterceptor's cache: the server's
+     *  logout route runs under Optional auth, so WITHOUT valid claims it skips
+     *  revocation and still answers 204 — the session survives a "successful"
+     *  sign-out and the client cannot tell. Callers rotate the token first so
+     *  the claims they present are live. */
     @POST("api/v1/auth/logout")
-    suspend fun logout(@Body body: LogoutRequest)
+    suspend fun logout(
+        @Body body: LogoutRequest,
+        @Header("Authorization") authorization: String? = null,
+    )
 
     /** Start a device-pairing session. The TV displays the returned
      *  PIN; the user signs in via the web at /pair on a phone /

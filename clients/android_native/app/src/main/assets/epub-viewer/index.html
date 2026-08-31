@@ -2,6 +2,20 @@
 <html>
 <head>
 <meta charset="utf-8">
+<!--
+  Second layer behind the Kotlin-side shouldInterceptRequest block, which is a
+  denylist of exactly http/https and therefore never saw WebSocket schemes. CSP
+  is enforced by Blink before anything reaches the network layer, connect-src
+  governs WebSocket alongside fetch/XHR/sendBeacon, and a srcdoc chapter frame
+  inherits this policy — so a crafted book can no longer open an outbound
+  socket to beacon that it was read, or time wss:// connects against LAN hosts
+  to fingerprint ports from inside the self-hosted network.
+
+  'self' is non-breaking: the only legitimate connect is the host page's
+  fetch('/epub/file.epub') from the asset loader's own origin. Book resources
+  arrive as blob:/data: from JSZip, which img-src and style-src allow.
+-->
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' blob: data:; connect-src 'self'; img-src 'self' blob: data:; style-src 'self' 'unsafe-inline' blob: data:; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Reader</title>
 <style>

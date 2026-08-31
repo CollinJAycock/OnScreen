@@ -42,6 +42,16 @@ class HomeFragment : BrowseSupportFragment() {
 
     @Inject lateinit var prefs: ServerPrefs
     private lateinit var viewModel: HomeViewModel
+    // Only for the "Change server" escape hatch below, which needs the same
+    // full teardown (revoke + Watch Next purge + stop background audio) that
+    // SettingsFragment performs. Activity-scoped so the ViewModel — and the
+    // coroutine it runs on — survive this fragment's view being torn down by
+    // the navigation that immediately follows.
+    private val settingsViewModel by lazy {
+        ViewModelProvider(requireActivity())[
+            tv.onscreen.android.ui.settings.SettingsViewModel::class.java,
+        ]
+    }
     private var serverUrl: String = ""
     private var errorOverlay: ErrorOverlay? = null
     // Last state we actually rendered. onResume re-fetches, but if the content is
@@ -112,7 +122,30 @@ class HomeFragment : BrowseSupportFragment() {
                                 .setMessage(R.string.confirm_change_server)
                                 .setPositiveButton(R.string.change_server) { d, _ ->
                                     d.dismiss()
-                                    viewLifecycleOwner.lifecycleScope.launch {
+                                    // Full teardown, same as SettingsFragment's
+                                    // equivalent action. prefs.clearAll() alone
+                                    // wipes only the LOCAL copies: it skipped the
+                                    // server-side revoke (leaving the 30-day
+                                    // refresh token, the access token and the
+                                    // 24h user-scoped asset token alive for their
+                                    // full TTLs), skipped the identity-cache
+                                    // invalidation, skipped stopping parked
+                                    // background audio, and — the one that
+                                    // reliably bit — skipped watchNext.removeAll(),
+                                    // so the departing user's titles, resume
+                                    // positions and working deep links stayed on
+                                    // the launcher's Continue Watching strip for
+                                    // the next person to pick up the remote.
+                                    // Clearing local tokens does not touch the
+                                    // launcher's database.
+                                    //
+                                    // activity scope, not viewLifecycleOwner:
+                                    // navigateTo tears this fragment's view down
+                                    // mid-flow, which would cancel the revoke
+                                    // half-way (the same reason SettingsFragment
+                                    // uses the activity scope here).
+                                    (activity as? MainActivity)?.lifecycleScope?.launch {
+                                        settingsViewModel.logout()
                                         prefs.clearAll()
                                         (activity as? MainActivity)
                                             ?.navigateTo(NavigationDestination.SERVER_SETUP)

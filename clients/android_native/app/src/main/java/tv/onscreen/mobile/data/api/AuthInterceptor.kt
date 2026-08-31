@@ -1,7 +1,7 @@
 package tv.onscreen.mobile.data.api
 
-import android.net.Uri
 import kotlinx.coroutines.runBlocking
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.Interceptor
 import okhttp3.Response
 import tv.onscreen.mobile.data.prefs.ServerPrefs
@@ -47,6 +47,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
     )
 
     @Volatile private var cachedServerHost: String? = null
+    @Volatile private var cachedServerPort: Int = -1
     @Volatile private var cachedToken: String? = null
     @Volatile private var cacheLoadedAtMs: Long = 0L
 
@@ -60,10 +61,24 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         // also fetches external images (TMDB poster CDN for the
         // "Request more" search row), and TMDB rejects requests that
         // carry an unknown bearer with 401 — Coil swallows that and
-        // shows the placeholder. Match by host: anything that isn't
-        // the configured server passes through unmodified.
+        // shows the placeholder.
+        //
+        // Match host AND port, matching the TV client. Host alone was not
+        // enough for two reasons. On a home LAN the media server shares a host
+        // with whatever else the box runs (`10.0.0.5:7070` OnScreen, `:8096`
+        // Jellyfin, `:32400` Plex), so a host-only match hands the bearer to a
+        // neighbouring service. And because HttpUrl.port carries the
+        // scheme's default, comparing it also blocks a scheme downgrade: an
+        // injected `http://<same-host>/x.png` against an https-configured
+        // server no longer collects the token for a passive observer who could
+        // not read the TLS session. Unlike TokenAuthenticator's guard this one
+        // needs no 401 — the header goes on the first request, so this is the
+        // primary boundary and the authenticator is the backstop.
         val serverHost = cachedServerHost
-        if (serverHost != null && !request.url.host.equals(serverHost, ignoreCase = true)) {
+        if (serverHost != null &&
+            (!request.url.host.equals(serverHost, ignoreCase = true) ||
+                request.url.port != cachedServerPort)
+        ) {
             return chain.proceed(request)
         }
 
@@ -96,12 +111,21 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         if (now - cacheLoadedAtMs < CACHE_TTL_MS) return
         synchronized(this) {
             if (now - cacheLoadedAtMs < CACHE_TTL_MS) return
-            val (host, token) = runBlocking {
+            // Parsed with OkHttp's HttpUrl, not android.net.Uri: this feeds a
+            // security boundary and must be exercisable in JVM unit tests,
+            // where android.jar is stubbed and Uri.parse() returns null —
+            // which would leave cachedServerHost null, disable the check
+            // entirely under test, and still work in production. Exactly the
+            // kind of guard that rots unnoticed. HttpUrl also supplies the
+            // scheme's default port, which is what makes the port comparison
+            // above meaningful for a URL written without an explicit one.
+            val (origin, token) = runBlocking {
                 val url = prefs.getServerUrl()
-                val parsedHost = url?.let { runCatching { Uri.parse(it).host }.getOrNull() }
-                parsedHost to prefs.getAccessToken()
+                val parsed = url?.let { runCatching { it.toHttpUrlOrNull() }.getOrNull() }
+                parsed to prefs.getAccessToken()
             }
-            cachedServerHost = host
+            cachedServerHost = origin?.host
+            cachedServerPort = origin?.port ?: -1
             cachedToken = token
             cacheLoadedAtMs = now
         }
@@ -122,6 +146,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         synchronized(this) {
             cachedToken = null
             cachedServerHost = null
+            cachedServerPort = -1
             cacheLoadedAtMs = 0L
         }
     }
