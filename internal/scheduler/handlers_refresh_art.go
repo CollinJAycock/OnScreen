@@ -260,6 +260,8 @@ func (h *RefreshMissingArtHandler) verifyArtPaths(ctx context.Context) (artVerif
 			clearPoster := false
 			if it.PosterPath != nil {
 				switch h.classifyArtPath(ctx, roots, *it.PosterPath) {
+				case artPresent:
+					// File is where the DB says it is — nothing to do.
 				case artDangling:
 					clearPoster = true
 				case artUnverifiable:
@@ -269,6 +271,8 @@ func (h *RefreshMissingArtHandler) verifyArtPaths(ctx context.Context) (artVerif
 			clearFanart := false
 			if it.FanartPath != nil {
 				switch h.classifyArtPath(ctx, roots, *it.FanartPath) {
+				case artPresent:
+					// File is where the DB says it is — nothing to do.
 				case artDangling:
 					clearFanart = true
 				case artUnverifiable:

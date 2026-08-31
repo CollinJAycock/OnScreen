@@ -105,8 +105,11 @@ type Handlers struct {
 	// artwork file, keyed by (library, library-relative slash path). Lets the
 	// artwork server apply the per-user content-rating ceiling — library ACL
 	// alone would still leak an over-ceiling poster to a restricted profile
-	// that can see the library. Returns found=false when the path maps to no
-	// rated item (music, backdrops), in which case the server fails open.
+	// that can see the library. Returns found=false only when the path maps to
+	// no item in the library at all (music backdrops, extra artwork the item
+	// columns don't reference); the route treats that as unrated — i.e. rank 4,
+	// most restrictive — for a capped caller and REFUSES, matching every other
+	// surface. An unrated but known item comes back found=true with "".
 	// nil = skip the rating gate (dev/test).
 	ArtworkContentRating func(ctx context.Context, libraryID uuid.UUID, relPath string) (rating string, found bool)
 	// PublicAssetCache reports whether to emit `Cache-Control: public` on
@@ -491,7 +494,6 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Invite != nil {
 				r.Post("/invites/accept", h.Invite.Accept)
 			}
-
 
 			// OIDC SSO flow (settings-driven).
 			if h.OIDCAuth != nil {

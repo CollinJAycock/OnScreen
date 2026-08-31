@@ -474,7 +474,6 @@ func pollOCRJob(t *testing.T, h *SubtitleHandler, itemID uuid.UUID, jobID string
 	return ocrJobJSON{}
 }
 
-
 // pgsStreamsJSON is a PGS (image-based) subtitle stream at index 2 — the index
 // the OCR tests request. OCR now refuses a stream that does not exist or is
 // not image-based, matching the two other entry points into the same pipeline;

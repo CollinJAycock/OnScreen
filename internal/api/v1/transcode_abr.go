@@ -790,15 +790,6 @@ func releaseABRChildLocks(parent *transcode.Session) {
 	}
 }
 
-// abrTokenOK validates the segment token is bound to this session, WITHOUT
-// the parental gate or usage accrual. Only for internal checks that are not a
-// delivery path; request handlers must use authorizeSegmentToken so no live
-// entry point can exist without the gate.
-func (h *NativeTranscodeHandler) abrTokenOK(ctx context.Context, token, sessionID string) bool {
-	tokSession, _, err := h.segToken.Validate(ctx, token)
-	return err == nil && tokSession == sessionID
-}
-
 // abrLadderCap resolves the ABR ladder height ceiling. An explicit client
 // quality pick (requestedHeight>0) wins; otherwise Auto uses autoMax — the soft
 // default that keeps Auto off a thrash-prone 4K rung. The operator hard cap

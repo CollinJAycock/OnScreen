@@ -233,8 +233,6 @@ func (h *PairHandler) Poll(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, pair)
 }
 
-// Claim handles POST /api/v1/auth/pair/claim — authenticated user binds the
-// PIN they typed in their browser to their account, authorising the device.
 // Pending handles GET /api/v1/auth/pair/pending?pin=NNNNNN.
 //
 // Returns ONLY descriptive facts about the device that requested a pending
@@ -279,6 +277,8 @@ func (h *PairHandler) Pending(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// Claim handles POST /api/v1/auth/pair/claim — authenticated user binds the
+// PIN they typed in their browser to their account, authorising the device.
 func (h *PairHandler) Claim(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
