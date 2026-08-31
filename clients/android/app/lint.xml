@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+        TV manifest checks, ignored ONLY for the firetv flavor overlay.
+
+        Lint evaluates a flavor manifest in ISOLATION, not as merged. The firetv
+        overlay contains nothing but two `tools:node="remove"` permission
+        entries — no activity, no uses-feature, no uses-sdk — so every check
+        that asks "is this a well-formed TV manifest?" answers no and anchors
+        its report to the <manifest> element there.
+
+        The firetvRelease MERGED manifest is correct, verified from the merge
+        output:
+
+            uses-sdk        minSdk=24  targetSdk=36
+            uses-feature    android.software.leanback     required=false
+            uses-feature    android.hardware.touchscreen  required=false
+            activity        tv.onscreen.android.ui.MainActivity
+                            categories: LEANBACK_LAUNCHER, DEFAULT, BROWSABLE
+
+        Scoped by PATH rather than disabled module-wide, so a genuine instance
+        of any of these in src/main (where the real manifest lives) still fails
+        the build. This is the whole reason the ignores are here and not in a
+        `lint { disable += ... }` block.
+
+        Why a list rather than fixing them one at a time: they are three
+        symptoms of one cause. Suppressing them individually as they surfaced
+        just produced the next one in the queue — MissingLeanbackLauncher, then
+        ImpliedTouchscreenHardware, then MissingLeanbackSupport. Any future TV
+        manifest check will do the same against this file.
+    -->
+    <issue id="MissingLeanbackLauncher">
+        <ignore path="src/firetv/AndroidManifest.xml" />
+    </issue>
+    <issue id="MissingLeanbackSupport">
+        <ignore path="src/firetv/AndroidManifest.xml" />
+    </issue>
+    <issue id="ImpliedTouchscreenHardware">
+        <ignore path="src/firetv/AndroidManifest.xml" />
+    </issue>
+</lint>

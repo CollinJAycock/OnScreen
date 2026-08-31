@@ -3,6 +3,7 @@ package tv.onscreen.android.ui.playback
 import androidx.media3.common.C
 import androidx.media3.common.ForwardingPlayer
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 
 /**
  * Content-time view of the player, for the Leanback transport bar ONLY.
@@ -29,6 +30,11 @@ import androidx.media3.common.Player
  * Relative seeks (seekBack/seekForward) are left on the raw delegate —
  * a ±10 s step is offset-invariant.
  */
+// @UnstableApi, not @OptIn: this class EXTENDS ForwardingPlayer, and Kotlin
+// will not let you opt in on behalf of a supertype — a class whose superclass
+// requires opt-in must carry the marker itself and propagate it. The single
+// construction site (PlaybackFragment) opts in locally.
+@UnstableApi
 class ContentTimeForwardingPlayer(
     player: Player,
     private val offsetMs: () -> Long,

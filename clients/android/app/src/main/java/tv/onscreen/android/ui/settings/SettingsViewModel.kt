@@ -3,6 +3,7 @@ package tv.onscreen.android.ui.settings
 import android.content.Context
 import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
+import androidx.media3.common.util.UnstableApi
 import tv.onscreen.android.playback.AudioHandoff
 import tv.onscreen.android.playback.OnScreenMediaSessionService
 import tv.onscreen.android.playback.WatchNextManager
@@ -169,6 +170,12 @@ class SettingsViewModel @Inject constructor(
         authRepo.logout()
     }
 
+    // OnScreenMediaSessionService is annotated @UnstableApi (it extends
+    // media3's MediaSessionService), so naming its class here requires opting
+    // in. androidx.annotation.OptIn rather than kotlin.OptIn: the marker is a
+    // Java annotation, and that is the form lint's UnsafeOptInUsageError
+    // recognises — same as PlaybackFragment. Scoped to this one function.
+    @androidx.annotation.OptIn(UnstableApi::class)
     private fun stopBackgroundAudio() {
         // Release the parked player first so the service's own teardown has
         // nothing left to hand back, then stop the service.

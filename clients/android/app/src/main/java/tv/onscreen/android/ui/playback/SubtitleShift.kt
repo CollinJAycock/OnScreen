@@ -5,6 +5,7 @@ import androidx.media3.common.C
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
+import androidx.media3.common.util.UnstableApi
 
 /**
  * Re-bases WebVTT cue timestamps for a resumed HLS session.
@@ -86,6 +87,10 @@ object SubtitleShift {
  * [SubtitleShift.shiftWebVtt], and serves the shifted bytes. Wrapped around
  * the HLS side-load factory only when the session has a non-zero offset.
  */
+// @UnstableApi, not @OptIn: this class IMPLEMENTS media3's DataSource, and
+// Kotlin requires the marker rather than a local opt-in when a SUPERTYPE
+// carries the opt-in requirement. Its call site opts in.
+@UnstableApi
 class ShiftedVttDataSource(
     private val upstream: DataSource,
     private val offsetMs: Long,

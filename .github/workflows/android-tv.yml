@@ -59,11 +59,30 @@ jobs:
           # manifest); run the default googletv variant's unit tests.
           ./gradlew :app:testGoogletvDebugUnitTest --no-daemon --console=plain
 
+      - name: Run Android lint
+        # This job used to run unit tests ONLY, so lint never gated the module
+        # and its errors accumulated unseen — 37 UnsafeOptInUsageError plus a
+        # real API-26-on-minSdk-24 crash in the Live TV guide were all sitting
+        # green. Both flavors, because the firetv manifest overlay is exactly
+        # the kind of thing that only breaks on its own variant.
+        run: |
+          ./gradlew :app:lintGoogletvRelease :app:lintFiretvRelease \
+            --no-daemon --console=plain
+
       - name: Upload test report on failure
         if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: android-tv-test-report
           path: clients/android/app/build/reports/tests/testGoogletvDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload lint report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: android-tv-lint-report
+          path: clients/android/app/build/reports/lint-results-*.*
           if-no-files-found: ignore
           retention-days: 7
