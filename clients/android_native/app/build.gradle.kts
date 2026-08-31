@@ -22,7 +22,7 @@ val keystoreProps = Properties().apply {
 
 android {
     namespace = "tv.onscreen.mobile"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         // applicationId is what Play / the OS sees as the package name.
@@ -36,10 +36,13 @@ android {
         // Material3 baseline doesn't need backward compat shims for
         // window-insets, predictive-back, and dynamic colors.
         minSdk = 24
-        // Android 15 (API 35) — Play Console requires targetSdk 35 for
-        // new submissions from Aug 2025. Bumping ahead of submission
-        // keeps the OldTargetApi lint quiet and avoids surprises.
-        targetSdk = 35
+        // Android 16 (API 36) — Play Console requires targetSdk 36 for new
+        // submissions from 2026-08-30. This is a hard upload gate, not a
+        // warning: the TV client learned that the expensive way when a
+        // 35-targeted upload was rejected and burned versionCode 13 (codes are
+        // consumed at upload, not at release). The phone client was still on
+        // 35, so the next upload would have been refused the same way.
+        targetSdk = 36
         // Native (phone/tablet) pipeline uses a separate 1000+ versionCode
         // band so it never collides with the TV client (clients/android),
         // which shares the tv.onscreen.android Play listing but ships from a
