@@ -18,7 +18,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           # Keep in lockstep with ci.yml — shipping binaries must be built by
           # the same toolchain CI tests (this was 1.25 vs CI's 1.26 until the
