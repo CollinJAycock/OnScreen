@@ -47,10 +47,12 @@ android {
         // band so it never collides with the TV client (clients/android),
         // which shares the tv.onscreen.android Play listing but ships from a
         // different pipeline using low/sequential codes.
-        // 1003: 1002 was burned on the Jun 10 upload (codes burn on upload,
-        // not release — it never reached an active track).
-        versionCode = 1003
-        versionName = "0.1.2"
+        // 1004: 1003 was consumed by an upload that predates the client
+        // security fixes and the API-36 retarget, so it cannot be reused —
+        // codes burn on upload, not on release. 1002 went the same way on the
+        // Jun 10 upload, which never reached an active track either.
+        versionCode = 1004
+        versionName = "0.1.3"
     }
 
     signingConfigs {
