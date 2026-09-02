@@ -29,7 +29,7 @@ jobs:
             artifact-glob: 'clients/desktop/src-tauri/target/release/bundle/{appimage,deb}/*'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-latest'

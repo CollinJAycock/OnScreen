@@ -23,7 +23,7 @@ jobs:
       run:
         working-directory: clients/android
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # AGP 9.2 / Gradle 9.4 require JDK 17+; the module compiles to 17 bytecode.
       - uses: actions/setup-java@v4
