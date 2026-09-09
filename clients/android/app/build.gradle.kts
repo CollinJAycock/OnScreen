@@ -53,11 +53,23 @@ android {
         // first paint regardless.
         minSdk = 24
         targetSdk = 36
-        // 14: versionCode 13 was uploaded against the API-35 target and
-        // blocked by the Play floor — codes are burned on upload, not
-        // release, so the re-target gets a fresh one.
-        versionCode = 17
-        versionName = "1.2.0"
+        // 19: everything after 17 (v1.2.0) — the client security audit, the
+        // pairing-origin fix, the Play device-targeting fix (leanback
+        // required), and the minSdk 21 -> 24 floor above. The floor change
+        // alters which devices the store offers the app to, so it must not
+        // ship under a spent code.
+        //
+        // Codes burn on UPLOAD, not on release. That is how 13 was lost (an
+        // API-35 target the Play floor rejected) and how the phone client
+        // lost both 1002 and 1003. 18 was built locally but never uploaded;
+        // it is skipped rather than reused, because a code only has to
+        // increase — skipping one is free, while guessing wrong about
+        // whether it was already spent costs a rejected upload.
+        //
+        // versionName stays 1.2.1: 18 never shipped, so there is no
+        // user-visible difference between it and this build.
+        versionCode = 19
+        versionName = "1.2.1"
     }
 
     // Per-store flavor split. Both stores ship the same app and code; they
