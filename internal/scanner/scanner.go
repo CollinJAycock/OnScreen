@@ -838,11 +838,13 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		return nil, nil, false, fmt.Errorf("stat %s: %w", path, err)
 	}
 
-	// Look up the existing file row once. Used three ways below:
-	// (1) tombstone short-circuit, (2) mtime+size fast skip (avoids hash
-	// + ffprobe entirely for unchanged files), (3) the hash-based fast
-	// path further down. Lifting it here means at most one DB lookup per
-	// processed file instead of two on every slow-path call.
+	// Look up the existing file row once. Used two ways below: (1) the
+	// mtime+size fast skip (avoids hash + ffprobe entirely for unchanged
+	// files), (2) the hash-based fast path further down — and both of
+	// those hand the row to resolveUnchangedFile, whose orphan-heal gate
+	// is the one reason an unchanged file still takes the slow path.
+	// Lifting it here means at most one DB lookup per processed file
+	// instead of two on every slow-path call.
 	existing, existingErr := s.media.GetFileByPath(ctx, path)
 	haveExisting := existingErr == nil
 
@@ -868,6 +870,14 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// (CreateMediaFile / UpdateMediaFileTechnicalMetadata) and
 	// MarkMediaFileActive set scanned_at = NOW(), so the timestamp
 	// always reflects the most recent successful processing of this row.
+	//
+	// healing records that this skip stood down for an orphan episode
+	// whose filename now parses. Such a file is byte-identical to last
+	// scan, so its content hash still matches the stored one and the
+	// hash fast path below would otherwise run the same gate a second
+	// time — a duplicate Info line, a second GetItem and a redundant
+	// MarkFileActive per healed file — before falling through again.
+	healing := false
 	if haveExisting &&
 		existing.FileHash != nil &&
 		existing.FileSize == info.Size &&
@@ -889,12 +899,16 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// the operator added the API key, because every file looked
 		// "unchanged" and the bail-out short-circuited before
 		// shouldEnrich could run. Mirrors the hash-match path below.
-		if item, err := s.media.GetItem(ctx, existing.MediaItemID); err == nil {
-			if s.shouldEnrich(ctx, item, false) {
-				return item, existing, false, nil
-			}
+		//
+		// Same shape of bug, one layer down: the item may be an orphan
+		// episode whose filename only parses since a parser fix. That is
+		// the single case where "unchanged on disk" must not mean
+		// "nothing to do" — resolveUnchangedFile falls through to the
+		// slow path for it instead of skipping.
+		if item, file, skip := s.resolveUnchangedFile(ctx, libraryType, path, existing); skip {
+			return item, file, false, nil
 		}
-		return nil, nil, false, nil
+		healing = true
 	}
 
 	hash, err := HashFileStore(ctx, s.mediaStore(), path, info.Size, info.ModTime)
@@ -914,7 +928,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// carve-out, every home_video scanned before extractHomeVideoArt
 	// landed would stay artless forever because the fast path skipped
 	// processHomeVideo, same shape as the prior audiobook bug).
-	if hash != nil && libraryType != "photo" && libraryType != "music" &&
+	// A heal decided by the mtime skip above goes straight to the slow
+	// path: this block would only re-run the same gate.
+	if hash != nil && !healing && libraryType != "photo" && libraryType != "music" &&
 		libraryType != "audiobook" && libraryType != "book" &&
 		libraryType != "manga" && libraryType != "home_video" {
 		if haveExisting &&
@@ -929,12 +945,13 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 					s.logger.WarnContext(ctx, "restore ancestry failed", "path", path, "err", err)
 				}
 			}
-			if item, err := s.media.GetItem(ctx, existing.MediaItemID); err == nil {
-				if s.shouldEnrich(ctx, item, false) {
-					return item, existing, false, nil
-				}
+			// Same unchanged-file decision as the mtime fast skip above,
+			// orphan-heal gate included: an orphan episode that now
+			// parses has identical content to last scan, so it lands
+			// here too and must fall through for the same reason.
+			if item, file, skip := s.resolveUnchangedFile(ctx, libraryType, path, existing); skip {
+				return item, file, false, nil
 			}
-			return nil, nil, false, nil
 		}
 	}
 
@@ -1032,7 +1049,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if bkErr != nil {
 			return nil, nil, false, fmt.Errorf("book for %s: %w", path, bkErr)
 		}
-	} else if libraryType == "show" || libraryType == "anime" || libraryType == "cartoons" {
+	} else if isShowLikeLibrary(libraryType) {
 		// Anime libraries share the show → season → episode hierarchy
 		// with `show` libraries; the library type only flips which
 		// metadata agent the enricher prefers (AniList primary), not
@@ -1040,7 +1057,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// falls through to ParseAnimeAbsoluteFilename for fansub-style
 		// "Title - NN" files when the S##E## pattern misses.
 		var showErr error
-		item, showErr = s.processShowHierarchy(ctx, libraryID, path)
+		item, showErr = s.processShowHierarchy(ctx, libraryID, path, roots)
 		if showErr != nil {
 			return nil, nil, false, fmt.Errorf("show hierarchy for %s: %w", path, showErr)
 		}
@@ -1179,6 +1196,61 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	return item, file, isNew, nil
 }
 
+// resolveUnchangedFile decides what processFile does with a file that
+// one of its two short-circuits (mtime+size fast skip, hash fast path)
+// considers unchanged. skip=true means return (item, file) as-is: the
+// item and its row when the owning item still needs enrichment, nil/nil
+// when there is nothing to do at all. skip=false means run the slow
+// path anyway — the row's item is an orphan episode whose filename now
+// parses, and only the slow path can re-parent it: processShowHierarchy
+// resolves the real owner, CreateOrUpdateFile re-points
+// media_files.media_item_id at it, and CleanupEmptyItems at scan end
+// drops the vacated leaf.
+//
+// Both short-circuits call this so the decision can't drift between
+// them. A GetItem failure keeps today's behaviour: fast-skip.
+func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryType, path string, existing *media.File) (*media.Item, *media.File, bool) {
+	item, err := s.media.GetItem(ctx, existing.MediaItemID)
+	if err != nil {
+		return nil, nil, true
+	}
+	if s.orphanEpisodeNowParses(libraryType, item, path) {
+		s.logger.InfoContext(ctx, "orphan episode now parses — re-parenting",
+			"path", path, "orphan_item_id", item.ID)
+		return nil, nil, false
+	}
+	if s.shouldEnrich(ctx, item, false) {
+		return item, existing, true
+	}
+	return nil, nil, true
+}
+
+// orphanEpisodeNowParses reports whether the item owning an unchanged
+// file is a parentless "episode" in a show-like library whose filename
+// now resolves through the TV parser chain — i.e. whether this scan
+// should heal it instead of fast-skipping the file.
+//
+// A parentless "episode" is exactly the shape processShowHierarchy's
+// "No parser matched" fallback leaves behind: a flat item titled by
+// the movie parser with no season above it. Before the unspaced-dash
+// rule landed, every "[Moozzi2] Dungeon Meshi-13 [BD …].mkv" became
+// one, and a rescan never healed it because processFile short-circuits
+// unchanged files before it ever re-parses the name. The parse check is
+// what stops a genuinely unparseable orphan from paying hash + ffprobe
+// on every scan — it stays fast-skipped like any other unchanged file.
+// Once re-parented the item has a parent, so this is false again and
+// the fast skip resumes: the heal costs one slow-path pass per file.
+func (s *Scanner) orphanEpisodeNowParses(libraryType string, item *media.Item, path string) bool {
+	if !isShowLikeLibrary(libraryType) || item == nil {
+		return false
+	}
+	if item.Type != "episode" || item.ParentID != nil {
+		return false
+	}
+	_, ok := parseEpisodeIdentity(path)
+	return ok
+}
+
 // persistPhotoEXIF extracts EXIF tags from an image and writes them to
 // photo_metadata. Also bumps the parent item's originally_available_at when
 // EXIF carries a DateTimeOriginal — that field already drives date sorting on
@@ -1243,51 +1315,33 @@ func (s *Scanner) persistPhotoEXIF(ctx context.Context, item *media.Item, path s
 }
 
 // processShowHierarchy builds the show->season->episode hierarchy for a TV file.
-// It parses the filename for show title, season number, and episode number,
-// then finds or creates each level of the hierarchy.
-// If parsing fails, it falls back to creating a flat episode item.
-func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID, path string) (*media.Item, error) {
-	// episodeTitle stays empty for numbered episodes (the "Episode N"
-	// default applies below); date-based episodes override it with the
-	// air date, which is their identity.
-	var episodeTitle string
-	showTitle, seasonNum, episodeNum, ok := ParseTVFilename(path)
+// It resolves the file's identity through parseEpisodeIdentity (the one
+// parser chain, shared with processFile's orphan-heal gate), then finds or
+// creates each level of the hierarchy. roots are the library's scan
+// roots; a file sitting directly in one gets no folder hint (see
+// showFolderHint).
+// If no parser matches, it falls back to creating a flat episode item.
+func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID, path string, roots []string) (*media.Item, error) {
+	identity, ok := parseEpisodeIdentity(path)
 	if !ok {
-		// No S##E## or 1x03 pattern — date-based (daily / talk-show)
-		// naming next: "The Daily Show - 2013-10-30 - Guest.mkv".
-		// Mapped Plex-style: season = year, episode index =
-		// month*100+day (unique within the year, sorts
-		// chronologically). Sonarr numbers daily seasons by year,
-		// which can never fit S##E##.
-		if dailyTitle, y, mo, d, dailyOK := ParseDailyFilename(path); dailyOK {
-			showTitle = dailyTitle
-			seasonNum = y
-			episodeNum = mo*100 + d
-			episodeTitle = fmt.Sprintf("%04d-%02d-%02d", y, mo, d)
-		} else if animeTitle, animeEp, animeOK := ParseAnimeAbsoluteFilename(path); animeOK {
-			// Anime-absolute style ("Show - 245.mkv",
-			// "[Group] Show - 1071 [1080p].mkv"). Common anime fansub
-			// layout: a single flat folder per show with
-			// absolute-numbered files. Slot the file into a synthetic
-			// Season 1 so the existing show / season / episode
-			// hierarchy works — anime users browse the flat episode
-			// list by absolute number anyway, and a single season
-			// feels natural for that.
-			showTitle = animeTitle
-			seasonNum = 1
-			episodeNum = animeEp
-		} else {
-			// No parser matched — fall back to flat episode.
-			title, year := parseFilename(path)
-			return s.media.FindOrCreateItem(ctx, media.CreateItemParams{
-				LibraryID: libraryID,
-				Type:      "episode",
-				Title:     title,
-				SortTitle: title,
-				Year:      year,
-			})
-		}
+		// No parser matched — fall back to flat episode. This parentless
+		// "episode" is the shape orphanEpisodeNowParses looks for on a
+		// rescan: once a parser change makes the name resolve, the heal
+		// gate routes the file back through here to be re-parented.
+		title, year := parseFilename(path)
+		return s.media.FindOrCreateItem(ctx, media.CreateItemParams{
+			LibraryID: libraryID,
+			Type:      "episode",
+			Title:     title,
+			SortTitle: title,
+			Year:      year,
+		})
 	}
+	showTitle, seasonNum, episodeNum := identity.showTitle, identity.season, identity.episode
+	// episodeTitle stays empty for numbered episodes (the "Episode N"
+	// default applies below); date-based episodes carry the air date,
+	// which is their identity.
+	episodeTitle := identity.episodeTitle
 
 	// 1. Find or create the "show" item (parent_id=null). When the
 	//    show's root folder carries a TRaSH/Sonarr-style id marker
@@ -1312,8 +1366,9 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 		// already attached under the same folder when every title key
 		// misses (Fix Match renamed the row to TMDB's canonical title) —
 		// otherwise each newly imported episode re-creates an unmatched
-		// duplicate show from the folder title.
-		FolderPath: showDir + string(filepath.Separator),
+		// duplicate show from the folder title. Empty for a file that
+		// sits directly in a library root.
+		FolderPath: showFolderHint(showDir, roots),
 	}
 	if folderIDs.TMDBID > 0 {
 		t := folderIDs.TMDBID
@@ -1380,6 +1435,27 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 	}
 
 	return episode, nil
+}
+
+// showFolderHint returns the FolderPath hint processShowHierarchy hands
+// FindOrCreateHierarchyItem for a show — showDir (from showDirFromFile)
+// with a trailing separator — or "" when showDir is one of the library
+// roots. A library root is never a show folder: for a file sitting
+// directly in the root (a flat fansub layout, "/anime/[Moozzi2]
+// Mushishi-01 [BD].mkv") the hint would be the root itself, and
+// FindShowByFolderPrefix with that prefix matches every chained file in
+// the library and returns an arbitrary show. Every title key misses for
+// a show none of whose files has ever parsed — exactly the all-orphan
+// set the heal gate routes through here in one scan — so without this
+// the whole set would attach itself to whichever show came first.
+func showFolderHint(showDir string, roots []string) string {
+	clean := filepath.Clean(showDir)
+	for _, root := range roots {
+		if clean == filepath.Clean(root) {
+			return ""
+		}
+	}
+	return showDir + string(filepath.Separator)
 }
 
 // isAllowedPath validates that a path is under one of the library roots.
@@ -1472,6 +1548,16 @@ func cleanTitle(name string) (title string, year *int) {
 		title = "Unknown"
 	}
 	return title, year
+}
+
+// isShowLikeLibrary reports whether a library type is scanned as the
+// show → season → episode hierarchy. Anime and cartoons share the shape
+// with `show`; the library type only flips which metadata agent the
+// enricher prefers (AniList primary for anime), not what the scanner
+// builds. Used at the processFile routing site and by the orphan-heal
+// gate so the two can't disagree about which libraries hold episodes.
+func isShowLikeLibrary(libraryType string) bool {
+	return libraryType == "show" || libraryType == "anime" || libraryType == "cartoons"
 }
 
 // fileTypeForLibrary maps library type to the media_item type used for top-level items.

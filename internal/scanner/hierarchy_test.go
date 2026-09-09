@@ -30,6 +30,10 @@ type mockMediaService struct {
 	hierarchyCalls []media.CreateItemParams
 	// Track calls to FindOrCreateItem.
 	flatCalls []media.CreateItemParams
+	// Track calls to CreateOrUpdateFile (which item the file was pointed at).
+	fileCalls []media.CreateFileParams
+	// Count calls to GetItem (the orphan-heal gate must run once per file).
+	getItemCalls int
 
 	// Dedupe stub: records calls and returns dedupeResult/dedupeErr.
 	dedupeCalls  []dedupeCall
@@ -87,6 +91,7 @@ func (m *mockMediaService) FindOrCreateHierarchyItem(_ context.Context, p media.
 }
 
 func (m *mockMediaService) CreateOrUpdateFile(_ context.Context, p media.CreateFileParams) (*media.File, bool, error) {
+	m.fileCalls = append(m.fileCalls, p)
 	f := &media.File{
 		ID:          uuid.New(),
 		MediaItemID: p.MediaItemID,
@@ -107,6 +112,7 @@ func (m *mockMediaService) GetFileByPath(_ context.Context, path string) (*media
 }
 
 func (m *mockMediaService) GetItem(_ context.Context, id uuid.UUID) (*media.Item, error) {
+	m.getItemCalls++
 	if it, ok := m.items[id]; ok {
 		return it, nil
 	}
@@ -234,7 +240,7 @@ func TestProcessShowHierarchy_S01E03(t *testing.T) {
 	s := newTestScanner(svc)
 	libID := uuid.New()
 
-	episode, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/Breaking.Bad.S01E03.mkv")
+	episode, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/Breaking.Bad.S01E03.mkv", []string{"/media/tv"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -271,7 +277,7 @@ func TestProcessShowHierarchy_FolderStructure(t *testing.T) {
 	s := newTestScanner(svc)
 	libID := uuid.New()
 
-	episode, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/The Wire/Season 3/S03E07.mkv")
+	episode, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/The Wire/Season 3/S03E07.mkv", []string{"/media/tv"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -290,7 +296,7 @@ func TestProcessShowHierarchy_UnparseableFallsBack(t *testing.T) {
 	libID := uuid.New()
 
 	// A filename without any S##E## or 1x03 pattern should fall back to flat episode.
-	item, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/Some.Random.Video.2020.mkv")
+	item, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/Some.Random.Video.2020.mkv", []string{"/media/tv"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -311,7 +317,7 @@ func TestProcessShowHierarchy_1x03Pattern(t *testing.T) {
 	s := newTestScanner(svc)
 	libID := uuid.New()
 
-	episode, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/Show Name 2x05.mkv")
+	episode, err := s.processShowHierarchy(context.Background(), libID, "/media/tv/Show Name 2x05.mkv", []string{"/media/tv"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -321,6 +327,132 @@ func TestProcessShowHierarchy_1x03Pattern(t *testing.T) {
 	// Season should be 2.
 	if svc.hierarchyCalls[1].Index == nil || *svc.hierarchyCalls[1].Index != 2 {
 		t.Errorf("season index: got %v, want 2", svc.hierarchyCalls[1].Index)
+	}
+}
+
+// TestProcessShowHierarchy_UnspacedDashAnime is the regression guard for
+// the QA orphans: the Moozzi2 BD-rip name used to reach the "No parser
+// matched" fallback and become a parentless flat episode titled
+// "Dungeon Meshi-13 [BD" (year 1920, scraped from 1920x1080). It must now
+// build the full show → season → episode chain, and the "-24 END" finale
+// marker must not leak into the episode number or the title.
+func TestProcessShowHierarchy_UnspacedDashAnime(t *testing.T) {
+	const dir = "/anime/Delicious in Dungeon/Season 1/"
+	tests := []struct {
+		name        string
+		path        string
+		wantShow    string
+		wantSeason  int
+		wantEpisode int
+		wantTitle   string
+	}{
+		{"unspaced dash", dir + "[Moozzi2] Dungeon Meshi-13 [BD 1920x1080 x265-10Bit 2Audio].mkv", "Dungeon Meshi", 1, 13, "Episode 13"},
+		{"finale marker END", dir + "[Moozzi2] Dungeon Meshi-24 END [BD 1920x1080 x265-10Bit 2Audio].mkv", "Dungeon Meshi", 1, 24, "Episode 24"},
+		// A sequel filed under "Season 2" takes that season, not the
+		// synthetic 1: QA's Clannad After Story episodes sit beside
+		// "Clannad.2007.S02E01…" and must land on the same season row
+		// rather than on top of Clannad S1E20 (see seasonFromFolder).
+		{"season folder wins over the synthetic season 1", "/anime/Clannad/Season 2/[Moozzi2] Clannad After Story-20 [BD 1920x1080 x.264 Flac].mkv", "Clannad After Story", 2, 20, "Episode 20"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newMockMediaService()
+			s := newTestScanner(svc)
+			libID := uuid.New()
+
+			episode, err := s.processShowHierarchy(context.Background(), libID, tt.path, []string{"/anime"})
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if episode.Type != "episode" {
+				t.Errorf("type: got %q, want %q", episode.Type, "episode")
+			}
+			if episode.Title != tt.wantTitle {
+				t.Errorf("title: got %q, want %q", episode.Title, tt.wantTitle)
+			}
+			if episode.Index == nil || *episode.Index != tt.wantEpisode {
+				t.Errorf("index: got %v, want %d", episode.Index, tt.wantEpisode)
+			}
+			if episode.ParentID == nil {
+				t.Errorf("episode has no parent — the orphan shape this fix removes")
+			}
+
+			// Hierarchy, not the flat fallback: show, season, episode.
+			if len(svc.flatCalls) != 0 {
+				t.Errorf("expected 0 flat calls, got %d", len(svc.flatCalls))
+			}
+			if len(svc.hierarchyCalls) != 3 {
+				t.Fatalf("expected 3 hierarchy calls, got %d", len(svc.hierarchyCalls))
+			}
+			if svc.hierarchyCalls[0].Type != "show" {
+				t.Errorf("call[0] type: got %q, want %q", svc.hierarchyCalls[0].Type, "show")
+			}
+			if svc.hierarchyCalls[0].Title != tt.wantShow {
+				t.Errorf("call[0] title: got %q, want %q", svc.hierarchyCalls[0].Title, tt.wantShow)
+			}
+			if svc.hierarchyCalls[1].Type != "season" {
+				t.Errorf("call[1] type: got %q, want %q", svc.hierarchyCalls[1].Type, "season")
+			}
+			if svc.hierarchyCalls[1].Index == nil || *svc.hierarchyCalls[1].Index != tt.wantSeason {
+				t.Errorf("call[1] season index: got %v, want %d", svc.hierarchyCalls[1].Index, tt.wantSeason)
+			}
+			if svc.hierarchyCalls[2].Type != "episode" {
+				t.Errorf("call[2] type: got %q, want %q", svc.hierarchyCalls[2].Type, "episode")
+			}
+			if svc.hierarchyCalls[2].Index == nil || *svc.hierarchyCalls[2].Index != tt.wantEpisode {
+				t.Errorf("call[2] episode index: got %v, want %d", svc.hierarchyCalls[2].Index, tt.wantEpisode)
+			}
+		})
+	}
+}
+
+// TestProcessShowHierarchy_FolderPathHint pins the folder hint handed to
+// FindOrCreateHierarchyItem for the show: the show folder (trailing
+// separator included) for a file under "<root>/Show/…", and NOTHING for
+// a file sitting directly in a library root. A library root is never a
+// show folder, and FindShowByFolderPrefix with the root as its prefix
+// matches every chained file in the library and returns an arbitrary
+// show — so an all-orphan flat-root set (every title key misses until
+// its first file parses) healed in one scan would attach itself to
+// whichever show came first. The heal is the first thing to route 100+
+// previously flat files through here at once, which is why this matters.
+func TestProcessShowHierarchy_FolderPathHint(t *testing.T) {
+	root := filepath.Join("/anime")
+	showDir := filepath.Join(root, "Mushishi")
+	const file = "[Moozzi2] Mushishi-01 [BD 1920x1080 x264 FLAC].mkv"
+	tests := []struct {
+		name  string
+		path  string
+		roots []string
+		want  string
+	}{
+		{"file directly in the library root", filepath.Join(root, file), []string{root}, ""},
+		{"root given with a trailing separator", filepath.Join(root, file), []string{root + string(filepath.Separator)}, ""},
+		{"file directly in the first of several roots", filepath.Join(root, file), []string{root, filepath.Join("/tv")}, ""},
+		{"file directly in the second of several roots", filepath.Join(root, file), []string{filepath.Join("/tv"), root}, ""},
+		{"season folder directly in the library root", filepath.Join(root, "Season 1", file), []string{root}, ""},
+		{"file in a show folder", filepath.Join(showDir, file), []string{root}, showDir + string(filepath.Separator)},
+		{"file in a season folder", filepath.Join(showDir, "Season 1", file), []string{root}, showDir + string(filepath.Separator)},
+		{"file in a show folder, several roots", filepath.Join(showDir, file), []string{filepath.Join("/tv"), root}, showDir + string(filepath.Separator)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			svc := newMockMediaService()
+			s := newTestScanner(svc)
+
+			if _, err := s.processShowHierarchy(context.Background(), uuid.New(), tt.path, tt.roots); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if len(svc.hierarchyCalls) != 3 || svc.hierarchyCalls[0].Type != "show" {
+				t.Fatalf("expected the show to be the first of 3 hierarchy calls, got %d calls", len(svc.hierarchyCalls))
+			}
+			if svc.hierarchyCalls[0].Title != "Mushishi" {
+				t.Errorf("show title: got %q, want %q", svc.hierarchyCalls[0].Title, "Mushishi")
+			}
+			if got := svc.hierarchyCalls[0].FolderPath; got != tt.want {
+				t.Errorf("show FolderPath: got %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

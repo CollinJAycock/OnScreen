@@ -124,15 +124,24 @@ func TestProcessFile_MtimeFastSkip_NeedsEnrichment(t *testing.T) {
 	}
 
 	itemID := uuid.New()
+	seasonID := uuid.New()
 	hash := "deadbeefcafefood"
 	svc := newMockMediaService()
 	// Episode with no Summary and no ThumbPath → itemNeedsEnrich returns
 	// true. Since last_enrich_attempted_at is unset (mock returns nil),
 	// the cooldown check also returns true → shouldEnrich = true.
+	//
+	// It hangs under a season, as every episode processShowHierarchy
+	// builds does. A parentless episode whose name parses is the orphan
+	// shape the heal gate (orphanEpisodeNowParses) deliberately refuses
+	// to fast-skip — see processfile_heal_test.go — so without the
+	// parent this fixture would take the slow path instead of the
+	// short-circuit under test.
 	svc.items[itemID] = &media.Item{
-		ID:    itemID,
-		Type:  "episode",
-		Title: "Episode 1",
+		ID:       itemID,
+		Type:     "episode",
+		Title:    "Episode 1",
+		ParentID: &seasonID,
 	}
 	durationMS := int64(2_500_000)
 	svc.fileByPath[path] = &media.File{
