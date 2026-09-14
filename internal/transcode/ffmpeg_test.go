@@ -389,6 +389,85 @@ func TestBuildHLS_AACAudioSyncFilter_MidStream(t *testing.T) {
 	}
 }
 
+// TestBuildHLS_SeekedCopy_NoAccurateSeek guards the LIP-SYNC fix for the
+// "audio runs 1-2 s ahead of the picture after a seek" bug.
+//
+// On a video-copy session, input `-ss` starts the copied video at the keyframe
+// the seek lands on, but ffmpeg's default accurate seek trims the audio to the
+// requested timestamp instead. When those disagree — matroska seeks at cluster
+// granularity and the landing point is not always the keyframe
+// FindPreviousKeyframe predicted — the two streams carry content up to a whole
+// GOP apart while being muxed as though aligned. Measured on QA at three
+// keyframes of one file: -4.04 s, -1.16 s, +7.99 s, i.e. inconsistent in size
+// and in sign. `-noaccurate_seek` stops the trim so both streams start at the
+// same place; it does not move the video, so the reported start_offset_sec is
+// no less truthful than before.
+func TestBuildHLS_SeekedCopy_NoAccurateSeek(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		StartOffset:   1064.902,
+		Encoder:       "copy",
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	argStr := strings.Join(args, " ")
+	if !strings.Contains(argStr, "-noaccurate_seek") {
+		t.Errorf("seeked video-copy must pass -noaccurate_seek or audio drifts a GOP ahead: %s", argStr)
+	}
+	// It is an INPUT option: it only applies to the seek when it precedes -i.
+	ss, na, in := argIndex(args, "-ss"), argIndex(args, "-noaccurate_seek"), argIndex(args, "-i")
+	if !(ss >= 0 && ss < na && na < in) {
+		t.Errorf("-noaccurate_seek must sit after -ss and before -i (got -ss@%d -noaccurate_seek@%d -i@%d): %s", ss, na, in, argStr)
+	}
+}
+
+// TestBuildHLS_UnseekedCopy_NoNoAccurateSeek — with no -ss there is nothing to
+// trim, so the flag must not appear (it would be inert noise in the argv).
+func TestBuildHLS_UnseekedCopy_NoNoAccurateSeek(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       "copy",
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	if argStr := strings.Join(args, " "); strings.Contains(argStr, "-noaccurate_seek") {
+		t.Errorf("start-of-file session should not pass -noaccurate_seek: %s", argStr)
+	}
+}
+
+// TestBuildHLS_SeekedReencode_KeepsAccurateSeek — a re-encode decodes, so it can
+// start on any frame: accurate seek trims video and audio to the same requested
+// point and lands where the client asked (measured in sync, -40 ms). Forcing
+// -noaccurate_seek there would only make playback start early for no reason.
+func TestBuildHLS_SeekedReencode_KeepsAccurateSeek(t *testing.T) {
+	args := BuildHLS(BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		StartOffset:   1064.902,
+		Encoder:       EncoderSoftware,
+		AudioCodec:    "aac",
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	})
+	if argStr := strings.Join(args, " "); strings.Contains(argStr, "-noaccurate_seek") {
+		t.Errorf("re-encode seek must keep accurate seek: %s", argStr)
+	}
+}
+
+// TestBuildDirectStream_Seeked_NoAccurateSeek — direct stream is `-c copy` for
+// every stream, so it hits exactly the same trap as the video-copy HLS path.
+func TestBuildDirectStream_Seeked_NoAccurateSeek(t *testing.T) {
+	seeked := strings.Join(BuildDirectStream("/media/movie.mkv", "/tmp/s", 900.5), " ")
+	if !strings.Contains(seeked, "-noaccurate_seek") {
+		t.Errorf("seeked direct stream must pass -noaccurate_seek: %s", seeked)
+	}
+	fromZero := strings.Join(BuildDirectStream("/media/movie.mkv", "/tmp/s", 0), " ")
+	if strings.Contains(fromZero, "-noaccurate_seek") {
+		t.Errorf("unseeked direct stream should not pass -noaccurate_seek: %s", fromZero)
+	}
+}
+
 // TestBuildHLS_AudioCopy_NoResampleFilter guards the inverse: the
 // resample filter must only apply when we're re-encoding to AAC.
 // Applying it to audio-copy would force FFmpeg to decode+re-encode

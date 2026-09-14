@@ -302,8 +302,42 @@ func BuildHLS(a BuildArgs) []string {
 	}
 
 	// Seek to start position (fast input seek for keyframe alignment).
+	//
+	// `-noaccurate_seek` on the video-copy path is a LIP-SYNC fix, not an
+	// optimisation. Input `-ss` lands the copied video on a keyframe at or
+	// before the target — that is expected, and the caller already reports
+	// the probed keyframe back to the client so the scrubber matches. But
+	// ffmpeg's DEFAULT accurate seek then trims the OTHER streams to the
+	// requested timestamp, and the keyframe it actually lands on is not
+	// always the one FindPreviousKeyframe predicted (matroska seeks at
+	// cluster granularity; nudging the target by up to 100 ms did not move
+	// it). When they disagree, video begins a whole GOP earlier than the
+	// audio does and the two are muxed as if aligned: the picture is late,
+	// the sound runs ahead, and nothing downstream can tell, because every
+	// timestamp is self-consistent — only the CONTENT is offset.
+	//
+	// Measured on QA (The Grey, HEVC + EAC3, remux) with the default seek:
+	// -ss 46.927 -> video content 36.828, audio content 46.907 (audio 10 s
+	// ahead); at three keyframes the error was -4.04 s, -1.16 s and +7.99 s
+	// — inconsistent in size AND sign, which is exactly how the bug was
+	// reported ("1-2 seconds, feels inconsistent"). The user's own session
+	// seeked to a keyframe 1.877 s after its predecessor and heard ~1.9 s.
+	//
+	// `-noaccurate_seek` stops the trim, so every stream starts at the
+	// container position the seek landed on. It does NOT move the video —
+	// measured identical at all three keyframes — so start_offset_sec stays
+	// as truthful as it was; it only brings the audio back to the picture.
+	// Residual after the fix: +/-10 ms.
+	//
+	// Re-encode sessions are deliberately excluded: the decoder can start on
+	// any frame, so accurate seek trims video and audio to the same point and
+	// lands where the client asked. Measured in sync (-40 ms); forcing the
+	// flag there would only make playback start early for no reason.
 	if a.StartOffset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", a.StartOffset))
+		if videoCopy {
+			args = append(args, "-noaccurate_seek")
+		}
 	}
 
 	// Pace ffmpeg input so the encoder doesn't finish faster than the
@@ -888,6 +922,12 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 	}
 	if startOffset > 0 {
 		args = append(args, "-ss", fmt.Sprintf("%.3f", startOffset))
+		// Everything here is `-c copy`, so this is the same lip-sync trap
+		// BuildHLS documents at its own `-ss`: accurate seek trims audio to
+		// the requested timestamp while the copied video can only start at
+		// the keyframe the seek landed on, leaving the sound running ahead
+		// of the picture by up to a GOP.
+		args = append(args, "-noaccurate_seek")
 	}
 	// Real-time read pacing — see BuildHLS for rationale. Container
 	// remux runs at 50-100× real-time which would race the worker's
