@@ -28,7 +28,11 @@ func startMinIO(t *testing.T) (endpoint, access, secret string) {
 	ctx := context.Background()
 	const user, pass = "onscreentest", "onscreentestsecret"
 
-	container, err := tcminio.Run(ctx, "minio/minio:RELEASE.2024-01-16T16-07-38Z",
+	// Pulled from quay.io, not Docker Hub: MinIO withdrew docker.io/minio/minio
+	// in Sept 2026 (the repository 404s and anonymous pulls are denied), which
+	// turned this test red on CI without any change here. quay.io/minio/minio is
+	// MinIO's own public registry and carries the identical tag.
+	container, err := tcminio.Run(ctx, "quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z",
 		tcminio.WithUsername(user), tcminio.WithPassword(pass))
 	if err != nil {
 		t.Fatalf("start minio: %v", err)
