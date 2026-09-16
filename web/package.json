@@ -16,25 +16,25 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-notification": "^2.3.3",
+    "@tauri-apps/plugin-notification": "^2.4.0",
     "@types/qrcode": "^1.5.6",
     "epubjs": "^0.3.93",
-    "hls.js": "^1.7.0",
+    "hls.js": "^1.7.3",
     "qrcode": "^1.5.4"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1",
+    "@playwright/test": "^1.63.0",
     "@sveltejs/adapter-static": "^3.0.0",
-    "@sveltejs/kit": "^2.70.2",
+    "@sveltejs/kit": "^2.70.3",
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/svelte": "^5.4.2",
     "@vitest/ui": "^4.1.10",
-    "happy-dom": "^20.11.2",
-    "svelte": "^5.56.9",
+    "happy-dom": "^20.14.5",
+    "svelte": "^5.57.0",
     "svelte-check": "^4.7.6",
     "typescript": "^6.0.3",
-    "vite": "^8.2.1",
+    "vite": "^8.3.0",
     "vitest": "^4.1.2"
   },
   "overrides": {
