@@ -229,23 +229,23 @@ dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
     // Leanback (TV UI framework)
     implementation("androidx.leanback:leanback:1.0.0")
-    implementation("androidx.recyclerview:recyclerview:1.3.2")
+    implementation("androidx.recyclerview:recyclerview:1.4.0")
     // TV provider — drives the system's "Watch Next" row that shows
     // resumable items across Google TV / Android TV launchers,
     // independent of any one app's home screen. Required for TV-PN
     // quality compliance.
-    implementation("androidx.tvprovider:tvprovider:1.0.0")
+    implementation("androidx.tvprovider:tvprovider:1.1.0")
 
     // Media3 / ExoPlayer
-    implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
-    implementation("androidx.media3:media3-ui-leanback:1.3.1")
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
+    implementation("androidx.media3:media3-ui-leanback:1.11.1")
     // media3-ui (non-Leanback PlayerView) is used by the Live TV
     // channel player — its Leanback counterpart is bundled with the
     // detail-page playback machinery and doesn't fit a fullscreen
     // channel surface.
-    implementation("androidx.media3:media3-ui:1.3.1")
-    implementation("androidx.media3:media3-session:1.3.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
+    implementation("androidx.media3:media3-session:1.11.1")
 
     // Networking
     implementation("com.squareup.retrofit2:retrofit:2.11.0")
@@ -257,11 +257,11 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
 
     // Image loading
-    implementation("io.coil-kt:coil:2.6.0")
+    implementation("io.coil-kt:coil:2.7.0")
 
     // Dependency injection
-    implementation("com.google.dagger:hilt-android:2.56.2")
-    ksp("com.google.dagger:hilt-android-compiler:2.56.2")
+    implementation("com.google.dagger:hilt-android:2.60.1")
+    ksp("com.google.dagger:hilt-android-compiler:2.60.1")
 
     // AndroidX
     implementation("androidx.core:core-ktx:1.13.1")
@@ -271,13 +271,13 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // Unit testing
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-    testImplementation("io.mockk:mockk:1.13.11")
-    testImplementation("com.google.truth:truth:1.4.4")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("com.google.truth:truth:1.4.5")
     // Drives the OkHttp stack (interceptor + authenticator + SSE) against a
     // real local server. The token-scoping and SSE-reconnect guards are only
     // meaningful end-to-end — mocking the client out would assert the mock.

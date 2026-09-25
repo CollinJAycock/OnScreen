@@ -153,7 +153,7 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.2")
     implementation("androidx.navigation:navigation-compose:2.8.1")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
-    implementation("androidx.hilt:hilt-navigation-compose:1.2.0")
+    implementation("androidx.hilt:hilt-navigation-compose:1.4.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
     // WorkManager + hilt-work: long-running background downloads
@@ -161,14 +161,14 @@ dependencies {
     // share the same OkHttp + repo singletons the rest of the app
     // uses (no second auth interceptor stack).
     implementation("androidx.work:work-runtime-ktx:2.9.1")
-    implementation("androidx.hilt:hilt-work:1.2.0")
-    ksp("androidx.hilt:hilt-compiler:1.2.0")
+    implementation("androidx.hilt:hilt-work:1.4.0")
+    ksp("androidx.hilt:hilt-compiler:1.4.0")
 
     // Media3 / ExoPlayer — same versions as the TV client so the
     // transcode + HLS path stays identical.
-    implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
-    implementation("androidx.media3:media3-ui:1.3.1")
+    implementation("androidx.media3:media3-exoplayer:1.11.1")
+    implementation("androidx.media3:media3-exoplayer-hls:1.11.1")
+    implementation("androidx.media3:media3-ui:1.11.1")
     // media3-session powers the background-audio MediaSessionService:
     // it owns the audio player, publishes a MediaSession (lockscreen /
     // Bluetooth / Android Auto controls + the OS now-playing widget),
@@ -176,7 +176,7 @@ dependencies {
     // manages the foreground-service promotion itself — the service goes
     // foreground while the UI is foreground (playback starts on a tap),
     // avoiding the start-FGS-on-teardown crash the old handoff hit.
-    implementation("androidx.media3:media3-session:1.3.1")
+    implementation("androidx.media3:media3-session:1.11.1")
 
     // Google Cast SDK — `MediaRouteButton` for the Cast picker, plus
     // `CastContext` / `CastSession` for sending LOAD requests to the
@@ -199,7 +199,7 @@ dependencies {
     // host theme). The AppCompat dep also lets us wrap with a
     // Theme.AppCompat.* theme where the attribute is set to an opaque
     // value, fixing the crash without changing the app shell.
-    implementation("androidx.appcompat:appcompat:1.7.0")
+    implementation("androidx.appcompat:appcompat:1.8.0")
 
     // Chrome Custom Tabs — used by the SSO bridge to open the
     // server's web /pair page in an in-app browser tab. The user
@@ -208,7 +208,7 @@ dependencies {
     // the existing pair-poll endpoint to receive the token pair.
     // No deep-link callback or token-in-URL leakage — the server
     // handshake stays in HTTPS land.
-    implementation("androidx.browser:browser:1.8.0")
+    implementation("androidx.browser:browser:1.10.0")
 
     // androidx.webkit — pulls in WebViewAssetLoader so the EPUB
     // reader can serve a bundled epub.js + the pre-fetched .epub
@@ -227,7 +227,7 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
 
     // Image loading — Coil's compose integration.
-    implementation("io.coil-kt:coil-compose:2.6.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     // OSMDroid — OpenStreetMap tile renderer for the photo-map view.
     // No API key, no Google Play Services dependency, no billing
@@ -239,8 +239,8 @@ dependencies {
     implementation("org.osmdroid:osmdroid-android:6.1.20")
 
     // Dependency injection
-    implementation("com.google.dagger:hilt-android:2.56.2")
-    ksp("com.google.dagger:hilt-android-compiler:2.56.2")
+    implementation("com.google.dagger:hilt-android:2.60.1")
+    ksp("com.google.dagger:hilt-android-compiler:2.60.1")
 
     // AndroidX
     implementation("androidx.core:core-ktx:1.13.1")
@@ -252,13 +252,13 @@ dependencies {
     implementation("androidx.datastore:datastore-preferences:1.1.1")
 
     // Coroutines
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.11.0")
 
     // Unit testing
     testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.8.1")
-    testImplementation("io.mockk:mockk:1.13.11")
-    testImplementation("com.google.truth:truth:1.4.4")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.11.0")
+    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("com.google.truth:truth:1.4.5")
     // The auth-scoping guards live in the COMPOSITION of interceptor +
     // authenticator + OkHttp's retry loop, so they need a real client against
     // a real socket — a mock-based test passes while the app leaks. Matches
