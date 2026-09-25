@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/livetv"
 )
 
@@ -386,6 +388,8 @@ func TestLiveTV_ListChannels_EnabledFalseShowsAll(t *testing.T) {
 	h := NewLiveTVHandler(svc, slog.Default())
 
 	req := httptest.NewRequest("GET", "/api/v1/tv/channels?enabled=false", nil)
+	// Only admins may list disabled channels.
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
 	rec := httptest.NewRecorder()
 	h.ListChannels(rec, req)
 	if rec.Code != http.StatusOK {
@@ -393,6 +397,25 @@ func TestLiveTV_ListChannels_EnabledFalseShowsAll(t *testing.T) {
 	}
 	if svc.listChansEnabledOnly == nil || *svc.listChansEnabledOnly {
 		t.Errorf("expected enabledOnly=false; got %v", svc.listChansEnabledOnly)
+	}
+}
+
+// TestLiveTV_ListChannels_NonAdminCannotSeeDisabled pins that ?enabled=false is
+// ignored for non-admins — disabling a channel must hide it from viewers.
+func TestLiveTV_ListChannels_NonAdminCannotSeeDisabled(t *testing.T) {
+	svc := newMockLiveTVService()
+	svc.channels[uuid.New()] = livetv.Channel{Number: "5.1", Enabled: true}
+	svc.channels[uuid.New()] = livetv.Channel{Number: "9", Enabled: false}
+	h := NewLiveTVHandler(svc, slog.Default())
+	req := httptest.NewRequest("GET", "/api/v1/tv/channels?enabled=false", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+	h.ListChannels(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d", rec.Code)
+	}
+	if svc.listChansEnabledOnly == nil || !*svc.listChansEnabledOnly {
+		t.Errorf("non-admin must get enabled-only; got %v", svc.listChansEnabledOnly)
 	}
 }
 

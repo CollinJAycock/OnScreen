@@ -724,6 +724,34 @@ func TestSecurityHeaders_CSPAllowsGoogleCastSDK(t *testing.T) {
 	}
 }
 
+// form-action is not covered by default-src, so without it injected markup (or
+// an on-origin file served as HTML) could post a credential form off-origin.
+// The SAML start route is the one exemption: its POST-binding page submits the
+// AuthnRequest to the IdP's origin.
+func TestSecurityHeaders_FormActionSelf(t *testing.T) {
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	formAction := func(path string) string {
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", path, nil))
+		for _, p := range splitCSP(rec.Header().Get("Content-Security-Policy")) {
+			if strings.HasPrefix(p, "form-action ") {
+				return p
+			}
+		}
+		return ""
+	}
+	for _, path := range []string{"/", "/login", "/artwork/Movies/x/poster.tbn", "/api/v1/auth/saml/acs"} {
+		if got := formAction(path); got != "form-action 'self'" {
+			t.Errorf("%s: form-action = %q, want 'self'", path, got)
+		}
+	}
+	if got := formAction("/api/v1/auth/saml"); got != "" {
+		t.Errorf("SAML start must not restrict form-action (POST binding) — got %q", got)
+	}
+}
+
 // splitCSP splits a CSP header on "; " boundaries.
 func splitCSP(csp string) []string {
 	var parts []string

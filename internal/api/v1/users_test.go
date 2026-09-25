@@ -40,13 +40,13 @@ func (m *mockUserService) SetPIN(_ context.Context, _ uuid.UUID, _, _ string) er
 func (m *mockUserService) ClearPIN(_ context.Context, _ uuid.UUID, _ string) error {
 	return m.clearPINErr
 }
-func (m *mockUserService) ListSwitchable(_ context.Context) ([]SwitchableUser, error) {
+func (m *mockUserService) ListSwitchable(_ context.Context, _ uuid.UUID) ([]SwitchableUser, error) {
 	if m.switchableErr != nil {
 		return nil, m.switchableErr
 	}
 	return m.switchableUsers, nil
 }
-func (m *mockUserService) VerifyPIN(_ context.Context, _ uuid.UUID, _ string) (*PINSwitchResult, error) {
+func (m *mockUserService) VerifyPIN(_ context.Context, _, _ uuid.UUID, _ string) (*PINSwitchResult, error) {
 	m.verifyPINCalled = true
 	if m.verifyPINErr != nil {
 		return nil, m.verifyPINErr
@@ -59,13 +59,23 @@ type fakeThrottle struct {
 	allowed    bool
 	incrCalls  int
 	resetCalls int
+	keys       []string // keys CheckFailures was asked about
 }
 
-func (f *fakeThrottle) CheckFailures(_ context.Context, _ string, _ int) (bool, error) {
+func (f *fakeThrottle) CheckFailures(_ context.Context, key string, _ int) (bool, error) {
+	f.keys = append(f.keys, key)
 	return f.allowed, nil
 }
 func (f *fakeThrottle) IncrFailure(_ context.Context, _ string, _ time.Duration) { f.incrCalls++ }
 func (f *fakeThrottle) ResetFailures(_ context.Context, _ string)                { f.resetCalls++ }
+
+// pinCaller attaches a normal (non-switched) authenticated caller to a request,
+// as the Auth_mw.Required group guarantees at runtime. ListSwitchable and
+// PINSwitch now require a caller identity so the switch is scoped to the
+// caller's own household, so handler tests must supply one.
+func pinCaller(req *http.Request) *http.Request {
+	return req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+}
 
 // ── mock user DB ────────────────────────────────────────────────────────────
 
@@ -552,6 +562,7 @@ func TestUser_ListSwitchable_Success(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/users/switchable", nil)
+	req = pinCaller(req)
 	h.ListSwitchable(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -574,6 +585,7 @@ func TestUser_ListSwitchable_ServiceError(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("GET", "/api/v1/users/switchable", nil)
+	req = pinCaller(req)
 	h.ListSwitchable(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -597,6 +609,7 @@ func TestUser_PINSwitch_WrongPIN(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"9999"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {
@@ -632,6 +645,7 @@ func TestUser_PINSwitch_ThrottledLockout(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + uuid.New().String() + `","pin":"9999"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusTooManyRequests {
@@ -656,6 +670,7 @@ func TestUser_PINSwitch_BadPINRecordsFailure(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + uuid.New().String() + `","pin":"9999"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
@@ -663,6 +678,33 @@ func TestUser_PINSwitch_BadPINRecordsFailure(t *testing.T) {
 	}
 	if thr.incrCalls != 1 {
 		t.Errorf("IncrFailure calls: got %d, want 1", thr.incrCalls)
+	}
+}
+
+// The lockout is per (caller, target): only the target's own parent can ever
+// pass VerifyPIN's household gate, so an unrelated account's doomed guesses must
+// not spend — and lock — the parent's budget for that profile.
+func TestUser_PINSwitch_LockoutKeyedByCallerAndTarget(t *testing.T) {
+	tm, err := auth.NewTokenMaker(make([]byte, 32))
+	if err != nil {
+		t.Fatalf("token maker: %v", err)
+	}
+	thr := &fakeThrottle{allowed: true}
+	h := NewUserHandler(&mockUserService{verifyPINErr: ErrInvalidCredentials}).WithDB(&mockUserDB{}).
+		WithTokenMaker(tm, slog.Default()).WithPINThrottle(thr)
+	target := uuid.New().String()
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch",
+			strings.NewReader(`{"user_id":"`+target+`","pin":"9999"}`))
+		h.PINSwitch(httptest.NewRecorder(), pinCaller(req)) // a fresh caller each time
+	}
+	if len(thr.keys) != 2 || thr.keys[0] == thr.keys[1] {
+		t.Fatalf("two callers shared a lockout key for one target: %v", thr.keys)
+	}
+	for _, k := range thr.keys {
+		if !strings.HasSuffix(k, ":"+target) {
+			t.Errorf("key %q is not scoped to the target", k)
+		}
 	}
 }
 
@@ -715,6 +757,7 @@ func TestUser_PINSwitch_InvalidUserID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"not-a-uuid","pin":"1234"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	// No token maker — returns 500 before body parsing.
@@ -730,6 +773,7 @@ func TestUser_PINSwitch_EmptyPIN(t *testing.T) {
 	targetID := uuid.New()
 	body := `{"user_id":"` + targetID.String() + `","pin":""}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	// No token maker — returns 500 before body parsing.
@@ -886,6 +930,7 @@ func TestUser_PINSwitch_Success(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -925,6 +970,7 @@ func TestUser_PINSwitch_Success_TokenIsSwitched(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusOK {
@@ -958,6 +1004,7 @@ func TestUser_PINSwitch_NoChaining(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), Switched: true}))
 	h.PINSwitch(rec, req)
 
@@ -980,6 +1027,7 @@ func TestUser_PINSwitch_DisabledByPolicy(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusForbidden {
@@ -999,6 +1047,7 @@ func TestUser_PINSwitch_WrongPIN_WithTokens(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"9999"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
@@ -1015,6 +1064,7 @@ func TestUser_PINSwitch_BadPIN_WithTokens(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"abc"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusUnauthorized {
@@ -1028,6 +1078,7 @@ func TestUser_PINSwitch_InvalidBody_WithTokens(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader("bad"))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -1042,6 +1093,7 @@ func TestUser_PINSwitch_InvalidUserID_WithTokens(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"not-a-uuid","pin":"1234"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -1057,6 +1109,7 @@ func TestUser_PINSwitch_EmptyPIN_WithTokens(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":""}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusBadRequest {
@@ -1073,6 +1126,7 @@ func TestUser_PINSwitch_VerifyPIN_InternalError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	body := `{"user_id":"` + targetID.String() + `","pin":"1234"}`
 	req := httptest.NewRequest("POST", "/api/v1/auth/pin-switch", strings.NewReader(body))
+	req = pinCaller(req)
 	h.PINSwitch(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {

@@ -6,6 +6,7 @@ import (
 	"regexp"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
@@ -18,7 +19,7 @@ type userQuerier interface {
 	GetUser(ctx context.Context, id uuid.UUID) (gen.User, error)
 	SetUserPIN(ctx context.Context, arg gen.SetUserPINParams) error
 	ClearUserPIN(ctx context.Context, id uuid.UUID) error
-	ListSwitchableUsers(ctx context.Context) ([]gen.ListSwitchableUsersRow, error)
+	ListSwitchableUsers(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListSwitchableUsersRow, error)
 }
 
 type userService struct {
@@ -74,9 +75,12 @@ func (s *userService) ClearPIN(ctx context.Context, userID uuid.UUID, password s
 	return s.db.ClearUserPIN(ctx, userID)
 }
 
-// ListSwitchable returns all users with their has_pin status (never exposes the hash).
-func (s *userService) ListSwitchable(ctx context.Context) ([]v1.SwitchableUser, error) {
-	rows, err := s.db.ListSwitchableUsers(ctx)
+// ListSwitchable returns the caller's own managed profiles with their has_pin
+// status (never the hash). Scoped to parent_user_id == callerID: the profile
+// picker must not enumerate other households' accounts, and these are the only
+// accounts the caller is allowed to PIN-switch into.
+func (s *userService) ListSwitchable(ctx context.Context, callerID uuid.UUID) ([]v1.SwitchableUser, error) {
+	rows, err := s.db.ListSwitchableUsers(ctx, pgtype.UUID{Bytes: callerID, Valid: true})
 	if err != nil {
 		return nil, fmt.Errorf("list switchable users: %w", err)
 	}
@@ -92,15 +96,36 @@ func (s *userService) ListSwitchable(ctx context.Context) ([]v1.SwitchableUser, 
 	return out, nil
 }
 
-// VerifyPIN looks up a user by ID and verifies the submitted PIN against the stored bcrypt hash.
-// Returns the gen.User on success so the caller can issue tokens.
-func (s *userService) VerifyPIN(ctx context.Context, userID uuid.UUID, rawPIN string) (*v1.PINSwitchResult, error) {
+// VerifyPIN authorizes a PIN-switch from callerID into targetID. It enforces the
+// household relationship and the non-admin / no-second-factor invariants BEFORE
+// comparing the PIN, then verifies the PIN against the stored bcrypt hash.
+// Returns the target's details on success so the caller can issue tokens.
+//
+// Every failure returns the same ErrInvalidCredentials so the endpoint cannot be
+// used as an oracle for "does this account exist / is it an admin / is it in my
+// household" — the answer is uniform whether the target is unrelated, an admin,
+// second-factor protected, PIN-less, or the PIN is simply wrong.
+func (s *userService) VerifyPIN(ctx context.Context, callerID, targetID uuid.UUID, rawPIN string) (*v1.PINSwitchResult, error) {
 	if !pinDigitsOnly.MatchString(rawPIN) {
 		return nil, v1.ErrBadPIN
 	}
 
-	user, err := s.db.GetUser(ctx, userID)
+	user, err := s.db.GetUser(ctx, targetID)
 	if err != nil {
+		return nil, v1.ErrInvalidCredentials
+	}
+
+	// Household gate: the target must be a managed profile OWNED by the caller.
+	// This is the fix for cross-account PIN-switching — without it, any user
+	// could switch into any non-admin account by guessing its 4-digit PIN.
+	if !user.ParentUserID.Valid || uuid.UUID(user.ParentUserID.Bytes) != callerID {
+		return nil, v1.ErrInvalidCredentials
+	}
+
+	// A 4-digit PIN must never grant admin or step over a second factor.
+	// Managed profiles carry neither today; this refuses defensively in case a
+	// profile row was ever promoted to admin or enrolled in TOTP.
+	if user.IsAdmin || user.TotpEnabled {
 		return nil, v1.ErrInvalidCredentials
 	}
 

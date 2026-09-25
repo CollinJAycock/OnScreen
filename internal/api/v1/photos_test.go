@@ -18,6 +18,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/photoimage"
 )
@@ -52,8 +53,10 @@ type mockPhotoMedia struct {
 
 	listParams    *media.ListPhotosParams
 	timelineLibID uuid.UUID
+	timelineRank  *int
 	mapParams     *media.ListPhotoMapPointsParams
 	mapCountLibID uuid.UUID
+	mapCountRank  *int
 	searchParams  *media.SearchPhotosByExifParams
 }
 
@@ -78,8 +81,9 @@ func (m *mockPhotoMedia) CountPhotos(_ context.Context, _ media.ListPhotosParams
 	return int64(len(m.photos)), nil
 }
 
-func (m *mockPhotoMedia) ListPhotoTimeline(_ context.Context, libraryID uuid.UUID) ([]media.PhotoTimelineBucket, error) {
+func (m *mockPhotoMedia) ListPhotoTimeline(_ context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]media.PhotoTimelineBucket, error) {
 	m.timelineLibID = libraryID
+	m.timelineRank = maxRatingRank
 	return m.timeline, nil
 }
 
@@ -89,8 +93,9 @@ func (m *mockPhotoMedia) ListPhotoMapPoints(_ context.Context, p media.ListPhoto
 	return m.mapPts, nil
 }
 
-func (m *mockPhotoMedia) CountPhotoMapPoints(_ context.Context, libraryID uuid.UUID) (int64, error) {
+func (m *mockPhotoMedia) CountPhotoMapPoints(_ context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error) {
 	m.mapCountLibID = libraryID
+	m.mapCountRank = maxRatingRank
 	return m.mapTotal, nil
 }
 
@@ -843,5 +848,52 @@ func TestPhotosImage_DimensionClampedToMax(t *testing.T) {
 	h.Image(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// Every photo listing must carry the caller's content-rating ceiling into the
+// query. /photos/{id}/image already refused an over-ceiling photo's bytes, but
+// the listings handed a restricted profile its title, EXIF and GPS anyway.
+func TestPhotos_ListingsApplyRatingCeiling(t *testing.T) {
+	libID := uuid.New()
+	m := &mockPhotoMedia{}
+	h := NewPhotosHandler(m, nil, slog.Default())
+	call := func(fn http.HandlerFunc, path, maxRating string) {
+		req := httptest.NewRequest(http.MethodGet, path+"?library_id="+libID.String(), nil)
+		req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), MaxContentRating: maxRating}))
+		rec := httptest.NewRecorder()
+		fn(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d", path, rec.Code)
+		}
+	}
+	rank := func(p *int) int {
+		if p == nil {
+			return -1
+		}
+		return *p
+	}
+
+	call(h.List, "/api/v1/photos", "PG")
+	call(h.Timeline, "/api/v1/photos/timeline", "PG")
+	call(h.Map, "/api/v1/photos/map", "PG")
+	call(h.Search, "/api/v1/photos/search", "PG")
+	want := *contentrating.MaxRatingRank("PG")
+	for name, got := range map[string]*int{
+		"list":      m.listParams.MaxRatingRank,
+		"timeline":  m.timelineRank,
+		"map":       m.mapParams.MaxRatingRank,
+		"map count": m.mapCountRank,
+		"search":    m.searchParams.MaxRatingRank,
+	} {
+		if rank(got) != want {
+			t.Errorf("%s: rating rank = %d, want %d", name, rank(got), want)
+		}
+	}
+
+	// An unrestricted caller passes no ceiling.
+	call(h.List, "/api/v1/photos", "")
+	if m.listParams.MaxRatingRank != nil {
+		t.Errorf("unrestricted caller got ceiling %d", *m.listParams.MaxRatingRank)
 	}
 }

@@ -36,6 +36,8 @@ import (
 
 	"github.com/rwcarlsen/goexif/exif"
 	"golang.org/x/image/draw"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // Server serves photo derivatives.
@@ -279,6 +281,8 @@ func decodeEmbeddedCover(ctx context.Context, sourcePath string) (image.Image, e
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner", "-loglevel", "error",
+		// Confine the demuxer to this input's protocols (must precede -i).
+		"-protocol_whitelist", ffsafe.Whitelist(sourcePath),
 		"-i", sourcePath,
 		// Map the first video/picture stream if present. The "?" makes
 		// the mapping optional so the command doesn't fail on files
@@ -333,6 +337,8 @@ func decodeHEIC(ctx context.Context, sourcePath string) (image.Image, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner", "-loglevel", "error",
+		// Confine the demuxer to this input's protocols (must precede -i).
+		"-protocol_whitelist", ffsafe.Whitelist(sourcePath),
 		"-i", sourcePath,
 		"-frames:v", "1",
 		"-f", "mjpeg",

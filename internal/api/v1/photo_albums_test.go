@@ -18,6 +18,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -29,6 +30,7 @@ type mockPhotoAlbumDB struct {
 	listMineArg pgtype.UUID
 
 	listItems    []gen.ListPhotoAlbumItemsRow
+	lastListRank *int32
 	listItemsErr error
 
 	getResult gen.Collection
@@ -59,11 +61,12 @@ func (m *mockPhotoAlbumDB) ListMyPhotoAlbums(_ context.Context, userID pgtype.UU
 	m.listMineArg = userID
 	return m.listMine, m.listMineErr
 }
-func (m *mockPhotoAlbumDB) ListPhotoAlbumItems(_ context.Context, _ gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error) {
+func (m *mockPhotoAlbumDB) ListPhotoAlbumItems(_ context.Context, arg gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error) {
+	m.lastListRank = arg.MaxRatingRank
 	return m.listItems, m.listItemsErr
 }
 
-func (m *mockPhotoAlbumDB) CountPhotoAlbumItems(_ context.Context, _ uuid.UUID) (int64, error) {
+func (m *mockPhotoAlbumDB) CountPhotoAlbumItems(_ context.Context, _ gen.CountPhotoAlbumItemsParams) (int64, error) {
 	return int64(len(m.listItems)), nil
 }
 func (m *mockPhotoAlbumDB) GetCollection(_ context.Context, _ uuid.UUID) (gen.Collection, error) {
@@ -503,6 +506,28 @@ func TestPhotoAlbums_Items_ReturnsPhotos(t *testing.T) {
 	}
 	if resp.Data[0].Width == nil || *resp.Data[0].Width != 800 {
 		t.Errorf("width passthrough: %+v", resp.Data[0])
+	}
+}
+
+// The album listing applies the caller's content-rating ceiling on read (as
+// every /photos listing does): an add-time check alone goes stale once a
+// profile's ceiling is lowered after it filled the album.
+func TestPhotoAlbums_Items_PassesRatingCeiling(t *testing.T) {
+	uid := uuid.New()
+	albumID := uuid.New()
+	m := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
+	hh := NewPhotoAlbumHandler(m, slog.Default())
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uid, MaxContentRating: "PG"}))
+	req = withChiParam(req, "id", albumID.String())
+	rec := httptest.NewRecorder()
+	hh.Items(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	if m.lastListRank == nil || int(*m.lastListRank) != *contentrating.MaxRatingRank("PG") {
+		t.Errorf("album listing ceiling = %v, want the PG rank", m.lastListRank)
 	}
 }
 

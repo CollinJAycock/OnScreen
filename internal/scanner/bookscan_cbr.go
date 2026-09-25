@@ -10,6 +10,11 @@ import (
 	"github.com/nwaples/rardecode/v2"
 )
 
+// maxCBRDictBytes caps the RAR decompression window a .cbr may declare (the
+// library default is 4 GiB, allocated up front) so a crafted archive can't force
+// a multi-GB allocation during a library scan. Real comic archives use far less.
+const maxCBRDictBytes = 256 << 20
+
 // readFirstCBRPage opens the CBR (RAR archive) at cbrPath, sorts its
 // image entries lexicographically, and returns the bytes of the first
 // page. Mirrors readFirstCBZPage for ZIP — same convention (every
@@ -57,7 +62,7 @@ func readCBRPages(cbrPath string, readBytes bool) ([]cbrPage, bool) {
 	}
 	defer f.Close()
 
-	r, err := rardecode.NewReader(f)
+	r, err := rardecode.NewReader(f, rardecode.MaxDictionarySize(maxCBRDictBytes))
 	if err != nil {
 		return nil, false
 	}

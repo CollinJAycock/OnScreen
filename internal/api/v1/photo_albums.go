@@ -26,7 +26,7 @@ import (
 type PhotoAlbumDB interface {
 	ListMyPhotoAlbums(ctx context.Context, userID pgtype.UUID) ([]gen.ListMyPhotoAlbumsRow, error)
 	ListPhotoAlbumItems(ctx context.Context, arg gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error)
-	CountPhotoAlbumItems(ctx context.Context, collectionID uuid.UUID) (int64, error)
+	CountPhotoAlbumItems(ctx context.Context, arg gen.CountPhotoAlbumItemsParams) (int64, error)
 	GetCollection(ctx context.Context, id uuid.UUID) (gen.Collection, error)
 	CreateCollection(ctx context.Context, arg gen.CreateCollectionParams) (gen.Collection, error)
 	UpdateCollection(ctx context.Context, arg gen.UpdateCollectionParams) (gen.Collection, error)
@@ -229,11 +229,17 @@ func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Paginated with a generous default cap so a huge album doesn't materialize
-	// entirely per open; clients can page with ?limit/?offset.
+	// entirely per open; clients can page with ?limit/?offset. The caller's
+	// content-rating ceiling filters on read, as every other photo listing does.
+	var maxRank *int32
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+	}
 	rows, err := h.db.ListPhotoAlbumItems(r.Context(), gen.ListPhotoAlbumItemsParams{
-		CollectionID: id,
-		Lim:          respond.ParseLimit(r, photoAlbumPageDefault, photoAlbumPageDefault),
-		Off:          parseInt32(r.URL.Query().Get("offset"), 0),
+		CollectionID:  id,
+		Lim:           respond.ParseLimit(r, photoAlbumPageDefault, photoAlbumPageDefault),
+		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
+		MaxRatingRank: maxRank,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo album items", "id", id, "err", err)
@@ -272,7 +278,7 @@ func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 			AddedAt:     row.AddedAt.Time,
 		})
 	}
-	total, _ := h.db.CountPhotoAlbumItems(r.Context(), id)
+	total, _ := h.db.CountPhotoAlbumItems(r.Context(), gen.CountPhotoAlbumItemsParams{CollectionID: id, MaxRatingRank: maxRank})
 	respond.List(w, r, out, total, "")
 }
 

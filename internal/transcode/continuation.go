@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // ── Auto-continue past a premature ffmpeg EOF ────────────────────────────────
@@ -193,6 +195,8 @@ func probeSourceDurationSec(ctx context.Context, input string) float64 {
 		"-v", "error",
 		"-show_entries", "format=duration",
 		"-of", "default=nw=1:nk=1",
+		// Confine the demuxer to this input's protocols (must precede input).
+		"-protocol_whitelist", ffsafe.Whitelist(input),
 		input,
 	).Output()
 	if err != nil {

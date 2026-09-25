@@ -138,7 +138,7 @@ func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if !h.checkAccess(w, r, item.LibraryID) {
+	if !h.checkItemAccess(w, r, item) {
 		return
 	}
 
@@ -179,7 +179,7 @@ func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.WarnContext(r.Context(), "subtitles: search", "id", itemID, "err", err)
-		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respond.Error(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "the subtitle provider returned an error")
 		return
 	}
 
@@ -221,7 +221,7 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if !h.checkAccess(w, r, item.LibraryID) {
+	if !h.checkItemAccess(w, r, item) {
 		return
 	}
 
@@ -279,7 +279,7 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "subtitles: download", "id", itemID, "err", err)
-		respond.JSON(w, r, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		respond.Error(w, r, http.StatusBadGateway, "SUBTITLE_PROVIDER_ERROR", "the subtitle provider returned an error")
 		return
 	}
 	respond.Created(w, r, toExternalSubtitleJSON(row))
@@ -349,7 +349,7 @@ func (h *SubtitleHandler) OCR(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if !h.checkAccess(w, r, item.LibraryID) {
+	if !h.checkItemAccess(w, r, item) {
 		return
 	}
 
@@ -527,7 +527,7 @@ func (h *SubtitleHandler) OCRStatus(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if !h.checkAccess(w, r, item.LibraryID) {
+	if !h.checkItemAccess(w, r, item) {
 		return
 	}
 
@@ -542,6 +542,14 @@ func (h *SubtitleHandler) OCRStatus(w http.ResponseWriter, r *http.Request) {
 
 // Delete handles DELETE /api/v1/items/{id}/subtitles/{subId}.
 func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
+	// External subtitles are shared by every user of the item and carry no
+	// uploader, so deletion is admin-only: library access alone let any user
+	// (including a restricted profile) remove subtitles others downloaded or
+	// paid OCR time for.
+	if c := middleware.ClaimsFromContext(r.Context()); c == nil || !c.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
 	itemID, err := uuid.Parse(chi.URLParam(r, "id"))
 	if err != nil {
 		respond.BadRequest(w, r, "invalid item id")
@@ -562,7 +570,7 @@ func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	if !h.checkAccess(w, r, item.LibraryID) {
+	if !h.checkItemAccess(w, r, item) {
 		return
 	}
 
@@ -608,7 +616,7 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.checkAccess(w, r, item.LibraryID) {
+	if !h.checkItemAccess(w, r, item) {
 		return
 	}
 	// Content-rating ceiling: a restricted profile with library access to a
@@ -638,6 +646,28 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
+
+// checkItemAccess applies the library ACL AND the content-rating ceiling for an
+// item — the same pair the streaming and embedded-subtitle routes enforce.
+// Subtitle search/download/OCR/serve previously checked only the library, so a
+// restricted profile could pull (and trigger paid OpenSubtitles / OCR work for)
+// subtitles of titles above its ceiling.
+func (h *SubtitleHandler) checkItemAccess(w http.ResponseWriter, r *http.Request, item *media.Item) bool {
+	if !h.checkAccess(w, r, item.LibraryID) {
+		return false
+	}
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.NotFound(w, r)
+			return false
+		}
+	}
+	return true
+}
 
 func (h *SubtitleHandler) checkAccess(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID) bool {
 	if h.access == nil {

@@ -276,11 +276,25 @@ func (s *Service) Search(ctx context.Context, prefix string, limit int32) ([]Sum
 	if prefix == "" {
 		return nil, nil
 	}
+	// Bound the input and neutralise LIKE metacharacters: the prefix is placed
+	// in a LIKE pattern, so a bare "%" or "_" matched everything (a full table
+	// scan per request) and an unbounded string made each scan costlier.
+	// Postgres LIKE's default escape character is backslash.
+	if r := []rune(prefix); len(r) > maxPeopleSearchRunes {
+		prefix = string(r[:maxPeopleSearchRunes])
+	}
+	prefix = likeEscaper.Replace(prefix)
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
 	return s.q.SearchPeople(ctx, prefix, limit)
 }
+
+// maxPeopleSearchRunes caps a people-search prefix.
+const maxPeopleSearchRunes = 100
+
+// likeEscaper escapes LIKE metacharacters (backslash first).
+var likeEscaper = strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`)
 
 func capitalize(s string) string {
 	if s == "" {

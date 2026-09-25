@@ -19,6 +19,9 @@ type mockDB struct {
 	createErr  error
 	userIDs    []uuid.UUID
 	userIDsErr error
+	// libUserIDs, when non-nil, is the library-scoped recipient set.
+	libUserIDs    []uuid.UUID
+	lastLibraryID uuid.UUID
 }
 
 func (m *mockDB) CreateNotification(_ context.Context, arg gen.CreateNotificationParams) (gen.Notification, error) {
@@ -36,6 +39,19 @@ func (m *mockDB) CreateNotification(_ context.Context, arg gen.CreateNotificatio
 		Read:      false,
 		CreatedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 	}, nil
+}
+
+// ListNotifiableUserIDsForLibrary returns libUserIDs when set (the users who
+// can see the library), falling back to userIDs for tests that don't care.
+func (m *mockDB) ListNotifiableUserIDsForLibrary(_ context.Context, libID uuid.UUID) ([]uuid.UUID, error) {
+	m.lastLibraryID = libID
+	if m.userIDsErr != nil {
+		return nil, m.userIDsErr
+	}
+	if m.libUserIDs != nil {
+		return m.libUserIDs, nil
+	}
+	return m.userIDs, nil
 }
 
 func (m *mockDB) ListAllUserIDs(_ context.Context) ([]uuid.UUID, error) {
@@ -159,7 +175,7 @@ func TestNotifyScanComplete_ZeroItems_NoNotification(t *testing.T) {
 	db := &mockDB{userIDs: []uuid.UUID{uuid.New()}}
 	svc := NewService(db, NewBroker(), slog.Default())
 
-	svc.NotifyScanComplete(context.Background(), "Movies", 0)
+	svc.NotifyScanComplete(context.Background(), uuid.New(), "Movies", 0)
 
 	if len(db.created) != 0 {
 		t.Errorf("expected no notifications for 0 new items, got %d", len(db.created))
@@ -178,7 +194,7 @@ func TestNotifyScanComplete_SingularPlural(t *testing.T) {
 		db := &mockDB{userIDs: []uuid.UUID{uuid.New()}}
 		svc := NewService(db, NewBroker(), slog.Default())
 
-		svc.NotifyScanComplete(context.Background(), "Movies", tt.count)
+		svc.NotifyScanComplete(context.Background(), uuid.New(), "Movies", tt.count)
 
 		if len(db.created) != 1 {
 			t.Fatalf("count=%d: created %d, want 1", tt.count, len(db.created))
@@ -226,5 +242,27 @@ func TestItoa(t *testing.T) {
 		if got := itoa(tt.n); got != tt.want {
 			t.Errorf("itoa(%d) = %q, want %q", tt.n, got, tt.want)
 		}
+	}
+}
+
+// TestNotifyScanComplete_OnlyLibraryRecipients pins that a scan notification
+// reaches only the users who can see the library, not every account.
+func TestNotifyScanComplete_OnlyLibraryRecipients(t *testing.T) {
+	allowed := uuid.New()
+	outsider := uuid.New()
+	db := &mockDB{userIDs: []uuid.UUID{allowed, outsider}, libUserIDs: []uuid.UUID{allowed}}
+	svc := NewService(db, NewBroker(), slog.Default())
+	libID := uuid.New()
+	svc.NotifyScanComplete(context.Background(), libID, "Private Library", 3)
+	if db.lastLibraryID != libID {
+		t.Fatalf("recipients must be resolved for the scanned library; got %s", db.lastLibraryID)
+	}
+	for _, c := range db.created {
+		if c.UserID == outsider {
+			t.Fatal("a user without access to the library received its scan notification")
+		}
+	}
+	if len(db.created) != 1 {
+		t.Errorf("expected exactly one notification (to the allowed user); got %d", len(db.created))
 	}
 }

@@ -13,6 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // hlsStreamLifetime is the soft cap on how long a single HLS session is
@@ -68,7 +70,17 @@ type HLSConfig struct {
 	FFmpegBin    string
 	VideoEncoder string
 	AudioEncoder string
+	// MaxSessions caps concurrently running channel sessions (each is a tune
+	// plus an ffmpeg transcode). 0 selects the default. Viewers of an already
+	// running channel always join it; only NEW channel sessions count.
+	MaxSessions int
 }
+
+// defaultMaxLiveSessions bounds simultaneous live channels. Each session is a
+// full libx264 transcode, and IPTV "tuners" have no hardware limit, so without
+// a ceiling any signed-in user could sweep channel IDs and start one encode
+// per channel until the server ran out of CPU.
+const defaultMaxLiveSessions = 6
 
 // HLSSession represents one active per-channel session. The first viewer
 // for a channel creates it; subsequent viewers increment refcount and
@@ -133,6 +145,110 @@ type HLSProxy struct {
 
 	mu       sync.Mutex
 	sessions map[uuid.UUID]*HLSSession
+	// creating holds one reservation per channel whose session is being built.
+	// Building (upstream open + ffmpeg start) runs outside mu and takes from
+	// ~100 ms to ~10 s, so the MaxSessions check must count these alongside
+	// sessions — otherwise N parallel first-viewers of N channels all saw the
+	// same under-cap map and all started a tune + transcode. The channel is
+	// closed when the reservation ends (handed to the session, or released on
+	// failure), which lets a second first-viewer of the SAME channel wait for
+	// the in-flight create instead of tuning a second tuner. Guarded by mu;
+	// lazily allocated so zero-value/literal proxies (tests) work.
+	creating map[uuid.UUID]chan struct{}
+}
+
+// maxSessions is the effective live-session ceiling.
+func (p *HLSProxy) maxSessions() int {
+	if p.cfg.MaxSessions > 0 {
+		return p.cfg.MaxSessions
+	}
+	return defaultMaxLiveSessions // zero-valued config (tests, literals)
+}
+
+// joinOrReserve is Acquire's locked entry step. It either joins the channel's
+// live session (returned non-nil, refcount already bumped), or claims the
+// channel's create reservation (returned as reservation) counted against
+// MaxSessions — atomically under p.mu, so concurrent callers can never
+// collectively overshoot the cap. When another caller is already creating this
+// channel's session it waits for that attempt to finish and re-evaluates. A
+// caller holding a reservation MUST end it with endReservation on every path.
+func (p *HLSProxy) joinOrReserve(ctx context.Context, channelID uuid.UUID) (*HLSSession, chan struct{}, error) {
+	for {
+		p.mu.Lock()
+		corpse := false
+		if s, ok := p.sessions[channelID]; ok {
+			s.mu.Lock()
+			// Skip a session that teardown has already closed. teardown sets
+			// closed=true and releases every resource (ffmpeg killed, upstream
+			// closed, directory removed) BEFORE removing the map entry, so there
+			// is a window where the map still holds a corpse. Handing it out
+			// returned a session whose directory no longer exists — the caller
+			// then served 404s for a channel that looked live. Build a fresh one
+			// instead.
+			if !s.closed {
+				s.refcount++
+				// Cancel any pending close timer — a new viewer arrived during
+				// the grace period.
+				if s.closing != nil {
+					s.closing.Stop()
+					s.closing = nil
+				}
+				s.mu.Unlock()
+				p.mu.Unlock()
+				return s, nil, nil
+			}
+			s.mu.Unlock()
+			corpse = true
+		}
+		if pending, ok := p.creating[channelID]; ok {
+			// Someone is already building this channel. Wait for them rather
+			// than tuning a duplicate, then look again: join their session, or
+			// (if their attempt failed) try ourselves.
+			p.mu.Unlock()
+			select {
+			case <-pending:
+				continue
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			}
+		}
+		occupied := len(p.sessions) + len(p.creating)
+		if corpse {
+			occupied-- // the new session takes over the corpse's slot
+		}
+		if occupied >= p.maxSessions() {
+			p.mu.Unlock()
+			// Refuse before tuning: a new channel beyond the ceiling would burn
+			// a tune and start another transcode. Reported as "all tuners
+			// busy", which every client already handles.
+			return nil, nil, ErrAllTunersBusy
+		}
+		if p.creating == nil {
+			p.creating = make(map[uuid.UUID]chan struct{})
+		}
+		reservation := make(chan struct{})
+		p.creating[channelID] = reservation
+		p.mu.Unlock()
+		return nil, reservation, nil
+	}
+}
+
+// endReservationLocked drops channelID's create reservation if it is still
+// the given one, waking anyone waiting on it. Caller holds p.mu. Idempotent:
+// a reservation already ended (or superseded by a later caller's) is left
+// alone.
+func (p *HLSProxy) endReservationLocked(channelID uuid.UUID, reservation chan struct{}) {
+	if cur, ok := p.creating[channelID]; ok && cur == reservation {
+		delete(p.creating, channelID)
+		close(reservation)
+	}
+}
+
+// endReservation is endReservationLocked for callers not holding p.mu.
+func (p *HLSProxy) endReservation(channelID uuid.UUID, reservation chan struct{}) {
+	p.mu.Lock()
+	p.endReservationLocked(channelID, reservation)
+	p.mu.Unlock()
 }
 
 // NewHLSProxy wires the proxy. The session directory is created on first
@@ -147,6 +263,9 @@ func NewHLSProxy(cfg HLSConfig, svc *Service, logger *slog.Logger) *HLSProxy {
 	}
 	if cfg.AudioEncoder == "" {
 		cfg.AudioEncoder = "aac"
+	}
+	if cfg.MaxSessions <= 0 {
+		cfg.MaxSessions = defaultMaxLiveSessions
 	}
 	return &HLSProxy{cfg: cfg, svc: svc, logger: logger, sessions: make(map[uuid.UUID]*HLSSession)}
 }
@@ -189,34 +308,17 @@ func (p *HLSProxy) Lookup(channelID uuid.UUID) (*HLSSession, bool) {
 // exactly once. Returns ErrAllTunersBusy verbatim from the driver so the
 // HTTP handler can render the right error.
 func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSession, error) {
-	p.mu.Lock()
-	if s, ok := p.sessions[channelID]; ok {
-		s.mu.Lock()
-		// Skip a session that teardown has already closed. teardown sets
-		// closed=true and releases every resource (ffmpeg killed, upstream
-		// closed, directory removed) BEFORE removing the map entry, so there is
-		// a window where the map still holds a corpse. Handing it out returned
-		// a session whose directory no longer exists — the caller then served
-		// 404s for a channel that looked live. Fall through and build a fresh
-		// one instead.
-		if s.closed {
-			s.mu.Unlock()
-			p.mu.Unlock()
-		} else {
-			s.refcount++
-			// Cancel any pending close timer — a new viewer arrived during the
-			// grace period.
-			if s.closing != nil {
-				s.closing.Stop()
-				s.closing = nil
-			}
-			s.mu.Unlock()
-			p.mu.Unlock()
-			return s, nil
-		}
-	} else {
-		p.mu.Unlock()
+	joined, reservation, err := p.joinOrReserve(ctx, channelID)
+	if err != nil {
+		return nil, err
 	}
+	if joined != nil {
+		return joined, nil
+	}
+	// We hold channelID's create reservation (one MaxSessions slot). Every
+	// failure path below releases it via this defer; the success path hands it
+	// to the session under p.mu, after which the deferred call is a no-op.
+	defer p.endReservation(channelID, reservation)
 
 	// Session lifetime is decoupled from the request context: the
 	// playlist GET that triggers Acquire returns in seconds, but the
@@ -233,12 +335,18 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	upstream, err := p.svc.OpenChannelStream(streamCtx, channelID)
 	if err != nil {
 		cancel()
+		// Give the slot back BEFORE the join poll below: this attempt holds no
+		// tune any more, and a waiter for the same channel may now create the
+		// session the poll then joins.
+		p.endReservation(channelID, reservation)
 		// Two first-viewers can race here: both saw no session, both tried to
 		// tune, and on a single-tuner device the loser gets ALL_TUNERS_BUSY —
 		// for a channel the winner is actively streaming. Before surfacing the
 		// error, wait briefly for the winner's session to appear and join it.
 		// (The winner registers within ~100 ms of its tune; the poll only runs
-		// on the error path, so a genuinely busy tuner still errors in ≤2 s.)
+		// on the error path, so a genuinely busy tuner still errors in ≤2 s.
+		// Same-channel creates are serialized by the reservation now, so the
+		// "winner" is typically a waiter that retried after this failure.)
 		deadline := time.Now().Add(2 * time.Second)
 		for time.Now().Before(deadline) {
 			if s, ok := p.Lookup(channelID); ok {
@@ -301,6 +409,12 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 	if inputFmt != "" {
 		args = append(args, "-f", inputFmt)
 	}
+	// The stream is piped in over stdin (Go fetches it), so ffmpeg needs no
+	// network of its own — confine the demuxer to stdin/local protocols so a
+	// hostile upstream stream can't make ffmpeg reach the network (SSRF). Must
+	// precede -i. (file: stays permitted, so this does not by itself block a
+	// nested local-file reference — see the internal/ffsafe package doc.)
+	args = append(args, "-protocol_whitelist", ffsafe.Whitelist("pipe:0"))
 	args = append(args,
 		"-i", "pipe:0",
 		"-map", "0:v:0", // first video stream only
@@ -444,7 +558,7 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 		// would serve playlists out of a deleted dir AND throw away the working
 		// session we just built, burning a tuner tune for nothing.
 		//
-		// The first lookup already guards this (see the top of Acquire); this
+		// The first lookup already guards this (see joinOrReserve); this
 		// is the same window reached from the other side, because we released
 		// p.mu for the whole create. Falling through to the plain insert is
 		// safe: teardown's delete is identity-guarded (`existing == s`), so
@@ -453,6 +567,10 @@ func (p *HLSProxy) Acquire(ctx context.Context, channelID uuid.UUID) (*HLSSessio
 			"channel_id", channelID)
 	}
 	p.sessions[channelID] = s
+	// Hand the reservation's slot to the session in the same critical section
+	// that inserts it, so the cap never sees both (or neither), and waiters
+	// woken by the close find the session already in the map.
+	p.endReservationLocked(channelID, reservation)
 	p.mu.Unlock()
 	// Reaper: when the process exits (our cancel or an ffmpeg crash), close the
 	// upstream and drop the session entry. Bound to THIS session, not just the

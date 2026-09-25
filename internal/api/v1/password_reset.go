@@ -33,6 +33,10 @@ type PasswordResetDB interface {
 	// requests can't both pass GetResetToken's used_at IS NULL check
 	// and run last-write-wins on the password column.
 	MarkResetTokenUsed(ctx context.Context, id uuid.UUID) (bool, error)
+	// InvalidateUserResetTokens burns every outstanding reset link for the
+	// user, so other links requested earlier can't reset the password again
+	// after the owner has recovered the account.
+	InvalidateUserResetTokens(ctx context.Context, userID uuid.UUID) error
 	UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error
 	// BumpSessionEpoch + DeleteSessionsForUser together revoke all
 	// outstanding credentials for the user — see ResetPassword for why
@@ -311,6 +315,12 @@ func (h *PasswordResetHandler) ResetPassword(w http.ResponseWriter, r *http.Requ
 		h.logger.ErrorContext(r.Context(), "password reset: update password", "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	// Kill any OTHER outstanding reset links for this user (the one just used
+	// is already claimed). Best-effort: the password is already changed, so a
+	// failure here is logged rather than failing the reset.
+	if err := h.db.InvalidateUserResetTokens(r.Context(), token.UserID); err != nil {
+		h.logger.WarnContext(r.Context(), "password reset: invalidate other reset tokens", "err", err)
 	}
 
 	// Cut every existing credential for the user. The whole point of

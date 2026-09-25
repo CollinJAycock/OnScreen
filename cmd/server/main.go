@@ -666,10 +666,15 @@ func run() error {
 		// secret so re-using it as the pepper costs nothing and avoids
 		// introducing a separate config knob.
 		usernamePepper: secretKey,
+		// Single-use TOTP codes across instances (in-process fallback built in).
+		totpReplay: valkey.NewTOTPReplayGuard(valkeyClient),
+		// HLS segment tokens die with the session family on refresh-token theft.
+		segTokens: segTokenMgr,
 	}
 
+	// Epoch reads go to the PRIMARY: a replica would delay revocation by its lag.
 	authMiddleware := middleware.NewAuthenticator(tokenMaker).
-		WithEpochReader(&sessionEpochAdapter{q: gen.New(roPool)})
+		WithEpochReader(&sessionEpochAdapter{q: gen.New(rwPool)})
 
 	auditLogger := audit.New(gen.New(rwPool), logger)
 	libHandler := v1.NewLibraryHandler(libSvc, logger).
@@ -679,7 +684,8 @@ func run() error {
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 
-	authHandler := v1.NewAuthHandler(authSvc, logger).WithAudit(auditLogger)
+	authHandler := v1.NewAuthHandler(authSvc, logger).WithAudit(auditLogger).
+		WithSetupPolicy(cfg.AllowPublicSetup)
 	totpHandler := v1.NewTOTPHandler(authSvc, logger).WithAudit(auditLogger)
 
 	// Native device pairing — short-lived PIN codes stored in Valkey, claimed
@@ -1136,7 +1142,8 @@ func run() error {
 
 	// ── Notifications ────────────────────────────────────────────────────────
 	_ = notifServiceEarly // used by scanEnqueuer above
-	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger)
+	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger).
+		WithSessionValidator(authMiddleware) // close open SSE streams once the session is revoked
 
 	// ── Cross-device playback transfer ───────────────────────────────────────
 	playbackHandler := v1.NewPlaybackHandler(gen.New(roPool), notifBrokerEarly, logger)
@@ -1148,7 +1155,8 @@ func run() error {
 		logger.Error("scan embedded migrations for schema version", "err", err)
 		os.Exit(1)
 	}
-	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, expectedSchemaVersion, dbmigrations.FS, logger).WithAudit(auditLogger)
+	backupHandler := v1.NewBackupHandler(cfg.DatabaseURL, expectedSchemaVersion, dbmigrations.FS, logger).
+		WithAudit(auditLogger).WithReauth(authSvc)
 
 	// ── Media-request workflow + arr-services admin ──────────────────────────
 	// Requests fan out to the arr instances configured in the arr_services
@@ -1293,7 +1301,8 @@ func run() error {
 	// missing art", "N items unmatched" banner. Reads from the live
 	// scanEnqueuer for in-flight scans and from mediaSvc for the
 	// snapshot counts; both are cheap. Mounted at /api/v1/jobs.
-	jobsHandler := v1.NewJobsHandler(libEnqueuer, mediaSvc, &jobsLibNamer{libSvc: libSvc}, logger)
+	jobsHandler := v1.NewJobsHandler(libEnqueuer, mediaSvc, &jobsLibNamer{libSvc: libSvc}, logger).
+		WithLibraryAccess(libSvc) // non-admins see only their own libraries' scans
 
 	// ── People (cast/crew) handler — lazy TMDB fetch on first item-detail
 	// view. peopleSvc itself is constructed earlier (above the items
@@ -1321,7 +1330,7 @@ func run() error {
 		History:         historyHandler,
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
-		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger),
+		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
 		Photos:          photosHandler,
 		Books:           booksHandler,
 		Trickplay:       trickplayHandler,
@@ -1456,12 +1465,14 @@ func run() error {
 	// Go runtime. Stamped by ldflags (Makefile / Dockerfile build-args); reads
 	// "dev"/"unknown" on an un-stamped local build. Lets a deploy be verified
 	// with one curl instead of inferring the build from behaviour.
+	// The public listener reports only the release version (also on
+	// /system/capabilities, which native clients need). The exact build time and
+	// Go runtime version — useful to an attacker matching a build to known
+	// stdlib advisories — are served on the operator-only metrics port instead.
 	mainMux.HandleFunc("/health/version", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]string{
-			"version":    version,
-			"build_time": buildTime,
-			"go":         runtime.Version(),
+			"version": version,
 		})
 	})
 	// Multi-site DR surface: this node's site, Postgres role (primary/standby),
@@ -1472,6 +1483,15 @@ func run() error {
 	metricsMux := http.NewServeMux()
 	metricsMux.Handle("/metrics", observability.MetricsHandler(promReg))
 	metricsMux.HandleFunc("/health/live", liveH)
+	// Full build identity for operators (loopback/firewalled metrics port).
+	metricsMux.HandleFunc("/health/version", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{
+			"version":    version,
+			"build_time": buildTime,
+			"go":         runtime.Version(),
+		})
+	})
 
 	// pprof handlers — registered on the metrics port (NOT the public
 	// API port) so they share the same operator-only attack surface
@@ -1814,7 +1834,7 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		}
 		// Send in-app notification if new items were found.
 		if e.notifService != nil && result.New > 0 {
-			e.notifService.NotifyScanComplete(context.WithoutCancel(e.serverCtx), lib.Name, result.New)
+			e.notifService.NotifyScanComplete(context.WithoutCancel(e.serverCtx), libraryID, lib.Name, result.New)
 		}
 		// Intro/credits detection runs on show + anime libraries, and only
 		// when the admin has left detection on auto. Movies are excluded —

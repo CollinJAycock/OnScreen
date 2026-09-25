@@ -15,6 +15,8 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/livetv"
 )
 
@@ -98,7 +100,7 @@ func TestLiveTVStream_Playlist_NoProxyIs503(t *testing.T) {
 	svc := newMockLiveTVService()
 	h := NewLiveTVHandler(svc, slog.Default()) // no .WithStreamProxy
 	req := httptest.NewRequest("GET", "/api/v1/tv/channels/"+uuid.New().String()+"/stream.m3u8", nil)
-	req = withChiParam(req, "id", uuid.New().String())
+	req = withChiParam(req, "id", enabledChannelID(svc))
 	rec := httptest.NewRecorder()
 	h.StreamPlaylist(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -125,7 +127,7 @@ func TestLiveTVStream_Playlist_AllTunersBusy(t *testing.T) {
 	proxy.acquireErr = livetv.ErrAllTunersBusy
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 	req := httptest.NewRequest("GET", "/api/v1/tv/channels/"+uuid.New().String()+"/stream.m3u8", nil)
-	req = withChiParam(req, "id", uuid.New().String())
+	req = withChiParam(req, "id", enabledChannelID(svc))
 	rec := httptest.NewRecorder()
 	h.StreamPlaylist(rec, req)
 	if rec.Code != http.StatusServiceUnavailable {
@@ -142,7 +144,7 @@ func TestLiveTVStream_Playlist_ChannelNotFoundIs404(t *testing.T) {
 	proxy.acquireErr = livetv.ErrNotFound
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 	req := httptest.NewRequest("GET", "/api/v1/tv/channels/"+uuid.New().String()+"/stream.m3u8", nil)
-	req = withChiParam(req, "id", uuid.New().String())
+	req = withChiParam(req, "id", enabledChannelID(svc))
 	rec := httptest.NewRecorder()
 	h.StreamPlaylist(rec, req)
 	if rec.Code != http.StatusNotFound {
@@ -156,7 +158,7 @@ func TestLiveTVStream_Playlist_OtherErrorIs500(t *testing.T) {
 	proxy.acquireErr = errors.New("disk full")
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 	req := httptest.NewRequest("GET", "/api/v1/tv/channels/"+uuid.New().String()+"/stream.m3u8", nil)
-	req = withChiParam(req, "id", uuid.New().String())
+	req = withChiParam(req, "id", enabledChannelID(svc))
 	rec := httptest.NewRecorder()
 	h.StreamPlaylist(rec, req)
 	if rec.Code != http.StatusInternalServerError {
@@ -171,6 +173,7 @@ func TestLiveTVStream_Playlist_ServesM3U8(t *testing.T) {
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 
 	id := uuid.New()
+	svc.channels[id] = livetv.Channel{Enabled: true}
 	req := httptest.NewRequest("GET", "/api/v1/tv/channels/"+id.String()+"/stream.m3u8", nil)
 	req = withChiParam(req, "id", id.String())
 	rec := httptest.NewRecorder()
@@ -198,6 +201,7 @@ func TestLiveTVStream_Segment_RejectsTraversal(t *testing.T) {
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 
 	id := uuid.New()
+	svc.channels[id] = livetv.Channel{Enabled: true}
 	for _, name := range []string{"../etc/passwd", "/etc/passwd", "seg-../foo.ts", "playlist.m3u8"} {
 		req := httptest.NewRequest("GET",
 			"/api/v1/tv/channels/"+id.String()+"/segments/"+name, nil)
@@ -219,6 +223,7 @@ func TestLiveTVStream_Segment_ServesTSContent(t *testing.T) {
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 
 	id := uuid.New()
+	svc.channels[id] = livetv.Channel{Enabled: true}
 	// A segment is only fetchable once a playlist request has created the
 	// session — the segment handler now looks up, never creates. Establish
 	// the session first, as a real player does.
@@ -247,6 +252,7 @@ func TestLiveTVStream_Segment_MissingFileIs404(t *testing.T) {
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 
 	id := uuid.New()
+	svc.channels[id] = livetv.Channel{Enabled: true}
 	req := httptest.NewRequest("GET",
 		"/api/v1/tv/channels/"+id.String()+"/segments/seg-99999.ts", nil)
 	req = withChiParams(req, "id", id.String(), "name", "seg-99999.ts")
@@ -282,6 +288,7 @@ func TestLiveTVStream_Segment_DoesNotCreateSession(t *testing.T) {
 	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
 
 	id := uuid.New()
+	svc.channels[id] = livetv.Channel{Enabled: true}
 	req := httptest.NewRequest("GET",
 		"/api/v1/tv/channels/"+id.String()+"/segments/seg-00000.ts", nil)
 	req = withChiParams(req, "id", id.String(), "name", "seg-00000.ts")
@@ -297,5 +304,36 @@ func TestLiveTVStream_Segment_DoesNotCreateSession(t *testing.T) {
 	}
 	if got := proxy.lookups.Load(); got != 1 {
 		t.Errorf("Lookup called %d times, want 1", got)
+	}
+}
+
+// enabledChannelID registers an enabled channel in the mock and returns its id.
+// StreamPlaylist now refuses unknown or disabled channels for non-admins before
+// touching the proxy, so tests exercising proxy behaviour need a real, enabled
+// channel behind the id.
+func enabledChannelID(svc *mockLiveTVService) string {
+	id := uuid.New()
+	svc.mu.Lock()
+	svc.channels[id] = livetv.Channel{Enabled: true}
+	svc.mu.Unlock()
+	return id.String()
+}
+
+func TestLiveTVStream_Playlist_DisabledChannelIs404ForNonAdmin(t *testing.T) {
+	svc := newMockLiveTVService()
+	proxy := newStubStreamProxy(t)
+	h := NewLiveTVHandler(svc, slog.Default()).WithStreamProxy(proxy)
+	id := uuid.New()
+	svc.channels[id] = livetv.Channel{Enabled: false}
+	req := httptest.NewRequest("GET", "/api/v1/tv/channels/"+id.String()+"/stream.m3u8", nil)
+	req = withChiParam(req, "id", id.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+	h.StreamPlaylist(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("disabled channel for non-admin: got %d, want 404", rec.Code)
+	}
+	if proxy.acquires.Load() != 0 {
+		t.Error("a disabled channel must be refused before any tune/transcode is started")
 	}
 }

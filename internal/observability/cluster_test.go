@@ -92,3 +92,31 @@ func TestClusterStatusHandler_DBError503(t *testing.T) {
 		t.Errorf("role = %v, want unknown", body["role"])
 	}
 }
+
+// ctxClusterQ fails the query when its context is already cancelled, like pgx.
+type ctxClusterQ struct{ clusterQ }
+
+func (q ctxClusterQ) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if ctx.Err() != nil {
+		return clusterRow{clusterQ{err: ctx.Err()}}
+	}
+	return q.clusterQ.QueryRow(ctx, sql, args...)
+}
+
+// The refreshed status is cached and shared with every poller, so a client that
+// disconnects mid-refresh must not cancel the query and publish a 503 to all
+// load balancers for the TTL.
+func TestClusterStatusHandler_CallerCancelDoesNotPoisonCache(t *testing.T) {
+	h := ClusterStatusHandler("site-a", ctxClusterQ{clusterQ{inRecovery: false}}, clusterLogger())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // the first caller has already gone
+	rec := httptest.NewRecorder()
+	h(rec, httptest.NewRequest(http.MethodGet, "/health/cluster", nil).WithContext(ctx))
+
+	rec = httptest.NewRecorder() // a healthy poller inside the TTL
+	h(rec, httptest.NewRequest(http.MethodGet, "/health/cluster", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("poller after a cancelled refresh got %d, want 200 (cache poisoned)", rec.Code)
+	}
+}

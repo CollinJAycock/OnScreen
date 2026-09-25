@@ -254,10 +254,21 @@ func (h *PairHandler) Pending(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid pin")
 		return
 	}
-	raw, err := h.store.Get(r.Context(), pairKeyPIN+pin)
-	if err != nil {
+	// The PIN index maps to the device TOKEN, not the record; the JSON record
+	// lives under the device key. Resolve PIN -> token -> record. The previous
+	// code unmarshalled the raw token string as a pairRecord, which always
+	// failed, so this endpoint always 404'd and the confirmation page never
+	// showed the requesting device's IP / user-agent — leaving the human with
+	// nothing but the attacker-suppliable device_name to judge a pairing by.
+	deviceToken, err := h.store.Get(r.Context(), pairKeyPIN+pin)
+	if err != nil || deviceToken == "" {
 		// 404 for both "no such PIN" and a store error — the caller learns
 		// nothing either way.
+		respond.NotFound(w, r)
+		return
+	}
+	raw, err := h.store.Get(r.Context(), pairKeyDev+deviceToken)
+	if err != nil {
 		respond.NotFound(w, r)
 		return
 	}

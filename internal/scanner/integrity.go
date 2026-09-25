@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // Integrity verdict values stored in media_files.integrity_status. Aliased
@@ -200,6 +201,8 @@ func integrityProbeAt(ctx context.Context, path string, p integrityPoint) (integ
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
 		"-ss", fmt.Sprintf("%d", offsetSec),
 		"-t", fmt.Sprintf("%d", integrityWindowSec),
+		// Confine the demuxer to this input's protocols (must precede -i).
+		"-protocol_whitelist", ffsafe.Whitelist(path),
 		"-i", path,
 		"-map", "0:v:0", "-an", "-sn",
 		"-frames:v", fmt.Sprintf("%d", integrityFramesPerPoint),

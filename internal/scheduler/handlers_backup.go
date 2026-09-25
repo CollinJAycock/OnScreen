@@ -57,27 +57,47 @@ func (h *BackupHandler) Run(ctx context.Context, rawCfg json.RawMessage) (string
 	if err != nil {
 		return "", fmt.Errorf("pg_dump not found (looked in <exeDir>/pgsql/bin then PATH): %w", err)
 	}
-	if err := os.MkdirAll(cfg.OutputDir, 0o755); err != nil {
+	outDir, err := resolveBackupDir(cfg.OutputDir)
+	if err != nil {
+		return "", err
+	}
+	cfg.OutputDir = outDir
+	// Owner-only: a dump is the whole database (password hashes, encrypted
+	// secrets, every user's history). 0755/0644 left it readable by every
+	// local account on the host.
+	if err := os.MkdirAll(cfg.OutputDir, 0o700); err != nil {
 		return "", fmt.Errorf("create output dir: %w", err)
 	}
 
 	filename := "onscreen-backup-" + time.Now().UTC().Format("20060102-150405") + ".dump"
 	dst := filepath.Join(cfg.OutputDir, filename)
 
+	// Pre-create the dump owner-only; pg_dump -f truncates and keeps the mode.
+	if f, ferr := os.OpenFile(dst, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600); ferr == nil {
+		_ = f.Close()
+	} else {
+		return "", fmt.Errorf("create dump file: %w", ferr)
+	}
+	// Password goes in PGPASSWORD, not argv (visible in the process table).
+	dsn, dsnEnv := dbtools.CommandDSN(h.databaseURL)
 	cmd := exec.CommandContext(ctx, pgDump,
 		"--format=custom",
 		"--no-owner",
 		"--no-acl",
 		"--compress=5",
 		"--file="+dst,
-		h.databaseURL,
+		dsn,
 	)
+	cmd.Env = dsnEnv
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		_ = os.Remove(dst) // don't leave a partial file behind
-		return "", fmt.Errorf("pg_dump failed: %w: %s", err, strings.TrimSpace(stderr.String()))
+		msg := strings.ReplaceAll(strings.TrimSpace(stderr.String()), h.databaseURL, "<DATABASE_URL>")
+		msg = strings.ReplaceAll(msg, dsn, "<DATABASE_URL>")
+		return "", fmt.Errorf("pg_dump failed: %w: %s", err, msg)
 	}
+	_ = os.Chmod(dst, 0o600) // belt and braces on platforms that ignore the pre-create mode
 
 	info, err := os.Stat(dst)
 	if err != nil {
@@ -133,4 +153,21 @@ func rotateBackups(dir string, retain int) int {
 		}
 	}
 	return removed
+}
+
+// resolveBackupDir accepts an absolute or rooted output_dir and returns it
+// absolute. A rooted path without a drive ("/var/backups/onscreen", the task
+// form's default) is not IsAbs on Windows but has always meant "on the current
+// drive" there, so it is resolved rather than refused — refusing broke every
+// existing Windows backup task. A relative path (resolved against whatever the
+// server's working directory happens to be) is refused.
+func resolveBackupDir(dir string) (string, error) {
+	if !filepath.IsAbs(dir) && !strings.HasPrefix(dir, "/") && !strings.HasPrefix(dir, `\`) {
+		return "", fmt.Errorf("output_dir must be an absolute path")
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolve output_dir: %w", err)
+	}
+	return abs, nil
 }

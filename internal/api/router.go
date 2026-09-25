@@ -162,6 +162,10 @@ func NewRouter(h *Handlers) http.Handler {
 	r.Use(middleware.RequestID)
 	r.Use(middleware.SecurityHeaders)
 	r.Use(middleware.CORS(h.CORSAllowedOrigins))
+	// CSRF: block cross-site cookie-authenticated writes (SameSite is site-, not
+	// origin-scoped, so a sibling subdomain could otherwise drive one). No-op for
+	// Bearer clients, safe methods, and unauthenticated requests.
+	r.Use(middleware.CSRFGuard(h.CORSAllowedOrigins))
 	r.Use(middleware.Recover(h.Logger))
 	r.Use(middleware.Logger(h.Logger))
 	if h.Metrics != nil {
@@ -394,12 +398,13 @@ func NewRouter(h *Handlers) http.Handler {
 							w.Header().Add("Vary", "Cookie")
 						}
 						w.Header().Set("Cache-Control", fullCC)
-						// Clear WriteTimeout — the 60 s server default
-						// kills mid-track for native clients that read
-						// at decode rate. Browsers dodge it by buffering
-						// the whole body in <1 s; native doesn't.
+						w.Header().Set("Content-Type", artworkContentType(clean))
+						// Extend (not clear) the write deadline: the server
+						// default can cut off a large original on a slow
+						// link, but an unbounded deadline lets a slow reader
+						// hold the connection indefinitely.
 						if rc := http.NewResponseController(w); rc != nil {
-							_ = rc.SetWriteDeadline(time.Time{})
+							_ = rc.SetWriteDeadline(time.Now().Add(artworkWriteTimeout))
 						}
 						// Serve through the media store (full Range support; 302 to
 						// a CDN when the backend offloads). 15 min bounds any signed
@@ -446,6 +451,10 @@ func NewRouter(h *Handlers) http.Handler {
 	if h.Arr != nil {
 		r.Route("/api/v1/arr", func(r chi.Router) {
 			r.Use(middleware.MaxBytesBody(1 << 20))
+			// This route sits outside every user-auth group, so it had no rate
+			// limit at all; an admin-chosen short X-Api-Key was guessable online.
+			r.Use(middleware.RateLimit(h.RateLimiter, middleware.ArrWebhookLimit,
+				middleware.IPKey("ratelimit:arrwebhook")))
 			r.Post("/webhook", h.Arr.Webhook)
 		})
 	}
@@ -893,7 +902,10 @@ func NewRouter(h *Handlers) http.Handler {
 			// Media requests — user-facing workflow + admin queue actions.
 			if h.Requests != nil {
 				r.Get("/requests", h.Requests.List)
-				r.Post("/requests", h.Requests.Create)
+				// Each create is a TMDB lookup + an admin-queue entry.
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.DiscoverLimit,
+					middleware.SessionKey("ratelimit:requests"))).
+					Post("/requests", h.Requests.Create)
 				r.Get("/requests/{id}", h.Requests.Get)
 				r.Post("/requests/{id}/cancel", h.Requests.Cancel)
 				r.Group(func(r chi.Router) {
@@ -1224,15 +1236,36 @@ func NewRouter(h *Handlers) http.Handler {
 // "artwork": the full movie bytes, subtitles, NFO files, all with Range
 // support and none of the playback gates. Artwork agents only ever write
 // image formats, so the list is closed.
-var artworkImageExts = map[string]bool{
-	".jpg": true, ".jpeg": true, ".png": true, ".webp": true,
-	".gif": true, ".bmp": true, ".avif": true, ".tbn": true,
+//
+// Each extension maps to the Content-Type the route declares. It is set
+// explicitly because http.ServeContent otherwise falls back to sniffing the
+// bytes for extensions the mime table doesn't know (.tbn, and .bmp/.avif on
+// some hosts) — a "poster" that is really HTML would be served as text/html
+// on the app's own origin. nosniff only stops the BROWSER sniffing; it cannot
+// stop the server declaring the sniffed type itself.
+var artworkImageExts = map[string]string{
+	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".tbn": "image/jpeg",
+	".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",
+	".bmp": "image/bmp", ".avif": "image/avif",
 }
 
 // artworkExtAllowed reports whether the cleaned artwork path names an image.
 func artworkExtAllowed(clean string) bool {
+	return artworkContentType(clean) != ""
+}
+
+// artworkContentType returns the declared image type for an artwork path, or ""
+// when the extension is not on the allowlist.
+func artworkContentType(clean string) string {
 	return artworkImageExts[strings.ToLower(filepath.Ext(clean))]
 }
+
+// artworkWriteTimeout bounds a full-size artwork response. The server's default
+// write timeout is too short for a large original over a slow link, but these
+// are single images, not decode-rate streams, so the deadline is bounded rather
+// than cleared: a client reading at near-zero bytes per second can no longer
+// pin a connection (and its goroutine and file handle) forever.
+const artworkWriteTimeout = 5 * time.Minute
 
 // artworkResizeDims reads the optional ?w= / ?h= resize params and snaps each
 // to the artwork bucket ladder. 0 means unconstrained on that axis.

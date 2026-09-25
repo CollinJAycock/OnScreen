@@ -6,8 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"os"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -249,19 +253,9 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(body.ScanPaths) == 0 {
-		respond.BadRequest(w, r, "at least one scan path is required")
+	if err := validateScanPaths(body.ScanPaths); err != nil {
+		respond.BadRequest(w, r, err.Error())
 		return
-	}
-	for _, p := range body.ScanPaths {
-		if strings.TrimSpace(p) == "" {
-			respond.BadRequest(w, r, "scan paths must not be empty")
-			return
-		}
-		if strings.Contains(p, "..") {
-			respond.BadRequest(w, r, "scan paths must not contain '..'")
-			return
-		}
 	}
 
 	if body.Agent == "" {
@@ -398,6 +392,17 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	paths := existing.Paths
 	if body.ScanPaths != nil {
+		// Same rules as Create — PATCH used to skip them entirely, so an
+		// update could point a library at "/" or a path with "..". Only
+		// validated when the paths actually change: the settings page always
+		// resends them, and a library created before these rules must stay
+		// editable (rename, schedule, privacy) without being forced to move.
+		if !slices.Equal(*body.ScanPaths, existing.Paths) {
+			if err := validateScanPaths(*body.ScanPaths); err != nil {
+				respond.BadRequest(w, r, err.Error())
+				return
+			}
+		}
 		paths = *body.ScanPaths
 	}
 	agent := existing.Agent
@@ -917,4 +922,58 @@ func callerRatingRank(r *http.Request) *int {
 		return nil
 	}
 	return contentrating.MaxRatingRank(claims.MaxContentRating)
+}
+
+// validateScanPaths enforces the rules every library scan path must meet, for
+// both create and update: at least one path; each non-empty, absolute, free of
+// ".." components, and not a filesystem root. A library rooted at "/" (or a
+// drive root) would let the scanner index — and the file routes serve — the
+// server's whole filesystem.
+func validateScanPaths(paths []string) error {
+	if len(paths) == 0 {
+		return errors.New("at least one scan path is required")
+	}
+	for _, p := range paths {
+		t := strings.TrimSpace(p)
+		if t == "" {
+			return errors.New("scan paths must not be empty")
+		}
+		for _, seg := range strings.FieldsFunc(t, isPathSeparator) {
+			if seg == ".." {
+				return errors.New("scan paths must not contain '..'")
+			}
+		}
+		if !filepath.IsAbs(t) && !strings.HasPrefix(t, "/") {
+			return fmt.Errorf("scan path %q must be absolute", t)
+		}
+		if isSystemRoot(filepath.Clean(t)) {
+			return fmt.Errorf("scan path %q must not be a filesystem root", t)
+		}
+	}
+	return nil
+}
+
+func isPathSeparator(r rune) bool { return r == '/' || r == '\\' }
+
+// isSystemRoot reports whether clean is the root of the server's own system
+// filesystem: "/" on POSIX, or the system drive's root (C:\) on Windows. A
+// library there would let the scanner index — and the file routes serve — the
+// whole OS. Other roots are legitimate libraries: a dedicated media drive
+// (E:\) or a UNC share root (\\nas\Movies, with or without a trailing slash).
+func isSystemRoot(clean string) bool {
+	if clean == "/" || clean == `\` {
+		return true
+	}
+	vol := filepath.VolumeName(clean)
+	if vol == "" || strings.HasPrefix(vol, `\\`) || strings.HasPrefix(vol, "//") {
+		return false
+	}
+	if clean != vol && clean != vol+string(filepath.Separator) {
+		return false
+	}
+	sys := os.Getenv("SystemDrive")
+	if sys == "" {
+		sys = "C:"
+	}
+	return strings.EqualFold(vol, sys)
 }

@@ -58,6 +58,19 @@ func (a *dvrAdapter) GetSchedule(ctx context.Context, id uuid.UUID) (livetv.Sche
 	return scheduleFromGen(row), nil
 }
 
+// The DVR service detects this method with a runtime type assertion (it is an
+// optional extension of DVRQuerier); pin it here so a signature drift fails
+// the build instead of silently falling back to the in-Go count.
+var _ interface {
+	CountLiveSchedulesForUser(context.Context, uuid.UUID) (int64, error)
+} = (*dvrAdapter)(nil)
+
+// CountLiveSchedulesForUser backs the per-user schedule cap: only rules that
+// can still produce a recording count (spent one-offs drop out).
+func (a *dvrAdapter) CountLiveSchedulesForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	return a.q.CountLiveSchedulesForUser(ctx, userID)
+}
+
 func (a *dvrAdapter) ListSchedulesForUser(ctx context.Context, userID uuid.UUID) ([]livetv.Schedule, error) {
 	rows, err := a.q.ListSchedulesForUser(ctx, userID)
 	if err != nil {

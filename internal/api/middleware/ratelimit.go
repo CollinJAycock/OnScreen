@@ -76,6 +76,11 @@ var (
 	// the OS client's own 1 req/s limiter — a noisy user can stall
 	// the queue for everyone else if uncapped at the API layer.
 	SubtitlesLimit = RateLimitConfig{Limit: 30, Window: time.Minute}
+	// ArrWebhookLimit bounds the unauthenticated-until-key-checked *arr
+	// notification webhook per source IP. Sized well above a real import burst
+	// (a season pack fires one event per episode) while turning online guessing
+	// of the X-Api-Key into a slow crawl.
+	ArrWebhookLimit = RateLimitConfig{Limit: 120, Window: time.Minute}
 )
 
 // resolveLimit reads the named env var at package init. Falls back to the

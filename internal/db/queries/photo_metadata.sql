@@ -59,6 +59,8 @@ LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE mi.library_id = $1
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND (sqlc.narg('from')::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= sqlc.narg('from'))
   AND (sqlc.narg('to')::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= sqlc.narg('to'))
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id DESC
@@ -73,6 +75,8 @@ LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE mi.library_id = $1
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND (sqlc.narg('from')::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= sqlc.narg('from'))
   AND (sqlc.narg('to')::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= sqlc.narg('to'));
 
@@ -93,6 +97,8 @@ JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE mi.library_id = $1
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND pm.gps_lat IS NOT NULL
   AND pm.gps_lon IS NOT NULL
   AND (sqlc.narg('min_lat')::double precision IS NULL OR pm.gps_lat >= sqlc.narg('min_lat'))
@@ -112,6 +118,8 @@ JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE mi.library_id = $1
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND pm.gps_lat IS NOT NULL
   AND pm.gps_lon IS NOT NULL;
 
@@ -136,6 +144,8 @@ JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE mi.library_id = $1
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND (sqlc.narg('camera_make')::text   IS NULL OR pm.camera_make  ILIKE '%' || sqlc.narg('camera_make')::text  || '%')
   AND (sqlc.narg('camera_model')::text  IS NULL OR pm.camera_model ILIKE '%' || sqlc.narg('camera_model')::text || '%')
   AND (sqlc.narg('lens_model')::text    IS NULL OR pm.lens_model   ILIKE '%' || sqlc.narg('lens_model')::text   || '%')
@@ -162,6 +172,8 @@ JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE mi.library_id = $1
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND (sqlc.narg('camera_make')::text   IS NULL OR pm.camera_make  ILIKE '%' || sqlc.narg('camera_make')::text  || '%')
   AND (sqlc.narg('camera_model')::text  IS NULL OR pm.camera_model ILIKE '%' || sqlc.narg('camera_model')::text || '%')
   AND (sqlc.narg('lens_model')::text    IS NULL OR pm.lens_model   ILIKE '%' || sqlc.narg('lens_model')::text   || '%')
@@ -196,6 +208,8 @@ FROM (
     WHERE mi.library_id = $1
       AND mi.type = 'photo'
       AND mi.deleted_at IS NULL
+      AND (sqlc.narg('max_rating_rank')::int IS NULL
+           OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
 ) sub
 GROUP BY sub.year, sub.month
 ORDER BY sub.year DESC, sub.month DESC;

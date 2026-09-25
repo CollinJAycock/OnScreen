@@ -777,6 +777,21 @@ func toOpenSubtitlesDTO(cfg settings.OpenSubtitlesConfig) openSubtitlesSettingDT
 	}
 }
 
+// endpointMovesStoredSecret reports whether a settings PATCH would point an
+// integration at a different endpoint while keeping its stored secret — i.e.
+// the endpoint changes, a secret is stored, and the request neither supplies a
+// new one nor clears it (nil or the round-tripped mask).
+func endpointMovesStoredSecret(curEndpoint string, newEndpoint *string, curSecret string, newSecret *string) bool {
+	if newEndpoint == nil || curSecret == "" {
+		return false
+	}
+	norm := func(s string) string { return strings.TrimRight(strings.TrimSpace(s), "/") }
+	if strings.EqualFold(norm(curEndpoint), norm(*newEndpoint)) {
+		return false
+	}
+	return newSecret == nil || *newSecret == maskedSecret
+}
+
 // maskedSecret is the placeholder every secret-returning field emits instead
 // of its real value. It is also the write-side sentinel: a PATCH carrying
 // exactly this string means "leave the stored secret alone". Both directions
@@ -945,6 +960,24 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ctx := r.Context()
+	// A stored credential must not follow its endpoint to a new host. The UI
+	// round-trips the masked secret, so re-pointing SMTP / LDAP / OIDC at a
+	// different server while keeping the stored password would hand it to
+	// whatever host was just typed in on the next test email, bind or token
+	// exchange. Checked before anything is written so a refused save cannot
+	// half-apply.
+	if body.SMTP != nil && endpointMovesStoredSecret(h.svc.SMTP(ctx).Host, body.SMTP.Host, h.svc.SMTP(ctx).Password, body.SMTP.Password) {
+		respond.ValidationError(w, r, "re-enter the SMTP password when changing the SMTP host")
+		return
+	}
+	if body.LDAP != nil && endpointMovesStoredSecret(h.svc.LDAP(ctx).Host, body.LDAP.Host, h.svc.LDAP(ctx).BindPassword, body.LDAP.BindPassword) {
+		respond.ValidationError(w, r, "re-enter the LDAP bind password when changing the LDAP host")
+		return
+	}
+	if body.OIDC != nil && endpointMovesStoredSecret(h.svc.OIDC(ctx).IssuerURL, body.OIDC.IssuerURL, h.svc.OIDC(ctx).ClientSecret, body.OIDC.ClientSecret) {
+		respond.ValidationError(w, r, "re-enter the OIDC client secret when changing the issuer URL")
+		return
+	}
 	// maskedSecret is the sentinel GET writes in place of every stored secret
 	// (see maskAPIKey). A PATCH carrying it back means "unchanged" — the admin
 	// UI round-trips whatever GET handed it, so treating the mask as a new
@@ -1010,7 +1043,11 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		// Read-modify-write so partial updates (e.g. toggling Enabled without
 		// re-sending the API key) don't clobber the stored credentials.
 		cur := h.svc.OpenSubtitles(ctx)
-		if body.OpenSubtitles.APIKey != nil {
+		// The API key is masked on GET like every other secret, so a save that
+		// round-trips the form sends "****" back. Treat the mask as "unchanged"
+		// — it was the one secret field missing this check, so every Settings
+		// save replaced the real key with the literal mask.
+		if body.OpenSubtitles.APIKey != nil && *body.OpenSubtitles.APIKey != maskedSecret {
 			cur.APIKey = *body.OpenSubtitles.APIKey
 		}
 		if body.OpenSubtitles.Username != nil {

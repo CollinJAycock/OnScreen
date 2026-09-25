@@ -162,6 +162,14 @@ func (h *InviteHandler) Accept(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "token, username, and password are required")
 		return
 	}
+	// Same username rule registration and profile creation enforce. Without it
+	// an invitee could pick a name with whitespace or lookalike characters to
+	// impersonate another user, or pre-claim a name a directory (LDAP/OIDC)
+	// principal would later need.
+	if !usernameRe.MatchString(body.Username) {
+		respond.BadRequest(w, r, "username must be 2-32 letters, numbers, or underscores")
+		return
+	}
 	if err := ValidatePassword(body.Password); err != nil {
 		respond.BadRequest(w, r, err.Error())
 		return

@@ -79,6 +79,23 @@ type authService struct {
 	// nil, the rate-limit key falls back to the lowercased username
 	// (still functional, just not opaque).
 	usernamePepper []byte
+	// totpReplay is the shared record of spent TOTP time steps (Valkey in
+	// production) that makes a code single-use across instances. Optional:
+	// nil — or a Valkey error at check time — falls back to totpReplayLocal,
+	// which protects this process only. Never skipped outright.
+	totpReplay      auth.TOTPReplayGuard
+	totpReplayLocal auth.MemoryTOTPReplayGuard
+	// segTokens revokes every outstanding HLS segment token for a user.
+	// Used on the refresh-reuse (theft) path, which burns the whole session
+	// family. Optional — nil leaves segment tokens to their idle TTL.
+	segTokens segmentTokenRevoker
+	// now is the clock for TOTP step matching; nil = time.Now (tests pin it).
+	now func() time.Time
+}
+
+// segmentTokenRevoker is satisfied by *transcode.SegmentTokenManager.
+type segmentTokenRevoker interface {
+	RevokeAllForUser(ctx context.Context, userID uuid.UUID) error
 }
 
 // MaxLoginFailuresPerUsername / loginFailureWindow set the per-username
@@ -97,10 +114,101 @@ const (
 // without touching the per-username login counter — so without a per-USER cap
 // on the verify step an attacker holding the password could grind the 10^6 code
 // space. Keyed by user ID so re-minting challenges can't reset it.
+//
+// In-session step-up — DisableTOTP (code) and VerifyReauth (password and code;
+// it gates the SECRET_KEY/DB-URL reveal and backup restore) — has its OWN
+// per-user budget of the same size, shared by both endpoints so an attacker
+// can't get a fresh 10 guesses per endpoint. It is deliberately separate from
+// the login verify budget: step-up is reachable from any live session with no
+// password, so sharing one counter let a stolen session burn it and lock the
+// real user out of signing in (and so out of revoking that very session).
 const (
 	MaxTOTPFailuresPerUser = 10
 	totpFailureWindow      = 15 * time.Minute
 )
+
+// loginTOTPFailureKey is the per-user counter for the pre-session second-factor
+// step of login (TOTP or recovery code). The key name predates this split, so
+// counters already in Valkey carry over.
+func loginTOTPFailureKey(userID uuid.UUID) string {
+	return "ratelimit:totp_verify:" + userID.String()
+}
+
+// stepUpFailureKey is the per-user counter for in-session re-proofs: TOTP
+// disable and step-up reauth. Kept apart from loginTOTPFailureKey — see the
+// MaxTOTPFailuresPerUser note.
+func stepUpFailureKey(userID uuid.UUID) string {
+	return "ratelimit:stepup:" + userID.String()
+}
+
+// errStepUpLocked is returned by VerifyReauth once the per-user cap is hit.
+// Callers already collapse every reauth failure into one REAUTH_FAILED
+// response, so it is not distinguishable from a wrong password on the wire.
+var errStepUpLocked = errors.New("too many failed verification attempts; try again in 15 minutes")
+
+// reserveStepUp atomically takes one slot under the per-user cap held at key
+// (see valkey.RateLimiter.CheckFailures). false = locked out.
+func (s *authService) reserveStepUp(ctx context.Context, key string, userID uuid.UUID) bool {
+	if s.rateLimiter == nil {
+		return true
+	}
+	allowed, _ := s.rateLimiter.CheckFailures(ctx, key, MaxTOTPFailuresPerUser)
+	if !allowed {
+		s.logger.WarnContext(ctx, "per-user step-up / TOTP throttle hit", "user_id", userID)
+	}
+	return allowed
+}
+
+func (s *authService) recordStepUpFailure(ctx context.Context, key string) {
+	if s.rateLimiter != nil {
+		s.rateLimiter.IncrFailure(ctx, key, totpFailureWindow)
+	}
+}
+
+func (s *authService) resetStepUpFailures(ctx context.Context, key string) {
+	if s.rateLimiter != nil {
+		s.rateLimiter.ResetFailures(ctx, key)
+	}
+}
+
+// validateTOTPOnce reports whether code is a live TOTP code for secret AND its
+// time step has not been spent by this user before; a success spends it. So an
+// observed code (shoulder-surf, shared screen, phishing relay) can't be
+// replayed inside its ~90 s validity window, and two concurrent submissions of
+// one code can't both pass — the guard's check-and-record is atomic.
+//
+// The shared Valkey guard is authoritative across instances. If it is not
+// wired or errors, the in-process guard still refuses replays on this
+// instance rather than skipping the check. Every success is recorded locally
+// too, so a later Valkey outage doesn't forget steps spent before it.
+func (s *authService) validateTOTPOnce(ctx context.Context, userID uuid.UUID, code, secret string) bool {
+	step, ok := auth.MatchTOTPStep(code, secret, s.clock())
+	if !ok {
+		return false
+	}
+	return s.spendTOTPStep(ctx, userID, step)
+}
+
+// spendTOTPStep consumes a matched time step for userID; false = already spent.
+func (s *authService) spendTOTPStep(ctx context.Context, userID uuid.UUID, step int64) bool {
+	localFresh, _ := s.totpReplayLocal.ConsumeTOTPStep(ctx, userID, step)
+	if s.totpReplay != nil {
+		fresh, err := s.totpReplay.ConsumeTOTPStep(ctx, userID, step)
+		if err == nil {
+			return fresh && localFresh
+		}
+		s.logger.WarnContext(ctx, "totp replay guard unavailable; using per-instance guard",
+			"user_id", userID, "err", err)
+	}
+	return localFresh
+}
+
+func (s *authService) clock() time.Time {
+	if s.now != nil {
+		return s.now()
+	}
+	return time.Now()
+}
 
 func (s *authService) UserCount(ctx context.Context) (int64, error) {
 	return s.db.CountUsers(ctx)
@@ -193,11 +301,13 @@ func (s *authService) LoginLocal(ctx context.Context, username, password string)
 	// per-IP — credential stuffing one account from many IPs sails
 	// past it. Per-username caps total *failures* regardless of source.
 	//
-	// Failure-only counter: CheckFailures reads without incrementing;
-	// IncrFailure runs only on a confirmed bad login; ResetFailures
-	// clears the counter on success. The earlier sliding-window form
-	// counted successes too, so a user who logs in `limit` times
-	// legitimately would lock themselves out — fixed here.
+	// Failure-only counter: CheckFailures atomically compares AND reserves
+	// a slot for this attempt (so a concurrent burst can't all pass the
+	// check before any failure is recorded); IncrFailure turns the
+	// reservation into a committed failure on a confirmed bad login;
+	// ResetFailures clears everything on success. Successes therefore
+	// still never count toward the lockout (the earlier sliding-window
+	// form counted them, so `limit` legitimate logins locked a user out).
 	//
 	// Counter is keyed by the username the caller is *trying*, not by
 	// whether it exists. An enumerator probing usernames burns through
@@ -306,6 +416,7 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 			s.logger.ErrorContext(ctx, "refresh reuse: failed to bump session epoch; outstanding access tokens not invalidated",
 				"user_id", found.UserID, "err", berr)
 		}
+		s.revokeSegmentTokens(ctx, found.UserID)
 		return nil, fmt.Errorf("refresh: token already used; session invalidated")
 	}
 	session := found
@@ -364,6 +475,7 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 			s.logger.ErrorContext(ctx, "refresh reuse: failed to bump session epoch; outstanding access tokens not invalidated",
 				"user_id", session.UserID, "err", berr)
 		}
+		s.revokeSegmentTokens(ctx, session.UserID)
 		return nil, fmt.Errorf("refresh: token already used; session invalidated")
 	}
 
@@ -416,7 +528,28 @@ func (s *authService) Logout(ctx context.Context, refreshToken string) error {
 	if err := s.db.BumpSessionEpoch(ctx, session.UserID); err != nil {
 		s.logger.WarnContext(ctx, "logout: bump session epoch", "err", err, "user_id", session.UserID)
 	}
+	// HLS segment tokens are deliberately NOT revoked here. They are indexed
+	// per user only — nothing ties a segment token to the refresh session
+	// being logged out — so the only revoke available (RevokeAllForUser)
+	// would cut playback mid-stream on every OTHER device of this user, and
+	// unlike access tokens those players have no refresh path to recover.
+	// Segment tokens are revoked on the paths that mean "every device":
+	// refresh-token theft (Refresh above), password reset / admin password
+	// change / demote / delete (UserHandler, PasswordResetHandler).
 	return nil
+}
+
+// revokeSegmentTokens is the HLS leg of a session-family burn. Best-effort:
+// the epoch bump already cut API access; a failure here only leaves segment
+// tokens to their idle TTL, so it is logged at ERROR for ops, not returned.
+func (s *authService) revokeSegmentTokens(ctx context.Context, userID uuid.UUID) {
+	if s.segTokens == nil {
+		return
+	}
+	if err := s.segTokens.RevokeAllForUser(ctx, userID); err != nil {
+		s.logger.ErrorContext(ctx, "revoke segment tokens after session family burn",
+			"user_id", userID, "err", err)
+	}
 }
 
 // ── TOTP / 2FA ──────────────────────────────────────────────────────────────
@@ -465,7 +598,9 @@ func (s *authService) ActivateTOTP(ctx context.Context, userID uuid.UUID, code s
 	if err != nil {
 		return nil, fmt.Errorf("activate totp: decrypt secret: %w", err)
 	}
-	if !auth.ValidateTOTPCode(code, secret) {
+	// Spend the step even here: the enrolment code is otherwise still live
+	// for ~90 s and could be replayed as the first login second factor.
+	if !s.validateTOTPOnce(ctx, userID, code, secret) {
 		return nil, v1.ErrBadTOTPCode
 	}
 	if err := s.db.ActivateUserTOTP(ctx, userID); err != nil {
@@ -497,13 +632,22 @@ func (s *authService) DisableTOTP(ctx context.Context, userID uuid.UUID, code st
 	if !user.TotpEnabled {
 		return nil // already off — idempotent
 	}
+	// Same per-user cap as the login verify step: a stolen session must not
+	// be able to grind the code space here, where only the general
+	// per-session API limit applied before. Locked out → the same
+	// ErrBadTOTPCode the verify path returns.
+	if !s.reserveStepUp(ctx, stepUpFailureKey(userID), userID) {
+		return v1.ErrBadTOTPCode
+	}
 	ok, err := s.validateSecondFactor(ctx, user, code)
 	if err != nil {
 		return err
 	}
 	if !ok {
+		s.recordStepUpFailure(ctx, stepUpFailureKey(userID))
 		return v1.ErrBadTOTPCode
 	}
+	s.resetStepUpFailures(ctx, stepUpFailureKey(userID))
 	if err := s.db.DisableUserTOTP(ctx, userID); err != nil {
 		return fmt.Errorf("disable totp: %w", err)
 	}
@@ -532,14 +676,9 @@ func (s *authService) VerifyTOTPLogin(ctx context.Context, challengeToken, code 
 	// Per-user second-factor brute-force throttle. Keyed by user ID (not
 	// username, not IP) so neither a distributed IP pool nor re-minting fresh
 	// challenge tokens lets an attacker exceed the cap on TOTP/recovery-code
-	// guesses for a single account.
-	rlKey := "ratelimit:totp_verify:" + claims.UserID.String()
-	if s.rateLimiter != nil {
-		allowed, _ := s.rateLimiter.CheckFailures(ctx, rlKey, MaxTOTPFailuresPerUser)
-		if !allowed {
-			s.logger.WarnContext(ctx, "per-user TOTP verify throttle hit", "user_id", claims.UserID)
-			return nil, v1.ErrBadTOTPCode
-		}
+	// guesses for a single account. Shared with DisableTOTP / VerifyReauth.
+	if !s.reserveStepUp(ctx, loginTOTPFailureKey(claims.UserID), claims.UserID) {
+		return nil, v1.ErrBadTOTPCode
 	}
 
 	ok, err := s.validateSecondFactor(ctx, user, code)
@@ -547,14 +686,10 @@ func (s *authService) VerifyTOTPLogin(ctx context.Context, challengeToken, code 
 		return nil, err
 	}
 	if !ok {
-		if s.rateLimiter != nil {
-			s.rateLimiter.IncrFailure(ctx, rlKey, totpFailureWindow)
-		}
+		s.recordStepUpFailure(ctx, loginTOTPFailureKey(claims.UserID))
 		return nil, v1.ErrBadTOTPCode
 	}
-	if s.rateLimiter != nil {
-		s.rateLimiter.ResetFailures(ctx, rlKey)
-	}
+	s.resetStepUpFailures(ctx, loginTOTPFailureKey(claims.UserID))
 	return s.issueTokenPair(ctx, user)
 }
 
@@ -584,10 +719,21 @@ func (s *authService) VerifyReauth(ctx context.Context, userID uuid.UUID, passwo
 	}
 	if user.PasswordHash == nil {
 		// Federated (OIDC/SAML/LDAP) accounts have no local password to
-		// re-verify against; their IdP owns the credential.
-		return fmt.Errorf("re-verification requires a password-based account")
+		// re-verify against; their IdP owns the credential. Return the sentinel
+		// so callers can distinguish "no local step-up is possible" from "wrong
+		// password".
+		return v1.ErrReauthNoLocalPassword
+	}
+	// Per-user failure cap, shared with the TOTP verify/disable paths. Step-up
+	// guards the SECRET_KEY / DATABASE_URL reveal and backup restore, so a
+	// stolen admin session must not get to grind the password (or code) here
+	// under nothing but the general per-session API limit. Wrong password and
+	// wrong code both count.
+	if !s.reserveStepUp(ctx, stepUpFailureKey(userID), userID) {
+		return errStepUpLocked
 	}
 	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password)); err != nil {
+		s.recordStepUpFailure(ctx, stepUpFailureKey(userID))
 		return fmt.Errorf("invalid password")
 	}
 	if user.TotpEnabled {
@@ -596,23 +742,28 @@ func (s *authService) VerifyReauth(ctx context.Context, userID uuid.UUID, passwo
 			return err
 		}
 		if !ok {
+			s.recordStepUpFailure(ctx, stepUpFailureKey(userID))
 			return fmt.Errorf("invalid 2FA code")
 		}
 	}
+	s.resetStepUpFailures(ctx, stepUpFailureKey(userID))
 	return nil
 }
 
-// validateSecondFactor accepts EITHER a live TOTP code OR an unused
-// recovery code (consumed on success). A valid TOTP code never consumes
-// a recovery code; a recovery code is single-use and burned atomically.
+// validateSecondFactor accepts EITHER a live, not-yet-spent TOTP code OR an
+// unused recovery code (consumed on success). A valid TOTP code never
+// consumes a recovery code; a TOTP step and a recovery code are each
+// single-use and burned atomically.
 func (s *authService) validateSecondFactor(ctx context.Context, user gen.User, code string) (bool, error) {
 	if user.TotpSecret != nil && *user.TotpSecret != "" {
 		secret, err := s.enc.Decrypt(*user.TotpSecret)
 		if err != nil {
 			return false, fmt.Errorf("validate 2fa: decrypt secret: %w", err)
 		}
-		if auth.ValidateTOTPCode(code, secret) {
-			return true, nil
+		if step, live := auth.MatchTOTPStep(code, secret, s.clock()); live {
+			// A live code decides the outcome by itself: spent before (a
+			// replay) is a failure, not a cue to try it as a recovery code.
+			return s.spendTOTPStep(ctx, user.ID, step), nil
 		}
 	}
 	norm := auth.NormalizeRecoveryCode(code)

@@ -180,7 +180,21 @@ func (h *CollectionHandler) requireOwnerOrAdmin(w http.ResponseWriter, r *http.R
 		// Server-owned (auto-genre etc.) — non-admins may read but not mutate.
 		// The mutating handlers wrap this helper so getting here from one of
 		// them already implies admin via the IsAdmin branch above; for Get/
-		// Items the read is allowed, so return true.
+		// Items the read is allowed — but only when the caller can see the
+		// library a library-scoped collection (e.g. an event folder) belongs
+		// to. List already filters these; fetching one by id skipped the ACL
+		// and exposed private libraries' collection names.
+		if col.LibraryID.Valid && h.access != nil {
+			ok, err := h.access.CanAccessLibrary(r.Context(), claims.UserID, uuid.UUID(col.LibraryID.Bytes), claims.IsAdmin)
+			if err != nil {
+				respond.InternalError(w, r)
+				return false
+			}
+			if !ok {
+				respond.NotFound(w, r)
+				return false
+			}
+		}
 		return true
 	}
 	if uuid.UUID(col.UserID.Bytes) != claims.UserID {

@@ -540,7 +540,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// pixels. Re-probe synchronously on the transcode-start path; cheap
 	// for healthy files (probe completes in <500 ms) and only fires when
 	// the row is actually missing data.
-	h.lazyReprobe(ctx, file)
+	if err := h.lazyReprobe(ctx, file); err != nil {
+		h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
+			"file_id", file.ID, "path", file.FilePath)
+		respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
+			"this file is not a playable media container")
+		return
+	}
 
 	// Dolby Vision gate: refuse rather than serve a broken stream. The only
 	// correct DV tonemapper (libplacebo) can't init on the deployment host and
@@ -1050,18 +1056,44 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 // endpoint handed out directPlay/directStream verdicts for video the client
 // may not decode at all — and the client then trusted the verdict over its
 // own local heuristics.
-func (h *NativeTranscodeHandler) lazyReprobe(ctx context.Context, file *media.File) {
+//
+// Returns scanner.ErrUnsafeContainer when the file is a playlist/reference
+// container (HLS, DASH, concat, SDP): callers must refuse to decode it, because
+// those demuxers open other resources named inside the file. That covers files
+// indexed before the scanner started refusing them — whether the scan stored
+// their container name or failed to probe them and kept minimal metadata. Every
+// other probe failure is logged and swallowed, as before.
+func (h *NativeTranscodeHandler) lazyReprobe(ctx context.Context, file *media.File) error {
+	if file.Container != nil && scanner.IsReferenceDemuxer(*file.Container) {
+		return scanner.ErrUnsafeContainer
+	}
+	// The stored row only describes the file as it was when last scanned. A
+	// real movie.mkv later replaced at the same path by an #EXTM3U / ffconcat
+	// file keeps its old row (Container=matroska, full codec info) until a
+	// rescan notices, and the early return below would trust it. So sniff the
+	// actual first bytes on every Start/Decide — one open + a 512-byte read,
+	// no ffprobe. Local backend only: with object storage FilePath is a store
+	// key this process can't open, so there the scan-time ffprobe format check
+	// (and the rescan that marks a swapped file missing) is the guard. Fleet
+	// workers pulling source over HTTP read this same server-local file, so
+	// the sniff here covers them too.
+	if mediastore.IsLocal(h.mediaStore()) && scanner.LooksLikeReferenceContainer(file.FilePath) {
+		return scanner.ErrUnsafeContainer
+	}
 	if file.VideoCodec != nil && file.ResolutionW != nil && file.ResolutionH != nil {
-		return
+		return nil
 	}
 	probed, perr := h.probeFile(ctx, file.FilePath)
 	if perr != nil {
+		if errors.Is(perr, scanner.ErrUnsafeContainer) {
+			return perr
+		}
 		h.logger.WarnContext(ctx, "transcode: lazy re-probe failed",
 			"file_id", file.ID, "path", file.FilePath, "err", perr)
-		return
+		return nil
 	}
 	if probed == nil {
-		return
+		return nil
 	}
 	if probed.VideoCodec != nil && file.VideoCodec == nil {
 		file.VideoCodec = probed.VideoCodec
@@ -1089,6 +1121,7 @@ func (h *NativeTranscodeHandler) lazyReprobe(ctx context.Context, file *media.Fi
 		"file_id", file.ID,
 		"video_codec", vc,
 		"hdr", hdr)
+	return nil
 }
 
 // probeFile indirects scanner.ProbeFile so tests can stub the ffprobe exec.

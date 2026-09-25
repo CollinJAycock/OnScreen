@@ -183,9 +183,14 @@ func TestRewriteLivePlaylistTokens(t *testing.T) {
 	}
 }
 
-// stubLiveTVService satisfies LiveTVService for handler construction; the
-// stream tests never reach it.
+// stubLiveTVService satisfies LiveTVService for handler construction. The
+// stream handlers only reach GetChannel (the non-admin disabled-channel gate),
+// which reports every channel as existing and enabled.
 type stubLiveTVService struct{ LiveTVService }
+
+func (stubLiveTVService) GetChannel(_ context.Context, id uuid.UUID) (livetv.Channel, error) {
+	return livetv.Channel{ID: id, Enabled: true}, nil
+}
 
 // ── router-level: chi param helper reuse check ──────────────────────────────
 

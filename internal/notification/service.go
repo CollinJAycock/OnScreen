@@ -14,6 +14,7 @@ import (
 type DB interface {
 	CreateNotification(ctx context.Context, arg gen.CreateNotificationParams) (gen.Notification, error)
 	ListAllUserIDs(ctx context.Context) ([]uuid.UUID, error)
+	ListNotifiableUserIDsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
 }
 
 // Service creates notifications and publishes them via SSE.
@@ -73,8 +74,11 @@ func (s *Service) NotifyAllUsers(ctx context.Context, typ, title, body string, i
 	}
 }
 
-// NotifyScanComplete sends a "scan_complete" notification to all users.
-func (s *Service) NotifyScanComplete(ctx context.Context, libraryName string, newItems int) {
+// NotifyScanComplete sends a "scan_complete" notification to the users who can
+// see the library (admins, everyone for a public library, grantees for a
+// private one). Broadcasting it to every account leaked the name and activity
+// of private libraries to users who have no access to them.
+func (s *Service) NotifyScanComplete(ctx context.Context, libraryID uuid.UUID, libraryName string, newItems int) {
 	if newItems == 0 {
 		return
 	}
@@ -84,7 +88,14 @@ func (s *Service) NotifyScanComplete(ctx context.Context, libraryName string, ne
 		body += "s"
 	}
 	body += " added"
-	s.NotifyAllUsers(ctx, "scan_complete", title, body, nil)
+	ids, err := s.db.ListNotifiableUserIDsForLibrary(ctx, libraryID)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "list library recipients for scan notification", "library_id", libraryID, "err", err)
+		return
+	}
+	for _, uid := range ids {
+		s.Notify(ctx, uid, "scan_complete", title, body, nil)
+	}
 }
 
 // NotifyNewContent sends a "new_content" notification to all users.

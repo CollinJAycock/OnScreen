@@ -42,6 +42,25 @@ func Rank(rating string) int {
 	}
 }
 
+// knownCeilings is every rating Rank places explicitly. It is the set a
+// per-user CEILING may be set to.
+var knownCeilings = map[string]bool{
+	"G": true, "TV-Y": true, "TV-G": true,
+	"PG": true, "TV-Y7": true, "TV-PG": true,
+	"PG-13": true, "TV-14": true, "R-15": true,
+	"R": true, "R-17+": true,
+	"NC-17": true, "TV-MA": true, "R+": true, "R-18+": true,
+	"Rx": true,
+}
+
+// IsKnownCeiling reports whether rating is a recognised rating a user's
+// max_content_rating may be set to. Validation matters because an unknown
+// string ranks 4 (the most permissive ceiling) — a typo such as "PG13" would
+// silently remove the restriction the admin meant to impose.
+func IsKnownCeiling(rating string) bool {
+	return knownCeilings[rating]
+}
+
 // IsAllowed returns true if contentRating is at or below maxRating.
 // If maxRating is empty, everything is allowed.
 // Empty contentRating is rank 4 (see Rank).

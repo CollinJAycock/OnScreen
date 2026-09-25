@@ -1193,7 +1193,11 @@ const getUserPreferences = `-- name: GetUserPreferences :one
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
        preferred_video_codec, forced_subtitles_only,
-       episode_use_show_poster, hub_layout
+       episode_use_show_poster, hub_layout,
+       -- Whether THIS account has a PIN. The Settings page reads its own PIN
+       -- status here rather than from the switchable-profiles list, which is
+       -- scoped to the caller's managed children and never contains the caller.
+       (pin IS NOT NULL)::boolean AS has_pin
 FROM users
 WHERE id = $1
 `
@@ -1209,6 +1213,7 @@ type GetUserPreferencesRow struct {
 	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
 	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
 	HubLayout             []byte  `json:"hub_layout"`
+	HasPin                bool    `json:"has_pin"`
 }
 
 // Client reads this on login to seed player defaults (language,
@@ -1228,6 +1233,7 @@ func (q *Queries) GetUserPreferences(ctx context.Context, id uuid.UUID) (GetUser
 		&i.ForcedSubtitlesOnly,
 		&i.EpisodeUseShowPoster,
 		&i.HubLayout,
+		&i.HasPin,
 	)
 	return i, err
 }
@@ -1512,6 +1518,7 @@ func (q *Queries) ListManagedProfiles(ctx context.Context, parentUserID pgtype.U
 const listSwitchableUsers = `-- name: ListSwitchableUsers :many
 SELECT id, username, is_admin, (pin IS NOT NULL) AS has_pin, avatar_url, parent_user_id
 FROM users
+WHERE parent_user_id = $1
 ORDER BY username
 `
 
@@ -1524,8 +1531,15 @@ type ListSwitchableUsersRow struct {
 	ParentUserID pgtype.UUID `json:"parent_user_id"`
 }
 
-func (q *Queries) ListSwitchableUsers(ctx context.Context) ([]ListSwitchableUsersRow, error) {
-	rows, err := q.db.Query(ctx, listSwitchableUsers)
+// Household profile picker. Returns ONLY the caller's own managed profiles
+// (parent_user_id = the caller), never every account on the server. The old
+// form listed all users unconditionally, which — together with a PIN-switch
+// handler that never checked the caller/target relationship — let any user
+// switch into any non-admin account by guessing its 4-digit PIN. Managed
+// profiles are the only legitimate switch targets: they have no password and
+// are reached solely by their owner picking them here.
+func (q *Queries) ListSwitchableUsers(ctx context.Context, parentUserID pgtype.UUID) ([]ListSwitchableUsersRow, error) {
+	rows, err := q.db.Query(ctx, listSwitchableUsers, parentUserID)
 	if err != nil {
 		return nil, err
 	}

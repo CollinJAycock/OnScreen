@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // Dead-chroma ("green frame") detection.
@@ -64,6 +66,10 @@ func SegmentChromaDead(ctx context.Context, segPath, initPath string) (bool, err
 		input = joined
 	}
 	cmd := exec.CommandContext(ctx, "ffmpeg", "-hide_banner", "-loglevel", "error",
+		// Confine the demuxer to this input's protocols (must precede -i). The
+		// input is always a local file here — either the segment or the
+		// byte-concatenated init+segment temp file built above.
+		"-protocol_whitelist", ffsafe.Whitelist(input),
 		"-i", input,
 		"-frames:v", "5",
 		"-vf", "signalstats,metadata=print:file=-",

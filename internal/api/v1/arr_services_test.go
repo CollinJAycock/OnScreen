@@ -178,6 +178,40 @@ func TestArrServices_Update_LeavesUntouchedKeySealedOnce(t *testing.T) {
 	}
 }
 
+// Changing base_url without re-entering the key must be refused: keeping the
+// stored key would let the next probe or approval send it to the new host,
+// bypassing Probe's own "stored key only for the stored URL" rule. Resending
+// the SAME URL (the edit form always does) keeps working.
+func TestArrServices_Update_BaseURLChangeRequiresKey(t *testing.T) {
+	enc := arrTestEncryptor(t)
+	id := uuid.New()
+	sealed, err := arrcrypt.Seal(enc, id, "original-key")
+	if err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	patch := func(body map[string]any) int {
+		db := &recordingArrDB{stored: gen.ArrService{
+			ID: id, Name: "Main Sonarr", Kind: "sonarr",
+			BaseUrl: "http://sonarr.lan:8989", ApiKey: sealed,
+		}}
+		h := NewArrServicesHandler(db, slog.Default()).WithEncryptor(enc)
+		b, _ := json.Marshal(body)
+		req := withChiParam(httptest.NewRequest("PATCH", "/", strings.NewReader(string(b))), "id", id.String())
+		rec := httptest.NewRecorder()
+		h.Update(rec, req)
+		return rec.Code
+	}
+	if got := patch(map[string]any{"base_url": "https://elsewhere.example"}); got != 422 {
+		t.Errorf("new base_url without key: got %d, want 422", got)
+	}
+	if got := patch(map[string]any{"base_url": "https://elsewhere.example", "api_key": "new-key"}); got != 200 {
+		t.Errorf("new base_url with key: got %d, want 200", got)
+	}
+	if got := patch(map[string]any{"base_url": "HTTP://sonarr.lan:8989/", "name": "Renamed"}); got != 200 {
+		t.Errorf("unchanged base_url (case/trailing slash): got %d, want 200", got)
+	}
+}
+
 // With no encryptor wired the handler must behave exactly as before, so
 // enabling at-rest encryption is opt-in and an un-migrated deployment keeps
 // working.

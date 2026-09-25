@@ -184,11 +184,27 @@ func (r *LogRingBuffer) Handle(ctx context.Context, rec slog.Record) error {
 		_ = enc.Encode(attrs)
 	}
 
+	// Per-entry size caps. The ring's memory ceiling assumes ~500 B lines; an
+	// attacker-influenced value (a very long request path/header that reaches a
+	// log call) could otherwise bloat a single entry without bound and, times
+	// the ring capacity, exhaust the heap. Cap the message, and drop an oversized
+	// attrs blob entirely (a truncated JSON blob would fail to parse anyway).
+	const maxLogMsgBytes = 4 << 10    // 4 KiB
+	const maxLogAttrsBytes = 16 << 10 // 16 KiB
+	msg := rec.Message
+	if len(msg) > maxLogMsgBytes {
+		msg = msg[:maxLogMsgBytes] + "…[truncated]"
+	}
+	raw := append([]byte(nil), buf.Bytes()...)
+	if len(raw) > maxLogAttrsBytes {
+		raw = []byte(`{"_truncated":true}` + "\n")
+	}
+
 	e := logEntry{
 		t:        rec.Time,
 		level:    rec.Level,
-		msg:      rec.Message,
-		rawAttrs: append([]byte(nil), buf.Bytes()...),
+		msg:      msg,
+		rawAttrs: raw,
 	}
 
 	r.mu.Lock()

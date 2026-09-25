@@ -179,6 +179,16 @@ func (h *ArrHandler) authenticate(r *http.Request) bool {
 	if expected == "" {
 		return false // no key configured — reject all
 	}
+	// A key made only of '*' is the settings UI's MASK, persisted by an older
+	// build that saved the masked field back as the value. Treating it as a real
+	// key meant anyone sending "X-Api-Key: ****" could trigger scans. Refuse it
+	// as if unset; the admin must set a real key.
+	if strings.Trim(expected, "*") == "" {
+		if h.logger != nil {
+			h.logger.WarnContext(r.Context(), "arr webhook: stored API key is a masked placeholder; rejecting — set a real key in Settings")
+		}
+		return false
+	}
 	provided := r.Header.Get("X-Api-Key")
 	if provided == "" {
 		return false

@@ -6,6 +6,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -973,6 +974,29 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		}
 		var probeErr error
 		probe, probeErr = ProbeFile(ctx, probeSource)
+		if errors.Is(probeErr, ErrUnsafeContainer) {
+			// A playlist/reference file wearing a media extension. Unlike an
+			// ordinary probe failure (indexed with minimal metadata so a
+			// transiently unreadable file still appears), this must never be
+			// indexed: every later ffmpeg pass (transcode, subtitle extraction,
+			// trickplay) would follow the references it names.
+			//
+			// If the path was already indexed — real media that has since been
+			// replaced in place by a playlist — refusing to re-index isn't
+			// enough: the old row would stay active with its old container and
+			// codec metadata, and playback would trust it. Take the row out of
+			// service the way a vanished file is (status=missing, the ADR-011
+			// grace period): hidden from item file lists, self-healing if the
+			// real file comes back, hard-deleted by CleanupMissingFiles if not.
+			if haveExisting {
+				s.logger.WarnContext(ctx, "indexed file is now a playlist/reference container; marking it missing",
+					"path", path, "file_id", existing.ID)
+				if err := s.media.MarkMissing(ctx, existing.ID); err != nil {
+					s.logger.WarnContext(ctx, "mark missing failed", "path", path, "file_id", existing.ID, "err", err)
+				}
+			}
+			return nil, nil, false, fmt.Errorf("refusing to index %s: %w", path, probeErr)
+		}
 		if probeErr != nil {
 			s.logger.WarnContext(ctx, "ffprobe failed, storing minimal metadata",
 				"path", path, "err", probeErr)

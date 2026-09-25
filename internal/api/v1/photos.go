@@ -50,9 +50,9 @@ type PhotoMediaService interface {
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListPhotos(ctx context.Context, p media.ListPhotosParams) ([]media.PhotoListItem, error)
 	CountPhotos(ctx context.Context, p media.ListPhotosParams) (int64, error)
-	ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID) ([]media.PhotoTimelineBucket, error)
+	ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]media.PhotoTimelineBucket, error)
 	ListPhotoMapPoints(ctx context.Context, p media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error)
-	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error)
 	SearchPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error)
 	CountPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) (int64, error)
 }
@@ -113,6 +113,11 @@ type PhotoTimelineBucketResponse struct {
 // from/to are RFC3339 timestamps and are inclusive. Without library_id we
 // 400 — there is no implicit "all libraries" scope because library access
 // is checked per-library.
+//
+// Every photo listing (List, Timeline, Map, Search) applies the caller's
+// content-rating ceiling in SQL, the same gate Image enforces on the bytes. A
+// restricted profile used to be refused the image yet handed the photo's title,
+// EXIF and GPS coordinates by these endpoints.
 func (h *PhotosHandler) List(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	libIDStr := q.Get("library_id")
@@ -147,11 +152,12 @@ func (h *PhotosHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := media.ListPhotosParams{
-		LibraryID: libID,
-		From:      from,
-		To:        to,
-		Limit:     limit,
-		Offset:    offset,
+		LibraryID:     libID,
+		From:          from,
+		To:            to,
+		Limit:         limit,
+		Offset:        offset,
+		MaxRatingRank: callerRatingRank(r),
 	}
 
 	rows, err := h.media.ListPhotos(r.Context(), params)
@@ -205,7 +211,7 @@ func (h *PhotosHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.media.ListPhotoTimeline(r.Context(), libID)
+	rows, err := h.media.ListPhotoTimeline(r.Context(), libID, callerRatingRank(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo timeline", "library_id", libID, "err", err)
 		respond.InternalError(w, r)
@@ -285,19 +291,20 @@ func (h *PhotosHandler) Map(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := h.media.ListPhotoMapPoints(r.Context(), media.ListPhotoMapPointsParams{
-		LibraryID: libID,
-		MinLat:    minLat,
-		MaxLat:    maxLat,
-		MinLon:    minLon,
-		MaxLon:    maxLon,
-		Limit:     limit,
+		LibraryID:     libID,
+		MinLat:        minLat,
+		MaxLat:        maxLat,
+		MinLon:        minLon,
+		MaxLon:        maxLon,
+		Limit:         limit,
+		MaxRatingRank: callerRatingRank(r),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo map points", "library_id", libID, "err", err)
 		respond.InternalError(w, r)
 		return
 	}
-	total, err := h.media.CountPhotoMapPoints(r.Context(), libID)
+	total, err := h.media.CountPhotoMapPoints(r.Context(), libID, callerRatingRank(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "count photo map points", "library_id", libID, "err", err)
 		respond.InternalError(w, r)
@@ -429,21 +436,22 @@ func (h *PhotosHandler) Search(w http.ResponseWriter, r *http.Request) {
 	}
 
 	params := media.SearchPhotosByExifParams{
-		LibraryID:   libID,
-		CameraMake:  strPtrIfNonEmpty(q.Get("camera_make")),
-		CameraModel: strPtrIfNonEmpty(q.Get("camera_model")),
-		LensModel:   strPtrIfNonEmpty(q.Get("lens_model")),
-		ApertureMin: apertureMin,
-		ApertureMax: apertureMax,
-		ISOMin:      isoMin,
-		ISOMax:      isoMax,
-		FocalMin:    focalMin,
-		FocalMax:    focalMax,
-		From:        from,
-		To:          to,
-		HasGPS:      hasGPS,
-		Limit:       limit,
-		Offset:      offset,
+		LibraryID:     libID,
+		CameraMake:    strPtrIfNonEmpty(q.Get("camera_make")),
+		CameraModel:   strPtrIfNonEmpty(q.Get("camera_model")),
+		LensModel:     strPtrIfNonEmpty(q.Get("lens_model")),
+		ApertureMin:   apertureMin,
+		ApertureMax:   apertureMax,
+		ISOMin:        isoMin,
+		ISOMax:        isoMax,
+		FocalMin:      focalMin,
+		FocalMax:      focalMax,
+		From:          from,
+		To:            to,
+		HasGPS:        hasGPS,
+		Limit:         limit,
+		Offset:        offset,
+		MaxRatingRank: callerRatingRank(r),
 	}
 
 	rows, err := h.media.SearchPhotosByExif(r.Context(), params)

@@ -13,6 +13,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/notification"
 )
@@ -25,16 +26,36 @@ type NotificationDB interface {
 	MarkAllNotificationsRead(ctx context.Context, userID uuid.UUID) error
 }
 
+// SessionValidator re-checks that an admitted caller's session has not since
+// been revoked (session_epoch bump, user deleted). Satisfied by
+// *middleware.Authenticator.
+type SessionValidator interface {
+	SessionStillValid(ctx context.Context, claims *auth.Claims) bool
+}
+
 // NotificationHandler serves notification endpoints.
 type NotificationHandler struct {
 	db     NotificationDB
 	broker *notification.Broker
 	logger *slog.Logger
+
+	// sessions re-validates the caller on open SSE streams; nil disables the
+	// periodic re-check (tests / minimal wirings). recheckEvery overrides
+	// sseSessionRecheckInterval (tests).
+	sessions     SessionValidator
+	recheckEvery time.Duration
 }
 
 // NewNotificationHandler creates a NotificationHandler.
 func NewNotificationHandler(db NotificationDB, broker *notification.Broker, logger *slog.Logger) *NotificationHandler {
 	return &NotificationHandler{db: db, broker: broker, logger: logger}
+}
+
+// WithSessionValidator makes open SSE streams re-check the caller's session
+// every sseSessionRecheckInterval and close once it has been revoked.
+func (h *NotificationHandler) WithSessionValidator(v SessionValidator) *NotificationHandler {
+	h.sessions = v
+	return h
 }
 
 type notificationResponse struct {
@@ -191,10 +212,37 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	keepalive := time.NewTicker(sseKeepaliveInterval)
 	defer keepalive.Stop()
 
+	// The auth middleware checked the session once, at connect. A stream can
+	// stay open for days, so without a re-check a logout / demote / password
+	// reset / delete never reached it: the revoked caller kept receiving the
+	// user's events. Re-run the same revocation check on a timer and end the
+	// stream once it fails (the client's reconnect then meets the middleware).
+	var recheckC <-chan time.Time
+	if h.sessions != nil {
+		every := h.recheckEvery
+		if every <= 0 {
+			every = sseSessionRecheckInterval
+		}
+		recheck := time.NewTicker(every)
+		defer recheck.Stop()
+		recheckC = recheck.C
+	}
+
 	for {
 		select {
 		case <-r.Context().Done():
 			return
+		case <-recheckC:
+			ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+			valid := h.sessions.SessionStillValid(ctx, claims)
+			cancel()
+			if !valid {
+				if h.logger != nil {
+					h.logger.InfoContext(r.Context(), "closing notification stream: session revoked",
+						"user_id", claims.UserID)
+				}
+				return
+			}
 		case <-keepalive.C:
 			if _, err := fmt.Fprintf(w, ": keepalive\n\n"); err != nil {
 				return
@@ -216,3 +264,8 @@ func (h *NotificationHandler) Stream(w http.ResponseWriter, r *http.Request) {
 // consumer NAT/proxy paths, and the reference clients time out against a
 // multiple of it (see the Android NotificationsStream watchdog).
 const sseKeepaliveInterval = 30 * time.Second
+
+// sseSessionRecheckInterval is how often an open notification stream
+// re-validates its caller's session — the bound on how long a revoked session
+// keeps receiving events. One indexed PK lookup per open stream per minute.
+const sseSessionRecheckInterval = 60 * time.Second

@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -15,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // ProbeResult holds the technical metadata extracted from a media file by ffprobe.
@@ -138,6 +141,9 @@ func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 		"-analyzeduration", "1000000", // 1 s of stream data
 		"-show_entries", "stream=index",
 		"-of", "csv=p=0",
+		// Confine the demuxer to this input's protocols so a crafted file in a
+		// library can't turn a scan-time probe into an SSRF (must precede input).
+		"-protocol_whitelist", ffsafe.Whitelist(path),
 		path,
 	}
 	out, err := exec.CommandContext(ctx, "ffprobe", args...).Output()
@@ -149,6 +155,71 @@ func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 		return SourceUnreadable, fmt.Errorf("ffprobe verify: no streams detected")
 	}
 	return SourceOK, nil
+}
+
+// ErrUnsafeContainer is returned by ProbeFile for a file whose container is a
+// playlist or reference format (HLS, DASH, concat lists, SDP/RTSP descriptors)
+// rather than media. Those demuxers open OTHER resources named inside the file,
+// so a crafted "movie.mkv" that is really a playlist could make ffmpeg read
+// local files (or, on an http source, fetch URLs) while transcoding output that
+// is streamed back to a user. The -protocol_whitelist on every ffmpeg call
+// keeps such a file off the network, but file: must stay allowed for real
+// media, so the only complete fix is to never index or decode these files.
+var ErrUnsafeContainer = errors.New("file is a playlist/reference container, not media; refusing to index or decode it")
+
+// referenceDemuxers are ffmpeg demuxers that follow references embedded in the
+// input. None of them is a format a media library legitimately stores.
+var referenceDemuxers = map[string]bool{
+	"hls": true, "applehttp": true, "dash": true, "concat": true,
+	"sdp": true, "rtsp": true, "rtp": true,
+}
+
+// IsReferenceDemuxer reports whether any name in ffprobe's comma-separated
+// format_name is a reference-following demuxer.
+func IsReferenceDemuxer(formatName string) bool {
+	for _, t := range strings.Split(formatName, ",") {
+		if referenceDemuxers[strings.ToLower(strings.TrimSpace(t))] {
+			return true
+		}
+	}
+	return false
+}
+
+// LooksLikeReferenceContainer is the exported first-bytes sniff (see
+// looksLikeReferenceContainer). Playback gates call it on every start because
+// the stored container name only describes the file as it was at scan time —
+// a file replaced in place by a playlist keeps its old row until a rescan.
+// Reads at most 512 bytes; false for http(s) URLs and unreadable paths.
+func LooksLikeReferenceContainer(path string) bool { return looksLikeReferenceContainer(path) }
+
+// looksLikeReferenceContainer sniffs the first bytes of a local file for the
+// text signatures of playlist/reference formats. Real media containers are
+// binary and never start with these. Remote (http) sources are left to the
+// post-probe format check.
+func looksLikeReferenceContainer(path string) bool {
+	if ffsafe.IsHTTPURL(path) {
+		return false
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	buf := make([]byte, 512)
+	n, _ := io.ReadFull(f, buf)
+	head := strings.TrimLeft(strings.TrimPrefix(string(buf[:n]), "\xef\xbb\xbf"), " \t\r\n")
+	lower := strings.ToLower(head)
+	switch {
+	case strings.HasPrefix(head, "#EXTM3U"), strings.HasPrefix(head, "#EXT-X-"):
+		return true // HLS / extended M3U playlist
+	case strings.HasPrefix(lower, "ffconcat"):
+		return true // ffmpeg concat script
+	case strings.HasPrefix(lower, "<mpd"), strings.HasPrefix(lower, "<?xml") && strings.Contains(lower, "<mpd"):
+		return true // DASH manifest
+	case strings.HasPrefix(head, "v=0\n"), strings.HasPrefix(head, "v=0\r\n"):
+		return true // SDP session description
+	}
+	return false
 }
 
 // ProbeFile runs a full ffprobe pass against path and returns the parsed
@@ -171,7 +242,14 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 		"-show_streams",
 		"-show_format",
 		"-show_chapters",
+		// Confine the demuxer to this input's protocols (must precede input).
+		"-protocol_whitelist", ffsafe.Whitelist(path),
 		path,
+	}
+
+	// Refuse playlist/reference containers before ffprobe ever opens them.
+	if looksLikeReferenceContainer(path) {
+		return nil, ErrUnsafeContainer
 	}
 
 	cmd := exec.CommandContext(ctx, "ffprobe", args...)
@@ -183,6 +261,11 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 	var probe ffprobeOutput
 	if err := json.Unmarshal(out, &probe); err != nil {
 		return nil, fmt.Errorf("ffprobe parse: %w", err)
+	}
+	// Belt and braces for sources the byte sniff can't see (object-storage
+	// URLs) or disguises it misses: trust ffprobe's own demuxer verdict.
+	if IsReferenceDemuxer(probe.Format.FormatName) {
+		return nil, ErrUnsafeContainer
 	}
 
 	result := &ProbeResult{}

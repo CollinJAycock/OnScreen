@@ -2,7 +2,9 @@
 
 // Reproduces and guards the photo timeline-sidebar query (ListPhotoTimelineBuckets).
 // On the deployed DB this returned HTTP 500 with
-//   column "pm.taken_at" must appear in the GROUP BY clause ... (SQLSTATE 42803)
+//
+//	column "pm.taken_at" must appear in the GROUP BY clause ... (SQLSTATE 42803)
+//
 // because GROUP BY referenced the SELECT-list aliases (year, month) rather than the
 // grouped expressions. This test runs the query against a real Postgres so the
 // regression can't reappear.
@@ -56,9 +58,20 @@ func TestListPhotoTimelineBuckets_Integration_GroupsByMonth(t *testing.T) {
 	// taken_at NULL -> falls back to created_at (today); just must not error.
 	seedPhoto(ctx, t, q, lib, "no-exif", nil)
 
-	rows, err := q.ListPhotoTimelineBuckets(ctx, lib)
+	rows, err := q.ListPhotoTimelineBuckets(ctx, gen.ListPhotoTimelineBucketsParams{LibraryID: lib})
 	if err != nil {
 		t.Fatalf("ListPhotoTimelineBuckets: %v", err)
+	}
+
+	// A restricted profile's ceiling filters in SQL: every seeded photo is
+	// unrated, which ranks most restrictive, so a PG ceiling sees no buckets.
+	pg := int32(1)
+	capped, err := q.ListPhotoTimelineBuckets(ctx, gen.ListPhotoTimelineBucketsParams{LibraryID: lib, MaxRatingRank: &pg})
+	if err != nil {
+		t.Fatalf("ListPhotoTimelineBuckets (capped): %v", err)
+	}
+	if len(capped) != 0 {
+		t.Errorf("capped timeline = %v, want no buckets for unrated photos", capped)
 	}
 
 	// Find the March 2024 bucket: two photos must collapse into one (year,month) row.

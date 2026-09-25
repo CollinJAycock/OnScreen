@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // generateSprites extracts thumbnails from inputPath every spec.IntervalSec
@@ -43,6 +45,9 @@ func generateSprites(ctx context.Context, inputPath, outDir string, spec Spec) (
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-nostdin", "-hide_banner", "-loglevel", "error",
 		"-y",
+		// Confine the demuxer to this input's protocols so a crafted source
+		// can't reach the network (must precede -i). See internal/ffsafe.
+		"-protocol_whitelist", ffsafe.Whitelist(inputPath),
 		"-i", inputPath,
 		"-an", "-sn",
 		"-vf", vf,

@@ -381,10 +381,10 @@ type stubUserService struct{}
 
 func (s *stubUserService) SetPIN(_ context.Context, _ uuid.UUID, _, _ string) error { return nil }
 func (s *stubUserService) ClearPIN(_ context.Context, _ uuid.UUID, _ string) error  { return nil }
-func (s *stubUserService) ListSwitchable(_ context.Context) ([]v1.SwitchableUser, error) {
+func (s *stubUserService) ListSwitchable(_ context.Context, _ uuid.UUID) ([]v1.SwitchableUser, error) {
 	return nil, nil
 }
-func (s *stubUserService) VerifyPIN(_ context.Context, _ uuid.UUID, _ string) (*v1.PINSwitchResult, error) {
+func (s *stubUserService) VerifyPIN(_ context.Context, _, _ uuid.UUID, _ string) (*v1.PINSwitchResult, error) {
 	return nil, fmt.Errorf("invalid PIN")
 }
 

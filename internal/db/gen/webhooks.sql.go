@@ -214,7 +214,7 @@ func (q *Queries) ListWebhookFailures(ctx context.Context, arg ListWebhookFailur
 const updateWebhookEndpoint = `-- name: UpdateWebhookEndpoint :one
 UPDATE webhook_endpoints
 SET url        = $2,
-    secret     = $3,
+    secret     = COALESCE($3, secret),
     events     = $4,
     enabled    = $5,
     updated_at = NOW()
@@ -230,6 +230,10 @@ type UpdateWebhookEndpointParams struct {
 	Enabled bool      `json:"enabled"`
 }
 
+// secret: a NULL argument KEEPS the stored signing secret. Callers pass NULL
+// whenever the request omitted a secret (the UI's "leave blank to keep
+// current"); the old `secret = $3` silently wiped the secret on every edit and
+// on the enable/disable toggle, after which deliveries went out unsigned.
 func (q *Queries) UpdateWebhookEndpoint(ctx context.Context, arg UpdateWebhookEndpointParams) (WebhookEndpoint, error) {
 	row := q.db.QueryRow(ctx, updateWebhookEndpoint,
 		arg.ID,

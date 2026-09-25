@@ -6,11 +6,18 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
+
+// pgUUID wraps a uuid.UUID as a valid pgtype.UUID for building gen.User rows in
+// tests (parent_user_id is nullable, so it's pgtype.UUID in the generated model).
+func pgUUID(id uuid.UUID) pgtype.UUID {
+	return pgtype.UUID{Bytes: id, Valid: true}
+}
 
 // stubUserQ implements userQuerier with hand-crafted state. Keeps
 // behaviour observable: each method records the most recent params
@@ -40,7 +47,7 @@ func (s *stubUserQ) ClearUserPIN(_ context.Context, _ uuid.UUID) error {
 	s.clearCalled = true
 	return s.clearErr
 }
-func (s *stubUserQ) ListSwitchableUsers(_ context.Context) ([]gen.ListSwitchableUsersRow, error) {
+func (s *stubUserQ) ListSwitchableUsers(_ context.Context, _ pgtype.UUID) ([]gen.ListSwitchableUsersRow, error) {
 	return nil, s.listErr
 }
 
@@ -161,9 +168,18 @@ func TestClearPIN_RejectsWrongPassword(t *testing.T) {
 
 // ── VerifyPIN ────────────────────────────────────────────────────────────────
 
+// managedProfile builds a managed-profile row owned by callerID with the given
+// PIN hash — the shape VerifyPIN must accept.
+func managedProfile(callerID uuid.UUID, hash *string) gen.User {
+	return gen.User{
+		ID: uuid.New(), Username: "alice", IsAdmin: false,
+		Pin: hash, SessionEpoch: 7, ParentUserID: pgUUID(callerID),
+	}
+}
+
 func TestVerifyPIN_RejectsBadFormat(t *testing.T) {
 	for _, p := range []string{"abc", "12345", ""} {
-		_, err := newUserService(&stubUserQ{}).VerifyPIN(context.Background(), uuid.New(), p)
+		_, err := newUserService(&stubUserQ{}).VerifyPIN(context.Background(), uuid.New(), uuid.New(), p)
 		if !errors.Is(err, v1.ErrBadPIN) {
 			t.Errorf("PIN %q: got %v, want ErrBadPIN", p, err)
 		}
@@ -173,15 +189,11 @@ func TestVerifyPIN_RejectsBadFormat(t *testing.T) {
 func TestVerifyPIN_AcceptsCorrectPIN(t *testing.T) {
 	rawPIN := "4321"
 	hash := hashPassword(t, rawPIN)
-	q := &stubUserQ{
-		user: gen.User{
-			ID: uuid.New(), Username: "alice", IsAdmin: false,
-			Pin: &hash, SessionEpoch: 7,
-		},
-	}
+	caller := uuid.New()
+	q := &stubUserQ{user: managedProfile(caller, &hash)}
 	svc := newUserService(q)
 
-	res, err := svc.VerifyPIN(context.Background(), q.user.ID, rawPIN)
+	res, err := svc.VerifyPIN(context.Background(), caller, q.user.ID, rawPIN)
 	if err != nil {
 		t.Fatalf("VerifyPIN: %v", err)
 	}
@@ -195,26 +207,91 @@ func TestVerifyPIN_AcceptsCorrectPIN(t *testing.T) {
 
 func TestVerifyPIN_RejectsWrongPIN(t *testing.T) {
 	hash := hashPassword(t, "1234")
-	q := &stubUserQ{
-		user: gen.User{ID: uuid.New(), Pin: &hash},
-	}
+	caller := uuid.New()
+	q := &stubUserQ{user: managedProfile(caller, &hash)}
 	svc := newUserService(q)
 
-	_, err := svc.VerifyPIN(context.Background(), q.user.ID, "9999")
+	_, err := svc.VerifyPIN(context.Background(), caller, q.user.ID, "9999")
 	if !errors.Is(err, v1.ErrInvalidCredentials) {
 		t.Errorf("got %v, want ErrInvalidCredentials", err)
 	}
 }
 
-func TestVerifyPIN_NoPINSetReturnsInvalidCredentials(t *testing.T) {
-	// User exists but never set a PIN — must NOT crash, must NOT
-	// distinguish from wrong-PIN (no PIN-set enumeration).
-	q := &stubUserQ{
-		user: gen.User{ID: uuid.New(), Pin: nil},
-	}
+// TestVerifyPIN_RejectsForeignHousehold is the core cross-account-switch fix:
+// a correct PIN on a profile owned by SOMEONE ELSE must be refused.
+func TestVerifyPIN_RejectsForeignHousehold(t *testing.T) {
+	rawPIN := "4321"
+	hash := hashPassword(t, rawPIN)
+	owner := uuid.New()
+	attacker := uuid.New()
+	q := &stubUserQ{user: managedProfile(owner, &hash)} // owned by `owner`
 	svc := newUserService(q)
 
-	_, err := svc.VerifyPIN(context.Background(), q.user.ID, "1234")
+	_, err := svc.VerifyPIN(context.Background(), attacker, q.user.ID, rawPIN)
+	if !errors.Is(err, v1.ErrInvalidCredentials) {
+		t.Errorf("got %v, want ErrInvalidCredentials — a correct PIN on another household's profile must be refused", err)
+	}
+}
+
+// TestVerifyPIN_RejectsTopLevelAccount refuses switching into a full account
+// (parent_user_id NULL) even when it is in the caller's chain and has a PIN.
+func TestVerifyPIN_RejectsTopLevelAccount(t *testing.T) {
+	rawPIN := "4321"
+	hash := hashPassword(t, rawPIN)
+	caller := uuid.New()
+	u := managedProfile(caller, &hash)
+	u.ParentUserID = pgtype.UUID{} // NULL — a top-level account
+	q := &stubUserQ{user: u}
+	svc := newUserService(q)
+
+	_, err := svc.VerifyPIN(context.Background(), caller, q.user.ID, rawPIN)
+	if !errors.Is(err, v1.ErrInvalidCredentials) {
+		t.Errorf("got %v, want ErrInvalidCredentials — a full account is not a PIN-switch target", err)
+	}
+}
+
+// TestVerifyPIN_RejectsAdminTarget refuses a profile flagged admin even with a
+// correct PIN and correct household — a 4-digit PIN must never grant admin.
+func TestVerifyPIN_RejectsAdminTarget(t *testing.T) {
+	rawPIN := "4321"
+	hash := hashPassword(t, rawPIN)
+	caller := uuid.New()
+	u := managedProfile(caller, &hash)
+	u.IsAdmin = true
+	q := &stubUserQ{user: u}
+	svc := newUserService(q)
+
+	_, err := svc.VerifyPIN(context.Background(), caller, q.user.ID, rawPIN)
+	if !errors.Is(err, v1.ErrInvalidCredentials) {
+		t.Errorf("got %v, want ErrInvalidCredentials — PIN must not enter an admin account", err)
+	}
+}
+
+// TestVerifyPIN_RejectsTOTPTarget refuses a profile with a second factor even on
+// a correct PIN — the PIN path must not step over TOTP.
+func TestVerifyPIN_RejectsTOTPTarget(t *testing.T) {
+	rawPIN := "4321"
+	hash := hashPassword(t, rawPIN)
+	caller := uuid.New()
+	u := managedProfile(caller, &hash)
+	u.TotpEnabled = true
+	q := &stubUserQ{user: u}
+	svc := newUserService(q)
+
+	_, err := svc.VerifyPIN(context.Background(), caller, q.user.ID, rawPIN)
+	if !errors.Is(err, v1.ErrInvalidCredentials) {
+		t.Errorf("got %v, want ErrInvalidCredentials — PIN must not bypass a second factor", err)
+	}
+}
+
+func TestVerifyPIN_NoPINSetReturnsInvalidCredentials(t *testing.T) {
+	// User exists in the household but never set a PIN — must NOT crash, must
+	// NOT distinguish from wrong-PIN (no PIN-set enumeration).
+	caller := uuid.New()
+	q := &stubUserQ{user: managedProfile(caller, nil)}
+	svc := newUserService(q)
+
+	_, err := svc.VerifyPIN(context.Background(), caller, q.user.ID, "1234")
 	if !errors.Is(err, v1.ErrInvalidCredentials) {
 		t.Errorf("got %v, want ErrInvalidCredentials (must not leak PIN-existence)", err)
 	}
@@ -227,7 +304,7 @@ func TestVerifyPIN_MissingUserReturnsInvalidCredentials(t *testing.T) {
 	q := &stubUserQ{getErr: errors.New("not found")}
 	svc := newUserService(q)
 
-	_, err := svc.VerifyPIN(context.Background(), uuid.New(), "1234")
+	_, err := svc.VerifyPIN(context.Background(), uuid.New(), uuid.New(), "1234")
 	if !errors.Is(err, v1.ErrInvalidCredentials) {
 		t.Errorf("got %v, want ErrInvalidCredentials (no user-existence leak)", err)
 	}
@@ -237,7 +314,7 @@ func TestVerifyPIN_MissingUserReturnsInvalidCredentials(t *testing.T) {
 
 func TestListSwitchable_PropagatesDBError(t *testing.T) {
 	q := &stubUserQ{listErr: errors.New("db down")}
-	_, err := newUserService(q).ListSwitchable(context.Background())
+	_, err := newUserService(q).ListSwitchable(context.Background(), uuid.New())
 	if err == nil {
 		t.Error("expected DB error to propagate")
 	}

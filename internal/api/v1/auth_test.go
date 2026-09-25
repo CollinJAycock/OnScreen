@@ -31,6 +31,8 @@ type mockAuthService struct {
 
 	userCount    int64
 	userCountErr error
+
+	loggedOut string // refresh token the last Logout call revoked
 }
 
 func (m *mockAuthService) LoginLocal(_ context.Context, _, _ string) (*TokenPair, error) {
@@ -45,7 +47,7 @@ func (m *mockAuthService) Refresh(_ context.Context, _ string) (*TokenPair, erro
 	}
 	return m.refreshResult, nil
 }
-func (m *mockAuthService) Logout(_ context.Context, _ string) error { return nil }
+func (m *mockAuthService) Logout(_ context.Context, tok string) error { m.loggedOut = tok; return nil }
 func (m *mockAuthService) CreateUser(_ context.Context, _, _, _ string, _ bool) (*UserInfo, error) {
 	if m.createUserErr != nil {
 		return nil, m.createUserErr
@@ -66,7 +68,11 @@ func (m *mockAuthService) UserCount(_ context.Context) (int64, error) {
 }
 
 func newAuthHandler(svc *mockAuthService) *AuthHandler {
-	return NewAuthHandler(svc, slog.Default())
+	// Allow public first-run setup in the shared helper so the validation/flow
+	// tests reach their assertions regardless of the (test-default, non-local)
+	// RemoteAddr. The local-peer gate itself is covered by the dedicated
+	// TestRegister_FirstRunSetupGate_* tests, which use the default policy.
+	return NewAuthHandler(svc, slog.Default()).WithSetupPolicy(true)
 }
 
 // ── Login ────────────────────────────────────────────────────────────────────
@@ -248,6 +254,70 @@ func TestRegister_FirstUser_AlwaysAdmin(t *testing.T) {
 
 	if rec.Code != http.StatusCreated {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusCreated)
+	}
+}
+
+// TestRegister_FirstRunSetupGate_NonLocalBlocked pins the first-run gate: with
+// an empty users table and the default policy, a non-local client cannot create
+// the first admin (prevents an internet land-grab on a fresh install).
+func TestRegister_FirstRunSetupGate_NonLocalBlocked(t *testing.T) {
+	svc := &mockAuthService{userCount: 0, createUserResult: &UserInfo{ID: uuid.New(), Username: "admin", IsAdmin: true}}
+	h := NewAuthHandler(svc, slog.Default()) // default policy: allowPublicSetup=false
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/auth/register",
+		strings.NewReader(`{"username":"admin","password":"password12345"}`))
+	req.RemoteAddr = "203.0.113.7:44321" // public client
+	h.Register(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("non-local first-run register: got %d, want 403", rec.Code)
+	}
+}
+
+// TestRegister_FirstRunSetupGate_LocalAllowed confirms the LAN setup path still
+// works under the default policy.
+func TestRegister_FirstRunSetupGate_LocalAllowed(t *testing.T) {
+	svc := &mockAuthService{userCount: 0, createUserResult: &UserInfo{ID: uuid.New(), Username: "admin", IsAdmin: true}}
+	h := NewAuthHandler(svc, slog.Default())
+	for _, addr := range []string{"127.0.0.1:5000", "192.168.1.10:5000", "[::1]:5000"} {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("POST", "/api/v1/auth/register",
+			strings.NewReader(`{"username":"admin","password":"password12345"}`))
+		req.RemoteAddr = addr
+		req.Host = "192.168.1.10:7070"
+		h.Register(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Errorf("local peer %s first-run register: got %d, want 201", addr, rec.Code)
+		}
+	}
+}
+
+// TestRegister_FirstRunSetupGate_RebindHostBlocked: a LAN peer is not enough.
+// Via DNS rebinding a page on the attacker's domain reaches the box from a LAN
+// browser as same-origin; the Host header still names that domain, so first-run
+// setup refuses it while every local way of addressing the box keeps working.
+func TestRegister_FirstRunSetupGate_RebindHostBlocked(t *testing.T) {
+	svc := &mockAuthService{userCount: 0, createUserResult: &UserInfo{ID: uuid.New(), Username: "admin", IsAdmin: true}}
+	h := NewAuthHandler(svc, slog.Default())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("POST", "/api/v1/auth/register",
+		strings.NewReader(`{"username":"admin","password":"password12345"}`))
+	req.RemoteAddr = "192.168.1.50:5000" // the victim's LAN browser
+	req.Host = "rebind.attacker.example:7070"
+	h.Register(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Errorf("rebound Host first-run register: got %d, want 403", rec.Code)
+	}
+
+	// ALLOW_PUBLIC_SETUP is the operator's explicit override for both gates.
+	h = NewAuthHandler(svc, slog.Default()).WithSetupPolicy(true)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest("POST", "/api/v1/auth/register",
+		strings.NewReader(`{"username":"admin","password":"password12345"}`))
+	req.RemoteAddr = "192.168.1.50:5000"
+	req.Host = "onscreen.example.com"
+	h.Register(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Errorf("ALLOW_PUBLIC_SETUP override: got %d, want 201", rec.Code)
 	}
 }
 
@@ -522,7 +592,8 @@ func TestLogout_NoToken(t *testing.T) {
 }
 
 func TestLogout_WithBodyToken(t *testing.T) {
-	h := newAuthHandler(&mockAuthService{})
+	svc := &mockAuthService{}
+	h := newAuthHandler(svc)
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest("POST", "/api/v1/auth/logout",
@@ -531,6 +602,11 @@ func TestLogout_WithBodyToken(t *testing.T) {
 
 	if rec.Code != http.StatusNoContent {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	// No access token on the request (it has usually expired by sign-out):
+	// the body refresh token must still be revoked server-side.
+	if svc.loggedOut != "body-tok" {
+		t.Errorf("body refresh token not revoked without claims: got %q", svc.loggedOut)
 	}
 	// Verify cookies are cleared even when token comes from body.
 	cookies := rec.Result().Cookies()

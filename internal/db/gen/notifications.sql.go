@@ -94,6 +94,40 @@ func (q *Queries) ListAllUserIDs(ctx context.Context) ([]uuid.UUID, error) {
 	return items, nil
 }
 
+const listNotifiableUserIDsForLibrary = `-- name: ListNotifiableUserIDsForLibrary :many
+SELECT u.id FROM users u
+WHERE u.parent_user_id IS NULL
+  AND (
+        u.is_admin
+     OR EXISTS (SELECT 1 FROM libraries l WHERE l.id = $1 AND l.is_private = false)
+     OR EXISTS (SELECT 1 FROM library_access la WHERE la.library_id = $1 AND la.user_id = u.id)
+  )
+`
+
+// Top-level users who may see a library: admins, everyone when the library is
+// public, and explicit grantees when it is private. Scan notifications go only
+// to these users — the library name and activity used to be broadcast to every
+// account, leaking the existence of private libraries.
+func (q *Queries) ListNotifiableUserIDsForLibrary(ctx context.Context, id uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listNotifiableUserIDsForLibrary, id)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listNotifications = `-- name: ListNotifications :many
 SELECT id, user_id, type, title, body, item_id, read, created_at
 FROM notifications

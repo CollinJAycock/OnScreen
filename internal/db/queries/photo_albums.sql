@@ -38,6 +38,11 @@ LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE ci.collection_id = $1
   AND mi.deleted_at IS NULL
   AND mi.type = 'photo'
+  -- The caller's content-rating ceiling, applied on READ like
+  -- ListCollectionItems: the add-time check alone went stale when a profile's
+  -- ceiling was lowered after it filled the album.
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id
 -- NULLIF so a zero lim means "no limit" (the original behaviour); callers pass a
 -- positive cap to bound the result. Avoids a forgotten lim silently returning 0 rows.
@@ -47,4 +52,6 @@ LIMIT NULLIF(sqlc.arg('lim')::int, 0) OFFSET sqlc.arg('off')::int;
 SELECT COUNT(*)::bigint
 FROM collection_items ci
 JOIN media_items mi ON mi.id = ci.media_item_id
-WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL AND mi.type = 'photo';
+WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL AND mi.type = 'photo'
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int);

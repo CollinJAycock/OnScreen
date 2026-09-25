@@ -38,7 +38,12 @@ func TestTOTP_Integration_FullFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewEncryptor: %v", err)
 	}
-	svc := &authService{db: q, tokens: tm, enc: enc, logger: slog.Default()}
+	// TOTP codes are single-use per time step, so each step of the flow runs
+	// on its own 30 s step: the pinned clock advances one period per use.
+	clock := time.Now()
+	nextStep := func() time.Time { clock = clock.Add(30 * time.Second); return clock }
+	svc := &authService{db: q, tokens: tm, enc: enc, logger: slog.Default(),
+		now: func() time.Time { return clock }}
 
 	// Seed a local password account.
 	hash, _ := bcrypt.GenerateFromPassword([]byte("correct horse"), bcrypt.MinCost)
@@ -73,7 +78,7 @@ func TestTOTP_Integration_FullFlow(t *testing.T) {
 	// (tested below).
 
 	// 2. Activate with a live code → enabled + recovery codes.
-	code, _ := totp.GenerateCode(secret, time.Now())
+	code, _ := totp.GenerateCode(secret, nextStep())
 	codes, err := svc.ActivateTOTP(ctx, user.ID, code)
 	if err != nil {
 		t.Fatalf("ActivateTOTP: %v", err)
@@ -106,13 +111,20 @@ func TestTOTP_Integration_FullFlow(t *testing.T) {
 	}
 
 	// 5. Verify with a live code → real token pair.
-	code2, _ := totp.GenerateCode(secret, time.Now())
+	code2, _ := totp.GenerateCode(secret, nextStep())
 	ok, err := svc.VerifyTOTPLogin(ctx, gated.LoginChallengeToken, code2)
 	if err != nil {
 		t.Fatalf("VerifyTOTPLogin (good code): %v", err)
 	}
 	if ok.AccessToken == "" || ok.RefreshToken == "" {
 		t.Fatal("verify should issue a full token pair")
+	}
+
+	// 5b. The same code is spent — replaying it inside its validity window
+	// (fresh challenge, same clock step) must fail.
+	replay, _ := svc.LoginLocal(ctx, "totp-user", "correct horse")
+	if _, err := svc.VerifyTOTPLogin(ctx, replay.LoginChallengeToken, code2); err == nil {
+		t.Error("a TOTP code must not be accepted twice")
 	}
 
 	// 6. A bad challenge token is rejected.
@@ -134,7 +146,7 @@ func TestTOTP_Integration_FullFlow(t *testing.T) {
 	}
 
 	// 8. Disable wipes the secret + recovery codes.
-	code3, _ := totp.GenerateCode(secret, time.Now())
+	code3, _ := totp.GenerateCode(secret, nextStep())
 	if err := svc.DisableTOTP(ctx, user.ID, code3); err != nil {
 		t.Fatalf("DisableTOTP: %v", err)
 	}

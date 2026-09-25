@@ -451,7 +451,7 @@ func (m *mockQuerier) CountPhotosByLibrary(_ context.Context, _ ListPhotosParams
 	return int64(len(m.photoList)), m.photoCountErr
 }
 
-func (m *mockQuerier) ListPhotoTimelineBuckets(_ context.Context, _ uuid.UUID) ([]PhotoTimelineBucket, error) {
+func (m *mockQuerier) ListPhotoTimelineBuckets(_ context.Context, _ uuid.UUID, _ *int) ([]PhotoTimelineBucket, error) {
 	return m.photoTimeline, m.photoTimelineErr
 }
 
@@ -459,7 +459,7 @@ func (m *mockQuerier) ListPhotoMapPoints(_ context.Context, _ ListPhotoMapPoints
 	return m.photoMapPts, m.photoMapErr
 }
 
-func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID) (int64, error) {
+func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID, _ *int) (int64, error) {
 	return m.photoMapCount, m.photoMapCountErr
 }
 
@@ -1593,7 +1593,7 @@ func TestCountPhotos_Error(t *testing.T) {
 func TestListPhotoTimeline_PassesThrough(t *testing.T) {
 	svc, q := newService(t)
 	q.photoTimeline = []PhotoTimelineBucket{{Year: 2024, Month: 12, Count: 47}}
-	got, err := svc.ListPhotoTimeline(context.Background(), uuid.New())
+	got, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1605,7 +1605,7 @@ func TestListPhotoTimeline_PassesThrough(t *testing.T) {
 func TestListPhotoTimeline_Error(t *testing.T) {
 	svc, q := newService(t)
 	q.photoTimelineErr = errors.New("db down")
-	if _, err := svc.ListPhotoTimeline(context.Background(), uuid.New()); err == nil {
+	if _, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -1633,7 +1633,7 @@ func TestListPhotoMapPoints_Error(t *testing.T) {
 func TestCountPhotoMapPoints_PassesThrough(t *testing.T) {
 	svc, q := newService(t)
 	q.photoMapCount = 23107
-	n, err := svc.CountPhotoMapPoints(context.Background(), uuid.New())
+	n, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1645,7 +1645,7 @@ func TestCountPhotoMapPoints_PassesThrough(t *testing.T) {
 func TestCountPhotoMapPoints_Error(t *testing.T) {
 	svc, q := newService(t)
 	q.photoMapCountErr = errors.New("db down")
-	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New()); err == nil {
+	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil); err == nil {
 		t.Fatal("expected error")
 	}
 }

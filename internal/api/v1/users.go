@@ -6,6 +6,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -17,6 +19,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -24,6 +27,12 @@ import (
 var (
 	ErrBadPIN             = errors.New("PIN must be exactly 4 digits")
 	ErrInvalidCredentials = errors.New("invalid credentials")
+	// ErrReauthNoLocalPassword is returned by a ReauthVerifier when the account
+	// is federated (OIDC/SAML/LDAP) and has no local password to re-verify
+	// against. Callers decide whether that means "refuse the step-up" (the
+	// worker-credentials reveal) or "no local step-up is possible, fall back to
+	// the base gate" (restore).
+	ErrReauthNoLocalPassword = errors.New("re-verification requires a password-based account")
 )
 
 // SwitchableUser is a public-safe user representation for the user picker.
@@ -47,8 +56,8 @@ type PINSwitchResult struct {
 type UserService interface {
 	SetPIN(ctx context.Context, userID uuid.UUID, rawPIN, password string) error
 	ClearPIN(ctx context.Context, userID uuid.UUID, password string) error
-	ListSwitchable(ctx context.Context) ([]SwitchableUser, error)
-	VerifyPIN(ctx context.Context, userID uuid.UUID, rawPIN string) (*PINSwitchResult, error)
+	ListSwitchable(ctx context.Context, callerID uuid.UUID) ([]SwitchableUser, error)
+	VerifyPIN(ctx context.Context, callerID, targetID uuid.UUID, rawPIN string) (*PINSwitchResult, error)
 }
 
 // UserDB defines the database interface for user admin operations.
@@ -208,6 +217,14 @@ func (h *UserHandler) SetPIN(w http.ResponseWriter, r *http.Request) {
 		respond.Forbidden(w, r)
 		return
 	}
+	// A PIN-switched session must not set a PIN. SetPIN requires the account
+	// password, but a managed profile has none, so that check is skipped for it
+	// (PasswordHash == nil) — which would let a switched session set or change
+	// its own profile's PIN with no credential at all. Managed-profile PINs are
+	// managed by the owning account through the profile endpoints instead.
+	if blockSwitchedSession(w, r, "change a PIN") {
+		return
+	}
 
 	var body struct {
 		PIN      string `json:"pin"`
@@ -238,6 +255,11 @@ func (h *UserHandler) ClearPIN(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Forbidden(w, r)
+		return
+	}
+	// Same reasoning as SetPIN: a passwordless managed profile would skip the
+	// password check, so a switched session could clear its own PIN.
+	if blockSwitchedSession(w, r, "change a PIN") {
 		return
 	}
 
@@ -534,7 +556,14 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 // ListSwitchable handles GET /api/v1/users/switchable.
 // Returns all users with id, username, is_admin, has_pin (never exposes the hash).
 func (h *UserHandler) ListSwitchable(w http.ResponseWriter, r *http.Request) {
-	users, err := h.users.ListSwitchable(r.Context())
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Forbidden(w, r)
+		return
+	}
+	// Scoped to the caller's own managed profiles — never every account on the
+	// server. See ListSwitchableUsers in users.sql.
+	users, err := h.users.ListSwitchable(r.Context(), claims.UserID)
 	if err != nil {
 		respond.InternalError(w, r)
 		return
@@ -560,13 +589,19 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+
 	// No chaining: a token already minted via PIN-switch cannot initiate
 	// another switch. Otherwise profile A could PIN into B, then from B
 	// into C, hopping across the whole household from a single login and
 	// defeating the per-target brute-force lockout (each hop resets the
 	// attacker's vantage point). The legitimate flow always starts from a
 	// full credential login, whose token has Switched=false.
-	if cur := middleware.ClaimsFromContext(r.Context()); cur != nil && cur.Switched {
+	if claims.Switched {
 		respond.Error(w, r, http.StatusForbidden, "PIN_SWITCH_CHAINED",
 			"sign in with your account before switching profiles")
 		return
@@ -592,12 +627,18 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Brute-force lockout, keyed by the TARGET user. The 4-digit PIN mints a
+	// Brute-force lockout, keyed by CALLER and TARGET. The 4-digit PIN mints a
 	// token carrying the target's privileges, so an unthrottled guesser could
-	// escalate to admin in minutes; this caps failures per target. CheckFailures
-	// only reads — IncrFailure runs on a confirmed bad PIN, ResetFailures clears
+	// escalate in minutes; this caps failures per pair. CheckFailures reserves a
+	// slot, IncrFailure commits it on a confirmed bad PIN, ResetFailures clears
 	// the counter on success. Mirrors the per-username login throttle.
-	failKey := "ratelimit:pinswitch:" + targetID.String()
+	//
+	// Why the pair and not the target alone: the household gate in VerifyPIN
+	// means only the target's own parent can ever succeed, so the pair still
+	// bounds every guess that could matter — but a target-only key let ANY
+	// signed-in user who learned a child profile's id burn its lockout with
+	// requests that could never succeed, locking the real parent out forever.
+	failKey := "ratelimit:pinswitch:" + claims.UserID.String() + ":" + targetID.String()
 	if h.throttle != nil {
 		allowed, _ := h.throttle.CheckFailures(r.Context(), failKey, pinSwitchMaxFailures)
 		if !allowed {
@@ -610,7 +651,7 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	result, err := h.users.VerifyPIN(r.Context(), targetID, body.PIN)
+	result, err := h.users.VerifyPIN(r.Context(), claims.UserID, targetID, body.PIN)
 	if err != nil {
 		if errors.Is(err, ErrBadPIN) || errors.Is(err, ErrInvalidCredentials) {
 			if h.throttle != nil {
@@ -629,8 +670,11 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		h.throttle.ResetFailures(r.Context(), failKey)
 	}
 
-	// A 4-digit PIN must never grant admin. Admins authenticate with full
-	// credentials; PIN-switch is for non-admin household profiles only.
+	// Defense in depth: a 4-digit PIN must never grant admin. VerifyPIN already
+	// refuses an admin (or second-factor) target before the PIN is checked, so on
+	// the current contract this branch is unreachable and result.IsAdmin is
+	// always false here. It is kept so that if VerifyPIN's contract ever changes,
+	// the handler still refuses to hand out an admin session.
 	if result.IsAdmin {
 		respond.Error(w, r, http.StatusForbidden, "ADMIN_PIN_SWITCH_DISALLOWED",
 			"this profile requires full sign-in")
@@ -766,6 +810,17 @@ func (h *UserHandler) CreateProfile(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Forbidden(w, r)
+		return
+	}
+	// A PIN-switched session must not create a profile. Otherwise a member who
+	// switched into a household profile could mint a further managed profile
+	// under the victim — durable access that outlives the PIN. Because a managed
+	// profile is only ever reached via a switch, this closes the UNTRUSTED path
+	// to a nested (depth-2) profile, whose deeper levels would escape watch-limit
+	// and content-rating resolution (those cascade only one parent hop). An admin
+	// can still deliberately nest by passing owner_id below (a trusted-operator
+	// footgun, not an escalation) — admins are trusted in the threat model.
+	if blockSwitchedSession(w, r, "create a profile") {
 		return
 	}
 	var body struct {
@@ -961,6 +1016,11 @@ type preferencesResponse struct {
 	PreferredVideoCodec   *string `json:"preferred_video_codec,omitempty"`
 	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
 	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
+	// HasPIN reports whether the CALLER's own account has a PIN set. The Settings
+	// page reads it here (a self-scoped call) rather than from the switchable
+	// list, which is scoped to the caller's managed children and never contains
+	// the caller.
+	HasPIN bool `json:"has_pin"`
 	// HubLayout is the user's hub row customization (order + visibility).
 	// Omitted entirely when the user has never customized — clients render
 	// their default layout.
@@ -1004,6 +1064,7 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		PreferredVideoCodec:   row.PreferredVideoCodec,
 		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
 		EpisodeUseShowPoster:  row.EpisodeUseShowPoster,
+		HasPIN:                row.HasPin,
 	}
 	if len(row.HubLayout) > 0 {
 		// Tolerate a corrupt blob (manual DB edits) by omitting the field —
@@ -1300,6 +1361,20 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 	if err := decoder.Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body: "+err.Error())
 		return
+	}
+	// Normalise "" to NULL (no ceiling) and reject anything that is not a
+	// recognised rating: an unknown string ranks as the MOST permissive ceiling,
+	// so a typo like "PG13" would silently lift the restriction.
+	if body.MaxContentRating != nil {
+		v := strings.TrimSpace(*body.MaxContentRating)
+		if v == "" {
+			body.MaxContentRating = nil
+		} else if !contentrating.IsKnownCeiling(v) {
+			respond.ValidationError(w, r, "unknown content rating "+strconv.Quote(v))
+			return
+		} else {
+			body.MaxContentRating = &v
+		}
 	}
 	if err := h.db.UpdateUserContentRating(r.Context(), gen.UpdateUserContentRatingParams{
 		ID:               targetID,

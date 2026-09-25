@@ -204,10 +204,28 @@ func (a *Authenticator) Optional(next http.Handler) http.Handler {
 	})
 }
 
+// SessionStillValid re-runs the revocation check the middleware applied when
+// the request was admitted (session_epoch match / user still exists) against
+// already-parsed claims. Long-lived responses — the SSE notification stream —
+// call it periodically so a logout, demote, password reset or delete closes a
+// stream that was opened before it, instead of letting it run forever.
+// Same fail-open-on-DB-error posture as the admission check (see epochValid).
+func (a *Authenticator) SessionStillValid(ctx context.Context, claims *auth.Claims) bool {
+	if claims == nil {
+		return false
+	}
+	return a.epochValid(ctx, claims)
+}
+
 // epochValid compares the token's session_epoch against the DB's
 // current value. Missing reader → skip (legacy test setup); DB error
 // → fail-open (we don't want a DB blip to log everybody out) but log
 // as a concern; mismatch → fail-closed.
+//
+// The reader must query the PRIMARY (read-write) pool, not a replica:
+// revocation is an epoch bump written to the primary, and reading it from a
+// lagging replica would keep a just-revoked token working for the length of
+// the replication lag. cmd/server wires sessionEpochAdapter to rwPool.
 //
 // Zero-epoch tokens minted before the field existed match any row —
 // they age out within 1h via TTL, and after a single demote/delete
@@ -223,10 +241,15 @@ func (a *Authenticator) epochValid(ctx context.Context, claims *auth.Claims) boo
 		if errors.Is(err, ErrUserNotFound) {
 			return false
 		}
-		// Fail open on other errors: a DB hiccup shouldn't log everybody
-		// out. A real revocation (epoch bump) requires the DB write to
-		// succeed anyway, so this failure mode doesn't compromise the
-		// security property.
+		// ACCEPTED RISK — fail open on any other error. A DB hiccup must not
+		// log every user out, so while the epoch lookup is failing, a token
+		// revoked by an earlier epoch bump is honoured again until the
+		// lookup recovers (or the token's own TTL ends). The revocation
+		// itself can't be lost — the bump is a committed write — but its
+		// enforcement is suspended for the duration of the outage. Reviewed
+		// and accepted as a Low: exploiting it needs an already-revoked
+		// token AND a concurrent primary-DB failure, during which most
+		// authenticated handlers fail anyway.
 		return true
 	}
 	if claims.SessionEpoch == 0 {

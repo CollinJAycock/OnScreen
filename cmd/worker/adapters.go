@@ -734,13 +734,13 @@ func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, _ media.ListPhot
 func (a *mediaAdapter) CountPhotosByLibrary(ctx context.Context, _ media.ListPhotosParams) (int64, error) {
 	return 0, nil
 }
-func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, _ uuid.UUID) ([]media.PhotoTimelineBucket, error) {
+func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, _ uuid.UUID, _ *int) ([]media.PhotoTimelineBucket, error) {
 	return nil, nil
 }
 func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, _ media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error) {
 	return nil, nil
 }
-func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID) (int64, error) {
+func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID, _ *int) (int64, error) {
 	return 0, nil
 }
 func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, _ media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error) {

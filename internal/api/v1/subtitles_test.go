@@ -787,6 +787,7 @@ func TestSubtitles_Delete_Success(t *testing.T) {
 		"id":    itemID.String(),
 		"subId": subID.String(),
 	})
+	req = asSubAdmin(req)
 	h.Delete(rec, req)
 
 	if rec.Code != http.StatusNoContent {
@@ -818,6 +819,7 @@ func TestSubtitles_Delete_RejectsSubFromDifferentItem(t *testing.T) {
 		"id":    itemID.String(),
 		"subId": subID.String(),
 	})
+	req = asSubAdmin(req)
 	h.Delete(rec, req)
 
 	if rec.Code != http.StatusNotFound {
@@ -876,5 +878,37 @@ func TestSubtitles_Serve_UnknownSubReturns404(t *testing.T) {
 
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+// asSubAdmin re-stamps the request's claims as an admin (subtitle deletion is
+// admin-only), keeping the same user id.
+func asSubAdmin(req *http.Request) *http.Request {
+	c := middleware.ClaimsFromContext(req.Context())
+	uid := uuid.New()
+	if c != nil {
+		uid = c.UserID
+	}
+	return req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uid, IsAdmin: true}))
+}
+
+// TestSubtitles_Delete_NonAdminForbidden pins that shared external subtitles can
+// only be removed by an admin.
+func TestSubtitles_Delete_NonAdminForbidden(t *testing.T) {
+	itemID, fileID, libID, subID := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	svc := &mockSubtitleService{rows: map[uuid.UUID]gen.ExternalSubtitle{subID: {ID: subID, FileID: fileID}}}
+	mm := &mockSubsMedia{
+		items: map[uuid.UUID]*media.Item{itemID: {ID: itemID, LibraryID: libID, Type: "movie"}},
+		files: map[uuid.UUID][]media.File{itemID: {{ID: fileID, MediaItemID: itemID}}},
+	}
+	h := NewSubtitleHandler(svc, mm, slog.Default())
+	rec := httptest.NewRecorder()
+	req := subReq(http.MethodDelete, "/x", nil, uuid.New(), map[string]string{"id": itemID.String(), "subId": subID.String()})
+	h.Delete(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin delete: got %d, want 403", rec.Code)
+	}
+	if len(svc.deleted) != 0 {
+		t.Error("a non-admin must not delete a shared subtitle")
 	}
 }

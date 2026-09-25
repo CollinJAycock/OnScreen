@@ -97,8 +97,27 @@ func (l *Listener) Run(ctx context.Context) error {
 		if !strings.HasPrefix(strings.ToLower(msg), strings.ToLower(ProbePrefix)) {
 			continue
 		}
+		// Discovery is a LAN feature. Only answer senders on a local network:
+		// replying to arbitrary internet sources (a host-networked or VPS
+		// deployment has this port reachable) made the listener a UDP
+		// reflector — a tiny probe from a spoofed address returned a much
+		// larger JSON reply to the victim — and leaked server name, version,
+		// base URL and machine_id to anyone who asked.
+		if !isLocalSender(src.IP) {
+			continue
+		}
 		l.respond(conn, src)
 	}
+}
+
+// isLocalSender reports whether ip is on a network a zero-config LAN client
+// could legitimately probe from: loopback, RFC1918 / unique-local private, or
+// link-local. Anything routable on the public internet is ignored.
+func isLocalSender(ip net.IP) bool {
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
 // respond writes the server info JSON back to src. Failures are logged but

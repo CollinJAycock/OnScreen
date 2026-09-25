@@ -52,6 +52,7 @@ type BackupHandler struct {
 	audit           *audit.Logger
 	expectedVersion int64
 	migFS           fs.FS // used by goose to bring an older restored dump forward
+	reauth          ReauthVerifier
 }
 
 // NewBackupHandler builds a handler bound to a database URL and the
@@ -71,6 +72,17 @@ func NewBackupHandler(databaseURL string, expectedVersion int64, migFS fs.FS, lo
 // WithAudit wires the audit logger so backup/restore actions are recorded.
 func (h *BackupHandler) WithAudit(a *audit.Logger) *BackupHandler {
 	h.audit = a
+	return h
+}
+
+// WithReauth requires a step-up credential check (password, plus TOTP when the
+// admin has 2FA) before a restore runs. Restore destroys the whole database and
+// runs as the app's DB role, so it must not be reachable on an admin session
+// alone (a stolen cookie or an XSS-driven request) — the operator must re-prove
+// their password at the moment of restore. nil leaves restore gated only by the
+// admin check + CSRF guard.
+func (h *BackupHandler) WithReauth(v ReauthVerifier) *BackupHandler {
+	h.reauth = v
 	return h
 }
 
@@ -123,13 +135,16 @@ func (h *BackupHandler) Download(w http.ResponseWriter, r *http.Request) {
 	tmpPath := tmp.Name()
 	defer os.Remove(tmpPath)
 
+	// Password goes in PGPASSWORD, not argv (visible in the process table).
+	dsn, dsnEnv := dbtools.CommandDSN(h.databaseURL)
 	cmd := exec.CommandContext(r.Context(), pgDump,
 		"--format=custom",
 		"--no-owner",
 		"--no-acl",
 		"--compress=5",
-		h.databaseURL,
+		dsn,
 	)
+	cmd.Env = dsnEnv
 	var stderr strings.Builder
 	cmd.Stdout = tmp
 	cmd.Stderr = &stderr
@@ -284,14 +299,57 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Step-up re-authentication. Restore wipes and replaces the whole database,
+	// so require the admin to re-prove their password (and TOTP, if enrolled) at
+	// the moment of restore — an admin session alone (a stolen cookie, or an
+	// XSS-driven request from the admin's own browser) must not be enough. The
+	// password/totp_code fields ride the same multipart form as the upload.
+	//
+	// This runs AFTER the dump-version refusal on purpose: TOTP codes are
+	// single-use, so verifying first spent the code on an attempt that then
+	// 409'd, and the UI's "Restore anyway" retry (same form, same code) failed
+	// as a replay. Reading the uploaded dump's version before step-up exposes
+	// nothing an admin session could not already read.
+	if h.reauth != nil {
+		claims := middleware.ClaimsFromContext(r.Context())
+		if claims == nil {
+			respond.Unauthorized(w, r)
+			return
+		}
+		switch err := h.reauth.VerifyReauth(r.Context(), claims.UserID, r.FormValue("password"), r.FormValue("totp_code")); {
+		case err == nil:
+			// Verified — proceed.
+		case errors.Is(err, ErrReauthNoLocalPassword):
+			// Federated (OIDC/SAML/LDAP) admin: there is no local password to
+			// step up with, so requiring one would lock them out of restore
+			// entirely. The admin check and the CSRF guard still gate this
+			// endpoint — the same protection these accounts had before step-up
+			// existed — so proceed, but record it.
+			if h.logger != nil {
+				h.logger.WarnContext(r.Context(), "restore: step-up skipped for federated admin (no local password)",
+					"user_id", claims.UserID)
+			}
+		default:
+			if h.logger != nil {
+				h.logger.WarnContext(r.Context(), "restore: step-up reauth failed", "user_id", claims.UserID)
+			}
+			respond.Error(w, r, http.StatusForbidden, "REAUTH_FAILED",
+				"password (or 2FA code) incorrect")
+			return
+		}
+	}
+
+	// Password goes in PGPASSWORD, not argv (visible in the process table).
+	dsn, dsnEnv := dbtools.CommandDSN(h.databaseURL)
 	cmd := exec.CommandContext(r.Context(), pgRestore,
 		"--clean",
 		"--if-exists",
 		"--no-owner",
 		"--no-acl",
-		"--dbname", h.databaseURL,
+		"--dbname", dsn,
 		tmpPath,
 	)
+	cmd.Env = dsnEnv
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	runErr := cmd.Run()
@@ -442,7 +500,13 @@ func (h *BackupHandler) scrubDSN(s string) string {
 	if h.databaseURL == "" {
 		return s
 	}
-	return strings.ReplaceAll(s, h.databaseURL, "<DATABASE_URL>")
+	s = strings.ReplaceAll(s, h.databaseURL, "<DATABASE_URL>")
+	// The tools are now given the password-less DSN; scrub that form too so
+	// host/user/database names don't leak into returned output either.
+	if clean, _ := dbtools.CommandDSN(h.databaseURL); clean != h.databaseURL {
+		s = strings.ReplaceAll(s, clean, "<DATABASE_URL>")
+	}
+	return s
 }
 
 // extractDumpVersion runs pg_restore in data-only mode against the archive

@@ -21,3 +21,12 @@ UPDATE password_reset_tokens
 
 -- name: DeleteExpiredPasswordResetTokens :exec
 DELETE FROM password_reset_tokens WHERE expires_at < NOW() OR used_at IS NOT NULL;
+
+-- name: InvalidateUserPasswordResetTokens :exec
+-- Burn every outstanding reset link for a user. Run after a successful reset:
+-- a user who clicked "forgot password" several times (or whose mailbox an
+-- attacker could read) otherwise had OTHER still-valid links that could reset
+-- the password again after recovery.
+UPDATE password_reset_tokens
+   SET used_at = NOW()
+ WHERE user_id = $1 AND used_at IS NULL;

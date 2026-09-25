@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // Encoder is a supported FFmpeg video encoder.
@@ -545,6 +547,13 @@ func BuildHLS(a BuildArgs) []string {
 	// Keep both values low — we only need video+audio params, not subtitles.
 	args = append(args, "-analyzeduration", "3000000", "-probesize", "5000000")
 
+	// Confine the demuxer to the protocols this input legitimately needs, so a
+	// crafted "media" file that is really a playlist cannot make ffmpeg open
+	// http(s) (SSRF) while transcoding. Input option — must precede -i. A local
+	// source gets file-family only; the HTTP source additionally gets the http
+	// stack. See internal/ffsafe.
+	args = append(args, ffsafe.InputProtocolArgs(a.InputPath)...)
+
 	args = append(args, "-i", a.InputPath)
 
 	// ── Video ────────────────────────────────────────────────────────────────
@@ -943,6 +952,10 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 			"-multiple_requests", "1",
 		)
 	}
+	// Confine the demuxer to the protocols this input needs (input option —
+	// must precede -i). Direct-stream is `-c copy` throughout, the same class of
+	// input as BuildHLS. See internal/ffsafe.
+	args = append(args, ffsafe.InputProtocolArgs(inputPath)...)
 	args = append(args,
 		"-i", inputPath,
 		"-c", "copy", // copy all streams

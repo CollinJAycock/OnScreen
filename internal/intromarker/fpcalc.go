@@ -12,6 +12,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // fingerprintSecondsPerFrame is the chromaprint default: one fingerprint
@@ -25,20 +27,13 @@ const fingerprintSecondsPerFrame = 0.1238
 // not found", "file unreadable", or parse failures — caller should log and
 // skip the episode rather than fail the whole run.
 func fingerprint(ctx context.Context, filePath string, startSec, durationSec int) ([]uint32, error) {
-	if startSec > 0 {
-		// fpcalc has no -ss flag; use ffmpeg to seek and pipe raw audio to fpcalc.
-		return fingerprintWithFFmpegSeek(ctx, filePath, startSec, durationSec)
-	}
-
-	args := []string{"-raw", "-length", strconv.Itoa(durationSec), filePath}
-	out, err := exec.CommandContext(ctx, "fpcalc", args...).Output()
-	if err == nil {
-		return parseFpcalcOutput(string(out))
-	}
-	// fpcalc's bundled codec support is incomplete on some Windows builds —
-	// older DVDRip audio (e.g. AC3, DTS) can fail with exit status 2. Fall back
-	// to letting ffmpeg decode and pipe raw PCM into fpcalc.
-	return fingerprintWithFFmpegSeek(ctx, filePath, 0, durationSec)
+	// Always decode through ffmpeg first and hand fpcalc only the temp WAV.
+	// Running fpcalc directly on the library file let fpcalc's own bundled
+	// libavformat demux it with no protocol allowlist — the same playlist-
+	// container exposure every ffmpeg call site now closes via ffsafe. (It was
+	// also the less reliable path: fpcalc lacks codecs such as AC3/DTS on some
+	// builds and already fell back to this decode.)
+	return fingerprintWithFFmpegSeek(ctx, filePath, startSec, durationSec)
 }
 
 // fingerprintWithFFmpegSeek decodes filePath via ffmpeg into a temporary
@@ -59,6 +54,8 @@ func fingerprintWithFFmpegSeek(ctx context.Context, filePath string, startSec, d
 		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-ss", strconv.Itoa(startSec),
 		"-t", strconv.Itoa(durationSec),
+		// Confine the demuxer to this input's protocols (must precede -i).
+		"-protocol_whitelist", ffsafe.Whitelist(filePath),
 		"-i", filePath,
 		"-vn", "-ac", "1", "-ar", "11025", "-f", "wav",
 		tmpPath,

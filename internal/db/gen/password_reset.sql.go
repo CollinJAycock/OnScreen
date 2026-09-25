@@ -57,6 +57,21 @@ func (q *Queries) GetPasswordResetToken(ctx context.Context, tokenHash string) (
 	return i, err
 }
 
+const invalidateUserPasswordResetTokens = `-- name: InvalidateUserPasswordResetTokens :exec
+UPDATE password_reset_tokens
+   SET used_at = NOW()
+ WHERE user_id = $1 AND used_at IS NULL
+`
+
+// Burn every outstanding reset link for a user. Run after a successful reset:
+// a user who clicked "forgot password" several times (or whose mailbox an
+// attacker could read) otherwise had OTHER still-valid links that could reset
+// the password again after recovery.
+func (q *Queries) InvalidateUserPasswordResetTokens(ctx context.Context, userID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, invalidateUserPasswordResetTokens, userID)
+	return err
+}
+
 const markPasswordResetTokenUsed = `-- name: MarkPasswordResetTokenUsed :execrows
 UPDATE password_reset_tokens
    SET used_at = NOW()

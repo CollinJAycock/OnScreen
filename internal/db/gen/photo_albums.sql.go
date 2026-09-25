@@ -17,10 +17,17 @@ SELECT COUNT(*)::bigint
 FROM collection_items ci
 JOIN media_items mi ON mi.id = ci.media_item_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL AND mi.type = 'photo'
+  AND ($2::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $2::int)
 `
 
-func (q *Queries) CountPhotoAlbumItems(ctx context.Context, collectionID uuid.UUID) (int64, error) {
-	row := q.db.QueryRow(ctx, countPhotoAlbumItems, collectionID)
+type CountPhotoAlbumItemsParams struct {
+	CollectionID  uuid.UUID `json:"collection_id"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
+}
+
+func (q *Queries) CountPhotoAlbumItems(ctx context.Context, arg CountPhotoAlbumItemsParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPhotoAlbumItems, arg.CollectionID, arg.MaxRatingRank)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -107,14 +114,20 @@ LEFT JOIN photo_metadata pm ON pm.item_id = mi.id
 WHERE ci.collection_id = $1
   AND mi.deleted_at IS NULL
   AND mi.type = 'photo'
+  -- The caller's content-rating ceiling, applied on READ like
+  -- ListCollectionItems: the add-time check alone went stale when a profile's
+  -- ceiling was lowered after it filled the album.
+  AND ($2::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $2::int)
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id
-LIMIT NULLIF($3::int, 0) OFFSET $2::int
+LIMIT NULLIF($4::int, 0) OFFSET $3::int
 `
 
 type ListPhotoAlbumItemsParams struct {
-	CollectionID uuid.UUID `json:"collection_id"`
-	Off          int32     `json:"off"`
-	Lim          int32     `json:"lim"`
+	CollectionID  uuid.UUID `json:"collection_id"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
+	Off           int32     `json:"off"`
+	Lim           int32     `json:"lim"`
 }
 
 type ListPhotoAlbumItemsRow struct {
@@ -140,7 +153,12 @@ type ListPhotoAlbumItemsRow struct {
 // NULLIF so a zero lim means "no limit" (the original behaviour); callers pass a
 // positive cap to bound the result. Avoids a forgotten lim silently returning 0 rows.
 func (q *Queries) ListPhotoAlbumItems(ctx context.Context, arg ListPhotoAlbumItemsParams) ([]ListPhotoAlbumItemsRow, error) {
-	rows, err := q.db.Query(ctx, listPhotoAlbumItems, arg.CollectionID, arg.Off, arg.Lim)
+	rows, err := q.db.Query(ctx, listPhotoAlbumItems,
+		arg.CollectionID,
+		arg.MaxRatingRank,
+		arg.Off,
+		arg.Lim,
+	)
 	if err != nil {
 		return nil, err
 	}

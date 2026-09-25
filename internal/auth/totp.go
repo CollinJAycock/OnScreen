@@ -2,12 +2,17 @@ package auth
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"fmt"
 	"image/png"
 	"strings"
+	"sync"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/pquerna/otp"
+	"github.com/pquerna/otp/hotp"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -67,19 +72,100 @@ func RenderTOTPQRPNG(otpauthURL string) ([]byte, error) {
 // totp.Validate applies a ±1 step (±30 s) skew window, covering ordinary
 // clock drift between the server and the user's phone.
 //
-// NOT single-use: nothing records which time step a user already consumed, so
-// the same six digits authenticate repeatedly for up to ~90 s (the step plus
-// the ±1 skew). An attacker who observes a code — shoulder-surfing, a shared
-// screen, a phishing relay — can replay it inside that window.
-//
-// Making it single-use needs per-user state (last-consumed step in the users
-// row, or a short-lived Valkey key) checked and written atomically on the
-// verify path; see ValidateTOTPForUser in the auth service for where that
-// belongs. Deliberately not bolted on here: this function is pure and used by
-// enrolment as well as login, and a partial implementation that only covers one
-// caller is worse than a documented gap.
+// NOT single-use on its own: it is pure and records nothing, so the same six
+// digits validate repeatedly for up to ~90 s. Every account-facing path (login
+// second factor, step-up reauth, disable, enrolment confirm) must instead go
+// through MatchTOTPStep + a TOTPReplayGuard, which spends the matched time step
+// so an observed code cannot be replayed.
 func ValidateTOTPCode(code, secret string) bool {
 	return totp.Validate(strings.TrimSpace(code), secret)
+}
+
+// totpPeriod / totpSkew mirror totp.Validate's defaults (and what
+// GenerateTOTPSecret enrols): 30 s steps, ±1 step of clock-drift tolerance.
+const (
+	totpPeriod = 30
+	totpSkew   = 1
+)
+
+// MatchTOTPStep reports which RFC 6238 time step (counter) code is valid for,
+// searching the same ±1-step window totp.Validate accepts. ok=false when the
+// code matches no step in the window. The step is what a TOTPReplayGuard
+// spends to make the code single-use.
+func MatchTOTPStep(code, secret string, now time.Time) (step int64, ok bool) {
+	code = strings.TrimSpace(code)
+	if len(code) != otp.DigitsSix.Length() {
+		return 0, false
+	}
+	current := now.Unix() / totpPeriod
+	opts := hotp.ValidateOpts{Digits: otp.DigitsSix, Algorithm: otp.AlgorithmSHA1}
+	for off := int64(-totpSkew); off <= totpSkew; off++ {
+		c := current + off
+		if c < 0 {
+			continue
+		}
+		// hotp.ValidateCustom compares in constant time.
+		if valid, err := hotp.ValidateCustom(code, uint64(c), secret, opts); err == nil && valid {
+			return c, true
+		}
+	}
+	return 0, false
+}
+
+// TOTPReplayGuard records the TOTP time steps a user has already spent.
+// ConsumeTOTPStep must atomically refuse any step <= the user's last consumed
+// step and otherwise record it — no check-then-set window in which two
+// concurrent submissions of the same code both pass.
+//
+// Implemented by valkey.TOTPReplayGuard (shared across instances) and
+// MemoryTOTPReplayGuard (per process; fallback when Valkey is unreachable).
+type TOTPReplayGuard interface {
+	ConsumeTOTPStep(ctx context.Context, userID uuid.UUID, step int64) (fresh bool, err error)
+}
+
+// memoryStepTTL matches the Valkey guard: after four periods every step that
+// can still validate is newer than the remembered one.
+const memoryStepTTL = 4 * totpPeriod * time.Second
+
+// MemoryTOTPReplayGuard is an in-process TOTPReplayGuard: a mutex-protected map
+// of user → last consumed step with expiry. The zero value is ready to use.
+type MemoryTOTPReplayGuard struct {
+	mu        sync.Mutex
+	last      map[uuid.UUID]memoryStep
+	lastSweep time.Time
+	now       func() time.Time // nil = time.Now (tests override)
+}
+
+type memoryStep struct {
+	step      int64
+	expiresAt time.Time
+}
+
+// ConsumeTOTPStep implements TOTPReplayGuard. Never returns an error.
+func (g *MemoryTOTPReplayGuard) ConsumeTOTPStep(_ context.Context, userID uuid.UUID, step int64) (bool, error) {
+	now := time.Now()
+	if g.now != nil {
+		now = g.now()
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.last == nil {
+		g.last = make(map[uuid.UUID]memoryStep)
+	}
+	// Bound memory: sweep expired entries at most once per TTL.
+	if now.Sub(g.lastSweep) >= memoryStepTTL {
+		for k, e := range g.last {
+			if !now.Before(e.expiresAt) {
+				delete(g.last, k)
+			}
+		}
+		g.lastSweep = now
+	}
+	if e, ok := g.last[userID]; ok && now.Before(e.expiresAt) && step <= e.step {
+		return false, nil
+	}
+	g.last[userID] = memoryStep{step: step, expiresAt: now.Add(memoryStepTTL)}
+	return true, nil
 }
 
 // GenerateRecoveryCodes returns n random single-use codes: `display`

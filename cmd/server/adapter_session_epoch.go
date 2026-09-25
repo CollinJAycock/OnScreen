@@ -11,10 +11,13 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
-// sessionEpochAdapter implements middleware.SessionEpochReader against
-// the read-only pool. The auth middleware calls GetSessionEpoch on
-// every authenticated request, so this has to be cheap — a single
-// indexed PK lookup on users.
+// sessionEpochAdapter implements middleware.SessionEpochReader. It MUST be
+// built on the read-write (primary) pool: revocation is an epoch bump written
+// to the primary, and reading it back from a replica delays the revocation by
+// the replication lag — a logged-out / demoted / deleted user's token keeps
+// working until the replica catches up. The auth middleware calls
+// GetSessionEpoch on every authenticated request, so this has to stay cheap —
+// a single indexed PK lookup on users.
 type sessionEpochAdapter struct{ q *gen.Queries }
 
 func (a *sessionEpochAdapter) GetSessionEpoch(ctx context.Context, userID uuid.UUID) (int64, error) {

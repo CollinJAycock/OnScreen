@@ -215,6 +215,14 @@ func (s *DVRService) CreateSchedule(ctx context.Context, p CreateScheduleParams)
 	if err := validateScheduleParams(p); err != nil {
 		return Schedule{}, err
 	}
+	// Per-user cap: schedules fan out into recordings every match pass, so an
+	// unbounded count (e.g. an all-day channel_block on every channel) let one
+	// account monopolise the tuners and the disk. Only LIVE schedules count
+	// (see countLiveSchedules) — spent one-offs are never cleaned up, so
+	// counting every row locked a user out after 100 lifetime guide clicks.
+	if err := s.checkScheduleCap(ctx, p.UserID); err != nil {
+		return Schedule{}, err
+	}
 	if p.Priority == 0 {
 		p.Priority = 50
 	}
@@ -273,7 +281,22 @@ func (s *DVRService) DeleteSchedule(ctx context.Context, id uuid.UUID) error {
 }
 
 // SetScheduleEnabled toggles without deletion.
+//
+// Re-enabling is subject to the same per-user cap as creating: disabled rules
+// don't count toward it, so without this check a user could park rules
+// disabled, create more, and switch them all back on.
 func (s *DVRService) SetScheduleEnabled(ctx context.Context, id uuid.UUID, enabled bool) error {
+	if enabled {
+		sc, err := s.q.GetSchedule(ctx, id)
+		if err != nil {
+			return fmt.Errorf("get schedule: %w", err)
+		}
+		if !sc.Enabled {
+			if err := s.checkScheduleCap(ctx, sc.UserID); err != nil {
+				return err
+			}
+		}
+	}
 	if err := s.q.SetScheduleEnabled(ctx, id, enabled); err != nil {
 		return fmt.Errorf("set schedule enabled: %w", err)
 	}
@@ -411,8 +434,14 @@ func (s *DVRService) Match(ctx context.Context) (int, int, error) {
 		_ = tuneCount // reserved for conflict resolver
 		// Upsert the recording. The SQL's ON CONFLICT guard prevents
 		// duplicates for the same (user, program) pair.
-		startsAt := c.program.StartsAt.Add(-time.Duration(c.sched.PaddingPreSec) * time.Second)
-		endsAt := c.program.EndsAt.Add(time.Duration(c.sched.PaddingPostSec) * time.Second)
+		startsAt := c.program.StartsAt.Add(-clampPadding(c.sched.PaddingPreSec, maxPaddingPreSec))
+		endsAt := c.program.EndsAt.Add(clampPadding(c.sched.PaddingPostSec, maxPaddingPostSec))
+		if endsAt.Sub(startsAt) > maxRecordingDuration {
+			s.logger.WarnContext(ctx, "dvr: skipping over-long recording window",
+				"schedule_id", c.sched.ID, "title", c.program.Title,
+				"starts_at", startsAt, "ends_at", endsAt)
+			continue
+		}
 		schedIDPtr := &c.sched.ID
 		_, err := s.q.UpsertRecording(ctx, UpsertRecordingParams{
 			ScheduleID: schedIDPtr,
@@ -535,5 +564,101 @@ func validateScheduleParams(p CreateScheduleParams) error {
 	default:
 		return fmt.Errorf("%w: unknown schedule type %q", ErrInvalidSchedule, p.Type)
 	}
+	// Bound the numeric knobs. Padding went straight from the request to the
+	// DB: a post-padding near the int32 maximum produced a recording ending
+	// decades out, which held a tuner and grew one MP4 until the disk filled;
+	// a huge pre-padding started it immediately. 0 means "use the default".
+	if p.PaddingPreSec < 0 || p.PaddingPreSec > maxPaddingPreSec {
+		return fmt.Errorf("%w: padding_pre_sec must be 0-%d", ErrInvalidSchedule, maxPaddingPreSec)
+	}
+	if p.PaddingPostSec < 0 || p.PaddingPostSec > maxPaddingPostSec {
+		return fmt.Errorf("%w: padding_post_sec must be 0-%d", ErrInvalidSchedule, maxPaddingPostSec)
+	}
+	if p.Priority < 0 || p.Priority > maxSchedulePriority {
+		return fmt.Errorf("%w: priority must be 0-%d", ErrInvalidSchedule, maxSchedulePriority)
+	}
+	if p.RetentionDays != nil && (*p.RetentionDays < 1 || *p.RetentionDays > maxRetentionDays) {
+		return fmt.Errorf("%w: retention_days must be 1-%d", ErrInvalidSchedule, maxRetentionDays)
+	}
 	return nil
+}
+
+// DVR bounds. Recordings are started by any signed-in user, so every knob that
+// turns into tuner time or disk has a ceiling.
+const (
+	maxPaddingPreSec     = 15 * 60     // 15 min early start
+	maxPaddingPostSec    = 3 * 60 * 60 // 3 h overrun (live sport)
+	maxSchedulePriority  = 100
+	maxRetentionDays     = 3650
+	maxSchedulesPerUser  = 100
+	maxRecordingDuration = 12 * time.Hour // programme + padding
+)
+
+// liveScheduleCounter is the exact SQL count behind the per-user cap
+// (gen.CountLiveSchedulesForUser). It is an optional extension of DVRQuerier —
+// asserted at runtime rather than added to the interface — so an adapter that
+// doesn't implement it yet still compiles and falls back to an in-Go count.
+type liveScheduleCounter interface {
+	CountLiveSchedulesForUser(ctx context.Context, userID uuid.UUID) (int64, error)
+}
+
+// checkScheduleCap returns ErrInvalidSchedule when userID already has
+// maxSchedulesPerUser live schedules. A count failure is returned as-is (a
+// 500), not treated as "under the cap".
+func (s *DVRService) checkScheduleCap(ctx context.Context, userID uuid.UUID) error {
+	n, err := s.countLiveSchedules(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("count schedules: %w", err)
+	}
+	if n >= maxSchedulesPerUser {
+		return fmt.Errorf("%w: schedule limit (%d) reached", ErrInvalidSchedule, maxSchedulesPerUser)
+	}
+	return nil
+}
+
+// countLiveSchedules counts the user's schedules that can still produce a
+// recording: enabled series / channel_block rules, plus enabled one-offs whose
+// programme hasn't finished airing. Spent one-offs are left in place (their
+// recordings' retention JOINs on them) but no longer count.
+func (s *DVRService) countLiveSchedules(ctx context.Context, userID uuid.UUID) (int, error) {
+	if c, ok := s.q.(liveScheduleCounter); ok {
+		n, err := c.CountLiveSchedulesForUser(ctx, userID)
+		return int(n), err
+	}
+	rows, err := s.q.ListSchedulesForUser(ctx, userID)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, sc := range rows {
+		if scheduleLiveApprox(sc) {
+			n++
+		}
+	}
+	return n, nil
+}
+
+// scheduleLiveApprox is countLiveSchedules' fallback when the querier has no
+// EPG-aware count: without programme end times, a one-off stays live until
+// the EPG trim (a day after it airs) NULLs its program_id.
+func scheduleLiveApprox(sc Schedule) bool {
+	if !sc.Enabled {
+		return false
+	}
+	if sc.Type == ScheduleTypeOnce {
+		return sc.ProgramID != nil
+	}
+	return true
+}
+
+// clampPadding bounds a stored padding value at match time, so schedule rows
+// written before validation existed can't produce an unbounded recording.
+func clampPadding(v, max int32) time.Duration {
+	if v < 0 {
+		v = 0
+	}
+	if v > max {
+		v = max
+	}
+	return time.Duration(v) * time.Second
 }

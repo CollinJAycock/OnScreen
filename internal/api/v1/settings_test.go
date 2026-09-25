@@ -988,7 +988,7 @@ func TestSettings_UpdateLDAP_PreservesMaskedPassword(t *testing.T) {
 		},
 	}
 	h := newSettingsHandler(svc)
-	body := `{"ldap":{"enabled":true,"bind_password":"****","host":"new-host:636"}}`
+	body := `{"ldap":{"enabled":true,"bind_password":"****","host":"ldap.example.com:389","bind_dn":"cn=svc2"}}`
 	req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.Update(rec, req)
@@ -999,8 +999,32 @@ func TestSettings_UpdateLDAP_PreservesMaskedPassword(t *testing.T) {
 	if svc.ldap.BindPassword != "original-pw" {
 		t.Errorf("masked password was overwritten: got %q", svc.ldap.BindPassword)
 	}
-	if svc.ldap.Host != "new-host:636" {
-		t.Errorf("host not updated: got %q", svc.ldap.Host)
+	if svc.ldap.BindDN != "cn=svc2" {
+		t.Errorf("bind_dn not updated: got %q", svc.ldap.BindDN)
+	}
+}
+
+// Re-pointing LDAP at a new host while round-tripping the mask is refused:
+// the next bind would send the stored password to the new host. Nothing is
+// written.
+func TestSettings_UpdateLDAP_NewHostWithMaskRefused(t *testing.T) {
+	svc := &mockSettingsService{
+		ldap: settings.LDAPConfig{
+			Enabled: true, Host: "ldap.example.com:389",
+			BindDN: "cn=svc", BindPassword: "original-pw",
+		},
+	}
+	h := newSettingsHandler(svc)
+	body := `{"ldap":{"enabled":true,"bind_password":"****","host":"new-host:636"}}`
+	req := httptest.NewRequest("PATCH", "/", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	h.Update(rec, req)
+
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status: got %d, want 422; body=%s", rec.Code, rec.Body.String())
+	}
+	if svc.ldap.Host != "ldap.example.com:389" || svc.ldap.BindPassword != "original-pw" {
+		t.Errorf("refused update was applied: %+v", svc.ldap)
 	}
 }
 

@@ -12,6 +12,31 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countLiveSchedulesForUser = `-- name: CountLiveSchedulesForUser :one
+SELECT COUNT(*)
+FROM schedules s
+LEFT JOIN epg_programs p ON p.id = s.program_id
+WHERE s.user_id = $1
+  AND s.enabled = TRUE
+  AND (s.type <> 'once' OR p.ends_at > NOW())
+`
+
+// The per-user schedule cap counts only rules that can still produce a
+// recording: enabled series / channel_block rules, and enabled one-off
+// ('once') rules whose programme has not finished airing. Every guide
+// "Record" click creates a 'once' row and nothing deletes it after it airs
+// (EPG trimming only NULLs program_id, and deleting it would drop the
+// retention its recordings JOIN on), so counting every row locked a user
+// out of scheduling after 100 lifetime one-offs. A NULL program_id or an
+// ended programme makes p.ends_at > NOW() false/NULL, so spent one-offs
+// drop out without any row being touched.
+func (q *Queries) CountLiveSchedulesForUser(ctx context.Context, userID uuid.UUID) (int64, error) {
+	row := q.db.QueryRow(ctx, countLiveSchedulesForUser, userID)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createSchedule = `-- name: CreateSchedule :one
 
 INSERT INTO schedules (
@@ -272,6 +297,9 @@ SELECT id, user_id, type, program_id, channel_id, title_match, new_only,
        priority, retention_days, enabled, created_at, updated_at
 FROM schedules
 WHERE enabled = TRUE
+  AND (type <> 'once'
+       OR EXISTS (SELECT 1 FROM epg_programs p
+                  WHERE p.id = schedules.program_id AND p.ends_at > NOW()))
 ORDER BY priority DESC, created_at
 LIMIT 5000
 `
@@ -280,6 +308,10 @@ LIMIT 5000
 // ignored (but their existing scheduled recordings continue normally).
 // Hard-capped at 5000 — generous ceiling so a ridiculous fleet of
 // title-match rules can't blow up the matcher's memory each tick.
+// Spent one-offs (programme finished, or trimmed from the EPG) are skipped
+// with the same rule CountLiveSchedulesForUser uses: the matcher has nothing
+// to do for them, and since nothing deletes them they would otherwise pile up
+// until they pushed live rules past the cap and recordings silently stopped.
 func (q *Queries) ListEnabledSchedules(ctx context.Context) ([]Schedule, error) {
 	rows, err := q.db.Query(ctx, listEnabledSchedules)
 	if err != nil {

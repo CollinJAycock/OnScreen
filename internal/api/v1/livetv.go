@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/livetv"
 )
@@ -58,6 +59,11 @@ type LiveTVHandler struct {
 	// limits (matches the items handler).
 	watchLimit ItemWatchLimit
 	accrue     *usageAccruer
+
+	// chanEnabled memoizes channel enabled-ness for the segment handler's
+	// non-admin gate (livetv_stream.go), which runs every couple of seconds
+	// per viewer. Zero value is ready to use.
+	chanEnabled channelEnabledCache
 
 	// RTMP broadcast ("go live") support. rtmp is nil when the embedded RTMP
 	// ingest server isn't enabled; the broadcast endpoints then 503.
@@ -342,6 +348,12 @@ func (h *LiveTVHandler) ListChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	enabledOnly := r.URL.Query().Get("enabled") != "false"
+	// Only admins may see disabled channels (the channel-management UI).
+	// Disabling a channel is how an admin takes it away from viewers, so a
+	// non-admin must not be able to opt back in with ?enabled=false.
+	if c := middleware.ClaimsFromContext(r.Context()); c == nil || !c.IsAdmin {
+		enabledOnly = true
+	}
 	rows, err := h.svc.ListChannels(r.Context(), enabledOnly)
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list channels", "err", err)

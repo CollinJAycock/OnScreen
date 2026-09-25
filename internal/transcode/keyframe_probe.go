@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // keyframeWindowSec is how far back of the requested seek time we scan
@@ -57,6 +59,8 @@ func FindPreviousKeyframe(ctx context.Context, path string, targetSec float64) f
 		"-read_intervals", interval,
 		"-show_entries", "packet=pts_time,flags",
 		"-print_format", "json",
+		// Confine the demuxer to this input's protocols (must precede input).
+		"-protocol_whitelist", ffsafe.Whitelist(path),
 		path,
 	}
 	out, err := exec.CommandContext(ctx, "ffprobe", args...).Output()

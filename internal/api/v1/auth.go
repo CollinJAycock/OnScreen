@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"regexp"
 	"strings"
@@ -16,6 +17,79 @@ import (
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
 )
+
+// isLocalPeer reports whether the request's client address is on the local host
+// or a private/link-local network.
+//
+// It reads RemoteAddr, which TrustedRealIP rewrites from a trusted proxy's
+// X-Forwarded-For / X-Real-IP — but ONLY when the proxy actually sends one of
+// those headers. The bundled docker/nginx.conf sample and cloudflared both do,
+// so on a supported deployment a public client behind the proxy correctly shows
+// its real public IP. The gate's soundness therefore depends on the fronting
+// proxy forwarding the client IP: a same-host proxy that forwards WITHOUT
+// setting XFF would leave RemoteAddr as its own loopback address and a remote
+// client would read as local. That is a proxy misconfiguration, but operators
+// exposing setup through a custom proxy should confirm it forwards the client
+// IP (or complete setup over the LAN / set ALLOW_PUBLIC_SETUP deliberately).
+func isLocalPeer(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsUnspecified() {
+		return true
+	}
+	// Tailscale / CGNAT (100.64.0.0/10): a tailnet peer is the operator's own
+	// device, and the TV clients already treat this range as local.
+	if cgnatRange.Contains(ip) {
+		return true
+	}
+	// A dual-stack LAN hands clients GLOBAL IPv6 addresses, which IsPrivate
+	// rejects — a browser on the same segment connecting over IPv6 would be
+	// refused setup. Accept a peer inside one of this host's own on-link
+	// prefixes: an internet client cannot source from our subnet.
+	return onLinkPeer(ip)
+}
+
+var cgnatRange = &net.IPNet{IP: net.IPv4(100, 64, 0, 0), Mask: net.CIDRMask(10, 32)}
+
+// onLinkPeer reports whether an IPv6 ip falls inside a /64-or-longer prefix
+// assigned to one of this host's interfaces (skipping loopback, whose peers
+// IsLoopback covers). IPv4 is deliberately excluded: a VPS's public IPv4
+// subnet is routinely shared with other tenants, whereas an IPv6 /64 is a
+// single site-owned segment.
+func onLinkPeer(ip net.IP) bool {
+	if ip.To4() != nil {
+		return false
+	}
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return false
+	}
+	for _, ifc := range ifaces {
+		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addrs {
+			n, ok := a.(*net.IPNet)
+			if !ok || n.IP.To4() != nil {
+				continue
+			}
+			if ones, bits := n.Mask.Size(); bits == 128 && ones >= 64 && n.Contains(ip) {
+				return true
+			}
+		}
+	}
+	return false
+}
 
 // usernameRe matches valid usernames: 2-32 alphanumeric characters or underscores.
 var usernameRe = regexp.MustCompile(`^[a-zA-Z0-9_]{2,32}$`)
@@ -79,9 +153,18 @@ type UserInfo struct {
 
 // AuthHandler handles auth endpoints.
 type AuthHandler struct {
-	svc    AuthService
-	logger *slog.Logger
-	audit  *audit.Logger
+	svc              AuthService
+	logger           *slog.Logger
+	audit            *audit.Logger
+	allowPublicSetup bool
+}
+
+// WithSetupPolicy sets whether first-run admin creation may come from a
+// non-local client. Default (false) confines the empty-users-table window to
+// loopback / private-network peers.
+func (h *AuthHandler) WithSetupPolicy(allowPublic bool) *AuthHandler {
+	h.allowPublicSetup = allowPublic
+	return h
 }
 
 // NewAuthHandler creates an AuthHandler.
@@ -169,20 +252,21 @@ func (h *AuthHandler) Logout(w http.ResponseWriter, r *http.Request) {
 	if c, err := r.Cookie(cookieRefreshToken); err == nil {
 		refreshToken = c.Value
 	}
-	// JSON-body path is for native clients (Tauri / Android TV) that
-	// don't have cookies. Require an authenticated request so an
-	// unauthenticated POST with a stolen refresh token (briefly observed
-	// in a log line, screenshot, etc.) can't force-revoke a victim's
-	// session — the prior unauthenticated path was a low-effort DOS
-	// against any user whose token was momentarily exposed.
+	// JSON-body path is for native clients (Tauri / TV / Android) that don't
+	// have cookies. It does NOT require a valid access token: sign-out is
+	// exactly when a client's access token has most likely expired, and
+	// gating on it made those sign-outs silently skip the revoke, leaving the
+	// refresh token alive server-side for its full lifetime. Requiring claims
+	// never protected anything either — whoever holds a refresh token can
+	// already spend it on /auth/refresh, and reuse detection then ends the
+	// victim's session family, so revoking it is strictly less power than
+	// possessing it.
 	if refreshToken == "" {
-		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-			var body struct {
-				RefreshToken string `json:"refresh_token"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.RefreshToken != "" {
-				refreshToken = body.RefreshToken
-			}
+		var body struct {
+			RefreshToken string `json:"refresh_token"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err == nil && body.RefreshToken != "" {
+			refreshToken = body.RefreshToken
 		}
 	}
 	if refreshToken != "" {
@@ -209,6 +293,30 @@ func (h *AuthHandler) Register(w http.ResponseWriter, r *http.Request) {
 			respond.Forbidden(w, r)
 			return
 		}
+	} else if !h.allowPublicSetup && !isLocalPeer(r) {
+		// First-run: while the users table is empty this call makes the caller
+		// the admin. Confine that to a loopback / private-network client so a
+		// fresh install briefly reachable on the internet can't be claimed by a
+		// stranger before the operator finishes setup. See isLocalPeer for the
+		// proxy-forwarding assumption this rests on.
+		if h.logger != nil {
+			h.logger.WarnContext(r.Context(), "first-run register refused: non-local client",
+				"remote_addr", r.RemoteAddr)
+		}
+		respond.Error(w, r, http.StatusForbidden, "SETUP_LOCAL_ONLY",
+			"initial setup must be completed from the local network; set ALLOW_PUBLIC_SETUP=true to override")
+		return
+	} else if !h.allowPublicSetup && !setupHostAllowed(r) {
+		// A LAN peer is not enough on its own: DNS rebinding lets a web page on
+		// any domain reach this box from a LAN browser as same-origin and read
+		// the response. See setupHostAllowed.
+		if h.logger != nil {
+			h.logger.WarnContext(r.Context(), "first-run register refused: non-local Host",
+				"host", r.Host)
+		}
+		respond.Error(w, r, http.StatusForbidden, "SETUP_LOCAL_HOST_ONLY",
+			"initial setup must be opened via the server's IP address or a local hostname; set ALLOW_PUBLIC_SETUP=true to override")
+		return
 	}
 
 	var body struct {

@@ -312,9 +312,9 @@ type Querier interface {
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*PhotoMetadata, error)
 	ListPhotosByLibrary(ctx context.Context, p ListPhotosParams) ([]PhotoListItem, error)
 	CountPhotosByLibrary(ctx context.Context, p ListPhotosParams) (int64, error)
-	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID) ([]PhotoTimelineBucket, error)
+	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]PhotoTimelineBucket, error)
 	ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsParams) ([]PhotoMapPoint, error)
-	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error)
 	SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error)
 	CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error)
 }
@@ -334,11 +334,12 @@ type EventCollection struct {
 // ListPhotosParams filters and paginates a photo-list query. From/To
 // constrain by COALESCE(taken_at, created_at); a nil bound means "open."
 type ListPhotosParams struct {
-	LibraryID uuid.UUID
-	From      *time.Time
-	To        *time.Time
-	Limit     int32
-	Offset    int32
+	LibraryID     uuid.UUID
+	From          *time.Time
+	To            *time.Time
+	Limit         int32
+	Offset        int32
+	MaxRatingRank *int // content_rating_rank() ceiling; nil = unrestricted
 }
 
 // PhotoListItem is the join of media_items + photo_metadata returned to
@@ -373,12 +374,13 @@ type PhotoTimelineBucket struct {
 // library doesn't melt the wire; callers are expected to zoom in to narrow
 // the bbox if they hit the cap.
 type ListPhotoMapPointsParams struct {
-	LibraryID uuid.UUID
-	MinLat    *float64
-	MaxLat    *float64
-	MinLon    *float64
-	MaxLon    *float64
-	Limit     int32
+	LibraryID     uuid.UUID
+	MinLat        *float64
+	MaxLat        *float64
+	MinLon        *float64
+	MaxLon        *float64
+	Limit         int32
+	MaxRatingRank *int // content_rating_rank() ceiling; nil = unrestricted
 }
 
 // PhotoMapPoint is one geotagged photo as plotted on a map. PosterPath is
@@ -416,6 +418,8 @@ type SearchPhotosByExifParams struct {
 	HasGPS      *bool
 	Limit       int32
 	Offset      int32
+	// MaxRatingRank is the content_rating_rank() ceiling; nil = unrestricted.
+	MaxRatingRank *int
 }
 
 // PhotoSearchResult is one row returned by SearchPhotosByExif. Carries the
@@ -1190,8 +1194,8 @@ func (s *Service) CountPhotos(ctx context.Context, p ListPhotosParams) (int64, e
 // ListPhotoTimeline returns (year, month, count) buckets for the timeline
 // sidebar. Always returns the full library — pagination would defeat the
 // purpose of a sticky-section index.
-func (s *Service) ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID) ([]PhotoTimelineBucket, error) {
-	rows, err := s.ro.ListPhotoTimelineBuckets(ctx, libraryID)
+func (s *Service) ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]PhotoTimelineBucket, error) {
+	rows, err := s.ro.ListPhotoTimelineBuckets(ctx, libraryID, maxRatingRank)
 	if err != nil {
 		return nil, fmt.Errorf("list photo timeline: %w", err)
 	}
@@ -1213,8 +1217,8 @@ func (s *Service) ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsPa
 // CountPhotoMapPoints returns the total number of geotagged photos in the
 // library (ignoring any bbox). Used to surface "you have X mappable photos"
 // even when the current view is empty.
-func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID)
+func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error) {
+	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID, maxRatingRank)
 	if err != nil {
 		return 0, fmt.Errorf("count photo map points: %w", err)
 	}

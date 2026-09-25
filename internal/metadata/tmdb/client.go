@@ -620,12 +620,15 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 	u := baseURL + path + "?" + params.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		return fmt.Errorf("build request: %w", err)
+		return fmt.Errorf("build request: %w", c.redactKey(err))
 	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("http: %w", err)
+		// A transport error is a *url.Error whose message embeds the full URL —
+		// including ?api_key=. Scrub it before it reaches the logs, the admin
+		// log ring and trace spans.
+		return fmt.Errorf("http: %w", c.redactKey(err))
 	}
 	defer resp.Body.Close()
 
@@ -919,4 +922,18 @@ type tmdbEpisode struct {
 	Runtime       int     `json:"runtime"`
 	VoteAverage   float64 `json:"vote_average"`
 	StillPath     string  `json:"still_path"`
+}
+
+// redactKey removes the API key from a *url.Error's URL so the key never
+// appears in an error string. Other errors are returned unchanged.
+func (c *Client) redactKey(err error) error {
+	if c.apiKey == "" {
+		return err
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		ue.URL = strings.ReplaceAll(ue.URL, url.QueryEscape(c.apiKey), "REDACTED")
+		ue.URL = strings.ReplaceAll(ue.URL, c.apiKey, "REDACTED")
+	}
+	return err
 }

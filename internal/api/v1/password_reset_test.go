@@ -22,6 +22,9 @@ import (
 // ── mock PasswordResetDB ─────────────────────────────────────────────────────
 
 type mockPasswordResetDB struct {
+	// invalidatedFor records InvalidateUserResetTokens calls.
+	invalidatedFor []uuid.UUID
+
 	// mu guards the *Called flags. ForgotPassword now does its token
 	// creation + SMTP send on a detached goroutine (the synchronous version
 	// leaked account existence through response latency), so the test
@@ -78,6 +81,13 @@ func (m *mockPasswordResetDB) CreateResetToken(_ context.Context, _ uuid.UUID, _
 
 func (m *mockPasswordResetDB) GetResetToken(_ context.Context, _ string) (PRToken, error) {
 	return m.token, m.tokenErr
+}
+
+func (m *mockPasswordResetDB) InvalidateUserResetTokens(_ context.Context, uid uuid.UUID) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.invalidatedFor = append(m.invalidatedFor, uid)
+	return nil
 }
 
 func (m *mockPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) (bool, error) {
@@ -331,6 +341,10 @@ func TestResetPassword_Success(t *testing.T) {
 	}
 	if !db.markUsedCalled {
 		t.Error("expected MarkResetTokenUsed to be called")
+	}
+	// Every OTHER outstanding reset link for the user must die with this reset.
+	if len(db.invalidatedFor) != 1 || db.invalidatedFor[0] != uid {
+		t.Errorf("expected InvalidateUserResetTokens(%s) once; got %v", uid, db.invalidatedFor)
 	}
 }
 

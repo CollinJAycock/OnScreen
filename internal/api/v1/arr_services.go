@@ -336,6 +336,15 @@ func (h *ArrServicesHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		params.BaseUrl = trimmed
+		// Re-pointing a service at a new host must come with its key. Keeping
+		// the stored key here would let the next probe or request approval send
+		// it to whatever URL was just typed in — the exfiltration Probe itself
+		// refuses (it only reuses the stored key for the stored base_url).
+		if !strings.EqualFold(trimmed, strings.TrimRight(existing.BaseUrl, "/")) &&
+			(body.APIKey == nil || strings.TrimSpace(*body.APIKey) == "") {
+			respond.ValidationError(w, r, "re-enter the API key when changing base_url")
+			return
+		}
 	}
 	if body.APIKey != nil && strings.TrimSpace(*body.APIKey) != "" {
 		sealed, serr := arrcrypt.Seal(h.enc, id, strings.TrimSpace(*body.APIKey))
@@ -510,10 +519,20 @@ func (h *ArrServicesHandler) Probe(w http.ResponseWriter, r *http.Request) {
 			respond.InternalError(w, r)
 			return
 		}
+		storedURL := strings.TrimRight(existing.BaseUrl, "/")
 		if body.BaseURL == "" {
-			body.BaseURL = existing.BaseUrl
+			body.BaseURL = storedURL
 		}
 		if body.APIKey == "" {
+			// Only reuse the stored (never-displayed) key against the URL it was
+			// saved for. Otherwise the probe would decrypt the key and send it as
+			// X-Api-Key to whatever base_url the caller supplied — a way for a
+			// hijacked admin session to exfiltrate a secret the UI never reveals.
+			// A new URL must be tested with the key re-entered.
+			if !strings.EqualFold(body.BaseURL, storedURL) {
+				respond.ValidationError(w, r, "re-enter the API key to test a different base_url")
+				return
+			}
 			// Stored form, not usable as a credential until opened.
 			plain, derr := arrcrypt.Open(h.enc, existing.ID, existing.ApiKey)
 			if derr != nil {

@@ -111,7 +111,11 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	// "audio-only", skipped the video capability check entirely, and this
 	// endpoint handed out directPlay for video the client can't decode; the
 	// client then trusted the verdict over its own heuristics.
-	h.lazyReprobe(ctx, file)
+	if err := h.lazyReprobe(ctx, file); err != nil {
+		respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
+			"this file is not a playable media container")
+		return
+	}
 
 	caps, hasProfile := clientCaps(r, body)
 	serverCaps := transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}

@@ -112,6 +112,56 @@ func TestPair_CreateCode_ReturnsPINAndDeviceToken(t *testing.T) {
 	}
 }
 
+// TestPair_Pending_ReturnsDeviceInfo is the regression test for the broken
+// confirmation screen: Pending must resolve PIN -> device token -> JSON record
+// and surface the requesting device's IP / user-agent, not 404. Previously it
+// unmarshalled the raw token string as a record and always 404'd, leaving the
+// user with only the attacker-suppliable device_name to judge a pairing by.
+func TestPair_Pending_ReturnsDeviceInfo(t *testing.T) {
+	store := newMemPairStore()
+	h := newPairHandler(store, nil)
+
+	// Create a pending code from a specific client.
+	create := httptest.NewRequest("POST", "/api/v1/auth/pair/code", nil)
+	create.RemoteAddr = "203.0.113.9:5555"
+	create.Header.Set("User-Agent", "LivingRoomTV/1.2")
+	crec := httptest.NewRecorder()
+	h.CreateCode(crec, create)
+	if crec.Code != http.StatusCreated {
+		t.Fatalf("CreateCode status %d: %s", crec.Code, crec.Body.String())
+	}
+	pin, _ := decodePairData(t, crec.Body.Bytes())["pin"].(string)
+
+	// Pending requires an authenticated caller (the person confirming).
+	req := httptest.NewRequest("GET", "/api/v1/auth/pair/pending?pin="+pin, nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+	h.Pending(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Pending status: got %d, want 200; body=%s", rec.Code, rec.Body.String())
+	}
+	data := decodePairData(t, rec.Body.Bytes())
+	if ip, _ := data["ip"].(string); ip != "203.0.113.9" {
+		t.Errorf("ip = %q, want the requesting client 203.0.113.9", ip)
+	}
+	if ua, _ := data["user_agent"].(string); ua != "LivingRoomTV/1.2" {
+		t.Errorf("user_agent = %q, want LivingRoomTV/1.2", ua)
+	}
+}
+
+// TestPair_Pending_UnknownPIN404 keeps the not-found path intact.
+func TestPair_Pending_UnknownPIN404(t *testing.T) {
+	store := newMemPairStore()
+	h := newPairHandler(store, nil)
+	req := httptest.NewRequest("GET", "/api/v1/auth/pair/pending?pin=000000", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+	h.Pending(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("unknown pin: got %d, want 404", rec.Code)
+	}
+}
+
 func TestPair_CreateCode_StoreFailureReturns500(t *testing.T) {
 	store := newMemPairStore()
 	store.failSet = true

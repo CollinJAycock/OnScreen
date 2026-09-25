@@ -8,6 +8,7 @@ import (
 	"os"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -110,6 +111,17 @@ func (h *LiveTVHandler) StreamPlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A disabled channel is off-limits to viewers even by direct id (admins
+	// may still preview it). Checked before Acquire so a disabled channel never
+	// costs a tune or a transcode.
+	if c := middleware.ClaimsFromContext(r.Context()); c == nil || !c.IsAdmin {
+		ch, cerr := h.svc.GetChannel(r.Context(), id)
+		if cerr != nil || !ch.Enabled {
+			respond.NotFound(w, r)
+			return
+		}
+	}
+
 	session, err := h.proxy.Acquire(r.Context(), id)
 	if err != nil {
 		switch {
@@ -187,13 +199,31 @@ func (h *LiveTVHandler) StreamSegment(w http.ResponseWriter, r *http.Request) {
 	// Same parental gate as the playlist — the playlist check alone only
 	// covers session START; a viewer already mid-stream when their allowed
 	// window closes must stop within the memo TTL, not at the next channel
-	// change. Segment fetches are also the accrual signal: live TV counted
-	// ZERO usage against the daily budget before this, no matter how long
-	// the profile watched.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
-		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
+	// change.
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims != nil && watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
+		return
+	}
+
+	// Same disabled-channel rule as the playlist (and in the same order after
+	// the parental gate). The playlist gate alone left a hole: while any
+	// session for a disabled channel is running (an admin previewing it, or
+	// viewers mid-stream when it was disabled), a non-admin who knows the
+	// channel id could fetch its segments directly — the names are
+	// sequential. Memoized briefly: this runs on every segment, and a disable
+	// still takes effect within channelEnabledTTL.
+	if claims == nil || !claims.IsAdmin {
+		if !h.channelEnabledForViewers(r.Context(), id) {
+			respond.NotFound(w, r)
 			return
 		}
+	}
+
+	// Segment fetches are the accrual signal: live TV counted ZERO usage
+	// against the daily budget before this, no matter how long the profile
+	// watched. Accrued only once the request is allowed, so a refused fetch
+	// never counts as viewing.
+	if claims != nil {
 		h.accrue.Tick(r.Context(), h.logger, claims.UserID)
 	}
 
@@ -221,4 +251,62 @@ func (h *LiveTVHandler) StreamSegment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "video/mp2t")
 	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeContent(w, r, name, time.Time{}, f)
+}
+
+// channelEnabledTTL bounds how long the segment gate trusts a memoized
+// channel enabled flag. Short enough that disabling a channel cuts off
+// non-admin segment fetches within seconds; long enough to spare the DB a
+// lookup on every 2 s segment of every viewer.
+const channelEnabledTTL = 5 * time.Second
+
+// channelEnabledCacheMax bounds the memo. Only channels that exist are ever
+// stored (lookup failures aren't cached), so the real bound is the channel
+// count; this is a backstop that triggers a sweep of expired entries.
+const channelEnabledCacheMax = 4096
+
+type channelEnabledEntry struct {
+	enabled bool
+	expires time.Time
+}
+
+// channelEnabledCache is a tiny TTL memo of channel id → enabled.
+type channelEnabledCache struct {
+	mu      sync.Mutex
+	entries map[uuid.UUID]channelEnabledEntry
+}
+
+// channelEnabledForViewers reports whether a non-admin may stream channel id:
+// it exists and is enabled. Fails closed — an unknown id or a lookup error is
+// "no" and is not cached, so the memo only ever holds real channels.
+func (h *LiveTVHandler) channelEnabledForViewers(ctx context.Context, id uuid.UUID) bool {
+	now := time.Now()
+	c := &h.chanEnabled
+	c.mu.Lock()
+	if e, ok := c.entries[id]; ok && now.Before(e.expires) {
+		c.mu.Unlock()
+		return e.enabled
+	}
+	c.mu.Unlock()
+
+	ch, err := h.svc.GetChannel(ctx, id)
+	if err != nil {
+		return false
+	}
+
+	c.mu.Lock()
+	if c.entries == nil {
+		c.entries = make(map[uuid.UUID]channelEnabledEntry)
+	}
+	if len(c.entries) >= channelEnabledCacheMax {
+		for k, e := range c.entries {
+			if !now.Before(e.expires) {
+				delete(c.entries, k)
+			}
+		}
+	}
+	if len(c.entries) < channelEnabledCacheMax {
+		c.entries[id] = channelEnabledEntry{enabled: ch.Enabled, expires: now.Add(channelEnabledTTL)}
+	}
+	c.mu.Unlock()
+	return ch.Enabled
 }

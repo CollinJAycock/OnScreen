@@ -77,6 +77,10 @@ func (s *stubPasswordResetDB) CreateResetToken(_ context.Context, _ uuid.UUID, _
 func (s *stubPasswordResetDB) GetResetToken(_ context.Context, _ string) (v1.PRToken, error) {
 	return s.token, s.tokenErr
 }
+func (s *stubPasswordResetDB) InvalidateUserResetTokens(_ context.Context, _ uuid.UUID) error {
+	return nil
+}
+
 func (s *stubPasswordResetDB) MarkResetTokenUsed(_ context.Context, _ uuid.UUID) (bool, error) {
 	return true, nil
 }

@@ -77,6 +77,11 @@ func NewS3(cfg S3Config) (*S3, error) {
 		AllowPrivate:  true,
 		AllowLoopback: true,
 	}).DialContext
+	// minio's DefaultTransport honours HTTP(S)_PROXY. Through a proxy the guard
+	// above only ever sees the PROXY's address, so an endpoint of
+	// 169.254.169.254 would be fetched by the proxy on our behalf — exactly the
+	// bypass the guard exists to stop. Dial the endpoint directly.
+	transport.Proxy = nil
 	client, err := minio.New(cfg.Endpoint, &minio.Options{
 		Creds:     credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure:    cfg.UseSSL,

@@ -30,6 +30,30 @@ func realKey() []byte {
 	return []byte("3f7a9c2e8b1d4f60a5c8e1b4d7f0a3c6")
 }
 
+// TestValidateSecretKey_RejectsShippedPlaceholders pins that the exact
+// placeholder strings from the example configs are refused — they pass the
+// entropy floor as raw bytes, so without an explicit reject a server booted
+// from an unedited .env would run with a publicly known key.
+func TestValidateSecretKey_RejectsShippedPlaceholders(t *testing.T) {
+	placeholders := []string{
+		"change-me-to-a-random-32-byte-string",
+		"change-me-generate-with-openssl-rand--hex-32",
+		"REPLACE-ME-32-RANDOM-BYTES-XXXXXXX",
+		"CHANGEME-changeme-changeme-changeme",
+		"your-secret-key-goes-here-000000",
+		"dev-secret-key-change-in-production-32b", // old `make dev` default
+	}
+	for _, p := range placeholders {
+		if err := validateSecretKey(p); err == nil {
+			t.Errorf("placeholder %q must be rejected", p)
+		}
+	}
+	// A real random-looking key must still pass.
+	if err := validateSecretKey(string(realKey())); err != nil {
+		t.Errorf("real key rejected: %v", err)
+	}
+}
+
 func TestValidateSecretKey_RawBytes32(t *testing.T) {
 	if err := validateSecretKey(string(realKey())); err != nil {
 		t.Errorf("32-byte raw key should be valid: %v", err)

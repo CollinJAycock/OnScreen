@@ -39,6 +39,8 @@ var (
 	ErrNotOwner           = errors.New("requests: not owned by user")
 	ErrNoArrService       = errors.New("requests: no arr service configured for this media type")
 	ErrArrServiceMismatch = errors.New("requests: arr service kind does not match request type")
+	ErrInvalidSeasons     = errors.New("requests: invalid season list")
+	ErrTooManyPending     = errors.New("requests: too many pending requests")
 	ErrArrServiceDisabled = errors.New("requests: arr service is disabled")
 	ErrArrAddFailed       = errors.New("requests: arr instance rejected the add")
 )
@@ -175,6 +177,24 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (gen.MediaRequest,
 	}
 	if s.tmdb == nil {
 		return gen.MediaRequest{}, ErrTMDBLookupFailed
+	}
+	// Bound the season list (stored as JSON and forwarded to Sonarr).
+	if len(in.Seasons) > maxRequestSeasons {
+		return gen.MediaRequest{}, ErrInvalidSeasons
+	}
+	for _, sn := range in.Seasons {
+		if sn < 0 || sn > maxSeasonNumber {
+			return gen.MediaRequest{}, ErrInvalidSeasons
+		}
+	}
+	// Per-user ceiling on OPEN requests: each create costs a TMDB lookup and
+	// lands in the admin queue, so an unbounded count let one account flood
+	// both.
+	if pending, err := s.db.CountMediaRequestsForUser(ctx, gen.CountMediaRequestsForUserParams{
+		UserID: in.UserID,
+		Status: ptrString(StatusPending),
+	}); err == nil && pending >= maxPendingRequestsPerUser {
+		return gen.MediaRequest{}, ErrTooManyPending
 	}
 
 	// Reject duplicates early. The unique partial index also enforces this
@@ -889,3 +909,12 @@ func firstString(values ...*string) *string {
 	}
 	return nil
 }
+
+// Request bounds (see Create).
+const (
+	maxRequestSeasons         = 100
+	maxSeasonNumber           = 1000
+	maxPendingRequestsPerUser = 25
+)
+
+func ptrString(v string) *string { return &v }

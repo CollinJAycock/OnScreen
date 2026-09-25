@@ -12,6 +12,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/watchstatus"
 )
 
@@ -30,11 +31,44 @@ type WatchStatusService interface {
 type WatchStatusHandler struct {
 	svc    WatchStatusService
 	logger *slog.Logger
+	// Optional item gate (see WithItemGate). nil leaves the historical
+	// behaviour of accepting any item id.
+	items  watchStatusItemGetter
+	access LibraryAccessChecker
+}
+
+// watchStatusItemGetter loads an item for the visibility gate.
+type watchStatusItemGetter interface {
+	GetMediaItem(ctx context.Context, id uuid.UUID) (gen.GetMediaItemRow, error)
 }
 
 // NewWatchStatusHandler constructs the handler.
 func NewWatchStatusHandler(svc WatchStatusService, logger *slog.Logger) *WatchStatusHandler {
 	return &WatchStatusHandler{svc: svc, logger: logger}
+}
+
+// WithItemGate makes every watch-status read/write first check that the caller
+// can see the item (library ACL + content-rating ceiling), 404ing otherwise —
+// the same gate lists and favorites apply. Without it a user, including a
+// restricted profile, could attach statuses to items outside their libraries
+// and use the responses as an item-existence oracle.
+func (h *WatchStatusHandler) WithItemGate(items watchStatusItemGetter, access LibraryAccessChecker) *WatchStatusHandler {
+	h.items = items
+	h.access = access
+	return h
+}
+
+// itemVisible applies the item gate; true means proceed.
+func (h *WatchStatusHandler) itemVisible(w http.ResponseWriter, r *http.Request, itemID uuid.UUID) bool {
+	if h.items == nil {
+		return true
+	}
+	item, err := h.items.GetMediaItem(r.Context(), itemID)
+	if err != nil {
+		respond.NotFound(w, r)
+		return false
+	}
+	return itemAddAllowed(w, r, h.access, h.logger, item)
 }
 
 // WatchStatusResponse is the JSON shape for a single (user, item)
@@ -66,6 +100,9 @@ func (h *WatchStatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 	itemID, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	if !h.itemVisible(w, r, itemID) {
 		return
 	}
 	st, err := h.svc.Get(r.Context(), claims.UserID, itemID)
@@ -104,6 +141,9 @@ func (h *WatchStatusHandler) Put(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid item id")
 		return
 	}
+	if !h.itemVisible(w, r, itemID) {
+		return
+	}
 	var body setWatchStatusRequest
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -137,6 +177,9 @@ func (h *WatchStatusHandler) Delete(w http.ResponseWriter, r *http.Request) {
 	itemID, err := parseUUID(r, "id")
 	if err != nil {
 		respond.BadRequest(w, r, "invalid item id")
+		return
+	}
+	if !h.itemVisible(w, r, itemID) {
 		return
 	}
 	if err := h.svc.Clear(r.Context(), claims.UserID, itemID); err != nil {

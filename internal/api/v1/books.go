@@ -23,6 +23,12 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
+// maxCBRDictBytes caps the RAR decompression window a .cbr may declare. The
+// library default is 4 GiB and the window is allocated up front, so a tiny
+// crafted archive in a book library could force a multi-GB allocation on every
+// page request. Real comic archives use 32-128 MiB windows at most.
+const maxCBRDictBytes = 256 << 20
+
 // BookHandler serves single pages from CBZ archives stored as book
 // items. v2.1 Stage 1 is CBZ-only (zip of images, Go stdlib parses it
 // without any new dependency); CBR + EPUB land once we pick parser
@@ -224,7 +230,7 @@ func servePageFromCBR(ctx context.Context, w http.ResponseWriter, cbrPath string
 		return err
 	}
 	defer f.Close()
-	rr, err := rardecode.NewReader(f)
+	rr, err := rardecode.NewReader(f, rardecode.MaxDictionarySize(maxCBRDictBytes))
 	if err != nil {
 		return err
 	}
@@ -274,7 +280,7 @@ func cbrPageNames(ctx context.Context, cbrPath string) ([]string, error) {
 		return nil, err
 	}
 	defer f.Close()
-	rr, err := rardecode.NewReader(f)
+	rr, err := rardecode.NewReader(f, rardecode.MaxDictionarySize(maxCBRDictBytes))
 	if err != nil {
 		return nil, err
 	}

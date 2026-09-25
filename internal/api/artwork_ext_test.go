@@ -1,6 +1,9 @@
 package api
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 // The /artwork/* route walks LIBRARY SCAN PATHS — the directories the media
 // itself lives in. Constrained only to "under a scan path", it served the
@@ -38,5 +41,21 @@ func TestArtworkExtAllowed(t *testing.T) {
 			t.Errorf("non-image served through the artwork route: %s — this re-opens "+
 				"ungated media streaming", p)
 		}
+	}
+}
+
+// Every allowed extension declares an image/* type, so the server never falls
+// back to sniffing the body (a .tbn holding HTML would be sniffed as text/html).
+func TestArtworkContentTypeIsAlwaysImage(t *testing.T) {
+	for ext, ct := range artworkImageExts {
+		if !strings.HasPrefix(ct, "image/") {
+			t.Errorf("%s declares %q, want an image/* type", ext, ct)
+		}
+	}
+	if got := artworkContentType("old-library/banner.TBN"); got != "image/jpeg" {
+		t.Errorf(".tbn content type = %q, want image/jpeg", got)
+	}
+	if got := artworkContentType("Movies/Film/Film.mkv"); got != "" {
+		t.Errorf("non-image got content type %q", got)
 	}
 }

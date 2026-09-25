@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 
+	"github.com/onscreen/onscreen/internal/ffsafe"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/valkey"
 )
@@ -88,6 +89,9 @@ func probeSource(ctx context.Context, input string) sourceProbe {
 		"-select_streams", "v:0",
 		"-show_entries", "stream_side_data=rotation:stream_tags=rotate:format=bit_rate",
 		"-of", "default=nw=1",
+		// Confine the demuxer to protocols this input needs, so a crafted
+		// source can't turn a probe into an SSRF. Must precede the input.
+		"-protocol_whitelist", ffsafe.Whitelist(input),
 		input,
 	).Output()
 	if err != nil {

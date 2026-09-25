@@ -19,6 +19,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/ffsafe"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/staticabr"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -152,10 +153,17 @@ func (e *Encoder) rungArgs(input, codec string, r transcode.Rendition, rdir stri
 	}
 
 	args := []string{"-nostdin", "-y"}
-	// Reconnect on flaky object-storage/CDN reads when the input is a URL.
-	if strings.Contains(input, "://") {
+	// Reconnect on flaky object-storage/CDN reads when the input is an http(s)
+	// URL. Keyed on the SAME predicate as the protocol grant below so reconnect
+	// is never enabled for an input the whitelist confines to local protocols
+	// (a mismatch would arm networking without permitting the http stack).
+	if ffsafe.IsHTTPURL(input) {
 		args = append(args, "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5")
 	}
+	// Confine the demuxer to the protocols this input needs (must precede -i).
+	// The pre-encode source may be a local file or an object-storage URL, so the
+	// helper grants the http stack only for an http(s) input. See internal/ffsafe.
+	args = append(args, "-protocol_whitelist", ffsafe.Whitelist(input))
 	args = append(args,
 		"-i", input,
 		"-map", "0:v:0", "-map", "0:a:0?",

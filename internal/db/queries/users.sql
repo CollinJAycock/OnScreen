@@ -42,8 +42,16 @@ UPDATE users SET is_admin = $2, updated_at = NOW() WHERE id = $1;
 SELECT COUNT(*) FROM users WHERE is_admin = true;
 
 -- name: ListSwitchableUsers :many
+-- Household profile picker. Returns ONLY the caller's own managed profiles
+-- (parent_user_id = the caller), never every account on the server. The old
+-- form listed all users unconditionally, which — together with a PIN-switch
+-- handler that never checked the caller/target relationship — let any user
+-- switch into any non-admin account by guessing its 4-digit PIN. Managed
+-- profiles are the only legitimate switch targets: they have no password and
+-- are reached solely by their owner picking them here.
 SELECT id, username, is_admin, (pin IS NOT NULL) AS has_pin, avatar_url, parent_user_id
 FROM users
+WHERE parent_user_id = $1
 ORDER BY username;
 
 -- name: ListManagedProfiles :many
@@ -199,7 +207,11 @@ RETURNING *;
 SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
        preferred_video_codec, forced_subtitles_only,
-       episode_use_show_poster, hub_layout
+       episode_use_show_poster, hub_layout,
+       -- Whether THIS account has a PIN. The Settings page reads its own PIN
+       -- status here rather than from the switchable-profiles list, which is
+       -- scoped to the caller's managed children and never contains the caller.
+       (pin IS NOT NULL)::boolean AS has_pin
 FROM users
 WHERE id = $1;
 

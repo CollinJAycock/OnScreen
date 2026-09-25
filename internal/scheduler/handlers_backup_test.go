@@ -148,3 +148,20 @@ func TestBackupHandlerNilConfigRequiresOutputDir(t *testing.T) {
 		t.Fatal("expected error when output_dir missing (nil cfg)")
 	}
 }
+
+// output_dir must be absolute or rooted. The rooted task-form default
+// ("/var/backups/onscreen") is valid on Windows too — it means the current
+// drive — so it must resolve, not fail every scheduled run.
+func TestResolveBackupDir(t *testing.T) {
+	for _, dir := range []string{"/var/backups/onscreen", filepath.Join(t.TempDir(), "b")} {
+		got, err := resolveBackupDir(dir)
+		if err != nil || !filepath.IsAbs(got) {
+			t.Errorf("resolveBackupDir(%q) = %q, %v; want an absolute path", dir, got, err)
+		}
+	}
+	for _, dir := range []string{"backups", "./backups", "../backups"} {
+		if _, err := resolveBackupDir(dir); err == nil {
+			t.Errorf("relative %q accepted", dir)
+		}
+	}
+}

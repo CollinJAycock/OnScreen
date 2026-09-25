@@ -307,3 +307,29 @@ func TestLyrics_Get_MetadataLookupFailureReturnsEmpty(t *testing.T) {
 		t.Error("fetcher should NOT be called when artist/album resolution failed")
 	}
 }
+
+// ── content-rating ceiling ───────────────────────────────────────────────────
+
+// A restricted profile refused a track's audio (stream/download apply the
+// ceiling) must not get its lyrics either — unrated ranks most restrictive.
+func TestLyrics_Get_OverCeilingReturns404(t *testing.T) {
+	item := lyricsTrackItem()
+	explicit := "TV-MA"
+	item.ContentRating = &explicit
+	store := &fakeLyricsStore{plain: "words", synced: "[00:00.00]words"}
+	h := NewLyricsHandler(store, &fakeLyricsItems{item: item}, nil, slog.Default())
+
+	rec := httptest.NewRecorder()
+	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}))
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("over-ceiling track lyrics: got %d, want 404", rec.Code)
+	}
+
+	allowed := "G"
+	item.ContentRating = &allowed
+	rec = httptest.NewRecorder()
+	h.Get(rec, lyricsRequest(t, item.ID.String(), &auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}))
+	if rec.Code != http.StatusOK {
+		t.Errorf("within-ceiling track lyrics: got %d, want 200", rec.Code)
+	}
+}

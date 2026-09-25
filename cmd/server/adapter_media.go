@@ -613,11 +613,12 @@ func (a *mediaAdapter) GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (
 
 func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, p media.ListPhotosParams) ([]media.PhotoListItem, error) {
 	rows, err := a.q.ListPhotosByLibrary(ctx, gen.ListPhotosByLibraryParams{
-		LibraryID: p.LibraryID,
-		Limit:     p.Limit,
-		Offset:    p.Offset,
-		From:      tsOrNull(p.From),
-		To:        tsOrNull(p.To),
+		LibraryID:     p.LibraryID,
+		Limit:         p.Limit,
+		Offset:        p.Offset,
+		From:          tsOrNull(p.From),
+		To:            tsOrNull(p.To),
+		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
 	})
 	if err != nil {
 		return nil, err
@@ -652,14 +653,18 @@ func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, p media.ListPhot
 
 func (a *mediaAdapter) CountPhotosByLibrary(ctx context.Context, p media.ListPhotosParams) (int64, error) {
 	return a.q.CountPhotosByLibrary(ctx, gen.CountPhotosByLibraryParams{
-		LibraryID: p.LibraryID,
-		From:      tsOrNull(p.From),
-		To:        tsOrNull(p.To),
+		LibraryID:     p.LibraryID,
+		From:          tsOrNull(p.From),
+		To:            tsOrNull(p.To),
+		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
 	})
 }
 
-func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID) ([]media.PhotoTimelineBucket, error) {
-	rows, err := a.q.ListPhotoTimelineBuckets(ctx, libraryID)
+func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]media.PhotoTimelineBucket, error) {
+	rows, err := a.q.ListPhotoTimelineBuckets(ctx, gen.ListPhotoTimelineBucketsParams{
+		LibraryID:     libraryID,
+		MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -676,12 +681,13 @@ func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, libraryID u
 
 func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, p media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error) {
 	rows, err := a.q.ListPhotoMapPoints(ctx, gen.ListPhotoMapPointsParams{
-		LibraryID: p.LibraryID,
-		Limit:     p.Limit,
-		MinLat:    p.MinLat,
-		MaxLat:    p.MaxLat,
-		MinLon:    p.MinLon,
-		MaxLon:    p.MaxLon,
+		LibraryID:     p.LibraryID,
+		Limit:         p.Limit,
+		MinLat:        p.MinLat,
+		MaxLat:        p.MaxLat,
+		MinLon:        p.MinLon,
+		MaxLon:        p.MaxLon,
+		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
 	})
 	if err != nil {
 		return nil, err
@@ -714,27 +720,31 @@ func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, p media.ListPhoto
 	return out, nil
 }
 
-func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID) (int64, error) {
-	return a.q.CountPhotoMapPoints(ctx, libraryID)
+func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error) {
+	return a.q.CountPhotoMapPoints(ctx, gen.CountPhotoMapPointsParams{
+		LibraryID:     libraryID,
+		MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+	})
 }
 
 func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error) {
 	rows, err := a.q.SearchPhotosByExif(ctx, gen.SearchPhotosByExifParams{
-		LibraryID:   p.LibraryID,
-		Limit:       p.Limit,
-		Offset:      p.Offset,
-		CameraMake:  p.CameraMake,
-		CameraModel: p.CameraModel,
-		LensModel:   p.LensModel,
-		ApertureMin: p.ApertureMin,
-		ApertureMax: p.ApertureMax,
-		IsoMin:      p.ISOMin,
-		IsoMax:      p.ISOMax,
-		FocalMin:    p.FocalMin,
-		FocalMax:    p.FocalMax,
-		From:        tsOrNull(p.From),
-		To:          tsOrNull(p.To),
-		HasGps:      p.HasGPS,
+		LibraryID:     p.LibraryID,
+		Limit:         p.Limit,
+		Offset:        p.Offset,
+		CameraMake:    p.CameraMake,
+		CameraModel:   p.CameraModel,
+		LensModel:     p.LensModel,
+		ApertureMin:   p.ApertureMin,
+		ApertureMax:   p.ApertureMax,
+		IsoMin:        p.ISOMin,
+		IsoMax:        p.ISOMax,
+		FocalMin:      p.FocalMin,
+		FocalMax:      p.FocalMax,
+		From:          tsOrNull(p.From),
+		To:            tsOrNull(p.To),
+		HasGps:        p.HasGPS,
+		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
 	})
 	if err != nil {
 		return nil, err
@@ -775,19 +785,20 @@ func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, p media.SearchPho
 
 func (a *mediaAdapter) CountPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) (int64, error) {
 	return a.q.CountPhotosByExif(ctx, gen.CountPhotosByExifParams{
-		LibraryID:   p.LibraryID,
-		CameraMake:  p.CameraMake,
-		CameraModel: p.CameraModel,
-		LensModel:   p.LensModel,
-		ApertureMin: p.ApertureMin,
-		ApertureMax: p.ApertureMax,
-		IsoMin:      p.ISOMin,
-		IsoMax:      p.ISOMax,
-		FocalMin:    p.FocalMin,
-		FocalMax:    p.FocalMax,
-		From:        tsOrNull(p.From),
-		To:          tsOrNull(p.To),
-		HasGps:      p.HasGPS,
+		LibraryID:     p.LibraryID,
+		CameraMake:    p.CameraMake,
+		CameraModel:   p.CameraModel,
+		LensModel:     p.LensModel,
+		ApertureMin:   p.ApertureMin,
+		ApertureMax:   p.ApertureMax,
+		IsoMin:        p.ISOMin,
+		IsoMax:        p.ISOMax,
+		FocalMin:      p.FocalMin,
+		FocalMax:      p.FocalMax,
+		From:          tsOrNull(p.From),
+		To:            tsOrNull(p.To),
+		HasGps:        p.HasGPS,
+		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
 	})
 }
 

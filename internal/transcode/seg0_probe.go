@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // WaitForSeg0Audio blocks until FFmpeg has produced enough output for us
@@ -126,6 +128,8 @@ func probeFirstPacketPTS(ctx context.Context, path, stream string) (float64, boo
 		"-read_intervals", "%+#1",
 		"-show_entries", "packet=pts_time",
 		"-of", "csv=p=0",
+		// Confine the demuxer to this input's protocols (must precede input).
+		"-protocol_whitelist", ffsafe.Whitelist(path),
 		path,
 	}
 	out, err := exec.CommandContext(cctx, "ffprobe", args...).Output()

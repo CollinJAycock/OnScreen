@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -194,6 +195,14 @@ type Config struct {
 	// serving against a stale schema (which surfaces as login 401s — the auth
 	// query selects columns the migration adds).
 	AutoMigrate bool `env:"AUTO_MIGRATE" envDefault:"false"`
+	// AllowPublicSetup lifts the first-run guard that otherwise only lets the
+	// initial admin account be created from a loopback / private-network client.
+	// While the users table is empty, POST /auth/register makes whoever calls it
+	// first the admin, so a fresh install briefly exposed to the internet can be
+	// claimed by a stranger. The default confines that window to the LAN (the
+	// normal self-host setup path); set this true only when you must complete
+	// setup over the public internet, and finish it promptly.
+	AllowPublicSetup bool `env:"ALLOW_PUBLIC_SETUP" envDefault:"false"`
 	// PublicAssetCache makes immutable, user-independent assets (resized artwork)
 	// emit `Cache-Control: public` instead of `private`, so a shared CDN / cache
 	// fronting the server can store them and take the cacheable-majority off the
@@ -502,6 +511,27 @@ func (h *HotReloadable) Reload(logger *slog.Logger, current *Config) {
 func validateSecretKey(key string) error {
 	if len(key) == 0 {
 		return fmt.Errorf("SECRET_KEY is required")
+	}
+	// Reject the placeholder values shipped in the example configs (and obvious
+	// "change me" variants) BEFORE the entropy check. They score above the
+	// entropy floor as raw bytes (~3.7 bits/byte), so without this they would be
+	// accepted — a server booted from an unedited .env would run with a publicly
+	// known key, and anyone who knows it can forge tokens the AdminRequired gate
+	// trusts. A real `openssl rand -hex 32` key contains none of these markers.
+	lower := strings.ToLower(key)
+	for _, marker := range []string{
+		"change-me", "changeme", "change me",
+		"replace-me", "replaceme", "replace me",
+		"your-secret", "your_secret", "yoursecret",
+		"example", "placeholder", "xxxxxxxx",
+		"random-32-byte-string", "openssl-rand",
+		// The old `make dev` default ("dev-secret-key-change-in-production-32b")
+		// was committed to the repo, so any server still running it is forgeable.
+		"dev-secret", "change-in-production", "insecure",
+	} {
+		if strings.Contains(lower, marker) {
+			return fmt.Errorf("SECRET_KEY looks like a placeholder (contains %q) — generate a real one with `openssl rand -hex 32`", marker)
+		}
 	}
 	var keyBytes []byte
 	// Try hex decode (64 hex chars = 32 bytes).

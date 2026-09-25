@@ -56,6 +56,11 @@ func (a *passwordResetAdapter) MarkResetTokenUsed(ctx context.Context, id uuid.U
 	return rows > 0, nil
 }
 
+// InvalidateUserResetTokens burns every outstanding reset link for userID.
+func (a *passwordResetAdapter) InvalidateUserResetTokens(ctx context.Context, userID uuid.UUID) error {
+	return a.q.InvalidateUserPasswordResetTokens(ctx, userID)
+}
+
 func (a *passwordResetAdapter) UpdatePassword(ctx context.Context, userID uuid.UUID, passwordHash string) error {
 	return a.q.UpdateUserPassword(ctx, gen.UpdateUserPasswordParams{
 		ID:           userID,

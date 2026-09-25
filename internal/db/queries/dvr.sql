@@ -29,16 +29,40 @@ WHERE user_id = $1
 ORDER BY created_at DESC
 LIMIT 500;
 
+-- name: CountLiveSchedulesForUser :one
+-- The per-user schedule cap counts only rules that can still produce a
+-- recording: enabled series / channel_block rules, and enabled one-off
+-- ('once') rules whose programme has not finished airing. Every guide
+-- "Record" click creates a 'once' row and nothing deletes it after it airs
+-- (EPG trimming only NULLs program_id, and deleting it would drop the
+-- retention its recordings JOIN on), so counting every row locked a user
+-- out of scheduling after 100 lifetime one-offs. A NULL program_id or an
+-- ended programme makes p.ends_at > NOW() false/NULL, so spent one-offs
+-- drop out without any row being touched.
+SELECT COUNT(*)
+FROM schedules s
+LEFT JOIN epg_programs p ON p.id = s.program_id
+WHERE s.user_id = $1
+  AND s.enabled = TRUE
+  AND (s.type <> 'once' OR p.ends_at > NOW());
+
 -- name: ListEnabledSchedules :many
 -- The matcher iterates this every minute. Disabled schedules are
 -- ignored (but their existing scheduled recordings continue normally).
 -- Hard-capped at 5000 — generous ceiling so a ridiculous fleet of
 -- title-match rules can't blow up the matcher's memory each tick.
+-- Spent one-offs (programme finished, or trimmed from the EPG) are skipped
+-- with the same rule CountLiveSchedulesForUser uses: the matcher has nothing
+-- to do for them, and since nothing deletes them they would otherwise pile up
+-- until they pushed live rules past the cap and recordings silently stopped.
 SELECT id, user_id, type, program_id, channel_id, title_match, new_only,
        time_start, time_end, padding_pre_sec, padding_post_sec,
        priority, retention_days, enabled, created_at, updated_at
 FROM schedules
 WHERE enabled = TRUE
+  AND (type <> 'once'
+       OR EXISTS (SELECT 1 FROM epg_programs p
+                  WHERE p.id = schedules.program_id AND p.ends_at > NOW()))
 ORDER BY priority DESC, created_at
 LIMIT 5000;
 

@@ -32,6 +32,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/ratings"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
+	"github.com/onscreen/onscreen/internal/ffsafe"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -1381,6 +1382,20 @@ func (h *ItemHandler) GetEXIF(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
+	// Content-rating ceiling, as on the photo bytes (/photos/{id}/image): EXIF
+	// carries GPS coordinates, so a profile refused the image must not get the
+	// location it was taken at either. 404 keeps denial indistinguishable from
+	// absence.
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.NotFound(w, r)
+			return
+		}
+	}
 	pm, err := h.media.GetPhotoMetadata(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, media.ErrNotFound) {
@@ -2604,9 +2619,14 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		// request on a token-free same-origin URL, so a shared cache must not
 		// serve one user's authorized cues to another.
 		w.Header().Set("Cache-Control", "private, max-age=86400")
+		// -protocol_whitelist confines the demuxer to local protocols so a
+		// crafted source file cannot turn this extraction (whose WebVTT output
+		// is returned straight to the caller) into an SSRF or remote fetch. It
+		// is an input option and must precede -i. See internal/ffsafe.
 		cmd := exec.CommandContext(r.Context(), "ffmpeg",
-			"-i", file.FilePath, "-map", fmt.Sprintf("0:%d", streamIdx),
-			"-f", "webvtt", "-v", "quiet", "pipe:1")
+			append(ffsafe.InputProtocolArgs(file.FilePath),
+				"-i", file.FilePath, "-map", fmt.Sprintf("0:%d", streamIdx),
+				"-f", "webvtt", "-v", "quiet", "pipe:1")...)
 		cmd.Stdout = w
 		if err := cmd.Run(); err != nil {
 			h.logger.WarnContext(r.Context(), "subtitle extraction failed",
@@ -2688,9 +2708,12 @@ func extractEmbeddedSubtitleToCache(srcPath string, streamIdx int, cachePath str
 	if err != nil {
 		return nil, err
 	}
+	// Confine the demuxer to local protocols (input option — must precede -i).
+	// See internal/ffsafe.
 	cmd := exec.CommandContext(ctx, "ffmpeg",
-		"-i", srcPath, "-map", fmt.Sprintf("0:%d", streamIdx),
-		"-f", "webvtt", "-v", "quiet", "pipe:1")
+		append(ffsafe.InputProtocolArgs(srcPath),
+			"-i", srcPath, "-map", fmt.Sprintf("0:%d", streamIdx),
+			"-f", "webvtt", "-v", "quiet", "pipe:1")...)
 	cmd.Stdout = out
 	runErr := cmd.Run()
 	_ = out.Close()

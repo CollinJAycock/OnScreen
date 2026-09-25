@@ -9,6 +9,10 @@ import (
 
 type nonceCtxKey struct{}
 
+// samlStartPath is the SP-initiated SAML login route; see the form-action note
+// on SecurityHeaders.
+const samlStartPath = "/api/v1/auth/saml"
+
 // NonceFromContext returns the per-request CSP nonce stamped by
 // SecurityHeaders, or "" if the middleware didn't run (e.g. a unit test
 // that exercises a handler directly). The SPA shell handler reads this
@@ -66,12 +70,24 @@ func newNonce() string {
 //     could re-root every relative script URL to an attacker origin and
 //     sidestep the script-src nonce. object-src 'none' kills legacy
 //     <object>/<embed> plugin vectors unconditionally.
+//   - form-action 'self' (also not covered by default-src) stops injected
+//     markup — or an on-origin file served as HTML — from posting a fake
+//     sign-in form to an attacker's server. The SPA submits nothing
+//     natively (every form is fetch-driven), so it costs nothing. The one
+//     exemption is the SAML start route: when an IdP only offers the
+//     HTTP-POST binding, that response is a form that submits the
+//     AuthnRequest to the IdP's origin.
 func SecurityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		nonce := newNonce()
+		formAction := "form-action 'self'; "
+		if r.URL.Path == samlStartPath {
+			formAction = ""
+		}
 		csp := "default-src 'self'; " +
 			"base-uri 'self'; " +
 			"object-src 'none'; " +
+			formAction +
 			"script-src 'self' 'nonce-" + nonce + "' https://static.cloudflareinsights.com https://www.gstatic.com; " +
 			"style-src 'self' 'unsafe-inline' blob:; " +
 			"img-src 'self' data: https: blob:; " +

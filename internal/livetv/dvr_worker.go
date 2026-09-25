@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // DVRWorkerConfig configures the recording worker. RecordDir is the
@@ -20,6 +22,12 @@ type DVRWorkerConfig struct {
 	RecordDir string
 	FFmpegBin string
 }
+
+// Capture concurrency ceilings (see startDueRecordings).
+const (
+	maxConcurrentCaptures = 8
+	maxCapturesPerUser    = 3
+)
 
 // DVRLibraryResolver returns the UUID of the library recordings should
 // land in. Wired to settings at startup; may return uuid.Nil which the
@@ -66,6 +74,7 @@ type DVRWorker struct {
 
 type captureSession struct {
 	recID    uuid.UUID
+	userID   uuid.UUID // owner, for the per-user concurrency cap
 	cancel   context.CancelFunc
 	cmd      *exec.Cmd
 	upstream *onceCloser
@@ -185,8 +194,27 @@ func (w *DVRWorker) startDueRecordings(ctx context.Context) {
 	for _, r := range due {
 		w.mu.Lock()
 		_, alreadyActive := w.active[r.ID]
+		total, perUser := len(w.active), 0
+		for _, sess := range w.active {
+			if sess.userID == r.UserID {
+				perUser++
+			}
+		}
 		w.mu.Unlock()
 		if alreadyActive {
+			continue
+		}
+		// Concurrency caps. Any signed-in user can schedule recordings, and an
+		// IPTV "tuner" has no hardware limit, so without a ceiling one account
+		// could run unbounded simultaneous captures. Over the cap the row stays
+		// 'scheduled' and is retried next tick while the programme airs.
+		if total >= maxConcurrentCaptures || perUser >= maxCapturesPerUser {
+			if !time.Now().Before(r.EndsAt) {
+				_ = w.q.SetRecordingFailed(ctx, r.ID, "capture limit reached")
+				continue
+			}
+			w.logger.WarnContext(ctx, "dvr capture deferred: concurrency limit",
+				"recording_id", r.ID, "user_id", r.UserID, "active_total", total, "active_user", perUser)
 			continue
 		}
 		if err := w.beginCapture(ctx, r); err != nil {
@@ -219,9 +247,15 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 	// Destination filename: title + start time, colons replaced with
 	// dashes for Windows compatibility. Scanner uses filename-based
 	// matching, so keep it descriptive.
+	//
+	// The recording ID is part of the name: two users recording the same
+	// programme used to get the SAME path, so the second ffmpeg failed (or
+	// overwrote the first), and a capture standing down removed a file another
+	// capture was still writing. A per-recording name makes every capture own
+	// its file exclusively.
 	safeTitle := safeFilename(r.Title)
 	path := filepath.Join(w.cfg.RecordDir,
-		fmt.Sprintf("%s - %s.mp4", safeTitle, r.StartsAt.UTC().Format("2006-01-02 1504")))
+		fmt.Sprintf("%s - %s [%s].mp4", safeTitle, r.StartsAt.UTC().Format("2006-01-02 1504"), r.ID.String()[:8]))
 
 	// The deadline is a KILL BACKSTOP, not the end of the recording. The
 	// recording ends by CLOSING THE UPSTREAM (see the endTimer below): ffmpeg
@@ -247,7 +281,9 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 	//
 	// Optional input-format hint: TS tuners autodetect; the RTMP broadcast
 	// reader returns "flv" so ffmpeg doesn't have to probe a live pipe.
-	ffArgs := []string{"-fflags", "+genpts+discardcorrupt"}
+	// -n: never overwrite an existing output file (defence in depth alongside
+	// the unique per-recording name above).
+	ffArgs := []string{"-n", "-fflags", "+genpts+discardcorrupt"}
 	// Probe the RAW upstream for the hint — the once-closer wrapper is a
 	// concrete type and would hide the interface.
 	if hinter, ok := rawUpstream.(inputFormatHinter); ok {
@@ -255,6 +291,11 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 			ffArgs = append(ffArgs, "-f", f)
 		}
 	}
+	// Stream is piped in over stdin, so confine the demuxer to stdin/local
+	// protocols — a hostile upstream can't pivot ffmpeg to the network (SSRF).
+	// Must precede -i. (file: stays permitted, so a nested local-file reference
+	// is not blocked by this alone — see the internal/ffsafe package doc.)
+	ffArgs = append(ffArgs, "-protocol_whitelist", ffsafe.Whitelist("pipe:0"))
 	ffArgs = append(ffArgs,
 		"-i", "pipe:0",
 		"-map", "0:v:0",
@@ -276,7 +317,7 @@ func (w *DVRWorker) beginCapture(_ context.Context, r Recording) error {
 	}
 
 	session := &captureSession{
-		recID: r.ID, cancel: cancel, cmd: cmd,
+		recID: r.ID, userID: r.UserID, cancel: cancel, cmd: cmd,
 		upstream: upstream, filePath: path,
 		done: make(chan struct{}),
 	}

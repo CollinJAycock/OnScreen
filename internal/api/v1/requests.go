@@ -135,6 +135,16 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "invalid request body")
 		return
 	}
+	// quality_profile_id and root_folder are admin decisions: they pick how
+	// much disk a grab uses and which library folder it lands in. A regular
+	// user's values used to win at approval (the approve UI sends an empty
+	// body), so a user could route content into another library's folder or
+	// request remux-grade profiles. Keep only the service PREFERENCE, which the
+	// UI surfaces to the approving admin.
+	if !claims.IsAdmin {
+		body.QualityProfileID = nil
+		body.RootFolder = nil
+	}
 	req, err := h.svc.Create(r.Context(), requests.CreateInput{
 		UserID:             claims.UserID,
 		Type:               strings.ToLower(strings.TrimSpace(body.Type)),
@@ -155,6 +165,11 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 				"you already have an active request for this title")
 		case errors.Is(err, requests.ErrTMDBLookupFailed):
 			respond.ValidationError(w, r, "tmdb lookup failed — verify the tmdb_id")
+		case errors.Is(err, requests.ErrInvalidSeasons):
+			respond.ValidationError(w, r, "invalid season list")
+		case errors.Is(err, requests.ErrTooManyPending):
+			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_PENDING_REQUESTS",
+				"you have too many pending requests; wait for some to be reviewed")
 		default:
 			h.logger.ErrorContext(r.Context(), "create request", "err", err)
 			respond.InternalError(w, r)

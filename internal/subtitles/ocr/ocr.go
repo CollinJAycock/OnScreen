@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // IsImageBased reports whether a subtitle codec is bitmap-based and thus
@@ -210,6 +212,9 @@ func (e *Engine) probeEvents(ctx context.Context, input string, absIdx int) ([]s
 		"-of", "json",
 		"-show_packets",
 		"-select_streams", strconv.Itoa(absIdx),
+		// Confine the demuxer to this input's protocols (must precede input).
+		// Same source file as renderFrames — guard both ffprobe/ffmpeg passes.
+		"-protocol_whitelist", ffsafe.Whitelist(input),
 		input,
 	)
 	out, err := cmd.Output()
@@ -269,6 +274,8 @@ func (e *Engine) renderFrames(ctx context.Context, input string, absIdx int, out
 		"-nostdin", "-y",
 		"-hide_banner", "-loglevel", "warning",
 		"-fix_sub_duration",
+		// Confine the demuxer to this input's protocols (must precede -i).
+		"-protocol_whitelist", ffsafe.Whitelist(input),
 		"-i", input,
 		"-filter_complex", filter,
 		"-vsync", "vfr",

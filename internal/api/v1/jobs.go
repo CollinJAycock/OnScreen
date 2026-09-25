@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 )
 
@@ -40,12 +41,21 @@ type JobsHandler struct {
 	scans    JobsScanLister
 	counters JobsCounters
 	libNamer JobsLibraryNamer
+	access   LibraryAccessChecker
 	logger   *slog.Logger
 }
 
 // NewJobsHandler constructs a JobsHandler. libNamer is optional.
 func NewJobsHandler(scans JobsScanLister, counters JobsCounters, libNamer JobsLibraryNamer, logger *slog.Logger) *JobsHandler {
 	return &JobsHandler{scans: scans, counters: counters, libNamer: libNamer, logger: logger}
+}
+
+// WithLibraryAccess scopes the in-flight scan list to libraries the caller can
+// see. Without it every signed-in user — a managed child profile included — got
+// the name of every library being scanned, private ones too.
+func (h *JobsHandler) WithLibraryAccess(access LibraryAccessChecker) *JobsHandler {
+	h.access = access
+	return h
 }
 
 // scanInFlight is one entry in the response's `scans` array.
@@ -72,8 +82,12 @@ func (h *JobsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	scans := []scanInFlight{}
+	visible := h.visibleLibraries(r)
 	if h.scans != nil {
 		for _, id := range h.scans.InFlightScans() {
+			if visible != nil && !visible(id) {
+				continue
+			}
 			entry := scanInFlight{LibraryID: id.String()}
 			if h.libNamer != nil {
 				if name, ok := h.libNamer.NameOf(ctx, id); ok {
@@ -104,4 +118,29 @@ func (h *JobsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		MissingArt: missingArt,
 		Unmatched:  unmatched,
 	})
+}
+
+// visibleLibraries returns a filter for the caller's libraries, or nil when no
+// filtering applies (no access checker wired, or an admin caller). It fails
+// closed: a missing caller or an ACL lookup error hides every scan.
+func (h *JobsHandler) visibleLibraries(r *http.Request) func(uuid.UUID) bool {
+	if h.access == nil {
+		return nil
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		return func(uuid.UUID) bool { return false }
+	}
+	if claims.IsAdmin {
+		return nil
+	}
+	allowed, err := h.access.AllowedLibraryIDs(r.Context(), claims.UserID, false)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "jobs: library ACL lookup failed", "err", err)
+		return func(uuid.UUID) bool { return false }
+	}
+	return func(id uuid.UUID) bool {
+		_, ok := allowed[id]
+		return ok
+	}
 }

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // blackdetect runs ffmpeg's blackdetect filter over the tail of filePath and
@@ -25,6 +27,8 @@ func blackdetect(ctx context.Context, filePath string, fileDurationSec, tailSec 
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-nostdin", "-hide_banner", "-loglevel", "info",
 		"-ss", strconv.Itoa(startSec),
+		// Confine the demuxer to this input's protocols (must precede -i).
+		"-protocol_whitelist", ffsafe.Whitelist(filePath),
 		"-i", filePath,
 		"-an",
 		"-vf", "blackdetect=d=0.4:pic_th=0.98",

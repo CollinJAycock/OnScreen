@@ -2,6 +2,8 @@ package valkey
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,7 +17,8 @@ import (
 type RateLimiter struct {
 	client          *Client
 	logger          *slog.Logger
-	failOpenCounter func() // increments onscreen_ratelimit_failopen_total
+	failOpenCounter func()           // increments onscreen_ratelimit_failopen_total
+	now             func() time.Time // clock for failure reservations; nil = time.Now (tests override)
 }
 
 // NewRateLimiter creates a rate limiter backed by the given Valkey client.
@@ -121,39 +124,100 @@ func (r *RateLimiter) allow(ctx context.Context, key string, limit int, window t
 	return allowed, remaining, resetAt, nil
 }
 
-// failureCounterScript atomically reads the current failure count at `key`
-// and refuses (returns -1) if it's already at or above `limit`. Otherwise
-// returns the current count. Used by the brute-force throttle's pre-auth
-// gate — the *check* must not increment, because that would count successful
-// logins toward the lockout. Increments happen only after a confirmed failure
-// (see IncrFailure).
+// failurePendingTTL bounds how long an in-flight attempt's reservation (see
+// CheckFailures) holds a slot. It only has to outlast one credential check —
+// a bcrypt compare, an LDAP bind — and it is what frees the slot when an
+// attempt ends in neither IncrFailure nor ResetFailures (a DB/LDAP outage
+// error path). Generous on purpose: an attempt slower than this merely
+// stops being counted as in flight; it is still counted once it fails.
+const failurePendingTTL = 60 * time.Second
+
+// failurePendingKey is the sorted set of in-flight reservations that sits
+// next to the committed failure counter at `key`.
+func failurePendingKey(key string) string { return key + ":pending" }
+
+// failureReserveScript is the brute-force throttle's pre-auth gate. In ONE
+// atomic step it counts committed failures plus live in-flight reservations
+// and, if that total is under `limit`, reserves a slot for the caller.
 //
-// KEYS[1] = failure counter key
-// ARGV[1] = limit (string)
+// The previous gate only READ the committed counter and the failure path
+// incremented it later, after the (slow, deliberately so) credential check.
+// That check-then-increment split let a concurrent burst all read the same
+// under-cap count before any of them incremented, so N parallel guesses got
+// N tries against a cap of `limit`. Reserving inside the same script that
+// compares means N concurrent attempts consume N slots; the (limit+1)th sees
+// the cap and is refused.
 //
-// Returns: current count, or -1 if already at limit.
-var failureCounterScript = redis.NewScript(`
-local key   = KEYS[1]
+// A reservation is not a failure: a successful attempt clears everything via
+// ResetFailures, a failed one converts its reservation into a committed
+// failure via IncrFailure, and an attempt that does neither (an infra error)
+// simply ages out after failurePendingTTL. So a legitimate user logging in
+// `limit` times is still never locked out.
+//
+// KEYS[1] = committed failure counter
+// KEYS[2] = in-flight reservation zset (score = reservation expiry, ms)
+// ARGV[1] = limit
+// ARGV[2] = now (ms)
+// ARGV[3] = reservation TTL (ms)
+// ARGV[4] = unique reservation member
+//
+// Returns: slots in use before this reservation, or -1 if refused.
+var failureReserveScript = redis.NewScript(`
 local limit = tonumber(ARGV[1])
-local v = redis.call('GET', key)
-local count = tonumber(v) or 0
-if count >= limit then
+local now   = tonumber(ARGV[2])
+local ttl   = tonumber(ARGV[3])
+redis.call('ZREMRANGEBYSCORE', KEYS[2], '-inf', now)
+local failures = tonumber(redis.call('GET', KEYS[1])) or 0
+local pending  = redis.call('ZCARD', KEYS[2])
+if failures + pending >= limit then
     return -1
 end
-return count
+redis.call('ZADD', KEYS[2], now + ttl, ARGV[4])
+redis.call('PEXPIRE', KEYS[2], ttl)
+return failures + pending
 `)
 
-// CheckFailures returns whether the caller is under the failure cap for `key`.
+// failureCommitScript records a confirmed failure: INCR + (re)arm the TTL in
+// one step — the old separate INCR and EXPIRE round trips could leave a
+// counter with NO expiry (permanent lockout) if the second call failed or the
+// process died between them — and retire one in-flight reservation, which is
+// the one this failure was holding.
+//
+// KEYS[1] = committed failure counter
+// KEYS[2] = in-flight reservation zset
+// ARGV[1] = window (ms)
+var failureCommitScript = redis.NewScript(`
+local n = redis.call('INCR', KEYS[1])
+redis.call('PEXPIRE', KEYS[1], ARGV[1])
+redis.call('ZPOPMIN', KEYS[2])
+return n
+`)
+
+// CheckFailures reports whether the caller is under the failure cap for `key`
+// and, when it is, atomically RESERVES one slot for the attempt about to run.
 // If allowed=false, the caller has hit the limit and should be rejected
 // without performing the expensive operation (bcrypt compare). Fails open
 // when Valkey is unavailable (matches Allow's posture).
 //
-// CheckFailures does NOT increment the counter. Pair it with IncrFailure on
-// the failure path and ResetFailures on the success path. This split is the
-// fix for the prior bug where Allow() counted successes toward the cap, so
-// a user logging in `limit` times legitimately got locked out.
+// Pair it with IncrFailure on the failure path and ResetFailures on the
+// success path, exactly as before — the reservation is what closes the
+// check-then-increment race (see failureReserveScript) without counting
+// successes toward the lockout.
 func (r *RateLimiter) CheckFailures(ctx context.Context, key string, limit int) (allowed bool, err error) {
-	res, err := failureCounterScript.Run(ctx, r.client.rdb, []string{key}, fmt.Sprintf("%d", limit)).Int64()
+	member, err := reservationID()
+	if err != nil {
+		// crypto/rand failing is not a Valkey outage; don't hand out a free
+		// pass on it — refuse this one attempt.
+		r.logger.Error("rate limiter: reservation id", "key", key, "err", err)
+		return false, err
+	}
+	res, err := failureReserveScript.Run(ctx, r.client.rdb,
+		[]string{key, failurePendingKey(key)},
+		fmt.Sprintf("%d", limit),
+		fmt.Sprintf("%d", r.nowMS()),
+		fmt.Sprintf("%d", failurePendingTTL.Milliseconds()),
+		member,
+	).Int64()
 	if err != nil {
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			return false, err
@@ -167,30 +231,43 @@ func (r *RateLimiter) CheckFailures(ctx context.Context, key string, limit int) 
 	return res >= 0, nil
 }
 
-// IncrFailure increments the failure counter at `key` and (re)sets its TTL
-// to `window`. The counter naturally expires after `window` of inactivity,
-// so a slow drip below the cap never trips the lockout. Errors are logged
-// and swallowed — failing to record a single failure shouldn't abort the
-// auth response.
+// IncrFailure records a confirmed failure at `key`: increments the counter,
+// (re)sets its TTL to `window`, and retires the attempt's in-flight
+// reservation — all atomically. The counter expires `window` after the LAST
+// failure, so a slow drip below the cap never trips the lockout. Errors are
+// logged and swallowed — failing to record a single failure shouldn't abort
+// the auth response.
 func (r *RateLimiter) IncrFailure(ctx context.Context, key string, window time.Duration) {
-	if _, err := r.client.rdb.Incr(ctx, key).Result(); err != nil {
+	if err := failureCommitScript.Run(ctx, r.client.rdb,
+		[]string{key, failurePendingKey(key)},
+		fmt.Sprintf("%d", window.Milliseconds()),
+	).Err(); err != nil {
 		r.logger.Warn("incr failure counter", "key", key, "err", err)
-		return
-	}
-	// EXPIRE on every increment is a small over-write but keeps the
-	// window sliding — the counter expires `window` after the last
-	// failure rather than after the first. Same posture as a typical
-	// "lockout for 15 min from your last bad attempt" UX.
-	if err := r.client.rdb.Expire(ctx, key, window).Err(); err != nil {
-		r.logger.Warn("expire failure counter", "key", key, "err", err)
 	}
 }
 
-// ResetFailures clears the failure counter at `key`. Call on successful auth
-// so a user who eventually got their password right starts fresh next time.
-// Errors are logged and swallowed.
+// ResetFailures clears the failure counter at `key` (and any in-flight
+// reservations). Call on successful auth so a user who eventually got their
+// password right starts fresh next time. Errors are logged and swallowed.
 func (r *RateLimiter) ResetFailures(ctx context.Context, key string) {
-	if err := r.client.rdb.Del(ctx, key).Err(); err != nil {
+	if err := r.client.rdb.Del(ctx, key, failurePendingKey(key)).Err(); err != nil {
 		r.logger.Warn("reset failure counter", "key", key, "err", err)
 	}
+}
+
+func (r *RateLimiter) nowMS() int64 {
+	if r.now != nil {
+		return r.now().UnixMilli()
+	}
+	return time.Now().UnixMilli()
+}
+
+// reservationID returns a random member name so concurrent reservations never
+// collapse into one zset entry.
+func reservationID() (string, error) {
+	var b [12]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
 }

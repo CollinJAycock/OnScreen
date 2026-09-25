@@ -181,9 +181,23 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	// (echoed back by the IdP in the form POST). Without this the
 	// possibleRequestIDs list is empty and ParseResponse rejects every
 	// SP-init response with "InResponseTo does not match expected []".
+	//
+	// The lookup also enforces the browser binding (bindingSAMLRequestTracker):
+	// the POSTing browser must carry the cookie set when THIS sign-in was
+	// started, so an assertion minted for someone else's flow can't be
+	// completed here (login CSRF). No RelayState → no possible IDs →
+	// ParseResponse refuses (IdP-initiated SSO is not enabled).
 	var possibleIDs []string
 	if relay := r.Form.Get("RelayState"); relay != "" {
-		if tr, terr := mw.RequestTracker.GetTrackedRequest(r, relay); terr == nil && tr != nil {
+		tr, terr := mw.RequestTracker.GetTrackedRequest(r, relay)
+		switch {
+		case errors.Is(terr, errSAMLBindMissing), errors.Is(terr, errSAMLBindMismatch):
+			h.logger.WarnContext(r.Context(), "saml acs: sign-in not started by this browser; refusing",
+				"err", terr)
+			respond.Error(w, r, http.StatusUnauthorized, "SAML_INVALID_ASSERTION",
+				"The SAML assertion could not be verified.")
+			return
+		case terr == nil && tr != nil:
 			possibleIDs = []string{tr.SAMLRequestID}
 		}
 	}
@@ -213,7 +227,7 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 	// Stop tracking the request — single-use prevents replay of a
 	// captured assertion against the same RelayState. crewjam/saml's
 	// own ServeACS does this; we have to mirror it because we call
-	// ParseResponse directly.
+	// ParseResponse directly. Also clears the binding cookie.
 	if relay := r.Form.Get("RelayState"); relay != "" {
 		_ = mw.RequestTracker.StopTrackingRequest(w, r, relay)
 	}
@@ -301,7 +315,7 @@ func (h *SAMLHandler) middleware(ctx context.Context) (*samlsp.Middleware, error
 		return h.mw, nil
 	}
 
-	mw, idpMeta, err := buildSAMLMiddleware(ctx, cfg, h.baseURL, h.tracker)
+	mw, idpMeta, err := buildSAMLMiddleware(ctx, cfg, h.baseURL, h.tracker, h.logger)
 	if err != nil {
 		return nil, err
 	}
@@ -316,8 +330,9 @@ func (h *SAMLHandler) middleware(ctx context.Context) (*samlsp.Middleware, error
 // and wires the ACS endpoint at /api/v1/auth/saml/acs. The optional
 // tracker swaps in a non-default RequestTracker (e.g. the Valkey-
 // backed one for HA installs) — pass nil to fall back to the
-// memory-tracker default.
-func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL string, tracker samlsp.RequestTracker) (*samlsp.Middleware, *saml.EntityDescriptor, error) {
+// memory-tracker default. Either way it is wrapped in the browser-binding
+// tracker (see bindingSAMLRequestTracker).
+func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL string, tracker samlsp.RequestTracker, logger *slog.Logger) (*samlsp.Middleware, *saml.EntityDescriptor, error) {
 	if cfg.SPCertificatePEM == "" || cfg.SPPrivateKeyPEM == "" {
 		return nil, nil, errors.New("saml: SP certificate + private key required (auto-generate via SetSAML)")
 	}
@@ -398,11 +413,14 @@ func buildSAMLMiddleware(ctx context.Context, cfg settings.SAMLConfig, baseURL s
 	// for the full reasoning. cmd/server can swap in a Valkey-backed
 	// tracker via WithRequestTracker for HA installs (v2.1 Track A
 	// item 2); nil falls back to single-instance memory.
-	if tracker != nil {
-		mw.RequestTracker = tracker
-	} else {
-		mw.RequestTracker = newMemorySAMLRequestTracker()
+	//
+	// RelayState alone doesn't tie the sign-in to the browser that started
+	// it, so the chosen tracker is wrapped in the binding tracker, which adds
+	// a per-browser cookie the ACS must present (login-CSRF defence).
+	if tracker == nil {
+		tracker = newMemorySAMLRequestTracker()
 	}
+	mw.RequestTracker = newBindingSAMLRequestTracker(tracker, logger)
 	return mw, idpMeta, nil
 }
 

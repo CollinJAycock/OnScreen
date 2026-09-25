@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onscreen/onscreen/internal/safehttp"
 )
@@ -217,68 +218,148 @@ func ParseXMLTV(r io.Reader) (channels []XMLTVChannel, programs []XMLTVProgram, 
 	// a hard error on those.
 	dec.CharsetReader = func(_ string, input io.Reader) (io.Reader, error) { return input, nil }
 
-	var doc XMLTVDocument
-	if err := dec.Decode(&doc); err != nil {
-		return nil, nil, 0, fmt.Errorf("xmltv decode: %w", err)
-	}
-
-	channels = make([]XMLTVChannel, 0, len(doc.Channels))
-	for _, c := range doc.Channels {
-		entry := XMLTVChannel{
-			ID:           c.ID,
-			DisplayNames: c.DisplayNames,
-			LCN:          c.LCN,
+	// Stream the document: decode one <channel> / <programme> at a time and
+	// convert it immediately. Decoding the whole <tv> tree into XMLTVDocument
+	// first held every raw element AND the converted copy at once — roughly
+	// double the memory of a large national grid, from a feed an admin (or a
+	// hijacked admin session) points at any URL.
+	sawRoot := false
+	for {
+		tok, terr := dec.Token()
+		if terr == io.EOF {
+			break
 		}
-		if len(c.Icons) > 0 {
-			entry.IconURL = c.Icons[0].Src
+		if terr != nil {
+			return nil, nil, 0, fmt.Errorf("xmltv decode: %w", terr)
 		}
-		channels = append(channels, entry)
-	}
-
-	programs = make([]XMLTVProgram, 0, len(doc.Programmes))
-	for _, p := range doc.Programmes {
-		start, err := parseXMLTVTime(p.Start)
-		if err != nil {
-			skipped++
+		se, ok := tok.(xml.StartElement)
+		if !ok {
 			continue
 		}
-		stop, err := parseXMLTVTime(p.Stop)
-		if err != nil {
-			skipped++
-			continue
-		}
-		out := XMLTVProgram{
-			ChannelID: p.Channel,
-			StartsAt:  start.UTC(),
-			EndsAt:    stop.UTC(),
-		}
-		if len(p.Titles) > 0 {
-			out.Title = p.Titles[0]
-		}
-		if len(p.Subs) > 0 {
-			out.Subtitle = p.Subs[0]
-		}
-		if len(p.Descs) > 0 {
-			out.Description = p.Descs[0]
-		}
-		out.Category = append(out.Category, p.Cats...)
-		// Ratings: take the first one regardless of system. Rich UI for
-		// per-system filtering can come later.
-		if len(p.Ratings) > 0 {
-			out.Rating = p.Ratings[0].Value
-		}
-		// Episode-num: prefer xmltv_ns format ("0.0.0/1"), fall back to
-		// onscreen format ("S5E12") or anything else as raw text.
-		out.SeasonNum, out.EpisodeNum = parseEpisodeNum(p.Episodes)
-		// date: 8 chars YYYYMMDD = original air date (movies) / first-aired.
-		if len(p.Date) >= 8 {
-			if d, err := time.Parse("20060102", p.Date[:8]); err == nil {
-				out.OriginalAirDate = &d
+		switch se.Name.Local {
+		case "tv":
+			sawRoot = true
+		case "channel":
+			if len(channels) >= maxXMLTVChannels {
+				if err := dec.Skip(); err != nil {
+					return nil, nil, 0, fmt.Errorf("xmltv decode: %w", err)
+				}
+				continue
 			}
+			var c xmltvChannel
+			if err := dec.DecodeElement(&c, &se); err != nil {
+				return nil, nil, 0, fmt.Errorf("xmltv decode: %w", err)
+			}
+			channels = append(channels, convertXMLTVChannel(c))
+		case "programme":
+			if len(programs) >= maxXMLTVProgrammes {
+				skipped++
+				if err := dec.Skip(); err != nil {
+					return nil, nil, 0, fmt.Errorf("xmltv decode: %w", err)
+				}
+				continue
+			}
+			var p xmltvProgramme
+			if err := dec.DecodeElement(&p, &se); err != nil {
+				return nil, nil, 0, fmt.Errorf("xmltv decode: %w", err)
+			}
+			out, ok := convertXMLTVProgramme(p)
+			if !ok {
+				skipped++
+				continue
+			}
+			programs = append(programs, out)
 		}
-		programs = append(programs, out)
+	}
+	if !sawRoot {
+		return nil, nil, 0, errors.New("xmltv decode: missing <tv> root element")
 	}
 	return channels, programs, skipped, nil
+}
+
+// XMLTV element ceilings. The byte cap alone still allowed tens of millions of
+// minimal <programme/> elements; these bound what one pull can hold in memory.
+// Sized well above the largest real grids (thousands of channels x 14 days).
+const (
+	maxXMLTVChannels   = 50_000
+	maxXMLTVProgrammes = 2_000_000
+	maxXMLTVTextBytes  = 8 << 10 // per description/title field
+	maxXMLTVCategories = 16
+)
+
+// clipText truncates an XMLTV text field to maxXMLTVTextBytes.
+func clipText(s string) string {
+	if len(s) <= maxXMLTVTextBytes {
+		return s
+	}
+	// Cut on a rune boundary: a split multi-byte character would be invalid
+	// UTF-8, which Postgres rejects on insert.
+	cut := maxXMLTVTextBytes
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut]
+}
+
+func convertXMLTVChannel(c xmltvChannel) XMLTVChannel {
+	entry := XMLTVChannel{
+		ID:           c.ID,
+		DisplayNames: c.DisplayNames,
+		LCN:          c.LCN,
+	}
+	if len(c.Icons) > 0 {
+		entry.IconURL = c.Icons[0].Src
+	}
+	return entry
+}
+
+// convertXMLTVProgramme maps one raw <programme>; ok=false means its start or
+// stop timestamp is unparseable and it should be counted as skipped.
+func convertXMLTVProgramme(p xmltvProgramme) (XMLTVProgram, bool) {
+	start, err := parseXMLTVTime(p.Start)
+	if err != nil {
+		return XMLTVProgram{}, false
+	}
+	stop, err := parseXMLTVTime(p.Stop)
+	if err != nil {
+		return XMLTVProgram{}, false
+	}
+	if len(p.Cats) > maxXMLTVCategories {
+		p.Cats = p.Cats[:maxXMLTVCategories]
+	}
+	out := XMLTVProgram{
+		ChannelID: p.Channel,
+		StartsAt:  start.UTC(),
+		EndsAt:    stop.UTC(),
+	}
+	if len(p.Titles) > 0 {
+		out.Title = p.Titles[0]
+	}
+	if len(p.Subs) > 0 {
+		out.Subtitle = p.Subs[0]
+	}
+	if len(p.Descs) > 0 {
+		out.Description = p.Descs[0]
+	}
+	out.Category = append(out.Category, p.Cats...)
+	// Ratings: take the first one regardless of system. Rich UI for
+	// per-system filtering can come later.
+	if len(p.Ratings) > 0 {
+		out.Rating = p.Ratings[0].Value
+	}
+	// Episode-num: prefer xmltv_ns format ("0.0.0/1"), fall back to
+	// onscreen format ("S5E12") or anything else as raw text.
+	out.SeasonNum, out.EpisodeNum = parseEpisodeNum(p.Episodes)
+	// date: 8 chars YYYYMMDD = original air date (movies) / first-aired.
+	if len(p.Date) >= 8 {
+		if d, err := time.Parse("20060102", p.Date[:8]); err == nil {
+			out.OriginalAirDate = &d
+		}
+	}
+	out.Title = clipText(out.Title)
+	out.Subtitle = clipText(out.Subtitle)
+	out.Description = clipText(out.Description)
+	return out, true
 }
 
 // parseXMLTVTime accepts the XMLTV time format: "YYYYMMDDHHMMSS" with

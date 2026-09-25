@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // processHomeVideo creates a 'home_video' media_item for a file in a
@@ -111,6 +112,8 @@ func (s *Scanner) extractHomeVideoArt(ctx context.Context, item *media.Item, fil
 	cmd := exec.CommandContext(ctx, "ffmpeg",
 		"-hide_banner", "-loglevel", "error",
 		"-ss", seek,
+		// Confine the demuxer to this input's protocols (must precede -i).
+		"-protocol_whitelist", ffsafe.Whitelist(filePath),
 		"-i", filePath,
 		"-frames:v", "1",
 		"-q:v", "2",

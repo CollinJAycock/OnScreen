@@ -2,9 +2,13 @@ package v1
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"errors"
+	"log/slog"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -132,4 +136,172 @@ func randomIndex() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(b), nil
+}
+
+// ── Browser binding (login-CSRF defence) ────────────────────────────────────
+
+// RelayState alone does not bind a SAML sign-in to the browser that started
+// it: an attacker can start a flow in their own browser, authenticate at the
+// IdP as THEMSELVES, and have a victim's browser POST the resulting assertion
+// + RelayState to the ACS — silently signing the victim into the attacker's
+// account (whatever the victim then uploads, links or types lands there).
+//
+// bindingSAMLRequestTracker closes that by pairing each tracked request with
+// a short-lived HttpOnly cookie set on the browser that hit /auth/saml. The
+// cookie's digest is stored with the tracked request (appended to its stored
+// SAMLRequestID, so it rides through both the memory and the Valkey tracker
+// unchanged, and works across HA instances), and the ACS lookup refuses a
+// request whose browser does not present the matching cookie.
+//
+// The ACS is a cross-site POST from the IdP, so over HTTPS the cookie is
+// SameSite=None; Secure — and a missing cookie there fails closed. Browsers
+// refuse SameSite=None without Secure, so on plain HTTP the cookie is Lax and
+// usually does NOT survive the cross-site POST; a MISSING cookie is then
+// accepted with a warning (the pre-binding behaviour; plain-HTTP SSO is a dev
+// setup), while a PRESENT-but-mismatched one is still refused.
+type bindingSAMLRequestTracker struct {
+	inner  samlsp.RequestTracker
+	logger *slog.Logger
+}
+
+const (
+	samlBindCookieName = "onscreen_saml_bind"
+	// Covers GET /api/v1/auth/saml (start) and POST /api/v1/auth/saml/acs.
+	samlBindCookiePath = "/api/v1/auth/saml"
+	// samlBindSep joins the SAML request ID and the cookie digest in the
+	// tracker's stored SAMLRequestID. crewjam request IDs are "id-<hex>", so
+	// the separator cannot occur in them.
+	samlBindSep = "|bind:"
+)
+
+var (
+	errSAMLBindMissing  = errors.New("saml: sign-in binding cookie missing on a secure request")
+	errSAMLBindMismatch = errors.New("saml: sign-in binding cookie does not match this sign-in")
+)
+
+func newBindingSAMLRequestTracker(inner samlsp.RequestTracker, logger *slog.Logger) *bindingSAMLRequestTracker {
+	return &bindingSAMLRequestTracker{inner: inner, logger: logger}
+}
+
+// TrackRequest tracks the request via the inner tracker with the binding
+// digest attached, and sets the binding cookie on the starting browser. A
+// browser that already holds a well-formed binding cookie keeps it, so two
+// sign-ins started in parallel tabs both stay valid.
+func (t *bindingSAMLRequestTracker) TrackRequest(w http.ResponseWriter, r *http.Request, samlRequestID string) (string, error) {
+	nonce := ""
+	if c, err := r.Cookie(samlBindCookieName); err == nil && validSAMLBindNonce(c.Value) {
+		nonce = c.Value
+	} else {
+		b := make([]byte, 32)
+		if _, err := rand.Read(b); err != nil {
+			return "", err
+		}
+		nonce = base64.RawURLEncoding.EncodeToString(b)
+	}
+	idx, err := t.inner.TrackRequest(w, r, samlRequestID+samlBindSep+samlBindDigest(nonce))
+	if err != nil {
+		return "", err
+	}
+	setSAMLBindCookie(w, r, nonce, int(samlTrackerTTL/time.Second))
+	return idx, nil
+}
+
+// StopTrackingRequest ends the tracked request and clears the binding cookie.
+func (t *bindingSAMLRequestTracker) StopTrackingRequest(w http.ResponseWriter, r *http.Request, index string) error {
+	err := t.inner.StopTrackingRequest(w, r, index)
+	setSAMLBindCookie(w, r, "", -1)
+	return err
+}
+
+// GetTrackedRequests lists pending requests with the binding digest stripped.
+func (t *bindingSAMLRequestTracker) GetTrackedRequests(r *http.Request) []samlsp.TrackedRequest {
+	all := t.inner.GetTrackedRequests(r)
+	for i := range all {
+		all[i].SAMLRequestID, _ = splitSAMLBinding(all[i].SAMLRequestID)
+	}
+	return all
+}
+
+// GetTrackedRequest resolves the RelayState index and enforces the browser
+// binding: errSAMLBindMissing / errSAMLBindMismatch when the caller's browser
+// is not the one that started this sign-in.
+func (t *bindingSAMLRequestTracker) GetTrackedRequest(r *http.Request, index string) (*samlsp.TrackedRequest, error) {
+	tr, err := t.inner.GetTrackedRequest(r, index)
+	if err != nil || tr == nil {
+		return tr, err
+	}
+	id, digest := splitSAMLBinding(tr.SAMLRequestID)
+	if err := checkSAMLBinding(r, digest); err != nil {
+		return nil, err
+	}
+	c, cerr := r.Cookie(samlBindCookieName)
+	if (cerr != nil || c.Value == "") && t.logger != nil {
+		// Only reachable on a non-TLS request (checkSAMLBinding fails closed
+		// on TLS). Accepted for plain-HTTP dev setups; flag it.
+		t.logger.WarnContext(r.Context(), "saml acs: no sign-in binding cookie on a plain-HTTP request; "+
+			"accepting without browser binding (serve OnScreen over HTTPS to enforce it)")
+	}
+	out := *tr
+	out.SAMLRequestID = id
+	return &out, nil
+}
+
+// checkSAMLBinding compares the request's binding cookie against the digest
+// stored with the tracked request. nil = bound (or the tolerated plain-HTTP
+// missing-cookie case).
+func checkSAMLBinding(r *http.Request, storedDigest string) error {
+	c, err := r.Cookie(samlBindCookieName)
+	if err != nil || c.Value == "" {
+		if isSecure(r) {
+			return errSAMLBindMissing
+		}
+		return nil
+	}
+	// A cookie is present: it must match. An entry tracked before binding
+	// existed (no stored digest) can't be verified, so it is refused too.
+	if storedDigest == "" ||
+		subtle.ConstantTimeCompare([]byte(samlBindDigest(c.Value)), []byte(storedDigest)) != 1 {
+		return errSAMLBindMismatch
+	}
+	return nil
+}
+
+// splitSAMLBinding separates a stored "<requestID>|bind:<digest>" value.
+// Entries without a digest come back with digest "".
+func splitSAMLBinding(stored string) (requestID, digest string) {
+	if i := strings.LastIndex(stored, samlBindSep); i >= 0 {
+		return stored[:i], stored[i+len(samlBindSep):]
+	}
+	return stored, ""
+}
+
+// samlBindDigest stores only a hash of the cookie, so reading the tracker
+// store (Valkey) is not enough to forge the cookie.
+func samlBindDigest(nonce string) string {
+	sum := sha256.Sum256([]byte(nonce))
+	return base64.RawURLEncoding.EncodeToString(sum[:])
+}
+
+func validSAMLBindNonce(v string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(v)
+	return err == nil && len(b) == 32
+}
+
+// setSAMLBindCookie writes (maxAge > 0) or clears (maxAge < 0) the binding
+// cookie. Attributes must be identical on both so the browser evicts it.
+func setSAMLBindCookie(w http.ResponseWriter, r *http.Request, value string, maxAge int) {
+	c := &http.Cookie{
+		Name:     samlBindCookieName,
+		Value:    value,
+		Path:     samlBindCookiePath,
+		HttpOnly: true,
+		MaxAge:   maxAge,
+		SameSite: http.SameSiteLaxMode,
+	}
+	if isSecure(r) {
+		// Must reach the ACS on the IdP's cross-site POST.
+		c.Secure = true
+		c.SameSite = http.SameSiteNoneMode
+	}
+	http.SetCookie(w, c)
 }
