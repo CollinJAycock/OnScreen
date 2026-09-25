@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "archiver": "^7.0.1",
-    "brighterscript": "^0.69.0",
+    "brighterscript": "^0.73.5",
     "brs": "^0.45.0"
   }
 }
