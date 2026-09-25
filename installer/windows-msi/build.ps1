@@ -3,7 +3,7 @@
 # Output: dist/OnScreen-Setup-<version>.exe
 #
 # What's bundled:
-#   - server.exe / worker.exe / devtoken.exe (cross-compiled here)
+#   - server.exe / worker.exe (cross-compiled here; devtoken is a dev tool, not shipped)
 #   - WinSW.exe (downloaded, cached)
 #   - ffmpeg.exe + ffprobe.exe (Gyan.dev full build, downloaded, cached)
 #   - PostgreSQL 17 Windows binaries (downloaded from EnterpriseDB, cached)
@@ -31,6 +31,46 @@ $distDir  = "$root\dist"
 Set-Location $root
 
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
+
+# ── Pinned third-party downloads ─────────────────────────────────────────────
+# Every bundled third-party binary ends up running as SYSTEM or a service
+# account on users' machines. Each download — and each CACHED copy, on every
+# build, so a tampered installer/.cache is caught too — is checked against a
+# pinned SHA-256, and the build fails on a mismatch. To bump a component:
+# download the new file, verify it against the vendor's published checksum or
+# signature where one exists, then change URL + hash together. An empty hash
+# only warns and prints the actual hash (for a deliberately unpinned file).
+function Get-PinnedDownload {
+    param([string]$Url, [string]$OutFile, [string]$Sha256)
+    if (-not (Test-Path $OutFile)) {
+        Write-Host "==> Downloading $Url" -ForegroundColor Cyan
+        $partial = "$OutFile.partial"
+        Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing
+        Move-Item -Force $partial $OutFile
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $OutFile).Hash
+    if (-not $Sha256) {
+        Write-Warning "UNPINNED download $(Split-Path -Leaf $OutFile): sha256=$actual - verify it and pin the hash."
+        return
+    }
+    if ($actual -ne $Sha256.ToUpperInvariant()) {
+        Remove-Item -Force $OutFile
+        throw "SHA-256 mismatch for $(Split-Path -Leaf $OutFile): expected $Sha256, got $actual. The file was deleted; re-verify the source before changing the pin."
+    }
+}
+
+# Pin provenance: none of these vendors publishes a checksum or signs these
+# files, so the hashes were taken on 2026-09-25 from the copies the maintainer
+# has been shipping (installer/.cache). WinSW + ffmpeg matched across two
+# independently downloaded caches; every file's size matches GitHub's release
+# asset metadata. They pin "what we already ship" and stop silent drift or
+# cache tampering; they are not a vendor attestation.
+$Pins = @{
+    WinSW    = "05B82D46AD331CC16BDC00DE5C6332C1EF818DF8CEEFCD49C726553209B3A0DA"  # WinSW-x64.exe v2.12.0
+    Ffmpeg   = "D760E1B3574402ED18B4865851F87D87E73965A982E6453212DF8621FED1C508"  # Gyan ffmpeg-7.1.1-full_build.zip
+    Postgres = "795196DF1B2855FD0C7FB52629C6CC16ACAA85819912E732BD4C46863E77EB30"  # EDB postgresql-17.5-1-windows-x64-binaries.zip
+    Redis    = "018EA18A35876383CBB5F4CD0258ADFC87747CF9D619BCE1CF73A2E36F720CCF"  # tporadowski Redis-x64-5.0.14.1.zip
+}
 
 if (-not $Version) {
     # Source of truth: the VERSION file at the repo root. `git describe`
@@ -89,8 +129,10 @@ Write-Host "Inno Setup at: $iscc" -ForegroundColor Gray
 if (-not $SkipFrontend) {
     Write-Host "==> Building frontend..." -ForegroundColor Cyan
     Push-Location web
-    npm install --silent
-    if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+    # npm ci: install exactly the lockfile (with integrity checks), never
+    # re-resolve ranges while building a release artifact.
+    npm ci --silent
+    if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
     npm run build
     if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
     Pop-Location
@@ -106,10 +148,11 @@ $env:GOOS = "windows"
 $env:GOARCH = "amd64"
 $env:CGO_ENABLED = "0"
 
+# cmd/devtoken is NOT built into release installers: it mints admin tokens
+# from SECRET_KEY and is a developer tool, not part of the product.
 foreach ($b in @(
     @{ Pkg = "./cmd/server";   Out = "server.exe" }
     @{ Pkg = "./cmd/worker";   Out = "worker.exe" }
-    @{ Pkg = "./cmd/devtoken"; Out = "devtoken.exe" }
 )) {
     Write-Host "    -> $($b.Out)" -ForegroundColor Gray
     go build -ldflags "$ldflags" -o (Join-Path $stageDir $b.Out) $b.Pkg
@@ -118,20 +161,14 @@ foreach ($b in @(
 
 # ── WinSW ────────────────────────────────────────────────────────────────────
 $winswCache = "$cacheDir\WinSW-x64-v2.12.0.exe"
-if (-not (Test-Path $winswCache)) {
-    Write-Host "==> Downloading WinSW v2.12.0..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe" `
-        -OutFile $winswCache -UseBasicParsing
-}
+Get-PinnedDownload -Url "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe" `
+    -OutFile $winswCache -Sha256 $Pins.WinSW
 Copy-Item $winswCache "$stageDir\WinSW.exe"
 
 # ── ffmpeg ───────────────────────────────────────────────────────────────────
 $ffmpegZip = "$cacheDir\ffmpeg-7.1.1-full_build.zip"
-if (-not (Test-Path $ffmpegZip)) {
-    Write-Host "==> Downloading ffmpeg 7.1.1 (Gyan full build, ~150 MB)..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-full_build.zip" `
-        -OutFile $ffmpegZip -UseBasicParsing
-}
+Get-PinnedDownload -Url "https://github.com/GyanD/codexffmpeg/releases/download/7.1.1/ffmpeg-7.1.1-full_build.zip" `
+    -OutFile $ffmpegZip -Sha256 $Pins.Ffmpeg
 $ffmpegExtract = "$cacheDir\ffmpeg-extract"
 if (Test-Path $ffmpegExtract) { Remove-Item -Recurse -Force $ffmpegExtract }
 Expand-Archive -Path $ffmpegZip -DestinationPath $ffmpegExtract -Force
@@ -147,11 +184,10 @@ Copy-Item "$ffSrc\ffprobe.exe" $ffmpegStage
 # needs to bootstrap a cluster on the target machine.
 $pgVersion = "17.5-1"
 $pgZip = "$cacheDir\postgresql-$pgVersion-windows-x64-binaries.zip"
-if (-not (Test-Path $pgZip)) {
-    Write-Host "==> Downloading PostgreSQL $pgVersion (~320 MB)..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri "https://get.enterprisedb.com/postgresql/postgresql-$pgVersion-windows-x64-binaries.zip" `
-        -OutFile $pgZip -UseBasicParsing
-}
+# NOTE: bumping $pgVersion (17.5 misses later 17.x security minors) needs the
+# matching new hash in $Pins.Postgres.
+Get-PinnedDownload -Url "https://get.enterprisedb.com/postgresql/postgresql-$pgVersion-windows-x64-binaries.zip" `
+    -OutFile $pgZip -Sha256 $Pins.Postgres
 $pgExtract = "$cacheDir\pg-extract"
 if (Test-Path $pgExtract) { Remove-Item -Recurse -Force $pgExtract }
 Write-Host "==> Extracting PostgreSQL..." -ForegroundColor Cyan
@@ -171,11 +207,11 @@ foreach ($sub in @("bin", "share", "lib")) {
 
 # ── Redis (tporadowski) ──────────────────────────────────────────────────────
 $redisZip = "$cacheDir\Redis-x64-5.0.14.1.zip"
-if (-not (Test-Path $redisZip)) {
-    Write-Host "==> Downloading Redis-on-Windows 5.0.14.1 (~5 MB)..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri "https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip" `
-        -OutFile $redisZip -UseBasicParsing
-}
+# NOTE: tporadowski/redis is an unmaintained 5.0 fork (last release 2022) that
+# lacks later upstream Redis security fixes. It is bound to 127.0.0.1 here;
+# replacing it with a maintained store is tracked in docs/security.md.
+Get-PinnedDownload -Url "https://github.com/tporadowski/redis/releases/download/v5.0.14.1/Redis-x64-5.0.14.1.zip" `
+    -OutFile $redisZip -Sha256 $Pins.Redis
 $redisExtract = "$cacheDir\redis-extract"
 if (Test-Path $redisExtract) { Remove-Item -Recurse -Force $redisExtract }
 Expand-Archive -Path $redisZip -DestinationPath $redisExtract -Force

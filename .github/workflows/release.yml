@@ -5,20 +5,31 @@ on:
     tags:
       - "v*"
 
+# Least privilege by default. The build/test job runs `npm ci` (dependency
+# lifecycle scripts) and `go test ./...` (all dependency test code); it used to
+# share one job with contents:write + packages:write, so any compromised
+# dependency or action could replace release binaries, checksums.txt or a
+# ghcr tag. Write scopes are now granted only to the small publish jobs below,
+# which run no project/dependency code.
 permissions:
-  contents: write
-  packages: write
+  contents: read
 
 jobs:
-  release:
-    name: Build & Release
+  build:
+    name: Build & test
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.meta2.outputs.VERSION }}
+      build_time: ${{ steps.meta2.outputs.BUILD_TIME }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 0
+          persist-credentials: false
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           # Keep in lockstep with ci.yml — shipping binaries must be built by
           # the same toolchain CI tests (this was 1.25 vs CI's 1.26 until the
@@ -26,7 +37,7 @@ jobs:
           go-version: "1.26"
           cache: true
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: "24"
           cache: npm
@@ -88,10 +99,33 @@ jobs:
         working-directory: dist
         run: sha256sum * > checksums.txt
 
-      # Docker image
-      - uses: docker/setup-buildx-action@v4
+      - name: Upload release binaries
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-dist
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
 
-      - uses: docker/login-action@v4
+  image:
+    name: Docker image
+    needs: build
+    runs-on: ubuntu-latest
+    # packages:write to push to ghcr; id-token + attestations to publish a
+    # signed SLSA provenance attestation for the pushed image digest.
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -99,7 +133,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
@@ -108,7 +142,8 @@ jobs:
             type=semver,pattern={{major}}
 
       - name: Build & push Docker image
-        uses: docker/build-push-action@v6
+        id: push
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: .
           file: docker/Dockerfile
@@ -116,24 +151,56 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            VERSION=${{ steps.meta2.outputs.VERSION }}
-            BUILD_TIME=${{ steps.meta2.outputs.BUILD_TIME }}
+            VERSION=${{ needs.build.outputs.version }}
+            BUILD_TIME=${{ needs.build.outputs.build_time }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64,linux/arm64
 
-      # GitHub Release
-      - name: Generate release notes
-        id: notes
-        run: |
-          # Extract notes from CHANGELOG.md for this version
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Extracting notes for version $VERSION"
-          # Fall back to auto-generated notes if CHANGELOG extraction fails
-          echo "auto=true" >> "$GITHUB_OUTPUT"
+      # Registry names must be lowercase; github.repository keeps the owner's
+      # case. Computed in the shell from the env var (no ${{ }} in run:).
+      - name: Image name for attestation
+        id: imgname
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+
+      # Lets users verify the image came from this workflow:
+      #   gh attestation verify oci://ghcr.io/<owner>/<repo>:<tag> --repo <owner>/<repo>
+      - name: Attest image provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-name: ${{ steps.imgname.outputs.name }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
+
+  release:
+    name: Publish GitHub Release
+    needs: [build, image]
+    runs-on: ubuntu-latest
+    # The only job holding contents:write. It runs no project or dependency
+    # code: it downloads the artifacts built above, attests them and uploads.
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download release binaries
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: release-dist
+          path: dist
+
+      # Signed SLSA provenance for every shipped binary, so checksums.txt is no
+      # longer the only (same-pipeline, unsigned) integrity signal. Verify with:
+      #   gh attestation verify onscreen-linux-amd64 --repo <owner>/<repo>
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3.0.0
+        with:
+          subject-path: |
+            dist/onscreen-*
+            dist/checksums.txt
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           generate_release_notes: true
           files: |

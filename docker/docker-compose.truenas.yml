@@ -10,6 +10,7 @@
 #
 # .env file:
 #   SECRET_KEY=<generate with: openssl rand -hex 32>
+#   DB_PASS=<generate with: openssl rand -hex 24>   (required)
 #   TMDB_API_KEY=<your tmdb key>
 #
 # GPU transcoding (optional — requires NVIDIA Container Toolkit on TrueNAS):
@@ -22,7 +23,10 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: onscreen
-      POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
+      # Required, no default: the old fallback "onscreen" is public, and this
+      # role is a superuser. An existing volume keeps the password it was
+      # initialised with - set DB_PASS to that value (or ALTER ROLE first).
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required - set a strong password in docker/.env}
       POSTGRES_DB: onscreen
     volumes:
       - /mnt/apps/OnScreen/postgres:/var/lib/postgresql/data
@@ -52,7 +56,13 @@ services:
         condition: service_healthy
     command: >
       -dir /migrations postgres
-      "postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable" up
+      "postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable" up
+    # Least privilege for the app container (it already runs as the non-root
+    # onscreen user): no setuid escalation, empty capability bounding set.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: "no"
 
   server:
@@ -65,7 +75,7 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
@@ -78,6 +88,12 @@ services:
       interval: 10s
       timeout: 3s
       retries: 10
+    # Least privilege for the app container (it already runs as the non-root
+    # onscreen user): no setuid escalation, empty capability bounding set.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
 
   worker:
@@ -91,7 +107,7 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       WORKER_ADDR: "worker:7073"
@@ -104,6 +120,12 @@ services:
       interval: 10s
       timeout: 3s
       retries: 5
+    # Least privilege for the app container (it already runs as the non-root
+    # onscreen user): no setuid escalation, empty capability bounding set.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     # ── GPU passthrough (uncomment if NVIDIA Container Toolkit is installed) ──
     # deploy:

@@ -14,7 +14,6 @@ behavior on real hardware (Intel QSV, AMD AMF, NVIDIA NVENC).
 | ---- | ------- |
 | `server.exe` | Main HTTP API + embedded web UI |
 | `worker.exe` | Transcode worker (runs in-process as the server's embedded worker by default). To deploy this binary as a **remote** worker on a separate machine, use the MSI installer's [worker-only mode](../windows-msi/) instead of this portable zip — it registers an onlogon interactive scheduled task (`OnScreenWorker`) so NVENC/QSV can reach the GPU (a Windows service runs in session 0 and can't). |
-| `devtoken.exe` | Issues a dev JWT for smoke-testing |
 | `WinSW.exe` + `onscreen.xml` | Windows Service wrapper for `server.exe` |
 | `ffmpeg/ffmpeg.exe` + `ffprobe.exe` | Gyan.dev full build — has NVENC, **QSV**, AMF, AV1, libdav1d |
 | `start.ps1` | Foreground launch (interactive use, Ctrl+C to stop) |
@@ -34,12 +33,24 @@ behavior on real hardware (Intel QSV, AMD AMF, NVIDIA NVENC).
 
 ### 2. Extract and configure
 
-Unzip somewhere stable — e.g. `C:\OnScreen\`. The location matters for
-the Windows Service: WinSW reads files from this directory at every
-service start, so don't extract to `%TEMP%`.
+Unzip somewhere stable — preferably `C:\Program Files\OnScreen\`. The
+location matters for the Windows Service: WinSW reads files from this
+directory at every service start, so don't extract to `%TEMP%`.
+
+The service runs as **LocalSystem**, so this folder must not be writable
+by ordinary users. A folder created directly under `C:\` (e.g.
+`C:\OnScreen`) inherits *Authenticated Users: Modify*, which would let any
+local account replace `server.exe` / `ffmpeg.exe` and run code as SYSTEM, or
+read `SECRET_KEY` from `.env`. `install-service.ps1` therefore resets the
+folder's permissions to SYSTEM + Administrators (full) and Users
+(read/execute), and restricts `.env` / `onscreen.xml` to SYSTEM +
+Administrators — edit them from an elevated shell afterwards. It also
+deletes a `devtoken.exe` left over from an older zip (a developer tool that
+can mint admin tokens; it is no longer shipped).
 
 ```powershell
-cd C:\OnScreen
+# from an elevated PowerShell (Program Files is admin-only)
+cd "C:\Program Files\OnScreen"
 copy .env.example .env
 notepad .env       # fill in SECRET_KEY at minimum
 ```

@@ -27,6 +27,16 @@ services:
       POSTGRES_USER: onscreen
       POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS required}
       POSTGRES_DB: onscreen
+      # Read once, by postgres-ha/init-replication.sh on first init. Set a
+      # REPLICATION_PASSWORD distinct from DB_PASS for new clusters (it falls
+      # back to DB_PASS only so existing stacks keep working). An existing
+      # cluster keeps whatever password its replicator role was created with:
+      # rotate it with ALTER ROLE replicator PASSWORD ... on the primary.
+      REPLICATION_PASSWORD: ${REPLICATION_PASSWORD:-${DB_PASS:?DB_PASS required}}
+      # Source allowed to stream a full copy of the DB. "samenet" = this compose
+      # network. For a cross-box DR standby set the standby's IP/32 and put the
+      # link on TLS (hostssl) — replication traffic is the whole database.
+      REPLICATION_ALLOWED_CIDR: ${REPLICATION_ALLOWED_CIDR:-samenet}
     command:
       - postgres
       - -c
@@ -50,7 +60,9 @@ services:
     <<: *pg
     user: postgres
     environment:
-      PGPASSWORD: ${DB_PASS:?DB_PASS required}
+      # Authenticates as the replicator role — must match what the primary's
+      # init script set (REPLICATION_PASSWORD, or DB_PASS on older stacks).
+      PGPASSWORD: ${REPLICATION_PASSWORD:-${DB_PASS:?DB_PASS required}}
     depends_on:
       postgres-primary:
         condition: service_healthy

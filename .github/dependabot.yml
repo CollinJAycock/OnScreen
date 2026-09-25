@@ -22,11 +22,55 @@ updates:
           - minor
           - patch
 
+  # Also keeps the full-commit-SHA action pins in .github/workflows current
+  # (Dependabot updates the SHA and the trailing "# vX.Y.Z" comment together).
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
+
+  # Client apps ship to end users' devices, so their dependencies need the same
+  # advisory coverage as the server. These were previously not monitored.
+  - package-ecosystem: gradle
+    directories:
+      - /clients/android          # TV client (Google TV / Fire TV)
+      - /clients/android_native   # phone client
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      gradle-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: npm
+    directories:
+      - /clients/desktop
+      - /clients/firetv
+      - /clients/roku
+      - /clients/tizen
+      - /clients/webos
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      clients-npm-minor-and-patch:
+        update-types:
+          - minor
+          - patch
+
+  - package-ecosystem: cargo
+    directory: /clients/desktop/src-tauri
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    groups:
+      cargo-minor-and-patch:
+        update-types:
+          - minor
+          - patch
 
   - package-ecosystem: docker
     directory: /docker

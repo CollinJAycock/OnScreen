@@ -14,7 +14,6 @@ behavior on real hardware (NVIDIA NVENC, Intel VAAPI/QSV, AMD VAAPI).
 | ---- | ------- |
 | `server` | Main HTTP API + embedded web UI (static, CGO-disabled binary — runs on glibc 2.17+ and musl) |
 | `worker` | Transcode worker (runs in-process by default; this binary is for the multi-host fan-out path) |
-| `devtoken` | Issues a dev JWT for smoke-testing |
 | `goose` | Migration runner (pressly/goose) — applied automatically by `start.sh` + `migrate.sh` |
 | `migrations/` | SQL migrations consumed by `goose` |
 | `migrate.sh` | Wrapper that applies pending migrations (called by `start.sh` and `onscreen.service`) |
@@ -56,7 +55,7 @@ behavior on real hardware (NVIDIA NVENC, Intel VAAPI/QSV, AMD VAAPI).
 ```bash
 tar -xzf onscreen-linux-amd64-<VERSION>.tar.gz
 cd onscreen-linux-amd64-<VERSION>
-chmod +x *.sh server worker devtoken goose    # Unix exec bits aren't carried from Windows-built archives
+chmod +x *.sh server worker goose    # Unix exec bits aren't carried from Windows-built archives
 cp .env.example .env
 ${EDITOR:-nano} .env       # SECRET_KEY at minimum
 ```
@@ -119,7 +118,8 @@ directory, `.env`, media, and Postgres/Valkey state are untouched.
 ## Updating
 
 1. Stop the service: `sudo systemctl stop onscreen`.
-2. Replace `server` / `worker` / `devtoken` with the new binaries
+2. Replace `server` / `worker` with the new binaries (and delete any
+   `devtoken` left by an older tarball — it can mint admin tokens)
    (preserve `.env` and any data you've put alongside).
 3. Start the service: `sudo systemctl start onscreen`.
 

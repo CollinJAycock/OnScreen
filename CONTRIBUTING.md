@@ -28,11 +28,13 @@ cd onscreen
 cp .env.example .env.dev
 # Edit .env.dev with your local values (DATABASE_URL, SECRET_KEY, etc.)
 
-# 3. Start Postgres and Valkey
+# 3. Start Postgres and Valkey. docker-compose.yml requires a DB password; keep
+#    it in docker/.env (gitignored), which both compose and the Makefile read.
+echo "DB_PASS=$(openssl rand -hex 24)" >> docker/.env
 docker compose -f docker/docker-compose.yml up -d postgres valkey
 
-# 4. Run migrations
-make migrate DATABASE_URL="postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable"
+# 4. Run migrations (DATABASE_URL defaults to the local DB with that password)
+make migrate
 
 # 5. Start dev servers (Go API on :7070, Vite on :5173)
 make dev

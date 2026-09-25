@@ -119,7 +119,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 docker build -f docker/Dockerfile -t onscreen .
 
 docker run -p 7070:7070 -p 7071:7071 \
-  -e DATABASE_URL="postgres://onscreen:onscreen@postgres:5432/onscreen?sslmode=disable" \
+  -e DATABASE_URL="postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable" \
   -e VALKEY_URL="redis://valkey:6379" \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
   -v /your/media:/media:ro \
@@ -137,11 +137,13 @@ For GPU transcoding, see [docker/Dockerfile.gpu](docker/Dockerfile.gpu) and the 
 ### Dev setup
 
 ```bash
-# 1. Start dependencies
+# 1. Start dependencies. docker-compose.yml requires a DB password; keep it in
+#    docker/.env (gitignored), which both compose and the Makefile read.
+echo "DB_PASS=$(openssl rand -hex 24)" >> docker/.env
 docker compose -f docker/docker-compose.yml up -d postgres valkey
 
-# 2. Run migrations
-make migrate DATABASE_URL="postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable"
+# 2. Run migrations (DATABASE_URL defaults to the local DB with that password)
+make migrate
 
 # 3. Run in dev mode (Go API on :7070, Vite on :5173)
 make dev

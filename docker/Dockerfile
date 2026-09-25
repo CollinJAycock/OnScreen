@@ -4,8 +4,10 @@
 FROM node:26-alpine AS frontend
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
+# npm ci, not npm install: installs exactly what package-lock.json pins (and
+# checks its integrity hashes) instead of re-resolving ranges at build time.
 RUN --mount=type=cache,target=/root/.npm \
-    npm install --no-audit --no-fund
+    npm ci --no-audit --no-fund
 COPY web/ ./
 RUN npm run build
 

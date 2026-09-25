@@ -1,15 +1,40 @@
 .git
 .github
-.env*
+.claude
+# Secrets must never reach the build context: `COPY . .` in the builder stage
+# would otherwise copy them into builder layers that persist in the local and
+# buildx cache. Patterns are anchored to the context root unless prefixed with
+# **/ — the old root-only ".env*" missed docker/.env, where the TrueNAS compose
+# tells operators to put SECRET_KEY/DB_PASS.
+**/.env
+**/.env.*
+.onscreen-deploy.env
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
+**/*.jks
+**/*.keystore
+**/keystore.properties
+**/local.properties
+docker/certs/
 *.exe
 bin/
+dist/
 coverage.out
 coverage.html
 node_modules/
-web/node_modules/
+**/node_modules/
 web/.svelte-kit/
 internal/webui/dist/
 docs/
 *.md
 !README.md
 !LICENSE
+# Not used by any image build (clients ship separately; installer/.cache holds
+# downloaded third-party binaries; screenshots/testdata are docs/tests only).
+clients/
+installer/
+screenshots/
+testdata/
+qa-media/

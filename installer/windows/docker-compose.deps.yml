@@ -9,7 +9,10 @@
 #   docker compose -f docker-compose.deps.yml up -d
 #
 # DATABASE_URL and VALKEY_URL in .env should point at:
-#   postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable
+#   postgres://onscreen:<DB_PASS>@localhost:5432/onscreen?sslmode=disable
+#
+# DB_PASS is read from .env in this directory and is REQUIRED - there is no
+# default. start-deps.ps1 generates a random one on first run.
 #   redis://localhost:6379
 
 name: onscreen-deps
@@ -20,7 +23,9 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: onscreen
-      POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
+      # No default: the old fallback "onscreen" is public, and this role is a
+      # superuser that every local process can reach on the loopback port.
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required - run start-deps.ps1 or set it in .env}
       POSTGRES_DB: onscreen
     ports:
       - "127.0.0.1:${PG_PORT:-5432}:5432"

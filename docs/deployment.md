@@ -627,7 +627,11 @@ server {
         proxy_pass http://onscreen;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # nginx is the edge here, so REPLACE any client-sent X-Forwarded-For
+        # rather than appending to it ($proxy_add_x_forwarded_for): a forged
+        # entry could otherwise pick the IP OnScreen rate-limits and audits.
+        # Behind a CDN, use real_ip_header/set_real_ip_from instead.
+        proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
         # WebSocket support (used by HLS live progress)

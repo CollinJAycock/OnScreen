@@ -65,12 +65,18 @@ generate:
 	sqlc generate
 
 ## migrate: run pending goose migrations (requires DATABASE_URL)
+##
+## The DSN (password included) is handed to goose via the GOOSE_DBSTRING
+## environment variable, not argv: a command-line argument is readable by
+## every local user through `ps` / /proc/<pid>/cmdline while goose runs.
+## (goose v3 merges GOOSE_DBSTRING in after the driver argument.)
+migrate migrate-status: export GOOSE_DBSTRING = $(DATABASE_URL)
 migrate:
-	goose -dir internal/db/migrations postgres "$(DATABASE_URL)" up
+	goose -dir internal/db/migrations postgres up
 
 ## migrate-status: show migration status
 migrate-status:
-	goose -dir internal/db/migrations postgres "$(DATABASE_URL)" status
+	goose -dir internal/db/migrations postgres status
 
 ## test-unit: run unit tests only (no external deps, <10s)
 test-unit:
@@ -103,10 +109,14 @@ test-int:
 ##
 ## SECRET_KEY is ephemeral: the stack is destroyed at the end, so nothing
 ## encrypted under it outlives the run.
+##
+## DB_PASS is ephemeral for the same reason: docker-compose.yml no longer has
+## a default database password, so the throwaway stack gets a random one.
 E2E_SECRET  := $(shell openssl rand -hex 32)
+E2E_DBPASS  := $(shell openssl rand -hex 16)
 E2E_PROJECT ?= onscreen-e2e
 E2E_COMPOSE := docker compose -p $(E2E_PROJECT) -f docker/docker-compose.yml
-E2E_ENV     := PG_PORT=55432 VALKEY_PORT=56379 SERVER_PORT=7090 DEBUG_PORT=7091 ONSCREEN_IMAGE=$(E2E_PROJECT)-server SECRET_KEY=$(E2E_SECRET)
+E2E_ENV     := PG_PORT=55432 VALKEY_PORT=56379 SERVER_PORT=7090 DEBUG_PORT=7091 ONSCREEN_IMAGE=$(E2E_PROJECT)-server SECRET_KEY=$(E2E_SECRET) DB_PASS=$(E2E_DBPASS)
 test-e2e:
 	@$(E2E_ENV) $(E2E_COMPOSE) down -v >/dev/null 2>&1 || true
 	$(E2E_ENV) $(E2E_COMPOSE) up -d --build --wait
@@ -141,13 +151,30 @@ lint:
 
 ## dev: start Vite dev server + Go server in dev mode side-by-side
 ## Override any var on the command line: make dev DATABASE_URL=...
-DATABASE_URL     ?= postgres://onscreen:onscreen@localhost:5432/onscreen?sslmode=disable
+##
+## SECRET_KEY: when not supplied (env or `make dev SECRET_KEY=...`), a random
+## per-checkout key is generated once into $(DEV_SECRET_FILE) (mode 0600,
+## gitignored) and reused, so encrypted settings in the dev DB stay readable
+## across runs. It used to default to a constant published in this file, and
+## anyone who knows the SECRET_KEY can forge admin tokens and decrypt stored
+## API keys. Upgrading a dev DB that was set up under the old constant: put
+## that old value into $(DEV_SECRET_FILE) (or pass SECRET_KEY) to keep its
+## encrypted settings readable.
+## DB_PASS: docker-compose.yml requires it and reads it from docker/.env, so
+## the dev DSN reads the same file and always matches the password the local
+## Postgres container was initialised with. There is no default password.
+DB_PASS          ?= $(shell sed -n 's/^DB_PASS=//p' docker/.env 2>/dev/null | tr -d "\"'")
+DATABASE_URL     ?= postgres://onscreen:$(DB_PASS)@localhost:5432/onscreen?sslmode=disable
 VALKEY_URL       ?= redis://localhost:6379
-SECRET_KEY       ?= dev-secret-key-change-in-production-32b
+DEV_SECRET_FILE  := .dev-secret-key
 dev:
+	@if [ -z "$$SECRET_KEY" ] && [ ! -s $(DEV_SECRET_FILE) ]; then \
+	  (umask 077 && openssl rand -hex 32 > $(DEV_SECRET_FILE)) && \
+	  echo "==> generated a random dev SECRET_KEY in $(DEV_SECRET_FILE)"; \
+	fi
 	DATABASE_URL=$(DATABASE_URL) \
 	VALKEY_URL=$(VALKEY_URL) \
-	SECRET_KEY=$(SECRET_KEY) \
+	SECRET_KEY="$${SECRET_KEY:-$$(cat $(DEV_SECRET_FILE))}" \
 	DEV_FRONTEND_URL=http://localhost:5173 \
 	$(GO) run -tags dev $(CMD_SERVER) & GO_PID=$$!; \
 	trap "kill $$GO_PID 2>/dev/null" EXIT; \
@@ -186,7 +213,7 @@ deploy: frontend
 	mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/server $(CMD_SERVER)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/worker $(CMD_WORKER)
-	goose -dir internal/db/migrations postgres "$(DATABASE_URL)" up
+	$(MAKE) --no-print-directory migrate
 	@echo "Build complete. Restart the server to pick up changes."
 
 ## clean: remove build artifacts

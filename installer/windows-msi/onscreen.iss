@@ -1,7 +1,7 @@
 ; OnScreen — Windows MSI-style installer (Inno Setup 6.x)
 ;
 ; Produces a single self-contained .exe that bundles:
-;   - server.exe + worker.exe + devtoken.exe (the product)
+;   - server.exe + worker.exe (the product; the devtoken dev tool is not shipped)
 ;   - ffmpeg.exe + ffprobe.exe (Gyan.dev full build)
 ;   - WinSW.exe (Windows Service wrapper)
 ;   - PostgreSQL 17 portable binaries
@@ -81,7 +81,8 @@ Name: "openbrowser"; Description: "Open OnScreen in a browser when install compl
 ; Core OnScreen binaries — produced by the build script before ISCC runs.
 Source: "stage\server.exe";    DestDir: "{app}"; Flags: ignoreversion
 Source: "stage\worker.exe";    DestDir: "{app}"; Flags: ignoreversion
-Source: "stage\devtoken.exe";  DestDir: "{app}"; Flags: ignoreversion
+; devtoken.exe is deliberately NOT shipped: it mints admin tokens from
+; SECRET_KEY and is a developer tool (cmd/devtoken), not part of the product.
 
 ; Service wrapper. Three running services share the same .exe via separate
 ; XML configs — that's how WinSW v2 works (the .exe stem matches the .xml
@@ -106,12 +107,22 @@ Source: "stage\ffmpeg\*"; DestDir: "{app}\ffmpeg"; Flags: ignoreversion recurses
 Source: "stage\pgsql\*";  DestDir: "{app}\pgsql";  Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "stage\redis\*";  DestDir: "{app}\redis";  Flags: ignoreversion recursesubdirs createallsubdirs
 
+[InstallDelete]
+; Upgrades: remove the devtoken.exe that earlier installers shipped (an admin
+; token minting tool has no place on a production box).
+Type: files; Name: "{app}\devtoken.exe"
+
 [Dirs]
-; Pre-create %ProgramData%\OnScreen with permissive ACLs so the Postgres
-; service account (LocalSystem by default) can write pgdata.
-Name: "{commonappdata}\{#MyAppShort}";        Permissions: users-modify
-Name: "{commonappdata}\{#MyAppShort}\pgdata"; Permissions: users-modify
-Name: "{commonappdata}\{#MyAppShort}\logs";   Permissions: users-modify
+; Pre-create %ProgramData%\OnScreen. NO "Permissions: users-modify": that let
+; any local user read the raw database files and edit postgresql.conf /
+; pg_hba.conf (code execution as the service account at the next restart), and
+; plant junctions in the logs dir that the LocalSystem services write/rotate.
+; The services run as LocalSystem, which already has full control here;
+; postinstall.ps1 then restricts the whole tree to SYSTEM + Administrators
+; (and strips the old grant from installs made by earlier versions).
+Name: "{commonappdata}\{#MyAppShort}"
+Name: "{commonappdata}\{#MyAppShort}\pgdata"
+Name: "{commonappdata}\{#MyAppShort}\logs"
 
 [Icons]
 Name: "{group}\Open {#MyAppShort}";  Filename: "http://localhost:7070"

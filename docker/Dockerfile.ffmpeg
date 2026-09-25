@@ -18,16 +18,35 @@ ARG CUDA_VERSION=12.8.0
 FROM nvidia/cuda:${CUDA_VERSION}-devel-ubuntu24.04 AS builder
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential clang nasm yasm pkg-config git wget patch \
+      build-essential clang nasm yasm pkg-config git wget patch gnupg \
       libx264-dev libx265-dev libfdk-aac-dev libmp3lame-dev libopus-dev \
       libvorbis-dev libvpx-dev libass-dev libfreetype-dev \
       libgnutls28-dev libzimg-dev ocl-icd-opencl-dev \
       libvulkan-dev meson ninja-build python3-jinja2 libshaderc-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# NVIDIA codec headers (required for nvenc/nvdec)
-RUN git clone --depth 1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git /tmp/nv-codec-headers && \
-    cd /tmp/nv-codec-headers && make install
+# Supply-chain pinning for everything fetched below. This image's ffmpeg parses
+# every untrusted media file the server sees, so each source is pinned to an
+# exact commit (tags are mutable) or verified against the vendor's signature,
+# and the build FAILS on any mismatch. Bumping a version therefore means
+# bumping its *_COMMIT too — resolve it with
+#   git ls-remote <repo-url> 'refs/tags/<tag>^{}'
+# (use the peeled ^{} line for annotated tags) and cross-check a mirror.
+
+# NVIDIA codec headers (required for nvenc/nvdec). Previously cloned from the
+# default branch HEAD, i.e. whatever was there at build time. Pinned to the
+# Video Codec SDK 13.0 line the deployed image was actually built from (master
+# on 2026-06-01; n13.0.19.1 is that commit plus a few extra CUDA symbols).
+# NOTE: the headers' SDK version sets the MINIMUM NVIDIA DRIVER nvenc accepts at
+# runtime, so moving to n13.1.x (current master) is a driver-compat decision
+# like the CUDA pin above, not a routine bump.
+ARG NV_CODEC_HEADERS_TAG=n13.0.19.1
+ARG NV_CODEC_HEADERS_COMMIT=88fee5c37318c991a8762d423530f91681e32e3a
+RUN git clone --depth 1 --branch ${NV_CODEC_HEADERS_TAG} \
+      https://git.videolan.org/git/ffmpeg/nv-codec-headers.git /tmp/nv-codec-headers && \
+    cd /tmp/nv-codec-headers && \
+    test "$(git rev-parse HEAD)" = "${NV_CODEC_HEADERS_COMMIT}" && \
+    make install
 
 # Vulkan for the libplacebo GPU tonemap. Ubuntu 24.04's libvulkan-dev ships
 # Vulkan 1.3.275, but ffmpeg 8.1 requires `require_pkg_config vulkan >= 1.3.277`
@@ -36,7 +55,9 @@ RUN git clone --depth 1 https://git.videolan.org/git/ffmpeg/nv-codec-headers.git
 # The loader's SONAME (libvulkan.so.1) is forward-compatible, so the apt
 # libvulkan.so.1 — build-time link target and runtime loader — needs no rebuild.
 ARG VULKAN_HEADERS_TAG=v1.3.296
+ARG VULKAN_HEADERS_COMMIT=29f979ee5aa58b7b005f805ea8df7a855c39ff37
 RUN git clone --depth 1 --branch ${VULKAN_HEADERS_TAG} https://github.com/KhronosGroup/Vulkan-Headers.git /tmp/vk-headers && \
+    test "$(git -C /tmp/vk-headers rev-parse HEAD)" = "${VULKAN_HEADERS_COMMIT}" && \
     cp -r /tmp/vk-headers/include/* /usr/include/ && \
     VKPC="$(find /usr -name vulkan.pc | head -1)" && \
     sed -i 's/^Version:.*/Version: 1.3.296/' "$VKPC" && \
@@ -51,10 +72,14 @@ RUN git clone --depth 1 --branch ${VULKAN_HEADERS_TAG} https://github.com/Khrono
 # --libdir=lib puts libplacebo.so + libplacebo.pc in /usr/local/lib so the
 # runtime COPY picks the .so up and ffmpeg's pkg-config finds it (same dir
 # nv-codec-headers uses). Builds against the newer Vulkan headers overlaid above.
+# The commit pin also pins the submodules: their commits are recorded in the
+# superproject tree, so a verified top-level commit fixes them too.
 ARG LIBPLACEBO_TAG=v7.349.0
+ARG LIBPLACEBO_COMMIT=1fd3c7bde7b943fe8985c893310b5269a09b46c5
 RUN git clone --recursive --depth 1 --shallow-submodules --branch ${LIBPLACEBO_TAG} \
       https://code.videolan.org/videolan/libplacebo.git /tmp/libplacebo && \
     cd /tmp/libplacebo && \
+    test "$(git rev-parse HEAD)" = "${LIBPLACEBO_COMMIT}" && \
     meson setup build \
       --prefix=/usr/local \
       --libdir=lib \
@@ -69,9 +94,23 @@ RUN git clone --recursive --depth 1 --shallow-submodules --branch ${LIBPLACEBO_T
     ldconfig && \
     rm -rf /tmp/libplacebo
 
+# The release tarball is verified against FFmpeg's detached PGP signature. The
+# key file is fetched from ffmpeg.org too, so trust comes from the PINNED
+# FINGERPRINT (published on https://ffmpeg.org/download.html): the build only
+# proceeds if gpg reports a valid signature whose primary key is exactly that
+# fingerprint. A tampered tarball, a swapped key or a missing .asc all fail.
 ARG FFMPEG_VERSION=8.1.1
-RUN wget -q https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -O /tmp/ffmpeg.tar.bz2 && \
-    cd /tmp && tar xjf ffmpeg.tar.bz2
+ARG FFMPEG_SIGNING_KEY_FPR=FCF986EA15E6E293A5644F10B4322F04D67658D8
+RUN cd /tmp && \
+    wget -q https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2 -O ffmpeg.tar.bz2 && \
+    wget -q https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.bz2.asc -O ffmpeg.tar.bz2.asc && \
+    wget -q https://ffmpeg.org/ffmpeg-devel.asc -O ffmpeg-devel.asc && \
+    export GNUPGHOME="$(mktemp -d)" && \
+    gpg --batch --quiet --import ffmpeg-devel.asc && \
+    gpg --batch --status-file gpg.status --verify ffmpeg.tar.bz2.asc ffmpeg.tar.bz2 && \
+    grep -Eq "^\[GNUPG:\] VALIDSIG .* ${FFMPEG_SIGNING_KEY_FPR}\$" gpg.status && \
+    rm -rf "$GNUPGHOME" gpg.status ffmpeg.tar.bz2.asc ffmpeg-devel.asc && \
+    tar xjf ffmpeg.tar.bz2
 
 # Our curated CUDA-tonemap patch set, lifted from jellyfin-ffmpeg's 8.1.1 branch
 # (GPL) and carried as the minimal 3-patch chain on top of mainline 8.1.1:

@@ -36,6 +36,24 @@ if [ ! -f .env ]; then
     exit 1
 fi
 
+# .env holds SECRET_KEY (forges admin tokens, decrypts stored API keys) and the
+# database password. `cp .env.example .env` under the usual umask 022 leaves it
+# 0644 — readable by every local account. Make it owner-only: the run user
+# needs it for start.sh/migrate.sh; systemd reads EnvironmentFile= as root.
+chown "$RUN_USER" .env
+chmod 600 .env
+
+# The unit runs with all of RUN_USER's groups. Membership of docker (or lxd)
+# is root-equivalent, and sudo/wheel/admin are one password away from it, so a
+# code-execution bug in the server or ffmpeg would inherit that. Warn rather
+# than refuse, so existing installs keep working.
+for g in docker lxd sudo wheel admin; do
+    if id -nG "$RUN_USER" 2>/dev/null | tr ' ' '\n' | grep -qx "$g"; then
+        echo "WARNING: $RUN_USER is in the '$g' group, which the OnScreen service inherits. Prefer a dedicated account, e.g.:" >&2
+        echo "         sudo useradd --system --no-create-home --groups video,render onscreen   (then install as that user)" >&2
+    fi
+done
+
 UNIT_SRC="$INSTALL_DIR/onscreen.service"
 UNIT_DST="/etc/systemd/system/onscreen.service"
 

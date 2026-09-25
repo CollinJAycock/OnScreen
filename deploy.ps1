@@ -44,8 +44,16 @@ go build -ldflags "-X main.version=$version -X main.buildTime=$buildTime" -o bin
 if ($LASTEXITCODE -ne 0) { throw "Go build failed" }
 
 Write-Host "==> Running migrations..." -ForegroundColor Cyan
-goose -dir internal\db\migrations postgres $env:DATABASE_URL up
-if ($LASTEXITCODE -ne 0) { throw "Migration failed" }
+# DSN goes to goose via GOOSE_DBSTRING (env), not argv, so the DB password
+# never appears in the process command line (visible to process listings).
+$env:GOOSE_DBSTRING = $env:DATABASE_URL
+try {
+    goose -dir internal\db\migrations postgres up
+    if ($LASTEXITCODE -ne 0) { throw "Migration failed" }
+} finally {
+    # Don't leak it into the server process started below.
+    Remove-Item Env:\GOOSE_DBSTRING -ErrorAction SilentlyContinue
+}
 
 Write-Host "==> Stopping old server..." -ForegroundColor Cyan
 $oldProcs = Get-Process -Name server -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "*OnScreen*" }

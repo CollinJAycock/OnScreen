@@ -38,8 +38,45 @@ if (-not (Test-Path $envPath)) {
 
 $xmlPath = Join-Path $PSScriptRoot "onscreen.xml"
 $winsw   = Join-Path $PSScriptRoot "WinSW.exe"
-if (-not (Test-Path $winsw)) { throw "WinSW.exe missing — re-extract the zip." }
-if (-not (Test-Path $xmlPath)) { throw "onscreen.xml missing — re-extract the zip." }
+# ASCII-only strings: this file has no BOM, so Windows PowerShell 5.1 reads it
+# as ANSI, where an em-dash's last byte decodes to a curly quote that ends the
+# string early (the script failed to parse at all).
+if (-not (Test-Path $winsw)) { throw "WinSW.exe missing - re-extract the zip." }
+if (-not (Test-Path $xmlPath)) { throw "onscreen.xml missing - re-extract the zip." }
+
+# ── Lock down the install directory ──────────────────────────────────────────
+# The service runs as LocalSystem and launches server.exe / ffmpeg.exe from this
+# folder. A folder created under C:\ inherits "Authenticated Users: Modify", so
+# any local account could swap a binary (or plant a DLL) and get SYSTEM, and
+# read SECRET_KEY + DATABASE_URL from .env / onscreen.xml. Reset it to SYSTEM +
+# Administrators (full) and Users (read/execute); the secret-bearing files get
+# SYSTEM + Administrators only. Well-known SIDs so non-English Windows works.
+$SidSystem = '*S-1-5-18'; $SidAdmins = '*S-1-5-32-544'; $SidUsers = '*S-1-5-32-545'
+function Invoke-Icacls {
+    param([string[]]$IcaclsArgs)
+    $ErrorActionPreference = 'Continue'   # judge by exit code, not stderr text
+    $out = & icacls.exe @IcaclsArgs 2>&1
+    if ($LASTEXITCODE -ne 0) { throw "icacls $($IcaclsArgs -join ' ') failed (exit $LASTEXITCODE): $out" }
+}
+Write-Host "==> Restricting permissions on $PSScriptRoot..." -ForegroundColor Cyan
+Invoke-Icacls @($PSScriptRoot, '/inheritance:r', '/grant:r',
+    "${SidSystem}:(OI)(CI)F", "${SidAdmins}:(OI)(CI)F", "${SidUsers}:(OI)(CI)RX")
+# Children inherit the new root ACL (drops any explicit grants). Best-effort: a
+# locked file must not abort the install — the root ACL above already applies.
+$prevEAP = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+$resetOut = & icacls.exe "$PSScriptRoot\*" /reset /T /C /Q 2>&1
+if ($LASTEXITCODE -ne 0) { Write-Host "WARN: icacls /reset reported errors: $resetOut" -ForegroundColor Yellow }
+$ErrorActionPreference = $prevEAP
+function Protect-SecretFile {
+    param([string]$Path)
+    if (Test-Path -LiteralPath $Path) {
+        Invoke-Icacls @($Path, '/inheritance:r', '/grant:r', "${SidSystem}:F", "${SidAdmins}:F")
+    }
+}
+Protect-SecretFile $envPath
+# devtoken.exe (mints admin tokens from SECRET_KEY) shipped in older zips; it
+# is a developer tool, not part of the product.
+Remove-Item -Force -ErrorAction SilentlyContinue (Join-Path $PSScriptRoot "devtoken.exe")
 
 # Build <env/> lines from .env so the service sees the same config the
 # foreground launcher does. Skip blank lines / comments.
@@ -65,6 +102,8 @@ $xml = $xml -replace '(?ms)\s*<env\s[^/]*/>', ''
 $envBlock = ($envLines -join "`n")
 $xml = $xml -replace '</service>', "`n$envBlock`n</service>"
 Set-Content -Path $xmlPath -Value $xml -Encoding utf8
+# The XML now carries every .env value (SECRET_KEY, DATABASE_URL).
+Protect-SecretFile $xmlPath
 
 # WinSW finds its config by the running exe's own base name, not a path arg.
 # Copy WinSW.exe -> onscreen.exe so it pairs with onscreen.xml; passing the

@@ -21,7 +21,7 @@ services:
       context: ..
       dockerfile: docker/Dockerfile
     environment:
-      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
@@ -45,12 +45,18 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       WORKER_ADDR: "worker-gpu:7073"
       TRANSCODE_ENCODERS: "nvenc"
       TRANSCODE_MAX_SESSIONS: ${GPU_MAX_SESSIONS:-4}
+    # Least privilege for the app container (it already runs as the non-root
+    # onscreen user): no setuid escalation, empty capability bounding set.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
@@ -79,12 +85,18 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       WORKER_ADDR: "worker-cpu:7073"
       TRANSCODE_ENCODERS: "software"
       TRANSCODE_MAX_SESSIONS: ${CPU_MAX_SESSIONS:-2}
+    # Least privilege for the app container (it already runs as the non-root
+    # onscreen user): no setuid escalation, empty capability bounding set.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]

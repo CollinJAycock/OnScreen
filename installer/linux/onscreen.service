@@ -43,6 +43,30 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full
 ProtectHome=read-only
+# Extra sandboxing that limits what a code-execution bug in the server or in
+# ffmpeg/tesseract (which parse untrusted media/subtitles) can reach. Chosen
+# because none of them touch device access, /proc/driver or memory mapping,
+# so NVENC/NVDEC (/dev/nvidia*), VAAPI/QSV (/dev/dri) and media reads keep
+# working. Deliberately NOT set, because they break GPU transcoding or common
+# layouts:
+#   PrivateDevices / DevicePolicy / ProtectClock (restrict /dev -> no GPU),
+#   ProcSubset=pid (hides /proc/driver/nvidia), MemoryDenyWriteExecute (CUDA /
+#   driver JIT), SystemCallFilter (driver ioctls vary), ProtectSystem=strict
+#   (the install dir under /opt must stay writable), and
+#   CapabilityBoundingSet= (would stop a root-run unit reading media).
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectHostname=true
+ProtectProc=invisible
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+SystemCallArchitectures=native
+# IP for HTTP/UDP discovery, unix sockets for local services, netlink for
+# interface enumeration (Go's net.Interfaces).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
 # stdout/stderr go to journald — view with: journalctl -u onscreen -f
 StandardOutput=journal
 StandardError=journal

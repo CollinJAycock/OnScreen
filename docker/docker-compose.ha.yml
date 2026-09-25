@@ -60,6 +60,11 @@ services:
       "postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=${DB_SSLMODE:-require}" up
     volumes:
       - ../internal/db/migrations:/migrations:ro
+    # goose needs no privileges beyond a TCP connection.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     restart: "no"
 
   onscreen:
@@ -77,8 +82,21 @@ services:
       DATABASE_URL: postgres://onscreen:${DB_PASS}@pgbouncer:5432/onscreen?sslmode=${DB_SSLMODE:-require}&default_query_exec_mode=exec
       VALKEY_URL: redis://valkey:6379
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      # Only nginx can reach this service (it publishes no ports), and the
+      # default proxy trust (private peers) therefore means "nginx". To pin
+      # it exactly, give the compose network a fixed subnet and set e.g.
+      #   TRUSTED_PROXIES: 172.30.0.0/24
+      # nginx.conf must keep forwarding X-Forwarded-For/Proto on EVERY
+      # location, or every client looks local (first-run setup gate, per-IP
+      # rate limits and cookie Secure all depend on it).
     volumes:
       - media_data:/media:ro
+    # Least privilege for the app container (it already runs as the non-root
+    # onscreen user): no setuid escalation, empty capability bounding set.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:7070/health/live || exit 1"]
       interval: 10s
@@ -103,6 +121,12 @@ services:
       SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
     volumes:
       - media_data:/media
+    # Least privilege for the app container (it already runs as the non-root
+    # onscreen user): no setuid escalation, empty capability bounding set.
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
       interval: 10s
@@ -121,6 +145,10 @@ services:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ${TLS_CERT_PATH:-./certs/onscreen.crt}:/etc/ssl/certs/onscreen.crt:ro
       - ${TLS_KEY_PATH:-./certs/onscreen.key}:/etc/ssl/private/onscreen.key:ro
+    # nginx's master needs its default caps (bind :80/:443, setuid to the
+    # worker user), so only setuid-binary escalation is blocked here.
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:80/health || exit 1"]
       interval: 10s

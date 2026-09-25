@@ -77,7 +77,16 @@ if [[ -z "$DATABASE_URL" ]]; then
 fi
 
 echo "==> Applying migrations"
-sudo docker run --rm --network host --entrypoint /usr/local/bin/goose \
-    "$IMAGE" -dir /migrations postgres "$DATABASE_URL" up
+# Hand the DSN to goose through an --env-file (goose reads GOOSE_DBSTRING)
+# rather than argv: an argument to `docker run` / goose, password included, is
+# readable by every local user via `ps` / /proc/<pid>/cmdline. `-e VAR=value`
+# would leak the same way, and a bare `-e VAR` doesn't survive sudo's env
+# reset. The file is created 0600 and removed on exit.
+GOOSE_ENV_FILE="$(umask 077 && mktemp)"
+trap 'rm -f "$GOOSE_ENV_FILE"' EXIT
+printf 'GOOSE_DBSTRING=%s\n' "$DATABASE_URL" > "$GOOSE_ENV_FILE"
+sudo docker run --rm --network host --env-file "$GOOSE_ENV_FILE" \
+    --entrypoint /usr/local/bin/goose \
+    "$IMAGE" -dir /migrations postgres up
 
 echo "==> Done. Restart the server container to pick up the new image."

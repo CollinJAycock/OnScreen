@@ -10,6 +10,11 @@ on:
   push:
     tags: ['v*']
 
+# Least privilege: builds run npm lifecycle scripts, cargo build scripts and
+# proc-macros from ~300 crates; none of that should hold a write token.
+permissions:
+  contents: read
+
 jobs:
   build:
     name: ${{ matrix.os-name }}
@@ -29,7 +34,9 @@ jobs:
             artifact-glob: 'clients/desktop/src-tauri/target/release/bundle/{appimage,deb}/*'
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
 
       - name: Install Linux deps
         if: matrix.os == 'ubuntu-latest'
@@ -47,18 +54,20 @@ jobs:
             libsoup-3.0-dev \
             build-essential
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: web/package-lock.json
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch, pinned
+        with:
+          toolchain: stable
 
       # Cache cargo registry + the desktop client's target dir. cpal +
       # claxon + ureq + tauri together pull ~300+ crates; the cache
       # cuts cold builds from ~10 min to ~90 s on cache hits.
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: clients/desktop/src-tauri
 
@@ -68,7 +77,7 @@ jobs:
       - name: Build SvelteKit frontend
         run: |
           cd web
-          npm install --no-audit --no-fund
+          npm ci --no-audit --no-fund
           npm run build
 
       - name: Build Tauri bundle
@@ -76,7 +85,7 @@ jobs:
         run: cargo tauri build
 
       - name: Upload installer
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: onscreen-desktop-${{ matrix.os-name }}
           path: ${{ matrix.artifact-glob }}

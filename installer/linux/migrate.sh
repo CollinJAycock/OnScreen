@@ -37,4 +37,7 @@ if [ ! -d ./migrations ]; then
     exit 1
 fi
 
-./goose -dir migrations postgres "$DATABASE_URL" up
+# Hand goose the DSN via GOOSE_DBSTRING (env) rather than argv: arguments are
+# world-readable through ps / /proc/<pid>/cmdline, and this runs as the unit's
+# ExecStartPre on every service start. goose v3 slots it in after the driver.
+GOOSE_DBSTRING="$DATABASE_URL" exec ./goose -dir migrations postgres up

@@ -3,7 +3,7 @@
 # Output: dist/onscreen-linux-amd64-<version>.tar.gz
 #
 # Contents:
-#   - server / worker / devtoken      (Go binaries, linux/amd64, static)
+#   - server / worker                 (Go binaries, linux/amd64, static; devtoken is not shipped)
 #   - ffmpeg/ffmpeg + ffprobe         (ONLY with -BundleFfmpeg; Linux ships
 #                                      without it by default — the distro's
 #                                      ffmpeg wires up the right VAAPI driver
@@ -48,6 +48,29 @@ Set-Location $root
 # Force TLS 1.2 — Windows PowerShell 5.1 negotiates 1.0/1.1 by default and
 # johnvansickle.com / github.com both reject those.
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12 -bor [Net.ServicePointManager]::SecurityProtocol
+
+# ── Pinned third-party downloads ─────────────────────────────────────────────
+# Same helper as the Windows build scripts: every download and every CACHED
+# copy is checked against a pinned SHA-256 on each build; a mismatch deletes
+# the file and fails the build. An empty hash only warns and prints the hash.
+function Get-PinnedDownload {
+    param([string]$Url, [string]$OutFile, [string]$Sha256)
+    if (-not (Test-Path $OutFile)) {
+        Write-Host "==> Downloading $Url" -ForegroundColor Cyan
+        $partial = "$OutFile.partial"
+        Invoke-WebRequest -Uri $Url -OutFile $partial -UseBasicParsing
+        Move-Item -Force $partial $OutFile
+    }
+    $actual = (Get-FileHash -Algorithm SHA256 -LiteralPath $OutFile).Hash
+    if (-not $Sha256) {
+        Write-Warning "UNPINNED download $(Split-Path -Leaf $OutFile): sha256=$actual - verify it and pin the hash."
+        return
+    }
+    if ($actual -ne $Sha256.ToUpperInvariant()) {
+        Remove-Item -Force $OutFile
+        throw "SHA-256 mismatch for $(Split-Path -Leaf $OutFile): expected $Sha256, got $actual. The file was deleted; re-verify the source before changing the pin."
+    }
+}
 
 if (-not $Version) {
     # See installer/windows/build.ps1 for why we prefer the VERSION
@@ -97,8 +120,9 @@ if (-not $SkipFrontend) {
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {
-        npm install --silent
-        if ($LASTEXITCODE -ne 0) { throw "npm install failed" }
+        # npm ci: install exactly the lockfile (with integrity checks).
+        npm ci --silent
+        if ($LASTEXITCODE -ne 0) { throw "npm ci failed" }
         npm run build
         if ($LASTEXITCODE -ne 0) { throw "npm run build failed" }
     } finally {
@@ -117,10 +141,11 @@ $env:GOOS = "linux"
 $env:GOARCH = "amd64"
 $env:CGO_ENABLED = "0"   # static — runs on any glibc + musl distro
 
+# cmd/devtoken is NOT shipped: it mints admin tokens from SECRET_KEY and is a
+# developer tool, not part of the product.
 $binaries = @(
     @{ Pkg = "./cmd/server";   Out = "server" }
     @{ Pkg = "./cmd/worker";   Out = "worker" }
-    @{ Pkg = "./cmd/devtoken"; Out = "devtoken" }
 )
 foreach ($b in $binaries) {
     $outPath = Join-Path $bundleDir $b.Out
@@ -137,10 +162,11 @@ if (-not $NoFfmpeg) {
     # is tied to a numbered upstream version, not a moving HEAD.
     $ffmpegUrl = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
     $ffmpegArchive = Join-Path $cacheDir "ffmpeg-release-amd64-static.tar.xz"
-    if (-not (Test-Path $ffmpegArchive)) {
-        Write-Host "==> Downloading ffmpeg (johnvansickle static)..." -ForegroundColor Cyan
-        Invoke-WebRequest -Uri $ffmpegUrl -OutFile $ffmpegArchive -UseBasicParsing
-    }
+    # UNPINNED on purpose: this URL is a moving "latest release" alias, so any
+    # fixed hash breaks on the next upstream release, and the vendor publishes
+    # only an MD5 from the same host. The helper still prints the hash so it
+    # can be recorded. Opt-in only (`make installer-linux` passes -NoFfmpeg).
+    Get-PinnedDownload -Url $ffmpegUrl -OutFile $ffmpegArchive -Sha256 ""
     $ffmpegStage = Join-Path $cacheDir "ffmpeg-extract"
     if (Test-Path $ffmpegStage) { Remove-Item -Recurse -Force $ffmpegStage }
     New-Item -ItemType Directory -Path $ffmpegStage | Out-Null
@@ -166,10 +192,10 @@ if (-not $NoFfmpeg) {
 $gooseVersion = "v3.27.1"
 $gooseUrl = "https://github.com/pressly/goose/releases/download/$gooseVersion/goose_linux_x86_64"
 $gooseCache = Join-Path $cacheDir "goose_linux_x86_64_$gooseVersion"
-if (-not (Test-Path $gooseCache)) {
-    Write-Host "==> Downloading goose $gooseVersion..." -ForegroundColor Cyan
-    Invoke-WebRequest -Uri $gooseUrl -OutFile $gooseCache -UseBasicParsing
-}
+# Vendor-verified: matches the v3.27.1 release's own checksums.txt and GitHub's
+# asset digest for goose_linux_x86_64. Update together with $gooseVersion.
+$gooseSha256 = "C5F1E5CD3B8E5DA05592C2714B079D78EC846DDC7EC1F70D474C0449E79F6AB4"
+Get-PinnedDownload -Url $gooseUrl -OutFile $gooseCache -Sha256 $gooseSha256
 Copy-Item $gooseCache (Join-Path $bundleDir "goose")
 
 Write-Host "==> Copying migrations..." -ForegroundColor Cyan
@@ -236,7 +262,7 @@ Push-Location $stageDir
 # Note on file modes: bsdtar on Windows doesn't pick up Unix execute
 # bits from NTFS, so .sh and the Go binaries come out 0644 in the
 # archive. The README's Quickstart includes the `chmod +x *.sh server
-# worker devtoken goose ffmpeg/*` step right after extraction. The CRLF
+# worker goose ffmpeg/*` step right after extraction. The CRLF
 # normalisation above is what actually fixes most of the "not
 # recognized" symptoms — wrong line endings in #!/bin/bash break the
 # shebang outright; missing exe bits just need one chmod.

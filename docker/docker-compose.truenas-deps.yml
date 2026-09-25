@@ -6,7 +6,10 @@
 #   cd /mnt/apps/OnScreen/repo
 #   docker compose -f docker/docker-compose.truenas-deps.yml up -d
 #
-# The OnScreen custom app connects to these via the Docker bridge network.
+# The OnScreen custom app connects to these over the host (it runs with host
+# networking, reaching them on 127.0.0.1). The dependency ports below are
+# therefore bound to loopback only — see the postgres/valkey notes. Set a strong
+# DB_PASS (and, ideally, VALKEY_PASSWORD) in .env before first deploy.
 
 name: onscreen-deps
 
@@ -15,12 +18,25 @@ services:
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: onscreen
-      POSTGRES_PASSWORD: ${DB_PASS:-onscreen}
+      # Required, no default. A bare "5432:5432" bind (below, now fixed) used to
+      # expose Postgres to the network guarded only by the old default password
+      # "onscreen", which is publicly known. The loopback bind closes the network
+      # reach; refusing to start without DB_PASS closes the "operator forgot to
+      # set a password" gap that made the default the only barrier for anything
+      # on the host. Mirrors docker-compose.ha.yml / postgres-ha.yml.
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required — set a strong password in .env}
       POSTGRES_DB: onscreen
     volumes:
       - /mnt/apps/OnScreen/postgres:/var/lib/postgresql/data
     ports:
-      - "5432:5432"
+      # Loopback-only. The OnScreen app reaches Postgres over the host's
+      # loopback (host networking), so nothing here needs a routable interface.
+      # A bare "5432:5432" published the database to every host interface — the
+      # LAN, and the internet on any host that forwards the port. 127.0.0.1
+      # confines it to the host. Note: co-located containers/processes share the
+      # host loopback, so this bind is not an isolation boundary against other
+      # apps on the same NAS — the required DB_PASS above is what guards that.
+      - "127.0.0.1:5432:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U onscreen"]
       interval: 5s
@@ -31,7 +47,21 @@ services:
   valkey:
     image: valkey/valkey:8-alpine
     ports:
-      - "6379:6379"
+      # Loopback-only, for the same reason as Postgres above. Valkey ran with
+      # NO password on a routable interface. Valkey holds the pairing records
+      # and worker registrations the API trusts, so write access to it alone
+      # let anyone who could reach it mint a session for any account (admin
+      # included) or register a rogue transcode worker — no login required.
+      # 127.0.0.1 removes the network reach.
+      #
+      # IMPORTANT: co-located containers/processes share the host loopback, so on
+      # a multi-tenant NAS this bind alone does NOT isolate Valkey from other
+      # apps on the same host, and Valkey still has no password. Add one — it is
+      # left optional here only because it must be rolled out together with the
+      # app's VALKEY_URL (a mismatch breaks the app):
+      #   command: ["valkey-server", "--requirepass", "${VALKEY_PASSWORD:?set VALKEY_PASSWORD}"]
+      # then set the app's VALKEY_URL to redis://:${VALKEY_PASSWORD}@127.0.0.1:6379.
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 5s
@@ -49,5 +79,5 @@ services:
         condition: service_healthy
     command: >
       -dir /migrations postgres
-      "postgres://onscreen:${DB_PASS:-onscreen}@postgres:5432/onscreen?sslmode=disable" up
+      "postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable" up
     restart: "no"
