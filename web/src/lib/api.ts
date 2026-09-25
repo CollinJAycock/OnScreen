@@ -444,6 +444,35 @@ export class ApiClient {
     }
   }
 
+  /** Revoke the current session on the server (best-effort; throws on
+   *  network error). Cookie (browser) mode: the refresh cookie rides the
+   *  POST. Bearer (native) mode has no cookie, so the refresh token must go
+   *  in the body. Current servers revoke a body token even when the bearer
+   *  has expired; older ones only honoured it alongside a VALID bearer (an
+   *  expired one was treated as anonymous: still 204, nothing revoked), so
+   *  bearer mode rotates first to guarantee a fresh bearer, then revokes the
+   *  rotated refresh token. Sent to the current apiBase, i.e. the server
+   *  that issued the token — callers must run this BEFORE changing or
+   *  clearing the server URL. */
+  async revokeSession(): Promise<void> {
+    if (!refreshTokenStore || credentialsMode() !== 'omit') {
+      await this.request('POST', '/auth/logout', undefined, false);
+      return;
+    }
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.tryRefresh().finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    if (!(await this.refreshPromise) || !refreshTokenStore) return;
+    await fetch(apiBase + '/auth/logout', {
+      method: 'POST',
+      headers: authHeaders(),
+      credentials: credentialsMode(),
+      body: JSON.stringify({ refresh_token: refreshTokenStore }),
+    });
+  }
+
   get = <T>(path: string) => this.request<T>('GET', path);
   post = <T>(path: string, body?: unknown) => this.request<T>('POST', path, body);
   /** POST that does NOT attempt the 401→refresh→logout cascade. For
@@ -562,7 +591,10 @@ export const authApi = {
     api.post<{ id: string; username: string }>('/auth/register', { username, password, email }),
   logout: async () => {
     try {
-      await api.post('/auth/logout');
+      // revokeSession, not a bare POST: in bearer (Tauri) mode there is no
+      // cookie, and a body-less logout revoked nothing — the 30-day refresh
+      // token outlived "Sign out".
+      await api.revokeSession();
     } finally {
       // Clear bearer + persisted tokens regardless of whether the
       // server-side logout succeeded — a leaked refresh token is a
@@ -842,6 +874,10 @@ export interface UserPreferences {
   // setPreferences PUT body can omit it (server treats absent as
   // "leave unchanged" via SQL COALESCE).
   episode_use_show_poster?: boolean;
+  // Whether the caller's own account has a PIN set. Server returns it on GET;
+  // the Settings page reads its own PIN status here (the switchable-profiles
+  // list is scoped to managed children and never contains the caller).
+  has_pin?: boolean;
   // Hub row customization — absent until the user customizes.
   hub_layout?: HubRowPref[];
 }

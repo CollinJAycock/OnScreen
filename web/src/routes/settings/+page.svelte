@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { settingsApi, userApi, api } from '$lib/api';
-  import type { UserMeta, UserPreferences } from '$lib/api';
+  import { settingsApi, userApi } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
@@ -81,22 +80,16 @@
     } finally {
       loading = false;
     }
-    // Check current user's PIN status
-    try {
-      const user: UserMeta | null = api.getUser();
-      if (user) {
-        const switchable = await userApi.listSwitchable();
-        const me = switchable.find((u: { id: string }) => u.id === user.user_id);
-        if (me) hasPin = me.has_pin;
-      }
-    } catch { /* ignore — non-critical */ }
-
-    // Load language preferences
+    // Load language preferences (also carries the caller's own PIN status).
+    // has_pin comes from the self-scoped preferences call, not the switchable
+    // list — that list is scoped to the caller's managed children and never
+    // contains the caller's own account.
     try {
       const prefs = await userApi.getPreferences();
       prefAudioLang = prefs.preferred_audio_lang ?? '';
       prefSubtitleLang = prefs.preferred_subtitle_lang ?? '';
       prefEpisodeUseShowPoster = prefs.episode_use_show_poster ?? true;
+      hasPin = prefs.has_pin ?? false;
     } catch { /* ignore — non-critical */ }
 
   });

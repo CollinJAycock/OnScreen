@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { cssUrl } from '$lib/cssurl';
   import { progressUpdates } from '$lib/stores/notifications';
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
   import { capabilities } from '$lib/stores/capabilities';
@@ -3167,7 +3168,7 @@
 
     <!-- Fanart background (blurred, behind controls) -->
     {#if item.fanart_path}
-      <div class="fanart-bg" style="background-image:url('{assetUrl(`/artwork/${item.fanart_path}?v=${item.updated_at}&w=640`)}')"></div>
+      <div class="fanart-bg" style="background-image:{cssUrl(assetUrl(`/artwork/${item.fanart_path}?v=${item.updated_at}&w=640`))}"></div>
     {/if}
 
     <!-- Controls overlay -->
@@ -3241,7 +3242,7 @@
               {#if hoverCue}
                 <div
                   class="seek-preview-thumb"
-                  style="width:{hoverCue.w}px;height:{hoverCue.h}px;background-image:url('{hoverCue.url}');background-position:-{hoverCue.x}px -{hoverCue.y}px"
+                  style="width:{hoverCue.w}px;height:{hoverCue.h}px;background-image:{cssUrl(hoverCue.url)};background-position:-{hoverCue.x}px -{hoverCue.y}px"
                 ></div>
               {/if}
               <div class="seek-preview-time">{formatHoverTime(hoverTime)}</div>
@@ -3925,7 +3926,7 @@
 <div class="detail-page">
   <!-- Fanart hero -->
   {#if item.fanart_path}
-    <div class="detail-hero" style="background-image:url('{assetUrl(`/artwork/${item.fanart_path}?v=${item.updated_at}&w=1280`)}')">
+    <div class="detail-hero" style="background-image:{cssUrl(assetUrl(`/artwork/${item.fanart_path}?v=${item.updated_at}&w=1280`))}">
       <div class="detail-hero-fade"></div>
     </div>
   {/if}

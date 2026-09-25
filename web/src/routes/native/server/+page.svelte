@@ -5,6 +5,20 @@
     getStoredTokens, clearStoredTokens,
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
+  import { api, authApi } from '$lib/api';
+
+  function originOf(u: string | null): string | null {
+    if (!u) return null;
+    try { return new URL(u.trim()).origin; } catch { return null; }
+  }
+
+  // Validate-only twin of setServerUrl: the SAME Rust rules (scheme,
+  // plaintext-http-to-LAN in release builds, ...) but persists nothing and
+  // leaves the stored tokens alone. Rejects with a user-facing message.
+  async function validateServerUrl(url: string): Promise<void> {
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('validate_server_url', { url });
+  }
 
   let loading = true;
   let currentUrl: string | null = null;
@@ -25,10 +39,29 @@
 
   async function save() {
     saveError = '';
-    if (!urlInput.trim()) { saveError = 'URL required'; return; }
+    const next = urlInput.trim();
+    if (!next) { saveError = 'URL required'; return; }
     saving = true;
     try {
-      await setServerUrl(urlInput.trim());
+      // 1. Validate BEFORE anything irreversible. A URL the save would
+      //    reject (unsupported scheme, "nas:7070", plaintext http:// to a
+      //    LAN host in release builds) must not sign the user out of the
+      //    server they are still using.
+      await validateServerUrl(next);
+      // 2. Switching to a different server: revoke this session on the OLD
+      //    one (best-effort; an unreachable old server must not block the
+      //    switch), then drop the user metadata. api.ts still holds the old
+      //    apiBase and refresh token in memory (they only rebind on the
+      //    reload below), so the revoke reaches the server that issued it.
+      if (hasTokens && originOf(next) !== originOf(currentUrl)) {
+        try { await authApi.logout(); } catch { /* unreachable old server */ }
+        api.setUser(null);
+      }
+      // 3. Persist. On an origin change Rust wipes the stored tokens again,
+      //    after the revoke above, so nothing the old server issued (not even
+      //    a refresh token the revoke just rotated) is ever sent to the new
+      //    host.
+      await setServerUrl(next);
       // Hard reload so the api.ts apiBase rebinds + every cached
       // module pointing at the old server flushes. Cheaper than
       // re-wiring each consumer manually.
@@ -43,6 +76,10 @@
     if (!confirm('Sign out and clear the stored server URL? You will be returned to the first-run setup screen.')) return;
     disconnecting = true;
     try {
+      // Revoke the refresh token on the server BEFORE forgetting it —
+      // clearing only the local copy left it valid server-side for 30 days.
+      try { await authApi.logout(); } catch { /* best-effort; still clear locally */ }
+      api.setUser(null);
       await clearStoredTokens();
       await clearServerUrl();
       window.location.reload();

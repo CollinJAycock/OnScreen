@@ -41,6 +41,10 @@
   // Set when the server refuses a restore because the dump is from a newer
   // build. Lets the operator click "Restore anyway" to retry with ?force=true.
   let pendingForce: { dump: number; server: number; message: string } | null = null;
+  // Step-up re-authentication for restore: the server requires the admin's
+  // password (and TOTP code, if 2FA is enabled) to authorize a database wipe.
+  let restorePassword = '';
+  let restoreTotp = '';
 
   // Backup is fetched (not a plain <a download>) so a JSON error body
   // from the server surfaces as a toast instead of being silently saved
@@ -85,11 +89,18 @@
     const f = fileInput?.files?.[0];
     if (!f) { toast.error('Pick a backup file first'); return; }
     if (confirmText !== 'RESTORE') { toast.error('Type RESTORE to confirm'); return; }
+    // Password is verified server-side (step-up re-auth). It is not hard-required
+    // here because a federated (SSO/LDAP) admin has no local password — the
+    // server allows those through the admin + CSRF gate. A password admin who
+    // leaves it blank is refused by the server with a clear error.
     restoring = true;
     lastResult = null;
     try {
       const fd = new FormData();
       fd.append('file', f);
+      // Step-up re-auth — the server verifies these before wiping the database.
+      fd.append('password', restorePassword);
+      if (restoreTotp) fd.append('totp_code', restoreTotp);
       const path = '/admin/restore' + (force ? '?force=true' : '');
       const resp = await authedFetch(path, {
         method: 'POST',
@@ -125,7 +136,14 @@
       toast.error(e instanceof Error ? e.message : 'Restore failed');
     } finally {
       restoring = false;
-      confirmText = '';
+      // Preserve the typed confirmation and credentials while a force-retry is
+      // pending (409 dump-newer) so "Restore anyway" can reuse them; clear only
+      // on a terminal outcome.
+      if (!pendingForce) {
+        confirmText = '';
+        restorePassword = '';
+        restoreTotp = '';
+      }
     }
   }
 
@@ -182,6 +200,33 @@
           type="text"
           bind:value={confirmText}
           placeholder="RESTORE"
+          disabled={restoring}
+        />
+      </label>
+    </div>
+
+    <div class="row">
+      <label>
+        Confirm your password <span class="muted">(leave blank if you sign in via SSO)</span>
+        <input
+          type="password"
+          bind:value={restorePassword}
+          placeholder="Your account password"
+          autocomplete="current-password"
+          disabled={restoring}
+        />
+      </label>
+    </div>
+
+    <div class="row">
+      <label>
+        2FA code <span class="muted">(only if enabled)</span>
+        <input
+          type="text"
+          bind:value={restoreTotp}
+          placeholder="123456"
+          inputmode="numeric"
+          autocomplete="one-time-code"
           disabled={restoring}
         />
       </label>
@@ -257,10 +302,12 @@
   h2 { font-size: 0.95rem; margin: 0 0 0.5rem; font-weight: 600; }
   .hint { color: var(--text-secondary); font-size: 0.82rem; line-height: 1.5; margin: 0 0 1rem; }
   .hint strong { color: var(--error); }
+  .muted { color: var(--text-muted); font-weight: 400; }
 
   .row { margin: 0.75rem 0; }
   .row label { display: flex; flex-direction: column; gap: 0.3rem; font-size: 0.82rem; color: var(--text-secondary); }
-  .row input[type="text"] {
+  .row input[type="text"],
+  .row input[type="password"] {
     padding: 0.48rem 0.7rem;
     border-radius: 7px;
     border: 1px solid var(--border-strong);
@@ -269,12 +316,14 @@
     font-family: inherit;
     max-width: 200px;
   }
-  .row input[type="text"]:focus {
+  .row input[type="text"]:focus,
+  .row input[type="password"]:focus {
     outline: none;
     border-color: var(--accent);
     box-shadow: 0 0 0 3px var(--accent-bg);
   }
-  .row input[type="text"]::placeholder { color: var(--text-muted); }
+  .row input[type="text"]::placeholder,
+  .row input[type="password"]::placeholder { color: var(--text-muted); }
   .picked { font-size: 0.78rem; color: var(--text-muted); }
   .picked code { color: var(--text-secondary); }
 
