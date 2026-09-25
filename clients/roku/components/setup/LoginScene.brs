@@ -126,8 +126,10 @@ function persistAndGoHome(pair as Object) as Boolean
 end function
 
 sub onChangeServerPressed()
+    ' Revoke any leftover session on the CURRENT server before its URL
+    ' is forgotten (no-op when no refresh token is stored).
+    Client_LogoutSync()
     Prefs_Delete(PrefsKeyServerUrl())
-    Prefs_ClearAuth()
     getMainScene().callFunc("navigateTo", "ServerSetupScene")
 end sub
 

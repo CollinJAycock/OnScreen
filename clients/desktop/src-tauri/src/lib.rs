@@ -160,13 +160,24 @@ fn clear_server_url(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-#[tauri::command]
-fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
+/// The acceptance rules for a server URL, shared by `set_server_url` and
+/// `validate_server_url` so a pre-check can never disagree with the save.
+/// Returns the normalised string that gets persisted plus its parsed form.
+fn parse_server_url(url: &str) -> Result<(String, url::Url), String> {
     let trimmed = url.trim().trim_end_matches('/').to_string();
     if trimmed.is_empty() {
         return Err("server URL cannot be empty".into());
     }
-    let parsed = url::Url::parse(&trimmed).map_err(|e| format!("invalid URL: {e}"))?;
+    let parsed = match url::Url::parse(&trimmed) {
+        Ok(u) => u,
+        // "nas.local" / "10.0.0.5:7070"-style input with no scheme at all.
+        Err(url::ParseError::RelativeUrlWithoutBase) => {
+            return Err(format!(
+                "server URL must start with https:// or http:// (e.g. https://{trimmed})"
+            ))
+        }
+        Err(e) => return Err(format!("invalid server URL: {e}")),
+    };
     match parsed.scheme() {
         "https" => {}
         "http" => {
@@ -190,13 +201,50 @@ fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
             #[cfg(debug_assertions)]
             let _ = is_loopback; // silence warning in dev
         }
+        // "nas:7070" parses as scheme "nas" + path "7070": the user meant
+        // host:port, so say what to type rather than "unsupported scheme".
+        _ if !trimmed.contains("://") => {
+            return Err(format!(
+                "server URL must start with https:// or http:// (e.g. https://{trimmed})"
+            ))
+        }
         other => {
             return Err(format!(
                 "unsupported scheme {other:?} — server URL must be http:// or https://"
             ))
         }
     }
+    Ok((trimmed, parsed))
+}
+
+/// Validate-only twin of `set_server_url`: the same rules, but it
+/// persists nothing and leaves the stored tokens alone. The
+/// /native/server page calls it BEFORE revoking the current session on
+/// a server switch, so a URL the save would reject (unsupported scheme,
+/// plaintext http:// to a LAN host in release builds) can't sign the
+/// user out of the server they're still using.
+#[tauri::command]
+fn validate_server_url(url: String) -> Result<(), String> {
+    parse_server_url(&url).map(|_| ())
+}
+
+#[tauri::command]
+fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
+    let (trimmed, parsed) = parse_server_url(&url)?;
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
+    // Tokens are bound to the server that issued them. When the origin
+    // changes, drop them BEFORE persisting the new URL so the old
+    // server's access/refresh tokens are never sent to the new host (a
+    // mistyped or malicious server would otherwise harvest a 30-day
+    // refresh token for the old one on the first /auth/refresh). Same
+    // origin (e.g. only a trailing path/slash changed) keeps the session.
+    let prev_origin = store
+        .get(KEY_SERVER_URL)
+        .and_then(|v| v.as_str().and_then(|s| url::Url::parse(s).ok()))
+        .map(|u| u.origin());
+    if prev_origin.as_ref() != Some(&parsed.origin()) {
+        wipe_tokens(&app)?;
+    }
     store.set(KEY_SERVER_URL, trimmed);
     store.save().map_err(|e| e.to_string())?;
     Ok(())
@@ -260,7 +308,10 @@ fn get_tokens(app: AppHandle) -> Result<StoredTokens, String> {
         Some(a) => keychain_set(KEY_ASSET_TOKEN, a),
         None => true,
     };
-    if migrated_access && migrated_refresh && migrated_asset {
+    // Migrated, or keychain unavailable and the user has NOT opted into
+    // plaintext storage: either way the on-disk plaintext copy goes.
+    // The values are returned below, so this session still works.
+    if (migrated_access && migrated_refresh && migrated_asset) || !plaintext_tokens_opted_in() {
         store.delete(KEY_ACCESS_TOKEN);
         store.delete(KEY_REFRESH_TOKEN);
         store.delete(KEY_ASSET_TOKEN);
@@ -293,26 +344,46 @@ fn set_tokens(app: AppHandle, access: String, refresh: String, asset: String) ->
         store.delete(KEY_ASSET_TOKEN);
         store.save().map_err(|e| e.to_string())?;
     } else {
-        // Keychain partially or fully unavailable; persist whichever
-        // values didn't make it so the user stays signed in. Surface
-        // the degradation to the frontend via a Tauri event so the
-        // settings UI can render a "credentials cached on disk" banner
-        // — without it the user has no way to know their refresh token
-        // is sitting plaintext in `appdata/settings.json`. Common
-        // causes: headless Linux without Secret Service, sandboxed mac
-        // builds without keychain entitlements.
-        if !kc_access_ok {
-            store.set(KEY_ACCESS_TOKEN, access);
-        }
-        if !kc_refresh_ok {
-            store.set(KEY_REFRESH_TOKEN, refresh);
-        }
-        if !kc_asset_ok {
-            store.set(KEY_ASSET_TOKEN, asset);
+        // Keychain partially or fully unavailable (headless Linux
+        // without Secret Service, sandboxed mac builds without keychain
+        // entitlements). Previously the missing values were written
+        // SILENTLY in plaintext to `appdata/settings.json` — a 30-day
+        // refresh token in a file that backups / sync pick up, and
+        // nothing in the UI ever told the user. Now the default is to
+        // NOT persist them: the in-memory session keeps working, the
+        // user signs in again next launch. Operators who accept the
+        // on-disk risk can opt back in with
+        // ONSCREEN_ALLOW_PLAINTEXT_TOKENS=1 (file is chmod 0600 on Unix).
+        let allow_plaintext = plaintext_tokens_opted_in();
+        for (ok, key, value) in [
+            (kc_access_ok, KEY_ACCESS_TOKEN, access),
+            (kc_refresh_ok, KEY_REFRESH_TOKEN, refresh),
+            (kc_asset_ok, KEY_ASSET_TOKEN, asset),
+        ] {
+            if !ok && allow_plaintext {
+                store.set(key, value);
+            } else {
+                // Never leave a stale plaintext copy of a rotated token.
+                store.delete(key);
+                if !ok {
+                    // Drop any older keychain copy too: it's a rotated
+                    // (server-revoked) token and would hydrate a dead
+                    // session next launch.
+                    keychain_clear(key);
+                }
+            }
         }
         store.save().map_err(|e| e.to_string())?;
+        if allow_plaintext {
+            restrict_store_permissions(&app);
+        }
         eprintln!(
-            "auth: keychain unavailable (access_ok={kc_access_ok} refresh_ok={kc_refresh_ok} asset_ok={kc_asset_ok}) — credentials cached plaintext in settings store"
+            "auth: keychain unavailable (access_ok={kc_access_ok} refresh_ok={kc_refresh_ok} asset_ok={kc_asset_ok}) — {}",
+            if allow_plaintext {
+                "credentials cached PLAINTEXT in settings store (ONSCREEN_ALLOW_PLAINTEXT_TOKENS=1)"
+            } else {
+                "credentials NOT persisted; sign-in will be required next launch"
+            }
         );
         let _ = app.emit(
             "auth:keychain-degraded",
@@ -320,16 +391,79 @@ fn set_tokens(app: AppHandle, access: String, refresh: String, asset: String) ->
                 "access_ok": kc_access_ok,
                 "refresh_ok": kc_refresh_ok,
                 "asset_ok": kc_asset_ok,
+                "plaintext": allow_plaintext,
             }),
         );
+        notify_keychain_degraded(&app, allow_plaintext);
     }
     Ok(())
+}
+
+/// Opt-in for the old behaviour of caching tokens in the plaintext
+/// settings store when the OS keychain is unavailable.
+fn plaintext_tokens_opted_in() -> bool {
+    matches!(
+        std::env::var("ONSCREEN_ALLOW_PLAINTEXT_TOKENS").as_deref(),
+        Ok("1") | Ok("true")
+    )
+}
+
+/// Best-effort chmod 0600 on the settings store when it holds
+/// plaintext credentials, so other local users can't read them.
+/// tauri-plugin-store resolves relative store paths against the app
+/// data dir. No-op on Windows (per-user profile ACLs already apply).
+fn restrict_store_permissions(app: &AppHandle) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Ok(dir) = app.path().app_data_dir() {
+            let p = dir.join(STORE_FILE);
+            if let Err(e) = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600)) {
+                eprintln!("auth: chmod 0600 {}: {e}", p.display());
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = app;
+}
+
+/// Surfaces keychain degradation to the user instead of failing
+/// silently: a one-shot OS notification per process. The
+/// `auth:keychain-degraded` event alone was invisible — nothing in the
+/// web bundle listens for it — whereas a notification needs no
+/// frontend change.
+fn notify_keychain_degraded(app: &AppHandle, plaintext: bool) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use tauri_plugin_notification::NotificationExt;
+    static NOTIFIED: AtomicBool = AtomicBool::new(false);
+
+    if NOTIFIED.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let body = if plaintext {
+        "The system keychain is unavailable, so your sign-in is stored UNENCRYPTED in the OnScreen settings file."
+    } else {
+        "The system keychain is unavailable, so OnScreen can't remember your sign-in. You'll need to sign in again next time you open the app."
+    };
+    if let Err(e) = app
+        .notification()
+        .builder()
+        .title("OnScreen: secure credential storage unavailable")
+        .body(body)
+        .show()
+    {
+        eprintln!("auth: keychain-degraded notification failed: {e}");
+    }
 }
 
 /// Wipes tokens from both the keychain and the legacy store so a
 /// logout doesn't leave a stranded copy in either place.
 #[tauri::command]
 fn clear_tokens(app: AppHandle) -> Result<(), String> {
+    wipe_tokens(&app)
+}
+
+fn wipe_tokens(app: &AppHandle) -> Result<(), String> {
     keychain_clear(KEY_ACCESS_TOKEN);
     keychain_clear(KEY_REFRESH_TOKEN);
     keychain_clear(KEY_ASSET_TOKEN);
@@ -580,6 +714,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             get_server_url,
+            validate_server_url,
             set_server_url,
             clear_server_url,
             get_tokens,

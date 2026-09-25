@@ -57,6 +57,8 @@ export const items = {
     if (!tok) return null;
     const resp = await fetch(`${origin}/api/v1/items/${id}/trickplay/index.vtt`, {
       headers: { Authorization: `Bearer ${tok}` },
+      // Never replay the Bearer across a redirect (see client.ts raw()).
+      redirect: 'manual',
     });
     if (!resp.ok) return null;
     return await resp.text();
@@ -182,7 +184,10 @@ export const pair = {
       headers: {
         Authorization: `Bearer ${deviceToken}`,
         'Content-Type': 'application/json'
-      }
+      },
+      // The device token is the pairing secret; never replay it across a
+      // redirect (a non-200/202/410 falls through to the throw below).
+      redirect: 'manual'
     });
     if (resp.status === 200) {
       const j = await resp.json();

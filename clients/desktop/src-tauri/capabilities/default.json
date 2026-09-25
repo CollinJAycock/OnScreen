@@ -1,29 +1,13 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability set for the OnScreen desktop window. Grants the IPC bridge to the commands the scaffold exposes plus the store plugin used to persist server URL / credentials.",
+  "description": "Default capability set for the OnScreen desktop window. Least privilege: the webview only gets core IPC (app commands + events) and the notification plugin it calls from JS. The store, global-shortcut, dialog, tray and window plugins are driven Rust-side only (Rust plugin APIs need no capability), so they are deliberately NOT granted to the webview: a script injected into the webview could otherwise write server_url straight into settings.json (bypassing set_server_url's validation), register system-wide key hooks, or read the settings store.",
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:tray:allow-new",
-    "core:tray:allow-set-icon",
-    "core:tray:allow-set-tooltip",
-    "core:tray:allow-set-visible",
-    "core:tray:allow-set-menu",
-    "core:window:allow-show",
-    "core:window:allow-set-focus",
-    "core:window:allow-unminimize",
-    "store:allow-get",
-    "store:allow-set",
-    "store:allow-save",
-    "store:allow-delete",
-    "global-shortcut:allow-register",
-    "global-shortcut:allow-unregister",
-    "global-shortcut:allow-is-registered",
     "notification:default",
     "notification:allow-notify",
     "notification:allow-is-permission-granted",
-    "notification:allow-request-permission",
-    "dialog:allow-save"
+    "notification:allow-request-permission"
   ]
 }

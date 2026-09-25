@@ -169,6 +169,11 @@
         {/if}
         {#if serverUrl}
           <div class="identity-server">{serverUrl}</div>
+          {#if serverUrl.toLowerCase().startsWith('http://')}
+            <!-- Persistent reminder that this session (password, refresh
+                 token) travels in cleartext; fine on a trusted LAN only. -->
+            <div class="identity-insecure">Not encrypted (http://) — use https:// outside your home network</div>
+          {/if}
         {/if}
       </div>
     {/if}
@@ -320,6 +325,11 @@
   .identity-line {
     font-size: var(--font-md);
     color: var(--text-primary);
+  }
+  .identity-insecure {
+    margin-top: 4px;
+    font-size: var(--font-sm);
+    color: #fcd34d;
   }
   .identity-server {
     margin-top: 4px;

@@ -1,4 +1,4 @@
-export { api, ApiClient, ApiError, Unauthorized } from './client';
+export { api, ApiClient, ApiError, Unauthorized, isLocalNetworkHost, isCleartextRemote } from './client';
 export type { UserMeta, TokenPair } from './client';
 export { supportsHEVC, demoteCodec, isCodecDemoted } from './capabilities';
 export * from './types';

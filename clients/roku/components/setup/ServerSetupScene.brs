@@ -11,6 +11,9 @@ sub init()
     m.keyboard = m.top.findNode("keyboard")
     m.connectBtn = m.top.findNode("connectBtn")
     m.error = m.top.findNode("error")
+    ' URL the user has explicitly agreed to use over cleartext http://
+    ' to a non-local host (second Connect press on the same URL).
+    m.insecureConfirmed = ""
 
     m.connectBtn.observeField("buttonSelected", "onConnectPressed")
     m.keyboard.setFocus(true)
@@ -26,6 +29,15 @@ sub onConnectPressed()
     end if
     if not (Left(url, 7) = "http://" or Left(url, 8) = "https://")
         showError("URL must start with http:// or https://")
+        return
+    end if
+    ' Plain http:// on the LAN is the common self-hosted setup and stays
+    ' allowed. Plain http:// to a public host would send the password,
+    ' refresh token and pairing token across the internet in cleartext,
+    ' so require a deliberate second Connect press.
+    if Left(url, 7) = "http://" and not StringIsLocalNetworkHost(StringUrlHost(url)) and m.insecureConfirmed <> url
+        m.insecureConfirmed = url
+        showError("Not encrypted: " + url + " is not on your local network, so your password and sign-in tokens would be sent in plain text. Use https://, or press Connect again to continue anyway.")
         return
     end if
 

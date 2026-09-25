@@ -32,9 +32,11 @@
 
     <feature name="http://tizen.org/feature/screen.size.normal.1080.1920" />
 
-    <!-- Privileges: only what we actually call. -->
+    <!-- Privileges: only what we actually call. (mediastorage was
+         dropped: nothing uses tizen.filesystem / tizen.content — the
+         app only calls tizen.application, tizen.tvinputdevice and
+         webapis.avplay, and streams over HTTP.) -->
     <tizen:privilege name="http://tizen.org/privilege/internet" />
-    <tizen:privilege name="http://tizen.org/privilege/mediastorage" />
     <tizen:privilege name="http://tizen.org/privilege/avplay" />
 
     <!-- Tizen-specific application metadata. -->
@@ -66,9 +68,15 @@
          SvelteKit's adapter-static with bundleStrategy:'inline' emits
          the whole app bundle as an inline <script> in index.html, and
          our polyfill block in app.html is also inline — both fail
-         silently to a black screen under default CSP. Widen the policy
-         so inline + cross-origin server requests work, and allow blob:
-         + data: media/img which the player and trickplay use. -->
-    <tizen:content-security-policy>default-src * 'unsafe-inline' 'unsafe-eval'; script-src * 'unsafe-inline' 'unsafe-eval'; style-src * 'unsafe-inline'; img-src * data: blob:; media-src * blob:; connect-src *</tizen:content-security-policy>
+         silently to a black screen under default CSP. Allow inline so
+         the app boots, keep img/media/connect open to any host (the
+         server is user-chosen) plus blob:/data: for the player and
+         trickplay. Scripts are NOT allowed from arbitrary origins and
+         eval is off: the built index.html is fully self-contained (two
+         inline <script>s, no external script, no eval/new Function), so
+         `script-src *` / 'unsafe-eval' only widened the blast radius of
+         any future HTML-injection bug (an injected <script src=...>
+         could read the refresh token out of localStorage). -->
+    <tizen:content-security-policy>default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src *; font-src 'self' data:; object-src 'none'</tizen:content-security-policy>
 
 </widget>

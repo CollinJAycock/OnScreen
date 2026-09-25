@@ -188,6 +188,28 @@ function Client_RefreshSync() as Boolean
     return true
 end function
 
+' Best-effort server-side revoke of the stored refresh token, then a
+' local clear. The server only honours a body refresh_token on
+' /auth/logout when the request carries a VALID bearer (an expired one
+' is silently treated as anonymous and the body ignored), so rotate
+' first to get a fresh bearer, then revoke the rotated token. Without
+' this, a "signed out" device's 30-day refresh token stays live on the
+' server. Must run BEFORE the server URL changes so the revoke reaches
+' the server that issued the token. Synchronous (same rules as the
+' other *Sync helpers).
+sub Client_LogoutSync()
+    if Prefs_IsNonEmptyString(Prefs_Get(PrefsKeyRefreshToken()))
+        if Client_RefreshSync()
+            refresh = Prefs_Get(PrefsKeyRefreshToken())
+            if Prefs_IsNonEmptyString(refresh)
+                transfer = Client_BuildTransfer(ApiAuthLogout(), true)
+                if transfer <> invalid then transfer.PostFromString(FormatJson({ refresh_token: refresh }))
+            end if
+        end if
+    end if
+    Prefs_ClearAuth()
+end sub
+
 ' Async GET. Caller provides a message port (typically the Task
 ' node's port); we wire it onto the transfer and fire the request.
 ' Caller waits on the port for an roUrlEvent — when it arrives,

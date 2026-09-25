@@ -2,6 +2,16 @@
 <html lang="en" data-theme="dark">
   <head>
     <meta charset="utf-8" />
+    <!-- CSP (webOS shipped none). Must precede the inline polyfill
+         script. Inline scripts are required (bundleStrategy 'inline'
+         emits the whole app inline); scripts from any other origin and
+         eval are not — an HTML-injection bug can't pull in a remote
+         script to read the tokens in localStorage. img/media/connect
+         stay open to any host (user-chosen server); blob: covers MSE
+         (hls.js) media and hls.js's blob: transmux worker (it falls back
+         to main-thread transmuxing if a worker is refused). ws:/wss: for
+         the Vite dev server's HMR socket. -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src * data: blob:; media-src * data: blob:; connect-src * ws: wss:; font-src 'self' data:; object-src 'none'" />
     <meta name="viewport" content="width=1920, initial-scale=1" />
     <title>OnScreen</title>
     <script>
