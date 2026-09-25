@@ -44,6 +44,22 @@ interface OnScreenApi {
         @Header("Authorization") authorization: String? = null,
     )
 
+    /** [refresh] against an explicit absolute URL. Used by sign-out, which
+     *  runs detached AFTER local auth is cleared: routing through the
+     *  placeholder base (BaseUrlInterceptor reads the server URL at request
+     *  time) could deliver the OLD server's refresh token to a server the
+     *  user entered in the meantime. Absolute URLs bypass that rewrite. */
+    @POST
+    suspend fun refreshAt(@Url url: String, @Body body: RefreshRequest): ApiResponse<TokenPair>
+
+    /** [logout] against an explicit absolute URL — see [refreshAt]. */
+    @POST
+    suspend fun logoutAt(
+        @Url url: String,
+        @Body body: LogoutRequest,
+        @Header("Authorization") authorization: String? = null,
+    )
+
     // ── Federated auth discovery ────────────────────────────────────────────
 
     /** Per-provider enabled flag + display name. Server emits these

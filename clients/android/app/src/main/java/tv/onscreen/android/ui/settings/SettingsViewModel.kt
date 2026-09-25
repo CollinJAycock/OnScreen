@@ -1,11 +1,10 @@
 package tv.onscreen.android.ui.settings
 
 import android.content.Context
-import android.content.Intent
 import dagger.hilt.android.qualifiers.ApplicationContext
 import androidx.media3.common.util.UnstableApi
 import tv.onscreen.android.playback.AudioHandoff
-import tv.onscreen.android.playback.OnScreenMediaSessionService
+import tv.onscreen.android.playback.StreamTokenVault
 import tv.onscreen.android.playback.WatchNextManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -177,19 +176,12 @@ class SettingsViewModel @Inject constructor(
     // recognises — same as PlaybackFragment. Scoped to this one function.
     @androidx.annotation.OptIn(UnstableApi::class)
     private fun stopBackgroundAudio() {
-        // Release the parked player first so the service's own teardown has
-        // nothing left to hand back, then stop the service.
-        AudioHandoff.peek()?.let { player ->
-            runCatching {
-                player.stop()
-                player.release()
-            }
-        }
-        AudioHandoff.clear()
-        runCatching {
-            appContext.stopService(
-                Intent(appContext, OnScreenMediaSessionService::class.java)
-            )
-        }
+        // Shared with the involuntary sign-out path (SignOutTeardown) so both
+        // tear down identically.
+        AudioHandoff.stopAll(appContext)
+        // Drop in-memory stream credentials the player's resolver would
+        // otherwise keep re-attaching. authRepo.logout() clears it too; this
+        // covers the window before that returns.
+        StreamTokenVault.clear()
     }
 }

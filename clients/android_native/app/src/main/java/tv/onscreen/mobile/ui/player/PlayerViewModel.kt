@@ -10,6 +10,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
+import tv.onscreen.mobile.data.api.HeartbeatRefusal
 import tv.onscreen.mobile.data.api.apiError
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.ChildItem
@@ -434,6 +435,15 @@ class PlayerViewModel @Inject constructor(
                     // ItemFile to play it from disk. Bypasses the
                     // server entirely — same as the airplane-mode
                     // playback path on Spotify / Plex.
+                    //
+                    // ONLY when the server could not be reached. A server that
+                    // ANSWERED with an auth/access refusal (a content-rating
+                    // ceiling lowered after download, library access revoked,
+                    // item gone) is an authoritative "no" — playing the local
+                    // copy there would bypass the very gate that just refused.
+                    // Such errors fall through to the catch below and surface
+                    // the restricted / not-found message instead.
+                    if (isServerRefusal(e)) throw e
                     val offline = playFromLocalIfDownloaded(resolvedId)
                     if (offline != null) return@launch
                     throw e
@@ -489,19 +499,20 @@ class PlayerViewModel @Inject constructor(
                     ?.takeIf { it.exists() && it.length() > 0 }
 
                 // Parental watch-limit pre-flight — block a restricted user
-                // before any stream/transcode starts. Skipped for offline
-                // downloads (can't reach the server to check) and fail-open if
-                // the check errors; the transcode/progress 403 still catches a
-                // cap reached mid-session.
-                if (localFile == null) {
-                    try {
-                        val wl = watchLimitRepo.get()
-                        if (!wl.allowed) {
-                            _state.value = PlayerUiState(loading = false, error = parentalBlockMessage(wl.reason))
-                            return@launch
-                        }
-                    } catch (_: Exception) { /* limit lookup failed — fail open */ }
-                }
+                // before any stream/transcode starts. Runs for local downloads
+                // too: reaching this line means getItem() just succeeded, so
+                // the server IS reachable and skipping the check only let a
+                // downloaded copy start past an exhausted limit. (The truly
+                // offline path returned earlier via playFromLocalIfDownloaded.)
+                // Fail-open if the check errors; the progress 403 still catches
+                // a cap reached mid-session.
+                try {
+                    val wl = watchLimitRepo.get()
+                    if (!wl.allowed) {
+                        _state.value = PlayerUiState(loading = false, error = parentalBlockMessage(wl.reason))
+                        return@launch
+                    }
+                } catch (_: Exception) { /* limit lookup failed — fail open */ }
 
                 // Dolby Vision is not supported: the server returns the "unsupported"
                 // verdict (DV can't be tonemapped correctly server-side — see
@@ -798,6 +809,13 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
+    /** True when [e] is the server definitively refusing the item (it
+     *  answered, with 401/403/404/410) rather than a transport failure.
+     *  Offline fallback must never trigger on these. 5xx stays eligible:
+     *  a broken-but-reachable server is closer to "offline" than to "no". */
+    private fun isServerRefusal(e: Exception): Boolean =
+        e is HttpException && e.code() in setOf(401, 403, 404, 410)
+
     /** Map a server PARENTAL_LIMIT reason to a friendly sentence. The screen
      *  renders [PlayerUiState.error] verbatim, so this returns display text. */
     private fun parentalBlockMessage(reason: String?): String = when (reason) {
@@ -827,11 +845,20 @@ class PlayerViewModel @Inject constructor(
                 // closed) mid-session. Surface the block — setting error tears
                 // down the player host and shows the message. Other failures
                 // stay best-effort.
-                if (state == "playing" && e is HttpException && e.code() == 403) {
-                    val err = e.apiError()
-                    if (err?.code == "PARENTAL_LIMIT") {
-                        _state.value = _state.value.copy(error = parentalBlockMessage(err.message))
-                    }
+                //
+                // ANY 403 on a 'playing' heartbeat stops playback, not just
+                // PARENTAL_LIMIT: a content-rating / library-access 403 means
+                // the server no longer lets this user watch the item, and
+                // ignoring it let an offline-fallback copy (or a stream on an
+                // already-issued token) keep playing while online. The
+                // decision is shared with PlaybackService's background
+                // heartbeat — see HeartbeatRefusal.
+                when (val refusal = HeartbeatRefusal.of(state, e)) {
+                    null -> Unit
+                    is HeartbeatRefusal.WatchLimit ->
+                        _state.value = _state.value.copy(error = parentalBlockMessage(refusal.reason))
+                    HeartbeatRefusal.ContentRevoked ->
+                        _state.value = _state.value.copy(error = "content_restricted")
                 }
             }
         }

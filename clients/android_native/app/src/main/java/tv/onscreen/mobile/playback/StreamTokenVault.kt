@@ -4,7 +4,6 @@ import android.net.Uri
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.ResolvingDataSource
-import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Keeps playback credentials OUT of the URLs we hand to ExoPlayer, and
@@ -37,7 +36,25 @@ import java.util.concurrent.ConcurrentHashMap
  */
 object StreamTokenVault {
 
-    private val tokens = ConcurrentHashMap<String, String>()
+    /**
+     * Bounded LRU. ACCESS-ordered, so both [register] and every request the
+     * resolver makes move a url to the tail, and the head is always the
+     * least-recently-used credential. [LinkedHashMap.removeEldestEntry] runs
+     * after the insert, so the entry just registered (the tail) is never the
+     * one evicted.
+     *
+     * This used to be a ConcurrentHashMap trimmed with `keys.firstOrNull()` —
+     * HASH order, not insertion order — so once over the cap, register() could
+     * evict the token it had just stored, or the one the player was using; the
+     * next request (a seek, a reconnect) then went out bare, 401'd and
+     * playback died. Access order mutates on get(), so every touch of [tokens]
+     * goes through [lock]. Same structure as the TV client's vault.
+     */
+    private val lock = Any()
+    private val tokens = object : LinkedHashMap<String, String>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?): Boolean =
+            size > MAX_ENTRIES
+    }
 
     /**
      * Record [token] as the credential for [cleanUrl] and return [cleanUrl]
@@ -46,25 +63,29 @@ object StreamTokenVault {
      * offline sources need no credential.
      */
     fun register(cleanUrl: String, token: String?): String {
-        if (!token.isNullOrEmpty()) tokens[cleanUrl] = token
-        // Bound the map. Playback touches a handful of URLs per session; this
-        // only trips if something loops, and evicting the oldest entry is
-        // harmless (the URL is re-registered on the next prepare).
-        if (tokens.size > MAX_ENTRIES) {
-            tokens.keys.firstOrNull()?.let { tokens.remove(it) }
-        }
+        // Bounded by MAX_ENTRIES (see [tokens]). Playback touches a handful of
+        // URLs per session; eviction only trips if something loops, and then
+        // drops the least-recently-used credential, never the new or live one.
+        if (!token.isNullOrEmpty()) synchronized(lock) { tokens[cleanUrl] = token }
         return cleanUrl
     }
 
     /** Drop every credential. Called on identity transitions so a signed-out
      *  user's tokens do not linger in memory for the next account. */
-    fun clear() = tokens.clear()
+    fun clear() = synchronized(lock) { tokens.clear() }
+
+    /** The credential for [url], marking it most-recently-used — what the
+     *  resolver calls per request, so an in-use url stays clear of eviction. */
+    internal fun resolve(url: String): String? = synchronized(lock) { tokens[url] }
 
     /** Read back a registered credential. Exists so tests can assert that a
      *  url is clean AND that its token was actually captured — asserting only
-     *  the first would pass if the token were silently dropped. */
+     *  the first would pass if the token were silently dropped. A peek:
+     *  iterating does not reorder an access-ordered map, so asserting never
+     *  changes which entry is evicted next. */
     @androidx.annotation.VisibleForTesting
-    fun tokenForTest(cleanUrl: String): String? = tokens[cleanUrl]
+    fun tokenForTest(cleanUrl: String): String? =
+        synchronized(lock) { tokens.entries.firstOrNull { it.key == cleanUrl }?.value }
 
     /**
      * Wraps [upstream] so each request gains its `?token=` immediately before
@@ -74,7 +95,7 @@ object StreamTokenVault {
     @UnstableApi
     fun resolverFactory(upstream: DataSource.Factory): DataSource.Factory =
         ResolvingDataSource.Factory(upstream) { dataSpec ->
-            val token = tokens[dataSpec.uri.toString()]
+            val token = resolve(dataSpec.uri.toString())
             if (token.isNullOrEmpty()) {
                 dataSpec
             } else {
@@ -103,5 +124,6 @@ object StreamTokenVault {
         return cleaned to token
     }
 
-    private const val MAX_ENTRIES = 64
+    /** Internal so the eviction tests fill to the real cap. */
+    internal const val MAX_ENTRIES = 64
 }

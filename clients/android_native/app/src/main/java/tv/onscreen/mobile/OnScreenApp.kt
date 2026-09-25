@@ -16,6 +16,11 @@ class OnScreenApp : Application(), ImageLoaderFactory, Configuration.Provider {
 
     @Inject lateinit var workerFactory: HiltWorkerFactory
 
+    /** Involuntary sign-out teardown (background audio, stream credentials,
+     *  identity caches). Process-level so it runs even with no activity alive
+     *  — mirrors the TV client's OnScreenApp. */
+    @Inject lateinit var signOutTeardown: tv.onscreen.mobile.playback.SignOutTeardown
+
     override val workManagerConfiguration: Configuration
         get() = Configuration.Builder()
             .setWorkerFactory(workerFactory)
@@ -33,6 +38,7 @@ class OnScreenApp : Application(), ImageLoaderFactory, Configuration.Provider {
             osmdroidBasePath = cacheDir.resolve("osmdroid")
             osmdroidTileCache = cacheDir.resolve("osmdroid/tiles")
         }
+        signOutTeardown.start()
     }
 
 

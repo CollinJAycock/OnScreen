@@ -1,7 +1,6 @@
 package tv.onscreen.mobile.ui.settings
 
 import android.content.Context
-import android.content.Intent
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -12,8 +11,7 @@ import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AuthRepository
-import tv.onscreen.mobile.playback.PlaybackService
-import tv.onscreen.mobile.playback.StreamTokenVault
+import tv.onscreen.mobile.playback.SignOutTeardown
 import javax.inject.Inject
 
 @HiltViewModel
@@ -77,26 +75,21 @@ class SettingsViewModel @Inject constructor(
         // Revoke + drop caches while the server URL still resolves, THEN
         // forget the URL — order matters, the logout call needs it. Media
         // downloaded from this server goes with it.
-        auth.logoutDetached(andThen = {
+        auth.logoutDetached(andThen = { origin ->
             downloads.cancelAllAndClear()
-            server.clearAll()
+            // Compare-and-clear, not clearAll(): the revoke above can run for
+            // many seconds against a dead server, during which the user may
+            // already have entered a NEW server (and even signed in). Only
+            // forget the server this action was about.
+            server.clearAllIfUnchanged(origin)
         })
     }
 
     /** Tear down the background-audio service and drop any cached playback
      *  credentials. Mirrors the TV client's SettingsViewModel.stopBackgroundAudio.
-     *
-     *  stopService rather than a controller command: PlayerScreen deliberately
-     *  releases only its MediaController on back-out ("backing out keeps audio
-     *  playing"), so the service outlives every UI surface and nothing else in
-     *  the app stops it. */
+     *  Shared with the involuntary sign-out path (SignOutTeardown) so both tear
+     *  down identically — see [SignOutTeardown.stopBackgroundAudio]. */
     private fun stopBackgroundAudio() {
-        runCatching {
-            appContext.stopService(Intent(appContext, PlaybackService::class.java))
-        }
-        // The vault holds stream/asset tokens keyed by URL. They are
-        // short-lived and in-memory only, but there is no reason for the next
-        // account on this device to inherit them.
-        StreamTokenVault.clear()
+        SignOutTeardown.stopBackgroundAudio(appContext)
     }
 }

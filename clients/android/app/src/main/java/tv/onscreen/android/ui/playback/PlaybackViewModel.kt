@@ -19,6 +19,7 @@ import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
+import tv.onscreen.android.playback.StreamTokenVault
 import javax.inject.Inject
 
 sealed class PlaybackSource {
@@ -26,8 +27,8 @@ sealed class PlaybackSource {
     /**
      * Server-issued HLS session.
      *
-     * @property playlistUrl absolute URL of the M3U8 (already carries
-     *   `?token=…`).
+     * @property playlistUrl absolute URL of the M3U8, WITHOUT its `?token=`
+     *   (held in StreamTokenVault and re-attached by the data source).
      * @property offsetMs absolute content-time position the HLS stream
      *   actually opens at — used for scrubber-time mapping (display
      *   position = player position + offsetMs). Server-reported
@@ -425,8 +426,13 @@ class PlaybackViewModel @Inject constructor(
             viewModelScope.launch { transcodeRepo.stop(priorSessionId, priorToken) }
         }
 
+        // Strip the playlist's `?token=` into the vault so the MediaItem (which
+        // a parked audio player exposes through the MediaSession) stays clean.
+        // Child segment/variant URIs keep their server-embedded token, so only
+        // this top-level URL needs re-attaching. See StreamTokenVault.
+        val (cleanPlaylist, playlistToken) = StreamTokenVault.split("$serverUrl${session.playlist_url}")
         return PlaybackSource.Hls(
-            playlistUrl = "$serverUrl${session.playlist_url}",
+            playlistUrl = StreamTokenVault.register(cleanPlaylist, playlistToken),
             offsetMs = openOffsetMs,
             initialSeekMs = seg0SkipMs,
         )
@@ -644,8 +650,9 @@ class PlaybackViewModel @Inject constructor(
     }
 
     /**
-     * Build a direct-play stream URL with the bearer token appended
-     * as `?token=`. The server's asset-route middleware
+     * Build a direct-play stream URL whose credential is carried as
+     * `?token=` (attached by StreamTokenVault's resolver, not baked into
+     * the returned url). The server's asset-route middleware
      * (RequiredAllowQueryToken) accepts that as the auth carrier
      * since ExoPlayer's HTTP stack can't attach an Authorization
      * header.
@@ -659,10 +666,12 @@ class PlaybackViewModel @Inject constructor(
      */
     private suspend fun buildDirectPlayUrl(serverUrl: String, streamPath: String, streamToken: String?): String {
         val token = if (!streamToken.isNullOrEmpty()) streamToken else serverPrefs.getAssetToken()
-        val base = "$serverUrl$streamPath"
-        if (token.isNullOrEmpty()) return base
-        val sep = if (streamPath.contains("?")) "&" else "?"
-        return "$base${sep}token=$token"
+        // Return the CLEAN url and park the credential in StreamTokenVault;
+        // the player's resolving data source re-attaches `?token=` per
+        // request. A tokenised url here would reach the MediaSession (music
+        // is handed to OnScreenMediaSessionService) and be republished as
+        // METADATA_KEY_MEDIA_URI to other apps. See StreamTokenVault.
+        return StreamTokenVault.register("$serverUrl$streamPath", token)
     }
 
     override fun onCleared() {

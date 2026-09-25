@@ -23,6 +23,7 @@ import tv.onscreen.mobile.data.model.TotpSetupResponse
 import tv.onscreen.mobile.data.model.TotpStatusResponse
 import tv.onscreen.mobile.data.model.TotpVerifyRequest
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.playback.StreamTokenVault
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -136,12 +137,24 @@ open class AuthRepository @Inject constructor(
      *  Optional auth and still answers 204 either way), so a stale cached
      *  bearer meant the session silently survived a "successful" sign-out. */
     suspend fun logout() {
+        logoutFromOrigin()
+    }
+
+    /** [logout], returning the server origin the session belonged to (captured
+     *  BEFORE the wipe). Every server call below is pinned to that origin via
+     *  an absolute URL: this runs detached after local auth is cleared, the
+     *  user can be on the pair screen entering a NEW server while a slow or
+     *  dead old server times out, and the placeholder-base route re-reads the
+     *  server URL per request — which would have sent the old server's refresh
+     *  and access tokens to the new host. */
+    private suspend fun logoutFromOrigin(): String? {
+        val origin = prefs.getServerUrl()?.trimEnd('/')
         val refreshToken = prefs.getRefreshToken()
         val accessToken = prefs.getAccessToken()
         invalidateIdentityCaches()
         prefs.clearAuth()
         try {
-            if (!refreshToken.isNullOrEmpty()) {
+            if (!refreshToken.isNullOrEmpty() && pinnedOriginUsable(origin)) {
                 // Rotate BEFORE revoking. Sending the stored access token is
                 // only sufficient while that token is still live: the logout
                 // route runs under Optional auth, which never rejects, so an
@@ -164,21 +177,55 @@ open class AuthRepository @Inject constructor(
                 // stored pair when the rotation fails (offline, server down),
                 // which is no worse than the previous behaviour.
                 val rotated = runCatching {
-                    api.refresh(RefreshRequest(refreshToken)).data
+                    check(pinnedOriginUsable(origin))
+                    api.refreshAt("$origin/api/v1/auth/refresh", RefreshRequest(refreshToken)).data
                 }.getOrNull()
                 val bearer = rotated?.access_token?.takeIf { it.isNotEmpty() }
                     ?: accessToken?.takeIf { it.isNotEmpty() }
                 val revokeToken = rotated?.refresh_token?.takeIf { it.isNotEmpty() }
                     ?: refreshToken
-                api.logout(
-                    LogoutRequest(revokeToken),
-                    bearer?.let { "Bearer $it" },
-                )
+                // Re-check right before the second send: the refresh above can
+                // take the full connect timeout on a dead server.
+                if (pinnedOriginUsable(origin)) {
+                    api.logoutAt(
+                        "$origin/api/v1/auth/logout",
+                        LogoutRequest(revokeToken),
+                        bearer?.let { "Bearer $it" },
+                    )
+                }
             }
         } catch (_: Exception) {
             // Best-effort — server may be unreachable. Local state is
             // already clear, so the user is signed out regardless.
         }
+        return origin
+    }
+
+    /** Whether an absolute URL on [origin] will really reach [origin].
+     *  BaseUrlInterceptor leaves absolute URLs alone EXCEPT the placeholder
+     *  host `localhost`, which it re-points at the CURRENT server — so a
+     *  localhost origin (e.g. `adb reverse` setups) is only safe to use while
+     *  it is still the configured server. */
+    private suspend fun pinnedOriginUsable(origin: String?): Boolean {
+        val url = origin?.toHttpUrlOrNull() ?: return false
+        if (!url.host.equals("localhost", ignoreCase = true)) return true
+        return prefs.getServerUrl()?.trimEnd('/') == origin
+    }
+
+    /** Local half of an INVOLUNTARY sign-out — TokenAuthenticator cleared the
+     *  tokens because the refresh was definitively rejected (remote revoke of
+     *  a lost/sold phone, expiry, reuse detection). Nothing is left to revoke
+     *  server-side, but the in-process identity state voluntary [logout] drops
+     *  must go too, or the next account on this phone inherits the previous
+     *  one's cached preferences / rating ceiling and stream credentials.
+     *  Idempotent (plain cache clears), so the extra run after a voluntary
+     *  logout — whose logged-in → logged-out edge also fires the watcher — is
+     *  harmless. Device surfaces (background audio) are handled by
+     *  [tv.onscreen.mobile.playback.SignOutTeardown], which calls this.
+     *  Mirrors the TV client's AuthRepository.onInvoluntarySignOut. */
+    fun onInvoluntarySignOut() {
+        invalidateIdentityCaches()
+        StreamTokenVault.clear()
     }
 
     /** Fire-and-forget [logout] on the app-lifetime scope, with an optional
@@ -188,10 +235,14 @@ open class AuthRepository @Inject constructor(
      *  clear the settings ViewModel — a viewModelScope.launch would be
      *  cancelled before the revoke POST lands (the same trap ItemRepository
      *  documents for the terminal progress event). */
-    fun logoutDetached(andThen: (suspend () -> Unit)? = null) {
+    fun logoutDetached(andThen: (suspend (origin: String?) -> Unit)? = null) {
         detachedScope.launch {
-            logout()
-            andThen?.invoke()
+            // The follow-up receives the origin captured at the START of the
+            // sign-out, so it can compare-and-clear (see
+            // ServerPrefs.clearAllIfUnchanged) instead of acting on whatever
+            // server the user may have configured while the revoke ran.
+            val origin = logoutFromOrigin()
+            andThen?.invoke(origin)
         }
     }
 

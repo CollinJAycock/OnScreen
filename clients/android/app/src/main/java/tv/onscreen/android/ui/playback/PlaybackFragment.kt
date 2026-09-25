@@ -159,6 +159,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  owns that transition). */
     private var playbackEnded: Boolean = false
 
+    /** Set when the server refused a mid-session 'playing' heartbeat with a
+     *  403 (see stopForRefusedPlayback). Keeps the stopped player out of the
+     *  background-audio handoff. */
+    private var playbackRefused: Boolean = false
+
     /** Skip-intro / skip-credits overlay button. Inflated lazily on
      *  first marker hit, then shown/hidden as the player crosses
      *  marker windows. */
@@ -1018,7 +1023,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 exo.playWhenReady = true
             }
             is PlaybackSource.Hls -> {
-                val (factory, errorPolicy) = transcodeHttpFactory()
+                val (httpFactory, errorPolicy) = transcodeHttpFactory()
+                // playlistUrl is clean (see StreamTokenVault); the resolver puts
+                // the playlist's `?token=` back on the wire. Segment/variant
+                // URIs carry their own server-embedded token and pass through.
+                val factory = tv.onscreen.android.playback.StreamTokenVault.resolverFactory(httpFactory)
                 val hlsSource = HlsMediaSource.Factory(factory)
                     .setLoadErrorHandlingPolicy(errorPolicy)
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
@@ -1263,7 +1272,20 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val ctx = requireContext()
         val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE)
             as? android.app.ActivityManager
+        // Same stack ExoPlayer.Builder builds by default (DefaultMediaSourceFactory
+        // over DefaultDataSource over DefaultHttpDataSource), wrapped in the
+        // StreamTokenVault resolver: direct-play MediaItems carry CLEAN urls so
+        // the token never reaches the MediaSession this player is parked in for
+        // background audio, and the resolver re-attaches `?token=` per request.
+        // Covers the service's auto-advance setMediaItem too, since the service
+        // drives this same player instance.
+        val dsFactory = tv.onscreen.android.playback.StreamTokenVault.resolverFactory(
+            androidx.media3.datasource.DefaultDataSource.Factory(ctx, DefaultHttpDataSource.Factory()),
+        )
         val builder = ExoPlayer.Builder(ctx)
+            .setMediaSourceFactory(
+                androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dsFactory),
+            )
         if (am?.isLowRamDevice == true) {
             val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
@@ -1845,10 +1867,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             .commit()
     }
 
-    private fun showErrorDialog(message: String) {
+    /** [leaveOnCancel]: BACK on the dialog also leaves playback, instead of
+     *  dropping the user back onto a player whose controls still work. */
+    private fun showErrorDialog(message: String, leaveOnCancel: Boolean = false) {
         val (title, body) = when {
             message == "content_restricted" ->
                 getString(R.string.content_restricted) to ""
+            // Mid-session heartbeat 403 that is not the watch limit — library
+            // access revoked or rating ceiling lowered (ProgressTracker).
+            message == ProgressTracker.CONTENT_REVOKED ->
+                getString(R.string.content_revoked) to ""
             // Parental watch limit — "watch_limit:<reason>" sentinel set by the
             // ViewModel (pre-flight / transcode 403) and ProgressTracker (mid-
             // session heartbeat 403).
@@ -1874,6 +1902,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // this callback, and popBackStack on a detached fragment
                 // throws IllegalStateException.
                 if (isAdded) parentFragmentManager.popBackStack()
+            }
+            .apply {
+                if (leaveOnCancel) {
+                    setOnCancelListener { if (isAdded) parentFragmentManager.popBackStack() }
+                }
             }
             .create()
             .focusableOnTv()
@@ -2038,14 +2071,29 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         tracker.positionProvider = { player?.currentPosition ?: 0L }
         tracker.durationProvider = { contentDurationMs() }
         tracker.updateOffset(viewModel.hlsOffsetMs)
-        // Daily cap reached / allowed-hours window closed mid-session — pause
-        // and surface the same block dialog the start path uses.
-        tracker.onBlocked = { reason ->
-            player?.pause()
-            showErrorDialog("watch_limit:$reason")
-        }
+        // The server refused a 'playing' heartbeat (403): watch cap / allowed
+        // hours, or the item left this profile's reach mid-session.
+        tracker.onBlocked = { sentinel -> stopForRefusedPlayback(sentinel) }
         tracker.start(itemId, viewModel.hlsOffsetMs)
         progressTracker = tracker
+    }
+
+    /** Tear playback down after the server refused a mid-session heartbeat
+     *  (see ProgressTracker.onBlocked). Pausing alone was not a teardown: the
+     *  paused player still held its stream token, BACK on the dialog left the
+     *  play control live, and a paused audio player past 0 ms passed the
+     *  handoff's liveness gate — so it was parked in the MediaSessionService
+     *  and resumable from the system media controls. stop() keeps the
+     *  position, so onStop's terminal 'stopped' report still saves the resume
+     *  point (the server only gates 'playing'). */
+    private fun stopForRefusedPlayback(sentinel: String) {
+        playbackRefused = true
+        player?.run {
+            pause()
+            stop()
+        }
+        viewModel.stopActiveTranscode()
+        showErrorDialog(sentinel, leaveOnCancel = true)
     }
 
     /** Hand the current content position back to the detail screen via
@@ -2144,6 +2192,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // playWhenReady == true at STATE_ENDED, so the playWhenReady gate
         // below cannot catch end-of-stream on its own.
         if (exo.playbackState == Player.STATE_ENDED) return false
+        // The server refused this playback mid-session (stopForRefusedPlayback):
+        // never hand it to the background service to be resumed from there.
+        if (playbackRefused) return false
         if (!exo.playWhenReady && exo.currentPosition == 0L) return false
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
         val ctx = activity?.applicationContext ?: return false

@@ -16,6 +16,8 @@ import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.ResponseBody.Companion.toResponseBody
 import tv.onscreen.mobile.data.downloads.DownloadManifest
 import tv.onscreen.mobile.data.downloads.DownloadStore
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
@@ -717,5 +719,97 @@ class PlayerViewModelTest {
 
         coVerify(exactly = 1) { subs.download("movie-1", "f1", candidate) }
         assertThat(doneCalled).isTrue()
+    }
+
+    // ── Offline fallback must not override a server refusal ─────────────────
+
+    private fun httpError(code: Int, body: String = ""): retrofit2.HttpException =
+        retrofit2.HttpException(
+            retrofit2.Response.error<Any>(
+                code,
+                body.toResponseBody("application/json".toMediaTypeOrNull()),
+            ),
+        )
+
+    /** Download manager with ONE completed local copy of movie-1 on disk. */
+    private fun downloadsWithMovie(): OnScreenDownloadManager {
+        val file = java.io.File.createTempFile("onscreen-dl", ".mp4").apply {
+            writeBytes(ByteArray(64) { 1 })
+            deleteOnExit()
+        }
+        val entry = tv.onscreen.mobile.data.downloads.DownloadEntry(
+            file_id = "00000000-0000-0000-0000-0000000000f1",
+            item_id = "movie-1",
+            item_title = "Test Movie",
+            item_type = "movie",
+            container = "mp4",
+            size_bytes = 64,
+            downloaded_bytes = 64,
+            status = "completed",
+        )
+        val store = mockk<DownloadStore>(relaxed = true)
+        coEvery { store.load() } returns Unit
+        every { store.state } returns MutableStateFlow(DownloadManifest(entries = listOf(entry)))
+        every { store.fileFor(any()) } returns file
+        val mgr = mockk<OnScreenDownloadManager>()
+        every { mgr.store } returns store
+        return mgr
+    }
+
+    @Test
+    fun `a content-rating 403 does not fall back to the downloaded copy`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } throws httpError(403, """{"error":{"code":"CONTENT_RESTRICTED","message":"rating"}}""")
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.source).isNull()
+        assertThat(vm.state.value.error).isEqualTo("content_restricted")
+    }
+
+    @Test
+    fun `a 404 after access is revoked does not fall back to the downloaded copy`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } throws httpError(404)
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.source).isNull()
+        assertThat(vm.state.value.error).isNotNull()
+    }
+
+    @Test
+    fun `a transport failure still plays the downloaded copy offline`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } throws java.io.IOException("unreachable")
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        val src = vm.state.value.source as PlaybackSource.DirectPlay
+        assertThat(src.url).startsWith("file://")
+        assertThat(vm.state.value.error).isNull()
+    }
+
+    @Test
+    fun `any 403 on a playing heartbeat stops playback`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
+        coEvery { itemRepo.updateProgress(any(), any(), any(), any(), any()) } throws
+            httpError(403, """{"error":{"code":"FORBIDDEN","message":"no access"}}""")
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit())
+        vm.reportProgress("movie-1", 1_000L, 10_000L, "playing")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).isEqualTo("content_restricted")
     }
 }

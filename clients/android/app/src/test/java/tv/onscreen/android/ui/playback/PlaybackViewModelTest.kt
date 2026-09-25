@@ -27,6 +27,7 @@ import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
+import tv.onscreen.android.playback.StreamTokenVault
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class PlaybackViewModelTest {
@@ -188,6 +189,76 @@ class PlaybackViewModelTest {
         assertThat(hls.playlistUrl).isEqualTo("http://srv/transcode/sess-1.m3u8")
         assertThat(hls.offsetMs).isEqualTo(30_000L)
         assertThat(vm.hlsOffsetMs).isEqualTo(30_000L)
+    }
+
+    @Test
+    fun `direct play url is clean and its stream token is vaulted`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(directPlayFile().copy(stream_token = "st-24h"))
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        val src = vm.uiState.value.source as PlaybackSource.DirectPlay
+        // The url is CLEAN: for music this MediaItem ends up in the
+        // MediaSession, whose legacy bridge republishes the uri as
+        // METADATA_KEY_MEDIA_URI to any notification-listener app. The token
+        // must still be captured, or playback would 401.
+        assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4")
+        assertThat(src.url).doesNotContain("token=")
+        assertThat(StreamTokenVault.tokenForTest(src.url)).isEqualTo("st-24h")
+    }
+
+    @Test
+    fun `direct play falls back to a vaulted asset token`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(directPlayFile().copy(id = "f9", stream_url = "/media/files/f9.flac"))
+        val sp = mockk<tv.onscreen.android.data.prefs.ServerPrefs>(relaxed = true)
+        coEvery { sp.getAssetToken() } returns "as-24h"
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), sp)
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        val src = vm.uiState.value.source as PlaybackSource.DirectPlay
+        assertThat(src.url).isEqualTo("http://srv/media/files/f9.flac")
+        assertThat(StreamTokenVault.tokenForTest(src.url)).isEqualTo("as-24h")
+    }
+
+    @Test
+    fun `hls playlist token is stripped from the media item url and vaulted`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(
+                itemId = "movie-1",
+                height = 1080,
+                positionMs = 0L,
+                fileId = "f2",
+                videoCopy = false,
+                supportsHevc = false,
+                supportsAv1 = false,
+            )
+        } returns TranscodeSession(
+            session_id = "sess-v",
+            token = "sess-tok",
+            playlist_url = "/api/v1/transcode/sessions/sess-v/playlist.m3u8?token=sess-tok",
+        )
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        val hls = vm.uiState.value.source as PlaybackSource.Hls
+        assertThat(hls.playlistUrl)
+            .isEqualTo("http://srv/api/v1/transcode/sessions/sess-v/playlist.m3u8")
+        assertThat(StreamTokenVault.tokenForTest(hls.playlistUrl)).isEqualTo("sess-tok")
     }
 
     @Test

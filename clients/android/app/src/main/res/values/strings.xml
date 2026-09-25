@@ -137,6 +137,7 @@
     <string name="all_libraries">All libraries</string>
     <string name="search_in">Search in</string>
     <string name="content_restricted">This title is outside your content rating limit.</string>
+    <string name="content_revoked">This title is no longer available on this profile.</string>
     <string name="watch_limit_title">Watch limit reached</string>
     <string name="watch_limit_daily">You’ve reached today’s watch-time limit for this account. Check back tomorrow.</string>
     <string name="watch_limit_outside_hours">Playback is outside the allowed hours for this account. Try again during the permitted times.</string>

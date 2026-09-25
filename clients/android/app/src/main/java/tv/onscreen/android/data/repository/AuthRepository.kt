@@ -9,6 +9,7 @@ import tv.onscreen.android.data.model.RefreshRequest
 import tv.onscreen.android.data.model.TokenPair
 import tv.onscreen.android.data.model.TotpVerifyRequest
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.playback.StreamTokenVault
 import kotlinx.coroutines.flow.first
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -104,6 +105,24 @@ class AuthRepository @Inject constructor(
         // the 5 s TTL after sign-out every new request still carried the
         // just-revoked token.
         authInterceptor.invalidateCache()
+        // In-memory stream/asset credentials the player re-attaches per request.
+        StreamTokenVault.clear()
+    }
+
+    /** Local half of an INVOLUNTARY sign-out — TokenAuthenticator cleared the
+     *  tokens because the refresh was definitively rejected (remote revoke,
+     *  expiry, reuse detection). There is nothing to revoke server-side, but
+     *  the same in-process identity state voluntary [logout] drops must go too,
+     *  or the next person on a shared TV inherits cached prefs, a stale bearer
+     *  for up to the interceptor TTL, and the previous user's stream tokens.
+     *  Idempotent: every call here is a plain cache clear, so running it after
+     *  a voluntary logout (whose logged-in → logged-out edge also fires the
+     *  watcher) is harmless. Device surfaces (Watch Next, parked audio) are
+     *  handled by SignOutTeardown, which calls this. */
+    fun onInvoluntarySignOut() {
+        invalidateIdentityCaches()
+        authInterceptor.invalidateCache()
+        StreamTokenVault.clear()
     }
 
     /** Check server reachability by hitting the health endpoint.

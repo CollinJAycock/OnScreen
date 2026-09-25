@@ -116,6 +116,15 @@ class ShiftedVttDataSource(
         while (true) {
             val n = upstream.read(chunk, 0, chunk.size)
             if (n == C.RESULT_END_OF_INPUT || n < 0) break
+            // Hard cap: this buffers the whole file and then builds a shifted
+            // String copy (~3x the size on the heap). Real VTTs are tens of KB;
+            // an oversized/pathological sidecar would otherwise OOM the player
+            // on a low-RAM Fire TV stick every time the title resumes. Throwing
+            // here drops only the text track — the side-load source is built
+            // with setTreatLoadErrorsAsEndOfStream(true).
+            if (buf.size().toLong() + n > MAX_VTT_BYTES) {
+                throw java.io.IOException("subtitle exceeds ${MAX_VTT_BYTES} bytes; not loading")
+            }
             buf.write(chunk, 0, n)
         }
         val shifted = SubtitleShift.shiftWebVtt(buf.toString("UTF-8"), offsetMs)
@@ -135,6 +144,11 @@ class ShiftedVttDataSource(
     }
 
     override fun getUri(): Uri? = uri
+
+    companion object {
+        /** Upper bound on a side-loaded VTT we will buffer and shift. */
+        const val MAX_VTT_BYTES: Long = 16L * 1024 * 1024
+    }
 
     override fun close() {
         data = null

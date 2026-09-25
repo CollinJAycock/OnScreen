@@ -162,6 +162,9 @@ class MainActivity : FragmentActivity() {
         // refresh token is dead/reused, but only this onCreate routes by login
         // state — so the user would otherwise be stranded on a broken Home until
         // relaunch. Route back to login on a logged-in → logged-out transition.
+        // The device-level teardown for that same edge (Watch Next rows,
+        // parked audio, identity caches) lives in SignOutTeardown, started
+        // from OnScreenApp so it also runs when no activity is alive.
         lifecycleScope.launch {
             var wasLoggedIn = prefs.isLoggedIn.first()
             prefs.isLoggedIn.collect { loggedIn ->
@@ -423,6 +426,14 @@ class MainActivity : FragmentActivity() {
         val incoming = launchIntent ?: return false
         val data = incoming.data ?: return false
         if (data.scheme != "onscreen" || data.host != "watch") return false
+        // Belt-and-braces with the manifest (the filter is not BROWSABLE):
+        // browsers stamp CATEGORY_BROWSABLE on anything a web page launches,
+        // including Chrome-style intent: URIs naming this component. Launcher
+        // Watch Next tiles never carry it, so refuse web-originated auto-play.
+        if (incoming.hasCategory(Intent.CATEGORY_BROWSABLE)) {
+            Log.w("MainActivity", "ignoring browsable watch deep link")
+            return false
+        }
         val raw = data.lastPathSegment ?: return false
         // UUID-validate before navigating. The deep link is callable by
         // any installed app via a crafted Intent; the server rejects

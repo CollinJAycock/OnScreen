@@ -50,7 +50,13 @@ class TokenAuthenticator(
      *  fetch throws — which a content-rating 403 does, indistinguishably from
      *  a network blip. Leaving the media meant the next person to pair, a
      *  second household member or a restricted child profile, could open
-     *  Downloads and play everything the previous account had. */
+     *  Downloads and play everything the previous account had.
+     *
+     *  The rest of the teardown — stopping PlaybackService, clearing
+     *  StreamTokenVault and the identity caches — needs Android and
+     *  AuthRepository, which this OkHttp-graph class cannot depend on. It is
+     *  done by playback/SignOutTeardown (and PlaybackService itself), both of
+     *  which observe the logged-in → logged-out edge clearAuth() produces. */
     private suspend fun clearAuthAndCache() {
         prefs.clearAuth()
         authInterceptor.invalidateCache()

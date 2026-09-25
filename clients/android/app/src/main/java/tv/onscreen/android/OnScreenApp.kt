@@ -35,12 +35,17 @@ class OnScreenApp : Application(), ImageLoaderFactory {
      */
     @Inject lateinit var okHttpClient: OkHttpClient
 
+    /** Involuntary sign-out teardown (Watch Next rows, parked audio, identity
+     *  caches). Process-level so it runs even with no activity alive. */
+    @Inject lateinit var signOutTeardown: tv.onscreen.android.playback.SignOutTeardown
+
     override fun onCreate() {
         super.onCreate()
         disableStrictRevocationChecking()
         // Before any request: the capabilities header is built lazily on the
         // first API call and bakes in the panel resolution read here.
         tv.onscreen.android.ui.playback.PlaybackHelper.initDisplayCaps(this)
+        signOutTeardown.start()
     }
 
     override fun newImageLoader(): ImageLoader =

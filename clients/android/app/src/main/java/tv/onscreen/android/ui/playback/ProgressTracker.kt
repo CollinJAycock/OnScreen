@@ -1,8 +1,7 @@
 package tv.onscreen.android.ui.playback
 
 import kotlinx.coroutines.*
-import retrofit2.HttpException
-import tv.onscreen.android.data.api.apiError
+import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.repository.ItemRepository
 
 /**
@@ -32,11 +31,16 @@ class ProgressTracker(
     /** Duration provider — returns the total duration in ms. */
     var durationProvider: (() -> Long)? = null
 
-    /** Fires (on the main thread) when a 'playing' heartbeat is rejected by
-     *  the parental watch limit — a daily cap reached or the allowed-hours
-     *  window closing mid-session. The tracker stops itself first; the caller
-     *  pauses playback and shows the block message. */
-    var onBlocked: ((reason: String) -> Unit)? = null
+    /** Fires (on the main thread) when the server refuses a 'playing'
+     *  heartbeat with ANY 403 — the server no longer lets this profile watch
+     *  the item. The tracker stops itself first; the caller tears playback
+     *  down and shows the message for [sentinel], which uses the fragment's
+     *  error-dialog vocabulary:
+     *   - `watch_limit:<reason>` — PARENTAL_LIMIT: daily cap reached or the
+     *     allowed-hours window closed mid-session.
+     *   - [CONTENT_REVOKED] — anything else: library access revoked or the
+     *     content-rating ceiling lowered while this was playing. */
+    var onBlocked: ((sentinel: String) -> Unit)? = null
 
     fun start(itemId: String, hlsOffsetMs: Long = 0) {
         this.itemId = itemId
@@ -113,27 +117,41 @@ class ProgressTracker(
             itemRepo.updateProgress(id, contentPos, dur, state)
             lastReportedContentMs = contentPos
         } catch (e: Exception) {
-            // A 'playing' heartbeat rejected with a parental watch-limit 403
-            // means the cap was reached (or the allowed-hours window closed)
-            // mid-session — stop reporting and surface the block. Any other
-            // failure stays best-effort (don't crash playback on a hiccup).
-            if (state == "playing" && e is HttpException && e.code() == 403) {
-                val err = e.apiError()
-                if (err?.code == "PARENTAL_LIMIT") {
-                    // Dispatch the callback on terminalScope, NOT from this
-                    // coroutine: this code runs inside the heartbeat job that
-                    // stop() is about to cancel, and withContext() begins with
-                    // ensureActive() — so dispatching from here after stop()
-                    // threw CancellationException before the callback ever ran,
-                    // and the block screen never appeared. terminalScope
-                    // outlives the job by design.
-                    val cb = onBlocked
-                    if (cb != null) {
-                        terminalScope.launch(Dispatchers.Main) { cb(err.message ?: "") }
-                    }
-                    stop()
+            // ANY 403 on a 'playing' heartbeat stops playback, not only a
+            // PARENTAL_LIMIT one — see HeartbeatRefusal, which the background
+            // OnScreenMediaSessionService shares. Mirrors the phone client's
+            // PlayerViewModel.reportProgress. Other failures stay best-effort
+            // (don't crash playback on a hiccup).
+            val refusal = HeartbeatRefusal.of(state, e)
+            if (refusal != null) {
+                val sentinel = blockSentinel(refusal)
+                // Dispatch the callback on terminalScope, NOT from this
+                // coroutine: this code runs inside the heartbeat job that
+                // stop() is about to cancel, and withContext() begins with
+                // ensureActive() — so dispatching from here after stop()
+                // threw CancellationException before the callback ever ran,
+                // and the block screen never appeared. terminalScope
+                // outlives the job by design.
+                val cb = onBlocked
+                if (cb != null) {
+                    terminalScope.launch(Dispatchers.Main) { cb(sentinel) }
                 }
+                stop()
             }
+        }
+    }
+
+    companion object {
+        /** Error-dialog sentinel for a mid-session 403 that is NOT the parental
+         *  watch limit. Distinct from the start path's `content_restricted`
+         *  ("outside your content rating limit"): mid-session it may equally be
+         *  a revoked library grant, so the message stays generic. */
+        const val CONTENT_REVOKED = "content_revoked"
+
+        /** Map a heartbeat refusal onto the fragment's error-dialog sentinel. */
+        private fun blockSentinel(refusal: HeartbeatRefusal): String = when (refusal) {
+            is HeartbeatRefusal.WatchLimit -> "watch_limit:${refusal.reason ?: ""}"
+            HeartbeatRefusal.ContentRevoked -> CONTENT_REVOKED
         }
     }
 }

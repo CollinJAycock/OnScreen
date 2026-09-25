@@ -21,6 +21,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
@@ -242,13 +243,44 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 )
                 if (dur <= 0) continue
                 val pos = player.currentPosition + activeHlsOffsetMs
-                try {
+                // Best-effort EXCEPT a refusal: any 403 on this heartbeat means
+                // the server no longer lets this profile play the item (watch
+                // cap / allowed hours, library access revoked, rating ceiling
+                // lowered). Swallowing it kept parked music streaming on its
+                // already-issued token. Same decision as the fragment's
+                // ProgressTracker — see HeartbeatRefusal.
+                val refusal = HeartbeatRefusal.heartbeat {
                     itemRepo.updateProgress(itemId, pos, dur, "playing")
-                } catch (_: Exception) {
-                    // Best-effort; the next tick will retry.
+                }
+                if (refusal != null) {
+                    haltForRefusal(player, itemId, refusal)
+                    return@launch
                 }
             }
         }
+    }
+
+    /** Stop background playback the server refused mid-session. There is no
+     *  UI here to explain it (the fragment's dialog covers the foreground
+     *  path); this only makes sure nothing keeps playing or reporting.
+     *   - The auto-advance listener goes first: it would otherwise report a
+     *     'stopped' for this item and chain to the next sibling.
+     *   - stop() + clearMediaItems() ends the stream and empties the session,
+     *     so the system media rail / notification stops advertising the item.
+     *   - stopSelf() tears the service down; onDestroy releases the parked
+     *     player and clears the handoff slot, so a returning fragment builds a
+     *     fresh player (and its own start path re-checks access). */
+    private fun haltForRefusal(player: ExoPlayer, itemId: String, refusal: HeartbeatRefusal) {
+        android.util.Log.w(TAG, "heartbeat refused for $itemId ($refusal); stopping background audio")
+        progressJob = null
+        autoAdvanceListener?.let { player.removeListener(it) }
+        autoAdvanceListener = null
+        activeItemId = null
+        runCatching {
+            player.stop()
+            player.clearMediaItems()
+        }
+        stopSelf()
     }
 
     /** On STATE_ENDED for music tracks, walk to the next sibling
@@ -316,8 +348,11 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // music-only, and music files are uniformly direct-playable
         // (no transcode negotiation). The fragment's PlaybackHelper
         // would short-circuit to DirectPlay for the same input.
-        val sep = if (file.stream_url.contains("?")) "&" else "?"
-        val url = "$server${file.stream_url}${sep}token=$token"
+        // CLEAN url on the MediaItem — this player is wrapped in our
+        // MediaSession, whose legacy bridge republishes the item uri to other
+        // apps. The credential goes in the vault; the player's resolving data
+        // source (built in PlaybackFragment.buildExoPlayer) re-attaches it.
+        val url = StreamTokenVault.register("$server${file.stream_url}", token)
 
         activeItemId = itemId
         activeItemType = item.type
@@ -375,5 +410,9 @@ class OnScreenMediaSessionService : MediaSessionService() {
         session = null
         AudioHandoff.clear()
         super.onDestroy()
+    }
+
+    private companion object {
+        const val TAG = "OnScreenMediaSession"
     }
 }

@@ -96,11 +96,14 @@
                  publish onscreen://watch/<item_id>?position=<ms>
                  URIs; MainActivity reads the path + query in
                  onCreate / onNewIntent and routes straight into
-                 PlaybackFragment with a resume offset. -->
+                 PlaybackFragment with a resume offset.
+                 Deliberately NOT BROWSABLE: the launcher fires the tile's
+                 intent URI without that category, and BROWSABLE would let any
+                 web page in the TV's browser (Silk etc.) force auto-playback
+                 of an arbitrary item and clobber its resume position. -->
             <intent-filter android:autoVerify="false">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="onscreen" android:host="watch" />
             </intent-filter>
         </activity>

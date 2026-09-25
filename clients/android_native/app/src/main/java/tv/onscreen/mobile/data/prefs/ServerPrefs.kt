@@ -101,6 +101,26 @@ class ServerPrefs(private val context: Context) {
         context.dataStore.edit { it.clear() }
     }
 
+    /** Compare-and-clear for a DETACHED "forget server": wipe everything only
+     *  if the stored server URL is still [expectedServerUrl] AND nobody has
+     *  signed in since the forget began. The forget's revoke can take many
+     *  seconds against a dead server; if the user meanwhile entered a new
+     *  server (or signed back in), an unconditional clearAll() erased that new
+     *  URL and the freshly minted tokens. Atomic: one DataStore transaction.
+     *  Returns true when it cleared. */
+    suspend fun clearAllIfUnchanged(expectedServerUrl: String?): Boolean {
+        var cleared = false
+        context.dataStore.edit {
+            val current = it[KEY_SERVER_URL]?.trimEnd('/')
+            val signedInSince = !it[KEY_ACCESS_TOKEN].isNullOrEmpty()
+            if (current == expectedServerUrl?.trimEnd('/') && !signedInSince) {
+                it.clear()
+                cleared = true
+            }
+        }
+        return cleared
+    }
+
     // ── Search filters ──────────────────────────────────────────────────────
 
     /** Reactive filter state for the search screen. UI binds to this so

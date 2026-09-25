@@ -18,9 +18,21 @@
     <cloud-backup>
         <exclude domain="sharedpref" path="." />
         <exclude domain="file" path="datastore/" />
+        <!-- Offline media + manifest.json: downloads must never outlive the
+             identity that fetched them (wiped on sign-out / involuntary
+             sign-out), so they must not ride a backup or phone-to-phone
+             transfer either. allowBackup="false" does NOT stop API 31+
+             device-to-device transfer; these rules do. -->
+        <exclude domain="file" path="downloads/" />
     </cloud-backup>
     <device-transfer>
         <exclude domain="sharedpref" path="." />
         <exclude domain="file" path="datastore/" />
+        <!-- Offline media + manifest.json: downloads must never outlive the
+             identity that fetched them (wiped on sign-out / involuntary
+             sign-out), so they must not ride a backup or phone-to-phone
+             transfer either. allowBackup="false" does NOT stop API 31+
+             device-to-device transfer; these rules do. -->
+        <exclude domain="file" path="downloads/" />
     </device-transfer>
 </data-extraction-rules>

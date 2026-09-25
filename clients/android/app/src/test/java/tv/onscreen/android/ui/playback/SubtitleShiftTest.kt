@@ -1,6 +1,7 @@
 package tv.onscreen.android.ui.playback
 
 import com.google.common.truth.Truth.assertThat
+import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class SubtitleShiftTest {
@@ -50,5 +51,33 @@ class SubtitleShiftTest {
         val short = "WEBVTT\n\n05:10.000 --> 05:12.000\nHi\n"
         val shifted = SubtitleShift.shiftWebVtt(short, 60_000L)
         assertThat(shifted).contains("00:04:10.000 --> 00:04:12.000")
+    }
+
+    @Test
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun `oversized subtitle is refused instead of buffered without bound`() {
+        // Upstream that never ends: without the cap, open() would buffer until
+        // the heap ran out (OOM on a low-RAM stick). With it, open() throws an
+        // IOException, which the side-load source treats as end-of-stream.
+        var served = 0L
+        val endless = object : androidx.media3.datasource.DataSource {
+            override fun addTransferListener(transferListener: androidx.media3.datasource.TransferListener) {}
+            override fun open(dataSpec: androidx.media3.datasource.DataSpec): Long =
+                androidx.media3.common.C.LENGTH_UNSET.toLong()
+            override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+                java.util.Arrays.fill(buffer, offset, offset + length, 'a'.code.toByte())
+                served += length
+                return length
+            }
+            override fun getUri(): android.net.Uri? = null
+            override fun close() {}
+        }
+        val ds = ShiftedVttDataSource(endless, 60_000L)
+        val spec = androidx.media3.datasource.DataSpec.Builder()
+            .setUri(io.mockk.mockk<android.net.Uri>(relaxed = true))
+            .build()
+        assertThrows(java.io.IOException::class.java) { ds.open(spec) }
+        // Stopped at (about) the cap rather than reading forever.
+        assertThat(served).isAtMost(ShiftedVttDataSource.MAX_VTT_BYTES + 64 * 1024)
     }
 }

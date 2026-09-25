@@ -22,8 +22,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.data.api.HeartbeatRefusal
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import javax.inject.Inject
@@ -69,7 +71,13 @@ class PlaybackService : MediaSessionService() {
     // item becomes current so replaying the same track reports again.
     private var reportedStoppedFor: String? = null
 
+    // Set once the account signed out under us (see haltForSignOut); no
+    // further progress is reported for it.
+    private var signedOut = false
+
     companion object {
+        private const val TAG = "PlaybackService"
+
         // MediaItem metadata extras keys (set by the UI, read here).
         const val EXTRA_TYPE = "onscreen.type"
         const val EXTRA_PARENT_ID = "onscreen.parentId"
@@ -98,6 +106,64 @@ class PlaybackService : MediaSessionService() {
         player.addListener(playerListener(player))
         session = MediaSession.Builder(this, player).build()
         startProgressReporter(player)
+        watchSignOut(player)
+    }
+
+    /**
+     * Stop the audio ourselves on the logged-in → logged-out edge.
+     *
+     * SignOutTeardown / SettingsViewModel call stopService(), but that cannot
+     * destroy a service with a bound MediaController — and MiniPlayerBar holds
+     * one for as long as the activity lives, including while it sits stopped
+     * in the background (collectAsStateWithLifecycle means AppNav does not
+     * even reroute to /pair until the app is foregrounded). A remote revoke of
+     * a phone playing music in the pocket therefore kept streaming the revoked
+     * account's track, on its stream token, with its title on the lock screen.
+     */
+    private fun watchSignOut(player: ExoPlayer) {
+        scope.launch {
+            var wasLoggedIn = prefs.isLoggedIn.first()
+            prefs.isLoggedIn.collect { loggedIn ->
+                if (wasLoggedIn && !loggedIn) haltForSignOut(player)
+                wasLoggedIn = loggedIn
+            }
+        }
+    }
+
+    private fun haltForSignOut(player: ExoPlayer) {
+        // Set first: stop() below drives STATE_IDLE → reportStopped, and the
+        // terminal PUT must not go out — the session is gone, so it would
+        // travel unauthenticated, and a 401 retried after a quick re-pair
+        // could land the previous account's position on the new one.
+        signedOut = true
+        progressJob?.cancel()
+        stopAndClear(player)
+    }
+
+    /** Stop background playback the server refused mid-session (any 403 on
+     *  the 'playing' heartbeat — see HeartbeatRefusal). There is no UI here to
+     *  explain it; PlayerViewModel's own heartbeat shows the message when the
+     *  player screen is open. The heartbeat keeps running for whatever a
+     *  still-bound controller plays next; it skips while the queue is empty. */
+    private fun haltForRefusal(player: Player, itemId: String, refusal: HeartbeatRefusal) {
+        android.util.Log.w(TAG, "heartbeat refused for $itemId ($refusal); stopping background audio")
+        // Mark the item as already reported BEFORE stop(): stop() drives
+        // STATE_IDLE → reportStopped, and no further report may go out for an
+        // item the server just refused. clearMediaItems() then resets the guard
+        // via onMediaItemTransition(null), but with the queue empty there is
+        // no current item left to report.
+        reportedStoppedFor = itemId
+        stopAndClear(player)
+    }
+
+    private fun stopAndClear(player: Player) {
+        runCatching {
+            player.stop()
+            // Empty the timeline so the platform session stops advertising
+            // the track (lock screen, notification).
+            player.clearMediaItems()
+        }
+        stopSelf()
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? = session
@@ -166,11 +232,16 @@ class PlaybackService : MediaSessionService() {
                 // recognise it as our own echo rather than a remote device
                 // telling it to seek.
                 LocalProgressTracker.record(id, pos)
-                try {
+                // Best-effort EXCEPT a refusal: any 403 on this heartbeat means
+                // the server no longer lets this profile play the item (watch
+                // cap / allowed hours, library access revoked, rating ceiling
+                // lowered). Swallowing it kept background music streaming on
+                // its already-issued token. Same decision as
+                // PlayerViewModel.reportProgress — see HeartbeatRefusal.
+                val refusal = HeartbeatRefusal.heartbeat {
                     itemRepo.updateProgress(id, pos, dur, "playing")
-                } catch (_: Exception) {
-                    // Best-effort; the next tick retries.
                 }
+                if (refusal != null) haltForRefusal(player, id, refusal)
             }
         }
     }
@@ -178,6 +249,7 @@ class PlaybackService : MediaSessionService() {
     /** Publish the terminal 'stopped' for the current item — the
      *  server's scrobble trigger. Deduped per item id. */
     private fun reportStopped(player: Player?) {
+        if (signedOut) return
         val item = player?.currentMediaItem ?: return
         val id = item.mediaId
         if (id.isEmpty() || id == reportedStoppedFor) return

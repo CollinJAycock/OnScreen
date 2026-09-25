@@ -94,4 +94,27 @@ object AudioHandoff {
         parked = null
         parkedMeta = null
     }
+
+    /** Stop and release any parked background audio and stop the session
+     *  service. Used on every sign-out (voluntary and involuntary): a parked
+     *  player otherwise keeps streaming on the signed-out user's already-issued
+     *  stream token, and its MediaSession keeps advertising their track.
+     *  Release the parked player first so the service's own teardown has
+     *  nothing left to hand back, then stop the service. Idempotent.
+     *  Must be called on the main thread (ExoPlayer is main-thread bound). */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun stopAll(context: android.content.Context) {
+        peek()?.let { player ->
+            runCatching {
+                player.stop()
+                player.release()
+            }
+        }
+        clear()
+        runCatching {
+            context.stopService(
+                android.content.Intent(context, OnScreenMediaSessionService::class.java),
+            )
+        }
+    }
 }

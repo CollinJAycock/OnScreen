@@ -296,7 +296,7 @@ class ProgressTrackerTest {
                 // coroutine — ensureActive() threw and onBlocked never fired,
                 // so a restricted profile crossing its cap mid-episode saw
                 // nothing at all.
-                assertThat(blockedReason).isEqualTo("daily_limit_reached")
+                assertThat(blockedReason).isEqualTo("watch_limit:daily_limit_reached")
 
                 // Tracker stopped itself: no further heartbeats.
                 repo.throwNext = null
@@ -304,6 +304,112 @@ class ProgressTrackerTest {
                 advanceTimeBy(30_000)
                 runCurrent()
                 assertThat(repo.calls.size).isEqualTo(before)
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
+
+    private fun http403(body: String?) = retrofit2.HttpException(
+        retrofit2.Response.error<Unit>(
+            403,
+            okhttp3.ResponseBody.create(null, body ?: ""),
+        ),
+    )
+
+    private fun http(code: Int) = retrofit2.HttpException(
+        retrofit2.Response.error<Unit>(code, okhttp3.ResponseBody.create(null, "")),
+    )
+
+    /** Drives one successful heartbeat, then fails the next with [failure]
+     *  and returns what onBlocked received (null = never fired) plus whether
+     *  heartbeats continued afterwards. */
+    private fun kotlinx.coroutines.test.TestScope.heartbeatRejectedWith(
+        failure: Throwable,
+    ): Pair<String?, Boolean> {
+        val repo = FakeRepo()
+        val tracker = newTracker(repo, this)
+        var blocked: String? = null
+        tracker.onBlocked = { blocked = it }
+
+        tracker.start("item-1")
+        advanceTimeBy(10_001)
+        runCurrent()
+
+        repo.throwNext = failure
+        advanceTimeBy(10_000)
+        runCurrent()
+
+        repo.throwNext = null
+        val before = repo.calls.size
+        advanceTimeBy(30_000)
+        runCurrent()
+        val keptReporting = repo.calls.size > before
+        tracker.stop()
+        return blocked to keptReporting
+    }
+
+    @Test
+    fun `non-parental 403 on a heartbeat also tears playback down`() =
+        runTest(StandardTestDispatcher()) {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                // checkLibraryAccess: library grant revoked or rating ceiling
+                // lowered while this was playing. Used to be swallowed as a
+                // best-effort hiccup, so the stream kept going on its token.
+                val (blocked, keptReporting) = heartbeatRejectedWith(
+                    http403("""{"error":{"code":"FORBIDDEN","message":"access denied"}}"""),
+                )
+                assertThat(blocked).isEqualTo(ProgressTracker.CONTENT_REVOKED)
+                assertThat(keptReporting).isFalse()
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun `403 without an error envelope still tears playback down`() =
+        runTest(StandardTestDispatcher()) {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                val (blocked, keptReporting) = heartbeatRejectedWith(http403(null))
+                assertThat(blocked).isEqualTo(ProgressTracker.CONTENT_REVOKED)
+                assertThat(keptReporting).isFalse()
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun `non-403 heartbeat failures stay best-effort`() =
+        runTest(StandardTestDispatcher()) {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                for (failure in listOf(http(500), http(404), RuntimeException("network down"))) {
+                    val (blocked, keptReporting) = heartbeatRejectedWith(failure)
+                    assertThat(blocked).isNull()
+                    assertThat(keptReporting).isTrue()
+                }
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
+    fun `a 403 on a paused report does not fire onBlocked`() =
+        runTest(StandardTestDispatcher()) {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                val repo = FakeRepo().apply { throwNext = http403(null) }
+                val tracker = newTracker(repo, this)
+                var blocked: String? = null
+                tracker.onBlocked = { blocked = it }
+
+                // Only 'playing' heartbeats are gated; a terminal pause/stop
+                // report being refused is not a reason to show a block dialog.
+                tracker.onPause()
+                runCurrent()
+
+                assertThat(blocked).isNull()
             } finally {
                 Dispatchers.resetMain()
             }
