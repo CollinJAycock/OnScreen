@@ -252,9 +252,9 @@ dependencies {
     implementation("com.squareup.retrofit2:converter-moshi:2.11.0")
     implementation("com.squareup.moshi:moshi:1.15.2")
     ksp("com.squareup.moshi:moshi-kotlin-codegen:1.15.2")
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    implementation("com.squareup.okhttp3:okhttp-sse:4.12.0")
+    implementation("com.squareup.okhttp3:okhttp:5.5.0")
+    implementation("com.squareup.okhttp3:logging-interceptor:5.5.0")
+    implementation("com.squareup.okhttp3:okhttp-sse:5.5.0")
 
     // Image loading
     implementation("io.coil-kt:coil:2.6.0")
@@ -281,5 +281,5 @@ dependencies {
     // Drives the OkHttp stack (interceptor + authenticator + SSE) against a
     // real local server. The token-scoping and SSE-reconnect guards are only
     // meaningful end-to-end — mocking the client out would assert the mock.
-    testImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
+    testImplementation("com.squareup.okhttp3:mockwebserver:5.5.0")
 }
