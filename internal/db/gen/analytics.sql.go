@@ -30,7 +30,7 @@ type GetAnalyticsOverviewRow struct {
 	TotalWatchTimeMs int64 `json:"total_watch_time_ms"`
 }
 
-// Analytics dashboard aggregates. All eight run in parallel from
+// Analytics dashboard aggregates. All of them run in parallel from
 // AnalyticsHandler.Get and are memoized server-side (per display timezone)
 // for analyticsCacheTTL.
 // Counts and sums route through watch_plays so scrobble+stop pairs from one
@@ -408,6 +408,47 @@ func (q *Queries) GetRecentPlays(ctx context.Context) ([]GetRecentPlaysRow, erro
 	return items, nil
 }
 
+const getStreamTypesByClient = `-- name: GetStreamTypesByClient :many
+SELECT COALESCE(client_name, 'Unknown client')::TEXT AS client,
+       COALESCE(decision, 'unknown')::TEXT           AS decision,
+       COUNT(*)::BIGINT                               AS count
+FROM watch_plays
+WHERE occurred_at > NOW() - make_interval(days => $1::INT)
+GROUP BY client_name, decision
+ORDER BY 1, 2
+`
+
+type GetStreamTypesByClientRow struct {
+	Client   string `json:"client"`
+	Decision string `json:"decision"`
+	Count    int64  `json:"count"`
+}
+
+// Playback decision per client app over the selected window — which devices
+// lean on the transcoder, and which still don't report a decision. One row
+// per (client, decision); the handler folds decisions into the same buckets
+// as GetStreamTypesPerDay, ranks clients by total, and sums every row (not
+// just the top clients) into the range-wide stream totals.
+func (q *Queries) GetStreamTypesByClient(ctx context.Context, days int32) ([]GetStreamTypesByClientRow, error) {
+	rows, err := q.db.Query(ctx, getStreamTypesByClient, days)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []GetStreamTypesByClientRow{}
+	for rows.Next() {
+		var i GetStreamTypesByClientRow
+		if err := rows.Scan(&i.Client, &i.Decision, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const getStreamTypesPerDay = `-- name: GetStreamTypesPerDay :many
 SELECT (DATE(occurred_at AT TIME ZONE $1::TEXT))::DATE AS date,
        COALESCE(decision, 'unknown')::TEXT AS decision,
@@ -429,8 +470,9 @@ type GetStreamTypesPerDayRow struct {
 	Count    int64       `json:"count"`
 }
 
-// Direct-vs-transcode load over time (viewer-timezone days). decision is
-// collapsed client-side; rows written before the decision column (or by
+// Direct-vs-transcode load over time (viewer-timezone days). The handler
+// folds decision into direct_play / direct_stream (directStream + remux) /
+// transcode / unknown; rows written before the decision column (or by
 // clients that don't send it yet) report as 'unknown'.
 func (q *Queries) GetStreamTypesPerDay(ctx context.Context, arg GetStreamTypesPerDayParams) ([]GetStreamTypesPerDayRow, error) {
 	rows, err := q.db.Query(ctx, getStreamTypesPerDay, arg.Tz, arg.Days)

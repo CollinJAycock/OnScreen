@@ -518,6 +518,9 @@ func (s *stubAnalyticsDB) GetCompletionStats(_ context.Context, _ int32) (gen.Ge
 func (s *stubAnalyticsDB) GetStreamTypesPerDay(_ context.Context, _ gen.GetStreamTypesPerDayParams) ([]gen.GetStreamTypesPerDayRow, error) {
 	return nil, nil
 }
+func (s *stubAnalyticsDB) GetStreamTypesByClient(_ context.Context, _ int32) ([]gen.GetStreamTypesByClientRow, error) {
+	return nil, nil
+}
 
 // stubAuditDB implements the auditQuerier used by AuditHandler.
 type stubAuditDB struct{}

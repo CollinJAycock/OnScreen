@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"sync"
 	"time"
 
@@ -40,6 +41,7 @@ type analyticsQuerier interface {
 	GetPlaysByHour(ctx context.Context, arg gen.GetPlaysByHourParams) ([]gen.GetPlaysByHourRow, error)
 	GetCompletionStats(ctx context.Context, days int32) (gen.GetCompletionStatsRow, error)
 	GetStreamTypesPerDay(ctx context.Context, arg gen.GetStreamTypesPerDayParams) ([]gen.GetStreamTypesPerDayRow, error)
+	GetStreamTypesByClient(ctx context.Context, days int32) ([]gen.GetStreamTypesByClientRow, error)
 }
 
 // AnalyticsHandler handles GET /api/v1/analytics.
@@ -177,11 +179,51 @@ type completionStats struct {
 	Completed int64 `json:"completed"`
 }
 
+// streamSplit is the playback-decision split every stream-type panel reports.
+// Embedded, so its fields flatten into the enclosing JSON object.
+type streamSplit struct {
+	DirectPlay   int64 `json:"direct_play"`
+	DirectStream int64 `json:"direct_stream"` // directStream + remux: original bits, new container
+	Transcode    int64 `json:"transcode"`
+	Unknown      int64 `json:"unknown"` // rows from clients that don't report a decision
+}
+
+// add folds n plays with the given watch_events.decision into the split.
+// Anything outside the Progress allowlist (NULL arrives as "unknown") counts
+// as unknown.
+func (s *streamSplit) add(decision string, n int64) {
+	switch decision {
+	case "directPlay":
+		s.DirectPlay += n
+	case "directStream", "remux":
+		s.DirectStream += n
+	case "transcode":
+		s.Transcode += n
+	default:
+		s.Unknown += n
+	}
+}
+
+func (s streamSplit) total() int64 {
+	return s.DirectPlay + s.DirectStream + s.Transcode + s.Unknown
+}
+
+// maxStreamTypeClients caps stream_types_by_client to the busiest clients;
+// stream_totals still covers every client.
+const maxStreamTypeClients = 8
+
 type dayStreamTypes struct {
-	Date      string `json:"date"`   // "2006-01-02" in the requested display timezone
-	Direct    int64  `json:"direct"` // directPlay + directStream + remux
-	Transcode int64  `json:"transcode"`
-	Unknown   int64  `json:"unknown"` // rows from clients that don't report a decision
+	Date string `json:"date"` // "2006-01-02" in the requested display timezone
+	streamSplit
+	// Direct is DirectPlay + DirectStream, kept for web builds that predate
+	// the split.
+	Direct int64 `json:"direct"`
+}
+
+type clientStreamTypes struct {
+	Client string `json:"client"` // client_name, or "Unknown client"
+	streamSplit
+	Total int64 `json:"total"`
 }
 
 type analyticsResponse struct {
@@ -199,6 +241,10 @@ type analyticsResponse struct {
 	PlaysByHour      []hourCount        `json:"plays_by_hour"`
 	Completion       completionStats    `json:"completion"`
 	StreamTypesByDay []dayStreamTypes   `json:"stream_types_by_day"`
+	// StreamTypesByClient is the top maxStreamTypeClients clients by plays;
+	// StreamTotals is the split over every play in the window.
+	StreamTypesByClient []clientStreamTypes `json:"stream_types_by_client"`
+	StreamTotals        streamSplit         `json:"stream_totals"`
 }
 
 // displayTZ validates the caller-supplied IANA zone name (e.g.
@@ -283,6 +329,7 @@ func (h *AnalyticsHandler) compute(ctx context.Context, tz string, days int32) (
 		playsByHour     []gen.GetPlaysByHourRow
 		completion      gen.GetCompletionStatsRow
 		streamTypes     []gen.GetStreamTypesPerDayRow
+		streamByClient  []gen.GetStreamTypesByClientRow
 	)
 
 	g, gctx := errgroup.WithContext(ctx)
@@ -336,6 +383,10 @@ func (h *AnalyticsHandler) compute(ctx context.Context, tz string, days int32) (
 	})
 	g.Go(func() (err error) {
 		streamTypes, err = h.db.GetStreamTypesPerDay(gctx, gen.GetStreamTypesPerDayParams{Tz: tz, Days: days})
+		return err
+	})
+	g.Go(func() (err error) {
+		streamByClient, err = h.db.GetStreamTypesByClient(gctx, days)
 		return err
 	})
 	if err := g.Wait(); err != nil {
@@ -450,32 +501,8 @@ func (h *AnalyticsHandler) compute(ctx context.Context, tz string, days int32) (
 		respHours[i] = hourCount{Hour: int(hr.Hour), Count: hr.Count}
 	}
 
-	// Collapse the decision dimension into direct / transcode / unknown per
-	// day — directStream and remux are "the original bits reached the client",
-	// which is the capacity question the chart answers.
-	streamByDate := map[string]*dayStreamTypes{}
-	var streamOrder []string
-	for _, st := range streamTypes {
-		date := st.Date.Time.Format("2006-01-02")
-		row, ok := streamByDate[date]
-		if !ok {
-			row = &dayStreamTypes{Date: date}
-			streamByDate[date] = row
-			streamOrder = append(streamOrder, date)
-		}
-		switch st.Decision {
-		case "directPlay", "directStream", "remux":
-			row.Direct += st.Count
-		case "transcode":
-			row.Transcode += st.Count
-		default:
-			row.Unknown += st.Count
-		}
-	}
-	respStreamTypes := make([]dayStreamTypes, len(streamOrder))
-	for i, date := range streamOrder {
-		respStreamTypes[i] = *streamByDate[date]
-	}
+	respStreamTypes := streamTypesByDay(streamTypes)
+	respStreamClients, respStreamTotals := streamTypesByClient(streamByClient)
 
 	return &analyticsResponse{
 		RangeDays: int(days),
@@ -486,17 +513,78 @@ func (h *AnalyticsHandler) compute(ctx context.Context, tz string, days int32) (
 			TotalPlays:       overview.TotalPlays,
 			TotalWatchTimeMS: overview.TotalWatchTimeMs,
 		},
-		Libraries:        respLibs,
-		VideoCodecs:      respCodecs,
-		Containers:       respContainers,
-		PlaysByDay:       respDays,
-		BandwidthByDay:   respBandwidth,
-		TopPlayed:        respTop,
-		RecentPlays:      respRecent,
-		TopUsers:         respUsers,
-		Clients:          respClients,
-		PlaysByHour:      respHours,
-		Completion:       completionStats{Plays: completion.PlaysWithDuration, Completed: completion.Completed},
-		StreamTypesByDay: respStreamTypes,
+		Libraries:           respLibs,
+		VideoCodecs:         respCodecs,
+		Containers:          respContainers,
+		PlaysByDay:          respDays,
+		BandwidthByDay:      respBandwidth,
+		TopPlayed:           respTop,
+		RecentPlays:         respRecent,
+		TopUsers:            respUsers,
+		Clients:             respClients,
+		PlaysByHour:         respHours,
+		Completion:          completionStats{Plays: completion.PlaysWithDuration, Completed: completion.Completed},
+		StreamTypesByDay:    respStreamTypes,
+		StreamTypesByClient: respStreamClients,
+		StreamTotals:        respStreamTotals,
 	}, nil
+}
+
+// streamTypesByDay folds the per-(day, decision) rows into one split per day,
+// in the query's date order. Direct carries the legacy direct-vs-transcode
+// sum — directStream and remux are "the original bits reached the client",
+// the capacity question the old chart answered.
+func streamTypesByDay(rows []gen.GetStreamTypesPerDayRow) []dayStreamTypes {
+	byDate := map[string]*dayStreamTypes{}
+	var order []string
+	for _, st := range rows {
+		date := st.Date.Time.Format("2006-01-02")
+		row, ok := byDate[date]
+		if !ok {
+			row = &dayStreamTypes{Date: date}
+			byDate[date] = row
+			order = append(order, date)
+		}
+		row.add(st.Decision, st.Count)
+	}
+	out := make([]dayStreamTypes, len(order))
+	for i, date := range order {
+		row := *byDate[date]
+		row.Direct = row.DirectPlay + row.DirectStream
+		out[i] = row
+	}
+	return out
+}
+
+// streamTypesByClient folds the per-(client, decision) rows into one split
+// per client, keeps the busiest maxStreamTypeClients (ties by name, so the
+// cut is stable across refreshes), and sums every row into the window-wide
+// totals — the tail beyond the cut still counts there.
+func streamTypesByClient(rows []gen.GetStreamTypesByClientRow) ([]clientStreamTypes, streamSplit) {
+	var totals streamSplit
+	byClient := map[string]*clientStreamTypes{}
+	for _, r := range rows {
+		totals.add(r.Decision, r.Count)
+		c, ok := byClient[r.Client]
+		if !ok {
+			c = &clientStreamTypes{Client: r.Client}
+			byClient[r.Client] = c
+		}
+		c.add(r.Decision, r.Count)
+	}
+	out := make([]clientStreamTypes, 0, len(byClient))
+	for _, c := range byClient {
+		c.Total = c.total()
+		out = append(out, *c)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Total != out[j].Total {
+			return out[i].Total > out[j].Total
+		}
+		return out[i].Client < out[j].Client
+	})
+	if len(out) > maxStreamTypeClients {
+		out = out[:maxStreamTypeClients]
+	}
+	return out, totals
 }

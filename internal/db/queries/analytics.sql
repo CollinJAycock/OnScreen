@@ -1,4 +1,4 @@
--- Analytics dashboard aggregates. All eight run in parallel from
+-- Analytics dashboard aggregates. All of them run in parallel from
 -- AnalyticsHandler.Get and are memoized server-side (per display timezone)
 -- for analyticsCacheTTL.
 
@@ -178,8 +178,9 @@ WHERE wp.occurred_at > NOW() - make_interval(days => sqlc.arg(days)::INT)
   AND mi.duration_ms IS NOT NULL AND mi.duration_ms > 0;
 
 -- name: GetStreamTypesPerDay :many
--- Direct-vs-transcode load over time (viewer-timezone days). decision is
--- collapsed client-side; rows written before the decision column (or by
+-- Direct-vs-transcode load over time (viewer-timezone days). The handler
+-- folds decision into direct_play / direct_stream (directStream + remux) /
+-- transcode / unknown; rows written before the decision column (or by
 -- clients that don't send it yet) report as 'unknown'.
 SELECT (DATE(occurred_at AT TIME ZONE sqlc.arg(tz)::TEXT))::DATE AS date,
        COALESCE(decision, 'unknown')::TEXT AS decision,
@@ -187,4 +188,18 @@ SELECT (DATE(occurred_at AT TIME ZONE sqlc.arg(tz)::TEXT))::DATE AS date,
 FROM watch_plays
 WHERE occurred_at >= NOW() - make_interval(days => sqlc.arg(days)::INT + 1)
 GROUP BY 1, 2
+ORDER BY 1, 2;
+
+-- name: GetStreamTypesByClient :many
+-- Playback decision per client app over the selected window — which devices
+-- lean on the transcoder, and which still don't report a decision. One row
+-- per (client, decision); the handler folds decisions into the same buckets
+-- as GetStreamTypesPerDay, ranks clients by total, and sums every row (not
+-- just the top clients) into the range-wide stream totals.
+SELECT COALESCE(client_name, 'Unknown client')::TEXT AS client,
+       COALESCE(decision, 'unknown')::TEXT           AS decision,
+       COUNT(*)::BIGINT                               AS count
+FROM watch_plays
+WHERE occurred_at > NOW() - make_interval(days => sqlc.arg(days)::INT)
+GROUP BY client_name, decision
 ORDER BY 1, 2;

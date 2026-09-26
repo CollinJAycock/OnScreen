@@ -2,6 +2,10 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, analyticsApi, sessionsApi, assetUrl, type AnalyticsData, type DayCount, type DayBytes, type DayStreamTypes, type ActiveSession } from '$lib/api';
+  import {
+    STREAM_SEGMENTS, REPORTED_SEGMENTS, NOT_REPORTED_NOTE, emptyCounts, normalizeStreamDay, countTotal,
+    resolveTotals, reportedShares, fmtShare, segmentWidth, streamBreakdown, type StreamDay
+  } from './stream-types';
 
   let data: AnalyticsData | null = null;
   let loading = true;
@@ -178,16 +182,26 @@
   $: bwDays = data ? fillDayBytes(data.bandwidth_by_day ?? [], chartDays) : [];
   $: maxBw  = bwDays.reduce((m, d) => Math.max(m, d.bytes), 0) || 1;
 
-  // Stream-type stacked series (direct / transcode / unknown per local day).
-  function fillStreamDays(raw: DayStreamTypes[], n: number): DayStreamTypes[] {
-    const map = new Map(raw.map(d => [d.date, d]));
-    return windowKeys(n).map(key =>
-      map.get(key) ?? { date: key, direct: 0, transcode: 0, unknown: 0 });
+  // Stream-type stacked series (direct play / direct stream / transcode /
+  // not reported per local day).
+  function fillStreamDays(raw: DayStreamTypes[], n: number): StreamDay[] {
+    const map = new Map(raw.map(d => [d.date, normalizeStreamDay(d)]));
+    return windowKeys(n).map(key => map.get(key) ?? { date: key, ...emptyCounts() });
   }
 
+  // Day segments top-down in the DOM (the column is bottom-anchored), so the
+  // visual stack reads bottom-up in STREAM_SEGMENTS order.
+  const streamSegmentsTopDown = [...STREAM_SEGMENTS].reverse();
+
   $: streamDays = data ? fillStreamDays(data.stream_types_by_day ?? [], chartDays) : [];
-  $: maxStream = streamDays.reduce((m, d) => Math.max(m, d.direct + d.transcode + d.unknown), 0) || 1;
-  $: hasDecisionData = streamDays.some(d => d.direct + d.transcode > 0);
+  $: maxStream = streamDays.reduce((m, d) => Math.max(m, countTotal(d)), 0) || 1;
+  // stream_totals / stream_types_by_client are absent on servers older than
+  // the direct-play / direct-stream split: totals fall back to the day rows,
+  // and the per-client panel is hidden rather than shown as empty.
+  $: streamTotals = data ? resolveTotals(data.stream_totals, streamDays) : emptyCounts();
+  $: streamPlays = countTotal(streamTotals);
+  $: shares = reportedShares(streamTotals);
+  $: clientStreams = data?.stream_types_by_client;
 
   // Hour-of-day chart: fill 0..23.
   $: hours = (() => {
@@ -380,29 +394,48 @@
         </div>
       </section>
 
-      <!-- ── Stream types (direct vs transcode) ────────────────────────── -->
+      <!-- ── Stream types (direct play / direct stream / transcode) ────── -->
       <section class="panel wide">
-        <h2>
+        <h2 class="has-legend">
           Stream types <span class="muted">— last {chartDays} days</span>
           <span class="legend">
-            <span class="legend-item"><span class="legend-dot direct"></span>Direct</span>
-            <span class="legend-item"><span class="legend-dot transcode"></span>Transcode</span>
-            <span class="legend-item"><span class="legend-dot unknown"></span>Unknown</span>
+            {#each STREAM_SEGMENTS as seg}
+              <span class="legend-item" title={seg.hint}><span class="legend-dot {seg.cls}"></span>{seg.legend}</span>
+            {/each}
           </span>
         </h2>
-        {#if !hasDecisionData}
-          <p class="muted small">No stream-type data yet — plays report their decision going forward;
-            history from before this feature shows as unknown.</p>
+
+        <!-- Shares are of REPORTED plays: not-reported plays say nothing
+             about delivery, so they're counted separately, not diluted in. -->
+        <div class="stream-summary" role="group"
+             aria-label="Share of reported plays by stream type, last {chartDays} days">
+          {#each REPORTED_SEGMENTS as seg}
+            <div class="stream-stat"
+                 title={shares
+                   ? `${seg.label}: ${streamTotals[seg.key].toLocaleString()} of ${shares.reported.toLocaleString()} reported plays`
+                   : `${seg.label}: no reported plays in this range`}>
+              <span class="legend-dot {seg.cls}"></span>
+              <span class="stream-stat-value">{fmtShare(shares?.[seg.key], streamTotals[seg.key])}</span>
+              <span class="stream-stat-label">{seg.label}</span>
+            </div>
+          {/each}
+          <div class="stream-stat not-reported" title={NOT_REPORTED_NOTE}>
+            <span class="legend-dot unknown"></span>
+            <span>{streamTotals.unknown.toLocaleString()} not reported</span>
+          </div>
+        </div>
+
+        {#if streamPlays === 0}
+          <p class="muted small">No plays recorded in this range yet</p>
         {/if}
         <div class="bar-chart" role="img"
-             aria-label="Daily plays split by stream type (direct vs transcode) for the last {chartDays} days.">
+             aria-label="Daily plays split by stream type (direct play, direct stream, transcode, not reported) for the last {chartDays} days.">
           {#each streamDays as d}
-            {@const total = d.direct + d.transcode + d.unknown}
-            <div class="bar-col"
-                 title="{fmtDate(d.date)}: {d.direct} direct, {d.transcode} transcode{d.unknown ? `, ${d.unknown} unknown` : ''}">
-              {#if d.unknown > 0}<div class="bar-seg unknown" style="height:{(d.unknown / maxStream) * 100}%"></div>{/if}
-              {#if d.transcode > 0}<div class="bar-seg transcode" style="height:{(d.transcode / maxStream) * 100}%"></div>{/if}
-              {#if d.direct > 0}<div class="bar-seg direct" style="height:{(d.direct / maxStream) * 100}%"></div>{/if}
+            {@const total = countTotal(d)}
+            <div class="bar-col stacked" title="{fmtDate(d.date)}: {streamBreakdown(d)}">
+              {#each streamSegmentsTopDown as seg}
+                {#if d[seg.key] > 0}<div class="bar-seg {seg.cls}" style="height:{(d[seg.key] / maxStream) * 100}%"></div>{/if}
+              {/each}
               {#if total === 0}<div class="bar-fill" style="height:0"></div>{/if}
               {#if total > 0}
                 <div class="bar-tip">{total}</div>
@@ -417,7 +450,50 @@
             {/if}
           {/each}
         </div>
+        {#if streamTotals.unknown > 0}
+          <p class="footnote"><span class="legend-dot unknown"></span>{NOT_REPORTED_NOTE}</p>
+        {/if}
       </section>
+
+      <!-- ── Stream types by client ─────────────────────────────────────── -->
+      <!-- Hidden (not "empty") against a server that predates the field. -->
+      {#if clientStreams}
+        <section class="panel wide">
+          <h2 class="has-legend">
+            Stream types by client <span class="muted">— last {chartDays} days · share of each client’s plays</span>
+            <span class="legend">
+              {#each STREAM_SEGMENTS as seg}
+                <span class="legend-item" title={seg.hint}><span class="legend-dot {seg.cls}"></span>{seg.legend}</span>
+              {/each}
+            </span>
+          </h2>
+          {#if clientStreams.length === 0}
+            <p class="muted small">No plays recorded yet</p>
+          {:else}
+            <!-- Two ranked columns (1–4 | 5–8) on desktop; one on mobile. -->
+            <div class="hbars client-streams"
+                 style="grid-template-rows:repeat({Math.ceil(clientStreams.length / 2)}, auto)">
+              {#each clientStreams as c}
+                {@const sum = countTotal(c)}
+                <div class="hbar-row">
+                  <span class="hbar-label user" title={c.client}>{c.client}</span>
+                  <div class="hbar-track stacked" role="img"
+                       aria-label="{c.client}: {streamBreakdown(c)}"
+                       title="{c.client}: {streamBreakdown(c)}">
+                    {#each STREAM_SEGMENTS as seg}
+                      {#if c[seg.key] > 0}
+                        <div class="hbar-seg {seg.cls}" style="width:{segmentWidth(c[seg.key], sum)}%"
+                             title="{c.client}: {c[seg.key].toLocaleString()} {seg.phrase} ({fmtShare(Math.round(segmentWidth(c[seg.key], sum)), c[seg.key])})"></div>
+                      {/if}
+                    {/each}
+                  </div>
+                  <span class="hbar-count total" title="{c.total.toLocaleString()} play{c.total === 1 ? '' : 's'}">{c.total.toLocaleString()}</span>
+                </div>
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
 
       <!-- ── Top users ─────────────────────────────────────────────────── -->
       <section class="panel">
@@ -751,18 +827,61 @@
   }
   .bar-x-labels span { grid-row: 1; white-space: nowrap; }
 
-  /* Stacked stream-type segments (bottom-up: direct, transcode, unknown). */
-  .bar-seg { width: 100%; }
-  .bar-seg.direct    { background: #3ab8f7; border-radius: 2px 2px 0 0; }
-  .bar-seg.transcode { background: #f7a03a; }
-  .bar-seg.unknown   { background: var(--border-strong); }
+  /* ── Stream types ────────────────────────────────────────────────────── */
+  /* Series colours: blue direct play, violet direct stream (remux), orange
+     transcode, recessive grey for not reported. */
+  .page {
+    --st-direct-play: #3ab8f7;
+    --st-direct-stream: #7c6af7;
+    --st-transcode: #f7a03a;
+    --st-unknown: var(--border-strong);
+  }
 
-  .legend { float: right; display: inline-flex; gap: 0.8rem; text-transform: none; letter-spacing: 0; }
-  .legend-item { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: var(--text-muted); }
-  .legend-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; }
-  .legend-dot.direct    { background: #3ab8f7; }
-  .legend-dot.transcode { background: #f7a03a; }
-  .legend-dot.unknown   { background: var(--border-strong); }
+  /* Stacked day segments, bottom-up: direct play, direct stream, transcode,
+     not reported. A 1px surface gap keeps adjacent segments distinct. */
+  .bar-col.stacked { gap: 1px; }
+  .bar-seg { width: 100%; }
+  .bar-seg:first-child { border-radius: 2px 2px 0 0; }
+
+  .bar-seg.direct-play,   .hbar-seg.direct-play,   .legend-dot.direct-play   { background: var(--st-direct-play); }
+  .bar-seg.direct-stream, .hbar-seg.direct-stream, .legend-dot.direct-stream { background: var(--st-direct-stream); }
+  .bar-seg.transcode,     .hbar-seg.transcode,     .legend-dot.transcode     { background: var(--st-transcode); }
+  .bar-seg.unknown,       .hbar-seg.unknown,       .legend-dot.unknown       { background: var(--st-unknown); }
+
+  /* flow-root contains the floated legend when it wraps under a long title. */
+  h2.has-legend { display: flow-root; }
+  .legend { float: right; display: inline-flex; flex-wrap: wrap; gap: 0.8rem; text-transform: none; letter-spacing: 0; }
+  .legend-item { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.7rem; color: var(--text-muted); cursor: default; }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; display: inline-block; flex-shrink: 0; }
+
+  .stream-summary {
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 0.5rem 1.6rem; margin-bottom: 1.1rem;
+  }
+  .stream-stat { display: inline-flex; align-items: center; gap: 0.4rem; cursor: default; }
+  .stream-stat-value {
+    font-size: 1.15rem; font-weight: 700; letter-spacing: -0.02em;
+    color: var(--text-primary); font-variant-numeric: tabular-nums;
+  }
+  .stream-stat-label { font-size: 0.75rem; color: var(--text-secondary); }
+  .stream-stat.not-reported { font-size: 0.75rem; color: var(--text-muted); }
+
+  .footnote {
+    display: flex; align-items: flex-start; gap: 0.4rem;
+    margin-top: 0.7rem; font-size: 0.72rem; line-height: 1.4; color: var(--text-muted);
+  }
+  .footnote .legend-dot { margin-top: 0.3em; }
+
+  /* Per-client 100% stacked bars; the track is transparent so the 1px gaps
+     show the panel surface. */
+  .hbar-track.stacked { display: flex; gap: 1px; background: transparent; }
+  .hbar-seg { height: 100%; min-width: 2px; transition: width 0.3s ease; }
+  .hbar-count.total { width: 48px; }
+  .hbars.client-streams {
+    display: grid; grid-auto-flow: column;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 2.2rem; row-gap: 0.55rem;
+  }
 
   /* ── Horizontal bar rows ─────────────────────────────────────────────── */
   .hbars { display: flex; flex-direction: column; gap: 0.55rem; }
@@ -896,6 +1015,12 @@
 
     .bar-chart { gap: 2px; height: 60px; }
     .bar-tip { font-size: 0.55rem; }
+
+    .legend { float: none; display: flex; gap: 0.35rem 0.8rem; margin-top: 0.5rem; }
+    .stream-summary { gap: 0.5rem 1.1rem; }
+    .stream-stat-value { font-size: 1rem; }
+    .hbars.client-streams { grid-auto-flow: row; grid-template-columns: minmax(0, 1fr); }
+    .client-streams .hbar-label.user { width: 90px; }
 
     .top-info { width: 90px; }
 

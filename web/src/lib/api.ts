@@ -2097,9 +2097,28 @@ export interface CompletionStats {
 
 export interface DayStreamTypes {
   date: string;
-  direct: number;     // directPlay + directStream + remux
+  direct_play?: number;   // directPlay (absent on servers before the split)
+  direct_stream?: number; // directStream + remux (absent on servers before the split)
   transcode: number;
-  unknown: number;    // plays recorded before clients reported a decision
+  unknown: number;        // no decision attributed (older history, or a client that didn't report one)
+  direct: number;         // direct_play + direct_stream — kept for backward compatibility
+}
+
+// Same four-way split as DayStreamTypes, per client, over the page's range.
+export interface ClientStreamTypes {
+  client: string;         // client_name, or 'Unknown client'
+  direct_play: number;
+  direct_stream: number;
+  transcode: number;
+  unknown: number;
+  total: number;
+}
+
+export interface StreamTotals {
+  direct_play: number;
+  direct_stream: number;
+  transcode: number;
+  unknown: number;
 }
 
 export interface AnalyticsData {
@@ -2117,6 +2136,8 @@ export interface AnalyticsData {
   plays_by_hour: HourCount[];
   completion: CompletionStats;
   stream_types_by_day: DayStreamTypes[];
+  stream_types_by_client?: ClientStreamTypes[]; // top 8 by total; absent on older servers
+  stream_totals?: StreamTotals;                 // absent on older servers
 }
 
 export const analyticsApi = {
