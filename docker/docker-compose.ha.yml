@@ -89,6 +89,12 @@ services:
       # nginx.conf must keep forwarding X-Forwarded-For/Proto on EVERY
       # location, or every client looks local (first-run setup gate, per-IP
       # rate limits and cookie Secure all depend on it).
+      #
+      # Transcodes run on the dedicated `worker` replicas only. An API
+      # replica's embedded worker registers 127.0.0.1:7073, which only that
+      # replica can reach — a playlist request nginx routes to a different
+      # replica would be proxied to ITS loopback and never find the session.
+      DISABLE_EMBEDDED_WORKER: "true"
     volumes:
       - media_data:/media:ro
     # Least privilege for the app container (it already runs as the non-root
@@ -105,7 +111,12 @@ services:
 
   worker:
     image: ghcr.io/onscreen/onscreen:${ONSCREEN_VERSION:-latest}
-    entrypoint: ["/usr/local/bin/worker"]
+    # WORKER_ADDR is both the segment server's bind address and the address
+    # the API proxies HLS to, so each replica needs its own routable one: the
+    # default ":7073" would be the API container's own loopback, and the
+    # service name "worker" resolves to every replica. The container hostname
+    # resolves to just this replica on the compose network.
+    entrypoint: ["/bin/sh", "-c", "export WORKER_ADDR=\"$$(hostname):7073\"; exec /usr/local/bin/worker"]
     depends_on:
       migrate:
         condition: service_completed_successfully

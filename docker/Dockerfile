@@ -58,9 +58,13 @@ RUN apk add --no-cache ffmpeg ca-certificates tzdata chromaprint postgresql17-cl
 # pages loaded slowly with no log breadcrumb. /var/cache/onscreen sidesteps
 # that whole class of failure: we own the directory at image-build time and
 # the env var pins the application path regardless of $HOME.
+# /var/backups/onscreen is the scheduled-backup task's default output_dir;
+# the runtime user can't create it under root-owned /var, and dumps hold the
+# whole database, so it is owner-only.
 RUN addgroup -S onscreen && adduser -S onscreen -G onscreen \
- && mkdir -p /var/cache/onscreen \
- && chown -R onscreen:onscreen /var/cache/onscreen
+ && mkdir -p /var/cache/onscreen /var/backups/onscreen \
+ && chown -R onscreen:onscreen /var/cache/onscreen /var/backups/onscreen \
+ && chmod 0700 /var/backups/onscreen
 USER onscreen
 ENV CACHE_PATH=/var/cache/onscreen
 

@@ -355,8 +355,8 @@ func (s *DVRService) PurgeExpiredRecordings(ctx context.Context) (int, error) {
 			}
 		}
 		// The linked media_items row isn't hard-deleted here — the
-		// normal scanner sweep (CleanupMissingFiles) will soft-delete
-		// the item once its underlying file vanishes, which matches
+		// normal scanner sweep (a full scan's missing-file purge) will
+		// reap the item once its underlying file vanishes, which matches
 		// how other sources of orphaned items get reaped. Keeping the
 		// two paths consistent avoids a retention-specific media.Service
 		// dependency here.

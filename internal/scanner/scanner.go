@@ -126,7 +126,7 @@ type MediaService interface {
 	RestoreItemAncestry(ctx context.Context, id uuid.UUID) error
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.File, error)
-	CleanupMissingFiles(ctx context.Context, libraryID uuid.UUID) (int64, error)
+	PromoteExpiredMissing(ctx context.Context, gracePeriod time.Duration) (int, error)
 	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 	GetEnrichAttemptedAt(ctx context.Context, id uuid.UUID) (*time.Time, error)
 	TouchEnrichAttempt(ctx context.Context, id uuid.UUID) error
@@ -156,6 +156,11 @@ type ConcurrencyProvider interface {
 // timeout); an hour is ample headroom for a slow first byte.
 const probeURLTTL = time.Hour
 
+// defaultMissingFileGrace is the grace a status=missing file gets before a full
+// scan hard-deletes it, when WithMissingFileGrace wasn't called. Mirrors the
+// MISSING_FILE_GRACE_PERIOD default (config.MissingFileGracePeriod).
+const defaultMissingFileGrace = 15 * time.Minute
+
 type Scanner struct {
 	media   MediaService
 	agent   MetadataAgent
@@ -163,6 +168,7 @@ type Scanner struct {
 	logger  *slog.Logger
 	store   mediastore.Store // optional; nil → mediastore.Local (read media from disk)
 	metrics *observability.Metrics
+	grace   func() time.Duration // optional; nil → defaultMissingFileGrace
 }
 
 // New creates a Scanner.
@@ -189,6 +195,24 @@ func (s *Scanner) WithMetrics(m *observability.Metrics) *Scanner {
 func (s *Scanner) WithMediaStore(store mediastore.Store) *Scanner {
 	s.store = store
 	return s
+}
+
+// WithMissingFileGrace sets how long a file marked missing (ADR-011) is kept,
+// hidden but able to self-heal if it comes back, before a full scan
+// hard-deletes it. fn is read on every full scan, so a changed setting applies
+// without a restart. Returns the Scanner for chaining.
+func (s *Scanner) WithMissingFileGrace(fn func() time.Duration) *Scanner {
+	s.grace = fn
+	return s
+}
+
+// missingFileGrace returns the configured grace, defaulting to
+// defaultMissingFileGrace.
+func (s *Scanner) missingFileGrace() time.Duration {
+	if s.grace == nil {
+		return defaultMissingFileGrace
+	}
+	return s.grace()
 }
 
 // mediaStore returns the configured backend, defaulting to the local filesystem.
@@ -549,16 +573,22 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 			"library_id", libraryID, "walked", len(walked))
 	}
 
-	// Clean up stale missing files from prior scans and remove items
-	// with no remaining files. CleanupMissingFiles now hard-deletes
-	// rows directly (the "delete = hard delete" rule eliminated the
-	// old two-phase mark-deleted-then-purge dance), so the separate
-	// PurgeDeletedFiles step that used to come next is gone.
-	if n, err := s.media.CleanupMissingFiles(ctx, libraryID); err != nil {
-		s.logger.WarnContext(ctx, "cleanup missing files failed", "library_id", libraryID, "err", err)
-	} else if n > 0 {
-		s.logger.InfoContext(ctx, "missing files past grace hard-deleted",
-			"library_id", libraryID, "count", n)
+	// Hard-delete files that have stayed status=missing past the grace period
+	// (ADR-011), then soft-delete items with no active files left. This used to
+	// hard-delete EVERY missing file at the end of every scan, scoped watcher
+	// scans included, so a file marked missing earlier in the same scan (an
+	// indexed file swapped in place for a playlist) was gone at once: no grace,
+	// and restoring the real file created a new item, leaving the old one —
+	// and its watch history — soft-deleted. Within the grace the file stays
+	// hidden (its item is soft-deleted below), and when the same content comes
+	// back processFile's unchanged-file paths heal the row and item in place
+	// (MarkFileActive + RestoreItemAncestry).
+	// Full scans only: PromoteExpiredMissing sweeps all libraries at once, and
+	// a burst of scoped scans shouldn't each repeat it. It logs its own count.
+	if fullScan {
+		if _, err := s.media.PromoteExpiredMissing(ctx, s.missingFileGrace()); err != nil {
+			s.logger.WarnContext(ctx, "purge expired missing files failed", "library_id", libraryID, "err", err)
+		}
 	}
 	if err := s.media.CleanupEmptyItems(ctx, libraryID); err != nil {
 		s.logger.WarnContext(ctx, "cleanup empty items failed", "library_id", libraryID, "err", err)
@@ -985,9 +1015,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 			// replaced in place by a playlist — refusing to re-index isn't
 			// enough: the old row would stay active with its old container and
 			// codec metadata, and playback would trust it. Take the row out of
-			// service the way a vanished file is (status=missing, the ADR-011
-			// grace period): hidden from item file lists, self-healing if the
-			// real file comes back, hard-deleted by CleanupMissingFiles if not.
+			// service with the ADR-011 missing state: hidden from item file
+			// lists, self-healing if the real file comes back, and hard-deleted
+			// by a full scan once the missing-file grace period has passed.
 			if haveExisting {
 				s.logger.WarnContext(ctx, "indexed file is now a playlist/reference container; marking it missing",
 					"path", path, "file_id", existing.ID)

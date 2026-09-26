@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
@@ -306,6 +308,39 @@ func TestTasksCreateValidations(t *testing.T) {
 				t.Fatalf("expected 4xx, got %d body=%s", rec.Code, rec.Body.String())
 			}
 		})
+	}
+}
+
+// A second enabled task of the same type trips uq_scheduled_tasks_enabled_type
+// (23505). That is an admin mistake, so 409 with a usable message — not 500.
+// Any other DB error still maps to 500.
+func TestTasksCreateDuplicateEnabledTypeConflict(t *testing.T) {
+	dup := fmt.Errorf("create: %w", &pgconn.PgError{Code: "23505", ConstraintName: "uq_scheduled_tasks_enabled_type"})
+	body := []byte(`{"name":"n2","task_type":"backup_database","cron_expr":"0 3 * * *"}`)
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{{dup, http.StatusConflict}, {errors.New("connection refused"), http.StatusInternalServerError}} {
+		h := newTasksTestHandler(&fakeTasksDB{createErr: tc.err}, "backup_database")
+		rec := httptest.NewRecorder()
+		h.Create(rec, httptest.NewRequest(http.MethodPost, "/api/v1/admin/tasks", bytes.NewReader(body)))
+		if rec.Code != tc.want {
+			t.Errorf("err %v: status %d, want %d (body=%s)", tc.err, rec.Code, tc.want, rec.Body.String())
+		}
+	}
+}
+
+// Re-enabling (or retyping) a task into a slot another enabled task holds hits
+// the same index on UPDATE and gets the same 409.
+func TestTasksUpdateDuplicateEnabledTypeConflict(t *testing.T) {
+	id := uuid.New()
+	existing := gen.ScheduledTask{ID: id, Name: "old", TaskType: "backup_database", Config: []byte(`{}`), CronExpr: "0 3 * * *"}
+	db := &fakeTasksDB{getOut: existing, updateErr: &pgconn.PgError{Code: "23505"}}
+	h := newTasksTestHandler(db, "backup_database")
+	rec := httptest.NewRecorder()
+	h.Update(rec, reqWithID(http.MethodPatch, "/api/v1/admin/tasks/"+id.String(), id.String(), []byte(`{"enabled":true}`)))
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("status %d, want 409 (body=%s)", rec.Code, rec.Body.String())
 	}
 }
 

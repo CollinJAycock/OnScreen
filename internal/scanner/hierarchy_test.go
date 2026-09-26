@@ -150,7 +150,7 @@ func (m *mockMediaService) GetFiles(_ context.Context, _ uuid.UUID) ([]media.Fil
 func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]media.File, error) {
 	return nil, nil
 }
-func (m *mockMediaService) CleanupMissingFiles(_ context.Context, _ uuid.UUID) (int64, error) {
+func (m *mockMediaService) PromoteExpiredMissing(_ context.Context, _ time.Duration) (int, error) {
 	return 0, nil
 }
 func (m *mockMediaService) UpsertPhotoMetadata(_ context.Context, _ media.PhotoMetadataParams) error {

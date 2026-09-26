@@ -178,8 +178,13 @@ func (h *FavoritesHandler) Add(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if claims.MaxContentRating != "" && item.ContentRating != nil && *item.ContentRating != "" &&
-		contentrating.Rank(*item.ContentRating) > contentrating.Rank(claims.MaxContentRating) {
+	// IsAllowed ranks an unrated item most restrictive, matching the SQL
+	// ceiling List (and every other ceiling gate) applies.
+	cr := ""
+	if item.ContentRating != nil {
+		cr = *item.ContentRating
+	}
+	if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
 		respond.NotFound(w, r)
 		return
 	}

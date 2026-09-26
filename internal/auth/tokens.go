@@ -84,6 +84,10 @@ type Claims struct {
 	// no profile-hopping chains. Absent / false on a normal credential
 	// login.
 	Switched bool `json:"switched,omitempty"`
+	// TokenID is the random jti of a TOTP login challenge — the handle the
+	// verify step burns so one challenge can mint at most one session.
+	// Empty on every other token.
+	TokenID string `json:"jti,omitempty"`
 }
 
 // TokenMaker issues and validates Paseto v4 local tokens.
@@ -190,12 +194,23 @@ func (m *TokenMaker) IssueAssetToken(claims Claims) (string, error) {
 // Bearer/cookie path and the asset middleware rejects it too — it is
 // only ever accepted by the /auth/totp/verify handler, which checks the
 // purpose explicitly and reads UserID to issue the real token pair.
-func (m *TokenMaker) IssueTOTPChallengeToken(userID uuid.UUID) (string, error) {
+//
+// sessionEpoch is the user's epoch at the password step; verify refuses the
+// challenge once it moves, so a password reset / force-logout between the two
+// steps kills a half-finished login too. The random jti lets verify burn the
+// challenge on success, making it single-use.
+func (m *TokenMaker) IssueTOTPChallengeToken(userID uuid.UUID, sessionEpoch int64) (string, error) {
+	jti, err := uuid.NewRandom()
+	if err != nil {
+		return "", fmt.Errorf("generate challenge id: %w", err)
+	}
 	token := paseto.NewToken()
 	token.SetIssuedAt(time.Now())
 	token.SetNotBefore(time.Now())
 	token.SetExpiration(time.Now().Add(TOTPChallengeTTL))
+	token.SetJti(jti.String())
 	token.SetString("user_id", userID.String())
+	token.SetString("session_epoch", fmt.Sprintf("%d", sessionEpoch))
 	token.SetString("purpose", "totp_challenge")
 	return token.V4Encrypt(m.key, nil), nil
 }
@@ -253,6 +268,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		}
 	}
 	switchedStr, _ := token.GetString("switched")
+	tokenID, _ := token.GetJti()
 
 	return &Claims{
 		UserID:           userID,
@@ -265,6 +281,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		Purpose:          purpose,
 		FileID:           fileID,
 		Switched:         switchedStr == "true",
+		TokenID:          tokenID,
 	}, nil
 }
 

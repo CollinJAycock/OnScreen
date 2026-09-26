@@ -135,6 +135,30 @@ func TestClassifyRestoreOutcome_BenignOnlyClearsError(t *testing.T) {
 	}
 }
 
+// pg_dump 17 (in the image) against a Postgres 16 server adds one
+// `unrecognized configuration parameter "transaction_timeout"` error to the
+// partition noise. The data still restores, so the run must read as clean —
+// it used to surface as exit_error on every compose-stack restore.
+func TestClassifyRestoreOutcome_TransactionTimeoutSkewIsBenign(t *testing.T) {
+	skew := "pg_restore: error: could not execute query: ERROR:  unrecognized configuration parameter \"transaction_timeout\"\n" +
+		"Command was: SET transaction_timeout = 0;\n"
+	partition := "pg_restore: error: could not execute query: ERROR:  cannot drop inherited constraint \"watch_events_default_pkey\" of relation \"watch_events_default\"\n" +
+		"Command was: ALTER TABLE IF EXISTS ONLY public.watch_events_default DROP CONSTRAINT IF EXISTS watch_events_default_pkey;\n"
+	stderr := skew + strings.Repeat(partition, 7) + "pg_restore: warning: errors ignored on restore: 8\n"
+
+	gotStderr, suppressed, got := classifyRestoreOutcome(errors.New("exit status 1"), stderr)
+	if got != nil || gotStderr != "" || suppressed != 8 {
+		t.Errorf("skew + partition noise: err=%v stderr=%q suppressed=%d, want clean with 8 suppressed", got, gotStderr, suppressed)
+	}
+
+	// The skew line must not launder a real error sitting beside it.
+	real := "pg_restore: error: could not execute query: ERROR:  relation \"users\" does not exist\n"
+	mixed := skew + real + "pg_restore: warning: errors ignored on restore: 2\n"
+	if _, _, got := classifyRestoreOutcome(errors.New("exit status 1"), mixed); got == nil {
+		t.Error("skew + a real error must keep runErr")
+	}
+}
+
 func TestClassifyRestoreOutcome_MixedKeepsRealError(t *testing.T) {
 	// One benign error and one genuine error should NOT be suppressed —
 	// the operator needs to see the real one. Total error count is 2, but

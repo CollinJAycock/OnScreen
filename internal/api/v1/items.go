@@ -191,6 +191,9 @@ type ItemHandler struct {
 	// segTokens revokes the segment token belonging to a session this handler
 	// deletes, so the progress-beacon stop path matches tearDown. Optional.
 	segTokens SessionSegmentTokenRevoker
+	// decisions attributes decision-less progress reports (WithPlayDecisions).
+	// Optional; nil records them as unknown.
+	decisions *PlayDecisionRecorder
 	subs      ExternalSubLister
 	tracker   *streaming.Tracker
 	sync      *notification.Broker
@@ -1450,6 +1453,19 @@ func (h *ItemHandler) ListMarkers(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
+	// Content-rating ceiling, as on EXIF/lyrics: a profile that can't stream
+	// the item gets 404, not its intro/credits timings (unrated = most
+	// restrictive).
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.NotFound(w, r)
+			return
+		}
+	}
 	if item.Type != "episode" {
 		respond.List(w, r, []MarkerJSON{}, 0, "")
 		return
@@ -1586,7 +1602,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.access != nil {
+	if h.access != nil || claims.MaxContentRating != "" {
 		item, err := h.media.GetItem(r.Context(), id)
 		if err != nil {
 			if errors.Is(err, media.ErrNotFound) {
@@ -1598,6 +1614,17 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !h.checkLibraryAccess(w, r, item.LibraryID) {
+			return
+		}
+		// Content-rating ceiling: a profile that can't stream the item must not
+		// record a watch event against it either (unrated = most restrictive).
+		// 404 keeps denial indistinguishable from absence.
+		cr := ""
+		if item.ContentRating != nil {
+			cr = *item.ContentRating
+		}
+		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+			respond.NotFound(w, r)
 			return
 		}
 	}
@@ -1641,12 +1668,11 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		clientNamePtr = &body.ClientName
 	}
 	// Allowlist the decision: anything else (typos, junk from a hostile
-	// client) records as NULL/unknown rather than polluting the analytics
-	// dimension.
+	// client) is discarded rather than polluting the analytics dimension, and
+	// the server attributes the heartbeat itself below.
 	var decisionPtr *string
-	switch body.Decision {
-	case "directPlay", "directStream", "remux", "transcode":
-		decisionPtr = &body.Decision
+	if d := normalizePlayDecision(body.Decision); d != "" {
+		decisionPtr = &d
 	}
 
 	// Parental watch-limit gate + accounting. Only 'playing' heartbeats are
@@ -1673,6 +1699,16 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 				h.logger.WarnContext(r.Context(), "watch-limit: add tick", "err", aerr)
 			}
 		}
+	}
+
+	// Many clients never report a decision (Android TV / Fire TV, the music
+	// players, the TV web clients, older builds), but the server knows what it
+	// served: a live session's decision, else the last one Start or StreamFile
+	// recorded. A client-supplied decision still wins and costs no lookup.
+	// Resolved here, after the watch-limit gate, so a blocked heartbeat doesn't
+	// pay for it; before the stop path below deletes the session it reads.
+	if decisionPtr == nil {
+		decisionPtr = h.inferPlayDecision(r.Context(), claims.UserID, id)
 	}
 
 	if err := h.watch.Record(r.Context(), watchevent.RecordParams{
@@ -2371,6 +2407,9 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		// here but count NOTHING toward the daily budget unless the client
 		// volunteered progress beacons.
 		h.usageAccrue.Tick(r.Context(), h.logger, claims.UserID)
+		// Remember this as a direct play so the item's progress reports are
+		// attributed even when the client doesn't say so (see noteDirectPlay).
+		h.noteDirectPlay(r, claims.UserID, file.MediaItemID)
 	}
 
 	if h.tracker != nil && (r.Method == http.MethodGet || r.Method == http.MethodHead) {

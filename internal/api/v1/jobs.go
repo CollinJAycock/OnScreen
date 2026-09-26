@@ -98,9 +98,15 @@ func (h *JobsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The counters are server-wide operator signals: the queries count every
+	// library, private ones and over-ceiling items included, so a non-admin
+	// would learn about (and watch activity in) content they can't see. They
+	// point at admin-only remedies (re-enrich, manual match) anyway, so only
+	// an admin caller gets them; everyone else sees 0.
 	missingArt := 0
 	unmatched := 0
-	if h.counters != nil {
+	claims := middleware.ClaimsFromContext(ctx)
+	if h.counters != nil && claims != nil && claims.IsAdmin {
 		if n, err := h.counters.CountItemsMissingArt(ctx); err != nil {
 			h.logger.WarnContext(ctx, "jobs: count missing art failed", "err", err)
 		} else {

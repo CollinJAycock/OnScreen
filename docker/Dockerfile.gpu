@@ -72,10 +72,12 @@ FROM onscreen-ffmpeg:latest
 # rationale (alpine's adduser-S home behaviour drifted between releases
 # and broke the artwork resize cache silently). The GPU image is debian-
 # based via the nvidia/cuda upstream, but the same pin keeps the runtime
-# state location consistent across both flavours.
+# state location consistent across both flavours. /var/backups/onscreen is
+# the scheduled-backup default output_dir, owner-only (see docker/Dockerfile).
 RUN groupadd -r onscreen && useradd -r -g onscreen onscreen \
- && mkdir -p /var/cache/onscreen \
- && chown -R onscreen:onscreen /var/cache/onscreen
+ && mkdir -p /var/cache/onscreen /var/backups/onscreen \
+ && chown -R onscreen:onscreen /var/cache/onscreen /var/backups/onscreen \
+ && chmod 0700 /var/backups/onscreen
 USER onscreen
 ENV CACHE_PATH=/var/cache/onscreen
 # CUDA JIT cache on the persistent, writable cache volume. ffmpeg ships its CUDA

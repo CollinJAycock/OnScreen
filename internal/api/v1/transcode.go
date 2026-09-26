@@ -90,6 +90,9 @@ type NativeTranscodeHandler struct {
 	logger   *slog.Logger
 	killer   SessionKiller        // optional — set for embedded worker deployments
 	userCaps UserStreamCapsReader // optional — per-user admin concurrent/bitrate caps
+	// decisions remembers each created session's decision so the item's
+	// progress reports are attributed after the session is gone. Optional.
+	decisions *PlayDecisionRecorder
 	// tokens mints the per-file stream token embedded in a job's SourceURL
 	// so a remote worker without shared storage can pull the source over
 	// HTTP. Optional — when nil, jobs carry no SourceURL and workers must
@@ -468,6 +471,21 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Playlist/reference-container gate — BEFORE anything runs ffprobe or
+	// ffmpeg on the source. VerifySource below is an ffprobe, and ffprobe on
+	// a file swapped in place for an #EXTM3U playlist opens it with the HLS
+	// demuxer and follows the references inside it (file: has to stay
+	// whitelisted for real media); the failed probe then also misreported
+	// the file as SOURCE_UNREADABLE (422) instead of the documented 415.
+	// Stored container name plus a 512-byte sniff: no ffprobe involved.
+	if err := h.refuseReferenceContainer(file); err != nil {
+		h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
+			"file_id", file.ID, "path", file.FilePath)
+		respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
+			"this file is not a playable media container")
+		return
+	}
+
 	// Pre-flight source verification — bounds the "spinner forever" case
 	// where ffmpeg would otherwise hang trying to demux a corrupt or
 	// missing file. Catches the bad input in ~1 s with a structured error
@@ -487,6 +505,15 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 				"The file for this title is missing on disk. Re-scan the library to refresh.")
 			return
 		case scanner.SourceUnreadable:
+			if errors.Is(verr, scanner.ErrUnsafeContainer) {
+				// Swapped for a playlist after the gate above ran;
+				// VerifySource's own sniff refused it before ffprobe.
+				h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
+					"file_id", file.ID, "path", file.FilePath)
+				respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
+					"this file is not a playable media container")
+				return
+			}
 			h.logger.WarnContext(ctx, "transcode: source file unreadable",
 				"file_id", file.ID, "path", file.FilePath, "err", verr)
 			respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_UNREADABLE",
@@ -857,6 +884,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap, abrMaxBitrate)
 		if len(ladder) > 1 {
 			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser)
+			// startABR answers the client itself; its parent session existing
+			// under sessionID is the success signal.
+			if h.decisions != nil {
+				if _, gerr := h.sessions.Get(ctx, sessionID); gerr == nil {
+					h.decisions.Record(ctx, claims.UserID, itemID, decision)
+				}
+			}
 			return
 		}
 	}
@@ -987,6 +1021,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if workerAddr != "" {
 		h.logger.InfoContext(ctx, "dispatched to worker", "session_id", sessionID, "worker", workerAddr)
 	}
+	// Attributes the item's progress reports, also after the session is gone.
+	h.decisions.Record(ctx, claims.UserID, itemID, decision)
 
 	// For mid-stream video-copy sessions, the AAC encoder needs a few
 	// seconds of warmup after the seek before its first valid frame
@@ -1064,21 +1100,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 // their container name or failed to probe them and kept minimal metadata. Every
 // other probe failure is logged and swallowed, as before.
 func (h *NativeTranscodeHandler) lazyReprobe(ctx context.Context, file *media.File) error {
-	if file.Container != nil && scanner.IsReferenceDemuxer(*file.Container) {
-		return scanner.ErrUnsafeContainer
-	}
-	// The stored row only describes the file as it was when last scanned. A
-	// real movie.mkv later replaced at the same path by an #EXTM3U / ffconcat
-	// file keeps its old row (Container=matroska, full codec info) until a
-	// rescan notices, and the early return below would trust it. So sniff the
-	// actual first bytes on every Start/Decide — one open + a 512-byte read,
-	// no ffprobe. Local backend only: with object storage FilePath is a store
-	// key this process can't open, so there the scan-time ffprobe format check
-	// (and the rescan that marks a swapped file missing) is the guard. Fleet
-	// workers pulling source over HTTP read this same server-local file, so
-	// the sniff here covers them too.
-	if mediastore.IsLocal(h.mediaStore()) && scanner.LooksLikeReferenceContainer(file.FilePath) {
-		return scanner.ErrUnsafeContainer
+	if err := h.refuseReferenceContainer(file); err != nil {
+		return err
 	}
 	if file.VideoCodec != nil && file.ResolutionW != nil && file.ResolutionH != nil {
 		return nil
@@ -1121,6 +1144,30 @@ func (h *NativeTranscodeHandler) lazyReprobe(ctx context.Context, file *media.Fi
 		"file_id", file.ID,
 		"video_codec", vc,
 		"hdr", hdr)
+	return nil
+}
+
+// refuseReferenceContainer returns scanner.ErrUnsafeContainer when file is a
+// playlist/reference container, judged WITHOUT running ffprobe — Start calls it
+// before any probe touches the source, and lazyReprobe (so Decide) calls it
+// before its own re-probe.
+//
+// The stored row only describes the file as it was when last scanned. A real
+// movie.mkv later replaced at the same path by an #EXTM3U / ffconcat file keeps
+// its old row (Container=matroska, full codec info) until a rescan notices. So
+// sniff the actual first bytes on every Start/Decide — one open + a 512-byte
+// read. Local backend only: with object storage FilePath is a store key this
+// process can't open, so there the scan-time ffprobe format check (and the
+// rescan that marks a swapped file missing) is the guard. Fleet workers pulling
+// source over HTTP read this same server-local file, so the sniff here covers
+// them too.
+func (h *NativeTranscodeHandler) refuseReferenceContainer(file *media.File) error {
+	if file.Container != nil && scanner.IsReferenceDemuxer(*file.Container) {
+		return scanner.ErrUnsafeContainer
+	}
+	if mediastore.IsLocal(h.mediaStore()) && scanner.LooksLikeReferenceContainer(file.FilePath) {
+		return scanner.ErrUnsafeContainer
+	}
 	return nil
 }
 
@@ -1249,6 +1296,19 @@ func (h *NativeTranscodeHandler) supersedeUserItem(ctx context.Context, userID, 
 	}
 }
 
+// playlistReadyWait bounds how long Playlist waits for a session's worker and
+// first segment before answering 503. A var so tests can shorten it.
+var playlistReadyWait = 60 * time.Second
+
+const (
+	// playlistFetchTimeout bounds the index.m3u8 fetch once seg0 is ready.
+	playlistFetchTimeout = 10 * time.Second
+	// playlistWriteSlack is how far past playlistReadyWait Playlist moves its
+	// write deadline: the last readiness HEAD overrunning the wait (3 s), the
+	// index fetch, and writing a few-KB body.
+	playlistWriteSlack = 15 * time.Second
+)
+
 // Playlist handles GET /api/v1/transcode/sessions/{sid}/playlist.m3u8.
 // Validates the segment token, waits for FFmpeg, and serves the rewritten playlist.
 func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request) {
@@ -1279,8 +1339,17 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 	// multi-instance deployments. In single-instance mode WorkerAddr is still
 	// set (to the embedded worker's loopback address), so proxying is used
 	// universally and local-disk fallback is only a last resort.
+	//
+	// The waits below share one playlistReadyWait budget, which is as long as
+	// the server's 60 s WriteTimeout (measured from the request headers). So a
+	// session that never became ready had its 503 written after the
+	// connection's write deadline and the client saw a connection reset
+	// instead of the status. Move this response's deadline past the wait.
+	if rc := http.NewResponseController(w); rc != nil {
+		_ = rc.SetWriteDeadline(time.Now().Add(playlistReadyWait + playlistWriteSlack))
+	}
 	var workerAddr string
-	deadline := time.Now().Add(60 * time.Second)
+	deadline := time.Now().Add(playlistReadyWait)
 	for time.Now().Before(deadline) {
 		sess, err := h.sessions.Get(ctx, sessionID)
 		if err == nil && sess.WorkerAddr != "" {
@@ -1372,7 +1441,11 @@ func (h *NativeTranscodeHandler) Playlist(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	data, err := fetchFromWorker(ctx, workerAddr, sessID, "index.m3u8", filepath.Join(sessDir, "index.m3u8"))
+	// Bounded well inside playlistWriteSlack (workerClient's own timeout is
+	// 30 s) so the response still lands before the extended write deadline.
+	fetchCtx, cancel := context.WithTimeout(ctx, playlistFetchTimeout)
+	defer cancel()
+	data, err := fetchFromWorker(fetchCtx, workerAddr, sessID, "index.m3u8", filepath.Join(sessDir, "index.m3u8"))
 	if err != nil {
 		http.Error(w, "playlist not ready", http.StatusServiceUnavailable)
 		return

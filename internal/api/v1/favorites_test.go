@@ -281,3 +281,28 @@ func TestFavorites_Add_AboveRatingCeiling(t *testing.T) {
 		t.Error("AddFavorite must not be called for content above the rating ceiling")
 	}
 }
+
+// An unrated item ranks most restrictive, so a capped profile must not be
+// able to favorite it (List would hide it anyway); an uncapped caller can.
+func TestFavorites_Add_UnratedItemUnderCeiling(t *testing.T) {
+	add := func(maxRating string) (int, bool) {
+		db := &mockFavoritesDB{item: gen.GetMediaItemRow{LibraryID: uuid.New()}}
+		h := NewFavoritesHandler(db, slog.Default())
+		itemID := uuid.New()
+		req := httptest.NewRequest(http.MethodPost, "/api/v1/items/"+itemID.String()+"/favorite", nil)
+		req = req.WithContext(middleware.WithClaims(req.Context(),
+			&auth.Claims{UserID: uuid.New(), MaxContentRating: maxRating}))
+		rctx := chi.NewRouteContext()
+		rctx.URLParams.Add("id", itemID.String())
+		req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+		rec := httptest.NewRecorder()
+		h.Add(rec, req)
+		return rec.Code, db.addCalled
+	}
+	if code, called := add("PG"); code != http.StatusNotFound || called {
+		t.Errorf("capped profile, unrated item: got %d (added=%v), want 404 and no insert", code, called)
+	}
+	if code, called := add(""); code != http.StatusNoContent || !called {
+		t.Errorf("uncapped caller, unrated item: got %d (added=%v), want 204 and insert", code, called)
+	}
+}

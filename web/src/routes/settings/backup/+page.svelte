@@ -151,6 +151,8 @@
   const restoreForced = () => doRestore(true);
 </script>
 
+<svelte:head><title>Backup — OnScreen</title></svelte:head>
+
 <div class="wrap">
   <section>
     <h2>Backup database</h2>

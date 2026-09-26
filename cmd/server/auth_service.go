@@ -85,6 +85,12 @@ type authService struct {
 	// which protects this process only. Never skipped outright.
 	totpReplay      auth.TOTPReplayGuard
 	totpReplayLocal auth.MemoryTOTPReplayGuard
+	// totpChallenges records redeemed TOTP login challenges (by jti) so one
+	// challenge mints at most one session. Same shape as totpReplay: shared
+	// Valkey guard when wired, totpChallengesLocal as the per-instance
+	// fallback (see redeemTOTPChallenge).
+	totpChallenges      auth.TOTPChallengeGuard
+	totpChallengesLocal auth.MemoryTOTPChallengeGuard
 	// segTokens revokes every outstanding HLS segment token for a user.
 	// Used on the refresh-reuse (theft) path, which burns the whole session
 	// family. Optional — nil leaves segment tokens to their idle TTL.
@@ -200,6 +206,34 @@ func (s *authService) spendTOTPStep(ctx context.Context, userID uuid.UUID, step 
 		s.logger.WarnContext(ctx, "totp replay guard unavailable; using per-instance guard",
 			"user_id", userID, "err", err)
 	}
+	return localFresh
+}
+
+// challengeBurnSlack keeps a redeemed-challenge record a little past the
+// token's own expiry, so an instance whose clock runs behind the burning one
+// still finds the record for as long as it would accept the token.
+const challengeBurnSlack = time.Minute
+
+// redeemTOTPChallenge burns a login challenge's jti; false = already redeemed.
+// Same posture as spendTOTPStep: the shared guard is authoritative across
+// instances, and a Valkey outage falls back to the in-process record rather
+// than skipping the check. Every burn the shared guard grants is recorded
+// locally too, so an outage later doesn't forget it. The shared guard goes
+// first and a loss there returns before touching the local record — that
+// ordering guarantees exactly one of several concurrent verifies wins, where
+// checking both in either order could let each refuse the other.
+func (s *authService) redeemTOTPChallenge(ctx context.Context, jti string, expiresAt time.Time) bool {
+	ttl := time.Until(expiresAt) + challengeBurnSlack
+	if s.totpChallenges != nil {
+		fresh, err := s.totpChallenges.RedeemTOTPChallenge(ctx, jti, ttl)
+		if err == nil && !fresh {
+			return false
+		}
+		if err != nil {
+			s.logger.WarnContext(ctx, "totp challenge guard unavailable; using per-instance guard", "err", err)
+		}
+	}
+	localFresh, _ := s.totpChallengesLocal.RedeemTOTPChallenge(ctx, jti, ttl)
 	return localFresh
 }
 
@@ -374,7 +408,7 @@ func (s *authService) LoginLocal(ctx context.Context, username, password string)
 	// and tell the client to collect a code; /auth/totp/verify completes
 	// the login. (Federated accounts never have totp_enabled set.)
 	if user.TotpEnabled {
-		challenge, err := s.tokens.IssueTOTPChallengeToken(user.ID)
+		challenge, err := s.tokens.IssueTOTPChallengeToken(user.ID, user.SessionEpoch)
 		if err != nil {
 			return nil, fmt.Errorf("issue totp challenge: %w", err)
 		}
@@ -658,10 +692,13 @@ func (s *authService) DisableTOTP(ctx context.Context, userID uuid.UUID, code st
 }
 
 // VerifyTOTPLogin validates the login challenge token + second factor and
-// issues the real token pair.
+// issues the real token pair. A challenge is single-use and dies with the
+// user's session epoch — see the checks below.
 func (s *authService) VerifyTOTPLogin(ctx context.Context, challengeToken, code string) (*v1.TokenPair, error) {
 	claims, err := s.tokens.ValidateAccessToken(challengeToken)
-	if err != nil || claims == nil || claims.Purpose != "totp_challenge" {
+	// No jti = minted before challenges became single-use; refuse rather
+	// than let it bypass the burn below (it ages out in TOTPChallengeTTL).
+	if err != nil || claims == nil || claims.Purpose != "totp_challenge" || claims.TokenID == "" {
 		return nil, v1.ErrInvalidTOTPChallenge
 	}
 	user, err := s.db.GetUser(ctx, claims.UserID)
@@ -670,6 +707,14 @@ func (s *authService) VerifyTOTPLogin(ctx context.Context, challengeToken, code 
 	}
 	// 2FA disabled between password and verify → the challenge is stale.
 	if !user.TotpEnabled {
+		return nil, v1.ErrInvalidTOTPChallenge
+	}
+	// Session epoch moved since the password step (password reset, admin
+	// force-logout, demote, refresh-theft burn) → the challenge is revoked
+	// along with every other credential. Without this, whoever got past the
+	// password step (a real-time phishing relay, say) could still finish the
+	// login for the challenge's full TTL after the victim reset the password.
+	if claims.SessionEpoch != user.SessionEpoch {
 		return nil, v1.ErrInvalidTOTPChallenge
 	}
 
@@ -690,6 +735,13 @@ func (s *authService) VerifyTOTPLogin(ctx context.Context, challengeToken, code 
 		return nil, v1.ErrBadTOTPCode
 	}
 	s.resetStepUpFailures(ctx, loginTOTPFailureKey(claims.UserID))
+	// Burn the challenge only now: a wrong code must leave it usable (the
+	// per-user failure cap above bounds guessing), but a redeemed one must
+	// never mint a second session, even with a fresh code. Atomic, so two
+	// concurrent verifies of one challenge can't both get here and pass.
+	if !s.redeemTOTPChallenge(ctx, claims.TokenID, claims.ExpiresAt) {
+		return nil, v1.ErrInvalidTOTPChallenge
+	}
 	return s.issueTokenPair(ctx, user)
 }
 

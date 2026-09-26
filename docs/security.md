@@ -65,8 +65,10 @@ These differ from prior behavior; operators upgrading should be aware:
 12. **Parental ceiling now covers photos, EXIF, lyrics, subtitles and
     watch-status.** Unrated items rank most restrictive, so a capped profile no
     longer sees unrated photos' titles/GPS or unrated tracks' lyrics.
-13. **Library-scoped leaks closed.** `/jobs`, scan-complete notifications,
-    server-owned collections and watch-status now respect library ACLs.
+13. **Library-scoped leaks closed.** The `/jobs` scan list, scan-complete
+    notifications, server-owned collections and watch-status now respect
+    library ACLs. The missing-art / unmatched backlog counts are server-wide,
+    so non-admins get zero for both.
 14. **Live TV quotas.** At most 6 concurrent live sessions (`HLSConfig`),
     8 concurrent DVR captures (3 per user), 100 schedules per user, bounded
     padding, 12 h max recording; non-admins cannot list or tune disabled
@@ -126,6 +128,9 @@ Items marked **upgrade** need operator action on existing installs.
 - App containers (server, worker, migrate) run with
   `no-new-privileges` and `cap_drop: [ALL]` (they are already non-root);
   nginx gets `no-new-privileges` only.
+- `docker-compose.yml` sets `METRICS_ADDR=0.0.0.0:7071` *inside* the server
+  container: container loopback is unreachable through a port publish, and the
+  host side stays `127.0.0.1`.
 - `docker-compose.postgres-ha.yml`: the replication role can use its own
   `REPLICATION_PASSWORD` (falls back to `DB_PASS`), the password is passed to
   SQL as a quoted psql variable (it used to be spliced into the statement), and
@@ -258,10 +263,20 @@ spoofing an HDHomeRun — is accepted for the self-hosted threat model.
 - **Live TV streaming is not gated by the content-rating ceiling** (channels
   carry no rating in the schema). Parental controls cover on-demand media only;
   a per-profile "no Live TV" switch is the planned follow-up.
+- **An over-ceiling item answers 403 on its detail and stream routes** (item,
+  children, direct stream, transcode start, playback decision, subtitle
+  stream), while the newer ceiling checks (EXIF, lyrics, watch-status,
+  subtitle search, artwork) answer 404 like an ACL miss. The 403 confirms that
+  an item id exists to a capped profile; it is kept for client compatibility.
 - **`TRUSTED_PROXIES` unset trusts private-range peers' forwarding headers.**
   This keeps the common LAN reverse-proxy setup working out of the box; on a
   network where untrusted hosts share the server's private range, set
   `TRUSTED_PROXIES` to the proxy's exact address.
+- **With `TRUSTED_PROXIES` unset, private addresses in `X-Forwarded-For` are
+  treated as proxy hops.** LAN clients behind a proxy that sends only
+  `X-Forwarded-For` all resolve to the proxy's address and share its per-IP
+  rate-limit bucket. Set `TRUSTED_PROXIES`, or have the proxy also send
+  `X-Real-IP`.
 - **The token pair is also returned in the JSON body** of login/refresh, not
   only as httpOnly cookies. Native and TV clients have no cookie jar and need
   it; the web client keeps it in memory only. CSP (nonce `script-src`) is the

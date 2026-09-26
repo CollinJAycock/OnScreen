@@ -9,6 +9,9 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
 )
 
 type stubScanLister struct {
@@ -40,6 +43,13 @@ func (s *stubLibNamer) NameOf(_ context.Context, id uuid.UUID) (string, bool) {
 	return n, ok
 }
 
+// adminJobsRequest is a GET /api/v1/jobs from an admin — the only caller the
+// server-wide counters are reported to.
+func adminJobsRequest() *http.Request {
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	return req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
+}
+
 func TestJobsHandler_ReturnsScansWithLibraryNames(t *testing.T) {
 	libA := uuid.New()
 	libB := uuid.New()
@@ -48,7 +58,7 @@ func TestJobsHandler_ReturnsScansWithLibraryNames(t *testing.T) {
 	namer := &stubLibNamer{names: map[uuid.UUID]string{libA: "Movies"}}
 
 	h := NewJobsHandler(scans, counters, namer, slog.Default())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req := adminJobsRequest()
 	rec := httptest.NewRecorder()
 	h.Get(rec, req)
 
@@ -102,7 +112,7 @@ func TestJobsHandler_CounterErrorsDegradeToZero(t *testing.T) {
 		unmatchedErr:  errors.New("db down"),
 	}
 	h := NewJobsHandler(&stubScanLister{}, counters, nil, slog.Default())
-	req := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	req := adminJobsRequest()
 	rec := httptest.NewRecorder()
 	h.Get(rec, req)
 
@@ -115,5 +125,34 @@ func TestJobsHandler_CounterErrorsDegradeToZero(t *testing.T) {
 	}
 	if int(data.Data["unmatched_count"].(float64)) != 0 {
 		t.Errorf("unmatched_count: got %v, want 0", data.Data["unmatched_count"])
+	}
+}
+
+// The counters are global (every library, every rating), so only an admin gets
+// them; a non-admin or anonymous caller sees 0 rather than a count that moves
+// with activity in libraries they can't see.
+func TestJobsHandler_CountersAdminOnly(t *testing.T) {
+	h := NewJobsHandler(&stubScanLister{}, &stubJobsCounters{missingArt: 14, unmatched: 14}, nil, slog.Default())
+	counts := func(req *http.Request) (int, int) {
+		rec := httptest.NewRecorder()
+		h.Get(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status %d", rec.Code)
+		}
+		data := decodeData(t, rec)
+		return int(data.Data["missing_art_count"].(float64)), int(data.Data["unmatched_count"].(float64))
+	}
+
+	userReq := httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)
+	userReq = userReq.WithContext(middleware.WithClaims(userReq.Context(),
+		&auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}))
+	if ma, um := counts(userReq); ma != 0 || um != 0 {
+		t.Errorf("non-admin counts = %d/%d, want 0/0", ma, um)
+	}
+	if ma, um := counts(httptest.NewRequest(http.MethodGet, "/api/v1/jobs", nil)); ma != 0 || um != 0 {
+		t.Errorf("anonymous counts = %d/%d, want 0/0", ma, um)
+	}
+	if ma, um := counts(adminJobsRequest()); ma != 14 || um != 14 {
+		t.Errorf("admin counts = %d/%d, want 14/14", ma, um)
 	}
 }

@@ -48,7 +48,7 @@ env-only — they're needed before the settings tables are reachable.
 | `NODE_ID` | host name | Stable identity used to key this node's row in `node_settings` (Settings ▸ Nodes). |
 | `IGNORE_NODE_DB_CONFIG` | `false` | Break-glass: boot from env/defaults only, ignoring the `node_settings` row. Recovers a node locked out by a bad bind address. |
 | `LISTEN_ADDR` | `:7070` | Address the HTTP server binds to (per-node UI override). |
-| `METRICS_ADDR` | `:7071` | Address for the Prometheus metrics endpoint (per-node UI override). |
+| `METRICS_ADDR` | `127.0.0.1:7071` | Address for the Prometheus metrics endpoint (per-node UI override). In a container, set `0.0.0.0:7071` and keep the published port loopback-only. |
 | `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
 | `RETAIN_MONTHS` | `24` | How many months of watch history to retain |
 | `TLS_CERT_FILE` | (none) | PEM-encoded certificate chain. When set with `TLS_KEY_FILE`, serves HTTPS from files (these win over an uploaded cert). See [Built-in HTTPS](#built-in-https). |
@@ -58,7 +58,7 @@ env-only — they're needed before the settings tables are reachable.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `WORKER_ADDR` | (none) | Address the standalone worker listens on, e.g. `:7073` |
+| `WORKER_ADDR` | `:7073` | Address the standalone worker's segment server binds **and** registers for the API to proxy HLS to, so it must be routable from the server, e.g. `worker:7073`. A bare `:7073` only works when the API runs on the same host. |
 
 ### Scanning
 
@@ -214,6 +214,9 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
+      # Container loopback is unreachable through a port publish; the host
+      # side stays loopback-only.
+      METRICS_ADDR: "0.0.0.0:7071"
     restart: unless-stopped
     ports:
       - "7070:7070"
@@ -240,7 +243,8 @@ services:
       SECRET_KEY: ${SECRET_KEY}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
-      WORKER_ADDR: ":7073"
+      # Bind + advertised address: must be routable from the server container.
+      WORKER_ADDR: "worker:7073"
     restart: unless-stopped
     volumes:
       - /path/to/your/media:/media:ro
@@ -828,7 +832,7 @@ The server exposes `GET /health/live` on the main listen address. A `200` respon
 
 ### Metrics endpoint
 
-The metrics endpoint at `METRICS_ADDR` (default `:7071`) exposes Prometheus
+The metrics endpoint at `METRICS_ADDR` (default `127.0.0.1:7071`) exposes Prometheus
 exposition format (`text/plain; version=0.0.4`). It's a dedicated mux — only
 `/metrics` is served, no app routes leak onto it. **Keep this port firewalled
 from public access.**

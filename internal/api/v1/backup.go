@@ -69,6 +69,12 @@ func NewBackupHandler(databaseURL string, expectedVersion int64, migFS fs.FS, lo
 	}
 }
 
+// auditActionBackupRestoreDenied records a restore refused at step-up
+// re-authentication (the dump is never applied). Named alongside
+// audit.ActionBackupRestore, the way settings.worker_credentials.denied pairs
+// with its reveal.
+const auditActionBackupRestoreDenied = "backup.restore.denied"
+
 // WithAudit wires the audit logger so backup/restore actions are recorded.
 func (h *BackupHandler) WithAudit(a *audit.Logger) *BackupHandler {
 	h.audit = a
@@ -333,6 +339,13 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 			if h.logger != nil {
 				h.logger.WarnContext(r.Context(), "restore: step-up reauth failed", "user_id", claims.UserID)
 			}
+			// Audited like a denied worker-credentials reveal: a refused
+			// step-up on the most destructive admin action is what a hijacked
+			// admin session guessing the password looks like.
+			if h.audit != nil {
+				actor := claims.UserID
+				h.audit.Log(r.Context(), &actor, auditActionBackupRestoreDenied, hdr.Filename, nil, audit.ClientIP(r))
+			}
 			respond.Error(w, r, http.StatusForbidden, "REAUTH_FAILED",
 				"password (or 2FA code) incorrect")
 			return
@@ -432,7 +445,12 @@ func (h *BackupHandler) Restore(w http.ResponseWriter, r *http.Request) {
 // the parent, so the per-child DROP is rejected; pg_restore continues, the
 // data lands, and the process still exits 1).
 //
-// When every counted error matches that signature, returns (nil, "",
+// The one other benign error is version skew between the image's pg_dump 17
+// and a Postgres 16 server: pg_dump 17 writes `SET transaction_timeout = 0;`,
+// a setting 16 doesn't know, so the restore reports one extra
+// `unrecognized configuration parameter "transaction_timeout"` and carries on.
+//
+// When every counted error matches one of those signatures, returns (nil, "",
 // suppressed_count) so the response envelope reports success and only
 // surfaces the suppressed count for visibility. Any other error type leaves
 // runErr and the (benign-filtered) stderr intact so real failures aren't
@@ -442,6 +460,7 @@ func classifyRestoreOutcome(runErr error, stderrOut string) (string, int, error)
 		return stderrOut, 0, nil
 	}
 	const benignSig = "cannot drop inherited constraint"
+	const benignSkewSig = `unrecognized configuration parameter "transaction_timeout"`
 
 	// `pg_restore: warning: errors ignored on restore: N` is the
 	// authoritative count of non-fatal errors pg_restore tallied. If it's
@@ -450,14 +469,16 @@ func classifyRestoreOutcome(runErr error, stderrOut string) (string, int, error)
 	if !ok {
 		return stderrOut, 0, runErr
 	}
-	benignCount := strings.Count(stderrOut, benignSig)
+	partitionNoise := strings.Count(stderrOut, benignSig)
+	benignCount := partitionNoise + strings.Count(stderrOut, benignSkewSig)
 	if benignCount == 0 || benignCount != totalErrors {
 		// Mixed or non-benign — surface everything, don't mask real errors.
 		return stderrOut, 0, runErr
 	}
 
-	// All N errors were the partition-inheritance noise. The data restored
-	// fine; clear runErr and drop the stderr blob.
+	// All N errors were partition-inheritance noise (plus, at most, the
+	// transaction_timeout skew line). The data restored fine; clear runErr and
+	// drop the stderr blob.
 	return "", benignCount, nil
 }
 

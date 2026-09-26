@@ -123,6 +123,9 @@ const (
 // keeps healthy files at ~200-500 ms while a corrupt header bails almost
 // instantly. Heavier metadata extraction stays in ProbeFile (called at
 // scan time or when missing fields trigger a lazy re-probe).
+//
+// A playlist/reference container is refused before ffprobe opens it, exactly
+// as in ProbeFile: SourceUnreadable wrapping ErrUnsafeContainer.
 func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 	if _, statErr := os.Stat(path); statErr != nil {
 		if os.IsNotExist(statErr) {
@@ -132,6 +135,9 @@ func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 		// purpose of surfacing an error to the user; the message carries
 		// the real reason for an admin reading server logs.
 		return SourceMissing, statErr
+	}
+	if looksLikeReferenceContainer(path) {
+		return SourceUnreadable, ErrUnsafeContainer
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()

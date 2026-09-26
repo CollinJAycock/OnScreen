@@ -365,18 +365,17 @@ func NewRouter(h *Handlers) http.Handler {
 							h.PublicAssetCache != nil && h.PublicAssetCache()
 						// Serve resized variant if dimensions requested.
 						if (wParam > 0 || hParam > 0) && h.Artwork != nil {
-							w.Header().Set("Content-Type", "image/jpeg")
 							resizedCC := "private, max-age=604800, immutable"
 							if shareable {
 								resizedCC = "public, max-age=604800, immutable"
-								// Both carriers, always: a cache keyed on only one
-								// of them will happily serve a cookie-authenticated
-								// response to a token-authenticated caller.
-								w.Header().Add("Vary", "Authorization")
-								w.Header().Add("Vary", "Cookie")
 							}
-							w.Header().Set("Cache-Control", resizedCC)
-							if err := h.Artwork.Resize(req.Context(), w, abs, wParam, hParam); err != nil {
+							// Success headers (image/jpeg, the immutable
+							// Cache-Control, Vary when shareable) are committed on
+							// the first body byte, so a resize that fails before
+							// writing gets a no-store 404 instead of a cached
+							// empty 200. See resizedArtworkWriter.
+							rw := &resizedArtworkWriter{w: w, cacheControl: resizedCC, vary: shareable}
+							if err := h.Artwork.Resize(req.Context(), rw, abs, wParam, hParam); err != nil {
 								// Client navigating off mid-resize is
 								// normal traffic on a TV remote (scroll
 								// past a card, swap rows, etc.) — log
@@ -388,6 +387,7 @@ func NewRouter(h *Handlers) http.Handler {
 								} else {
 									h.Logger.Error("artwork resize failed", "path", abs, "error", err)
 								}
+								rw.fail(req)
 							}
 							return
 						}
@@ -496,7 +496,6 @@ func NewRouter(h *Handlers) http.Handler {
 
 			r.Post("/auth/login", h.Auth.Login)
 			r.Post("/auth/refresh", h.Auth.Refresh)
-			r.Post("/auth/logout", h.Auth.Logout)
 			r.Post("/auth/register", h.Auth.Register)
 			r.Post("/auth/forgot-password", h.PasswordReset.ForgotPassword)
 			r.Post("/auth/reset-password", h.PasswordReset.ResetPassword)
@@ -527,6 +526,19 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.TOTP != nil {
 				r.Post("/auth/totp/verify", h.TOTP.Verify)
 			}
+		})
+
+		// Logout — NOT in AuthLimit's brute-force bucket. It verifies nothing
+		// guessable (it only revokes the refresh token it is handed), and
+		// sharing the 10/min bucket meant a household that had just logged in
+		// or refreshed a few times got a 429 here: the SPA still showed
+		// "signed out" but the server never deleted the session or bumped the
+		// epoch. Its own per-IP bucket at the general session rate still caps
+		// a flood of DB lookups.
+		r.Group(func(r chi.Router) {
+			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
+				middleware.IPKey("ratelimit:logout")))
+			r.Post("/auth/logout", h.Auth.Logout)
 		})
 
 		// Native client device pairing — no user auth (the device_token

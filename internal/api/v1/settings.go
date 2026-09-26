@@ -782,14 +782,70 @@ func toOpenSubtitlesDTO(cfg settings.OpenSubtitlesConfig) openSubtitlesSettingDT
 // the endpoint changes, a secret is stored, and the request neither supplies a
 // new one nor clears it (nil or the round-tripped mask).
 func endpointMovesStoredSecret(curEndpoint string, newEndpoint *string, curSecret string, newSecret *string) bool {
-	if newEndpoint == nil || curSecret == "" {
+	if newEndpoint == nil {
 		return false
 	}
 	norm := func(s string) string { return strings.TrimRight(strings.TrimSpace(s), "/") }
 	if strings.EqualFold(norm(curEndpoint), norm(*newEndpoint)) {
 		return false
 	}
-	return newSecret == nil || *newSecret == maskedSecret
+	return storedSecretKept(curSecret, newSecret)
+}
+
+// storedSecretKept reports whether a PATCH leaves a stored secret in place: one
+// is stored and the request neither supplies a new one nor clears it (nil or
+// the round-tripped mask).
+func storedSecretKept(curSecret string, newSecret *string) bool {
+	return curSecret != "" && (newSecret == nil || *newSecret == maskedSecret)
+}
+
+// smtpEndpoint is the SMTP relay address the stored password is sent to.
+// Host and port together: re-pointing only the port (e.g. to a listener that
+// doesn't offer TLS, or a different service on the same host) moves the
+// password just as a new host does.
+func smtpEndpoint(host string, port int) string {
+	return net.JoinHostPort(strings.TrimSpace(host), fmt.Sprint(port))
+}
+
+// nextSMTPEndpoint is the SMTP endpoint a PATCH would leave in place, or nil
+// when it touches neither host nor port.
+func nextSMTPEndpoint(cur settings.SMTPConfig, host *string, port *int) *string {
+	if host == nil && port == nil {
+		return nil
+	}
+	h, p := cur.Host, cur.Port
+	if host != nil {
+		h = *host
+	}
+	if port != nil {
+		p = *port
+	}
+	e := smtpEndpoint(h, p)
+	return &e
+}
+
+// ldapTLSDowngraded reports whether a PATCH weakens the transport the LDAP
+// bind password travels over on the same host: TLS (LDAPS or StartTLS — the
+// dialer enforces either) switched off, or certificate verification switched
+// off while TLS stays on. Either exposes the stored password to a network
+// attacker as surely as re-pointing the host does. nil fields are unchanged.
+func ldapTLSDowngraded(cur settings.LDAPConfig, startTLS, useLDAPS, skipVerify *bool) bool {
+	next := cur
+	if startTLS != nil {
+		next.StartTLS = *startTLS
+	}
+	if useLDAPS != nil {
+		next.UseLDAPS = *useLDAPS
+	}
+	if skipVerify != nil {
+		next.SkipTLSVerify = *skipVerify
+	}
+	curTLS := cur.StartTLS || cur.UseLDAPS
+	nextTLS := next.StartTLS || next.UseLDAPS
+	if curTLS && !nextTLS {
+		return true
+	}
+	return curTLS && !cur.SkipTLSVerify && next.SkipTLSVerify
 }
 
 // maskedSecret is the placeholder every secret-returning field emits instead
@@ -965,14 +1021,27 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// different server while keeping the stored password would hand it to
 	// whatever host was just typed in on the next test email, bind or token
 	// exchange. Checked before anything is written so a refused save cannot
-	// half-apply.
-	if body.SMTP != nil && endpointMovesStoredSecret(h.svc.SMTP(ctx).Host, body.SMTP.Host, h.svc.SMTP(ctx).Password, body.SMTP.Password) {
-		respond.ValidationError(w, r, "re-enter the SMTP password when changing the SMTP host")
-		return
+	// half-apply. SMTP compares host:port; LDAP also refuses a TLS downgrade on
+	// the same host, which would send the bind password in the clear (or to an
+	// unverified peer).
+	if body.SMTP != nil {
+		cur := h.svc.SMTP(ctx)
+		if endpointMovesStoredSecret(smtpEndpoint(cur.Host, cur.Port), nextSMTPEndpoint(cur, body.SMTP.Host, body.SMTP.Port), cur.Password, body.SMTP.Password) {
+			respond.ValidationError(w, r, "re-enter the SMTP password when changing the SMTP host or port")
+			return
+		}
 	}
-	if body.LDAP != nil && endpointMovesStoredSecret(h.svc.LDAP(ctx).Host, body.LDAP.Host, h.svc.LDAP(ctx).BindPassword, body.LDAP.BindPassword) {
-		respond.ValidationError(w, r, "re-enter the LDAP bind password when changing the LDAP host")
-		return
+	if body.LDAP != nil {
+		cur := h.svc.LDAP(ctx)
+		if endpointMovesStoredSecret(cur.Host, body.LDAP.Host, cur.BindPassword, body.LDAP.BindPassword) {
+			respond.ValidationError(w, r, "re-enter the LDAP bind password when changing the LDAP host")
+			return
+		}
+		if storedSecretKept(cur.BindPassword, body.LDAP.BindPassword) &&
+			ldapTLSDowngraded(cur, body.LDAP.StartTLS, body.LDAP.UseLDAPS, body.LDAP.SkipTLSVerify) {
+			respond.ValidationError(w, r, "re-enter the LDAP bind password when turning off TLS or certificate verification")
+			return
+		}
 	}
 	if body.OIDC != nil && endpointMovesStoredSecret(h.svc.OIDC(ctx).IssuerURL, body.OIDC.IssuerURL, h.svc.OIDC(ctx).ClientSecret, body.OIDC.ClientSecret) {
 		respond.ValidationError(w, r, "re-enter the OIDC client secret when changing the issuer URL")

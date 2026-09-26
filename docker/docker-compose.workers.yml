@@ -11,8 +11,11 @@
 #   - NVIDIA Container Toolkit installed (for worker-gpu)
 #   - Docker Desktop with WSL2 backend (Windows) or nvidia-docker2 (Linux)
 #
-# Scale workers independently:
-#   docker compose -f docker/docker-compose.yml -f docker/docker-compose.workers.yml up -d --scale worker-cpu=3
+# WORKER_ADDR is both a worker's bind address and the address the API proxies
+# HLS to, so it must be routable from the server and unique per worker. That
+# rules out `--scale` on these services as written (the service name resolves
+# to every replica); to scale one, give each replica its hostname instead, as
+# the worker entrypoint in docker-compose.ha.yml does.
 
 services:
   # Override: disable the embedded worker in the server so it only dispatches.

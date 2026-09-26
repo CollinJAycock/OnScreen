@@ -11,6 +11,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/api/respond"
@@ -164,6 +165,22 @@ func (h *TasksHandler) ListTypes(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, h.registry.Types())
 }
 
+// isTaskUniqueViolation reports whether err is Postgres 23505 (unique_violation).
+// On scheduled_tasks the only unique index is uq_scheduled_tasks_enabled_type:
+// at most one ENABLED task per task_type.
+func isTaskUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
+}
+
+// respondTaskTypeConflict answers a create/update that would leave two enabled
+// tasks of the same type — an admin mistake, not a server error, so 409 with a
+// message that says how to fix it instead of a bare 500.
+func respondTaskTypeConflict(w http.ResponseWriter, r *http.Request) {
+	respond.Error(w, r, http.StatusConflict, "CONFLICT",
+		"an enabled task of this type already exists; disable or edit that task instead")
+}
+
 type createTaskRequest struct {
 	Name     string          `json:"name"`
 	TaskType string          `json:"task_type"`
@@ -212,6 +229,10 @@ func (h *TasksHandler) Create(w http.ResponseWriter, r *http.Request) {
 		NextRunAt: pgtype.Timestamptz{Time: next, Valid: true},
 	})
 	if err != nil {
+		if isTaskUniqueViolation(err) {
+			respondTaskTypeConflict(w, r)
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "tasks: create failed", "err", err)
 		respond.InternalError(w, r)
 		return
@@ -297,6 +318,10 @@ func (h *TasksHandler) Update(w http.ResponseWriter, r *http.Request) {
 
 	row, err := h.q.UpdateScheduledTask(r.Context(), params)
 	if err != nil {
+		if isTaskUniqueViolation(err) {
+			respondTaskTypeConflict(w, r)
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "tasks: update failed", "err", err)
 		respond.InternalError(w, r)
 		return

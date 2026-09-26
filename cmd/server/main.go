@@ -565,7 +565,10 @@ func run() error {
 	caaClient := coverartarchive.New()
 	metaAgent.SetAlbumCoverByMBIDFn(func() scanner.AlbumCoverByMBIDAgent { return caaClient })
 
-	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger).WithMetrics(metrics)
+	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger).WithMetrics(metrics).
+		// Admin-set missing-file grace (System settings override the env
+		// default); read per scan so a change applies without a restart.
+		WithMissingFileGrace(func() time.Duration { return cfg.MissingFileGracePeriod })
 	notifBrokerEarly := notification.NewBroker()
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
@@ -668,6 +671,8 @@ func run() error {
 		usernamePepper: secretKey,
 		// Single-use TOTP codes across instances (in-process fallback built in).
 		totpReplay: valkey.NewTOTPReplayGuard(valkeyClient),
+		// Single-use TOTP login challenges across instances (same fallback).
+		totpChallenges: valkey.NewTOTPChallengeGuard(valkeyClient),
 		// HLS segment tokens die with the session family on refresh-token theft.
 		segTokens: segTokenMgr,
 	}
@@ -782,7 +787,12 @@ func run() error {
 	// embedded-tag/cover reads degrade to online enrichment for remote sources).
 	libScanner.WithMediaStore(mediaStoreProvider)
 
+	// Last playback decision per (user, item), shared by transcode Start and
+	// StreamFile (writers) and the progress beacon (reader), so plays from
+	// clients that don't report a decision aren't charted as "unknown".
+	playDecisions := v1.NewPlayDecisionRecorder(valkeyClient, logger)
 	nativeTranscodeHandler := v1.NewNativeTranscodeHandler(sessionStore, segTokenMgr, mediaSvc, cfg, logger).
+		WithPlayDecisions(playDecisions).
 		WithLibraryAccess(libSvc).
 		WithWatchLimit(watchLimitStore).
 		WithAudit(auditLogger).
@@ -880,6 +890,7 @@ func run() error {
 		// So the progress-beacon "stopped" path retires each deleted session's
 		// segment token, the way the Stop route's tearDown does.
 		WithSegmentTokenRevoker(segTokenMgr).
+		WithPlayDecisions(playDecisions).
 		WithMarkers(intromarker.NewStore(rwPool)).
 		WithExternalSubtitles(subtitleSvc).
 		WithSubtitleCache(subtitleCacheRoot).

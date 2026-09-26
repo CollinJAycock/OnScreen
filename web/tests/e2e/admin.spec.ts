@@ -1,9 +1,10 @@
 // Admin endpoint smoke — covers two operator-facing surfaces that
 // historically have no automated coverage and tend to silently break:
 //
-//   1. /api/v1/admin/backup — must either return a real ZIP or, when
-//      pg_dump is unavailable on the host, a structured 503 with the
-//      explicit PG_DUMP_UNAVAILABLE error code (NOT a blank 500).
+//   1. /api/v1/admin/backup — must either return a real pg_dump
+//      custom-format archive or, when pg_dump is unavailable on the
+//      host, a structured 503 with the explicit PG_DUMP_UNAVAILABLE
+//      error code (NOT a blank 500).
 //      Backups are the kind of thing nobody notices is broken until
 //      they actually need them.
 //
@@ -25,7 +26,7 @@ const login = adminToken;
 test.describe('Admin — backup endpoint', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run admin backup specs');
 
-  test('GET /api/v1/admin/backup returns a ZIP, or a clean 503 when pg_dump is missing', async ({
+  test('GET /api/v1/admin/backup returns a pg_dump archive, or a clean 503 when pg_dump is missing', async ({
     request,
   }) => {
     const token = await login(request);
@@ -35,16 +36,16 @@ test.describe('Admin — backup endpoint', () => {
     });
 
     if (r.status() === 200) {
-      // Happy path: actual ZIP bytes. Verify magic + non-trivial size.
+      // Happy path: a pg_dump --format=custom archive (what restore
+      // feeds to pg_restore). Verify magic + non-trivial size.
       const body = await r.body();
       expect(body.length, 'backup must be non-empty').toBeGreaterThan(100);
-      // ZIP local-file header magic: 50 4B 03 04 ("PK\x03\x04").
-      const magic = body.subarray(0, 4).toString('hex');
-      expect(magic, `expected ZIP magic 504b0304, got ${magic}`).toBe('504b0304');
-      // Some indication of content-type matching the bytes (operators
-      // expect to be able to save the response straight to .zip).
+      // Custom-format archive magic: "PGDMP" (50 47 44 4D 50).
+      const magic = body.subarray(0, 5).toString('hex');
+      expect(magic, `expected pg_dump magic 5047444d50 (PGDMP), got ${magic}`).toBe('5047444d50');
+      // The server serves it as an opaque .dump download.
       const ct = r.headers()['content-type'] ?? '';
-      expect.soft(ct, `unexpected content-type for backup: ${ct}`).toMatch(/zip|octet-stream/i);
+      expect.soft(ct, `unexpected content-type for backup: ${ct}`).toMatch(/octet-stream/i);
     } else if (r.status() === 503) {
       // pg_dump missing path: the error must be SHAPED, not a blank
       // 500. This catches the regression where the unavailable case
@@ -62,7 +63,7 @@ test.describe('Admin — backup endpoint', () => {
       );
     } else {
       throw new Error(
-        `backup endpoint must return 200 (ZIP) or 503 (PG_DUMP_UNAVAILABLE); got ${r.status()}: ${await r.text()}`,
+        `backup endpoint must return 200 (pg_dump archive) or 503 (PG_DUMP_UNAVAILABLE); got ${r.status()}: ${await r.text()}`,
       );
     }
   });
