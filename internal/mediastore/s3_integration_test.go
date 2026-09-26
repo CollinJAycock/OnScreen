@@ -28,11 +28,13 @@ func startMinIO(t *testing.T) (endpoint, access, secret string) {
 	ctx := context.Background()
 	const user, pass = "onscreentest", "onscreentestsecret"
 
-	// Pulled from quay.io, not Docker Hub: MinIO withdrew docker.io/minio/minio
-	// in Sept 2026 (the repository 404s and anonymous pulls are denied), which
-	// turned this test red on CI without any change here. quay.io/minio/minio is
-	// MinIO's own public registry and carries the identical tag.
-	container, err := tcminio.Run(ctx, "quay.io/minio/minio:RELEASE.2024-01-16T16-07-38Z",
+	// Chainguard's public build of the MinIO server, not MinIO's own images:
+	// MinIO withdrew docker.io/minio/minio and then closed quay.io/minio/minio
+	// to anonymous pulls too (401 from Sept 2026), each time turning this test
+	// red on CI with no change here. Chainguard's free tier only guarantees the
+	// floating :latest tag, which is fine for the handful of basic S3 calls this
+	// test makes; the testcontainers module still supplies `server /data`.
+	container, err := tcminio.Run(ctx, "cgr.dev/chainguard/minio:latest",
 		tcminio.WithUsername(user), tcminio.WithPassword(pass))
 	if err != nil {
 		t.Fatalf("start minio: %v", err)
