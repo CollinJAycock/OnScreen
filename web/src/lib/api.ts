@@ -2646,3 +2646,50 @@ export const arrServicesApi = {
     api.post<ArrService>(`/admin/arr-services/${id}/set-default`, {}),
   probe: (body: ArrProbeBody) => api.post<ArrProbeResult>('/admin/arr-services/probe', body),
 };
+
+// ── Upcoming (arr calendar) ──────────────────────────────────────────────────
+
+export type UpcomingKind = 'movie' | 'episode';
+export type UpcomingReleaseType = 'cinema' | 'digital' | 'physical' | 'airing';
+// downloaded = has a file; missing = date passed with no file; upcoming = still ahead.
+export type UpcomingStatus = 'downloaded' | 'missing' | 'upcoming';
+
+export interface UpcomingItem {
+  id: string;                        // "radarr:<serviceId>:<movieId>:digital" etc. — unique per entry
+  kind: UpcomingKind;
+  title: string;                     // movie title, or the series title for episodes
+  subtitle: string;                  // episodes: "S02E05 · Episode Title"; movies: ""
+  release_type: UpcomingReleaseType;
+  date: string;                      // RFC3339 UTC
+  all_day: boolean;                  // true = a release DATE (UTC day); false = an air time (local day)
+  status: UpcomingStatus;
+  poster_url: string | null;         // https only
+  year: number | null;
+  overview: string;
+  certification: string;
+  network: string;                   // episodes only
+  service: string;                   // the arr service's display name
+  item_id: string | null;            // the movie / show already in OnScreen, when matched
+}
+
+export interface UpcomingService {
+  name: string;
+  kind: ArrServiceKind;
+  ok: boolean;
+  error: string;                     // short generic message when !ok
+}
+
+export interface UpcomingResponse {
+  from: string;                      // YYYY-MM-DD
+  to: string;                        // YYYY-MM-DD
+  items: UpcomingItem[];             // sorted by date, then title
+  services: UpcomingService[];       // one per enabled service; empty when none configured
+}
+
+export const upcomingApi = {
+  // from / to are inclusive YYYY-MM-DD calendar days; the server caps the span at 62 days.
+  get: (from: string, to: string) =>
+    api.get<UpcomingResponse>(
+      `/upcoming?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+    ),
+};

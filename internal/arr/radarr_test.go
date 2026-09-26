@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestLookupMovieByTMDB_PrefersExactIDMatch(t *testing.T) {
@@ -115,5 +116,79 @@ func TestAddMovie_ConflictBubblesErrConflict(t *testing.T) {
 	_, err := newTestClient(srv, "k").AddMovie(context.Background(), AddMovieRequest{TMDBID: 603})
 	if !errors.Is(err, ErrConflict) {
 		t.Errorf("got %v, want ErrConflict", err)
+	}
+}
+
+func TestRadarrCalendar_QueryAndDecode(t *testing.T) {
+	// The request must carry the window as UTC RFC3339 plus
+	// unmonitored=false, and every release date must decode — Radarr sends
+	// full timestamps, and an absent date arrives as null.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/calendar" {
+			t.Errorf("path = %q, want /api/v3/calendar", r.URL.Path)
+		}
+		if got := r.Header.Get("X-Api-Key"); got != "k" {
+			t.Errorf("X-Api-Key = %q", got)
+		}
+		q := r.URL.Query()
+		if q.Get("start") != "2026-09-26T00:00:00Z" || q.Get("end") != "2026-10-27T00:00:00Z" {
+			t.Errorf("window = %q..%q", q.Get("start"), q.Get("end"))
+		}
+		if q.Get("unmonitored") != "false" {
+			t.Errorf("unmonitored = %q, want false", q.Get("unmonitored"))
+		}
+		_, _ = io.WriteString(w, `[{
+			"id": 12, "title": "Brand New Day", "year": 2026, "tmdbId": 969681,
+			"overview": "Peter is back.",
+			"inCinemas": "2026-07-31T00:00:00Z",
+			"digitalRelease": "2026-09-28T00:00:00Z",
+			"physicalRelease": null,
+			"hasFile": false, "monitored": true, "certification": "PG-13",
+			"images": [{"coverType": "poster", "url": "/MediaCover/12/poster.jpg", "remoteUrl": "https://image.tmdb.org/p.jpg"}],
+			"path": "/movies/Brand New Day (2026)"
+		}]`)
+	}))
+	defer srv.Close()
+
+	start := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	// A non-UTC end must still be sent as UTC.
+	end := time.Date(2026, 10, 27, 2, 0, 0, 0, time.FixedZone("CEST", 2*3600))
+	got, err := newTestClient(srv, "k").RadarrCalendar(context.Background(), start, end)
+	if err != nil {
+		t.Fatalf("RadarrCalendar: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d movies, want 1", len(got))
+	}
+	m := got[0]
+	if m.ID != 12 || m.TMDBID != 969681 || m.Year != 2026 || m.Certification != "PG-13" || m.HasFile || !m.Monitored {
+		t.Errorf("movie = %+v", m)
+	}
+	if want := time.Date(2026, 7, 31, 0, 0, 0, 0, time.UTC); !m.InCinemas.Equal(want) {
+		t.Errorf("inCinemas = %v, want %v", m.InCinemas, want)
+	}
+	if want := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC); !m.DigitalRelease.Equal(want) {
+		t.Errorf("digitalRelease = %v, want %v", m.DigitalRelease, want)
+	}
+	if !m.PhysicalRelease.IsZero() {
+		t.Errorf("physicalRelease = %v, want zero for null", m.PhysicalRelease)
+	}
+	if len(m.Images) != 1 || m.Images[0].RemoteURL != "https://image.tmdb.org/p.jpg" {
+		t.Errorf("images = %+v", m.Images)
+	}
+	if m.Path != "/movies/Brand New Day (2026)" {
+		t.Errorf("path = %q", m.Path)
+	}
+}
+
+func TestRadarrCalendar_UnauthorizedIsTyped(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	_, err := newTestClient(srv, "bad").RadarrCalendar(context.Background(), time.Now(), time.Now())
+	if !errors.Is(err, ErrUnauthorized) {
+		t.Errorf("got %v, want ErrUnauthorized", err)
 	}
 }

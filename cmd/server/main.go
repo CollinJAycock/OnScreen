@@ -1188,6 +1188,10 @@ func run() error {
 		// so Discover can't answer "does this title exist on the server" for
 		// content the caller has no other way to see.
 		WithAccess(libSvc)
+	// Upcoming calendar: fans out to the same arr_services, filtered per
+	// caller by rating ceiling and by the library each *arr folder maps into.
+	upcomingHandler := v1.NewUpcomingHandler(gen.New(roPool), libSvc, libSvc, settingsSvc, logger).
+		WithEncryptor(encryptor)
 	// Back-fill the scan enqueuer so post-scan goroutines can settle
 	// any media-requests whose download just landed, and let the arr
 	// webhook also fire a reconcile on Download events.
@@ -1377,6 +1381,7 @@ func run() error {
 		ArrServices:     arrServicesHandler,
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
+		Upcoming:        upcomingHandler,
 		Favorites:       favoritesHandler,
 		StreamTracker:   streamTracker,
 		Artwork:         artworkMgr,

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // SeriesLookup is the subset of Sonarr's /api/v3/series/lookup result we need
@@ -132,4 +133,47 @@ func (c *Client) AddSeries(ctx context.Context, req AddSeriesRequest) (*AddSerie
 		return nil, err
 	}
 	return &out, nil
+}
+
+// CalendarEpisode is the subset of a Sonarr /api/v3/calendar row the Upcoming
+// view needs. Series is populated because the request asks for
+// includeSeries=true; it is a pointer so a Sonarr build that ignores the flag
+// decodes to nil rather than to a zero-valued series with an empty title.
+type CalendarEpisode struct {
+	ID            int             `json:"id"`
+	SeriesID      int             `json:"seriesId"`
+	SeasonNumber  int             `json:"seasonNumber"`
+	EpisodeNumber int             `json:"episodeNumber"`
+	Title         string          `json:"title"`
+	AirDateUTC    Timestamp       `json:"airDateUtc"`
+	HasFile       bool            `json:"hasFile"`
+	Monitored     bool            `json:"monitored"`
+	Overview      string          `json:"overview"`
+	Series        *CalendarSeries `json:"series"`
+}
+
+// CalendarSeries is the series block Sonarr embeds in a calendar row. TMDBID
+// is only populated by Sonarr v4+. Path is Sonarr's own view of the series
+// folder — a remote path until mapped through arr_path_mappings.
+type CalendarSeries struct {
+	Title         string       `json:"title"`
+	Year          int          `json:"year"`
+	TMDBID        int          `json:"tmdbId"`
+	TVDBID        int          `json:"tvdbId"`
+	Certification string       `json:"certification"`
+	Network       string       `json:"network"`
+	Images        []MovieImage `json:"images"`
+	Path          string       `json:"path"`
+}
+
+// SonarrCalendar calls /api/v3/calendar for monitored episodes airing between
+// start and end, with each row's series embedded.
+func (c *Client) SonarrCalendar(ctx context.Context, start, end time.Time) ([]CalendarEpisode, error) {
+	q := calendarQuery(start, end)
+	q.Set("includeSeries", "true")
+	var out []CalendarEpisode
+	if err := c.do(ctx, http.MethodGet, "/api/v3/calendar", q, nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }

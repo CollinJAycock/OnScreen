@@ -9,12 +9,14 @@
     type RequestStatus,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import Upcoming from './Upcoming.svelte';
 
   // Discover used to live here as a third tab; it's now folded into /search
   // (search results show library hits + a "Request" section for TMDB
-  // matches in one pass), so this page is just for managing existing
-  // requests and the admin approval queue.
-  type Tab = 'mine' | 'queue';
+  // matches in one pass), so this page is for managing existing requests,
+  // seeing what Radarr / Sonarr expect to arrive (Upcoming, everyone) and
+  // the admin approval queue.
+  type Tab = 'mine' | 'upcoming' | 'queue';
 
   let ready = false;
   let isAdmin = false;
@@ -163,6 +165,9 @@
     <button class="tab" class:active={activeTab === 'mine'} on:click={() => { activeTab = 'mine'; loadMine(); }}>
       My Requests
     </button>
+    <button class="tab" class:active={activeTab === 'upcoming'} on:click={() => { activeTab = 'upcoming'; }}>
+      Upcoming
+    </button>
     {#if isAdmin}
       <button class="tab" class:active={activeTab === 'queue'} on:click={() => { activeTab = 'queue'; loadQueue(); }}>
         Queue
@@ -225,6 +230,10 @@
         </div>
       {/each}
     {/if}
+  {/if}
+
+  {#if activeTab === 'upcoming'}
+    <Upcoming {isAdmin} />
   {/if}
 
   {#if activeTab === 'queue' && isAdmin}
@@ -449,6 +458,9 @@
 
   @media (max-width: 600px) {
     .page { padding: 1.25rem 1rem 3rem; }
+    /* Three tabs leave no room for the hint beside them — lift it above. */
+    .tabs { flex-wrap: wrap; }
+    .hint { order: -1; flex-basis: 100%; margin-left: 0; }
     .row { flex-direction: column; }
     .row-poster { width: 80px; }
     .row-actions { flex-direction: row; min-width: 0; }

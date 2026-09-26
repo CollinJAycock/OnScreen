@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 func TestLookupSeriesByTVDB_ExactIDMatchWins(t *testing.T) {
@@ -145,5 +146,70 @@ func TestAddSeries_PostsRequest(t *testing.T) {
 	}
 	if got.TVDBID != 371980 || len(got.Seasons) != 1 || got.AddOptions.Monitor != "all" {
 		t.Errorf("body posted to upstream = %+v", got)
+	}
+}
+
+func TestSonarrCalendar_QueryAndDecode(t *testing.T) {
+	// includeSeries=true is what makes the series block (title, path,
+	// certification, network, images) come back on every row.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/v3/calendar" {
+			t.Errorf("path = %q, want /api/v3/calendar", r.URL.Path)
+		}
+		q := r.URL.Query()
+		if q.Get("start") != "2026-09-26T00:00:00Z" || q.Get("end") != "2026-10-27T00:00:00Z" {
+			t.Errorf("window = %q..%q", q.Get("start"), q.Get("end"))
+		}
+		if q.Get("unmonitored") != "false" || q.Get("includeSeries") != "true" {
+			t.Errorf("unmonitored=%q includeSeries=%q", q.Get("unmonitored"), q.Get("includeSeries"))
+		}
+		_, _ = io.WriteString(w, `[{
+			"id": 501, "seriesId": 7, "seasonNumber": 2, "episodeNumber": 5,
+			"title": "The Long Night", "airDateUtc": "2026-09-28T01:00:00Z",
+			"hasFile": true, "monitored": true, "overview": "Winter.",
+			"series": {
+				"title": "The Show", "year": 2024, "tmdbId": 1399, "tvdbId": 121361,
+				"certification": "TV-MA", "network": "HBO",
+				"images": [{"coverType": "poster", "remoteUrl": "https://artworks.thetvdb.com/p.jpg"}],
+				"path": "/tv/The Show"
+			}
+		},{
+			"id": 502, "seriesId": 7, "seasonNumber": 2, "episodeNumber": 6,
+			"title": "", "airDateUtc": "2026-10-05T01:00:00.0000000",
+			"hasFile": false, "monitored": true
+		}]`)
+	}))
+	defer srv.Close()
+
+	start := time.Date(2026, 9, 26, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2026, 10, 27, 0, 0, 0, 0, time.UTC)
+	got, err := newTestClient(srv, "k").SonarrCalendar(context.Background(), start, end)
+	if err != nil {
+		t.Fatalf("SonarrCalendar: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d episodes, want 2", len(got))
+	}
+	e := got[0]
+	if e.ID != 501 || e.SeasonNumber != 2 || e.EpisodeNumber != 5 || !e.HasFile || e.Title != "The Long Night" {
+		t.Errorf("episode = %+v", e)
+	}
+	if want := time.Date(2026, 9, 28, 1, 0, 0, 0, time.UTC); !e.AirDateUTC.Equal(want) {
+		t.Errorf("airDateUtc = %v, want %v", e.AirDateUTC, want)
+	}
+	if e.Series == nil {
+		t.Fatal("series block not decoded")
+	}
+	if e.Series.Title != "The Show" || e.Series.TMDBID != 1399 || e.Series.TVDBID != 121361 ||
+		e.Series.Certification != "TV-MA" || e.Series.Network != "HBO" || e.Series.Path != "/tv/The Show" {
+		t.Errorf("series = %+v", e.Series)
+	}
+	// A zone-less .NET timestamp is read as UTC; a row without a series
+	// block decodes to nil rather than an empty series.
+	if want := time.Date(2026, 10, 5, 1, 0, 0, 0, time.UTC); !got[1].AirDateUTC.Equal(want) {
+		t.Errorf("zone-less airDateUtc = %v, want %v", got[1].AirDateUTC, want)
+	}
+	if got[1].Series != nil {
+		t.Errorf("series = %+v, want nil when absent", got[1].Series)
 	}
 }

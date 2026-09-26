@@ -97,6 +97,7 @@ type Handlers struct {
 	ArrServices     *v1.ArrServicesHandler // outbound arr instance CRUD (admin)
 	Requests        *v1.RequestHandler     // user + admin request workflow
 	Discover        *v1.DiscoverHandler    // TMDB-backed search for the request UI
+	Upcoming        *v1.UpcomingHandler    // Radarr/Sonarr calendar for the request UI
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
@@ -909,6 +910,13 @@ func NewRouter(h *Handlers) http.Handler {
 				r.With(middleware.RateLimit(h.RateLimiter, middleware.DiscoverLimit,
 					middleware.SessionKey("ratelimit:discover"))).
 					Get("/discover/search", h.Discover.Search)
+			}
+
+			// Upcoming — what the enabled Radarr/Sonarr instances expect to
+			// arrive. Open to every user; the handler filters per caller and
+			// caches the upstream fan-out, so SessionLimit is enough.
+			if h.Upcoming != nil {
+				r.Get("/upcoming", h.Upcoming.Get)
 			}
 
 			// Media requests — user-facing workflow + admin queue actions.

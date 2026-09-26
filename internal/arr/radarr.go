@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // MovieLookup is the subset of Radarr's /api/v3/movie/lookup result we need
@@ -88,4 +89,35 @@ func (c *Client) AddMovie(ctx context.Context, req AddMovieRequest) (*AddMovieRe
 		return nil, err
 	}
 	return &out, nil
+}
+
+// CalendarMovie is the subset of a Radarr /api/v3/calendar row the Upcoming
+// view needs. A movie carries up to three release dates; Radarr returns it
+// when ANY of them falls inside the requested window, so callers must check
+// each date against the window themselves. Path is Radarr's own view of the
+// movie folder — a remote path until mapped through arr_path_mappings.
+type CalendarMovie struct {
+	ID              int          `json:"id"`
+	Title           string       `json:"title"`
+	Year            int          `json:"year"`
+	TMDBID          int          `json:"tmdbId"`
+	Overview        string       `json:"overview"`
+	InCinemas       Timestamp    `json:"inCinemas"`
+	DigitalRelease  Timestamp    `json:"digitalRelease"`
+	PhysicalRelease Timestamp    `json:"physicalRelease"`
+	HasFile         bool         `json:"hasFile"`
+	Monitored       bool         `json:"monitored"`
+	Certification   string       `json:"certification"`
+	Images          []MovieImage `json:"images"`
+	Path            string       `json:"path"`
+}
+
+// RadarrCalendar calls /api/v3/calendar for monitored movies with a cinema,
+// digital or physical release date between start and end.
+func (c *Client) RadarrCalendar(ctx context.Context, start, end time.Time) ([]CalendarMovie, error) {
+	var out []CalendarMovie
+	if err := c.do(ctx, http.MethodGet, "/api/v3/calendar", calendarQuery(start, end), nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
