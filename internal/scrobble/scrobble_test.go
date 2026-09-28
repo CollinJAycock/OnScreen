@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -552,6 +553,48 @@ func TestLink_NotConfigured(t *testing.T) {
 	}
 	if st, _ := h.svc.Status(ctx, h.user); st.LastFMAvailable || st.TraktAvailable {
 		t.Errorf("nothing configured must report unavailable: %+v", st)
+	}
+}
+
+// A wrong key or secret is the operator's to fix, not a network fault: it
+// comes back as ErrAppRejected. Other service errors don't.
+func TestLink_RejectedAppCredentials(t *testing.T) {
+	ctx := context.Background()
+	lastFMError := func(code int) func(http.ResponseWriter, req) {
+		return func(w http.ResponseWriter, _ req) {
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = io.WriteString(w, `{"error":`+strconv.Itoa(code)+`,"message":"nope"}`)
+		}
+	}
+	h := newHarness(t, Settings{}, fakeMedia{}, bothApps)
+
+	for _, code := range []int{10, 13, 26} {
+		h.srv.handle("auth.getToken", lastFMError(code))
+		if _, err := h.svc.StartLastFMLink(ctx, h.user); !errors.Is(err, ErrAppRejected) {
+			t.Errorf("last.fm error %d: got %v, want ErrAppRejected", code, err)
+		}
+	}
+	h.srv.handle("auth.getToken", lastFMError(11)) // service offline
+	if _, err := h.svc.StartLastFMLink(ctx, h.user); err == nil || errors.Is(err, ErrAppRejected) {
+		t.Errorf("last.fm error 11: got %v, want a plain upstream error", err)
+	}
+
+	h.srv.handle("auth.getToken", nil)
+	start, _ := h.svc.StartLastFMLink(ctx, h.user)
+	h.srv.handle("auth.getSession", lastFMError(13))
+	if _, err := h.svc.CompleteLastFMLink(ctx, h.user, start.Pending); !errors.Is(err, ErrAppRejected) {
+		t.Errorf("bad signature on complete: got %v", err)
+	}
+
+	h.srv.handle("/oauth/device/code", func(w http.ResponseWriter, _ req) { w.WriteHeader(http.StatusUnauthorized) })
+	if _, err := h.svc.StartTraktLink(ctx, h.user); !errors.Is(err, ErrAppRejected) {
+		t.Errorf("trakt 401: got %v", err)
+	}
+	h.srv.handle("/oauth/device/code", nil)
+	tstart, _ := h.svc.StartTraktLink(ctx, h.user)
+	h.srv.handle("/oauth/device/token", func(w http.ResponseWriter, _ req) { w.WriteHeader(http.StatusForbidden) })
+	if _, err := h.svc.CompleteTraktLink(ctx, h.user, tstart.Pending); !errors.Is(err, ErrAppRejected) {
+		t.Errorf("trakt 403 on complete: got %v", err)
 	}
 }
 

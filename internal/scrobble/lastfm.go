@@ -51,9 +51,25 @@ func (e *lastFMError) Error() string { return fmt.Sprintf("last.fm error %d: %s"
 // Last.fm error codes the link flow tells apart.
 const (
 	lastFMErrInvalidToken   = 4  // unknown or malformed token
+	lastFMErrInvalidAPIKey  = 10 // the operator's API key
+	lastFMErrBadSignature   = 13 // signed with the wrong shared secret
 	lastFMErrTokenNotAuthed = 14 // the user hasn't approved it yet
 	lastFMErrTokenExpired   = 15
+	lastFMErrSuspendedKey   = 26
 )
+
+// lastFMLinkErr wraps a failed link call, marking a rejection of the
+// operator's credentials as ErrAppRejected.
+func lastFMLinkErr(call string, err error) error {
+	var apiErr *lastFMError
+	if errors.As(err, &apiErr) {
+		switch apiErr.Code {
+		case lastFMErrInvalidAPIKey, lastFMErrBadSignature, lastFMErrSuspendedKey:
+			return fmt.Errorf("last.fm %s: %w: %w", call, ErrAppRejected, err)
+		}
+	}
+	return fmt.Errorf("last.fm %s: %w", call, err)
+}
 
 // lastFMSign computes api_sig: the MD5 of every parameter except format and
 // callback, sorted by name and concatenated as name+value, followed by the
@@ -192,7 +208,7 @@ func (s *Service) StartLastFMLink(ctx context.Context, userID uuid.UUID) (LastFM
 		Token string `json:"token"`
 	}
 	if err := s.lastFMCall(ctx, app, url.Values{"method": {"auth.getToken"}}, &out); err != nil {
-		return LastFMLinkStart{}, fmt.Errorf("last.fm auth.getToken: %w", err)
+		return LastFMLinkStart{}, lastFMLinkErr("auth.getToken", err)
 	}
 	if out.Token == "" {
 		return LastFMLinkStart{}, errors.New("last.fm auth.getToken: empty token")
@@ -234,7 +250,7 @@ func (s *Service) CompleteLastFMLink(ctx context.Context, userID uuid.UUID, pend
 	case errors.As(err, &apiErr) && (apiErr.Code == lastFMErrTokenExpired || apiErr.Code == lastFMErrInvalidToken):
 		return LinkResult{Status: LinkExpired}, nil
 	case err != nil:
-		return LinkResult{}, fmt.Errorf("last.fm auth.getSession: %w", err)
+		return LinkResult{}, lastFMLinkErr("auth.getSession", err)
 	}
 	if out.Session.Key == "" {
 		return LinkResult{}, errors.New("last.fm auth.getSession: empty session key")

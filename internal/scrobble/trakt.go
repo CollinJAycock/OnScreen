@@ -126,6 +126,9 @@ func (s *Service) StartTraktLink(ctx context.Context, userID uuid.UUID) (TraktLi
 	if err != nil {
 		return TraktLinkStart{}, fmt.Errorf("trakt device code: %w", err)
 	}
+	if status == http.StatusUnauthorized || status == http.StatusForbidden {
+		return TraktLinkStart{}, fmt.Errorf("trakt device code: %w (status %d)", ErrAppRejected, status)
+	}
 	if status != http.StatusOK || dc.DeviceCode == "" {
 		return TraktLinkStart{}, fmt.Errorf("trakt device code: status %d", status)
 	}
@@ -180,6 +183,8 @@ func (s *Service) CompleteTraktLink(ctx context.Context, userID uuid.UUID, pendi
 		return LinkResult{Status: LinkExpired}, nil
 	case http.StatusTeapot: // 418: the user denied the code
 		return LinkResult{Status: LinkDenied}, nil
+	case http.StatusUnauthorized, http.StatusForbidden: // the client id / secret
+		return LinkResult{}, fmt.Errorf("trakt device token: %w (status %d)", ErrAppRejected, status)
 	default:
 		return LinkResult{}, fmt.Errorf("trakt device token: status %d", status)
 	}

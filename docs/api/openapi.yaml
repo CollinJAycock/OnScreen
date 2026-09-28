@@ -2551,7 +2551,7 @@ paths:
                       auth_url: { type: string }
                       pending: { type: string }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED: no Last.fm API account on this server.' }
-        '502': { description: 'SCROBBLE_UPSTREAM: Last.fm could not be reached.' }
+        '502': { description: 'SCROBBLE_APP_REJECTED: Last.fm refused the API account; SCROBBLE_UPSTREAM: Last.fm could not be reached.' }
 
   /api/v1/users/me/scrobble/lastfm/link/complete:
     post:
@@ -2573,7 +2573,7 @@ paths:
                   data: { $ref: '#/components/schemas/ScrobbleLinkResult' }
         '400': { description: Missing or invalid pending handle. }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED' }
-        '502': { description: 'SCROBBLE_UPSTREAM' }
+        '502': { description: 'SCROBBLE_APP_REJECTED or SCROBBLE_UPSTREAM' }
 
   /api/v1/users/me/scrobble/lastfm:
     delete:
@@ -2609,7 +2609,7 @@ paths:
                       interval: { type: integer }
                       pending: { type: string }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED: no Trakt app on this server.' }
-        '502': { description: 'SCROBBLE_UPSTREAM: Trakt could not be reached.' }
+        '502': { description: 'SCROBBLE_APP_REJECTED: Trakt refused the app credentials; SCROBBLE_UPSTREAM: Trakt could not be reached.' }
 
   /api/v1/users/me/scrobble/trakt/link/complete:
     post:
@@ -2631,7 +2631,7 @@ paths:
                   data: { $ref: '#/components/schemas/ScrobbleLinkResult' }
         '400': { description: Missing or invalid pending handle. }
         '409': { description: 'SCROBBLE_NOT_CONFIGURED' }
-        '502': { description: 'SCROBBLE_UPSTREAM' }
+        '502': { description: 'SCROBBLE_APP_REJECTED or SCROBBLE_UPSTREAM' }
 
   /api/v1/users/me/scrobble/trakt:
     delete:

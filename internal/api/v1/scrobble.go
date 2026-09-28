@@ -200,6 +200,12 @@ func (h *ScrobbleHandler) linkError(w http.ResponseWriter, r *http.Request, serv
 			service+" isn't set up on this server; an admin adds its API credentials in Settings")
 	case errors.Is(err, scrobble.ErrInvalidPending):
 		respond.BadRequest(w, r, "invalid link request; start again")
+	case errors.Is(err, scrobble.ErrAppRejected):
+		if h.logger != nil {
+			h.logger.WarnContext(r.Context(), "scrobble link: app credentials rejected", "service", service, "err", err)
+		}
+		respond.Error(w, r, http.StatusBadGateway, "SCROBBLE_APP_REJECTED",
+			service+" rejected this server's API credentials; an admin should check them in Settings")
 	default:
 		if h.logger != nil {
 			h.logger.WarnContext(r.Context(), "scrobble link", "service", service, "err", err)

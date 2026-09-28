@@ -63,6 +63,7 @@ reusing a generic one.
 | Code | HTTP | Meaning |
 |---|---|---|
 | `SCROBBLE_NOT_CONFIGURED` | 409 | Last.fm / Trakt link attempted, but the admin hasn't entered that service's API credentials. |
+| `SCROBBLE_APP_REJECTED` | 502 | Last.fm / Trakt turned down the server's API credentials (wrong key or secret, unknown client); an admin fixes them in Settings. |
 | `SCROBBLE_UPSTREAM` | 502 | Last.fm / Trakt couldn't be reached, or answered unexpectedly, during a link. |
 
 ## Contract guarantees

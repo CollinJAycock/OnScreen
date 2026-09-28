@@ -21,6 +21,11 @@ import (
 // credentials, so no user can link it.
 var ErrNotConfigured = errors.New("scrobble: service not configured")
 
+// ErrAppRejected means the service turned down the operator's API
+// credentials (a mistyped Last.fm key or secret, an unknown Trakt client),
+// so no user can link until an admin fixes them in Settings.
+var ErrAppRejected = errors.New("scrobble: service rejected the server's API credentials")
+
 // ErrInvalidPending means a pending handle didn't open: tampered with, from
 // another user, or sealed under a since-rotated server key.
 var ErrInvalidPending = errors.New("scrobble: invalid link handle")

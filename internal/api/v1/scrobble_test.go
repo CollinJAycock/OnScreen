@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -306,6 +307,7 @@ func TestScrobble_LinkErrors(t *testing.T) {
 	}{
 		{scrobble.ErrNotConfigured, http.StatusConflict},
 		{scrobble.ErrInvalidPending, http.StatusBadRequest},
+		{fmt.Errorf("last.fm: %w", scrobble.ErrAppRejected), http.StatusBadGateway},
 		{errors.New("last.fm is down"), http.StatusBadGateway},
 	} {
 		h := NewScrobbleHandler(&mockScrobbleStore{linkErr: tc.err}, nil)
@@ -371,5 +373,21 @@ func TestScrobble_Unlink(t *testing.T) {
 	}
 	if strings.Join(store.unlinked, ",") != "lastfm,trakt" {
 		t.Errorf("unlinked: %v", store.unlinked)
+	}
+}
+
+// Rejected app credentials get their own code, so the page can point at the
+// admin's settings instead of the network.
+func TestScrobble_RejectedAppCredentialsHaveTheirOwnCode(t *testing.T) {
+	for err, code := range map[error]string{
+		fmt.Errorf("x: %w", scrobble.ErrAppRejected): "SCROBBLE_APP_REJECTED",
+		errors.New("timeout"):                        "SCROBBLE_UPSTREAM",
+	} {
+		rec := httptest.NewRecorder()
+		NewScrobbleHandler(&mockScrobbleStore{linkErr: err}, nil).
+			StartTraktLink(rec, scrobbleReq(http.MethodPost, "/api/v1/users/me/scrobble/trakt/link", uuid.New(), ""))
+		if !strings.Contains(rec.Body.String(), `"`+code+`"`) {
+			t.Errorf("%v: body %s, want code %s", err, rec.Body.String(), code)
+		}
 	}
 }
