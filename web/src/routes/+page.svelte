@@ -5,6 +5,7 @@
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
   import { nextUpSubtitle, removeById, restoreAt } from '$lib/watchState';
+  import { libraryGridHref } from '$lib/musicBrowse';
 
   let libraries: Library[] = [];
   let continueTV: HubItem[] = [];
@@ -40,6 +41,7 @@
     // tiles are episodes labelled show title + "S2 · E5 — Title".
     kind: 'continue' | 'plain' | 'library' | 'libraries' | 'next_up';
     libraryId?: string;
+    libraryType?: string;
     librarySquare?: boolean;
   };
 
@@ -57,6 +59,7 @@
       items: row.items,
       kind: 'library',
       libraryId: row.library_id,
+      libraryType: row.library_type,
       librarySquare: isSquareLibrary(row.library_type),
     })),
     // The library-tile grid participates in ordering too, so it can be
@@ -460,7 +463,8 @@
         <section class="hub-section">
           {#if section.kind === 'library'}
             <h2 class="hub-title">
-              <a class="hub-title-link" href={`/libraries/${section.libraryId}?sort=created_at&sort_dir=desc`}>
+              <!-- A music library's Recently Added row is albums: open its albums view. -->
+              <a class="hub-title-link" href={libraryGridHref(section.libraryId ?? '', section.libraryType, { sort: 'created_at', sort_dir: 'desc' })}>
                 {section.title}
               </a>
             </h2>

@@ -109,6 +109,8 @@ type mockMediaLister struct {
 	// test can distinguish "passed nil" from "never called".
 	gotFacetRank    *int
 	gotFacetRankSet bool
+	// gotFacetType is the item type the genre/year facet counted.
+	gotFacetType string
 }
 
 func (m *mockMediaLister) ListItems(_ context.Context, _ uuid.UUID, t string, _, _ int32) ([]media.Item, error) {
@@ -134,12 +136,12 @@ func (m *mockMediaLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ s
 func (m *mockMediaLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
 }
-func (m *mockMediaLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, rank *int) ([]media.GenreCount, error) {
-	m.gotFacetRank, m.gotFacetRankSet = rank, true
+func (m *mockMediaLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, t string, rank *int) ([]media.GenreCount, error) {
+	m.gotFacetRank, m.gotFacetRankSet, m.gotFacetType = rank, true, t
 	return nil, nil
 }
-func (m *mockMediaLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, rank *int) ([]media.YearCount, error) {
-	m.gotFacetRank, m.gotFacetRankSet = rank, true
+func (m *mockMediaLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, t string, rank *int) ([]media.YearCount, error) {
+	m.gotFacetRank, m.gotFacetRankSet, m.gotFacetType = rank, true, t
 	return nil, nil
 }
 func (m *mockMediaLister) ListEventCollectionsForLibrary(_ context.Context, _ uuid.UUID) ([]media.EventCollection, error) {
@@ -716,5 +718,116 @@ func TestLibrary_Facets_UnrestrictedCallerPassesNil(t *testing.T) {
 	}
 	if ml.gotFacetRank != nil {
 		t.Errorf("unrestricted caller got rank %d, want nil", *ml.gotFacetRank)
+	}
+}
+
+// ── facet item type ──────────────────────────────────────────────────────────
+
+// A music library's genres and years live on its albums (read from the files'
+// tags); the root artist rows carry neither. `?type=album` points the facets
+// there, through the same per-library allow-list as the listing, while a
+// plain request keeps counting the root type as existing clients expect.
+func TestLibrary_Facets_TypeParam(t *testing.T) {
+	facets := map[string]func(*LibraryHandler, http.ResponseWriter, *http.Request){
+		"genres": (*LibraryHandler).Genres,
+		"years":  (*LibraryHandler).Years,
+	}
+	cases := []struct {
+		target   string
+		wantCode int
+		wantType string
+	}{
+		{"/", http.StatusOK, "artist"},
+		{"/?type=album", http.StatusOK, "album"},
+		{"/?type=movie", http.StatusBadRequest, ""},
+	}
+	for name, call := range facets {
+		for _, c := range cases {
+			t.Run(name+c.target, func(t *testing.T) {
+				libID := uuid.New()
+				svc := &mockLibraryService{lib: &library.Library{ID: libID, Type: "music"}}
+				ml := &mockMediaLister{}
+				h := newLibHandler(svc).WithMedia(ml)
+
+				rec := httptest.NewRecorder()
+				call(h, rec, withClaims(withChiParam(httptest.NewRequest("GET", c.target, nil), "id", libID.String())))
+
+				if rec.Code != c.wantCode {
+					t.Fatalf("status: got %d, want %d (body=%s)", rec.Code, c.wantCode, rec.Body.String())
+				}
+				if c.wantType == "" {
+					if ml.gotFacetRankSet {
+						t.Error("facet query ran for a type outside the library's allow-list")
+					}
+					return
+				}
+				if ml.gotFacetType != c.wantType {
+					t.Errorf("facet counted type %q, want %q", ml.gotFacetType, c.wantType)
+				}
+			})
+		}
+	}
+}
+
+func TestFacetItemType(t *testing.T) {
+	cases := []struct {
+		libraryType, requested string
+		want                   string
+		ok                     bool
+	}{
+		{"music", "", "artist", true},
+		{"music", "album", "album", true},
+		{"music", "track", "track", true},
+		{"music", "show", "", false},
+		{"movie", "", "movie", true},
+		{"movie", "album", "", false},
+		{"anime", "", "show", true},
+	}
+	for _, c := range cases {
+		got, ok := facetItemType(c.libraryType, c.requested)
+		if got != c.want || ok != c.ok {
+			t.Errorf("facetItemType(%q, %q) = %q, %v; want %q, %v",
+				c.libraryType, c.requested, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// ── sort=artist ──────────────────────────────────────────────────────────────
+
+// sort=artist reaches the data layer as the filtered listing's sort, ascending
+// unless sort_dir says otherwise (A→Z is the natural first click, unlike the
+// newest-first date sorts).
+func TestLibrary_Items_SortByArtist(t *testing.T) {
+	cases := []struct {
+		query   string
+		wantAsc bool
+	}{
+		{"?type=album&sort=artist", true},
+		{"?type=album&sort=artist&sort_dir=asc", true},
+		{"?type=album&sort=artist&sort_dir=desc", false},
+	}
+	for _, c := range cases {
+		t.Run(c.query, func(t *testing.T) {
+			libID := uuid.New()
+			svc := &mockLibraryService{lib: &library.Library{ID: libID, Type: "music"}}
+			ml := &fpCapturingLister{}
+			h := newLibHandler(svc).WithMedia(ml)
+
+			rec := httptest.NewRecorder()
+			h.Items(rec, withClaims(withChiParam(httptest.NewRequest("GET", "/"+c.query, nil), "id", libID.String())))
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status: got %d body=%s", rec.Code, rec.Body.String())
+			}
+			if ml.gotFP == nil {
+				t.Fatal("sort=artist did not take the filtered listing path")
+			}
+			if ml.gotFP.Sort != "artist" || ml.gotFP.SortAsc != c.wantAsc {
+				t.Errorf("sort: got %q asc=%v, want artist asc=%v", ml.gotFP.Sort, ml.gotFP.SortAsc, c.wantAsc)
+			}
+			if ml.gotType != "album" {
+				t.Errorf("type: got %q, want album", ml.gotType)
+			}
+		})
 	}
 }

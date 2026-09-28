@@ -1019,6 +1019,60 @@ WHERE library_id = $1
 ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4;
 
+-- name: ListMediaItemsByParentTitle :many
+-- sort=artist: orders by the parent's sort title — the artist, for albums
+-- and music videos — then oldest-first within each parent, so an artist's
+-- discography reads in release order. p.id keeps two same-named artists
+-- from interleaving. Same filters as ListMediaItemsByTitle; every column is
+-- qualified because of the self-join.
+SELECT m.id, m.library_id, m.type, m.title, m.sort_title, m.original_title, m.year,
+       m.summary, m.tagline, m.rating, m.audience_rating, m.content_rating, m.duration_ms,
+       m.genres, m.tags, m.tmdb_id, m.tvdb_id, m.imdb_id, m.musicbrainz_id,
+       m.parent_id, m.index, m.poster_path, m.fanart_path, m.thumb_path,
+       m.originally_available_at, m.created_at, m.updated_at, m.deleted_at
+FROM media_items m
+LEFT JOIN media_items p ON p.id = m.parent_id
+WHERE m.library_id = $1
+  AND m.type = $2
+  AND m.deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(m.genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR m.year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR m.year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR m.rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, m.id, m.type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
+ORDER BY p.sort_title ASC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemsByParentTitleDesc :many
+-- Parents Z→A; within a parent the order stays oldest-first, as above.
+SELECT m.id, m.library_id, m.type, m.title, m.sort_title, m.original_title, m.year,
+       m.summary, m.tagline, m.rating, m.audience_rating, m.content_rating, m.duration_ms,
+       m.genres, m.tags, m.tmdb_id, m.tvdb_id, m.imdb_id, m.musicbrainz_id,
+       m.parent_id, m.index, m.poster_path, m.fanart_path, m.thumb_path,
+       m.originally_available_at, m.created_at, m.updated_at, m.deleted_at
+FROM media_items m
+LEFT JOIN media_items p ON p.id = m.parent_id
+WHERE m.library_id = $1
+  AND m.type = $2
+  AND m.deleted_at IS NULL
+  AND (sqlc.narg('genre')::text IS NULL OR sqlc.narg('genre') = ANY(m.genres))
+  AND (sqlc.narg('year_min')::int IS NULL OR m.year >= sqlc.narg('year_min'))
+  AND (sqlc.narg('year_max')::int IS NULL OR m.year <= sqlc.narg('year_max'))
+  AND (sqlc.narg('rating_min')::numeric IS NULL OR m.rating >= sqlc.narg('rating_min'))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, m.id, m.type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
+ORDER BY p.sort_title DESC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
+LIMIT $3 OFFSET $4;
+
+-- name: ListMediaItemTitles :many
+-- Titles for a batch of item ids, in one round trip. The library listing
+-- uses it to label child rows with their parent — an album with its artist.
+SELECT id, title
+FROM media_items
+WHERE id = ANY(@ids::uuid[])
+  AND deleted_at IS NULL;
+
 -- name: CountMediaItemsFiltered :one
 SELECT COUNT(*) FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
