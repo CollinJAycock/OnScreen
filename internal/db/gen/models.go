@@ -308,6 +308,7 @@ type MediaItem struct {
 	Kind                      *string            `json:"kind"`
 	ReadingDirection          *string            `json:"reading_direction"`
 	FranchiseID               *int32             `json:"franchise_id"`
+	DiscNumber                *int32             `json:"disc_number"`
 }
 
 type MediaItemTmdbCollection struct {

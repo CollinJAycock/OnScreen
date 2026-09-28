@@ -1781,6 +1781,9 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  // Tracks: disc within the album (index is the track on that disc).
+  // Absent = no disc tag, i.e. disc 1. Children arrive in (disc, track) order.
+  disc_number?: number;
   // Episode subtype within an anime show (`ova`, `ona`, `special`,
   // `movie`). Absent or `episode` = ordinary episode. Surfaced as a
   // badge on the episode list.

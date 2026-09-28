@@ -214,8 +214,18 @@ app's Search › Discover tab (which could request titles) was removed:
 - **Track order for "N/M"-tagged FLAC/Ogg/Opus** — Vorbis `TRACKNUMBER` /
   `DISCNUMBER` values like `02/12` parsed as 0, leaving albums unordered.
   They're parsed now, and a tagged file with no usable number takes it
-  from its `NN - Title` filename. It applies to newly scanned tracks;
-  tracks already in a library keep their stored order until re-imported.
+  from its `NN - Title` filename. Tracks already in a library get their
+  number on the next scan without being re-imported: the path supplies it
+  when it can (`07 - Title`, `2-07 Title`, a `CD2/` folder), otherwise the
+  file's tags are read once — no re-hash or ffprobe, and a file with no
+  number anywhere isn't re-read on every scan.
+- **Multi-disc albums lost tracks.** A track's position was its number
+  alone, so disc 2 track 1 was taken for disc 1 track 1 and its file filed
+  under that track. Tracks now store their disc (migration 00030 adds
+  `media_items.disc_number` and makes the one-track-per-position index
+  per disc); albums list in disc-then-track order and the children API
+  returns `disc_number`. An album already folded this way separates when
+  the affected files are next re-imported.
 - **Web home tiles wider than their posters** when a title or Next Up
   subtitle was long.
 

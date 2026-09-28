@@ -204,6 +204,7 @@ func GenGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
 	item.Kind = r.Kind
 	item.ReadingDirection = r.ReadingDirection
 	item.FranchiseID = int32PtrToIntPtr(r.FranchiseID)
+	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
 	return item
 }
 
@@ -228,6 +229,7 @@ func GenCreateItemRowToItem(r gen.CreateMediaItemRow) media.Item {
 		r.MusicbrainzArtistID, r.MusicbrainzAlbumArtistID,
 		r.DiscTotal, r.TrackTotal, r.OriginalYear,
 		r.Compilation, r.ReleaseType)
+	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
 	return item
 }
 
@@ -259,6 +261,7 @@ func GenListChildrenRowToItem(r gen.ListMediaItemChildrenRow) media.Item {
 	item.AniListID = int32PtrToIntPtr(r.AnilistID)
 	item.MalID = int32PtrToIntPtr(r.MalID)
 	item.Kind = r.Kind
+	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
 	return item
 }
 
@@ -316,6 +319,7 @@ func CreateItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
 		ReleaseType:               releaseType,
 		ParentID:                  uuidPtrToPGUUID(p.ParentID),
 		Index:                     IntPtrToInt32Ptr(p.Index),
+		DiscNumber:                IntPtrToInt32Ptr(p.DiscNumber),
 		PosterPath:                p.PosterPath,
 		FanartPath:                p.FanartPath,
 		ThumbPath:                 p.ThumbPath,

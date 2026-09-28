@@ -211,6 +211,15 @@ func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, 
 	})
 }
 
+func (a *mediaAdapter) FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error) {
+	n, err := a.q.FillTrackPosition(ctx, gen.FillTrackPositionParams{
+		ID:         id,
+		TrackIndex: dbconv.IntPtrToInt32Ptr(index),
+		DiscNumber: dbconv.IntPtrToInt32Ptr(disc),
+	})
+	return n > 0, err
+}
+
 func (a *mediaAdapter) SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error {
 	return a.q.SetMediaItemKind(ctx, gen.SetMediaItemKindParams{
 		ID:   id,

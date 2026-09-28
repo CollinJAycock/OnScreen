@@ -64,6 +64,18 @@ type MusicTags struct {
 // trackNumberRE matches a leading track number like "01 - ", "01. ", "01 ", "1-".
 var trackNumberRE = regexp.MustCompile(`^(\d{1,3})\s*[-.\s]\s*`)
 
+// discTrackRE matches the leading disc-track pair multi-disc rips are named
+// with — "1-01 Title", "2-05 - Title", "1.03. Title" (iTunes, foobar2000,
+// EAC). The track part is exactly two digits (a CD holds at most 99 tracks),
+// so a title that merely opens with numbers ("1-800-273-8255") isn't taken
+// for one. Checked before trackNumberRE, which would read "1-01" as track 1.
+var discTrackRE = regexp.MustCompile(`^(\d{1,2})[-.](\d{2})(?:\s*[-.]\s*|\s+|$)`)
+
+// discDirRE finds a disc marker in the name of the folder holding a track:
+// "CD1", "CD 2", "Disc 3", "disk_04", "Album (Disc 2)", "Album [CD2]". The
+// marker must stand on its own ("Disco 2000", "ABCD 1" don't count).
+var discDirRE = regexp.MustCompile(`(?i)(?:^|[\s(\[_.-])(?:cd|dis[ck])[\s_.-]*(\d{1,2})(?:$|[\s)\]_.-])`)
+
 // cleanTag sanitizes a tag string for safe DB storage. ID3 tags can return
 // Latin-1 or other non-UTF8 byte sequences that Postgres rejects; we scrub
 // invalid UTF-8 and also drop NUL bytes, which Postgres disallows in text.
@@ -88,9 +100,9 @@ func ReadMusicTags(filePath string) (*MusicTags, error) {
 // the folder structure (path-only, no read).
 func ReadMusicTagsStore(ctx context.Context, store mediastore.Store, filePath string) (*MusicTags, error) {
 	tags, tagErr := readEmbeddedTags(ctx, store, filePath)
+	fb := parseMusicPath(filePath)
 	if tagErr != nil || tags.effectiveArtist() == "" || tags.Title == "" {
 		// Fall back to folder-based parsing. Merge with any partial tag data.
-		fb := parseMusicPath(filePath)
 		if tags == nil {
 			tags = fb
 		} else {
@@ -113,9 +125,15 @@ func ReadMusicTagsStore(ctx context.Context, store mediastore.Store, filePath st
 	}
 	// A tagged file with no usable track number still carries one in its
 	// conventional filename ("02 - Title.flac"); without it the track has no
-	// position in its album.
+	// position in its album. Likewise the disc: a multi-disc rip without a
+	// DISCNUMBER tag usually says which disc in its name ("2-05 Title.flac")
+	// or folder ("CD2/"), and without it every disc's track 1 is the same
+	// position.
 	if tags.Track == 0 {
-		tags.Track = parseMusicPath(filePath).Track
+		tags.Track = fb.Track
+	}
+	if tags.Disc == 0 {
+		tags.Disc = fb.Disc
 	}
 	// AlbumArtist defaults to Artist when the tag is missing — avoids a hole
 	// in the artist/album hierarchy while still letting compilations override
@@ -439,7 +457,8 @@ func splitGenres(s string) []string {
 // parseMusicPath derives metadata from the file's path using the common
 // directory convention: .../Artist/Album/01 - Track Title.ext
 // If fewer than 2 parent directories exist, it uses "Unknown Artist" and
-// "Unknown Album" as fallbacks.
+// "Unknown Album" as fallbacks. It reads nothing from disk, so it is also
+// the cheap source of a track's position (see Scanner.healUnchangedTrack).
 func parseMusicPath(filePath string) *MusicTags {
 	mt := &MusicTags{}
 
@@ -447,12 +466,22 @@ func parseMusicPath(filePath string) *MusicTags {
 	ext := filepath.Ext(base)
 	stem := base[:len(base)-len(ext)]
 
-	// Try to extract track number from filename.
-	if m := trackNumberRE.FindStringSubmatch(stem); m != nil {
+	// Try to extract disc + track, or just the track number, from the
+	// filename; failing a disc there, from a disc folder ("CD2/").
+	if m := discTrackRE.FindStringSubmatch(stem); m != nil && m[1] != "0" && m[1] != "00" {
+		mt.Disc, _ = strconv.Atoi(m[1])
+		mt.Track, _ = strconv.Atoi(m[2])
+		stem = stem[len(m[0]):]
+	} else if m := trackNumberRE.FindStringSubmatch(stem); m != nil {
 		if n, err := strconv.Atoi(m[1]); err == nil {
 			mt.Track = n
 		}
 		stem = stem[len(m[0]):]
+	}
+	if mt.Disc == 0 {
+		if m := discDirRE.FindStringSubmatch(filepath.Base(filepath.Dir(filePath))); m != nil {
+			mt.Disc, _ = strconv.Atoi(m[1])
+		}
 	}
 
 	// The remaining stem is the track title.

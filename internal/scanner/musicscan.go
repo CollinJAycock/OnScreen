@@ -200,20 +200,25 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 		return nil, nil, err
 	}
 
-	// 3. Find or create the track (parent_id=album.id, index=track number).
-	var trackIndex *int
+	// 3. Find or create the track (parent_id=album.id, index=track number,
+	// disc_number=disc number).
+	var trackIndex, discNumber *int
 	if tags.Track > 0 {
 		trackIndex = &tags.Track
 	}
+	if tags.Disc > 0 {
+		discNumber = &tags.Disc
+	}
 	trackParams := media.CreateItemParams{
-		LibraryID: libraryID,
-		Type:      "track",
-		Title:     tags.Title,
-		SortTitle: sortTitle(tags.Title),
-		Year:      albumYear,
-		ParentID:  &album.ID,
-		Index:     trackIndex,
-		Genres:    tags.Genres,
+		LibraryID:  libraryID,
+		Type:       "track",
+		Title:      tags.Title,
+		SortTitle:  sortTitle(tags.Title),
+		Year:       albumYear,
+		ParentID:   &album.ID,
+		Index:      trackIndex,
+		DiscNumber: discNumber,
+		Genres:     tags.Genres,
 	}
 	if tags.MBRecordingID != uuid.Nil {
 		trackParams.MusicBrainzID = &tags.MBRecordingID
@@ -233,6 +238,13 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	track, err := s.media.FindOrCreateHierarchyItem(ctx, trackParams)
 	if err != nil {
 		return nil, nil, err
+	}
+	// An existing track is returned as stored: one imported before its
+	// number could be read (a Vorbis "02/12" tag, a number only in the
+	// filename) or before discs were kept still has none. Fill it in now.
+	if err := s.fillTrackPosition(ctx, track, tags.Track, tags.Disc, "tags"); err != nil {
+		s.logger.WarnContext(ctx, "fill track position failed",
+			"path", path, "track_id", track.ID, "track", tags.Track, "disc", tags.Disc, "err", err)
 	}
 
 	// 4. Album art: prefer disk-side cover files (cover.jpg / folder.jpg /
@@ -259,6 +271,93 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	s.extractLyrics(ctx, track, path, tags.Lyrics)
 
 	return track, tags, nil
+}
+
+// fillTrackPosition stores trackNum / disc on track where the track has
+// none (0 means unknown and is never written), and updates track to match.
+// Fill-only: a number the track already has is left alone. source names
+// where the numbers came from, for the log. An error means nothing was
+// written — typically because another track in the album already holds
+// that position (idx_media_items_parent_type_index).
+func (s *Scanner) fillTrackPosition(ctx context.Context, track *media.Item, trackNum, disc int, source string) error {
+	var index, discNumber *int
+	if track.Index == nil && trackNum > 0 {
+		index = &trackNum
+	}
+	if track.DiscNumber == nil && disc > 0 {
+		discNumber = &disc
+	}
+	if index == nil && discNumber == nil {
+		return nil
+	}
+	changed, err := s.media.FillTrackPosition(ctx, track.ID, index, discNumber)
+	if err != nil || !changed {
+		return err
+	}
+	if index != nil {
+		track.Index = index
+	}
+	if discNumber != nil {
+		track.DiscNumber = discNumber
+	}
+	s.logger.DebugContext(ctx, "track position filled",
+		"track_id", track.ID, "track", trackNum, "disc", disc, "source", source)
+	return nil
+}
+
+// healUnchangedTrack gives a track that has no track number one, for a file
+// the scan is otherwise skipping because it hasn't changed. Tracks imported
+// before the scanner could read "N/M" Vorbis numbers, or before it fell back
+// to the filename's number, would otherwise never get one: their files are
+// unchanged, so the tag read that would supply it never runs again.
+//
+// The number comes from the path first ("07 - Title.flac", "2-07 Title.flac",
+// "CD2/07 - Title.flac"), which costs no I/O. That is only trusted on its own
+// when it can't misplace the track: it names the disc, or the album isn't
+// known to span several discs — and the database agrees, i.e. no other track
+// in the album already holds that position. Otherwise the file's tags are
+// read, once: a file whose tags can't place it either is remembered in
+// unnumberedTracks so later scans skip it. No hash, no ffprobe, and the file
+// stays skipped either way.
+func (s *Scanner) healUnchangedTrack(ctx context.Context, item *media.Item, file *media.File, path string) {
+	if item == nil || item.Type != "track" || item.Index != nil {
+		return
+	}
+	if _, seen := s.unnumberedTracks.Load(file.ID); seen {
+		return
+	}
+	if pos := parseMusicPath(path); pos.Track > 0 && (pos.Disc > 0 || !s.albumSpansDiscs(ctx, item)) {
+		if s.fillTrackPosition(ctx, item, pos.Track, pos.Disc, "path") == nil {
+			return
+		}
+		// Taken by another track: the name is wrong or leaves out the
+		// disc. The tags settle it.
+	}
+	tags, err := ReadMusicTagsStore(ctx, s.mediaStore(), path)
+	if err != nil || tags.Track == 0 {
+		s.unnumberedTracks.Store(file.ID, struct{}{})
+		return
+	}
+	if err := s.fillTrackPosition(ctx, item, tags.Track, tags.Disc, "tags"); err != nil {
+		s.logger.WarnContext(ctx, "track number not filled; another track in the album holds it",
+			"path", path, "track_id", item.ID, "track", tags.Track, "disc", tags.Disc, "err", err)
+		s.unnumberedTracks.Store(file.ID, struct{}{})
+	}
+}
+
+// albumSpansDiscs reports whether track's album may hold more than one disc,
+// in which case a track number without a disc can't place the track. Only an
+// album whose tags said one disc, or said nothing about discs, counts as
+// single-disc; an album that can't be read is treated as multi-disc.
+func (s *Scanner) albumSpansDiscs(ctx context.Context, track *media.Item) bool {
+	if track.ParentID == nil {
+		return false
+	}
+	album, err := s.media.GetItem(ctx, *track.ParentID)
+	if err != nil {
+		return true
+	}
+	return album.DiscTotal != nil && *album.DiscTotal > 1
 }
 
 // albumArtFilenames lists the on-disk cover-art filenames we check (in

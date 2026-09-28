@@ -54,7 +54,9 @@
       }
 
       const list = await itemApi.children(id);
-      tracks = list.items.sort((a, b) => (a.index ?? 9999) - (b.index ?? 9999));
+      // Disc, then track: every disc restarts at track 1.
+      tracks = list.items.sort((a, b) =>
+        (a.disc_number ?? 1) - (b.disc_number ?? 1) || (a.index ?? 9999) - (b.index ?? 9999));
 
       // Resolve full detail for every track in parallel. Tracks need a file to
       // stream; without one the play button is disabled. We keep the full

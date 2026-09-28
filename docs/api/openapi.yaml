@@ -4974,6 +4974,13 @@ components:
         poster_path:    { type: string, nullable: true }
         thumb_path:     { type: string, nullable: true }
         index:          { type: integer, nullable: true }
+        disc_number:
+          type: integer
+          nullable: true
+          description: >-
+            Tracks only: the disc within the album (`index` is the track on
+            that disc). Absent means no disc tag — read it as disc 1.
+            Children are returned in (disc, index) order.
         view_offset_ms: { type: integer, format: int64 }
         watched:        { type: boolean }
         created_at:     { type: string, format: date-time }

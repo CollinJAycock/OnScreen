@@ -71,9 +71,11 @@ type Item struct {
 	MusicBrainzArtistID       *uuid.UUID
 	MusicBrainzAlbumArtistID  *uuid.UUID
 
-	// Hierarchy
-	ParentID *uuid.UUID
-	Index    *int
+	// Hierarchy. DiscNumber is set on tracks only: with Index it is the
+	// track's position in its album. nil reads as disc 1 (see TrackDisc).
+	ParentID   *uuid.UUID
+	Index      *int
+	DiscNumber *int
 
 	// Artwork (paths relative to the media file)
 	PosterPath *string
@@ -255,6 +257,9 @@ type Querier interface {
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
 	UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
+	// FillTrackPosition sets a track's index / disc_number where they are
+	// NULL, leaving stored values alone. Reports whether the row changed.
+	FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error)
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
@@ -515,6 +520,7 @@ type CreateItemParams struct {
 	MusicBrainzAlbumArtistID  *uuid.UUID
 	ParentID                  *uuid.UUID
 	Index                     *int
+	DiscNumber                *int
 	PosterPath                *string
 	FanartPath                *string
 	ThumbPath                 *string
@@ -1404,6 +1410,31 @@ func pickFlexibleMatch(candidates []Item, year *int) *Item {
 	return noYear
 }
 
+// TrackDisc is the disc a track sorts and matches under: its disc number,
+// or 1 when none is stored (a single-disc album, a file without a disc tag,
+// or a row from before disc numbers were kept).
+func TrackDisc(disc *int) int {
+	if disc == nil {
+		return 1
+	}
+	return *disc
+}
+
+// FillTrackPosition sets a track's track number and/or disc number where
+// they are unset. Fill-only: nil arguments and values already stored are
+// left alone, so a heal never rewrites a number the track already has.
+// Reports whether anything was written.
+func (s *Service) FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error) {
+	if index == nil && disc == nil {
+		return false, nil
+	}
+	changed, err := s.rw.FillTrackPosition(ctx, id, index, disc)
+	if err != nil {
+		return false, fmt.Errorf("fill track position %s: %w", id, err)
+	}
+	return changed, nil
+}
+
 // FindTopLevelItem looks up a top-level item (parent_id IS NULL) by
 // library+type+title without creating one. Returns (nil, nil) if not found.
 // Used by the music scanner to decide whether a collab tag like
@@ -1453,6 +1484,21 @@ func (s *Service) FindOrCreateHierarchyItem(ctx context.Context, p CreateItemPar
 // When Index is set on the params, parented items are matched by type+index
 // (e.g. season 1, episode 3) which is more reliable than title matching for
 // items whose title may change after enrichment.
+//
+// Tracks are numbered per disc, so for them the index match also requires
+// the same disc (TrackDisc: nil reads as disc 1) — otherwise disc 2 track 1
+// resolves to disc 1 track 1 and its file is folded into that item. A title
+// match is refused only when the sibling's disc is known and differs: a
+// sibling with no stored disc may be a row from before discs were stored,
+// and must still be found by title so its disc can be filled in rather
+// than a duplicate created. Other types carry no disc, so both guards are
+// no-ops for them.
+//
+// A sibling matching on both index and title wins over one matching on
+// either alone. Two siblings can share a number — a file whose name and
+// tags disagree, an album whose numbers are being filled in by a rescan —
+// and the first one in index order must not take a file that plainly
+// belongs to the other.
 func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *Item {
 	if p.ParentID != nil {
 		// Parented item: search among siblings.
@@ -1461,21 +1507,28 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 			return nil
 		}
 		normP := normalizeTitle(p.Title) // loop-invariant; hoist out (see findItemByTitle)
+		pDisc := TrackDisc(p.DiscNumber)
+		var partial *Item
 		for i := range children {
 			c := &children[i]
 			if c.Type != p.Type {
 				continue
 			}
-			// Prefer index-based matching (seasons and episodes).
-			if p.Index != nil && c.Index != nil && *c.Index == *p.Index {
+			// Index-based matching (seasons, episodes, tracks) is the more
+			// reliable key: titles can change after enrichment.
+			byIndex := p.Index != nil && c.Index != nil && *c.Index == *p.Index &&
+				TrackDisc(c.DiscNumber) == pDisc
+			// Title matching covers named items and unnumbered rows.
+			byTitle := p.Title != "" && normalizeTitle(c.Title) == normP &&
+				(c.DiscNumber == nil || *c.DiscNumber == pDisc)
+			if byIndex && byTitle {
 				return c
 			}
-			// Fall back to title matching (e.g. named items).
-			if p.Title != "" && normalizeTitle(c.Title) == normP {
-				return c
+			if partial == nil && (byIndex || byTitle) {
+				partial = c
 			}
 		}
-		return nil
+		return partial
 	}
 
 	// Top-level item (e.g. show, artist): use full-text search.
@@ -1746,10 +1799,13 @@ func (s *Service) mergeChildren(ctx context.Context, loserID, survivorID uuid.UU
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("list survivor children: %w", err)
 	}
-	// Index survivor children by (type, index) for O(1) collision lookup.
+	// Index survivor children by (type, disc, index) for O(1) collision
+	// lookup. The disc keeps two albums' disc 1 track 3 and disc 2 track 3
+	// apart; seasons and episodes have no disc, so it is constant for them.
 	type key struct {
-		t   string
-		idx int
+		t    string
+		disc int
+		idx  int
 	}
 	byKey := make(map[key]*Item, len(survivorKids))
 	for i := range survivorKids {
@@ -1757,7 +1813,7 @@ func (s *Service) mergeChildren(ctx context.Context, loserID, survivorID uuid.UU
 		if c.Index == nil {
 			continue
 		}
-		byKey[key{c.Type, *c.Index}] = c
+		byKey[key{c.Type, TrackDisc(c.DiscNumber), *c.Index}] = c
 	}
 	for i := range loserKids {
 		lk := &loserKids[i]
@@ -1769,7 +1825,7 @@ func (s *Service) mergeChildren(ctx context.Context, loserID, survivorID uuid.UU
 			reparented++
 			continue
 		}
-		match, collide := byKey[key{lk.Type, *lk.Index}]
+		match, collide := byKey[key{lk.Type, TrackDisc(lk.DiscNumber), *lk.Index}]
 		if !collide {
 			if err := s.rw.ReparentMediaItem(ctx, lk.ID, &survivorID); err != nil {
 				return 0, 0, 0, fmt.Errorf("reparent %s: %w", lk.ID, err)

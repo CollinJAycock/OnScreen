@@ -649,6 +649,10 @@ type ChildItemResponse struct {
 	PosterPath *string  `json:"poster_path,omitempty"`
 	ThumbPath  *string  `json:"thumb_path,omitempty"`
 	Index      *int     `json:"index,omitempty"`
+	// DiscNumber is a track's disc within its album (with Index, its
+	// position). Absent for non-tracks and for tracks with no disc tag,
+	// which read as disc 1; children already arrive in (disc, track) order.
+	DiscNumber *int `json:"disc_number,omitempty"`
 	// Kind surfaces episode subtype (`ova`, `ona`, `special`, `movie`)
 	// so the UI can show an OVA / Special badge on the episode list.
 	// Nil for ordinary episodes; the web client treats absent + "episode"
@@ -1200,6 +1204,7 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 			PosterPath:   c.PosterPath,
 			ThumbPath:    c.ThumbPath,
 			Index:        c.Index,
+			DiscNumber:   c.DiscNumber,
 			Kind:         c.Kind,
 			ViewOffsetMS: viewOffsetMS,
 			Watched:      watched,

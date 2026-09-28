@@ -1745,7 +1745,8 @@
     if (item.type === 'artist') {
       musicChildren = r.items.filter(c => c.type === 'album').sort((a, b) => (a.year ?? 0) - (b.year ?? 0));
     } else if (item.type === 'album') {
-      musicChildren = r.items.filter(c => c.type === 'track').sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+      musicChildren = r.items.filter(c => c.type === 'track')
+        .sort((a, b) => (a.disc_number ?? 1) - (b.disc_number ?? 1) || (a.index ?? 0) - (b.index ?? 0));
     }
   }
 

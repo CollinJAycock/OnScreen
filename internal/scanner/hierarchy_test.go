@@ -28,6 +28,13 @@ type mockMediaService struct {
 
 	// Track calls to FindOrCreateHierarchyItem.
 	hierarchyCalls []media.CreateItemParams
+	// hierarchyFind, when set, lets FindOrCreateHierarchyItem return an
+	// existing item (non-nil result) instead of always creating one.
+	hierarchyFind func(p media.CreateItemParams) *media.Item
+	// Track calls to FillTrackPosition; fillErr, when set, fails a call
+	// (the unique-position index refusing it) by returning non-nil.
+	fillCalls []fillCall
+	fillErr   func(index, disc *int) error
 	// Track calls to FindOrCreateItem.
 	flatCalls []media.CreateItemParams
 	// Track calls to CreateOrUpdateFile (which item the file was pointed at).
@@ -48,6 +55,11 @@ type mockMediaService struct {
 type dedupeCall struct {
 	itemType  string
 	libraryID uuid.UUID
+}
+
+type fillCall struct {
+	id          uuid.UUID
+	index, disc *int
 }
 
 func newMockMediaService() *mockMediaService {
@@ -76,15 +88,21 @@ func (m *mockMediaService) FindOrCreateItem(_ context.Context, p media.CreateIte
 
 func (m *mockMediaService) FindOrCreateHierarchyItem(_ context.Context, p media.CreateItemParams) (*media.Item, error) {
 	m.hierarchyCalls = append(m.hierarchyCalls, p)
+	if m.hierarchyFind != nil {
+		if found := m.hierarchyFind(p); found != nil {
+			return found, nil
+		}
+	}
 	it := &media.Item{
-		ID:        uuid.New(),
-		LibraryID: p.LibraryID,
-		Type:      p.Type,
-		Title:     p.Title,
-		SortTitle: p.SortTitle,
-		Year:      p.Year,
-		ParentID:  p.ParentID,
-		Index:     p.Index,
+		ID:         uuid.New(),
+		LibraryID:  p.LibraryID,
+		Type:       p.Type,
+		Title:      p.Title,
+		SortTitle:  p.SortTitle,
+		Year:       p.Year,
+		ParentID:   p.ParentID,
+		Index:      p.Index,
+		DiscNumber: p.DiscNumber,
 	}
 	m.items[it.ID] = it
 	return it, nil
@@ -135,6 +153,30 @@ func (m *mockMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateI
 
 func (m *mockMediaService) UpdateItemLyrics(_ context.Context, _ uuid.UUID, _, _ *string) error {
 	return nil
+}
+
+// FillTrackPosition records the call and applies it fill-only, like the SQL.
+func (m *mockMediaService) FillTrackPosition(_ context.Context, id uuid.UUID, index, disc *int) (bool, error) {
+	m.fillCalls = append(m.fillCalls, fillCall{id: id, index: index, disc: disc})
+	if m.fillErr != nil {
+		if err := m.fillErr(index, disc); err != nil {
+			return false, err
+		}
+	}
+	it, ok := m.items[id]
+	if !ok || it.Type != "track" {
+		return false, nil
+	}
+	changed := false
+	if it.Index == nil && index != nil {
+		v := *index
+		it.Index, changed = &v, true
+	}
+	if it.DiscNumber == nil && disc != nil {
+		v := *disc
+		it.DiscNumber, changed = &v, true
+	}
+	return changed, nil
 }
 func (m *mockMediaService) SetItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil

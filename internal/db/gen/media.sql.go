@@ -310,7 +310,7 @@ INSERT INTO media_items (
     disc_total, track_total, original_year, compilation, release_type,
     parent_id, index,
     poster_path, fanart_path, thumb_path,
-    originally_available_at, anilist_id
+    originally_available_at, anilist_id, disc_number
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
@@ -320,7 +320,7 @@ INSERT INTO media_items (
     $23, $24, $25, $26, $27,
     $28, $29,
     $30, $31, $32,
-    $33, $34
+    $33, $34, $35
 )
 RETURNING id, library_id, type, title, sort_title, original_title, year,
           summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -328,7 +328,7 @@ RETURNING id, library_id, type, title, sort_title, original_title, year,
           musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
           musicbrainz_artist_id, musicbrainz_album_artist_id,
           disc_total, track_total, original_year, compilation, release_type,
-          parent_id, index, poster_path, fanart_path, thumb_path,
+          parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
           originally_available_at, created_at, updated_at, deleted_at
 `
 
@@ -367,6 +367,7 @@ type CreateMediaItemParams struct {
 	ThumbPath                 *string        `json:"thumb_path"`
 	OriginallyAvailableAt     pgtype.Date    `json:"originally_available_at"`
 	AnilistID                 *int32         `json:"anilist_id"`
+	DiscNumber                *int32         `json:"disc_number"`
 }
 
 type CreateMediaItemRow struct {
@@ -400,6 +401,7 @@ type CreateMediaItemRow struct {
 	ReleaseType               *string            `json:"release_type"`
 	ParentID                  pgtype.UUID        `json:"parent_id"`
 	Index                     *int32             `json:"index"`
+	DiscNumber                *int32             `json:"disc_number"`
 	PosterPath                *string            `json:"poster_path"`
 	FanartPath                *string            `json:"fanart_path"`
 	ThumbPath                 *string            `json:"thumb_path"`
@@ -445,6 +447,7 @@ func (q *Queries) CreateMediaItem(ctx context.Context, arg CreateMediaItemParams
 		arg.ThumbPath,
 		arg.OriginallyAvailableAt,
 		arg.AnilistID,
+		arg.DiscNumber,
 	)
 	var i CreateMediaItemRow
 	err := row.Scan(
@@ -478,6 +481,7 @@ func (q *Queries) CreateMediaItem(ctx context.Context, arg CreateMediaItemParams
 		&i.ReleaseType,
 		&i.ParentID,
 		&i.Index,
+		&i.DiscNumber,
 		&i.PosterPath,
 		&i.FanartPath,
 		&i.ThumbPath,
@@ -504,6 +508,37 @@ WHERE status = 'missing'
 // Returns the count for log surfacing.
 func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uuid.UUID) (int64, error) {
 	result, err := q.db.Exec(ctx, deleteMissingFilesByLibrary, libraryID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const fillTrackPosition = `-- name: FillTrackPosition :execrows
+UPDATE media_items
+SET index       = COALESCE(index, $1::int),
+    disc_number = COALESCE(disc_number, $2::int),
+    updated_at  = NOW()
+WHERE id = $3
+  AND type = 'track'
+  AND deleted_at IS NULL
+  AND ((index IS NULL AND $1::int IS NOT NULL)
+       OR (disc_number IS NULL AND $2::int IS NOT NULL))
+`
+
+type FillTrackPositionParams struct {
+	TrackIndex *int32    `json:"track_index"`
+	DiscNumber *int32    `json:"disc_number"`
+	ID         uuid.UUID `json:"id"`
+}
+
+// Fills a track's missing track number and/or disc number. Fill-only: a
+// value already stored is never overwritten, so this heals tracks the
+// scanner once imported without a number without second-guessing numbers
+// it already has. Touches nothing (updated_at included) when there is
+// nothing to fill; returns the number of rows changed (0 or 1).
+func (q *Queries) FillTrackPosition(ctx context.Context, arg FillTrackPositionParams) (int64, error) {
+	result, err := q.db.Exec(ctx, fillTrackPosition, arg.TrackIndex, arg.DiscNumber, arg.ID)
 	if err != nil {
 		return 0, err
 	}
@@ -1036,7 +1071,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
-       parent_id, index, poster_path, fanart_path, thumb_path,
+       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL
@@ -1078,6 +1113,7 @@ type GetMediaItemRow struct {
 	FranchiseID               *int32             `json:"franchise_id"`
 	ParentID                  pgtype.UUID        `json:"parent_id"`
 	Index                     *int32             `json:"index"`
+	DiscNumber                *int32             `json:"disc_number"`
 	PosterPath                *string            `json:"poster_path"`
 	FanartPath                *string            `json:"fanart_path"`
 	ThumbPath                 *string            `json:"thumb_path"`
@@ -1126,6 +1162,7 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.FranchiseID,
 		&i.ParentID,
 		&i.Index,
+		&i.DiscNumber,
 		&i.PosterPath,
 		&i.FanartPath,
 		&i.ThumbPath,
@@ -2297,11 +2334,11 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        anilist_id, mal_id, kind,
-       parent_id, index, poster_path, fanart_path, thumb_path,
+       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE parent_id = $1 AND deleted_at IS NULL
-ORDER BY index
+ORDER BY COALESCE(disc_number, 1), index
 LIMIT 1000
 `
 
@@ -2330,6 +2367,7 @@ type ListMediaItemChildrenRow struct {
 	Kind                  *string            `json:"kind"`
 	ParentID              pgtype.UUID        `json:"parent_id"`
 	Index                 *int32             `json:"index"`
+	DiscNumber            *int32             `json:"disc_number"`
 	PosterPath            *string            `json:"poster_path"`
 	FanartPath            *string            `json:"fanart_path"`
 	ThumbPath             *string            `json:"thumb_path"`
@@ -2339,6 +2377,9 @@ type ListMediaItemChildrenRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
+// Ordered by (disc, track): a track with no disc number sorts as disc 1, and
+// every non-track child has none, so seasons and episodes order by index
+// alone exactly as before.
 func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUID) ([]ListMediaItemChildrenRow, error) {
 	rows, err := q.db.Query(ctx, listMediaItemChildren, parentID)
 	if err != nil {
@@ -2373,6 +2414,7 @@ func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUI
 			&i.Kind,
 			&i.ParentID,
 			&i.Index,
+			&i.DiscNumber,
 			&i.PosterPath,
 			&i.FanartPath,
 			&i.ThumbPath,

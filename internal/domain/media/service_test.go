@@ -153,14 +153,15 @@ func (m *mockQuerier) CreateMediaItem(_ context.Context, p CreateItemParams) (It
 		return Item{}, m.createItemErr
 	}
 	it := Item{
-		ID:        uuid.New(),
-		LibraryID: p.LibraryID,
-		Type:      p.Type,
-		Title:     p.Title,
-		SortTitle: p.SortTitle,
-		Year:      p.Year,
-		ParentID:  p.ParentID,
-		Index:     p.Index,
+		ID:         uuid.New(),
+		LibraryID:  p.LibraryID,
+		Type:       p.Type,
+		Title:      p.Title,
+		SortTitle:  p.SortTitle,
+		Year:       p.Year,
+		ParentID:   p.ParentID,
+		Index:      p.Index,
+		DiscNumber: p.DiscNumber,
 	}
 	m.items[it.ID] = it
 	return it, nil
@@ -177,6 +178,25 @@ func (m *mockQuerier) UpdateMediaItemMetadata(_ context.Context, p UpdateItemMet
 
 func (m *mockQuerier) UpdateMediaItemLyrics(_ context.Context, _ uuid.UUID, _, _ *string) error {
 	return nil
+}
+
+// FillTrackPosition mirrors the SQL: fill-only, tracks only, reports a change.
+func (m *mockQuerier) FillTrackPosition(_ context.Context, id uuid.UUID, index, disc *int) (bool, error) {
+	it, ok := m.items[id]
+	if !ok || it.Type != "track" {
+		return false, nil
+	}
+	changed := false
+	if it.Index == nil && index != nil {
+		v := *index
+		it.Index, changed = &v, true
+	}
+	if it.DiscNumber == nil && disc != nil {
+		v := *disc
+		it.DiscNumber, changed = &v, true
+	}
+	m.items[id] = it
+	return changed, nil
 }
 func (m *mockQuerier) SetMediaItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil

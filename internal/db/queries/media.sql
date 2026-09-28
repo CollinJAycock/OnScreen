@@ -6,7 +6,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
-       parent_id, index, poster_path, fanart_path, thumb_path,
+       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL;
@@ -488,15 +488,18 @@ WHERE parent_id IS NULL
   AND imdb_id IS NULL;
 
 -- name: ListMediaItemChildren :many
+-- Ordered by (disc, track): a track with no disc number sorts as disc 1, and
+-- every non-track child has none, so seasons and episodes order by index
+-- alone exactly as before.
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        anilist_id, mal_id, kind,
-       parent_id, index, poster_path, fanart_path, thumb_path,
+       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE parent_id = $1 AND deleted_at IS NULL
-ORDER BY index
+ORDER BY COALESCE(disc_number, 1), index
 LIMIT 1000;
 
 -- name: CreateMediaItem :one
@@ -509,7 +512,7 @@ INSERT INTO media_items (
     disc_total, track_total, original_year, compilation, release_type,
     parent_id, index,
     poster_path, fanart_path, thumb_path,
-    originally_available_at, anilist_id
+    originally_available_at, anilist_id, disc_number
 ) VALUES (
     $1, $2, $3, $4, $5, $6,
     $7, $8, $9, $10, $11, $12,
@@ -519,7 +522,7 @@ INSERT INTO media_items (
     $23, $24, $25, $26, $27,
     $28, $29,
     $30, $31, $32,
-    $33, $34
+    $33, $34, $35
 )
 RETURNING id, library_id, type, title, sort_title, original_title, year,
           summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -527,7 +530,7 @@ RETURNING id, library_id, type, title, sort_title, original_title, year,
           musicbrainz_id, musicbrainz_release_id, musicbrainz_release_group_id,
           musicbrainz_artist_id, musicbrainz_album_artist_id,
           disc_total, track_total, original_year, compilation, release_type,
-          parent_id, index, poster_path, fanart_path, thumb_path,
+          parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
           originally_available_at, created_at, updated_at, deleted_at;
 
 -- name: ListUnmatchedTopLevelItems :many
@@ -1662,6 +1665,22 @@ SET lyrics_plain = $2,
     lyrics_synced = $3,
     updated_at = NOW()
 WHERE id = $1;
+
+-- name: FillTrackPosition :execrows
+-- Fills a track's missing track number and/or disc number. Fill-only: a
+-- value already stored is never overwritten, so this heals tracks the
+-- scanner once imported without a number without second-guessing numbers
+-- it already has. Touches nothing (updated_at included) when there is
+-- nothing to fill; returns the number of rows changed (0 or 1).
+UPDATE media_items
+SET index       = COALESCE(index, sqlc.narg('track_index')::int),
+    disc_number = COALESCE(disc_number, sqlc.narg('disc_number')::int),
+    updated_at  = NOW()
+WHERE id = sqlc.arg('id')
+  AND type = 'track'
+  AND deleted_at IS NULL
+  AND ((index IS NULL AND sqlc.narg('track_index')::int IS NOT NULL)
+       OR (disc_number IS NULL AND sqlc.narg('disc_number')::int IS NOT NULL));
 
 -- name: GetShowPostersForEpisodes :many
 -- Resolves the show ancestor poster for a batch of episode IDs.

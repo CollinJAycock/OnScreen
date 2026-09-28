@@ -118,6 +118,7 @@ type MediaService interface {
 	GetItem(ctx context.Context, id uuid.UUID) (*media.Item, error)
 	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
 	UpdateItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
+	FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error)
 	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
@@ -169,6 +170,13 @@ type Scanner struct {
 	store   mediastore.Store // optional; nil → mediastore.Local (read media from disk)
 	metrics *observability.Metrics
 	grace   func() time.Duration // optional; nil → defaultMissingFileGrace
+
+	// unnumberedTracks holds the IDs of unchanged music files whose tags
+	// were re-read for a track number and couldn't supply one (see
+	// healUnchangedTrack), so later scans in this process don't re-read
+	// them. A file that changes takes the slow path instead, which reads
+	// its tags anyway. Keyed by media_files.id; values are unused.
+	unnumberedTracks sync.Map
 }
 
 // New creates a Scanner.
@@ -1272,6 +1280,12 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryType, path st
 		s.logger.InfoContext(ctx, "orphan episode now parses — re-parenting",
 			"path", path, "orphan_item_id", item.ID)
 		return nil, nil, false
+	}
+	// A track imported without a track number gets one here. Unlike the
+	// orphan heal this needs no slow path — nothing is re-parented, the
+	// row just gains its position — so the file stays skipped.
+	if libraryType == "music" {
+		s.healUnchangedTrack(ctx, item, existing, path)
 	}
 	if s.shouldEnrich(ctx, item, false) {
 		return item, existing, true
