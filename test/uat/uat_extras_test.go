@@ -289,6 +289,12 @@ func (s *stubSettingsService) WebDownloadsEnabled(_ context.Context) bool       
 func (s *stubSettingsService) SetWebDownloadsEnabled(_ context.Context, _ bool) error { return nil }
 func (s *stubSettingsService) PinSwitchEnabled(_ context.Context) bool                { return true }
 func (s *stubSettingsService) SetPinSwitchEnabled(_ context.Context, _ bool) error    { return nil }
+func (s *stubSettingsService) Requests(_ context.Context) settings.RequestsConfig {
+	return settings.RequestsConfig{}
+}
+func (s *stubSettingsService) SetRequests(_ context.Context, _ settings.RequestsConfig) error {
+	return nil
+}
 func (s *stubSettingsService) Storage(_ context.Context) settings.StorageConfig {
 	return settings.StorageConfig{}
 }
@@ -1277,6 +1283,9 @@ func (s *stubRequestsDB) GetArrService(_ context.Context, _ uuid.UUID) (gen.ArrS
 }
 func (s *stubRequestsDB) GetDefaultArrServiceByKind(_ context.Context, _ string) (gen.ArrService, error) {
 	return gen.ArrService{}, errors.New("not found")
+}
+func (s *stubRequestsDB) GetUserRequestPermissions(_ context.Context, _ uuid.UUID) (gen.GetUserRequestPermissionsRow, error) {
+	return gen.GetUserRequestPermissionsRow{}, errors.New("not found")
 }
 func (s *stubRequestsDB) CreateMediaRequest(_ context.Context, _ gen.CreateMediaRequestParams) (gen.MediaRequest, error) {
 	return gen.MediaRequest{}, nil

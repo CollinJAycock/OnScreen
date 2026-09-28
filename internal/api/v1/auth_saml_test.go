@@ -192,12 +192,14 @@ func (f *fakeSAMLDB) LinkSAMLAccount(_ context.Context, p gen.LinkSAMLAccountPar
 
 func (f *fakeSAMLDB) CreateSAMLUser(_ context.Context, p gen.CreateSAMLUserParams) (gen.User, error) {
 	u := gen.User{
-		ID:          uuid.New(),
-		Username:    p.Username,
-		Email:       p.Email,
-		SamlIssuer:  p.SamlIssuer,
-		SamlSubject: p.SamlSubject,
-		IsAdmin:     p.IsAdmin,
+		ID:                uuid.New(),
+		Username:          p.Username,
+		Email:             p.Email,
+		SamlIssuer:        p.SamlIssuer,
+		SamlSubject:       p.SamlSubject,
+		IsAdmin:           p.IsAdmin,
+		AutoApproveMovies: p.AutoApproveMovies,
+		AutoApproveTv:     p.AutoApproveTv,
 	}
 	f.users[u.ID] = u
 	f.bySAML[strPtrVal(p.SamlIssuer)+"|"+strPtrVal(p.SamlSubject)] = u

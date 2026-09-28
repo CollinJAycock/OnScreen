@@ -196,6 +196,7 @@ type mockLDAPDB struct {
 	linkCalls       int
 	createOut       gen.User
 	createErr       error
+	lastCreate      gen.CreateLDAPUserParams
 	count           int64
 	countErr        error
 	adminSets       []gen.SetUserAdminParams
@@ -214,7 +215,8 @@ func (m *mockLDAPDB) LinkLDAPAccount(_ context.Context, _ gen.LinkLDAPAccountPar
 	m.linkCalls++
 	return m.linkErr
 }
-func (m *mockLDAPDB) CreateLDAPUser(_ context.Context, _ gen.CreateLDAPUserParams) (gen.User, error) {
+func (m *mockLDAPDB) CreateLDAPUser(_ context.Context, p gen.CreateLDAPUserParams) (gen.User, error) {
+	m.lastCreate = p
 	return m.createOut, m.createErr
 }
 func (m *mockLDAPDB) CountUsers(_ context.Context) (int64, error) { return m.count, m.countErr }

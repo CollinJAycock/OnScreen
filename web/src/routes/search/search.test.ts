@@ -5,6 +5,7 @@ const mockGoto = vi.hoisted(() => vi.fn());
 const mockSearch = vi.hoisted(() => vi.fn());
 const mockDiscover = vi.hoisted(() => vi.fn());
 const mockCreate = vi.hoisted(() => vi.fn());
+const mockToastSuccess = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/api', () => ({
@@ -13,7 +14,7 @@ vi.mock('$lib/api', () => ({
   requestsApi: { create: mockCreate },
 }));
 vi.mock('$lib/stores/toast', () => ({
-  toast: { success: vi.fn(), error: vi.fn() },
+  toast: { success: mockToastSuccess, error: vi.fn() },
 }));
 
 beforeEach(() => {
@@ -119,6 +120,49 @@ describe('Search page', () => {
       expect(matrixCards).toHaveLength(1);
       // Request button present for the non-library result.
       expect(screen.getByRole('button', { name: /request/i })).toBeTruthy();
+    });
+
+    describe('requesting a title', () => {
+      const dune = {
+        type: 'movie', tmdb_id: 438631, title: 'Dune', year: 2021,
+        in_library: false, has_active_request: false,
+      };
+
+      async function requestDune() {
+        mockSearch.mockResolvedValue([]);
+        mockDiscover.mockResolvedValue([dune]);
+        render(Page);
+        await fireEvent.input(screen.getByRole('textbox'), { target: { value: 'dune' } });
+        await vi.advanceTimersByTimeAsync(350);
+        await waitFor(() => expect(screen.getByRole('button', { name: /request/i })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: /request/i }));
+        await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+        return mockToastSuccess.mock.calls[0][0] as string;
+      }
+
+      it('says it is on its way when the server auto-approved it', async () => {
+        mockCreate.mockResolvedValue({ id: 'r1', status: 'downloading', auto_approved: true });
+        const msg = await requestDune();
+        expect(mockCreate).toHaveBeenCalledWith({ type: 'movie', tmdb_id: 438631 });
+        expect(msg).toContain("Approved automatically — it's on its way");
+        expect(msg).toContain('Dune');
+        // The card flips to the returned status, not to "Pending".
+        await waitFor(() => expect(screen.getByText('Downloading')).toBeTruthy());
+      });
+
+      it('treats an already-approved status as auto-approved', async () => {
+        mockCreate.mockResolvedValue({ id: 'r1', status: 'approved' });
+        expect(await requestDune()).toContain('Approved automatically');
+      });
+
+      it('says it awaits approval when the request is pending', async () => {
+        // Also what a failed hand-off to Radarr/Sonarr looks like.
+        mockCreate.mockResolvedValue({ id: 'r1', status: 'pending', auto_approved: false });
+        const msg = await requestDune();
+        expect(msg).not.toContain('Approved automatically');
+        expect(msg).toMatch(/Requested: Dune.*awaiting admin approval/);
+        await waitFor(() => expect(screen.getByText('Pending')).toBeTruthy());
+      });
     });
 
     it('hides discover errors when TMDB is not configured', async () => {

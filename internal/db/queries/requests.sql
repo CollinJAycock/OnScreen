@@ -62,12 +62,17 @@ WHERE user_id = $1
   AND status IN ('pending', 'approved', 'downloading');
 
 -- name: ApproveMediaRequest :one
+-- auto_approved is set in the same UPDATE as the status flip, so no reader
+-- sees an approved row with decided_by NULL and the flag not yet set: an
+-- automatic approval passes decided_by NULL and auto_approved true, an admin
+-- approval the admin's id and false.
 UPDATE media_requests
 SET status      = 'approved',
     service_id  = $2,
     quality_profile_id = COALESCE($3, quality_profile_id),
     root_folder        = COALESCE($4, root_folder),
     decided_by  = $5,
+    auto_approved = $6,
     decided_at  = NOW(),
     updated_at  = NOW()
 WHERE id = $1 AND status = 'pending'

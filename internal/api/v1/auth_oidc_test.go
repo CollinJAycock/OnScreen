@@ -218,6 +218,7 @@ type mockOIDCDB struct {
 	linkCalls       int
 	createOut       gen.User
 	createErr       error
+	lastCreate      gen.CreateOIDCUserParams
 	count           int64
 	countErr        error
 	adminSets       []gen.SetUserAdminParams
@@ -233,7 +234,8 @@ func (m *mockOIDCDB) LinkOIDCAccount(_ context.Context, _ gen.LinkOIDCAccountPar
 	m.linkCalls++
 	return m.linkErr
 }
-func (m *mockOIDCDB) CreateOIDCUser(_ context.Context, _ gen.CreateOIDCUserParams) (gen.User, error) {
+func (m *mockOIDCDB) CreateOIDCUser(_ context.Context, p gen.CreateOIDCUserParams) (gen.User, error) {
+	m.lastCreate = p
 	return m.createOut, m.createErr
 }
 func (m *mockOIDCDB) CountUsers(_ context.Context) (int64, error) { return m.count, m.countErr }

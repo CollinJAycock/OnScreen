@@ -378,6 +378,24 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("Requests", func(t *testing.T) {
+		want := RequestsConfig{DefaultAutoApproveMovies: true, DefaultAutoApproveTV: false}
+		if err := svc.SetRequests(ctx, want); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		if got := svc.Requests(ctx); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+		// Turning a default back off must stick (not merge with the old value).
+		want = RequestsConfig{DefaultAutoApproveTV: true}
+		if err := svc.SetRequests(ctx, want); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		if got := svc.Requests(ctx); got != want {
+			t.Errorf("after second set: got %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("Update_OverwritesExistingValue", func(t *testing.T) {
 		// The set() helper uses INSERT ... ON CONFLICT DO UPDATE; this
 		// asserts the second write actually replaces the first rather
@@ -426,6 +444,10 @@ func TestService_GetUnsetReturnsZeroValues(t *testing.T) {
 	}
 	if got := svc.Storage(ctx); !reflect.DeepEqual(got, StorageConfig{}) {
 		t.Errorf("Storage unset: got %+v, want zero (local default)", got)
+	}
+	// Unset request defaults = both off: a fresh install queues every request.
+	if got := svc.Requests(ctx); got != (RequestsConfig{}) {
+		t.Errorf("Requests unset: got %+v, want zero (auto-approval off)", got)
 	}
 }
 

@@ -50,6 +50,7 @@ type mockSettingsService struct {
 	pinSwitch      bool
 	storage        settings.StorageConfig
 	system         settings.SystemConfig
+	requests       settings.RequestsConfig
 }
 
 func (m *mockSettingsService) TMDBAPIKey(_ context.Context) string {
@@ -192,6 +193,14 @@ func (m *mockSettingsService) WebDownloadsEnabled(_ context.Context) bool { retu
 func (m *mockSettingsService) PinSwitchEnabled(_ context.Context) bool    { return m.pinSwitch }
 func (m *mockSettingsService) SetPinSwitchEnabled(_ context.Context, enabled bool) error {
 	m.pinSwitch = enabled
+	return nil
+}
+func (m *mockSettingsService) Requests(_ context.Context) settings.RequestsConfig { return m.requests }
+func (m *mockSettingsService) SetRequests(_ context.Context, cfg settings.RequestsConfig) error {
+	if m.setErr != nil {
+		return m.setErr
+	}
+	m.requests = cfg
 	return nil
 }
 func (m *mockSettingsService) SetWebDownloadsEnabled(_ context.Context, enabled bool) error {

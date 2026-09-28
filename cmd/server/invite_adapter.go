@@ -14,6 +14,9 @@ import (
 // inviteAdapter wraps gen.Queries to implement v1.InviteDB.
 type inviteAdapter struct {
 	q *gen.Queries
+	// reqDefaults seeds the invited account's media-request auto-approval
+	// toggles from Settings ▸ Requests. nil creates it with both off.
+	reqDefaults v1.RequestDefaultsReader
 }
 
 func (a *inviteAdapter) CreateInviteToken(ctx context.Context, createdBy uuid.UUID, tokenHash string, email *string, expiresAt time.Time) (uuid.UUID, error) {
@@ -79,11 +82,14 @@ func (a *inviteAdapter) DeleteInviteToken(ctx context.Context, id uuid.UUID) err
 }
 
 func (a *inviteAdapter) CreateUser(ctx context.Context, username string, email *string, passwordHash string) (uuid.UUID, error) {
+	autoMovies, autoTV := v1.NewAccountRequestDefaults(ctx, a.reqDefaults)
 	user, err := a.q.CreateUser(ctx, gen.CreateUserParams{
-		Username:     username,
-		Email:        email,
-		PasswordHash: &passwordHash,
-		IsAdmin:      false,
+		Username:          username,
+		Email:             email,
+		PasswordHash:      &passwordHash,
+		IsAdmin:           false,
+		AutoApproveMovies: autoMovies,
+		AutoApproveTv:     autoTV,
 	})
 	if err != nil {
 		return uuid.UUID{}, err

@@ -68,6 +68,9 @@ const (
 	ActionRequestApprove = "request.approve"
 	ActionRequestDecline = "request.decline"
 	ActionRequestDelete  = "request.delete"
+	// A change to a user's media-request auto-approval toggles — granting one
+	// lets that user's requests reach Radarr/Sonarr with no admin review.
+	ActionUserRequestPermsChange = "user.request_permissions_change"
 
 	// Admin impersonation. ViewAs lets an admin browse the home/library/etc.
 	// surfaces as another user; without an audit trail the request log

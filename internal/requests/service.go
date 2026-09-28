@@ -1,7 +1,9 @@
 // Package requests implements the Overseerr-style media-request workflow:
 // users ask for a movie or show, admins approve/decline, approved requests
 // are forwarded to a configured Radarr/Sonarr instance, and the inbound arr
-// webhook flips them to "available" once the file lands.
+// webhook flips them to "available" once the file lands. Requests from admins,
+// and from users an admin has granted auto-approval for that media type, skip
+// the queue and are approved at creation (see Create).
 //
 // The service is deliberately the only orchestrator of arr add-flows so
 // transitions stay coherent — handlers shouldn't reach for the arr client
@@ -15,6 +17,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -70,6 +73,9 @@ type DB interface {
 	// arr_services lookups
 	GetArrService(ctx context.Context, id uuid.UUID) (gen.ArrService, error)
 	GetDefaultArrServiceByKind(ctx context.Context, kind string) (gen.ArrService, error)
+
+	// requester policy for auto-approval (admin flag, rating ceiling, toggles)
+	GetUserRequestPermissions(ctx context.Context, id uuid.UUID) (gen.GetUserRequestPermissionsRow, error)
 
 	// requests CRUD + transitions
 	CreateMediaRequest(ctx context.Context, arg gen.CreateMediaRequestParams) (gen.MediaRequest, error)
@@ -168,6 +174,14 @@ type CreateInput struct {
 // Create validates the request, snapshots metadata from TMDB, and inserts a
 // pending row. Returns ErrAlreadyRequested if the user has an active request
 // for the same title.
+//
+// When the requester is eligible for auto-approval (see autoApproveEligible)
+// the new row goes straight through the same approve step an admin would run,
+// and the returned request is already approved/downloading with AutoApproved
+// set. If that step fails — no arr service configured, the service disabled or
+// unreachable, the add rejected — the row stays pending in the admin queue
+// exactly as if auto-approval were off, the failure is logged at WARN, and
+// Create still succeeds: the request was accepted, it just needs a human.
 func (s *Service) Create(ctx context.Context, in CreateInput) (gen.MediaRequest, error) {
 	if in.Type != TypeMovie && in.Type != TypeShow {
 		return gen.MediaRequest{}, ErrInvalidType
@@ -242,6 +256,19 @@ func (s *Service) Create(ctx context.Context, in CreateInput) (gen.MediaRequest,
 	s.logger.InfoContext(ctx, "media request created",
 		"request_id", req.ID, "user_id", in.UserID, "type", in.Type, "tmdb_id", in.TMDBID, "title", title)
 
+	if s.autoApproveEligible(ctx, in) {
+		// approve sends the requester's "approved automatically" notice itself,
+		// so the "awaiting admin approval" one below is only for the queue path.
+		actx, cancel := context.WithTimeout(ctx, autoApproveTimeout)
+		approved, err := s.approve(actx, ApproveInput{RequestID: req.ID}, true)
+		cancel()
+		if err == nil {
+			return approved, nil
+		}
+		s.logger.WarnContext(ctx, "auto-approve failed; request left pending for admin review",
+			"request_id", req.ID, "user_id", in.UserID, "type", in.Type, "tmdb_id", in.TMDBID, "err", err)
+	}
+
 	if s.notify != nil {
 		s.notify.Notify(ctx, in.UserID, "request_created",
 			"Request submitted",
@@ -261,12 +288,63 @@ type ApproveInput struct {
 	RootFolder       *string
 }
 
+// autoApproveEligible decides whether a just-created request skips the admin
+// queue. The requester's policy is read from the users row, never from the
+// caller's token claims or request body, in this order:
+//
+//  1. Admins are always auto-approved — they are the approvers.
+//  2. A content-rating ceiling vetoes auto-approval whatever the toggles say:
+//     a capped (typically child) account's requests always get a human look.
+//  3. Otherwise the per-type toggle decides (movie → auto_approve_movies,
+//     show → auto_approve_tv).
+//
+// A non-admin request that names a specific arr service also stays queued:
+// that choice is only a preference surfaced to the approving admin (see the
+// handler's Create), and auto-approving it would let a user route a grab to,
+// say, the 4K instance with nobody reviewing it.
+//
+// Any lookup error means "not eligible" — the queue is the safe fallback.
+func (s *Service) autoApproveEligible(ctx context.Context, in CreateInput) bool {
+	perm, err := s.db.GetUserRequestPermissions(ctx, in.UserID)
+	if err != nil {
+		s.logger.WarnContext(ctx, "auto-approve: requester lookup failed; leaving request for admin review",
+			"user_id", in.UserID, "err", err)
+		return false
+	}
+	if perm.IsAdmin {
+		return true
+	}
+	if perm.MaxContentRating != nil && *perm.MaxContentRating != "" {
+		return false
+	}
+	if in.RequestedServiceID != nil {
+		return false
+	}
+	switch in.Type {
+	case TypeMovie:
+		return perm.AutoApproveMovies
+	case TypeShow:
+		return perm.AutoApproveTv
+	}
+	return false
+}
+
 // Approve resolves the destination arr instance, forwards the add via the
 // arr client, and transitions the row to approved → downloading. The arr
 // add happens inside the same logical step so a partial failure (e.g. arr
 // rejects the payload) leaves the request in `pending` for retry instead of
 // stranding it in `approved` with nothing on the upstream side.
 func (s *Service) Approve(ctx context.Context, in ApproveInput) (gen.MediaRequest, error) {
+	return s.approve(ctx, in, false)
+}
+
+// approve is the body of Approve, shared with Create's auto-approval so both
+// resolve the arr service, dispatch and transition identically. auto records
+// the decision as automatic: decided_by is left NULL — no admin made the call,
+// and naming the requester would read as "approved their own request" — and
+// auto_approved is set in the same UPDATE that flips the status, which is what
+// tells the row apart from an admin approval. in.AdminID is ignored when auto.
+func (s *Service) approve(ctx context.Context, in ApproveInput, auto bool) (gen.MediaRequest, error) {
 	req, err := s.db.GetMediaRequest(ctx, in.RequestID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -287,17 +365,26 @@ func (s *Service) Approve(ctx context.Context, in ApproveInput) (gen.MediaReques
 	tags, _ := decodeTagIDs(svc.DefaultTags)
 
 	if err := s.dispatchToArr(ctx, req, svc, qp, rf, tags); err != nil {
-		s.logger.ErrorContext(ctx, "arr add failed",
-			"request_id", req.ID, "service_id", svc.ID, "kind", svc.Kind, "err", err)
+		// An automatic attempt is logged once, at WARN, by Create — the
+		// request just falls back to the admin queue.
+		if !auto {
+			s.logger.ErrorContext(ctx, "arr add failed",
+				"request_id", req.ID, "service_id", svc.ID, "kind", svc.Kind, "err", err)
+		}
 		return gen.MediaRequest{}, err
 	}
 
+	decidedBy := pgUUID(&in.AdminID)
+	if auto {
+		decidedBy = pgtype.UUID{}
+	}
 	approved, err := s.db.ApproveMediaRequest(ctx, gen.ApproveMediaRequestParams{
 		ID:               req.ID,
 		ServiceID:        pgUUID(&svc.ID),
 		QualityProfileID: qp,
 		RootFolder:       rf,
-		DecidedBy:        pgUUID(&in.AdminID),
+		DecidedBy:        decidedBy,
+		AutoApproved:     auto,
 	})
 	if err != nil {
 		// We already pushed to arr; surface the DB error but the upstream
@@ -312,14 +399,20 @@ func (s *Service) Approve(ctx context.Context, in ApproveInput) (gen.MediaReques
 		approved.Status = StatusDownloading
 	}
 
-	s.logger.InfoContext(ctx, "media request approved",
-		"request_id", approved.ID, "service_id", svc.ID, "admin_id", in.AdminID)
+	if auto {
+		s.logger.InfoContext(ctx, "media request auto-approved",
+			"request_id", approved.ID, "service_id", svc.ID, "user_id", approved.UserID)
+	} else {
+		s.logger.InfoContext(ctx, "media request approved",
+			"request_id", approved.ID, "service_id", svc.ID, "admin_id", in.AdminID)
+	}
 
 	if s.notify != nil {
-		s.notify.Notify(ctx, approved.UserID, "request_approved",
-			"Request approved",
-			fmt.Sprintf("%q is being downloaded.", approved.Title),
-			nil)
+		body := fmt.Sprintf("%q is being downloaded.", approved.Title)
+		if auto {
+			body = fmt.Sprintf("%q was approved automatically and is being downloaded.", approved.Title)
+		}
+		s.notify.Notify(ctx, approved.UserID, "request_approved", "Request approved", body, nil)
 	}
 	return approved, nil
 }
@@ -916,5 +1009,12 @@ const (
 	maxSeasonNumber           = 1000
 	maxPendingRequestsPerUser = 25
 )
+
+// autoApproveTimeout bounds the arr round-trips an auto-approval adds to the
+// requester's POST. Each arr call has its own 15 s client timeout and a show
+// lookup can make several, so a slow or black-holed Radarr/Sonarr could
+// otherwise hold the request open past the server's 60 s write deadline.
+// Running out is just another failure: the row stays pending for an admin.
+const autoApproveTimeout = 20 * time.Second
 
 func ptrString(v string) *string { return &v }

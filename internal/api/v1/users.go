@@ -87,6 +87,9 @@ type UserDB interface {
 	UpdateUserStreamCaps(ctx context.Context, arg gen.UpdateUserStreamCapsParams) error
 	GetUserStreamCaps(ctx context.Context, id uuid.UUID) (gen.GetUserStreamCapsRow, error)
 	SetProfileInheritLibraryAccess(ctx context.Context, arg gen.SetProfileInheritLibraryAccessParams) (int64, error)
+	// SetUserRequestPermissions backs the per-user media-request
+	// auto-approval toggles. Rows affected = 0 means no such user.
+	SetUserRequestPermissions(ctx context.Context, arg gen.SetUserRequestPermissionsParams) (int64, error)
 }
 
 // UserLibraryAccessService is the subset of the library service needed to
@@ -289,6 +292,14 @@ type userListEntry struct {
 	Username  string    `json:"username"`
 	IsAdmin   bool      `json:"is_admin"`
 	CreatedAt time.Time `json:"created_at"`
+	// Per-user media-request auto-approval toggles, as stored. They have no
+	// effect while the user has a content-rating ceiling, and an admin's own
+	// requests are auto-approved regardless.
+	AutoApproveMovies bool `json:"auto_approve_movies"`
+	AutoApproveTV     bool `json:"auto_approve_tv"`
+	// The user's content-rating ceiling, when set — lets the admin UI explain
+	// that the toggles above are inert for this user.
+	MaxContentRating *string `json:"max_content_rating,omitempty"`
 }
 
 func tsToTime(ts pgtype.Timestamptz) time.Time {
@@ -314,10 +325,13 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 	users := make([]userListEntry, len(rows))
 	for i, row := range rows {
 		users[i] = userListEntry{
-			ID:        row.ID,
-			Username:  row.Username,
-			IsAdmin:   row.IsAdmin,
-			CreatedAt: tsToTime(row.CreatedAt),
+			ID:                row.ID,
+			Username:          row.Username,
+			IsAdmin:           row.IsAdmin,
+			CreatedAt:         tsToTime(row.CreatedAt),
+			AutoApproveMovies: row.AutoApproveMovies,
+			AutoApproveTV:     row.AutoApproveTv,
+			MaxContentRating:  row.MaxContentRating,
 		}
 	}
 	respond.List(w, r, users, int64(len(users)), "")
@@ -1519,6 +1533,70 @@ func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request)
 	}); err != nil {
 		respond.InternalError(w, r)
 		return
+	}
+	respond.NoContent(w)
+}
+
+// SetRequestPermissions sets a user's media-request auto-approval toggles
+// (admin only). PUT /api/v1/users/{id}/request-permissions with
+// {"auto_approve_movies": bool, "auto_approve_tv": bool} — both required, so a
+// client can't clear one by omitting it. Stored as given even for a user with a
+// content-rating ceiling, where they have no effect until the ceiling is
+// lifted (requests.Service checks the ceiling first). Read at request time, so
+// the change applies to the user's next request with no re-login.
+func (h *UserHandler) SetRequestPermissions(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	var body struct {
+		AutoApproveMovies *bool `json:"auto_approve_movies"`
+		AutoApproveTV     *bool `json:"auto_approve_tv"`
+	}
+	// Unknown fields are rejected for the same reason as SetContentRating: a
+	// misspelt key would otherwise decode into nothing and 204.
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body: "+err.Error())
+		return
+	}
+	if body.AutoApproveMovies == nil || body.AutoApproveTV == nil {
+		respond.ValidationError(w, r, "auto_approve_movies and auto_approve_tv are both required")
+		return
+	}
+	n, err := h.db.SetUserRequestPermissions(r.Context(), gen.SetUserRequestPermissionsParams{
+		ID:                targetID,
+		AutoApproveMovies: *body.AutoApproveMovies,
+		AutoApproveTv:     *body.AutoApproveTV,
+	})
+	if err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "set request permissions", "target_id", targetID, "err", err)
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	if n == 0 {
+		respond.NotFound(w, r)
+		return
+	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRequestPermsChange, targetID.String(),
+			map[string]any{
+				"auto_approve_movies": *body.AutoApproveMovies,
+				"auto_approve_tv":     *body.AutoApproveTV,
+			}, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }

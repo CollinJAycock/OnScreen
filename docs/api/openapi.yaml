@@ -2159,6 +2159,86 @@ paths:
       responses:
         '204': { description: Updated. }
 
+  /api/v1/users/{id}/request-permissions:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Set a user's media-request auto-approval (admin)
+      description: >
+        Per-type auto-approval of the user's media requests. Stored as given, but
+        inert while the user has a content-rating ceiling (their requests always
+        go to the admin queue); admins' own requests are always auto-approved.
+      tags: [Users]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [auto_approve_movies, auto_approve_tv]
+              properties:
+                auto_approve_movies: { type: boolean }
+                auto_approve_tv: { type: boolean }
+      responses:
+        '204': { description: Updated. }
+        '404': { description: No such user. }
+
+  /api/v1/upcoming:
+    get:
+      summary: Upcoming releases from Radarr/Sonarr calendars
+      description: >
+        Movie releases (cinema/digital/physical) and episode air times from every
+        enabled *arr service, filtered for the caller: entries above a restricted
+        profile's content-rating ceiling (unrated = most restrictive) or bound for
+        a library the caller can't access are omitted. Cached server-side for up
+        to 5 minutes.
+      tags: [Requests]
+      parameters:
+        - { name: from, in: query, schema: { type: string, format: date }, description: 'Default today (UTC).' }
+        - { name: to, in: query, schema: { type: string, format: date }, description: 'Default from + 30 days; span at most 62 days.' }
+      responses:
+        '200':
+          description: Upcoming entries, sorted by date, plus per-service status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      from: { type: string, format: date }
+                      to: { type: string, format: date }
+                      items:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            id: { type: string }
+                            kind: { type: string, enum: [movie, episode] }
+                            title: { type: string }
+                            subtitle: { type: string }
+                            release_type: { type: string, enum: [cinema, digital, physical, airing] }
+                            date: { type: string, format: date-time }
+                            all_day: { type: boolean }
+                            status: { type: string, enum: [downloaded, missing, upcoming] }
+                            poster_url: { type: string, nullable: true }
+                            year: { type: integer, nullable: true }
+                            overview: { type: string }
+                            certification: { type: string }
+                            network: { type: string }
+                            service: { type: string }
+                            item_id: { type: string, format: uuid, nullable: true }
+                      services:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            name: { type: string }
+                            kind: { type: string, enum: [radarr, sonarr] }
+                            ok: { type: boolean }
+                            error: { type: string }
+        '400': { description: Invalid or too wide a date range. }
+
   /api/v1/users/{id}/password:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     put:

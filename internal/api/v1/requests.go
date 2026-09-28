@@ -59,8 +59,12 @@ type requestDTO struct {
 	DecidedAt          *string    `json:"decided_at,omitempty"`
 	FulfilledItemID    *uuid.UUID `json:"fulfilled_item_id,omitempty"`
 	FulfilledAt        *string    `json:"fulfilled_at,omitempty"`
-	CreatedAt          string     `json:"created_at"`
-	UpdatedAt          string     `json:"updated_at"`
+	// AutoApproved marks a request approved at creation by the requester's
+	// standing permission (or because they are an admin) rather than by an
+	// admin decision; decided_by is absent on such rows.
+	AutoApproved bool   `json:"auto_approved"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 func toRequestDTO(req gen.MediaRequest) requestDTO {
@@ -77,6 +81,7 @@ func toRequestDTO(req gen.MediaRequest) requestDTO {
 		QualityProfileID: req.QualityProfileID,
 		RootFolder:       req.RootFolder,
 		DeclineReason:    req.DeclineReason,
+		AutoApproved:     req.AutoApproved,
 		CreatedAt:        req.CreatedAt.Time.UTC().Format("2006-01-02T15:04:05Z"),
 		UpdatedAt:        req.UpdatedAt.Time.UTC().Format("2006-01-02T15:04:05Z"),
 	}
@@ -124,6 +129,9 @@ type createRequestBody struct {
 // Create handles POST /api/v1/requests. Anyone authenticated can submit.
 // The service rejects duplicates with ErrAlreadyRequested; we map that to
 // 409 so the UI can show "you already requested this" without re-checking.
+// A requester with auto-approval gets the request back already approved /
+// downloading (auto_approved=true); if that send to the arr failed it comes
+// back pending like any other, and the response is 201 either way.
 func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
@@ -175,6 +183,18 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 			respond.InternalError(w, r)
 		}
 		return
+	}
+	if req.AutoApproved {
+		// Same audit action as an admin approval so the trail shows every
+		// title that was sent to an arr; "automatic" tells the two apart and
+		// the actor is the requester whose standing permission approved it.
+		h.auditEvent(r, audit.ActionRequestApprove, req.ID.String(), map[string]any{
+			"type":      req.Type,
+			"tmdb_id":   req.TmdbID,
+			"title":     req.Title,
+			"user_id":   req.UserID.String(),
+			"automatic": true,
+		})
 	}
 	respond.Created(w, r, toRequestDTO(req))
 }

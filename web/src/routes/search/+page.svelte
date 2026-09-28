@@ -8,6 +8,7 @@
     assetUrl,
     type SearchResult,
     type DiscoverItem,
+    type MediaRequest,
   } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
@@ -155,7 +156,9 @@
     creatingFor = new Set(creatingFor).add(item.tmdb_id);
     try {
       const created = await requestsApi.create({ type: item.type, tmdb_id: item.tmdb_id });
-      toast.success(`Requested: ${item.title}`);
+      toast.success(wasAutoApproved(created)
+        ? `Approved automatically — it's on its way: ${item.title}`
+        : `Requested: ${item.title} — awaiting admin approval`);
       // Mirror the server's response into the row so the card flips
       // immediately without a re-search.
       discoverResults = discoverResults.map(r =>
@@ -170,6 +173,14 @@
       next.delete(item.tmdb_id);
       creatingFor = next;
     }
+  }
+
+  // The server approves a request on the spot when the requester has
+  // auto-approve for that type (or is an admin) and the hand-off to
+  // Radarr/Sonarr succeeds — it then comes back already approved or
+  // downloading rather than pending in the admin queue.
+  function wasAutoApproved(req: MediaRequest): boolean {
+    return req.auto_approved === true || req.status === 'approved' || req.status === 'downloading';
   }
 
   function statusLabel(s: string): string {

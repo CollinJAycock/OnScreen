@@ -675,6 +675,8 @@ func run() error {
 		totpChallenges: valkey.NewTOTPChallengeGuard(valkeyClient),
 		// HLS segment tokens die with the session family on refresh-token theft.
 		segTokens: segTokenMgr,
+		// New accounts start with the admin's media-request auto-approval defaults.
+		reqDefaults: settingsSvc,
 	}
 
 	// Epoch reads go to the PRIMARY: a replica would delay revocation by its lag.
@@ -1128,15 +1130,19 @@ func run() error {
 	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, baseURL, logger).
 		WithSegmentTokenRevoker(segTokenMgr).
 		WithAudit(auditLogger)
-	inviteDB := &inviteAdapter{q: gen.New(rwPool)}
+	inviteDB := &inviteAdapter{q: gen.New(rwPool), reqDefaults: settingsSvc}
 	inviteHandler := v1.NewInviteHandler(inviteDB, emailSender, baseURL, logger).WithAudit(auditLogger)
 
 	// ── OIDC + SAML + LDAP (settings-driven, always wired) ────────────────────
 	// All three pull config from server_settings on each request, so admins
 	// enable and reconfigure them through the UI without a restart.
-	oidcSvc := v1.NewOIDCAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
+	// Each JIT-provisioning path seeds new accounts with the admin's media-request
+	// auto-approval defaults (Settings ▸ Requests).
+	oidcSvc := v1.NewOIDCAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger).
+		WithRequestDefaults(settingsSvc)
 	oidcAuthHandler := v1.NewOIDCHandler(settingsSvc, oidcSvc, baseURL, logger).WithAudit(auditLogger)
-	samlSvc := v1.NewSAMLAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger)
+	samlSvc := v1.NewSAMLAuthService(gen.New(rwPool), authSvc.issueTokenPair, logger).
+		WithRequestDefaults(settingsSvc)
 	// HA-aware SAML request tracker — Valkey-backed so an AuthnRequest
 	// minted on one OnScreen instance can be validated by an ACS
 	// callback that hits a different instance behind a load balancer.
@@ -1148,7 +1154,8 @@ func run() error {
 		WithRequestTracker(v1.NewValkeySAMLRequestTracker(valkeyClient)).
 		WithAudit(auditLogger)
 	ldapSvc := v1.NewLDAPAuthService(settingsSvc, v1.DefaultLDAPDialer{}, gen.New(rwPool), authSvc.issueTokenPair, logger).
-		WithThrottle(rateLimiter)
+		WithThrottle(rateLimiter).
+		WithRequestDefaults(settingsSvc)
 	ldapAuthHandler := v1.NewLDAPHandler(settingsSvc, ldapSvc, logger).WithAudit(auditLogger)
 
 	// ── Notifications ────────────────────────────────────────────────────────

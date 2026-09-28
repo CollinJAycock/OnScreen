@@ -467,11 +467,20 @@ type oidcAuthService struct {
 	db          OIDCOAuthDB
 	issueTokens IssueTokenPairFn
 	logger      *slog.Logger
+	reqDefaults RequestDefaultsReader // new-account auto-approval defaults; nil = off
 }
 
 // NewOIDCAuthService creates an OIDCAuthService backed by the given DB and token issuer.
-func NewOIDCAuthService(db OIDCOAuthDB, issueTokens IssueTokenPairFn, logger *slog.Logger) OIDCAuthService {
+func NewOIDCAuthService(db OIDCOAuthDB, issueTokens IssueTokenPairFn, logger *slog.Logger) *oidcAuthService {
 	return &oidcAuthService{db: db, issueTokens: issueTokens, logger: logger}
+}
+
+// WithRequestDefaults supplies the admin-set media-request auto-approval
+// defaults that JIT-provisioned accounts are created with. Returns the service
+// for chaining.
+func (s *oidcAuthService) WithRequestDefaults(r RequestDefaultsReader) *oidcAuthService {
+	s.reqDefaults = r
+	return s
 }
 
 func (s *oidcAuthService) LoginOrCreateOIDCUser(ctx context.Context, p OIDCProfile) (*TokenPair, error) {
@@ -522,12 +531,15 @@ func (s *oidcAuthService) LoginOrCreateOIDCUser(ctx context.Context, p OIDCProfi
 		e := p.Email
 		emailPtr = &e
 	}
+	autoMovies, autoTV := NewAccountRequestDefaults(ctx, s.reqDefaults)
 	user, err = s.db.CreateOIDCUser(ctx, gen.CreateOIDCUserParams{
-		Username:    p.Username,
-		Email:       emailPtr,
-		OidcIssuer:  &issuer,
-		OidcSubject: &subject,
-		IsAdmin:     isAdmin,
+		Username:          p.Username,
+		Email:             emailPtr,
+		OidcIssuer:        &issuer,
+		OidcSubject:       &subject,
+		IsAdmin:           isAdmin,
+		AutoApproveMovies: autoMovies,
+		AutoApproveTv:     autoTV,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create oidc user: %w", err)

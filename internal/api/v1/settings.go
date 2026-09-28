@@ -56,6 +56,8 @@ type SettingsServiceIface interface {
 	SetWebDownloadsEnabled(ctx context.Context, enabled bool) error
 	PinSwitchEnabled(ctx context.Context) bool
 	SetPinSwitchEnabled(ctx context.Context, enabled bool) error
+	Requests(ctx context.Context) settings.RequestsConfig
+	SetRequests(ctx context.Context, cfg settings.RequestsConfig) error
 	Storage(ctx context.Context) settings.StorageConfig
 	SetStorage(ctx context.Context, cfg settings.StorageConfig) error
 	System(ctx context.Context) settings.SystemConfig
@@ -582,6 +584,22 @@ type settingsResponse struct {
 	SMTP                smtpSettingDTO          `json:"smtp"`
 	OTel                otelSettingDTO          `json:"otel"`
 	General             generalSettingDTO       `json:"general"`
+	Requests            requestsSettingDTO      `json:"requests"`
+}
+
+// requestsSettingDTO mirrors settings.RequestsConfig: the media-request
+// auto-approval toggles a NEW full account starts with. Changing them never
+// touches existing users; managed profiles always start with both off.
+type requestsSettingDTO struct {
+	DefaultAutoApproveMovies bool `json:"default_auto_approve_movies"`
+	DefaultAutoApproveTV     bool `json:"default_auto_approve_tv"`
+}
+
+func toRequestsDTO(cfg settings.RequestsConfig) requestsSettingDTO {
+	return requestsSettingDTO{
+		DefaultAutoApproveMovies: cfg.DefaultAutoApproveMovies,
+		DefaultAutoApproveTV:     cfg.DefaultAutoApproveTV,
+	}
 }
 
 // generalSettingDTO mirrors settings.GeneralConfig — no secrets, surfaces the
@@ -933,6 +951,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		SMTP:                toSMTPDTO(h.svc.SMTP(ctx)),
 		OTel:                toOTelDTO(h.svc.OTel(ctx)),
 		General:             toGeneralDTO(h.svc.General(ctx)),
+		Requests:            toRequestsDTO(h.svc.Requests(ctx)),
 	})
 }
 
@@ -1010,6 +1029,10 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			LogLevel           *string   `json:"log_level"`
 			CORSAllowedOrigins *[]string `json:"cors_allowed_origins"`
 		} `json:"general"`
+		Requests *struct {
+			DefaultAutoApproveMovies *bool `json:"default_auto_approve_movies"`
+			DefaultAutoApproveTV     *bool `json:"default_auto_approve_tv"`
+		} `json:"requests"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -1342,6 +1365,21 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	if body.Requests != nil {
+		// Read-modify-write so flipping one default doesn't reset the other.
+		cur := h.svc.Requests(ctx)
+		if body.Requests.DefaultAutoApproveMovies != nil {
+			cur.DefaultAutoApproveMovies = *body.Requests.DefaultAutoApproveMovies
+		}
+		if body.Requests.DefaultAutoApproveTV != nil {
+			cur.DefaultAutoApproveTV = *body.Requests.DefaultAutoApproveTV
+		}
+		if err := h.svc.SetRequests(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "requests", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
 	if h.audit != nil {
 		detail := map[string]any{}
 		if body.TMDBAPIKey != nil {
@@ -1379,6 +1417,15 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.General != nil {
 			detail["general"] = "changed"
+		}
+		if body.Requests != nil {
+			// Record the resulting values, not just "changed": these decide
+			// whether new accounts' requests bypass admin review.
+			cur := h.svc.Requests(ctx)
+			detail["requests"] = map[string]bool{
+				"default_auto_approve_movies": cur.DefaultAutoApproveMovies,
+				"default_auto_approve_tv":     cur.DefaultAutoApproveTV,
+			}
 		}
 		// Always log, even if claims are somehow nil — the route is admin-gated,
 		// so a missing actor here means an invariant break worth recording.

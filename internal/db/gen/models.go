@@ -304,6 +304,7 @@ type MediaRequest struct {
 	FulfilledAt        pgtype.Timestamptz `json:"fulfilled_at"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	AutoApproved       bool               `json:"auto_approved"`
 }
 
 type NodeSetting struct {
@@ -534,6 +535,8 @@ type User struct {
 	MaxConcurrentStreams  *int32             `json:"max_concurrent_streams"`
 	MaxStreamBitrateKbps  *int32             `json:"max_stream_bitrate_kbps"`
 	HubLayout             []byte             `json:"hub_layout"`
+	AutoApproveMovies     bool               `json:"auto_approve_movies"`
+	AutoApproveTv         bool               `json:"auto_approve_tv"`
 }
 
 type UserFavorite struct {

@@ -210,6 +210,7 @@
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
               <span class="status-pill status-{req.status}">{statusLabel(req.status)}</span>
+              {#if req.auto_approved}<span class="auto-pill" title="Approved automatically when it was requested">Auto-approved</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
             {#if req.status === 'declined' && req.decline_reason}
@@ -269,6 +270,7 @@
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
               <span class="status-pill status-{req.status}">{statusLabel(req.status)}</span>
+              {#if req.auto_approved}<span class="auto-pill" title="Approved automatically when it was requested">Auto-approved</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
             <div class="row-meta">
@@ -439,6 +441,18 @@
   .status-available    { background: rgba(52,211,153,0.15); color: #6ee7b7; }
   .status-declined     { background: rgba(248,113,113,0.15); color: #fca5a5; }
   .status-failed       { background: rgba(248,113,113,0.15); color: #fca5a5; }
+  /* Outlined rather than filled so it reads as a note on the status, not a
+     second status. */
+  .auto-pill {
+    font-size: 0.65rem;
+    font-weight: 600;
+    padding: 0.12rem 0.5rem;
+    border-radius: 10px;
+    border: 1px solid var(--border-strong);
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
 
   .empty { text-align: center; padding: 3rem 1rem; color: var(--text-muted); font-size: 0.85rem; }
 

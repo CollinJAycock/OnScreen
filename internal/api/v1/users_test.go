@@ -100,6 +100,10 @@ type mockUserDB struct {
 	lastInheritParams *gen.SetProfileInheritLibraryAccessParams
 	inheritRows       int64
 	inheritErr        error
+
+	lastReqPerms *gen.SetUserRequestPermissionsParams
+	reqPermsRows int64
+	reqPermsErr  error
 }
 
 func (m *mockUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) {
@@ -188,6 +192,11 @@ func (m *mockUserDB) SetProfileInheritLibraryAccess(_ context.Context, p gen.Set
 
 func (m *mockUserDB) UpdateUserQualityProfile(_ context.Context, _ gen.UpdateUserQualityProfileParams) error {
 	return nil
+}
+
+func (m *mockUserDB) SetUserRequestPermissions(_ context.Context, p gen.SetUserRequestPermissionsParams) (int64, error) {
+	m.lastReqPerms = &p
+	return m.reqPermsRows, m.reqPermsErr
 }
 
 func authedRequest(r *http.Request) *http.Request {

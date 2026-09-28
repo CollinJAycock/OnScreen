@@ -466,6 +466,9 @@ func (s *stubUserDB) ListManagedProfileIDs(_ context.Context, _ pgtype.UUID) ([]
 func (s *stubUserDB) SetProfileInheritLibraryAccess(_ context.Context, _ gen.SetProfileInheritLibraryAccessParams) (int64, error) {
 	return 1, nil
 }
+func (s *stubUserDB) SetUserRequestPermissions(_ context.Context, _ gen.SetUserRequestPermissionsParams) (int64, error) {
+	return 1, nil
+}
 func (s *stubUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStreamCapsParams) error {
 	return nil
 }
@@ -833,6 +836,23 @@ func TestAdminRequired_NonAdmin(t *testing.T) {
 		}
 		resp.Body.Close()
 	}
+}
+
+// TestUserRequestPermissions_RouteAdminOnly proves PUT
+// /users/{id}/request-permissions is mounted behind AdminRequired: a regular
+// user can't grant anyone (themselves included) auto-approval.
+func TestUserRequestPermissions_RouteAdminOnly(t *testing.T) {
+	ts := newTestServer(t)
+	path := "/api/v1/users/" + uuid.New().String() + "/request-permissions"
+	body := map[string]any{"auto_approve_movies": true, "auto_approve_tv": true}
+
+	resp := ts.do("PUT", path, ts.userToken(), body)
+	assertStatus(t, resp, http.StatusForbidden)
+	resp.Body.Close()
+
+	resp = ts.do("PUT", path, ts.adminToken(), body)
+	assertStatus(t, resp, http.StatusNoContent)
+	resp.Body.Close()
 }
 
 // TestLibraries_ListEmpty returns an empty list when no libraries exist.

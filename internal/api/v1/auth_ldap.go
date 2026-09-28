@@ -156,7 +156,8 @@ type ldapAuthService struct {
 	db          LDAPOAuthDB
 	issueTokens IssueTokenPairFn
 	logger      *slog.Logger
-	throttle    FailureThrottle // per-username brute-force cap; nil = no throttle
+	throttle    FailureThrottle       // per-username brute-force cap; nil = no throttle
+	reqDefaults RequestDefaultsReader // new-account auto-approval defaults; nil = off
 }
 
 // ldapFailureWindow / maxLDAPFailuresPerUsername bound LDAP brute force per
@@ -178,6 +179,14 @@ func NewLDAPAuthService(cfgSrc LDAPSettingsReader, dialer LDAPDialer, db LDAPOAu
 // service for chaining. nil leaves LDAP login throttled only by the per-IP cap.
 func (s *ldapAuthService) WithThrottle(t FailureThrottle) *ldapAuthService {
 	s.throttle = t
+	return s
+}
+
+// WithRequestDefaults supplies the admin-set media-request auto-approval
+// defaults that first-login LDAP accounts are created with. Returns the
+// service for chaining.
+func (s *ldapAuthService) WithRequestDefaults(r RequestDefaultsReader) *ldapAuthService {
+	s.reqDefaults = r
 	return s
 }
 
@@ -370,11 +379,14 @@ func (s *ldapAuthService) loginOrCreate(ctx context.Context, dn, username, email
 		e := email
 		emailPtr = &e
 	}
+	autoMovies, autoTV := NewAccountRequestDefaults(ctx, s.reqDefaults)
 	user, err = s.db.CreateLDAPUser(ctx, gen.CreateLDAPUserParams{
-		Username: username,
-		Email:    emailPtr,
-		LdapDn:   &dnPtr,
-		IsAdmin:  createAdmin,
+		Username:          username,
+		Email:             emailPtr,
+		LdapDn:            &dnPtr,
+		IsAdmin:           createAdmin,
+		AutoApproveMovies: autoMovies,
+		AutoApproveTv:     autoTV,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create ldap user: %w", err)

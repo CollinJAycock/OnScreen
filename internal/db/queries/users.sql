@@ -10,14 +10,20 @@ SELECT * FROM users WHERE username = $1;
 -- truncating, but for now bound the response so a never-paginated
 -- admin call doesn't ship a multi-megabyte payload.
 SELECT id, username, email, is_admin,
-       created_at, updated_at
+       created_at, updated_at,
+       auto_approve_movies, auto_approve_tv,
+       max_content_rating
 FROM users
 ORDER BY username
 LIMIT 1000;
 
 -- name: CreateUser :one
-INSERT INTO users (username, email, password_hash, is_admin)
-VALUES ($1, $2, $3, $4)
+-- auto_approve_movies / auto_approve_tv carry the admin-set defaults for new
+-- full accounts (settings.RequestsConfig); CreateOIDCUser / CreateSAMLUser /
+-- CreateLDAPUser take them the same way. Managed profiles
+-- (CreateManagedProfile) omit them and start on the column default, false.
+INSERT INTO users (username, email, password_hash, is_admin, auto_approve_movies, auto_approve_tv)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: UpdateUserPassword :exec
@@ -160,8 +166,8 @@ SET oidc_issuer = $2,
 WHERE id = $1;
 
 -- name: CreateOIDCUser :one
-INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin, auto_approve_movies, auto_approve_tv)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetUserBySAMLSubject :one
@@ -181,8 +187,8 @@ WHERE id = $1;
 
 -- name: CreateSAMLUser :one
 -- JIT provisioning for a SAML login with no matching account.
-INSERT INTO users (username, email, saml_issuer, saml_subject, is_admin)
-VALUES ($1, $2, $3, $4, $5)
+INSERT INTO users (username, email, saml_issuer, saml_subject, is_admin, auto_approve_movies, auto_approve_tv)
+VALUES ($1, $2, $3, $4, $5, $6, $7)
 RETURNING *;
 
 -- name: GetUserByLDAPDN :one
@@ -196,8 +202,8 @@ SET ldap_dn = $2,
 WHERE id = $1;
 
 -- name: CreateLDAPUser :one
-INSERT INTO users (username, email, ldap_dn, is_admin)
-VALUES ($1, $2, $3, $4)
+INSERT INTO users (username, email, ldap_dn, is_admin, auto_approve_movies, auto_approve_tv)
+VALUES ($1, $2, $3, $4, $5, $6)
 RETURNING *;
 
 -- name: GetUserPreferences :one
@@ -282,6 +288,26 @@ SELECT id FROM users WHERE parent_user_id = $1;
 -- silently change what an admin can "see as".
 SELECT id, username, is_admin, max_content_rating
 FROM users
+WHERE id = $1;
+
+-- name: GetUserRequestPermissions :one
+-- Everything the media-request service needs to decide whether a new request
+-- is auto-approved, read from the row rather than the caller's token claims
+-- (claims can lag an admin's change by a token lifetime). is_admin wins, then a
+-- set max_content_rating vetoes, then the per-type toggle decides.
+SELECT is_admin, max_content_rating, auto_approve_movies, auto_approve_tv
+FROM users
+WHERE id = $1;
+
+-- name: SetUserRequestPermissions :execrows
+-- Admin-set per-user auto-approval toggles. Stored as given even while the
+-- user has a content-rating ceiling (which overrides them at request time), so
+-- lifting the ceiling later restores what the admin chose. Rows affected lets
+-- the handler 404 an unknown id.
+UPDATE users
+SET auto_approve_movies = $2,
+    auto_approve_tv     = $3,
+    updated_at          = NOW()
 WHERE id = $1;
 
 -- name: SetProfileInheritLibraryAccess :execrows

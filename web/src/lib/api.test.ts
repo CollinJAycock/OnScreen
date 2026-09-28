@@ -309,6 +309,18 @@ describe('userApi', () => {
     expect(body.max_content_rating).toBeNull();
   });
 
+  it('setRequestPermissions calls PUT /users/:id/request-permissions', async () => {
+    const fetch = vi.fn().mockResolvedValue({
+      ok: true, status: 204, json: () => Promise.resolve(null)
+    });
+    vi.stubGlobal('fetch', fetch);
+    await userApi.setRequestPermissions('user-7', { auto_approve_movies: true, auto_approve_tv: false });
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/user-7/request-permissions');
+    const [, opts] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(opts.method).toBe('PUT');
+    expect(JSON.parse(opts.body as string)).toEqual({ auto_approve_movies: true, auto_approve_tv: false });
+  });
+
   it('listSwitchable calls GET /users/switchable', async () => {
     const users = [{ id: '1', username: 'alice', is_admin: false, has_pin: true }];
     vi.stubGlobal('fetch', mockFetch(200, { data: users }));

@@ -552,12 +552,21 @@ type samlAuthService struct {
 	db          SAMLOAuthDB
 	issueTokens IssueTokenPairFn
 	logger      *slog.Logger
+	reqDefaults RequestDefaultsReader // new-account auto-approval defaults; nil = off
 }
 
 // NewSAMLAuthService creates a SAMLAuthService backed by the given DB
 // and token issuer.
-func NewSAMLAuthService(db SAMLOAuthDB, issueTokens IssueTokenPairFn, logger *slog.Logger) SAMLAuthService {
+func NewSAMLAuthService(db SAMLOAuthDB, issueTokens IssueTokenPairFn, logger *slog.Logger) *samlAuthService {
 	return &samlAuthService{db: db, issueTokens: issueTokens, logger: logger}
+}
+
+// WithRequestDefaults supplies the admin-set media-request auto-approval
+// defaults that JIT-provisioned accounts are created with. Returns the service
+// for chaining.
+func (s *samlAuthService) WithRequestDefaults(r RequestDefaultsReader) *samlAuthService {
+	s.reqDefaults = r
+	return s
 }
 
 // LoginOrCreateSAMLUser implements the same three-step lookup as the
@@ -614,12 +623,15 @@ func (s *samlAuthService) LoginOrCreateSAMLUser(ctx context.Context, p SAMLProfi
 		e := p.Email
 		emailPtr = &e
 	}
+	autoMovies, autoTV := NewAccountRequestDefaults(ctx, s.reqDefaults)
 	user, err = s.db.CreateSAMLUser(ctx, gen.CreateSAMLUserParams{
-		Username:    p.Username,
-		Email:       emailPtr,
-		SamlIssuer:  &issuer,
-		SamlSubject: &subject,
-		IsAdmin:     isAdmin,
+		Username:          p.Username,
+		Email:             emailPtr,
+		SamlIssuer:        &issuer,
+		SamlSubject:       &subject,
+		IsAdmin:           isAdmin,
+		AutoApproveMovies: autoMovies,
+		AutoApproveTv:     autoTV,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("create saml user: %w", err)

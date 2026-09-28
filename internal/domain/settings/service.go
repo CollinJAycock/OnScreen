@@ -41,6 +41,7 @@ const keyGeneralConfig = "general_config"
 const keyStorageConfig = "storage_config"
 const keySystemConfig = "system_config"
 const keyTLSConfig = "tls_config"
+const keyRequestsConfig = "requests_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -354,6 +355,42 @@ func (s *Service) SetPinSwitchEnabled(ctx context.Context, enabled bool) error {
 		v = "true"
 	}
 	return s.set(ctx, keyPinSwitchEnabled, v)
+}
+
+// RequestsConfig holds the media-request defaults an admin sets for NEW full
+// accounts (local register, invite accept, OIDC/SAML/LDAP provisioning): the
+// auto_approve_movies / auto_approve_tv values the users row is created with.
+// Read once at account creation and copied into the row, so changing a default
+// never touches existing users. Managed household profiles ignore it and
+// always start with both off. The zero value (both false) is the default — a
+// fresh install sends every request to the admin queue.
+type RequestsConfig struct {
+	DefaultAutoApproveMovies bool `json:"default_auto_approve_movies"`
+	DefaultAutoApproveTV     bool `json:"default_auto_approve_tv"`
+}
+
+// Requests returns the stored request defaults, or the zero value (both off)
+// if nothing is persisted.
+func (s *Service) Requests(ctx context.Context) RequestsConfig {
+	raw := s.get(ctx, keyRequestsConfig)
+	if raw == "" {
+		return RequestsConfig{}
+	}
+	var cfg RequestsConfig
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		s.logger.ErrorContext(ctx, "parse requests_config", "err", err)
+		return RequestsConfig{}
+	}
+	return cfg
+}
+
+// SetRequests persists the request defaults as JSON.
+func (s *Service) SetRequests(ctx context.Context, cfg RequestsConfig) error {
+	b, err := json.Marshal(cfg)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, keyRequestsConfig, string(b))
 }
 
 // OpenSubtitlesConfig stores credentials and defaults for the OpenSubtitles

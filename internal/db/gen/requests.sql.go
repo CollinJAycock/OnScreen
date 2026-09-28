@@ -19,10 +19,11 @@ SET status      = 'approved',
     quality_profile_id = COALESCE($3, quality_profile_id),
     root_folder        = COALESCE($4, root_folder),
     decided_by  = $5,
+    auto_approved = $6,
     decided_at  = NOW(),
     updated_at  = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at
+RETURNING id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved
 `
 
 type ApproveMediaRequestParams struct {
@@ -31,8 +32,13 @@ type ApproveMediaRequestParams struct {
 	QualityProfileID *int32      `json:"quality_profile_id"`
 	RootFolder       *string     `json:"root_folder"`
 	DecidedBy        pgtype.UUID `json:"decided_by"`
+	AutoApproved     bool        `json:"auto_approved"`
 }
 
+// auto_approved is set in the same UPDATE as the status flip, so no reader
+// sees an approved row with decided_by NULL and the flag not yet set: an
+// automatic approval passes decided_by NULL and auto_approved true, an admin
+// approval the admin's id and false.
 func (q *Queries) ApproveMediaRequest(ctx context.Context, arg ApproveMediaRequestParams) (MediaRequest, error) {
 	row := q.db.QueryRow(ctx, approveMediaRequest,
 		arg.ID,
@@ -40,6 +46,7 @@ func (q *Queries) ApproveMediaRequest(ctx context.Context, arg ApproveMediaReque
 		arg.QualityProfileID,
 		arg.RootFolder,
 		arg.DecidedBy,
+		arg.AutoApproved,
 	)
 	var i MediaRequest
 	err := row.Scan(
@@ -64,6 +71,7 @@ func (q *Queries) ApproveMediaRequest(ctx context.Context, arg ApproveMediaReque
 		&i.FulfilledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoApproved,
 	)
 	return i, err
 }
@@ -125,7 +133,7 @@ INSERT INTO media_requests (
     requested_service_id, quality_profile_id, root_folder
 )
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
-RETURNING id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at
+RETURNING id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved
 `
 
 type CreateMediaRequestParams struct {
@@ -181,6 +189,7 @@ func (q *Queries) CreateMediaRequest(ctx context.Context, arg CreateMediaRequest
 		&i.FulfilledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoApproved,
 	)
 	return i, err
 }
@@ -193,7 +202,7 @@ SET status         = 'declined',
     decided_at     = NOW(),
     updated_at     = NOW()
 WHERE id = $1 AND status = 'pending'
-RETURNING id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at
+RETURNING id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved
 `
 
 type DeclineMediaRequestParams struct {
@@ -227,6 +236,7 @@ func (q *Queries) DeclineMediaRequest(ctx context.Context, arg DeclineMediaReque
 		&i.FulfilledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoApproved,
 	)
 	return i, err
 }
@@ -241,7 +251,7 @@ func (q *Queries) DeleteMediaRequest(ctx context.Context, id uuid.UUID) error {
 }
 
 const findActiveRequestForUser = `-- name: FindActiveRequestForUser :one
-SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at FROM media_requests
+SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved FROM media_requests
 WHERE user_id = $1 AND type = $2 AND tmdb_id = $3
   AND status IN ('pending', 'approved', 'downloading')
 LIMIT 1
@@ -280,12 +290,13 @@ func (q *Queries) FindActiveRequestForUser(ctx context.Context, arg FindActiveRe
 		&i.FulfilledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoApproved,
 	)
 	return i, err
 }
 
 const findActiveRequestsForUserByTMDB = `-- name: FindActiveRequestsForUserByTMDB :many
-SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at FROM media_requests
+SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved FROM media_requests
 WHERE user_id = $1
   AND tmdb_id = ANY($2::int[])
   AND status IN ('pending', 'approved', 'downloading')
@@ -331,6 +342,7 @@ func (q *Queries) FindActiveRequestsForUserByTMDB(ctx context.Context, arg FindA
 			&i.FulfilledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AutoApproved,
 		); err != nil {
 			return nil, err
 		}
@@ -343,7 +355,7 @@ func (q *Queries) FindActiveRequestsForUserByTMDB(ctx context.Context, arg FindA
 }
 
 const getMediaRequest = `-- name: GetMediaRequest :one
-SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at FROM media_requests WHERE id = $1
+SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved FROM media_requests WHERE id = $1
 `
 
 func (q *Queries) GetMediaRequest(ctx context.Context, id uuid.UUID) (MediaRequest, error) {
@@ -371,12 +383,13 @@ func (q *Queries) GetMediaRequest(ctx context.Context, id uuid.UUID) (MediaReque
 		&i.FulfilledAt,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.AutoApproved,
 	)
 	return i, err
 }
 
 const listActiveMediaRequestsForTMDB = `-- name: ListActiveMediaRequestsForTMDB :many
-SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at FROM media_requests
+SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved FROM media_requests
 WHERE type = $1 AND tmdb_id = $2
   AND status IN ('approved', 'downloading')
 `
@@ -419,6 +432,7 @@ func (q *Queries) ListActiveMediaRequestsForTMDB(ctx context.Context, arg ListAc
 			&i.FulfilledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AutoApproved,
 		); err != nil {
 			return nil, err
 		}
@@ -431,7 +445,7 @@ func (q *Queries) ListActiveMediaRequestsForTMDB(ctx context.Context, arg ListAc
 }
 
 const listAllMediaRequests = `-- name: ListAllMediaRequests :many
-SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at
+SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved
 FROM media_requests
 WHERE ($3::text IS NULL OR status = $3::text)
 ORDER BY created_at DESC
@@ -475,6 +489,7 @@ func (q *Queries) ListAllMediaRequests(ctx context.Context, arg ListAllMediaRequ
 			&i.FulfilledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AutoApproved,
 		); err != nil {
 			return nil, err
 		}
@@ -487,7 +502,7 @@ func (q *Queries) ListAllMediaRequests(ctx context.Context, arg ListAllMediaRequ
 }
 
 const listMediaRequestsForUser = `-- name: ListMediaRequestsForUser :many
-SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at
+SELECT id, user_id, type, tmdb_id, title, year, poster_url, overview, status, seasons, requested_service_id, quality_profile_id, root_folder, service_id, decline_reason, decided_by, decided_at, fulfilled_item_id, fulfilled_at, created_at, updated_at, auto_approved
 FROM media_requests
 WHERE user_id = $1
   AND ($4::text IS NULL OR status = $4::text)
@@ -538,6 +553,7 @@ func (q *Queries) ListMediaRequestsForUser(ctx context.Context, arg ListMediaReq
 			&i.FulfilledAt,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.AutoApproved,
 		); err != nil {
 			return nil, err
 		}

@@ -759,6 +759,20 @@ export interface User {
   username: string;
   is_admin: boolean;
   created_at: string;
+  // Per-user request auto-approval. Stored as set, but the server ignores
+  // both while the user has a content-rating ceiling, and admins' own
+  // requests are always approved regardless.
+  auto_approve_movies: boolean;
+  auto_approve_tv: boolean;
+  // Content-rating ceiling, when the list includes it. Managed profiles'
+  // ceilings are also available from profileApi.list().
+  max_content_rating?: string | null;
+}
+
+/** Body of PUT /users/{id}/request-permissions. */
+export interface RequestPermissions {
+  auto_approve_movies: boolean;
+  auto_approve_tv: boolean;
 }
 
 export interface SwitchableUser {
@@ -807,6 +821,9 @@ export const userApi = {
     api.get<StreamingLimits>(`/users/${userId}/streaming-limits`),
   setStreamingLimits: (userId: string, limits: StreamingLimits) =>
     api.put<void>(`/users/${userId}/streaming-limits`, limits),
+  /** Whether the target user's movie / TV requests skip the admin queue. */
+  setRequestPermissions: (userId: string, perms: RequestPermissions) =>
+    api.put<void>(`/users/${userId}/request-permissions`, perms),
   /** The caller's own watch policy + today's usage + whether playback is
    *  allowed right now. Used by the player to pre-check before starting a
    *  stream so a restricted child is blocked before any content plays. */
@@ -1124,6 +1141,14 @@ export interface GeneralSettings {
   cors_allowed_origins: string[];
 }
 
+/** Auto-approve defaults stamped onto new full accounts (register, invite,
+ *  SSO/LDAP provisioning). Changing them never touches existing users, and
+ *  managed household profiles always start with both off. */
+export interface RequestSettings {
+  default_auto_approve_movies: boolean;
+  default_auto_approve_tv: boolean;
+}
+
 export interface ServerSettings {
   tmdb_api_key: string;
   tvdb_api_key: string;
@@ -1139,6 +1164,7 @@ export interface ServerSettings {
   smtp: SMTPSettings;
   otel: OTelSettings;
   general: GeneralSettings;
+  requests: RequestSettings;
 }
 
 export interface OpenSubtitlesUpdate {
@@ -2509,6 +2535,10 @@ export interface MediaRequest {
   decided_at?: string;
   fulfilled_item_id?: string;
   fulfilled_at?: string;
+  // True when the server approved the request on creation (the requester
+  // has auto-approve for this type, or is an admin) and handed it to
+  // Radarr/Sonarr. A failed hand-off leaves it pending and false.
+  auto_approved: boolean;
   created_at: string;
   updated_at: string;
 }

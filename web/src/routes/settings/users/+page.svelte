@@ -1,6 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { api, userApi, inviteApi, type User, type UserMeta, type UserLibraryAccess, type WatchLimitInfo } from '$lib/api';
+  import {
+    api, userApi, inviteApi, profileApi, settingsApi,
+    type User, type UserMeta, type UserLibraryAccess, type WatchLimitInfo,
+    type RequestPermissions, type RequestSettings
+  } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
@@ -57,6 +61,19 @@
   let bitrateEnabled = false;
   let bitrateMbps = 8;
 
+  // Request auto-approval. Per-user toggles save on click like the admin
+  // toggle; ids of rows mid-save block a second click racing the first PUT.
+  let permsSaving = new Set<string>();
+  // Managed profiles' content-rating ceilings by user id. A rated profile's
+  // requests always go to the queue whatever its toggles say, so the row
+  // needs the ceiling to explain that.
+  let profileRatings: Record<string, string> = {};
+
+  // Auto-approve defaults for accounts created from now on (server settings).
+  let requestDefaults: RequestSettings | null = null;
+  let defaultsError = '';
+  let defaultsSaving = false;
+
   // Invite flow
   let showInvite = false;
   let inviteEmail = '';
@@ -69,8 +86,82 @@
   onMount(async () => {
     currentUser = api.getUser();
     if (!currentUser) return;
-    await Promise.all([loadUsers(), loadInvites()]);
+    await Promise.all([loadUsers(), loadInvites(), loadProfileRatings(), loadRequestDefaults()]);
   });
+
+  async function loadProfileRatings() {
+    try {
+      const next: Record<string, string> = {};
+      for (const p of await profileApi.list() ?? []) {
+        if (p.max_content_rating) next[p.id] = p.max_content_rating;
+      }
+      profileRatings = next;
+    } catch {
+      profileRatings = {};
+    }
+  }
+
+  function ratingLimit(user: User): string | null {
+    return user.max_content_rating || profileRatings[user.id] || null;
+  }
+
+  async function toggleAutoApprove(user: User, kind: 'movies' | 'tv') {
+    if (permsSaving.has(user.id)) return;
+    const perms: RequestPermissions = {
+      auto_approve_movies: kind === 'movies' ? !user.auto_approve_movies : !!user.auto_approve_movies,
+      auto_approve_tv: kind === 'tv' ? !user.auto_approve_tv : !!user.auto_approve_tv
+    };
+    const on = kind === 'movies' ? perms.auto_approve_movies : perms.auto_approve_tv;
+    const what = kind === 'movies' ? 'Movie' : 'TV';
+    permsSaving = new Set(permsSaving).add(user.id);
+    try {
+      await userApi.setRequestPermissions(user.id, perms);
+      users = users.map(u => (u.id === user.id ? { ...u, ...perms } : u));
+      if (!on) {
+        toast.success(`${what} requests from "${user.username}" now need approval`);
+      } else if (ratingLimit(user)) {
+        // Stored, but the server ignores it while the ceiling is set.
+        toast.success(`Saved for "${user.username}" — takes effect only if the rating limit is removed`);
+      } else {
+        toast.success(`${what} requests from "${user.username}" are now approved automatically`);
+      }
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update request permissions');
+    } finally {
+      const next = new Set(permsSaving);
+      next.delete(user.id);
+      permsSaving = next;
+    }
+  }
+
+  async function loadRequestDefaults() {
+    defaultsError = '';
+    try {
+      const s = await settingsApi.get();
+      requestDefaults = {
+        default_auto_approve_movies: !!s.requests?.default_auto_approve_movies,
+        default_auto_approve_tv: !!s.requests?.default_auto_approve_tv
+      };
+    } catch (e: unknown) {
+      requestDefaults = null;
+      defaultsError = e instanceof Error ? e.message : 'Failed to load new-user defaults';
+    }
+  }
+
+  async function toggleDefault(key: keyof RequestSettings) {
+    if (!requestDefaults || defaultsSaving) return;
+    const next: RequestSettings = { ...requestDefaults, [key]: !requestDefaults[key] };
+    defaultsSaving = true;
+    try {
+      await settingsApi.update({ requests: next });
+      requestDefaults = next;
+      toast.success('New-user defaults saved');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save new-user defaults');
+    } finally {
+      defaultsSaving = false;
+    }
+  }
 
   async function loadInvites() {
     invitesLoading = true;
@@ -474,6 +565,7 @@
           <tr>
             <th>Username</th>
             <th>Role</th>
+            <th>Auto-approve</th>
             <th>Created</th>
             <th class="actions-col"></th>
           </tr>
@@ -498,6 +590,47 @@
                   </span>
                   <span class="toggle-label">{user.is_admin ? 'Admin' : 'User'}</span>
                 </button>
+              </td>
+              <td>
+                {#if user.is_admin}
+                  <span class="perm-note">Admins' requests are always approved</span>
+                {:else}
+                  {@const limited = ratingLimit(user)}
+                  <!-- A rating-limited user's toggles stay clickable: the
+                       server stores them, and they apply once the ceiling
+                       is lifted. Dimmed + the note say they do nothing now. -->
+                  <div class="perm-toggles" class:limited={!!limited}>
+                    <button
+                      class="perm-toggle"
+                      class:active={user.auto_approve_movies}
+                      role="switch"
+                      aria-checked={!!user.auto_approve_movies}
+                      aria-label="Auto-approve movies for {user.username}"
+                      aria-describedby={limited ? `perm-note-${user.id}` : undefined}
+                      disabled={permsSaving.has(user.id)}
+                      on:click={() => toggleAutoApprove(user, 'movies')}
+                    >
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">Movies</span>
+                    </button>
+                    <button
+                      class="perm-toggle"
+                      class:active={user.auto_approve_tv}
+                      role="switch"
+                      aria-checked={!!user.auto_approve_tv}
+                      aria-label="Auto-approve TV for {user.username}"
+                      aria-describedby={limited ? `perm-note-${user.id}` : undefined}
+                      disabled={permsSaving.has(user.id)}
+                      on:click={() => toggleAutoApprove(user, 'tv')}
+                    >
+                      <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                      <span class="toggle-label">TV</span>
+                    </button>
+                  </div>
+                  {#if limited}
+                    <span class="perm-note" id="perm-note-{user.id}" title="Content rating limit: {limited}">Rating-limited profiles always need approval</span>
+                  {/if}
+                {/if}
               </td>
               <td class="date-cell">{formatDate(user.created_at)}</td>
               <td class="actions-cell">
@@ -540,6 +673,40 @@
       </div>
     {/if}
   {/if}
+
+  <!-- Auto-approve defaults for new accounts -->
+  <section class="defaults-section">
+    <h2>New users</h2>
+    {#if requestDefaults}
+      <div class="defaults-card">
+        <button
+          class="perm-toggle"
+          class:active={requestDefaults.default_auto_approve_movies}
+          role="switch"
+          aria-checked={requestDefaults.default_auto_approve_movies}
+          disabled={defaultsSaving}
+          on:click={() => toggleDefault('default_auto_approve_movies')}
+        >
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Auto-approve movies</span>
+        </button>
+        <button
+          class="perm-toggle"
+          class:active={requestDefaults.default_auto_approve_tv}
+          role="switch"
+          aria-checked={requestDefaults.default_auto_approve_tv}
+          disabled={defaultsSaving}
+          on:click={() => toggleDefault('default_auto_approve_tv')}
+        >
+          <span class="toggle-track"><span class="toggle-thumb"></span></span>
+          <span class="toggle-label">Auto-approve TV</span>
+        </button>
+        <p class="defaults-hint">Applies to accounts created from now on. Household profiles start with auto-approve off.</p>
+      </div>
+    {:else if defaultsError}
+      <div class="banner error">{defaultsError}</div>
+    {/if}
+  </section>
 
   <!-- Pending invites -->
   {#if invites.length > 0}
@@ -891,28 +1058,48 @@
   .menu-item.danger:hover { background: rgba(248,113,113,0.12); }
   .menu-sep { height: 1px; background: var(--border); margin: 0.25rem 0.3rem; }
 
-  /* Admin toggle */
-  .admin-toggle {
+  /* Admin toggle (and the request auto-approve switches, which share it) */
+  .admin-toggle, .perm-toggle {
     display: inline-flex; align-items: center; gap: 0.5rem;
     background: none; border: none; cursor: pointer; padding: 0.2rem 0;
-    color: var(--text-muted); font-size: 0.8rem;
+    color: var(--text-muted); font-size: 0.8rem; font-family: inherit;
   }
-  .admin-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
+  .admin-toggle:disabled, .perm-toggle:disabled { opacity: 0.4; cursor: not-allowed; }
   .toggle-track {
     display: inline-block; width: 32px; height: 18px;
     background: rgba(255,255,255,0.1); border-radius: 9px;
     position: relative; transition: background 0.2s;
   }
-  .admin-toggle.active .toggle-track { background: var(--accent); }
+  .admin-toggle.active .toggle-track, .perm-toggle.active .toggle-track { background: var(--accent); }
   .toggle-thumb {
     position: absolute; top: 2px; left: 2px;
     width: 14px; height: 14px;
     background: #fff; border-radius: 50%;
     transition: transform 0.2s;
   }
-  .admin-toggle.active .toggle-thumb { transform: translateX(14px); }
+  .admin-toggle.active .toggle-thumb, .perm-toggle.active .toggle-thumb { transform: translateX(14px); }
   .toggle-label { font-size: 0.78rem; }
-  .admin-toggle.active .toggle-label { color: var(--accent-text); }
+  .admin-toggle.active .toggle-label, .perm-toggle.active .toggle-label { color: var(--accent-text); }
+
+  /* Request auto-approve column */
+  .perm-toggles { display: flex; flex-direction: column; align-items: flex-start; gap: 0.15rem; }
+  .perm-toggles.limited { opacity: 0.45; }
+  .perm-note {
+    display: block; max-width: 170px;
+    font-size: 0.7rem; line-height: 1.35; color: var(--text-muted);
+  }
+  .perm-toggles + .perm-note { margin-top: 0.25rem; }
+
+  /* New-user defaults */
+  .defaults-section { margin-top: 2rem; }
+  .defaults-card {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 0.35rem;
+    background: rgba(255,255,255,0.03);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.9rem 1.25rem;
+  }
+  .defaults-hint { font-size: 0.72rem; color: var(--text-muted); margin: 0.35rem 0 0; line-height: 1.45; }
 
   /* Buttons */
   .btn-create {
@@ -1042,7 +1229,7 @@
 
   /* Invites section */
   .invites-section { margin-top: 2rem; }
-  .invites-section h2 {
+  .invites-section h2, .defaults-section h2 {
     font-size: 1rem; font-weight: 600; color: #8888a0;
     margin: 0 0 0.75rem;
   }

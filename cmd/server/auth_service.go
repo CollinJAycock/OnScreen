@@ -97,6 +97,9 @@ type authService struct {
 	segTokens segmentTokenRevoker
 	// now is the clock for TOTP step matching; nil = time.Now (tests pin it).
 	now func() time.Time
+	// reqDefaults seeds a new account's media-request auto-approval toggles
+	// from Settings ▸ Requests. Optional — nil creates accounts with both off.
+	reqDefaults v1.RequestDefaultsReader
 }
 
 // segmentTokenRevoker is satisfied by *transcode.SegmentTokenManager.
@@ -260,7 +263,9 @@ func (s *authService) CreateFirstAdmin(ctx context.Context, username, email, pas
 	}
 	// The PL/pgSQL function NULLIFs an empty email so the partial unique
 	// index on email-when-not-null doesn't collide across blank-email
-	// users — Go side stays straightforward.
+	// users — Go side stays straightforward. It doesn't take the new-account
+	// request defaults: nobody can have set them before the first account
+	// exists, and an admin's requests are auto-approved regardless.
 	user, err := s.db.CreateFirstAdmin(ctx, gen.CreateFirstAdminParams{
 		Username:     username,
 		Email:        email,
@@ -291,11 +296,17 @@ func (s *authService) CreateUser(ctx context.Context, username, email, password 
 	if email != "" {
 		emailPtr = &email
 	}
+	// The new-account request defaults apply to every full account made here,
+	// admin or not (an admin's own requests are auto-approved regardless, but
+	// the stored toggles matter again if they are later demoted).
+	autoMovies, autoTV := v1.NewAccountRequestDefaults(ctx, s.reqDefaults)
 	user, err := s.db.CreateUser(ctx, gen.CreateUserParams{
-		Username:     username,
-		Email:        emailPtr,
-		PasswordHash: &hashStr,
-		IsAdmin:      isAdmin,
+		Username:          username,
+		Email:             emailPtr,
+		PasswordHash:      &hashStr,
+		IsAdmin:           isAdmin,
+		AutoApproveMovies: autoMovies,
+		AutoApproveTv:     autoTV,
 	})
 	if err != nil {
 		var pgErr *pgconn.PgError
