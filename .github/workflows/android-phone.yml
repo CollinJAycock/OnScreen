@@ -1,0 +1,85 @@
+name: Android phone
+
+# PR gate for the phone client's (clients/android_native) JVM unit tests. The
+# TV client has had this since its suite drifted red; the phone's 400+ tests
+# only ran when someone remembered to run them locally, which is how a fix in
+# one Android app lands without its sibling. Path-filtered so it only runs
+# when the phone client changes.
+on:
+  push:
+    paths:
+      - 'clients/android_native/**'
+      - '.github/workflows/android-phone.yml'
+  pull_request:
+    paths:
+      - 'clients/android_native/**'
+      - '.github/workflows/android-phone.yml'
+
+# Least privilege: the job only reads the repo and uploads artifacts (which
+# uses the runtime token, not GITHUB_TOKEN). Gradle plugins/dependencies run
+# arbitrary build code, so they must not see a write-scoped token.
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/android_native
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      # Provides cmdline-tools + accepts SDK licenses so AGP can resolve
+      # compileSdk 36 / build-tools on the runner.
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+
+      # Gradle dependency + build cache (keyed on the wrapper + build files).
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3
+
+      - name: Point the Gradle daemon JVM at the runner's JDK
+        # gradle.properties pins org.gradle.java.installations.paths to the
+        # Windows Android Studio JBR for local dev, which is invalid on Linux.
+        # GRADLE_USER_HOME outranks the project file, so override it there.
+        run: |
+          GUH="${GRADLE_USER_HOME:-$HOME/.gradle}"
+          mkdir -p "$GUH"
+          echo "org.gradle.java.installations.paths=$JAVA_HOME" >> "$GUH/gradle.properties"
+
+      - name: Run unit tests
+        # No keystore.properties on the runner: the build leaves release
+        # unsigned when it's absent, and unit tests only need debug.
+        run: |
+          chmod +x gradlew
+          ./gradlew :app:testDebugUnitTest --no-daemon --console=plain
+
+      - name: Run Android lint
+        # Errors only fail the build (warnings are reported, not gated). The
+        # release variant, since that's what minify / the Play upload build.
+        run: ./gradlew :app:lintRelease --no-daemon --console=plain
+
+      - name: Upload test report on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-phone-test-report
+          path: clients/android_native/app/build/reports/tests/testDebugUnitTest
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Upload lint report on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: android-phone-lint-report
+          path: clients/android_native/app/build/reports/lint-results-*.*
+          if-no-files-found: ignore
+          retention-days: 7
