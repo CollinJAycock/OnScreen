@@ -699,7 +699,7 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	h.attachWatchState(r.Context(), claims.UserID, fp.MaxRatingRank, items, out)
-	h.attachParentTitles(r.Context(), items, out)
+	h.attachParentTitles(r.Context(), fp.MaxRatingRank, items, out)
 	respond.List(w, r, out, total, "")
 }
 

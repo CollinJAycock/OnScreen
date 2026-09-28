@@ -128,7 +128,9 @@ func TestMusicBrowse_Integration_AlbumsAcrossArtists(t *testing.T) {
 	}
 
 	// Parent titles: one row per live id, unknown ids ignored.
-	rows, err := q.ListMediaItemTitles(ctx, []uuid.UUID{zappa, beatles, abba, uuid.New(), gone})
+	rows, err := q.ListMediaItemTitles(ctx, gen.ListMediaItemTitlesParams{
+		Ids: []uuid.UUID{zappa, beatles, abba, uuid.New(), gone},
+	})
 	if err != nil {
 		t.Fatalf("ListMediaItemTitles: %v", err)
 	}
@@ -144,5 +146,15 @@ func TestMusicBrowse_Integration_AlbumsAcrossArtists(t *testing.T) {
 		if got[id] != title {
 			t.Errorf("title of %s: got %q, want %q", id, got[id], title)
 		}
+	}
+
+	// Under a rating ceiling an unrated parent (rank 4) goes unnamed, as it
+	// is unlisted.
+	pg := int32(1)
+	capped, err := q.ListMediaItemTitles(ctx, gen.ListMediaItemTitlesParams{
+		Ids: []uuid.UUID{zappa, beatles, abba}, MaxRatingRank: &pg,
+	})
+	if err != nil || len(capped) != 0 {
+		t.Errorf("capped titles: got %v, %v; want none", capped, err)
 	}
 }

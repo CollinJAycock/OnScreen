@@ -11,6 +11,9 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -20,10 +23,13 @@ type fakeLibraryParentDB struct {
 	titles map[uuid.UUID]string
 	err    error
 	calls  [][]uuid.UUID
+	ranks  []*int32
 }
 
-func (f *fakeLibraryParentDB) ListMediaItemTitles(_ context.Context, ids []uuid.UUID) ([]gen.ListMediaItemTitlesRow, error) {
+func (f *fakeLibraryParentDB) ListMediaItemTitles(_ context.Context, arg gen.ListMediaItemTitlesParams) ([]gen.ListMediaItemTitlesRow, error) {
+	ids := arg.Ids
 	f.calls = append(f.calls, ids)
+	f.ranks = append(f.ranks, arg.MaxRatingRank)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -161,5 +167,32 @@ func TestLibrary_Items_ParentTitleDegrades(t *testing.T) {
 				t.Errorf("parent_title: got %q, want it omitted", *got[0].ParentTitle)
 			}
 		})
+	}
+}
+
+// The parents are named under the caller's rating ceiling, like the rows:
+// a capped profile's rank reaches the lookup, an uncapped one sends none.
+func TestLibrary_Items_ParentTitlesHonourTheRatingCeiling(t *testing.T) {
+	libID, parent := uuid.New(), uuid.New()
+	db := &fakeLibraryParentDB{titles: map[uuid.UUID]string{parent: "Show"}}
+	h := newLibHandler(musicLibrary(libID)).
+		WithMedia(&mockMediaLister{items: []media.Item{{ID: uuid.New(), Type: "album", ParentID: &parent}}, count: 1}).
+		WithParentTitles(db)
+
+	listParentFields(t, h, libID, "/?type=album")
+	if db.ranks[0] != nil {
+		t.Errorf("uncapped caller: got rank %d, want none", *db.ranks[0])
+	}
+
+	req := withChiParam(httptest.NewRequest(http.MethodGet, "/?type=album", nil), "id", libID.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}))
+	rec := httptest.NewRecorder()
+	h.Items(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d %s", rec.Code, rec.Body.String())
+	}
+	want := contentrating.MaxRatingRank("PG")
+	if got := db.ranks[len(db.ranks)-1]; got == nil || want == nil || int(*got) != *want {
+		t.Errorf("capped caller: got rank %v, want %v", got, want)
 	}
 }

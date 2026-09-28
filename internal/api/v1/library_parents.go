@@ -6,13 +6,14 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/dbconv"
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
 // LibraryParentDB is the optional title lookup behind parent_title on the
 // library listing: one batched query per page. *gen.Queries satisfies it.
 type LibraryParentDB interface {
-	ListMediaItemTitles(ctx context.Context, ids []uuid.UUID) ([]gen.ListMediaItemTitlesRow, error)
+	ListMediaItemTitles(ctx context.Context, arg gen.ListMediaItemTitlesParams) ([]gen.ListMediaItemTitlesRow, error)
 }
 
 // WithParentTitles wires parent_title on GET /libraries/:id/items. Without it
@@ -24,9 +25,11 @@ func (h *LibraryHandler) WithParentTitles(db LibraryParentDB) *LibraryHandler {
 
 // attachParentTitles fills parent_title on the rows of one listing page that
 // have a parent (albums, music videos, seasons, … listed via ?type=). A
-// top-level listing has no parents and makes no query. Failures only drop
-// the field — the listing itself already succeeded.
-func (h *LibraryHandler) attachParentTitles(ctx context.Context, items []media.Item, out []MediaItemResponse) {
+// top-level listing has no parents and makes no query. maxRank is the
+// caller's rating ceiling, which hides a parent above it just as the listing
+// hides rows above it. Failures only drop the field — the listing itself
+// already succeeded.
+func (h *LibraryHandler) attachParentTitles(ctx context.Context, maxRank *int, items []media.Item, out []MediaItemResponse) {
 	if h.parentDB == nil {
 		return
 	}
@@ -45,7 +48,9 @@ func (h *LibraryHandler) attachParentTitles(ctx context.Context, items []media.I
 	if len(ids) == 0 {
 		return
 	}
-	rows, err := h.parentDB.ListMediaItemTitles(ctx, ids)
+	rows, err := h.parentDB.ListMediaItemTitles(ctx, gen.ListMediaItemTitlesParams{
+		Ids: ids, MaxRatingRank: dbconv.IntPtrToInt32Ptr(maxRank),
+	})
 	if err != nil {
 		h.logger.WarnContext(ctx, "library items: parent titles", "err", err)
 		return

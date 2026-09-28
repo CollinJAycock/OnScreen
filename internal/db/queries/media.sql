@@ -1068,10 +1068,13 @@ LIMIT $3 OFFSET $4;
 -- name: ListMediaItemTitles :many
 -- Titles for a batch of item ids, in one round trip. The library listing
 -- uses it to label child rows with their parent — an album with its artist.
+-- The caller's rating ceiling applies to the parents too: a parent above it
+-- (a show over a season the profile may list) stays unnamed.
 SELECT id, title
 FROM media_items
 WHERE id = ANY(@ids::uuid[])
-  AND deleted_at IS NULL;
+  AND deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'));
 
 -- name: CountMediaItemsFiltered :one
 SELECT COUNT(*) FROM media_items

@@ -2438,7 +2438,13 @@ SELECT id, title
 FROM media_items
 WHERE id = ANY($1::uuid[])
   AND deleted_at IS NULL
+  AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
 `
+
+type ListMediaItemTitlesParams struct {
+	Ids           []uuid.UUID `json:"ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+}
 
 type ListMediaItemTitlesRow struct {
 	ID    uuid.UUID `json:"id"`
@@ -2447,8 +2453,10 @@ type ListMediaItemTitlesRow struct {
 
 // Titles for a batch of item ids, in one round trip. The library listing
 // uses it to label child rows with their parent — an album with its artist.
-func (q *Queries) ListMediaItemTitles(ctx context.Context, ids []uuid.UUID) ([]ListMediaItemTitlesRow, error) {
-	rows, err := q.db.Query(ctx, listMediaItemTitles, ids)
+// The caller's rating ceiling applies to the parents too: a parent above it
+// (a show over a season the profile may list) stays unnamed.
+func (q *Queries) ListMediaItemTitles(ctx context.Context, arg ListMediaItemTitlesParams) ([]ListMediaItemTitlesRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemTitles, arg.Ids, arg.MaxRatingRank)
 	if err != nil {
 		return nil, err
 	}
