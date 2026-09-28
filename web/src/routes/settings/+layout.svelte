@@ -43,10 +43,11 @@
     {
       label: 'Library',
       href: '/settings/unmatched',
-      matches: ['/settings/unmatched', '/settings/missing-art', '/settings/tasks', '/settings/maintenance'],
+      matches: ['/settings/unmatched', '/settings/missing-art', '/settings/library-health', '/settings/tasks', '/settings/maintenance'],
       children: [
         { href: '/settings/unmatched', label: 'Fix Match' },
         { href: '/settings/missing-art', label: 'Set Poster' },
+        { href: '/settings/library-health', label: 'Library Health' },
         { href: '/settings/tasks', label: 'Tasks' },
         { href: '/settings/maintenance', label: 'Maintenance' },
       ],
@@ -70,9 +71,10 @@
     {
       label: 'Integrations',
       href: '/settings/webhooks',
-      matches: ['/settings/webhooks', '/settings/arr-services', '/settings/plugins', '/settings/storage'],
+      matches: ['/settings/webhooks', '/settings/notifications', '/settings/arr-services', '/settings/plugins', '/settings/storage'],
       children: [
         { href: '/settings/webhooks', label: 'Webhooks' },
+        { href: '/settings/notifications', label: 'Notifications' },
         { href: '/settings/arr-services', label: 'Arr Services' },
         { href: '/settings/plugins', label: 'Plugins' },
         { href: '/settings/storage', label: 'Storage' },

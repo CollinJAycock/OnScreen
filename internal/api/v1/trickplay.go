@@ -15,11 +15,29 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/contentrating"
+	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/trickplay"
 )
+
+// TrickplayPlanner is the automatic-generation surface the handler uses:
+// per-library queueing and progress for the admin endpoints, plus the
+// shared worker queue the per-item regenerate goes through. Satisfied by
+// *trickplay.Planner.
+type TrickplayPlanner interface {
+	QueueLibrary(ctx context.Context, libraryID uuid.UUID, includeFailed bool) (int, error)
+	LibraryCounts(ctx context.Context, libraryID uuid.UUID) (trickplay.LibraryCounts, error)
+	QueueItem(itemID uuid.UUID)
+}
+
+// TrickplayLibraryLookup resolves a library (existence + its toggle) for the
+// per-library endpoints. Satisfied by *library.Service.
+type TrickplayLibraryLookup interface {
+	Get(ctx context.Context, id uuid.UUID) (*library.Library, error)
+}
 
 // TrickplayService is the subset of the trickplay package the API needs.
 // The file-serving path only needs ItemDir + Status; generation runs
@@ -50,6 +68,14 @@ type TrickplayHandler struct {
 	// exits.
 	genInFlight   map[uuid.UUID]struct{}
 	genInFlightMu sync.Mutex
+
+	// planner, when wired, routes the per-item regenerate through the
+	// process-wide generation queue (one ffmpeg sprite job at a time,
+	// shared with post-scan and backfill generation) and backs the
+	// per-library endpoints. nil keeps the standalone path above.
+	planner   TrickplayPlanner
+	libraries TrickplayLibraryLookup
+	audit     *audit.Logger
 }
 
 // MaxConcurrentTrickplayGenerations bounds in-flight ffmpeg sprite jobs
@@ -81,6 +107,21 @@ func (h *TrickplayHandler) WithLibraryAccess(a LibraryAccessChecker) *TrickplayH
 	return h
 }
 
+// WithPlanner wires automatic generation: the per-library admin endpoints
+// and routing the per-item regenerate through the shared worker queue.
+func (h *TrickplayHandler) WithPlanner(p TrickplayPlanner, libs TrickplayLibraryLookup) *TrickplayHandler {
+	h.planner = p
+	h.libraries = libs
+	return h
+}
+
+// WithAudit records admin "Generate now" requests in the audit log, like
+// the library scan action.
+func (h *TrickplayHandler) WithAudit(a *audit.Logger) *TrickplayHandler {
+	h.audit = a
+	return h
+}
+
 // LibraryAccessWired reports whether the library-ACL checker is wired.
 // A nil checker fails OPEN (serves every library), so api.Handlers.
 // ValidateLibraryAccess asserts this at startup and refuses to boot
@@ -95,6 +136,23 @@ type TrickplayStatusJSON struct {
 	ThumbWidth  int    `json:"thumb_width,omitempty"`
 	ThumbHeight int    `json:"thumb_height,omitempty"`
 	LastError   string `json:"last_error,omitempty"`
+}
+
+// trickplayStatusBody is the wire shape of the per-item status and generate
+// responses: the standard {"data": …} envelope every client parses (the web
+// api client and both Android apps read `.data`, and the OpenAPI spec
+// documents it) PLUS the same fields flattened at the top level, which is
+// all these endpoints used to return. Keeping both makes the envelope fix
+// additive — a caller that learned the bare shape keeps working — while the
+// clients that expected the envelope finally see real statuses instead of
+// falling back to "not_started" (which hid every generated sprite sheet).
+type trickplayStatusBody struct {
+	TrickplayStatusJSON
+	Data TrickplayStatusJSON `json:"data"`
+}
+
+func writeTrickplayStatus(w http.ResponseWriter, r *http.Request, code int, s TrickplayStatusJSON) {
+	respond.JSON(w, r, code, trickplayStatusBody{TrickplayStatusJSON: s, Data: s})
 }
 
 // Status handles GET /api/v1/items/{id}/trickplay. Returns status_not_started
@@ -122,7 +180,7 @@ func (h *TrickplayHandler) Status(w http.ResponseWriter, r *http.Request) {
 		out.ThumbWidth = spec.ThumbWidth
 		out.ThumbHeight = spec.ThumbHeight
 	}
-	respond.JSON(w, r, http.StatusOK, out)
+	writeTrickplayStatus(w, r, http.StatusOK, out)
 }
 
 // Generate handles POST /api/v1/items/{id}/trickplay. Admin-only. Fires the
@@ -142,6 +200,16 @@ func (h *TrickplayHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// With automatic generation wired, the regenerate joins the shared
+	// worker queue (at the head) instead of spawning its own ffmpeg: one
+	// sprite job at a time process-wide, and no chance of this run and a
+	// post-scan run of the same item stomping each other's output dir.
+	if h.planner != nil {
+		h.planner.QueueItem(id)
+		writeTrickplayStatus(w, r, http.StatusAccepted, TrickplayStatusJSON{Status: "pending"})
+		return
+	}
+
 	// Dedup: if a generation for this item is already running, just
 	// return 202 — the caller will see "pending" via Status. Without
 	// this, an admin POST loop on the same item would queue N copies
@@ -149,7 +217,7 @@ func (h *TrickplayHandler) Generate(w http.ResponseWriter, r *http.Request) {
 	h.genInFlightMu.Lock()
 	if _, running := h.genInFlight[id]; running {
 		h.genInFlightMu.Unlock()
-		respond.JSON(w, r, http.StatusAccepted, TrickplayStatusJSON{Status: "pending"})
+		writeTrickplayStatus(w, r, http.StatusAccepted, TrickplayStatusJSON{Status: "pending"})
 		return
 	}
 	h.genInFlight[id] = struct{}{}
@@ -178,7 +246,103 @@ func (h *TrickplayHandler) Generate(w http.ResponseWriter, r *http.Request) {
 		}
 	})
 
-	respond.JSON(w, r, http.StatusAccepted, TrickplayStatusJSON{Status: "pending"})
+	writeTrickplayStatus(w, r, http.StatusAccepted, TrickplayStatusJSON{Status: "pending"})
+}
+
+// TrickplayLibraryStatusJSON is the response for
+// GET /api/v1/libraries/{id}/trickplay/status. Counts cover the library's
+// video items that have a playable file; pending = not yet generated
+// (including in progress), failed includes items skipped for having no
+// usable file.
+type TrickplayLibraryStatusJSON struct {
+	Enabled bool  `json:"enabled"`
+	Total   int64 `json:"total"`
+	Done    int64 `json:"done"`
+	Pending int64 `json:"pending"`
+	Failed  int64 `json:"failed"`
+}
+
+// LibraryStatus handles GET /api/v1/libraries/{id}/trickplay/status.
+// Admin-only (router admin group; re-checked here).
+func (h *TrickplayHandler) LibraryStatus(w http.ResponseWriter, r *http.Request) {
+	lib, ok := h.requireAdminLibrary(w, r)
+	if !ok {
+		return
+	}
+	c, err := h.planner.LibraryCounts(r.Context(), lib.ID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "trickplay library status", "library_id", lib.ID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, TrickplayLibraryStatusJSON{
+		Enabled: lib.TrickplayEnabled,
+		Total:   c.Total,
+		Done:    c.Done,
+		Pending: c.Pending,
+		Failed:  c.Failed,
+	})
+}
+
+// GenerateLibrary handles POST /api/v1/libraries/{id}/trickplay/generate.
+// Admin-only. Queues every item in the library that has no sprites yet on
+// the shared generation worker and returns 202 immediately; idempotent —
+// items already queued or generating aren't added again. Works whether or
+// not the library's automatic toggle is on (it's an explicit request).
+// ?include_failed=true also retries items whose last attempt failed.
+func (h *TrickplayHandler) GenerateLibrary(w http.ResponseWriter, r *http.Request) {
+	lib, ok := h.requireAdminLibrary(w, r)
+	if !ok {
+		return
+	}
+	includeFailed := r.URL.Query().Get("include_failed") == "true"
+	n, err := h.planner.QueueLibrary(r.Context(), lib.ID, includeFailed)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "trickplay queue library", "library_id", lib.ID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		var actor *uuid.UUID
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			a := claims.UserID
+			actor = &a
+		}
+		h.audit.Log(r.Context(), actor, audit.ActionLibraryTrickplay, lib.ID.String(),
+			map[string]any{"queued": n, "include_failed": includeFailed}, audit.ClientIP(r))
+	}
+	respond.Accepted(w, r, map[string]any{"status": "queued", "queued": n})
+}
+
+// requireAdminLibrary gates the per-library endpoints: planner wired, admin
+// caller, valid + existing library. Writes the response and returns false
+// otherwise.
+func (h *TrickplayHandler) requireAdminLibrary(w http.ResponseWriter, r *http.Request) (*library.Library, bool) {
+	if h.svc == nil || h.planner == nil || h.libraries == nil {
+		respond.NotFound(w, r)
+		return nil, false
+	}
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return nil, false
+	}
+	id, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid library id")
+		return nil, false
+	}
+	lib, err := h.libraries.Get(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, library.ErrNotFound) {
+			respond.NotFound(w, r)
+			return nil, false
+		}
+		h.logger.ErrorContext(r.Context(), "trickplay get library", "library_id", id, "err", err)
+		respond.InternalError(w, r)
+		return nil, false
+	}
+	return lib, true
 }
 
 // trickplayFilePattern restricts /trickplay/{id}/* to known filenames so a

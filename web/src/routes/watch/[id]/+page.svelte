@@ -5,6 +5,11 @@
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { cssUrl } from '$lib/cssurl';
   import { progressUpdates } from '$lib/stores/notifications';
+  // Admin stop (Now Playing): playback.stop SSE + PLAYBACK_STOPPED refusals.
+  import { playbackStops } from '$lib/stores/notifications';
+  import { getClientName } from '$lib/api';
+  import { isStopForPlayer, adminStopText, PLAYBACK_STOPPED_CODE } from '$lib/playback-stop';
+  import { parseAtParam } from '$lib/playback-transfer';
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
   import { capabilities } from '$lib/stores/capabilities';
   import { isTauri, nativeDownload } from '$lib/native';
@@ -18,6 +23,10 @@
   import { toast } from '$lib/stores/toast';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
+  import PlayOnButton from '$lib/components/PlayOnButton.svelte';
+  import FranchiseShelf from '$lib/components/FranchiseShelf.svelte';
+  import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
+  import RequestMoreSeasonsButton from '$lib/components/RequestMoreSeasonsButton.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   // Subtitle styling: full preference set (size, color, background,
   // outline) lives in ./subtitle-style. Helper handles localStorage
@@ -36,6 +45,10 @@
     type SubtitleOutline,
   } from './subtitle-style';
   import { pickPreferredSubtitle } from './subtitle-select';
+  // Watched marks + the show / season Play target. Pure helpers, tested
+  // in $lib/watchState.test.ts.
+  import type { UpNext } from '$lib/api';
+  import { upNextLabel, markAllOptions, detailWatched } from '$lib/watchState';
   // Chromecast / Google Cast sender. Pure helpers (URL build, MIME
   // map, isCastable predicate) live in $lib/cast and are unit-tested
   // there; the SDK glue is local to this page.
@@ -63,6 +76,11 @@
   // stream and shows blockedMessage in place of the video.
   let blocked = false;
   let blockedMessage = '';
+
+  // Admin stop from Now Playing: set when a playback.stop event targets this
+  // player, or the server refuses the stream with 403 PLAYBACK_STOPPED. The
+  // video is torn down and replaced by this message ($lib/playback-stop).
+  let adminStopMessage = '';
 
   // Video element reference
   let videoEl: HTMLVideoElement;
@@ -1197,6 +1215,16 @@
     }
   });
 
+  // Admin stop. The store replays its last value on subscribe; skip that so a
+  // stop from an earlier visit to this title can't end a fresh playback.
+  let playbackStopsPrimed = false;
+  const unsubPlaybackStop = playbackStops.subscribe((evt) => {
+    if (!playbackStopsPrimed || !evt || adminStopMessage) return;
+    if (!isStopForPlayer(evt, { itemId: item?.id ?? null, sessionId: transcodeSessionId, clientName: getClientName() })) return;
+    handleAdminStop(adminStopText(evt.message));
+  });
+  playbackStopsPrimed = true;
+
   $: if (mounted && id && id !== prevId) {
     prevId = id;
     clearTimers();
@@ -1214,6 +1242,7 @@
     error = '';
     blocked = false;
     blockedMessage = '';
+    adminStopMessage = '';
     loading = true;
     transcodeSessionId = null;
     transcodeToken = null;
@@ -1232,6 +1261,7 @@
     clearTimers();
     cancelSleepTimer();
     unsubProgress();
+    unsubPlaybackStop();
     document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
     window.removeEventListener('mousemove', onSeekMouseMove);
     window.removeEventListener('mouseup', onSeekMouseUp);
@@ -1547,6 +1577,120 @@
     }
   }
 
+  // ── Watched marks + Up Next ───────────────────────────────────────────────
+  // Show / season pages ask the server which episode Play should start
+  // (resume / next / first / rewatch) and open the season holding it.
+  // Movies and episodes get a watched toggle; shows and seasons get
+  // "Mark all watched / unwatched"; each episode row gets a quick toggle.
+  let upNext: UpNext | null = null;
+  $: upNextText = upNextLabel(upNext);
+  $: markAllOpts = markAllOptions(upNext);
+  let itemWatched = false; // movie / episode page toggle state
+  let markBusy = false;
+  let episodeMarkBusy = new Set<string>();
+
+  // Best-effort: a failure (or an older server without the endpoint)
+  // just means no up-next button and the first season opens.
+  async function fetchUpNext(itemId: string): Promise<UpNext | null> {
+    try { return await itemApi.upNext(itemId); } catch { return null; }
+  }
+
+  async function refreshUpNext() {
+    if (!item || (item.type !== 'show' && item.type !== 'season')) return;
+    const forId = item.id;
+    const u = await fetchUpNext(forId);
+    if (item?.id === forId) upNext = u;
+  }
+
+  function playUpNext() {
+    if (upNext?.episode) goto(`/watch/${upNext.episode.id}`);
+  }
+
+  // Re-read episode lists (watched pills + progress bars) for the given
+  // seasons, default every season of this page opened so far.
+  async function refreshSeasonEpisodes(seasonIds?: string[]) {
+    const ids = seasonIds ?? seasons.map(s => s.id).filter(sid => seasonEpisodes.has(sid));
+    await Promise.all(ids.map(async (sid) => {
+      try {
+        const r = await itemApi.children(sid);
+        seasonEpisodes.set(sid, r.items
+          .filter(c => c.type === 'episode')
+          .sort((a, b) => (a.index ?? 0) - (b.index ?? 0)));
+      } catch { /* keep the old list */ }
+    }));
+    seasonEpisodes = seasonEpisodes;
+  }
+
+  function patchEpisode(seasonId: string, epId: string, patch: Partial<ChildItem>) {
+    const eps = seasonEpisodes.get(seasonId);
+    if (!eps) return;
+    seasonEpisodes.set(seasonId, eps.map(e => e.id === epId ? { ...e, ...patch } : e));
+    seasonEpisodes = seasonEpisodes;
+  }
+
+  // Movie / episode: flip watched ⇄ unwatched. Either way the resume
+  // point goes away server-side, so the detail page's Resume label too.
+  async function toggleItemWatched() {
+    if (!item || markBusy) return;
+    const target = item;
+    const next = !itemWatched;
+    markBusy = true;
+    itemWatched = next;
+    try {
+      if (next) await itemApi.markWatched(target.id);
+      else await itemApi.markUnwatched(target.id);
+      if (item?.id !== target.id) return;
+      siblings = siblings.map(s => s.id === target.id ? { ...s, watched: next, view_offset_ms: 0 } : s);
+      if (isDetailView) item = { ...item, view_offset_ms: 0 };
+      toast.success(next ? 'Marked as watched' : 'Marked as unwatched');
+    } catch (e: unknown) {
+      if (item?.id === target.id) itemWatched = !next;
+      toast.error(e instanceof Error ? e.message : 'Could not update watched state');
+    } finally {
+      markBusy = false;
+    }
+  }
+
+  // Show / season: every episode underneath (the server applies it).
+  async function markAllEpisodes(watched: boolean) {
+    if (!item || markBusy) return;
+    if (!watched && item.type === 'show' && !confirm(
+      `Mark every episode of "${item.title}" as unwatched?\n\n` +
+      `This clears your watched marks and resume points for the whole show.`
+    )) return;
+    markBusy = true;
+    try {
+      if (watched) await itemApi.markWatched(item.id);
+      else await itemApi.markUnwatched(item.id);
+      await Promise.all([refreshSeasonEpisodes(), refreshUpNext()]);
+      toast.success(watched ? 'Marked all as watched' : 'Marked all as unwatched');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Could not update watched state');
+    } finally {
+      markBusy = false;
+    }
+  }
+
+  // Episode row quick toggle — optimistic, rolled back on failure.
+  async function toggleEpisodeWatched(ep: ChildItem, seasonId: string) {
+    if (episodeMarkBusy.has(ep.id)) return;
+    const next = !ep.watched;
+    episodeMarkBusy = new Set(episodeMarkBusy).add(ep.id);
+    patchEpisode(seasonId, ep.id, { watched: next, view_offset_ms: 0 });
+    try {
+      if (next) await itemApi.markWatched(ep.id);
+      else await itemApi.markUnwatched(ep.id);
+      await Promise.all([refreshSeasonEpisodes([seasonId]), refreshUpNext()]);
+    } catch (e: unknown) {
+      patchEpisode(seasonId, ep.id, { watched: ep.watched, view_offset_ms: ep.view_offset_ms });
+      toast.error(e instanceof Error ? e.message : 'Could not update watched state');
+    } finally {
+      const rest = new Set(episodeMarkBusy);
+      rest.delete(ep.id);
+      episodeMarkBusy = rest;
+    }
+  }
+
   // ── Remove (admin) ─────────────────────────────────────────────────────────
   async function removeItem() {
     if (!item) return;
@@ -1570,18 +1714,22 @@
     if (!item) return;
 
     if (item.type === 'show') {
-      const r = await itemApi.children(item.id);
+      const [r, un] = await Promise.all([itemApi.children(item.id), fetchUpNext(item.id)]);
+      upNext = un;
       seasons = r.items
         .filter(c => c.type === 'season')
         .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
 
-      // Auto-select the first season and load its episodes.
+      // Open the season holding the up-next episode (falls back to the
+      // first season) and load its episodes.
       if (seasons.length > 0) {
-        await selectSeason(seasons[0].id);
+        const upNextSeason = un?.episode ? seasons.find(s => s.id === un.episode!.season_id) : undefined;
+        await selectSeason((upNextSeason ?? seasons[0]).id);
       }
     } else if (item.type === 'season') {
       // Landed directly on a season — load its episodes.
-      const r = await itemApi.children(item.id);
+      const [r, un] = await Promise.all([itemApi.children(item.id), fetchUpNext(item.id)]);
+      upNext = un;
       const eps = r.items
         .filter(c => c.type === 'episode')
         .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
@@ -1619,8 +1767,15 @@
     cast = [];
     playRequested = false;
     watchStatus = '';
+    upNext = null;
+    itemWatched = false;
     try {
       item = await itemApi.get(id);
+      // "Play on…" transfer (/watch/{id}?at=<ms>, see $lib/playback-transfer):
+      // start at the sender's position rather than the saved resume point.
+      const transferAt = parseAtParam($page.url.searchParams.get('at'));
+      if (transferAt !== null) item.view_offset_ms = transferAt;
+      itemWatched = detailWatched(item);
 
       // Per-user watching status. Loaded async alongside credits so a
       // 404 (no status set) doesn't slow page render. Status dropdown
@@ -1663,6 +1818,9 @@
       if (item.type === 'episode' && item.parent_id) {
         const r = await itemApi.children(item.parent_id);
         siblings = r.items.sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
+        // The season listing carries this episode's watched flag.
+        const self = siblings.find(s => s.id === item!.id);
+        if (self) itemWatched = !!self.watched;
       }
 
     } catch (e: unknown) {
@@ -1696,6 +1854,21 @@
   function handleParentalBlock(reason: string) {
     blocked = true;
     blockedMessage = parentalBlockMessage(reason);
+    error = '';
+    buffering = false;
+    if (videoEl && !videoEl.paused) videoEl.pause();
+    stopProgressTimer();
+    cancelAutoplay(true);
+    void stopTranscodeSession();
+    destroyHls();
+  }
+
+  // Stop playback because an admin stopped this stream. Saves the resume
+  // position first (a 'stopped' report is never refused), then tears down
+  // like handleParentalBlock. Idempotent.
+  function handleAdminStop(text: string) {
+    if (!adminStopMessage && videoEl && !videoEl.paused) void saveProgress('stopped');
+    adminStopMessage = text;
     error = '';
     buffering = false;
     if (videoEl && !videoEl.paused) videoEl.pause();
@@ -2025,6 +2198,8 @@
     } catch (e) {
       if (e instanceof ApiRequestError && e.code === 'PARENTAL_LIMIT') {
         handleParentalBlock(e.message);
+      } else if (e instanceof ApiRequestError && e.code === PLAYBACK_STOPPED_CODE) {
+        handleAdminStop(e.message);
       } else if (e instanceof ApiRequestError && e.code === 'FILE_DAMAGED') {
         // Server integrity gate (422): flip to the fileDamaged panel — a
         // decision-skipping start attempt ends at the same message a
@@ -2496,6 +2671,11 @@
       // stop playback and show the block message.
       if (e instanceof ApiRequestError && e.code === 'PARENTAL_LIMIT') {
         handleParentalBlock(e.message);
+        return;
+      }
+      // An admin stopped this stream and the SSE event didn't reach us.
+      if (e instanceof ApiRequestError && e.code === PLAYBACK_STOPPED_CODE) {
+        handleAdminStop(e.message);
         return;
       }
       console.warn(e);
@@ -3100,6 +3280,16 @@
       <p class="blocked-text">{blockedMessage}</p>
       <button class="back-btn" on:click={goBack}>← Back</button>
     </div>
+  {:else if adminStopMessage}
+    <div class="center-msg" role="alert">
+      <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
+        <circle cx="12" cy="12" r="9"/>
+        <rect x="9" y="9" width="6" height="6" rx="1"/>
+      </svg>
+      <p class="blocked-title">Playback stopped</p>
+      <p class="blocked-text">{adminStopMessage}</p>
+      <button class="back-btn" on:click={goBack}>← Back</button>
+    </div>
   {:else if fileDamaged}
     <div class="center-msg">
       <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
@@ -3192,6 +3382,21 @@
             <span class="top-title-sub">· {currentChapter.title}</span>
           {/if}
         </div>
+        {#if item.type === 'movie' || item.type === 'episode'}
+          <button
+            class="icon-btn small watched-btn"
+            class:is-watched={itemWatched}
+            on:click={toggleItemWatched}
+            disabled={markBusy}
+            title={itemWatched ? 'Mark unwatched' : 'Mark watched'}
+            aria-label={itemWatched ? 'Mark unwatched' : 'Mark watched'}
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="20" height="20" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" fill={itemWatched ? 'currentColor' : 'none'}/>
+              <polyline points="8 12.5 11 15.5 16.5 9.5" stroke={itemWatched ? '#fff' : 'currentColor'}/>
+            </svg>
+          </button>
+        {/if}
         <button
           class="icon-btn small favorite-btn"
           class:is-favorite={item.is_favorite}
@@ -3598,6 +3803,30 @@
               </div>
             {/if}
 
+            <!-- "Play on…" another OnScreen device (cross-device
+                 transfer). Hands over the content-time playhead (HLS
+                 offset included) and pauses here once the server
+                 accepts it. -->
+            {#if item?.id && (item.type === 'movie' || item.type === 'episode')}
+              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+              <div class="play-on-slot" style="display:flex" on:click|stopPropagation>
+                <PlayOnButton
+                  variant="overlay"
+                  itemId={item.id}
+                  getPositionMs={() => (videoEl ? (videoEl.currentTime + hlsOffsetSec) * 1000 : 0)}
+                  onsent={() => { if (videoEl && !videoEl.paused) videoEl.pause(); }}
+                />
+              </div>
+            {/if}
+
+            <!-- Report a problem with what's playing (sends the playing file). -->
+            {#if item?.id && (item.type === 'movie' || item.type === 'episode')}
+              <!-- svelte-ignore a11y-click-events-have-key-events a11y-no-static-element-interactions -->
+              <div class="report-problem-slot" style="display:flex" on:click|stopPropagation>
+                <ReportProblemButton variant="overlay" itemId={item.id} fileId={item.files?.[0]?.id} itemLabel={item.title} />
+              </div>
+            {/if}
+
             <!-- Cast / Chromecast. Only renders once the SDK reports
                  a receiver reachable; greyed out when the file isn't
                  castable (AV1 source, MKV, etc — see isCastable). -->
@@ -3982,6 +4211,34 @@
             <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><polygon points="6 4 20 12 6 20 6 4"/></svg>
             {item.view_offset_ms > 0 ? `Resume · ${fmtTime(item.view_offset_ms / 1000)}` : 'Play'}
           </button>
+          <!-- Send to another device at the same point the Play button
+               would start from (the saved resume position, else 0). -->
+          <PlayOnButton itemId={item.id} getPositionMs={() => item?.view_offset_ms ?? 0} />
+        {/if}
+        <!-- Show / season: play whatever the server says is up next. -->
+        {#if (item.type === 'show' || item.type === 'season') && upNextText && upNext?.episode}
+          <button class="play-btn" on:click={playUpNext} title={upNext.episode.title}>
+            <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16" aria-hidden="true"><polygon points="6 4 20 12 6 20 6 4"/></svg>
+            {upNextText}
+          </button>
+        {/if}
+        {#if item.type === 'movie' && item.files?.length}
+          <button class="mark-watched-btn" class:is-watched={itemWatched} disabled={markBusy} on:click={toggleItemWatched}>
+            <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
+            {itemWatched ? 'Mark unwatched' : 'Mark watched'}
+          </button>
+        {:else if item.type === 'show' || item.type === 'season'}
+          {#if markAllOpts.watched}
+            <button class="mark-watched-btn" disabled={markBusy} on:click={() => markAllEpisodes(true)}>
+              <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
+              Mark all watched
+            </button>
+          {/if}
+          {#if markAllOpts.unwatched}
+            <button class="mark-watched-btn" disabled={markBusy} on:click={() => markAllEpisodes(false)}>
+              Mark all unwatched
+            </button>
+          {/if}
         {/if}
         <!-- Download for offline playback. Server adds Content-Disposition:
              attachment so the browser triggers save-as. Stream-token in
@@ -4004,6 +4261,16 @@
             </svg>
             Download
           </a>
+        {/if}
+        <!-- Report a problem (any user): broken video/audio/subtitles or
+             the wrong title. Admins work reports on Settings ▸ Library health. -->
+        {#if item.type === 'movie' || item.type === 'episode' || item.type === 'show' || item.type === 'season'}
+          <ReportProblemButton itemId={item.id} fileId={item.files?.[0]?.id} itemLabel={item.title} />
+        {/if}
+        <!-- Aired seasons the library is missing: request them (hidden when
+             there are none, or the user can't request). -->
+        {#if item.type === 'show' && item.tmdb_id}
+          <RequestMoreSeasonsButton tmdbId={item.tmdb_id} title={item.title} />
         {/if}
       </div>
     </div>
@@ -4031,6 +4298,11 @@
           {/each}
         </div>
       </div>
+    {/if}
+
+    <!-- "Part of the <Name>" — the movie's TMDB franchise (other films, owned first). -->
+    {#if item.type === 'movie' && item.collection}
+      <FranchiseShelf collection={item.collection} currentItemId={item.id} />
     {/if}
 
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
@@ -4168,7 +4440,10 @@
           {@const epProgressPct = (!ep.watched && ep.view_offset_ms && ep.duration_ms)
             ? Math.min(100, Math.max(0, (ep.view_offset_ms / ep.duration_ms) * 100))
             : 0}
-          <a href="/watch/{ep.id}" class="episode-row" class:ep-watched={ep.watched}>
+          <!-- Row link + a sibling quick toggle (not nested in the link, so
+               it's its own tab stop and doesn't navigate). -->
+          <div class="episode-row-wrap">
+          <a href="/watch/{ep.id}" class="episode-row has-watch-toggle" class:ep-watched={ep.watched}>
             <div class="ep-number">{ep.index ?? '—'}</div>
             <div class="ep-info">
               <div class="ep-title">
@@ -4205,6 +4480,18 @@
               <div class="ep-duration">{Math.round(ep.duration_ms / 60000)}m</div>
             {/if}
           </a>
+          <button
+            type="button"
+            class="ep-watch-toggle"
+            class:on={ep.watched}
+            disabled={episodeMarkBusy.has(ep.id) || !selectedSeasonId}
+            on:click={() => selectedSeasonId && toggleEpisodeWatched(ep, selectedSeasonId)}
+            title={ep.watched ? 'Mark unwatched' : 'Mark watched'}
+            aria-label={`${ep.watched ? 'Mark unwatched' : 'Mark watched'}: ${ep.index != null ? `episode ${ep.index}, ` : ''}${ep.title}`}
+          >
+            <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
+          </button>
+          </div>
         {/each}
         {#if selectedEpisodes.length === 0}
           <div class="ep-empty">No episodes found.</div>
@@ -4659,6 +4946,9 @@
     flex: 1;
     min-width: 0;
   }
+  .watched-btn { color: rgba(255,255,255,0.85); }
+  .watched-btn.is-watched { color: var(--accent); }
+  .watched-btn:disabled { opacity: 0.6; cursor: progress; }
   .favorite-btn { color: rgba(255,255,255,0.85); }
   .favorite-btn.is-favorite { color: #f87171; }
   .favorite-btn:disabled { opacity: 0.6; cursor: progress; }
@@ -5484,6 +5774,46 @@
     background: var(--accent);
     border-radius: 2px;
   }
+
+  /* Episode-row quick watched toggle: a sibling of the row link, pinned
+     to the row's right edge (the link reserves room for it). Stays full
+     opacity on dimmed watched rows. */
+  .episode-row-wrap { position: relative; }
+  .episode-row.has-watch-toggle { padding-right: 2.9rem; }
+  .ep-watch-toggle {
+    position: absolute;
+    top: 0.8rem;
+    right: 0.6rem;
+    display: flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1.5px solid var(--border-strong);
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+  }
+  .ep-watch-toggle:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+  .ep-watch-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .ep-watch-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .ep-watch-toggle:disabled { opacity: 0.6; cursor: progress; }
+
+  /* Watched toggle / "Mark all" buttons beside Play on the detail page. */
+  .mark-watched-btn {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 6px;
+    color: var(--text-secondary); font-size: 0.8rem; font-weight: 500;
+    cursor: pointer; padding: 0.55rem 0.9rem;
+    margin-top: 1rem; margin-left: 0.5rem;
+    transition: all 0.12s;
+  }
+  .mark-watched-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); background: var(--bg-hover); }
+  .mark-watched-btn.is-watched { color: var(--accent-text, var(--accent)); border-color: var(--accent); }
+  .mark-watched-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .mark-watched-btn:disabled { opacity: 0.55; cursor: progress; }
 
   /* Fix Match button */
   .play-btn {

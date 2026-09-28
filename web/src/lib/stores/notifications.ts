@@ -1,5 +1,6 @@
 import { writable, derived } from 'svelte/store';
 import { notificationApi, assetUrl, type Notification } from '$lib/api';
+import { PLAYBACK_STOP_EVENT, parsePlaybackStop, type PlaybackStopEvent } from '$lib/playback-stop';
 
 export const notifications = writable<Notification[]>([]);
 export const unreadCount = derived(notifications, ($n) => $n.filter((x) => !x.read).length);
@@ -36,6 +37,16 @@ export type PlaybackTransfer = {
   targetClientName: string;
 };
 export const playbackTransfers = writable<PlaybackTransfer | null>(null);
+
+/** Admin "stop this stream" (`playback.stop`). Discrete like the stores
+ *  above; the watch page decides whether it targets its own player — see
+ *  $lib/playback-stop. */
+export const playbackStops = writable<PlaybackStopEvent | null>(null);
+
+/** Each persisted notification as it arrives over SSE (not the initial
+ *  list load). Discrete like the stores above, so a subscriber reacts to new
+ *  arrivals only — e.g. the admin nav badge refreshes on `request_pending`. */
+export const liveNotifications = writable<Notification | null>(null);
 
 let eventSource: EventSource | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -110,7 +121,15 @@ function connectSSE() {
         });
         return;
       }
+      if (ev.type === PLAYBACK_STOP_EVENT) {
+        // Sync event, never a bell-list notification — even when the
+        // payload is unusable.
+        const stop = parsePlaybackStop(ev.data);
+        if (stop) playbackStops.set(stop);
+        return;
+      }
       notifications.update((prev) => [ev, ...prev].slice(0, 50));
+      liveNotifications.set(ev);
     } catch { /* bad payload */ }
   };
 

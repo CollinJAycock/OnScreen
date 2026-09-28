@@ -180,7 +180,20 @@ func (c *Client) SearchMovie(ctx context.Context, title string, year int) (*meta
 		return nil, fmt.Errorf("tmdb: no results for %q (%d)", title, year)
 	}
 
-	return c.movieToResult(ctx, resp.Results[0])
+	// Upgrade the top hit to a full details response. Search rows carry no
+	// runtime, genres, tagline, IMDb id or belongs_to_collection, and the
+	// lite conversion would spend its second call on a standalone
+	// certification lookup anyway — the details call (release_dates appended)
+	// costs the same one request and answers all of it. It is also the exact
+	// request RefreshMovie makes, so the disk cache is shared with Fix Match
+	// and the franchise backfill. Falls back to the search row on any error.
+	top := resp.Results[0]
+	if full, err := c.RefreshMovie(ctx, top.ID); err == nil && full.TMDBID == top.ID {
+		return full, nil
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("tmdb search movie %q: %w", title, ctxErr)
+	}
+	return c.movieToResult(ctx, top)
 }
 
 // SearchTV implements metadata.Agent.
@@ -481,7 +494,14 @@ func (c *Client) RefreshMovie(ctx context.Context, tmdbID int) (*metadata.MovieR
 	if err := c.get(ctx, path, params, &movie); err != nil {
 		return nil, fmt.Errorf("tmdb refresh movie %d: %w", tmdbID, err)
 	}
-	return c.movieToResult(ctx, movie)
+	res, err := c.movieToResult(ctx, movie)
+	if err != nil {
+		return nil, err
+	}
+	// A details payload always answers belongs_to_collection (null = none).
+	res.Collection = movie.BelongsToCollection.toRef()
+	res.CollectionChecked = true
+	return res, nil
 }
 
 // RefreshTV implements metadata.Agent.
@@ -596,7 +616,7 @@ func (c *Client) get(ctx context.Context, path string, params url.Values, dest a
 	var key string
 	if c.cache != nil {
 		key = cacheKey(path + "?" + params.Encode())
-		if body, negative, ok := c.cache.lookup(key); ok {
+		if body, negative, ok := c.cache.lookup(key, positiveTTLFor(path)); ok {
 			if negative {
 				return errNotFound
 			}
@@ -864,6 +884,8 @@ type tmdbMovie struct {
 	// Present only on detail responses requested with
 	// append_to_response=release_dates.
 	ReleaseDates *tmdbReleaseDates `json:"release_dates"`
+	// Present (possibly null) only on detail responses.
+	BelongsToCollection *tmdbCollectionRef `json:"belongs_to_collection"`
 }
 
 type tmdbTV struct {

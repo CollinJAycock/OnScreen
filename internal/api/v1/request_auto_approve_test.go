@@ -144,8 +144,13 @@ func TestUser_SetRequestPermissions_Success(t *testing.T) {
 		t.Fatalf("status = %d, want 204 — body=%s", rec.Code, rec.Body)
 	}
 	got := db.lastReqPerms
-	if got == nil || got.ID != target || !got.AutoApproveMovies || got.AutoApproveTv {
+	if got == nil || got.ID != target || got.AutoApproveMovies == nil || !*got.AutoApproveMovies ||
+		got.AutoApproveTv == nil || *got.AutoApproveTv {
 		t.Errorf("stored %+v, want id=%s movies=true tv=false", got, target)
+	}
+	// The original two-toggle body leaves the newer fields untouched.
+	if got.CanRequest != nil || got.SetQuotaMovies || got.SetQuotaTv {
+		t.Errorf("two-toggle body touched can_request/quotas: %+v", got)
 	}
 }
 
@@ -173,9 +178,14 @@ func TestUser_SetRequestPermissions_Validation(t *testing.T) {
 		{"not json", "", `nope`, http.StatusBadRequest},
 		{"unknown field", "", `{"auto_approve_movie":true,"auto_approve_tv":true}`, http.StatusBadRequest},
 		{"wrong type", "", `{"auto_approve_movies":"yes","auto_approve_tv":true}`, http.StatusBadRequest},
-		{"missing tv", "", `{"auto_approve_movies":true}`, http.StatusUnprocessableEntity},
-		{"missing both", "", `{}`, http.StatusUnprocessableEntity},
+		// Every field is optional now, but an empty body changes nothing.
+		{"no fields", "", `{}`, http.StatusUnprocessableEntity},
 		{"null movies", "", `{"auto_approve_movies":null,"auto_approve_tv":true}`, http.StatusUnprocessableEntity},
+		{"null can_request", "", `{"can_request":null}`, http.StatusUnprocessableEntity},
+		{"negative quota", "", `{"quota_movies":-1}`, http.StatusUnprocessableEntity},
+		{"huge quota", "", `{"quota_tv":1001}`, http.StatusUnprocessableEntity},
+		{"fractional quota", "", `{"quota_tv":1.5}`, http.StatusBadRequest},
+		{"string quota", "", `{"quota_movies":"3"}`, http.StatusBadRequest},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -270,17 +280,23 @@ func TestSettings_Get_IncludesRequestDefaults(t *testing.T) {
 	}
 	var resp struct {
 		Data struct {
-			Requests map[string]bool `json:"requests"`
+			Requests map[string]any `json:"requests"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	want := map[string]bool{"default_auto_approve_movies": true, "default_auto_approve_tv": false}
-	if len(resp.Data.Requests) != 2 ||
-		resp.Data.Requests["default_auto_approve_movies"] != want["default_auto_approve_movies"] ||
-		resp.Data.Requests["default_auto_approve_tv"] != want["default_auto_approve_tv"] {
-		t.Errorf("requests = %v, want %v", resp.Data.Requests, want)
+	want := map[string]any{
+		"default_auto_approve_movies": true, "default_auto_approve_tv": false,
+		"quota_movies": float64(0), "quota_tv": float64(0), "quota_window_days": float64(0),
+	}
+	if len(resp.Data.Requests) != len(want) {
+		t.Errorf("requests = %v, want keys %v", resp.Data.Requests, want)
+	}
+	for k, v := range want {
+		if resp.Data.Requests[k] != v {
+			t.Errorf("requests[%s] = %v, want %v", k, resp.Data.Requests[k], v)
+		}
 	}
 }
 
@@ -297,26 +313,74 @@ func TestSettings_Update_RequestDefaultsRoundTrip(t *testing.T) {
 		}
 	}
 
+	// (An unset window reads back as the 7-day default.)
 	patch(`{"requests":{"default_auto_approve_movies":true,"default_auto_approve_tv":true}}`)
-	if svc.requests != (settings.RequestsConfig{DefaultAutoApproveMovies: true, DefaultAutoApproveTV: true}) {
+	if svc.requests != (settings.RequestsConfig{DefaultAutoApproveMovies: true, DefaultAutoApproveTV: true, QuotaWindowDays: 7}) {
 		t.Fatalf("after full PATCH: %+v", svc.requests)
 	}
 	// A partial object changes only the field it names.
 	patch(`{"requests":{"default_auto_approve_tv":false}}`)
-	if svc.requests != (settings.RequestsConfig{DefaultAutoApproveMovies: true}) {
+	if svc.requests != (settings.RequestsConfig{DefaultAutoApproveMovies: true, QuotaWindowDays: 7}) {
 		t.Errorf("after partial PATCH: %+v, want movies kept on, tv off", svc.requests)
 	}
 	// A PATCH that doesn't mention "requests" leaves them alone.
 	patch(`{"tmdb_api_key":"k"}`)
-	if svc.requests != (settings.RequestsConfig{DefaultAutoApproveMovies: true}) {
+	if svc.requests != (settings.RequestsConfig{DefaultAutoApproveMovies: true, QuotaWindowDays: 7}) {
 		t.Errorf("unrelated PATCH changed request defaults: %+v", svc.requests)
+	}
+	// Quotas are partial too and keep the toggles.
+	patch(`{"requests":{"quota_movies":5,"quota_window_days":30}}`)
+	if svc.requests != (settings.RequestsConfig{DefaultAutoApproveMovies: true, QuotaMovies: 5, QuotaWindowDays: 30}) {
+		t.Errorf("after quota PATCH: %+v", svc.requests)
 	}
 
 	// And GET reflects what was stored.
 	rec := httptest.NewRecorder()
 	h.Get(rec, httptest.NewRequest("GET", "/", nil))
-	if !strings.Contains(rec.Body.String(), `"requests":{"default_auto_approve_movies":true,"default_auto_approve_tv":false}`) {
+	if !strings.Contains(rec.Body.String(), `"requests":{"default_auto_approve_movies":true,"default_auto_approve_tv":false,"quota_movies":5,"quota_tv":0,"quota_window_days":30}`) {
 		t.Errorf("GET body lacks the stored defaults: %s", rec.Body)
+	}
+}
+
+func TestSettings_Update_RequestQuotaValidation(t *testing.T) {
+	for _, body := range []string{
+		`{"requests":{"quota_movies":-1}}`,
+		`{"requests":{"quota_tv":1001}}`,
+		`{"requests":{"quota_window_days":0}}`,
+		`{"requests":{"quota_window_days":91}}`,
+		// A bad quota refuses the whole save, including other blocks.
+		`{"tmdb_api_key":"new","requests":{"quota_window_days":365}}`,
+	} {
+		svc := &mockSettingsService{requests: settings.RequestsConfig{QuotaMovies: 2, QuotaWindowDays: 7}}
+		rec := httptest.NewRecorder()
+		newSettingsHandler(svc).Update(rec, httptest.NewRequest("PATCH", "/", strings.NewReader(body)))
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Errorf("%s: status = %d, want 422 — body=%s", body, rec.Code, rec.Body)
+		}
+		if svc.requests != (settings.RequestsConfig{QuotaMovies: 2, QuotaWindowDays: 7}) {
+			t.Errorf("%s: stored %+v despite the refusal", body, svc.requests)
+		}
+		if svc.key != "" {
+			t.Errorf("%s: tmdb key written despite the refusal", body)
+		}
+	}
+	// The bounds themselves are accepted.
+	svc := &mockSettingsService{}
+	rec := httptest.NewRecorder()
+	newSettingsHandler(svc).Update(rec, httptest.NewRequest("PATCH", "/",
+		strings.NewReader(`{"requests":{"quota_movies":1000,"quota_tv":0,"quota_window_days":90}}`)))
+	if rec.Code != http.StatusNoContent || svc.requests.QuotaMovies != 1000 || svc.requests.QuotaWindowDays != 90 {
+		t.Errorf("bounds: status %d stored %+v", rec.Code, svc.requests)
+	}
+}
+
+func TestRequestQuotaDefaults_FromSettings(t *testing.T) {
+	f := RequestQuotaDefaults(fakeRequestDefaults{settings.RequestsConfig{QuotaMovies: 4, QuotaTV: 1, QuotaWindowDays: 14}})
+	if got := f(context.Background()); got != (requests.QuotaDefaults{Movies: 4, TV: 1, WindowDays: 14}) {
+		t.Errorf("defaults = %+v", got)
+	}
+	if got := RequestQuotaDefaults(nil)(context.Background()); got != (requests.QuotaDefaults{WindowDays: 7}) {
+		t.Errorf("nil source = %+v, want unlimited over 7 days", got)
 	}
 }
 

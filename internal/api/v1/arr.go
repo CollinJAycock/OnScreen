@@ -36,11 +36,21 @@ type ArrRequestReconciler interface {
 	ReconcileFulfillments(ctx context.Context)
 }
 
+// ArrDownloadSyncer refreshes the live download state of the requests a
+// webhook is about. kind is "radarr" or "sonarr"; tmdbID / arrItemID identify
+// the title (0 = not in the payload). It must return immediately — the sync
+// runs in the background and coalesces bursts. Satisfied by
+// *requests.Service.
+type ArrDownloadSyncer interface {
+	TriggerDownloadSync(kind string, tmdbID, arrItemID int)
+}
+
 // ArrHandler handles incoming webhook notifications from Radarr, Sonarr, and Lidarr.
 type ArrHandler struct {
 	settings   ArrSettingsReader
 	libs       ArrLibraryFinder
 	reconciler ArrRequestReconciler
+	syncer     ArrDownloadSyncer
 	logger     *slog.Logger
 }
 
@@ -55,6 +65,29 @@ func NewArrHandler(settings ArrSettingsReader, libs ArrLibraryFinder, logger *sl
 func (h *ArrHandler) WithRequestReconciler(r ArrRequestReconciler) *ArrHandler {
 	h.reconciler = r
 	return h
+}
+
+// WithDownloadSyncer attaches the request download-status sync, fired on the
+// events that move a download along (see downloadSyncEvents). When nil, the
+// periodic arr_request_sync task is the only source of download state.
+func (h *ArrHandler) WithDownloadSyncer(s ArrDownloadSyncer) *ArrHandler {
+	h.syncer = s
+	return h
+}
+
+// downloadSyncEvents are the webhook events after which a request's download
+// state has likely changed: a release was grabbed, imported, or failed, or
+// the app needs a human to finish an import. Radarr and Sonarr send Grab,
+// Download (file imported), ManualInteractionRequired and — Sonarr v4 —
+// ImportComplete; the failure names cover builds/forks that report them.
+var downloadSyncEvents = map[string]bool{
+	"Grab":                      true,
+	"Download":                  true,
+	"ImportComplete":            true,
+	"ManualInteractionRequired": true,
+	"DownloadFailed":            true,
+	"DownloadFailure":           true,
+	"ImportFailure":             true,
 }
 
 // arrPayload is a minimal representation of a Radarr/Sonarr/Lidarr webhook body.
@@ -76,14 +109,19 @@ type arrPayload struct {
 }
 
 type arrMovie struct {
+	ID         int    `json:"id"`
 	Title      string `json:"title"`
 	Year       int    `json:"year"`
 	FolderPath string `json:"folderPath"`
+	TMDBID     int    `json:"tmdbId"`
 }
 
 type arrSeries struct {
+	ID    int    `json:"id"`
 	Title string `json:"title"`
 	Path  string `json:"path"`
+	// TMDBID is only sent by Sonarr v4+.
+	TMDBID int `json:"tmdbId"`
 }
 
 type arrArtist struct {
@@ -112,6 +150,11 @@ func (h *ArrHandler) Webhook(w http.ResponseWriter, r *http.Request) {
 	h.logger.InfoContext(r.Context(), "arr webhook received",
 		"event_type", payload.EventType,
 		"source", h.identifySource(payload))
+
+	// Refresh the requests this event is about before (and regardless of)
+	// the scan handling below — a Grab is otherwise ignored, and a Download
+	// whose folder maps to no library still moves a request along.
+	h.triggerDownloadSync(payload)
 
 	switch payload.EventType {
 	case "Test":
@@ -194,6 +237,29 @@ func (h *ArrHandler) authenticate(r *http.Request) bool {
 		return false
 	}
 	return subtle.ConstantTimeCompare([]byte(expected), []byte(provided)) == 1
+}
+
+// triggerDownloadSync starts a background sync of the requests a Radarr or
+// Sonarr event concerns. Lidarr and unidentifiable payloads are ignored — no
+// request type maps to them.
+func (h *ArrHandler) triggerDownloadSync(p arrPayload) {
+	if h.syncer == nil || !downloadSyncEvents[p.EventType] {
+		return
+	}
+	switch h.identifySource(p) {
+	case "radarr":
+		var tmdbID, id int
+		if p.Movie != nil {
+			tmdbID, id = p.Movie.TMDBID, p.Movie.ID
+		}
+		h.syncer.TriggerDownloadSync("radarr", tmdbID, id)
+	case "sonarr":
+		var tmdbID, id int
+		if p.Series != nil {
+			tmdbID, id = p.Series.TMDBID, p.Series.ID
+		}
+		h.syncer.TriggerDownloadSync("sonarr", tmdbID, id)
+	}
 }
 
 // identifySource returns "radarr", "sonarr", "lidarr", or "unknown".

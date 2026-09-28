@@ -12,6 +12,9 @@ import (
 // to round-trip into an AddSeriesRequest. Sonarr is TVDB-native; we accept
 // either a TVDB id (best) or a TMDB id (Sonarr v4+) for lookup.
 type SeriesLookup struct {
+	// ID is the series' id in this Sonarr's library when it is already there
+	// (Sonarr fills it in for a lookup result it manages); 0 otherwise.
+	ID         int            `json:"id,omitempty"`
 	Title      string         `json:"title"`
 	SortTitle  string         `json:"sortTitle,omitempty"`
 	TVDBID     int            `json:"tvdbId"`
@@ -126,7 +129,9 @@ type AddSeriesResponse struct {
 	Title string `json:"title"`
 }
 
-// AddSeries posts to /api/v3/series.
+// AddSeries posts to /api/v3/series. ErrConflict signals Sonarr already
+// manages the series (Sonarr answers 400 SeriesExistsValidator); the caller
+// should switch to the existing series (SeriesByTVDB + MonitorSeasons).
 func (c *Client) AddSeries(ctx context.Context, req AddSeriesRequest) (*AddSeriesResponse, error) {
 	var out AddSeriesResponse
 	if err := c.do(ctx, http.MethodPost, "/api/v3/series", nil, req, &out); err != nil {

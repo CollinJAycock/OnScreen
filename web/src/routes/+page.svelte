@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { libraryApi, hubApi, userApi, assetUrl, type Library, type HubItem, type HubData, type HubLibraryRow, type HubRowPref } from '$lib/api';
+  import { libraryApi, hubApi, userApi, itemApi, assetUrl, type Library, type HubItem, type HubData, type HubLibraryRow, type HubRowPref } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
+  import { nextUpSubtitle, removeById, restoreAt } from '$lib/watchState';
 
   let libraries: Library[] = [];
   let continueTV: HubItem[] = [];
@@ -11,6 +12,9 @@
   let continueOther: HubItem[] = [];
   let recentlyAddedByLibrary: HubLibraryRow[] = [];
   let trending: HubItem[] = [];
+  // Next unwatched episode per show in flight; the user's Plan to Watch list.
+  let nextUp: HubItem[] = [];
+  let planToWatch: HubItem[] = [];
   let loading = true;
   let error = '';
   let confirmDelete: Library | null = null;
@@ -32,8 +36,9 @@
     items: HubItem[];
     // 'continue' rows show the progress bar; 'library' rows link their
     // header and may render square; 'plain' is trending; 'libraries' is
-    // the library-tile grid (default last, pinnable anywhere).
-    kind: 'continue' | 'plain' | 'library' | 'libraries';
+    // the library-tile grid (default last, pinnable anywhere); 'next_up'
+    // tiles are episodes labelled show title + "S2 · E5 — Title".
+    kind: 'continue' | 'plain' | 'library' | 'libraries' | 'next_up';
     libraryId?: string;
     librarySquare?: boolean;
   };
@@ -41,8 +46,10 @@
   // Canonical section list in default order, derived from hub data.
   $: availableSections = [
     { key: 'continue_tv',     title: 'Continue Watching TV Shows', items: continueTV,     kind: 'continue' },
+    { key: 'next_up',         title: 'Next Up',                    items: nextUp,         kind: 'next_up' },
     { key: 'continue_movies', title: 'Continue Watching Movies',   items: continueMovies, kind: 'continue' },
     { key: 'continue_other',  title: 'Continue Watching',          items: continueOther,  kind: 'continue' },
+    { key: 'plan_to_watch',   title: 'Plan to Watch',              items: planToWatch,    kind: 'plain' },
     { key: 'trending',        title: 'Trending this week',         items: trending,       kind: 'plain' },
     ...recentlyAddedByLibrary.map((row): HubSection => ({
       key: `library:${row.library_id}`,
@@ -175,7 +182,43 @@
       unpackContinue(hub);
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
+      unpackWatchRows(hub);
     } catch { /* silently skip — next poll will retry */ }
+  }
+
+  // Both rows are absent on servers that predate them — render as empty
+  // (and so hidden) rather than failing.
+  function unpackWatchRows(hub: HubData) {
+    nextUp = hub.next_up ?? [];
+    planToWatch = hub.plan_to_watch ?? [];
+  }
+
+  // ── Continue Watching: remove a tile ─────────────────────────────────────
+  // Optimistic: the tile disappears at once; if the server call fails it
+  // goes back where it was (unless a poll already brought it back).
+  let dismissing = new Set<string>();
+
+  async function dismissContinue(item: HubItem) {
+    if (dismissing.has(item.id)) return;
+    dismissing = new Set(dismissing).add(item.id);
+    const tv = removeById(continueTV, item.id);
+    const movies = removeById(continueMovies, item.id);
+    const other = removeById(continueOther, item.id);
+    continueTV = tv.list;
+    continueMovies = movies.list;
+    continueOther = other.list;
+    try {
+      await itemApi.dismissContinueWatching(item.id);
+    } catch (e: unknown) {
+      if (tv.item) continueTV = restoreAt(continueTV, tv.item, tv.index);
+      if (movies.item) continueMovies = restoreAt(continueMovies, movies.item, movies.index);
+      if (other.item) continueOther = restoreAt(continueOther, other.item, other.index);
+      toast.error(e instanceof Error ? e.message : 'Could not remove from Continue Watching');
+    } finally {
+      const next = new Set(dismissing);
+      next.delete(item.id);
+      dismissing = next;
+    }
   }
 
   async function load() {
@@ -192,6 +235,7 @@
       unpackContinue(hub);
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
+      unpackWatchRows(hub);
       hubLayout = prefs?.hub_layout ?? [];
     }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed to load'; }
@@ -427,6 +471,7 @@
             {#each section.items as item (item.id)}
               {@const art = section.kind === 'library' ? item.poster_path : (item.poster_path ?? item.thumb_path)}
               {@const square = section.kind === 'library' ? section.librarySquare : (section.kind === 'continue' && isSquare(item))}
+              <div class="hub-card-wrap">
               <a class="hub-card" class:square href={hubHref(item)}>
                 {#if art}
                   <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
@@ -446,11 +491,32 @@
                 {#if section.kind === 'library' && item.show_title}
                   <div class="hub-label">{item.show_title}</div>
                   <div class="hub-sublabel">{item.title}</div>
+                {:else if section.kind === 'next_up'}
+                  <div class="hub-label">{item.show_title ?? item.title}</div>
+                  <div class="hub-sublabel">{nextUpSubtitle(item)}</div>
                 {:else}
                   <div class="hub-label">{item.title}</div>
                   {#if item.year}<div class="hub-year">{item.year}</div>{/if}
                 {/if}
               </a>
+              {#if section.kind === 'continue'}
+                <!-- Sibling of the card link (not nested) so it's its own
+                     tab stop; hover-revealed on desktop, always shown on
+                     touch and on keyboard focus. -->
+                <button
+                  type="button"
+                  class="hub-card-remove"
+                  title="Remove from Continue Watching"
+                  aria-label="Remove {item.show_title ?? item.title} from Continue Watching"
+                  disabled={dismissing.has(item.id)}
+                  on:click={() => dismissContinue(item)}
+                >
+                  <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true">
+                    <path d="M3.72 3.72a.75.75 0 011.06 0L8 6.94l3.22-3.22a.75.75 0 111.06 1.06L9.06 8l3.22 3.22a.75.75 0 11-1.06 1.06L8 9.06l-3.22 3.22a.75.75 0 01-1.06-1.06L6.94 8 3.72 4.78a.75.75 0 010-1.06z"/>
+                  </svg>
+                </button>
+              {/if}
+              </div>
             {/each}
           </div>
         </section>
@@ -583,6 +649,40 @@
     background: var(--bg-elevated);
   }
   .hub-card:hover { transform: translateY(-3px); box-shadow: 0 8px 24px var(--shadow); }
+  /* Positioning box for a card plus its sibling controls (the Continue
+     Watching remove button). Takes over the card's flex slot. */
+  .hub-card-wrap {
+    --card-w: clamp(120px, 10vw, 220px);
+    flex: 0 0 var(--card-w);
+    position: relative;
+  }
+  .hub-card-wrap > .hub-card { display: block; }
+  .hub-card-remove {
+    position: absolute;
+    top: 0.35rem;
+    right: 0.35rem;
+    z-index: 2;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: none;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.7);
+    color: rgba(255, 255, 255, 0.85);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s, transform 0.15s, background 0.12s;
+  }
+  .hub-card-wrap:hover .hub-card-remove { opacity: 1; transform: translateY(-3px); }
+  .hub-card-remove:focus-visible { opacity: 1; outline: 2px solid var(--accent); outline-offset: 1px; }
+  .hub-card-remove:hover { background: rgba(0, 0, 0, 0.9); color: #fff; }
+  .hub-card-remove:disabled { cursor: progress; }
+  @media (hover: none) {
+    .hub-card-remove { opacity: 1; }
+  }
   .hub-card img {
     width: var(--card-w);
     height: calc(var(--card-w) * 1.5);
@@ -838,7 +938,7 @@
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
     .page { padding: 1.25rem 1rem 5rem; }
-    .hub-card { --card-w: clamp(90px, 26vw, 130px); }
+    .hub-card, .hub-card-wrap { --card-w: clamp(90px, 26vw, 130px); }
 
     .grid { grid-template-columns: 1fr; }
     .lib-tile { min-height: 120px; padding: 1rem 1.1rem; }

@@ -24,6 +24,18 @@ FROM media_requests
 WHERE user_id = $1
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
+-- name: CountRecentMediaRequestsForUser :one
+-- Request-quota usage: how many requests of one type the user created after
+-- @since (now minus the quota window). Declined requests don't count, and
+-- neither do cancelled ones — CancelMediaRequest stores a user's own cancel as
+-- 'declined'. Served by media_requests_user_created (user_id, created_at).
+SELECT COUNT(*)
+FROM media_requests
+WHERE user_id = @user_id
+  AND type = @type
+  AND created_at > @since
+  AND status <> 'declined';
+
 -- name: ListAllMediaRequests :many
 SELECT *
 FROM media_requests
@@ -37,11 +49,13 @@ FROM media_requests
 WHERE (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status')::text);
 
 -- name: ListActiveMediaRequestsForTMDB :many
--- Used by the arr webhook to find pending/approved/downloading requests for
--- a given TMDB title so they can be marked fulfilled when the file lands.
+-- Used by the arr webhook to find approved/downloading requests for a given
+-- TMDB title so they can be marked fulfilled when the file lands. Failed ones
+-- are included: a file landing (a manual import, another user's request, a
+-- later grab) fulfils a request whose download had failed.
 SELECT * FROM media_requests
 WHERE type = $1 AND tmdb_id = $2
-  AND status IN ('approved', 'downloading');
+  AND status IN ('approved', 'downloading', 'failed');
 
 -- name: FindActiveRequestForUser :one
 -- Used by Discover to surface "you already requested this" without scanning
@@ -94,12 +108,21 @@ SET status = 'downloading', updated_at = NOW()
 WHERE id = $1 AND status = 'approved';
 
 -- name: MarkMediaRequestAvailable :exec
+-- Also clears the live download status (migration 00025): an available
+-- request has nothing left in flight. Accepts failed rows for the same reason
+-- ListActiveMediaRequestsForTMDB returns them.
 UPDATE media_requests
-SET status            = 'available',
-    fulfilled_item_id = $2,
-    fulfilled_at      = NOW(),
-    updated_at        = NOW()
-WHERE id = $1 AND status IN ('approved', 'downloading');
+SET status              = 'available',
+    fulfilled_item_id   = $2,
+    fulfilled_at        = NOW(),
+    updated_at          = NOW(),
+    download_state      = NULL,
+    download_progress   = NULL,
+    download_eta        = NULL,
+    download_size_bytes = NULL,
+    download_message    = NULL,
+    download_updated_at = NULL
+WHERE id = $1 AND status IN ('approved', 'downloading', 'failed');
 
 -- name: MarkMediaRequestFailed :exec
 UPDATE media_requests

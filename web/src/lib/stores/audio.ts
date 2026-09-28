@@ -1,4 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
+import type { ReplayGainInfo } from '$lib/replaygain';
 
 export interface AudioTrack {
   id: string;          // media_item id (track)
@@ -11,6 +12,11 @@ export interface AudioTrack {
   artist?: string;
   artistId?: string;
   posterPath?: string; // album poster, used by the player chrome
+  // ReplayGain tags of the file (replayGainFromFile(itemFile)). Queue
+  // builders that already hold the ItemDetail set it; left undefined, the
+  // browser player looks the tags up itself before the track starts.
+  // An empty object means "no tags" (played at unity).
+  replayGain?: ReplayGainInfo;
 }
 
 export type RepeatMode = 'off' | 'one' | 'all';

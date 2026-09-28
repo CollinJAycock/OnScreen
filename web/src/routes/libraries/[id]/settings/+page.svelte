@@ -2,8 +2,9 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, type Library } from '$lib/api';
+  import { libraryApi, type Library, type LibraryTrickplayStatus } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
+  import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from '$lib/trickplayProgress';
 
   let pickerOpen = false;
   let activePathIndex = 0;
@@ -25,6 +26,13 @@
   let scanIntervalMinutes = 60;
   let isPrivate = false;
   let autoGrantNewUsers = false;
+
+  // Seek-bar thumbnails (trickplay): the toggle saves with the form; the
+  // progress counts and "Generate now" talk to the per-library endpoints.
+  let trickplayEnabled = false;
+  let tpStatus: LibraryTrickplayStatus | null = null;
+  let tpGenerating = false;
+  let tpMessage = '';
 
   let mounted = false;
   let prevId = '';
@@ -52,6 +60,9 @@
     agent = 'tmdb';
     language = 'en';
     scanIntervalMinutes = 60;
+    trickplayEnabled = false;
+    tpStatus = null;
+    tpMessage = '';
     fetchLibrary();
   }
 
@@ -65,9 +76,35 @@
       scanIntervalMinutes = library.scan_interval_minutes ?? 60;
       isPrivate = library.is_private ?? false;
       autoGrantNewUsers = library.auto_grant_new_users ?? false;
+      trickplayEnabled = library.trickplay_enabled ?? false;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally { loading = false; }
+    void loadTrickplayStatus();
+  }
+
+  async function loadTrickplayStatus() {
+    if (!isVideoLibraryType(library?.type)) { tpStatus = null; return; }
+    try {
+      tpStatus = await libraryApi.trickplayStatus(id);
+    } catch {
+      // Counts are informational; a failure just hides them.
+      tpStatus = null;
+    }
+  }
+
+  async function generateTrickplay() {
+    tpGenerating = true;
+    tpMessage = '';
+    try {
+      const res = await libraryApi.generateTrickplay(id);
+      tpMessage = trickplayQueuedMessage(res?.queued ?? 0);
+      await loadTrickplayStatus();
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : 'Could not queue thumbnail generation';
+    } finally {
+      tpGenerating = false;
+    }
   }
 
   function addPath() { paths = [...paths, '']; }
@@ -91,6 +128,8 @@
         // The backend silently drops this on public libraries, but we
         // also clear the local toggle so the UI doesn't lie about state.
         auto_grant_new_users: isPrivate && autoGrantNewUsers,
+        // Only video libraries show the switch; leave other types' flag alone.
+        ...(isVideoLibraryType(library?.type) ? { trickplay_enabled: trickplayEnabled } : {}),
       });
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
@@ -227,6 +266,30 @@
           </select>
         </div>
       </section>
+
+      {#if isVideoLibraryType(library?.type)}
+        <section>
+          <div class="sec-label">Seek-bar thumbnails</div>
+          <label class="check-row">
+            <input type="checkbox" bind:checked={trickplayEnabled} />
+            <span>
+              <span class="check-title">Generate seek-bar thumbnails</span>
+              <span class="check-help">
+                Preview frames shown while scrubbing, built in the background after each scan and nightly.
+              </span>
+            </span>
+          </label>
+          <div class="tp-row">
+            <span class="tp-progress" data-testid="trickplay-progress">{formatTrickplayProgress(tpStatus)}</span>
+            <button type="button" class="btn-secondary" disabled={tpGenerating} on:click={generateTrickplay}>
+              {tpGenerating ? 'Queuing…' : 'Generate now'}
+            </button>
+          </div>
+          {#if tpMessage}
+            <div class="tp-msg">{tpMessage}</div>
+          {/if}
+        </section>
+      {/if}
 
       <section>
         <div class="sec-label">Visibility</div>
@@ -453,6 +516,13 @@
   }
   .btn-save:hover { background: var(--accent-hover); }
   .btn-save:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .tp-row {
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 0.6rem; margin-top: 0.75rem;
+  }
+  .tp-progress { font-size: 0.75rem; color: var(--text-muted); line-height: 1.4; }
+  .tp-msg { font-size: 0.75rem; color: var(--success); line-height: 1.4; margin-top: 0.6rem; }
 
   .maint { margin-top: 1.5rem; }
   .maint-sub {

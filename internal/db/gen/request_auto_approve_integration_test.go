@@ -111,8 +111,9 @@ func TestAutoApprove_Integration_UserColumnsAndQueries(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("UpdateUserContentRating: %v", err)
 	}
+	on := true
 	n, err := q.SetUserRequestPermissions(ctx, gen.SetUserRequestPermissionsParams{
-		ID: plain, AutoApproveMovies: true, AutoApproveTv: true,
+		ID: plain, AutoApproveMovies: &on, AutoApproveTv: &on,
 	})
 	if err != nil || n != 1 {
 		t.Fatalf("SetUserRequestPermissions = (%d, %v), want (1, nil)", n, err)

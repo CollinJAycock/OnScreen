@@ -16,13 +16,22 @@
     initNotifications,
     stopNotifications,
     playbackTransfers,
+    liveNotifications,
   } from '$lib/stores/notifications';
+  import {
+    pendingRequestCount,
+    refreshPendingRequests,
+    resetPendingRequests,
+    changesPendingQueue,
+    pendingBadgeText,
+  } from '$lib/stores/pendingRequests';
   import { startJobsPolling, stopJobsPolling } from '$lib/stores/jobs';
   import { loadCapabilities } from '$lib/stores/capabilities';
   import JobsBanner from '$lib/components/JobsBanner.svelte';
   import { itemApi, getClientName } from '$lib/api';
-  import { audio, type AudioTrack } from '$lib/stores/audio';
+  import { audio } from '$lib/stores/audio';
   import { currentTrack } from '$lib/stores/audio';
+  import { transferAction } from '$lib/playback-transfer';
 
   $: hasAudio = $currentTrack !== null;
 
@@ -159,42 +168,34 @@
     // posts to /playback/transfer; the broker fans out per-user;
     // each connected client reaches this subscription. Filter on
     // target_client_name === own client name so only the chosen
-    // device starts playback. Audio routes to the player; everything
-    // else navigates to /watch/{id}?at=position so the watch page
-    // resumes at the requested offset.
+    // device starts playback. Audio routes to the player at the sent
+    // position (audio.play's startMS — the AudioPlayer seeks there once
+    // the element has metadata); everything else navigates to
+    // /watch/{id}?at=position so the watch page resumes at that offset.
     playbackTransfers.subscribe(async (evt) => {
       if (!evt) return;
       if (evt.targetClientName !== getClientName()) return;
       try {
         const detail = await itemApi.get(evt.itemId);
-        const audioTypes = new Set(['track', 'audiobook', 'audiobook_chapter']);
-        if (audioTypes.has(detail.type)) {
-          const track: AudioTrack = {
-            id: detail.id,
-            fileId: detail.files[0]?.id ?? '',
-            title: detail.title,
-            artist: undefined,
-            album: undefined,
-            durationMS: detail.duration_ms,
-            posterPath: detail.poster_path ?? undefined,
-          };
-          audio.play([track]);
-          // Position seek lives on the AudioPlayer's <audio> element;
-          // the audio store sets the source and the element fires
-          // loadedmetadata after which currentTime is honoured. The
-          // store's existing resume-from-view_offset_ms path picks
-          // up the saved position; the transfer's position_ms is
-          // absorbed via the same mechanism since the originator's
-          // last progress write went through the broker too.
+        const action = transferAction(detail, evt.positionMs);
+        if (action.kind === 'audio') {
+          audio.play([action.track], 0, action.startMS);
         } else {
-          const at = evt.positionMs > 0 ? `?at=${evt.positionMs}` : '';
-          goto(`/watch/${evt.itemId}${at}`);
+          goto(action.href);
         }
       } catch (e) {
         console.warn('playback transfer: load item failed', e);
       }
     });
   });
+
+  // Admin nav badge: a new request landed in the approval queue (pushed over
+  // the notification SSE stream) → re-read the pending count now.
+  onMount(() =>
+    liveNotifications.subscribe((n) => {
+      if (n && isAdmin && changesPendingQueue(n.type)) refreshPendingRequests(true);
+    })
+  );
 
   async function openSwitcher() {
     switcherOpen = true;
@@ -241,6 +242,7 @@
       isAdmin = newUser.is_admin;
       stopNotifications();
       stopJobsPolling();
+      resetPendingRequests();
       initNotifications();
       startJobsPolling();
       closeSwitcher();
@@ -256,6 +258,7 @@
   async function logout() {
     stopNotifications();
     stopJobsPolling();
+    resetPendingRequests();
     try { await authApi.logout(); } catch { /* ignore */ }
     api.setUser(null);
     goto('/login');
@@ -303,6 +306,14 @@
     } else {
       isAdmin = false;
     }
+  }
+
+  // Keep the admin's pending-requests badge fresh on load and on every
+  // navigation (throttled in the store); clear it for non-admins.
+  $: if (!checking && path && isAdmin) {
+    refreshPendingRequests();
+  } else if (!isAdmin) {
+    resetPendingRequests();
   }
 </script>
 
@@ -391,6 +402,13 @@
             <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 7a1 1 0 011 1v2h2a1 1 0 110 2h-2v2a1 1 0 11-2 0v-2H7a1 1 0 110-2h2V8a1 1 0 011-1z" clip-rule="evenodd"/>
           </svg>
           Requests
+          {#if isAdmin && $pendingRequestCount > 0}
+            <span
+              class="nav-badge"
+              title="{$pendingRequestCount} request{$pendingRequestCount === 1 ? '' : 's'} waiting for approval"
+              aria-label="{$pendingRequestCount} pending"
+            >{pendingBadgeText($pendingRequestCount)}</span>
+          {/if}
         </a>
         <a href="/favorites" class="nav-link" class:active={path.startsWith('/favorites')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
@@ -412,19 +430,17 @@
             Profiles
           </a>
         {/if}
-        {#if isTauri()}
-          <!-- Native engine settings — only meaningful inside the
-               desktop client. Browser builds get nothing here so the
-               nav doesn't render a link to a page that just says
-               "open the desktop app". Available to any signed-in user
-               since the settings are per-device, not per-account. -->
-          <a href="/native/audio" class="nav-link" class:active={path.startsWith('/native/audio')}>
-            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-              <path d="M10 3.75a2 2 0 10-4 0v10.5a2 2 0 104 0v-8.5a.75.75 0 011.5 0v6.5a2 2 0 104 0v-3.5a.75.75 0 011.5 0v1a.75.75 0 001.5 0v-1a2.25 2.25 0 00-4.5 0v3.5a.5.5 0 11-1 0v-6.5a2.25 2.25 0 00-4.5 0v8.5a.5.5 0 11-1 0V3.75z"/>
-            </svg>
-            Audio
-          </a>
-        {/if}
+        <!-- Audio settings (ReplayGain + preamp) — in every build: the
+             browser player honours them too. The page itself gates the
+             desktop-only native-engine / exclusive-output controls on
+             isTauri(). Available to any signed-in user since the settings
+             are per-device, not per-account. -->
+        <a href="/native/audio" class="nav-link" class:active={path.startsWith('/native/audio')}>
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path d="M10 3.75a2 2 0 10-4 0v10.5a2 2 0 104 0v-8.5a.75.75 0 011.5 0v6.5a2 2 0 104 0v-3.5a.75.75 0 011.5 0v1a.75.75 0 001.5 0v-1a2.25 2.25 0 00-4.5 0v3.5a.5.5 0 11-1 0v-6.5a2.25 2.25 0 00-4.5 0v8.5a.5.5 0 11-1 0V3.75z"/>
+          </svg>
+          Audio
+        </a>
         {#if isAdmin}
           <a href="/settings" class="nav-link" class:active={path.startsWith('/settings')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
@@ -744,6 +760,22 @@
   .nav-link:hover { background: var(--bg-hover); color: var(--text-secondary); }
   .nav-link.active { background: var(--accent-bg); color: var(--accent-text); }
 
+  /* Admin: requests waiting for approval */
+  .nav-badge {
+    margin-left: auto;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: var(--accent);
+    color: #fff;
+    font-size: 0.64rem;
+    font-weight: 700;
+    line-height: 18px;
+    text-align: center;
+    box-sizing: border-box;
+  }
+
   .sidebar-foot {
     padding: 0.6rem;
     border-top: 1px solid var(--border);
@@ -1049,6 +1081,18 @@
       text-align: center;
     }
     .nav-link svg { width: 20px; height: 20px; }
+    .nav-link { position: relative; }
+    .nav-badge {
+      position: absolute;
+      top: 3px;
+      left: calc(50% + 4px);
+      margin-left: 0;
+      min-width: 15px;
+      height: 15px;
+      padding: 0 4px;
+      font-size: 0.56rem;
+      line-height: 15px;
+    }
 
     .main {
       padding-bottom: 60px;

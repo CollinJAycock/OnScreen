@@ -11,97 +11,44 @@ INSERT INTO watch_events (
     @client_id, @client_name, @client_ip, @decision, @occurred_at
 ) RETURNING id, occurred_at;
 
--- name: RefreshWatchState :exec
-REFRESH MATERIALIZED VIEW CONCURRENTLY watch_state;
-
 -- name: GetWatchState :one
--- Resolves the resume position for a single (user, media) pair by
--- reading the latest watch_event directly, instead of going through
--- the watch_state materialized view. The view filters
--- event_type IN ('stop', 'scrobble') and only refreshes on stop —
--- so during active playback (a stream of 'play' ticks every 10 s)
--- the view shows the last *finished* session, not the in-progress
--- one. If the player is force-killed before its final 'stop' PUT
--- lands, the resume position is lost entirely.
+-- Resolves the caller's watch state for one item from user_watch_state
+-- (migration 00023) — the single derivation every surface shares. The
+-- underlying watch_progress rollup is updated by a trigger on every
+-- watch_events insert, so a `play` tick lands on the next detail-page fetch
+-- even if the player is force-killed before its final `stop`.
 --
--- This query sees every event the client publishes, so the next
--- detail-page fetch always reflects the latest known position.
--- The view is still used by ListWatchStateForUser (history bulk
--- read) where eventual consistency is fine.
---
--- "watched" is sticky: once *any* past session for this (user,
--- media) reached past 90% completion, the status stays "watched"
--- even if the user later rewatched from the start (which would
--- otherwise overwrite the latest event with a tiny position and
--- demote the show back to in_progress). This matches Plex /
--- Jellyfin's behaviour — the watched indicator is meant to mean
--- "the user has finished this at least once," not "the latest
--- click landed past the 90% mark." Only a manual mark-as-unwatched
--- (separate flow) should clear it.
-SELECT
-    l.user_id,
-    l.media_id,
-    l.position_ms,
-    l.duration_ms,
-    CASE
-        WHEN EXISTS (
-            SELECT 1 FROM watch_events ec
-            WHERE ec.user_id = $1 AND ec.media_id = $2
-              AND ec.duration_ms IS NOT NULL AND ec.duration_ms > 0
-              AND ec.position_ms::float / NULLIF(ec.duration_ms, 0) > 0.9
-            LIMIT 1
-        )                                                       THEN 'watched'
-        WHEN l.duration_ms IS NULL OR l.duration_ms = 0         THEN 'unwatched'
-        WHEN l.position_ms::float / NULLIF(l.duration_ms, 0) > 0.9 THEN 'watched'
-        WHEN l.position_ms > 0                                  THEN 'in_progress'
-        ELSE                                                         'unwatched'
-    END AS status,
-    l.occurred_at AS last_watched_at,
-    l.client_id   AS last_client_id,
-    l.client_name AS last_client_name
-FROM watch_events l
-WHERE l.user_id = $1 AND l.media_id = $2
-ORDER BY l.occurred_at DESC
-LIMIT 1;
+-- "watched" is sticky: once any session since the latest manual mark passed
+-- 90%, the status stays "watched" even if the user later rewatched from the
+-- start (Plex / Jellyfin behave the same). A manual mark-as-unwatched clears
+-- it; a manual mark-as-watched sets it. position_ms is the latest event's
+-- position unless a newer mark reset it to 0; resumable says whether that
+-- position is a mid-way resume point. No row = the user never touched the
+-- item (callers treat ErrNoRows as unwatched).
+SELECT user_id, media_id, position_ms, duration_ms, status, resumable,
+       last_activity_at AS last_watched_at,
+       last_client_id, last_client_name
+FROM user_watch_state
+WHERE user_id = $1 AND media_id = $2;
 
 -- name: GetWatchStatesForItems :many
 -- Batch form of GetWatchState for a set of media IDs — used by the children
--- listing to avoid an N+1 (one query per child). Same direct-from-watch_events
--- semantics as GetWatchState: DISTINCT ON picks the latest event per media, and
--- the sticky-"watched" EXISTS check is per (user, media). Media the user has no
--- events for simply don't appear; the caller treats an absent id as unwatched.
-SELECT DISTINCT ON (l.media_id)
-    l.user_id,
-    l.media_id,
-    l.position_ms,
-    l.duration_ms,
-    CASE
-        WHEN EXISTS (
-            SELECT 1 FROM watch_events ec
-            WHERE ec.user_id = l.user_id AND ec.media_id = l.media_id
-              AND ec.duration_ms IS NOT NULL AND ec.duration_ms > 0
-              AND ec.position_ms::float / NULLIF(ec.duration_ms, 0) > 0.9
-            LIMIT 1
-        )                                                       THEN 'watched'
-        WHEN l.duration_ms IS NULL OR l.duration_ms = 0         THEN 'unwatched'
-        WHEN l.position_ms::float / NULLIF(l.duration_ms, 0) > 0.9 THEN 'watched'
-        WHEN l.position_ms > 0                                  THEN 'in_progress'
-        ELSE                                                         'unwatched'
-    END AS status,
-    l.occurred_at AS last_watched_at,
-    l.client_id   AS last_client_id,
-    l.client_name AS last_client_name
-FROM watch_events l
-WHERE l.user_id = sqlc.arg('user_id')
-  AND l.media_id = ANY(sqlc.arg('media_ids')::uuid[])
-ORDER BY l.media_id, l.occurred_at DESC;
+-- listing to avoid an N+1. Media the user has no row for simply don't appear;
+-- the caller treats an absent id as unwatched.
+SELECT user_id, media_id, position_ms, duration_ms, status, resumable,
+       last_activity_at AS last_watched_at,
+       last_client_id, last_client_name
+FROM user_watch_state
+WHERE user_id = sqlc.arg('user_id')
+  AND media_id = ANY(sqlc.arg('media_ids')::uuid[]);
 
 -- name: ListWatchStateForUser :many
-SELECT user_id, media_id, position_ms, duration_ms, status, last_watched_at,
+SELECT user_id, media_id, position_ms, duration_ms, status, resumable,
+       last_activity_at AS last_watched_at,
        last_client_id, last_client_name
-FROM watch_state
+FROM user_watch_state
 WHERE user_id = $1
-ORDER BY last_watched_at DESC
+ORDER BY last_activity_at DESC
 LIMIT 10000;
 
 -- name: ListRecentClientNamesForUser :many

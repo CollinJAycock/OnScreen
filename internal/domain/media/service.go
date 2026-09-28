@@ -201,6 +201,12 @@ type FilterParams struct {
 	MaxRatingRank *int   // content_rating_rank() ceiling for parental filtering
 	Sort          string // title, year, rating, created_at
 	SortAsc       bool
+	// Watch narrows to the caller's watch bucket — "unwatched",
+	// "in_progress" or "watched" (see media_watch_bucket, migration 00023);
+	// empty = no watch filter. WatchUserID is whose watch state is read and
+	// is required whenever Watch is set.
+	Watch       string
+	WatchUserID uuid.UUID
 }
 
 // DuplicatePair identifies a duplicate top-level item that should be merged

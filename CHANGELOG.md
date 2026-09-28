@@ -23,14 +23,121 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   capability profile, direct play via Authorization header, transcode
   fallback with session teardown, and resume-parity progress via mpv IPC
   (non-Windows). `play --print-url` doubles as a playback-matrix QA probe.
-- **Admin stream termination** — an admin can stop any user's session
-  (audit-logged with both parties); the analytics Now Playing cards grew a
-  Stop button. Owner-only remains the rule for non-admins.
+- **Admin stream termination** — an admin can stop any user's stream from
+  the Now Playing cards (`POST /api/v1/sessions/{id}/stop`, audit-logged
+  with both parties), in every playback mode, with an optional message (up
+  to 200 characters) shown to the viewer. A transcode is torn down; for
+  direct play, direct stream and remux the server also refuses that user +
+  item + client IP for 2 minutes (`403 PLAYBACK_STOPPED` on media bytes,
+  transcode start and progress beacons), so a client that ignores the stop
+  event can't simply restart. Owner-only remains the rule for non-admins.
+- **Now Playing detail** — each card shows the user and household profile,
+  device, LAN or remote, the playback decision, source → output format and
+  the reasons for a transcode.
 - **Runtime codec demotion on the TV fleet** — webOS ports the web player's
   full auto-escalation (bufferAppendError → demote → restart lands on
   H.264); Tizen, whose AVPlay claims are static, records a persistent
   demotion on NOT_SUPPORTED-class errors so overclaimed panels self-correct
   on the next attempt.
+
+The additions below are server + web client. The Android, Tizen, webOS and
+Roku apps are unchanged apart from benefiting from additive server fixes.
+
+Requests:
+
+- **Per-user auto-approve** — separate Movies and TV switches on
+  Settings → Users (`PUT /api/v1/users/{id}/request-permissions`); an
+  eligible request is sent to Radarr/Sonarr when it is created. Admins are
+  always auto-approved, a profile with a content-rating ceiling never is, and
+  a non-admin request that names a specific *arr instance goes to the queue.
+  Defaults for new accounts (registration, invite, OIDC/SAML/LDAP first
+  sign-in) are set in the "New users" block on the same page; household
+  profiles start off. If the hand-off fails, the request stays pending for an
+  admin.
+- **Request quotas and a can-request switch** — per-user movie and TV limits
+  per rolling window, with server-wide defaults in the "New users" block
+  (0 = unlimited, the default; window 1–90 days, default 7). An over-quota
+  request is still created but waits for an admin instead of being
+  auto-approved; declined and cancelled requests don't count; admins are
+  exempt. Switching a user's requests off
+  answers `403 REQUESTS_DISABLED`. Search shows the caller's remaining
+  allowance (`GET /api/v1/requests/quota`).
+- **Admin request queue** — a pending-requests badge in the nav
+  (`GET /api/v1/requests/pending-count`), an admin notification for each new
+  pending request, the requester's name on every row, and an approve dialog
+  that chooses the Radarr/Sonarr instance, quality profile and root folder,
+  pre-filled with what a plain approve would use.
+- **Live download status** — a new `arr_request_sync` task (every 5 minutes,
+  plus targeted syncs from the *arr webhook) reads Radarr/Sonarr and shows
+  searching, queued, downloading (progress and ETA), importing, stalled or
+  failed on each request. A failed download notifies the requester and the
+  admins once. Settings → Arr Services shows each instance's reachability,
+  its own health checks, free space behind its root folders and queue size.
+- **Season-level TV requests** — a show request can name seasons, and a user
+  can hold several requests for one show as long as their seasons don't
+  overlap, so "Request more seasons" works for a show already in the
+  library (Sonarr gets the new seasons monitored and searched). Each season
+  that completes gets a one-time "ready" notice; the request turns available
+  when every requested season is complete.
+- **Upcoming tab** — Radarr release dates and Sonarr air dates for the next
+  30 days as a month grid or agenda (`GET /api/v1/upcoming`), filtered by
+  the viewer's library access and rating ceiling.
+
+Watching:
+
+- **Mark watched / unwatched** on a movie, episode, season or show
+  (`POST`/`DELETE /api/v1/items/{id}/watched`; a season or show marks every
+  episode within the viewer's rating ceiling). Marks don't count as plays,
+  so analytics are unaffected.
+- **Continue Watching controls and new home rows** — remove a title from
+  Continue Watching (it comes back with new activity); a **Next Up** row
+  (the next episode of shows in progress) and a **Plan to Watch** row (from
+  the watching status), both part of the per-user hub layout. Resume / Play
+  on a show or season page starts the right episode and opens on its season
+  (`GET /api/v1/items/{id}/up-next`).
+- **Library grids** — watched badges, unwatched-episode counts on shows and
+  seasons, a watch filter (unwatched / in progress / watched) and "Surprise
+  me" (`GET /api/v1/libraries/{id}/random`).
+
+Playback and library:
+
+- **Automatic seek-bar thumbnails** — trickplay sprites are queued for items
+  without them after every library scan (one ffmpeg job at a time, paused
+  while a transcode runs), and a nightly `trickplay_backfill` task (seeded
+  enabled, 45-minute budget) works through the back catalogue. A
+  per-library switch, progress and "Generate now" sit in library settings.
+- **Play on…** — the web player and item page can send the current title and
+  position to another of the user's devices (`POST /api/v1/playback/transfer`
+  to a client that has played something in the last 30 days).
+- **ReplayGain in the browser** — track or album gain plus a ±15 dB preamp,
+  capped against the tagged peak so it never clips, applied through Web
+  Audio. It shares the desktop engine's per-device setting (off by default,
+  under Audio in the user menu). When media is served cross-origin (an
+  object-storage media store redirects streams to presigned URLs) the gain
+  stage is skipped and playback continues at unity gain.
+- **TMDB franchise collections** — a movie's TMDB collection becomes a
+  server-owned collection once the server holds two or more of its films
+  (at enrichment, plus a nightly `franchise_collections` task for movies
+  matched earlier). Libraries gain a Collections tab and movie pages a
+  "Part of the …" shelf; the collection page lists the films the server
+  doesn't have, with a Request button, for profiles without a rating
+  ceiling.
+- **Report a problem and Library health** — users report video, audio,
+  subtitle, wrong-match or other problems from an item or the player (one
+  open report per user, item and kind; at most 10 open per user). Admins work
+  them on Settings → Library health, which also lists files the integrity
+  probe marked damaged plus the unmatched and missing-art counts, and can
+  ask Radarr/Sonarr to re-grab a title, optionally blocklisting the release
+  it last grabbed.
+- **Notification agents** — Settings → Notifications sends server events to
+  Discord, Telegram, ntfy, Gotify or email (through the server's SMTP
+  settings): requests pending / approved / available / partly available /
+  failed, reported problems, new content (one batched message per scan
+  window, public libraries only), failed scheduled tasks, failed backups, and
+  no transcode worker available. Per-agent event selection, a Send test
+  button and last-delivery status. Secrets are encrypted at rest and never
+  returned; delivery goes through the SSRF guard (see
+  [docs/security.md](docs/security.md)).
 
 ### Changed
 
@@ -40,6 +147,43 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
 - **`podcast` library creation is parked** (the manga pattern) until the RSS
   subscription model ships — the scanner behind it is a local-files stub.
   Existing podcast libraries keep working.
+- **Watch state has one source.** Migration 00023 adds `watch_progress`, a
+  per-user, per-item rollup kept current by a trigger on `watch_events`, plus
+  the manual mark; the `user_watch_state` view derives watched / in progress
+  / resume point from it for item detail, library grids, Continue Watching,
+  Next Up and Plan to Watch. The `watch_state` materialized view is dropped.
+  Previously Continue Watching and item detail used different derivations
+  and could disagree, and a title finished in a month that retention had
+  detached was forgotten. Watched stays set across a rewatch.
+- **Seek-bar thumbnails are on by default for video libraries** — migration
+  00024 turns the new per-library switch on for existing movie, show, anime,
+  cartoons and home-video libraries (new video libraries start on too), so
+  the nightly backfill starts working through them; switch it off per
+  library to opt out.
+- **`GET /api/v1/collections` omits franchise collections** unless called
+  with `?include=franchise` (the web client asks for them), so native
+  clients see the list they saw before.
+- **Migrations 00020–00029** — applied on startup with `AUTO_MIGRATE=true`,
+  otherwise by the usual migrate step before starting the new binary
+  (`/health/ready` stays unready until they are applied).
+
+### Fixed
+
+- **Request notifications were never delivered.** Since requests shipped,
+  every `request_*` notification failed the `notifications.type` CHECK
+  constraint (it allowed three types) and the failure was only logged, so
+  requesters never heard back. Migration 00021 replaces the fixed list with
+  a format check.
+- **Seek-bar thumbnails never generated in the Docker image.** The sprite
+  directory was derived one level above the writable `CACHE_PATH` volume
+  (the root-owned `/var/cache`), so generation failed with "permission
+  denied"; it now lives under `CACHE_PATH` (an existing, usable legacy
+  directory is kept). ffmpeg 8's mjpeg encoder also refused limited-range
+  video, so sprites are converted to full range before encoding.
+- **Seek previews on Tizen and webOS** — those clients fetch
+  `/api/v1/items/{id}/trickplay/…`, which didn't exist. The server now
+  serves that path with the same auth, library access and rating ceiling as
+  `/trickplay/{id}/{file}`.
 
 ## [v2.4.0] — 2026-08-05
 

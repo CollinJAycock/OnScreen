@@ -2,7 +2,8 @@
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
+       trickplay_enabled
 FROM libraries
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -10,25 +11,30 @@ WHERE id = $1 AND deleted_at IS NULL;
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
+       trickplay_enabled
 FROM libraries
 WHERE deleted_at IS NULL
 ORDER BY name;
 
 -- name: CreateLibrary :one
+-- trickplay_enabled is resolved by the caller (the library service turns it
+-- on for video library types unless the request says otherwise).
 INSERT INTO libraries (name, type, scan_paths, agent, language,
                        scan_interval, metadata_refresh_interval,
-                       is_private, auto_grant_new_users)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                       is_private, auto_grant_new_users, trickplay_enabled)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
-          created_at, updated_at, deleted_at, is_private, auto_grant_new_users;
+          created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
+          trickplay_enabled;
 
 -- name: UpdateLibrary :one
 -- is_private uses COALESCE so admins can update other fields without
 -- having to re-send the privacy flag — pass NULL to preserve the
--- current value, true/false to flip it.
+-- current value, true/false to flip it. auto_grant_new_users and
+-- trickplay_enabled follow the same PATCH semantics.
 UPDATE libraries
 SET name                      = $2,
     scan_paths                = $3,
@@ -38,12 +44,14 @@ SET name                      = $2,
     metadata_refresh_interval = $7,
     is_private                = COALESCE(sqlc.narg('is_private')::bool, is_private),
     auto_grant_new_users      = COALESCE(sqlc.narg('auto_grant_new_users')::bool, auto_grant_new_users),
+    trickplay_enabled         = COALESCE(sqlc.narg('trickplay_enabled')::bool, trickplay_enabled),
     updated_at                = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
-          created_at, updated_at, deleted_at, is_private, auto_grant_new_users;
+          created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
+          trickplay_enabled;
 
 -- name: SoftDeleteLibrary :exec
 UPDATE libraries SET deleted_at = NOW(), updated_at = NOW()
@@ -63,7 +71,8 @@ WHERE id = $1;
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
+       trickplay_enabled
 FROM libraries
 WHERE deleted_at IS NULL
   AND scan_interval IS NOT NULL
@@ -74,7 +83,8 @@ WHERE deleted_at IS NULL
 SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
-       created_at, updated_at, deleted_at, is_private, auto_grant_new_users
+       created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
+       trickplay_enabled
 FROM libraries
 WHERE deleted_at IS NULL
   AND metadata_refresh_interval IS NOT NULL

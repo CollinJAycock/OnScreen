@@ -86,6 +86,7 @@ func genLibToLib(g gen.Library) library.Library {
 		Lang:                    g.Language,
 		IsPrivate:               g.IsPrivate,
 		AutoGrantNewUsers:       g.AutoGrantNewUsers,
+		TrickplayEnabled:        g.TrickplayEnabled,
 		ScanInterval:            durationToPtr(g.ScanInterval),
 		ScanLastCompletedAt:     pgtimeTZ(g.ScanLastCompletedAt),
 		MetadataRefreshInterval: durationToPtr(g.MetadataRefreshInterval),
@@ -97,6 +98,13 @@ func genLibToLib(g gen.Library) library.Library {
 }
 
 func libCreateParamsToGen(p library.CreateLibraryParams) gen.CreateLibraryParams {
+	// The service resolves a nil TrickplayEnabled to the per-type default
+	// before calling the querier; resolve here too so no path can insert a
+	// video library with the column's conservative false by omission.
+	trickplay := library.DefaultTrickplayEnabled(p.Type)
+	if p.TrickplayEnabled != nil {
+		trickplay = *p.TrickplayEnabled
+	}
 	return gen.CreateLibraryParams{
 		Name:                    p.Name,
 		Type:                    p.Type,
@@ -107,6 +115,7 @@ func libCreateParamsToGen(p library.CreateLibraryParams) gen.CreateLibraryParams
 		MetadataRefreshInterval: p.MetadataRefreshInterval,
 		IsPrivate:               p.IsPrivate,
 		AutoGrantNewUsers:       p.AutoGrantNewUsers,
+		TrickplayEnabled:        trickplay,
 	}
 }
 
@@ -121,6 +130,7 @@ func libUpdateParamsToGen(p library.UpdateLibraryParams) gen.UpdateLibraryParams
 		MetadataRefreshInterval: p.MetadataRefreshInterval,
 		IsPrivate:               p.IsPrivate,
 		AutoGrantNewUsers:       p.AutoGrantNewUsers,
+		TrickplayEnabled:        p.TrickplayEnabled,
 	}
 }
 

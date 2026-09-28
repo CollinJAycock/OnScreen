@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { collectionApi, assetUrl, type Collection, type CollectionItem } from '$lib/api';
+  import FranchiseParts from './FranchiseParts.svelte';
 
   let collection: Collection | null = null;
   let items: CollectionItem[] = [];
@@ -91,7 +92,12 @@
       <div class="error-bar">{error}</div>
     {/if}
 
-    {#if items.length === 0}
+    {#if collection.type === 'franchise'}
+      <!-- TMDB franchise: every film of the series, owned or not; missing
+           ones can be requested. -->
+      {#if collection.description}<p class="overview">{collection.description}</p>{/if}
+      <FranchiseParts parts={collection.parts} {items} />
+    {:else if items.length === 0}
       <div class="empty">
         <p>This collection is empty.</p>
         {#if collection.type === 'playlist'}
@@ -139,6 +145,7 @@
   .back:hover { color: var(--text-primary); }
   h1 { font-size: 1.4rem; font-weight: 800; color: var(--text-primary); margin: 0; }
   .count { font-size: 0.78rem; color: var(--text-muted); margin-left: auto; }
+  .overview { font-size: 0.82rem; color: var(--text-secondary); max-width: 60ch; margin: -1rem 0 1.5rem; line-height: 1.5; }
 
   .btn-edit {
     padding: 0.3rem 0.65rem; background: var(--bg-hover); border: 1px solid var(--border-strong);

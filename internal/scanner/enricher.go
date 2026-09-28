@@ -202,6 +202,10 @@ type Enricher struct {
 	// window so a per-show refresh stays at one upstream call.
 	aniListEpsSF    singleflight.Group
 	aniListEpsCache sync.Map // map[int]aniListEpsCacheEntry — key = anilist_id
+
+	// franchise, when set, is told which TMDB collection each enriched
+	// movie belongs to (see enricher_franchise.go). nil = not wired.
+	franchise FranchiseRecorder
 }
 
 // aniListEpsCacheEntry is the cached return of a streamingEpisodes
@@ -818,6 +822,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 				if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
 					return fmt.Errorf("merge into canonical sibling: %w", err)
 				}
+				e.recordFranchise(ctx, survivor.ID, p.TMDBID, result)
 				return nil
 			}
 			e.logger.WarnContext(ctx, "enrich: skipping risky title+year merge — sibling shares (title,year) but isn't a safe merge target",
@@ -830,6 +835,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update item metadata: %w", err)
 	}
+	e.recordFranchise(ctx, item.ID, p.TMDBID, result)
 
 	e.logger.InfoContext(ctx, "item enriched",
 		"item_id", item.ID,
@@ -2494,6 +2500,7 @@ func (e *Enricher) applyMatchedMovieToTarget(ctx context.Context, targetID uuid.
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update movie metadata: %w", err)
 	}
+	e.recordFranchise(ctx, targetID, p.TMDBID, result)
 	return nil
 }
 

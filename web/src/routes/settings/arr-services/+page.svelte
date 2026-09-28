@@ -9,6 +9,7 @@
     type ArrRootFolder,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import ArrHealthPanel from './ArrHealthPanel.svelte';
 
   let loading = true;
   let error = '';
@@ -398,6 +399,7 @@
                 {#if s.default_quality_profile_id != null}· QP #{s.default_quality_profile_id}{/if}
                 {#if s.default_root_folder}· {s.default_root_folder}{/if}
               </div>
+              <ArrHealthPanel serviceId={s.id} enabled={s.enabled} />
             </div>
             <div class="srv-actions">
               {#if !s.is_default}

@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/requests"
 )
 
 // RequestDefaultsReader is the slice of settings.Service the account-creation
@@ -26,4 +27,18 @@ func NewAccountRequestDefaults(ctx context.Context, src RequestDefaultsReader) (
 	}
 	d := src.Requests(ctx)
 	return d.DefaultAutoApproveMovies, d.DefaultAutoApproveTV
+}
+
+// RequestQuotaDefaults adapts the settings "requests" block to the request
+// service's server-wide quota defaults. Unlike the auto-approve defaults these
+// are live: read on every request, for any user without their own quota. nil
+// src = unlimited.
+func RequestQuotaDefaults(src RequestDefaultsReader) requests.QuotaDefaultsFunc {
+	return func(ctx context.Context) requests.QuotaDefaults {
+		if src == nil {
+			return requests.QuotaDefaults{WindowDays: requests.DefaultQuotaWindowDays}
+		}
+		c := src.Requests(ctx)
+		return requests.QuotaDefaults{Movies: c.QuotaMovies, TV: c.QuotaTV, WindowDays: c.QuotaWindowDays}
+	}
 }

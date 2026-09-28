@@ -4,8 +4,10 @@
 // photo-albums API stores albums as collections with type='photo_album'; before
 // 00017 the squashed 00001 constraint omitted that value, so POST
 // /api/v1/photo-albums failed with
-//   new row for relation "collections" violates check constraint
-//   "collections_type_check" (SQLSTATE 23514)
+//
+//	new row for relation "collections" violates check constraint
+//	"collections_type_check" (SQLSTATE 23514)
+//
 // This test proves every type the app inserts is accepted and a bogus one is not.
 package gen_test
 

@@ -61,6 +61,7 @@ type Handlers struct {
 	Items           *v1.ItemHandler
 	ItemsAdmin      *v1.ItemBulkAdminHandler // admin bulk re-enrich / cleanup
 	WatchStatus     *v1.WatchStatusHandler   // per-user Plan to Watch / Watching / etc.
+	WatchState      *v1.WatchStateHandler    // manual played/unplayed marks, CW dismiss, up-next
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
 	Trickplay       *v1.TrickplayHandler
@@ -98,6 +99,7 @@ type Handlers struct {
 	Requests        *v1.RequestHandler     // user + admin request workflow
 	Discover        *v1.DiscoverHandler    // TMDB-backed search for the request UI
 	Upcoming        *v1.UpcomingHandler    // Radarr/Sonarr calendar for the request UI
+	Issues          *v1.IssueHandler       // "Report a problem" + admin Library health / re-grab
 	StreamTracker   *streaming.Tracker
 	Artwork         *artwork.Manager
 	ArtworkRoots    func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
@@ -143,6 +145,9 @@ type Handlers struct {
 	// is reachable on the single API port. Ignored in production builds (the
 	// embedded SPA is always served). See frontend_dev.go.
 	DevFrontendURL string
+	// NotificationAgents: admin CRUD + test for the outbound Discord /
+	// Telegram / ntfy / Gotify / email notification agents.
+	NotificationAgents *v1.NotificationAgentHandler
 }
 
 // NewRouter builds the full Chi router.
@@ -595,6 +600,15 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Photos != nil {
 				r.Get("/items/{id}/image", h.Photos.Image)
 			}
+			// Trickplay alias: the Tizen and webOS clients fetch the VTT at
+			// /api/v1/items/{id}/trickplay/index.vtt (Bearer) and sprites at
+			// /api/v1/items/{id}/trickplay/sprite_NNN.jpg (?token= asset token).
+			// Same handler, same RequiredAllowQueryToken posture, same item ACL
+			// + rating ceiling as the canonical /trickplay/{id}/{file}; the
+			// VTT's relative sprite names resolve under this path too.
+			if h.Trickplay != nil {
+				r.Get("/items/{id}/trickplay/{file}", h.Trickplay.ServeFile)
+			}
 			// Static (pre-encoded) ABR ladder. Authorizes per-request via
 			// staticFileAccess (library ACL + content-rating ceiling), so it
 			// rides the same query-token middleware as the other asset GETs.
@@ -632,6 +646,7 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Get("/libraries", h.Library.List)
 			r.Get("/libraries/{id}", h.Library.Get)
 			r.Get("/libraries/{id}/items", h.Library.Items)
+			r.Get("/libraries/{id}/random", h.Library.Random)
 			r.Get("/libraries/{id}/genres", h.Library.Genres)
 			r.Get("/libraries/{id}/years", h.Library.Years)
 			r.Get("/libraries/{id}/event-collections", h.Library.EventCollections)
@@ -644,6 +659,11 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Delete("/libraries/{id}", h.Library.Delete)
 				r.Post("/libraries/{id}/scan", h.Library.Refresh)
 				r.Post("/libraries/{id}/detect-intros", h.Library.DetectIntros)
+				// Seek-bar thumbnail (trickplay) generation per library.
+				if h.Trickplay != nil {
+					r.Post("/libraries/{id}/trickplay/generate", h.Trickplay.GenerateLibrary)
+					r.Get("/libraries/{id}/trickplay/status", h.Trickplay.LibraryStatus)
+				}
 			})
 
 			// Webhooks — admin only.
@@ -778,6 +798,20 @@ func NewRouter(h *Handlers) http.Handler {
 				})
 			}
 
+			// Notification agents — admin only. Outbound Discord / Telegram /
+			// ntfy / Gotify / email channels; secrets are write-only.
+			if h.NotificationAgents != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/notification-agents", h.NotificationAgents.List)
+					r.Post("/admin/notification-agents", h.NotificationAgents.Create)
+					r.Get("/admin/notification-agents/events", h.NotificationAgents.Events)
+					r.Patch("/admin/notification-agents/{id}", h.NotificationAgents.Update)
+					r.Delete("/admin/notification-agents/{id}", h.NotificationAgents.Delete)
+					r.Post("/admin/notification-agents/{id}/test", h.NotificationAgents.Test)
+				})
+			}
+
 			// Plugins — admin only. Outbound MCP plugin registrations.
 			if h.Plugins != nil {
 				r.Group(func(r chi.Router) {
@@ -902,6 +936,9 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Patch("/admin/arr-services/{id}", h.ArrServices.Update)
 					r.Delete("/admin/arr-services/{id}", h.ArrServices.Delete)
 					r.Post("/admin/arr-services/{id}/set-default", h.ArrServices.SetDefault)
+					// Reachability, the instance's own health checks, disk
+					// space behind its root folders, queue size.
+					r.Get("/admin/arr-services/{id}/health", h.ArrServices.Health)
 				})
 			}
 
@@ -911,6 +948,11 @@ func NewRouter(h *Handlers) http.Handler {
 				r.With(middleware.RateLimit(h.RateLimiter, middleware.DiscoverLimit,
 					middleware.SessionKey("ratelimit:discover"))).
 					Get("/discover/search", h.Discover.Search)
+				// A show's seasons for the request season picker (TMDB +
+				// the caller's own library view + their active requests).
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.DiscoverLimit,
+					middleware.SessionKey("ratelimit:discover"))).
+					Get("/discover/tv/{tmdb_id}/seasons", h.Discover.Seasons)
 			}
 
 			// Upcoming — what the enabled Radarr/Sonarr instances expect to
@@ -927,10 +969,15 @@ func NewRouter(h *Handlers) http.Handler {
 				r.With(middleware.RateLimit(h.RateLimiter, middleware.DiscoverLimit,
 					middleware.SessionKey("ratelimit:requests"))).
 					Post("/requests", h.Requests.Create)
+				// The caller's own quota / can-request state (static segment, so
+				// chi matches it ahead of /requests/{id}).
+				r.Get("/requests/quota", h.Requests.Quota)
 				r.Get("/requests/{id}", h.Requests.Get)
 				r.Post("/requests/{id}/cancel", h.Requests.Cancel)
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
+					// Admin nav badge: requests waiting for approval.
+					r.Get("/requests/pending-count", h.Requests.PendingCount)
 					r.Post("/admin/requests/{id}/approve", h.Requests.Approve)
 					r.Post("/admin/requests/{id}/decline", h.Requests.Decline)
 					r.Delete("/admin/requests/{id}", h.Requests.Delete)
@@ -963,6 +1010,12 @@ func NewRouter(h *Handlers) http.Handler {
 			// Active sessions.
 			if h.NativeSessions != nil {
 				r.Get("/sessions", h.NativeSessions.List)
+				// Admin "stop this stream" (Now Playing) — works for direct
+				// play too: SSE message + a short server-side refusal window.
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Post("/sessions/{id}/stop", h.NativeSessions.Stop)
+				})
 			}
 
 			// Managed profiles — any authenticated user can manage their own.
@@ -984,6 +1037,9 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/collections/{id}/items", h.Collections.Items)
 				r.Post("/collections/{id}/items", h.Collections.AddItem)
 				r.Delete("/collections/{id}/items/{itemId}", h.Collections.RemoveItem)
+				// A library's franchise collections (the library page's
+				// Collections tab). Library-ACL checked in the handler.
+				r.Get("/libraries/{id}/collections", h.Collections.LibraryCollections)
 			}
 
 			// User playlists — ownership-checked, per-user.
@@ -1086,12 +1142,50 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Delete("/items/{id}/rating", h.Items.DeleteRating)
 			}
 
+			// "Report a problem": any user reports an item they can see (the
+			// handler applies the library ACL + rating ceiling); admins work
+			// the queue on Library health and can ask Radarr/Sonarr to re-grab.
+			if h.Issues != nil {
+				r.Get("/items/{id}/issues", h.Issues.ListMine)
+				// Each report notifies every admin: cap bursts per session on
+				// top of the handler's per-user open-report cap.
+				r.With(middleware.RateLimit(h.RateLimiter,
+					middleware.RateLimitConfig{Limit: 20, Window: time.Minute},
+					middleware.SessionKey("ratelimit:issues"))).
+					Post("/items/{id}/issues", h.Issues.Create)
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/issues", h.Issues.AdminList)
+					r.Patch("/admin/issues/{id}", h.Issues.AdminUpdate)
+					r.Get("/admin/library-health", h.Issues.LibraryHealth)
+					r.Post("/admin/items/{id}/regrab", h.Issues.Regrab)
+				})
+			}
+
 			// Per-user watching-status mirror — Plan to Watch /
 			// Watching / On Hold / Completed / Dropped.
 			if h.WatchStatus != nil {
 				r.Get("/items/{id}/watch-status", h.WatchStatus.Get)
 				r.Put("/items/{id}/watch-status", h.WatchStatus.Put)
 				r.Delete("/items/{id}/watch-status", h.WatchStatus.Delete)
+			}
+
+			// Per-user manual watch state: mark played / unplayed (a show or
+			// season expands to its episodes), hide from Continue Watching,
+			// and which episode Play on a show / season starts.
+			if h.WatchState != nil {
+				// A mark on a show upserts one watch_progress row per
+				// episode, so the generic session limit (1000/min) let one
+				// caller rewrite tens of thousands of rows a minute by
+				// toggling a long show. The writes share one tighter
+				// per-user bucket; the SQL also skips rows already in the
+				// requested state.
+				markRL := middleware.RateLimit(h.RateLimiter, watchMarkLimit,
+					middleware.SessionKey("ratelimit:watchmark"))
+				r.With(markRL).Post("/items/{id}/watched", h.WatchState.MarkWatched)
+				r.With(markRL).Delete("/items/{id}/watched", h.WatchState.MarkUnwatched)
+				r.With(markRL).Post("/items/{id}/dismiss-continue-watching", h.WatchState.DismissContinueWatching)
+				r.Get("/items/{id}/up-next", h.WatchState.UpNext)
 			}
 
 			// Cross-device "play on this device" remote control.
@@ -1264,6 +1358,12 @@ func NewRouter(h *Handlers) http.Handler {
 // some hosts) — a "poster" that is really HTML would be served as text/html
 // on the app's own origin. nosniff only stops the BROWSER sniffing; it cannot
 // stop the server declaring the sniffed type itself.
+// watchMarkLimit caps the manual watch-state writes (mark played / unplayed,
+// dismiss from Continue Watching) per user. Every client drives these from a
+// single click, so 60/min is far above real use while bounding the per-episode
+// write fan-out of show and season marks.
+var watchMarkLimit = middleware.RateLimitConfig{Limit: 60, Window: time.Minute}
+
 var artworkImageExts = map[string]string{
 	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".tbn": "image/jpeg",
 	".png": "image/png", ".webp": "image/webp", ".gif": "image/gif",

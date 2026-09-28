@@ -36,10 +36,6 @@ func (a *watchEventAdapter) InsertWatchEvent(ctx context.Context, p watchevent.I
 	}, nil
 }
 
-func (a *watchEventAdapter) RefreshWatchState(ctx context.Context) error {
-	return a.q.RefreshWatchState(ctx)
-}
-
 func (a *watchEventAdapter) GetWatchState(ctx context.Context, userID, mediaID uuid.UUID) (watchevent.WatchState, error) {
 	r, err := a.q.GetWatchState(ctx, gen.GetWatchStateParams{
 		UserID:  userID,
@@ -54,6 +50,7 @@ func (a *watchEventAdapter) GetWatchState(ctx context.Context, userID, mediaID u
 		PositionMS:     r.PositionMs,
 		DurationMS:     r.DurationMs,
 		Status:         r.Status,
+		Resumable:      r.Resumable,
 		LastWatchedAt:  r.LastWatchedAt.Time,
 		LastClientID:   r.LastClientID,
 		LastClientName: r.LastClientName,
@@ -76,6 +73,7 @@ func (a *watchEventAdapter) GetWatchStatesForItems(ctx context.Context, userID u
 			PositionMS:     r.PositionMs,
 			DurationMS:     r.DurationMs,
 			Status:         r.Status,
+			Resumable:      r.Resumable,
 			LastWatchedAt:  r.LastWatchedAt.Time,
 			LastClientID:   r.LastClientID,
 			LastClientName: r.LastClientName,
@@ -97,6 +95,7 @@ func (a *watchEventAdapter) ListWatchStateForUser(ctx context.Context, userID uu
 			PositionMS:     r.PositionMs,
 			DurationMS:     r.DurationMs,
 			Status:         r.Status,
+			Resumable:      r.Resumable,
 			LastWatchedAt:  r.LastWatchedAt.Time,
 			LastClientID:   r.LastClientID,
 			LastClientName: r.LastClientName,

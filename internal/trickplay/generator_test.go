@@ -78,6 +78,18 @@ func TestGenerateRejectsZeroDuration(t *testing.T) {
 	}
 }
 
+func TestGenerateSkipsClipShorterThanInterval(t *testing.T) {
+	store := &fakeStore{}
+	g := New(t.TempDir(), store, fakeLookup{path: "/tmp/x.mkv", duration: Default.IntervalSec - 1}, silentLogger())
+	err := g.Generate(context.Background(), uuid.New())
+	if !errors.Is(err, ErrZeroDuration) {
+		t.Fatalf("want ErrZeroDuration (skip) for a clip shorter than one interval, got %v", err)
+	}
+	if store.pending != 0 {
+		t.Errorf("short clip should short-circuit before marking pending")
+	}
+}
+
 func TestGenerateMarksFailedWhenFfmpegMissing(t *testing.T) {
 	// Point the generator at a non-existent input — ffmpeg will return an
 	// error which should translate to MarkFailed, not MarkDone.

@@ -43,6 +43,12 @@ type Library struct {
 	// library is a no-op functionally.
 	AutoGrantNewUsers bool
 
+	// TrickplayEnabled turns on automatic seek-bar thumbnail generation:
+	// after each scan the library's video items without sprites are
+	// queued, and the nightly trickplay_backfill task works through the
+	// rest. New video libraries default to on (see DefaultTrickplayEnabled).
+	TrickplayEnabled bool
+
 	ScanInterval            *time.Duration
 	ScanLastCompletedAt     *time.Time
 	MetadataRefreshInterval *time.Duration
@@ -68,6 +74,22 @@ type CreateLibraryParams struct {
 	// harmless but the UI hides the toggle, so this field is typically
 	// only meaningful when IsPrivate is also true.
 	AutoGrantNewUsers bool
+	// TrickplayEnabled: nil lets Create pick the per-type default
+	// (DefaultTrickplayEnabled); non-nil is the admin's explicit choice.
+	TrickplayEnabled *bool
+}
+
+// DefaultTrickplayEnabled reports whether a new library of the given type
+// gets automatic seek-bar thumbnail generation when the create request
+// doesn't say. On for the video library types — the same set migration
+// 00024 opted in for existing libraries — and off for everything else
+// (music, photo, books, audiobooks, podcasts, DVR).
+func DefaultTrickplayEnabled(libraryType string) bool {
+	switch libraryType {
+	case "movie", "show", "home_video", "anime", "cartoons":
+		return true
+	}
+	return false
 }
 
 // UpdateLibraryParams holds the fields that can be updated.
@@ -83,6 +105,7 @@ type UpdateLibraryParams struct {
 	// non-nil flips it.
 	IsPrivate         *bool
 	AutoGrantNewUsers *bool
+	TrickplayEnabled  *bool
 }
 
 // Querier is the subset of gen.Querier that this service needs.
@@ -288,6 +311,10 @@ func (s *Service) ReplaceAccessForUser(ctx context.Context, userID uuid.UUID, li
 func (s *Service) Create(ctx context.Context, p CreateLibraryParams) (*Library, error) {
 	if err := validateCreateParams(p); err != nil {
 		return nil, err
+	}
+	if p.TrickplayEnabled == nil {
+		on := DefaultTrickplayEnabled(p.Type)
+		p.TrickplayEnabled = &on
 	}
 
 	lib, err := s.rw.CreateLibrary(ctx, p)

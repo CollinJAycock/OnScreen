@@ -4,23 +4,35 @@ import Page from './+page.svelte';
 const mockGoto = vi.hoisted(() => vi.fn());
 const mockSearch = vi.hoisted(() => vi.fn());
 const mockDiscover = vi.hoisted(() => vi.fn());
+const mockSeasons = vi.hoisted(() => vi.fn());
 const mockCreate = vi.hoisted(() => vi.fn());
+const mockQuota = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
+const mockToastInfo = vi.hoisted(() => vi.fn());
+const mockToastError = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/api', () => ({
   searchApi: { search: mockSearch },
-  discoverApi: { search: mockDiscover },
-  requestsApi: { create: mockCreate },
+  discoverApi: { search: mockDiscover, seasons: mockSeasons },
+  requestsApi: { create: mockCreate, quota: mockQuota },
 }));
 vi.mock('$lib/stores/toast', () => ({
-  toast: { success: mockToastSuccess, error: vi.fn() },
+  toast: { success: mockToastSuccess, error: mockToastError, info: mockToastInfo },
 }));
+
+const unlimited = {
+  can_request: true,
+  window_days: 7,
+  movies: { limit: 0, used: 0, remaining: null },
+  tv: { limit: 0, used: 0, remaining: null },
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
   vi.useFakeTimers();
+  mockQuota.mockResolvedValue(unlimited);
 });
 
 afterEach(() => {
@@ -162,6 +174,166 @@ describe('Search page', () => {
         expect(msg).not.toContain('Approved automatically');
         expect(msg).toMatch(/Requested: Dune.*awaiting admin approval/);
         await waitFor(() => expect(screen.getByText('Pending')).toBeTruthy());
+      });
+
+      async function searchDune() {
+        mockSearch.mockResolvedValue([]);
+        mockDiscover.mockResolvedValue([dune]);
+        render(Page);
+        await fireEvent.input(screen.getByRole('textbox'), { target: { value: 'dune' } });
+        await vi.advanceTimersByTimeAsync(350);
+        await waitFor(() => expect(screen.getByText('Dune')).toBeTruthy());
+      }
+
+      it('says the limit was reached when the request went over quota', async () => {
+        mockCreate.mockResolvedValue({ id: 'r1', status: 'pending', auto_approved: false, over_quota: true });
+        await searchDune();
+        await fireEvent.click(screen.getByRole('button', { name: /request/i }));
+        await waitFor(() => expect(mockToastInfo).toHaveBeenCalledTimes(1));
+        expect(mockToastInfo.mock.calls[0][0]).toContain("You've reached your limit — this request needs admin approval");
+        expect(mockToastSuccess).not.toHaveBeenCalled();
+        await waitFor(() => expect(screen.getByText('Pending')).toBeTruthy());
+        // The allowance is re-read after the request.
+        await waitFor(() => expect(mockQuota).toHaveBeenCalledTimes(2));
+      });
+
+      it('shows how many requests are left in the window', async () => {
+        mockQuota.mockResolvedValue({
+          can_request: true,
+          window_days: 7,
+          movies: { limit: 3, used: 1, remaining: 2 },
+          tv: { limit: 1, used: 1, remaining: 0 },
+        });
+        await searchDune();
+        await waitFor(() => expect(screen.getByText('2 movie requests left this week')).toBeTruthy());
+        expect(screen.getByText('No TV requests left this week — new ones need admin approval')).toBeTruthy();
+        // Over the limit is still allowed (it just waits for an admin).
+        expect((screen.getByRole('button', { name: /request/i }) as HTMLButtonElement).disabled).toBe(false);
+      });
+
+      it('shows nothing about limits when requesting is unlimited', async () => {
+        await searchDune();
+        expect(screen.queryByTestId('request-quota')).toBeNull();
+      });
+
+      it('disables Request with an explanation when requesting is turned off', async () => {
+        mockQuota.mockResolvedValue({ ...unlimited, can_request: false });
+        await searchDune();
+        await waitFor(() => expect(screen.getByText('Requests turned off')).toBeTruthy());
+        const btn = screen.getByRole('button', { name: /requests turned off/i }) as HTMLButtonElement;
+        expect(btn.disabled).toBe(true);
+        expect(btn.title).toMatch(/turned off for your account/);
+        expect(screen.getByText(/Requesting is turned off for your account/)).toBeTruthy();
+      });
+
+      it('handles a REQUESTS_DISABLED refusal from the server', async () => {
+        mockCreate.mockRejectedValue(Object.assign(new Error('requesting is turned off'), { code: 'REQUESTS_DISABLED', status: 403 }));
+        mockQuota.mockResolvedValueOnce(unlimited).mockResolvedValue({ ...unlimited, can_request: false });
+        await searchDune();
+        await fireEvent.click(screen.getByRole('button', { name: /request/i }));
+        await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
+        expect(mockToastError.mock.calls[0][0]).toMatch(/turned off for your account/);
+        await waitFor(() => expect(screen.getByText('Requests turned off')).toBeTruthy());
+      });
+
+      it('still offers Request when the quota endpoint is unavailable', async () => {
+        mockQuota.mockRejectedValue(new Error('404'));
+        await searchDune();
+        expect((screen.getByRole('button', { name: /request/i }) as HTMLButtonElement).disabled).toBe(false);
+        expect(screen.queryByTestId('request-quota')).toBeNull();
+      });
+    });
+
+    describe('requesting a show (season picker)', () => {
+      const season = (n: number, over: Record<string, unknown> = {}) => ({
+        season_number: n, name: n === 0 ? 'Specials' : `Season ${n}`, episode_count: 10,
+        aired_episodes: 10, air_date: '2020-01-01', owned_episodes: 0, requested: null, ...over,
+      });
+      const severance = {
+        type: 'show', tmdb_id: 95396, title: 'Severance', year: 2022,
+        in_library: false, has_active_request: false,
+      };
+
+      async function searchFor(q: string, results: unknown[]) {
+        mockSearch.mockResolvedValue([]);
+        mockDiscover.mockResolvedValue(results);
+        render(Page);
+        await fireEvent.input(screen.getByRole('textbox'), { target: { value: q } });
+        await vi.advanceTimersByTimeAsync(350);
+      }
+
+      it('opens the picker and sends every season for a fresh show', async () => {
+        mockSeasons.mockResolvedValue([season(1), season(2), season(0, { episode_count: 3 })]);
+        mockCreate.mockResolvedValue({ id: 'r1', status: 'pending', auto_approved: false });
+        await searchFor('severance', [severance]);
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Request' })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: 'Request' }));
+        await waitFor(() => expect(mockSeasons).toHaveBeenCalledWith(95396));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Request all seasons' })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: 'Request all seasons' }));
+        // No seasons key: "every season" (the server's meaning of none).
+        await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({ type: 'show', tmdb_id: 95396 }));
+        await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+        expect(mockToastSuccess.mock.calls[0][0]).toMatch(/Requested: Severance.*awaiting admin approval/);
+        await waitFor(() => expect(screen.getByText('Pending')).toBeTruthy());
+      });
+
+      it('sends the picked seasons', async () => {
+        mockSeasons.mockResolvedValue([season(1), season(2), season(3)]);
+        mockCreate.mockResolvedValue({ id: 'r1', status: 'pending' });
+        await searchFor('severance', [severance]);
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Request' })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: 'Request' }));
+        await waitFor(() => expect(screen.getByRole('checkbox', { name: /Season 1/ })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('checkbox', { name: /Season 1/ }));
+        await fireEvent.click(screen.getByRole('button', { name: 'Request seasons 2, 3' }));
+        await waitFor(() =>
+          expect(mockCreate).toHaveBeenCalledWith({ type: 'show', tmdb_id: 95396, seasons: [2, 3] }),
+        );
+      });
+
+      it('offers "Request more seasons" for a show partly in the library', async () => {
+        mockSeasons.mockResolvedValue([season(1, { owned_episodes: 10 }), season(2)]);
+        mockCreate.mockResolvedValue({ id: 'r2', status: 'downloading', auto_approved: true });
+        await searchFor('severance', [
+          { ...severance, in_library: true, library_item_id: 'lib-9', partially_available: true, missing_seasons: [2] },
+          // Fully owned: stays out of the request section.
+          { type: 'show', tmdb_id: 1, title: 'Complete Show', in_library: true, has_active_request: false,
+            partially_available: false, missing_seasons: [] },
+        ]);
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Request more seasons' })).toBeTruthy());
+        expect(screen.getByText('In your library · 1 season missing')).toBeTruthy();
+        expect(screen.queryByText('Complete Show')).toBeNull();
+
+        await fireEvent.click(screen.getByRole('button', { name: 'Request more seasons' }));
+        await waitFor(() => expect(screen.getByText('In library')).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: 'Request season 2' }));
+        await waitFor(() =>
+          expect(mockCreate).toHaveBeenCalledWith({ type: 'show', tmdb_id: 95396, seasons: [2] }),
+        );
+        await waitFor(() => expect(mockToastSuccess).toHaveBeenCalledTimes(1));
+        expect(mockToastSuccess.mock.calls[0][0]).toContain('Approved automatically');
+      });
+
+      it('shows a refusal inside the picker instead of a toast', async () => {
+        mockSeasons.mockResolvedValue([season(1), season(2)]);
+        mockCreate.mockRejectedValue(Object.assign(new Error('requesting is turned off'), { code: 'REQUESTS_DISABLED', status: 403 }));
+        await searchFor('severance', [severance]);
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Request' })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: 'Request' }));
+        await waitFor(() => expect(screen.getByRole('button', { name: 'Request all seasons' })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: 'Request all seasons' }));
+        await waitFor(() => expect(screen.getByRole('alert').textContent).toMatch(/turned off for your account/));
+        expect(mockToastError).not.toHaveBeenCalled();
+      });
+
+      it('movies are still requested straight from the card', async () => {
+        mockCreate.mockResolvedValue({ id: 'r1', status: 'pending' });
+        await searchFor('heat', [{ type: 'movie', tmdb_id: 949, title: 'Heat', in_library: false, has_active_request: false }]);
+        await waitFor(() => expect(screen.getByRole('button', { name: /request for admin/i })).toBeTruthy());
+        await fireEvent.click(screen.getByRole('button', { name: /request for admin/i }));
+        await waitFor(() => expect(mockCreate).toHaveBeenCalledWith({ type: 'movie', tmdb_id: 949 }));
+        expect(mockSeasons).not.toHaveBeenCalled();
       });
     });
 

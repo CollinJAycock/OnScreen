@@ -1,11 +1,11 @@
 -- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 FROM collections
 WHERE user_id IS NULL OR user_id = sqlc.narg('user_id')
 ORDER BY sort_order, name;
 
 -- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 FROM collections WHERE id = $1;
 
 -- name: CreateCollection :one
@@ -14,12 +14,12 @@ FROM collections WHERE id = $1;
 -- filter shape that resolves at query time.
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id;
 
 -- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id;
 
 -- name: DeleteCollection :exec
 DELETE FROM collections WHERE id = $1;
@@ -114,7 +114,7 @@ ON CONFLICT DO NOTHING
 RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, library_id;
 
 -- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name;

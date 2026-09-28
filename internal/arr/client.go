@@ -28,10 +28,38 @@ var (
 	ErrNotFound = errors.New("arr: not found")
 	// ErrUnauthorized signals a bad API key or disabled instance.
 	ErrUnauthorized = errors.New("arr: unauthorized")
-	// ErrConflict signals the title is already managed by the instance.
-	// Callers should treat this as success — the title was already added.
+	// ErrConflict signals the title is already managed by the instance: a 409,
+	// or the 400 validation error Radarr / Sonarr actually answer an add of a
+	// title already in their library with (see isAlreadyAdded). Callers switch
+	// to the existing movie / series rather than treat the add as failed.
 	ErrConflict = errors.New("arr: already exists")
 )
+
+// Error-body bounds: how much of an error response is read (and searched for
+// the "already added" validation error), and how much of it an error quotes.
+const (
+	errorBodyScan    = 64 << 10
+	errorBodySnippet = 4096
+)
+
+// alreadyAddedCodes are the validator error codes Radarr (MovieExistsValidator)
+// and Sonarr (SeriesExistsValidator) put in the 400 validation array they
+// answer POST /api/v3/movie and /api/v3/series with when the title is already
+// in their library ("This movie has already been added").
+var alreadyAddedCodes = []string{"MovieExistsValidator", "SeriesExistsValidator"}
+
+// isAlreadyAdded reports whether a 400 body is the "already added" validation
+// error. It matches the error code, or the message for a build that leaves the
+// code out; the body is matched as text so a truncated or reshaped array
+// still counts.
+func isAlreadyAdded(body []byte) bool {
+	for _, code := range alreadyAddedCodes {
+		if bytes.Contains(body, []byte(code)) {
+			return true
+		}
+	}
+	return bytes.Contains(bytes.ToLower(body), []byte("has already been added"))
+}
 
 // Client is a transport wrapper used by both Radarr and Sonarr clients. It is
 // safe for concurrent use; the underlying http.Client provides the connection
@@ -107,7 +135,16 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 	case resp.StatusCode >= 400:
 		// Drain a bounded snippet of the body so the caller can log what arr
 		// actually said (validation errors are returned as JSON arrays here).
-		snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
+		// A validation array can list several failures, so a larger prefix is
+		// searched for the "already added" one than is quoted in the error.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, errorBodyScan))
+		snippet := body
+		if len(snippet) > errorBodySnippet {
+			snippet = snippet[:errorBodySnippet]
+		}
+		if resp.StatusCode == http.StatusBadRequest && isAlreadyAdded(body) {
+			return fmt.Errorf("%w: %s %s: %s", ErrConflict, method, path, strings.TrimSpace(string(snippet)))
+		}
 		return fmt.Errorf("arr: %s %s: %d %s: %s",
 			method, path, resp.StatusCode, http.StatusText(resp.StatusCode),
 			strings.TrimSpace(string(snippet)))

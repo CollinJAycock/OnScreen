@@ -300,6 +300,12 @@ type userListEntry struct {
 	// The user's content-rating ceiling, when set — lets the admin UI explain
 	// that the toggles above are inert for this user.
 	MaxContentRating *string `json:"max_content_rating,omitempty"`
+	// CanRequest: false blocks the user's new requests (admins are never
+	// blocked). The quotas are per-window request limits; null = the server
+	// default applies, 0 = unlimited. Always present so the UI can bind them.
+	CanRequest         bool   `json:"can_request"`
+	RequestQuotaMovies *int32 `json:"request_quota_movies"`
+	RequestQuotaTV     *int32 `json:"request_quota_tv"`
 }
 
 func tsToTime(ts pgtype.Timestamptz) time.Time {
@@ -332,6 +338,10 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			AutoApproveMovies: row.AutoApproveMovies,
 			AutoApproveTV:     row.AutoApproveTv,
 			MaxContentRating:  row.MaxContentRating,
+
+			CanRequest:         row.CanRequest,
+			RequestQuotaMovies: row.RequestQuotaMovies,
+			RequestQuotaTV:     row.RequestQuotaTv,
 		}
 	}
 	respond.List(w, r, users, int64(len(users)), "")
@@ -1043,10 +1053,14 @@ type preferencesResponse struct {
 
 // hubRowPref is one entry of the per-user hub layout. Key is a row
 // identifier shared across clients: "continue_tv", "continue_movies",
-// "continue_other", "trending", or "library:<uuid>". Rows present in the
-// hub data but absent from the layout render enabled, after the configured
-// ones, in default order — so new libraries appear without the user having
-// to re-save.
+// "continue_other", "next_up", "plan_to_watch", "trending", "libraries",
+// or "library:<uuid>". Keys are not allow-listed (length-capped only), so a
+// client that knows a newer row can save it before this server does. Rows
+// present in the hub data but absent from the layout render enabled, after
+// the configured ones, in default order — so new libraries appear without
+// the user having to re-save. The watch rows added after layouts shipped
+// are the exception: GetPreferences places them after the continue rows
+// (withDefaultHubRows).
 type hubRowPref struct {
 	Key     string `json:"key"`
 	Enabled bool   `json:"enabled"`
@@ -1084,6 +1098,7 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		// Tolerate a corrupt blob (manual DB edits) by omitting the field —
 		// the client falls back to its default layout.
 		_ = json.Unmarshal(row.HubLayout, &resp.HubLayout)
+		resp.HubLayout = withDefaultHubRows(resp.HubLayout)
 	}
 	respond.Success(w, r, resp)
 }
@@ -1537,10 +1552,17 @@ func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request)
 	respond.NoContent(w)
 }
 
-// SetRequestPermissions sets a user's media-request auto-approval toggles
-// (admin only). PUT /api/v1/users/{id}/request-permissions with
-// {"auto_approve_movies": bool, "auto_approve_tv": bool} — both required, so a
-// client can't clear one by omitting it. Stored as given even for a user with a
+// SetRequestPermissions sets a user's media-request policy (admin only).
+// PUT /api/v1/users/{id}/request-permissions with any of
+//
+//	{"auto_approve_movies": bool, "auto_approve_tv": bool,
+//	 "can_request": bool,
+//	 "quota_movies": int|null, "quota_tv": int|null}
+//
+// Every field is optional but at least one is required; an omitted field keeps
+// its stored value (the original two-toggle body still works unchanged). A
+// quota of null resets it to the server default, 0 is unlimited, N > 0 is N
+// requests per window. The toggles are stored as given even for a user with a
 // content-rating ceiling, where they have no effect until the ceiling is
 // lifted (requests.Service checks the ceiling first). Read at request time, so
 // the change applies to the user's next request with no re-login.
@@ -1559,10 +1581,7 @@ func (h *UserHandler) SetRequestPermissions(w http.ResponseWriter, r *http.Reque
 		respond.BadRequest(w, r, "invalid user id")
 		return
 	}
-	var body struct {
-		AutoApproveMovies *bool `json:"auto_approve_movies"`
-		AutoApproveTV     *bool `json:"auto_approve_tv"`
-	}
+	var body requestPermissionsBody
 	// Unknown fields are rejected for the same reason as SetContentRating: a
 	// misspelt key would otherwise decode into nothing and 204.
 	dec := json.NewDecoder(r.Body)
@@ -1571,15 +1590,12 @@ func (h *UserHandler) SetRequestPermissions(w http.ResponseWriter, r *http.Reque
 		respond.BadRequest(w, r, "invalid request body: "+err.Error())
 		return
 	}
-	if body.AutoApproveMovies == nil || body.AutoApproveTV == nil {
-		respond.ValidationError(w, r, "auto_approve_movies and auto_approve_tv are both required")
+	params, detail, verr := body.params(targetID)
+	if verr != "" {
+		respond.ValidationError(w, r, verr)
 		return
 	}
-	n, err := h.db.SetUserRequestPermissions(r.Context(), gen.SetUserRequestPermissionsParams{
-		ID:                targetID,
-		AutoApproveMovies: *body.AutoApproveMovies,
-		AutoApproveTv:     *body.AutoApproveTV,
-	})
+	n, err := h.db.SetUserRequestPermissions(r.Context(), params)
 	if err != nil {
 		if h.logger != nil {
 			h.logger.ErrorContext(r.Context(), "set request permissions", "target_id", targetID, "err", err)
@@ -1592,11 +1608,9 @@ func (h *UserHandler) SetRequestPermissions(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	if h.audit != nil {
+		// Only the fields this call changed; a nil quota means "server default".
 		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserRequestPermsChange, targetID.String(),
-			map[string]any{
-				"auto_approve_movies": *body.AutoApproveMovies,
-				"auto_approve_tv":     *body.AutoApproveTV,
-			}, audit.ClientIP(r))
+			detail, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }

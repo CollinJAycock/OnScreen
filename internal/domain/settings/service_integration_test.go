@@ -379,7 +379,8 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 	})
 
 	t.Run("Requests", func(t *testing.T) {
-		want := RequestsConfig{DefaultAutoApproveMovies: true, DefaultAutoApproveTV: false}
+		want := RequestsConfig{DefaultAutoApproveMovies: true, DefaultAutoApproveTV: false,
+			QuotaMovies: 5, QuotaTV: 2, QuotaWindowDays: 30}
 		if err := svc.SetRequests(ctx, want); err != nil {
 			t.Fatalf("Set: %v", err)
 		}
@@ -387,12 +388,21 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 			t.Errorf("got %+v, want %+v", got, want)
 		}
 		// Turning a default back off must stick (not merge with the old value).
-		want = RequestsConfig{DefaultAutoApproveTV: true}
+		want = RequestsConfig{DefaultAutoApproveTV: true, QuotaWindowDays: 7}
 		if err := svc.SetRequests(ctx, want); err != nil {
 			t.Fatalf("Set: %v", err)
 		}
 		if got := svc.Requests(ctx); got != want {
 			t.Errorf("after second set: got %+v, want %+v", got, want)
+		}
+		// A config stored before the quota fields existed reads back with the
+		// default 7-day window and unlimited quotas.
+		if err := svc.set(ctx, keyRequestsConfig, `{"default_auto_approve_movies":true}`); err != nil {
+			t.Fatalf("set legacy: %v", err)
+		}
+		legacy := RequestsConfig{DefaultAutoApproveMovies: true, QuotaWindowDays: DefaultQuotaWindowDays}
+		if got := svc.Requests(ctx); got != legacy {
+			t.Errorf("legacy config: got %+v, want %+v", got, legacy)
 		}
 	})
 
@@ -445,9 +455,10 @@ func TestService_GetUnsetReturnsZeroValues(t *testing.T) {
 	if got := svc.Storage(ctx); !reflect.DeepEqual(got, StorageConfig{}) {
 		t.Errorf("Storage unset: got %+v, want zero (local default)", got)
 	}
-	// Unset request defaults = both off: a fresh install queues every request.
-	if got := svc.Requests(ctx); got != (RequestsConfig{}) {
-		t.Errorf("Requests unset: got %+v, want zero (auto-approval off)", got)
+	// Unset request defaults = both off: a fresh install queues every request;
+	// quotas unlimited over the default 7-day window.
+	if got := svc.Requests(ctx); got != (RequestsConfig{QuotaWindowDays: DefaultQuotaWindowDays}) {
+		t.Errorf("Requests unset: got %+v, want auto-approval off, unlimited quotas, 7-day window", got)
 	}
 }
 

@@ -26,17 +26,7 @@ func generateSprites(ctx context.Context, inputPath, outDir string, spec Spec) (
 		return nil, fmt.Errorf("trickplay mkdir %s: %w", outDir, err)
 	}
 
-	// fps=1/N samples one frame every N seconds. scale+pad letterboxes each
-	// thumb into a fixed WxH box so the VTT #xywh coordinates line up
-	// regardless of the source video's aspect ratio. tile packs them into
-	// a CxR grid per output file.
-	vf := fmt.Sprintf(
-		"fps=1/%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,tile=%dx%d",
-		spec.IntervalSec,
-		spec.ThumbWidth, spec.ThumbHeight,
-		spec.ThumbWidth, spec.ThumbHeight,
-		spec.GridCols, spec.GridRows,
-	)
+	vf := spriteFilter(spec)
 
 	// %03d in the output template: ffmpeg emits sprite_000.jpg,
 	// sprite_001.jpg, … which sort lexicographically.
@@ -79,4 +69,21 @@ func generateSprites(ctx context.Context, inputPath, outDir string, spec Spec) (
 		return nil, fmt.Errorf("trickplay ffmpeg produced no sprites for %s", inputPath)
 	}
 	return names, nil
+}
+
+// spriteFilter is the -vf graph for one sprite run. fps=1/N samples one frame
+// every N seconds. scale+pad letterboxes each thumb into a fixed WxH box so
+// the VTT #xywh coordinates line up regardless of the source video's aspect
+// ratio. tile packs them into a CxR grid per output file. format=yuvj420p
+// converts to full range: ffmpeg 8's mjpeg encoder refuses the limited-range
+// YUV nearly all video uses ("Non full-range YUV is non-standard") unless
+// -strict unofficial, which writes JPEGs browsers render washed out.
+func spriteFilter(spec Spec) string {
+	return fmt.Sprintf(
+		"fps=1/%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,tile=%dx%d,format=yuvj420p",
+		spec.IntervalSec,
+		spec.ThumbWidth, spec.ThumbHeight,
+		spec.ThumbWidth, spec.ThumbHeight,
+		spec.GridCols, spec.GridRows,
+	)
 }

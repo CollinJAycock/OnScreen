@@ -107,6 +107,22 @@ tags:
       and a `has_secret` / `secret_changed` flag.
   - name: Maintenance
     description: One-shot admin operations (artwork backfill, dedupe).
+  - name: Notifications
+    description: |
+      Outbound notification agents (admin only): Discord webhooks, Telegram
+      bots, ntfy topics, Gotify servers and email lists that hear about
+      requests, problem reports, new content (batched — one message per
+      batch) and ops failures (scheduled task / backup failures, no transcode
+      worker). One message per event per agent, never one per user.
+
+      **Secrets** (the Discord webhook URL, bot / app / access tokens) are
+      encrypted at rest and write-only; changing an ntfy / Gotify server URL
+      requires re-entering the token.
+
+      **SSRF protection:** deliveries dial through the same post-resolution
+      guard as webhooks (no private, loopback, link-local, CGNAT or multicast
+      targets; redirects are not followed). `allow_private_network` opts a
+      self-hosted ntfy / Gotify into the LAN; Discord and Telegram never.
   - name: Plugins
     description: Outbound MCP plugin registrations (admin only).
   - name: Backup
@@ -605,8 +621,15 @@ paths:
       - { in: query, name: rating_min, schema: { type: number, format: float } }
       - { in: query, name: sort, schema: { type: string, enum: [title, year, rating, created_at, updated_at] } }
       - { in: query, name: order, schema: { type: string, enum: [asc, desc] } }
+      - $ref: '#/components/parameters/WatchFilter'
     get:
       summary: List items in a library
+      description: |
+        Each item carries the caller's watch state: `watch_state` /
+        `view_offset_ms` on playable videos (movie, episode, music video,
+        home video), `leaf_count` / `unwatched_count` on shows and seasons
+        (episodes within the caller's content-rating ceiling). `watch=`
+        filters in SQL, so paging, sort and `meta.total` stay consistent.
       tags: [Libraries]
       responses:
         '200':
@@ -615,6 +638,41 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/MediaItemListEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/libraries/{id}/random:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: query, name: genre,    schema: { type: string } }
+      - { in: query, name: year_min, schema: { type: integer } }
+      - { in: query, name: year_max, schema: { type: integer } }
+      - { in: query, name: rating_min, schema: { type: number, format: float } }
+      - { in: query, name: type, schema: { type: string }, description: 'Item type within the library (validated per library type, as on /items).' }
+      - $ref: '#/components/parameters/WatchFilter'
+    get:
+      summary: Pick one random item ("Surprise me")
+      description: |
+        One random item the caller can see, under the same filters as
+        GET /libraries/{id}/items (library access and content-rating
+        ceiling included). 404 when nothing matches or the library is
+        not visible to the caller.
+      tags: [Libraries]
+      responses:
+        '200':
+          description: The picked item.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:   { type: string, format: uuid }
+                      type: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/libraries/{id}/genres:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -665,6 +723,55 @@ paths:
       tags: [Libraries]
       responses:
         '202': { description: Detection enqueued. }
+
+  /api/v1/libraries/{id}/trickplay/generate:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Queue seek-bar thumbnail generation for a library (admin)
+      description: |
+        Queues every video item in the library that has no trickplay sprites
+        yet on the server's single background generation worker (one ffmpeg
+        job at a time, paused while a transcode is running) and returns
+        immediately. Idempotent — items already queued or generating are not
+        added twice. Works whether or not the library's `trickplay_enabled`
+        toggle is on (an explicit request). Items whose last attempt failed
+        are skipped unless `include_failed=true`. Audited as
+        `library.trickplay_generate`.
+      tags: [Libraries, Trickplay]
+      parameters:
+        - { in: query, name: include_failed, schema: { type: boolean, default: false } }
+      responses:
+        '202':
+          description: Queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      status: { type: string, enum: [queued] }
+                      queued: { type: integer, description: 'Items newly added to the queue by this call.' }
+        '403': { description: Not an admin. }
+        '404': { description: Unknown library, or trickplay generation not available on this server. }
+
+  /api/v1/libraries/{id}/trickplay/status:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Seek-bar thumbnail progress for a library (admin)
+      tags: [Libraries, Trickplay]
+      responses:
+        '200':
+          description: Counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/TrickplayLibraryStatus' }
+        '403': { description: Not an admin. }
+        '404': { description: Unknown library, or trickplay generation not available on this server. }
 
   # ── Search ─────────────────────────────────────────────────────────────────
   /api/v1/search:
@@ -1038,6 +1145,87 @@ paths:
       responses:
         '204': { description: Cleared. }
 
+  /api/v1/items/{id}/watched:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Mark played
+      description: |
+        Marks the item watched for the caller without playing it. A
+        movie, episode, music video or home video is marked directly; a
+        season marks each of its episodes and a show every episode under
+        it (only episodes within the caller's content-rating ceiling).
+        A mark overrides all earlier watch activity; activity after it
+        derives normally. Marks are not plays and never appear in
+        analytics or history. Other item types return 422. Items outside
+        the caller's libraries or ceiling return 404.
+      tags: [Items]
+      responses:
+        '204': { description: Marked. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/NoWatchState' }
+    delete:
+      summary: Mark unplayed
+      description: |
+        Marks the item (or every episode of a season / show) unwatched
+        for the caller and clears its resume point. Same scope and
+        errors as POST.
+      tags: [Items]
+      responses:
+        '204': { description: Marked unwatched. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/NoWatchState' }
+
+  /api/v1/items/{id}/dismiss-continue-watching:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Remove from Continue Watching
+      description: |
+        Hides the item from every Continue Watching row (the legacy
+        combined row and the split TV / movie rows) and from Next Up
+        until the caller records newer watch activity on it. An episode
+        or season dismisses its show's tile (Continue Watching TV shows
+        one tile per show). Movies, episodes, seasons, shows, music
+        videos and home videos only (422 otherwise).
+      tags: [Items]
+      responses:
+        '204': { description: Dismissed. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/NoWatchState' }
+
+  /api/v1/items/{id}/up-next:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Which episode Play on a show or season starts
+      description: |
+        Shows and seasons only (422 otherwise). Considers only episodes
+        within the caller's content-rating ceiling; for a show, season 0
+        specials are skipped unless the show has nothing else.
+
+        - resume: an episode has a resume point (the most recently
+          touched one; `episode.view_offset_ms` is set)
+        - next: the first not-watched episode after the most recently
+          watched one (by season, then episode number); if nothing is
+          left after it, the first not-watched episode overall
+        - start: nothing watched yet (first episode)
+        - rewatch: everything watched (first episode)
+        - none: no episodes (`episode` omitted)
+      tags: [Items]
+      responses:
+        '200':
+          description: Up next.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UpNext' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/NoWatchState' }
+
   /api/v1/items/{id}/rating:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -1401,15 +1589,44 @@ paths:
       - { in: path, name: file, required: true, schema: { type: string } }
     get:
       summary: Serve a trickplay sprite or VTT
-      description: No auth (loaded by `<video><track>`); the handler whitelists filenames.
+      description: |
+        Auth required: Bearer / cookie, or a `purpose=asset` token in
+        `?token=` (sprites are loaded where no Authorization header can be
+        sent; a general access token is rejected in the URL). The item's
+        library ACL and the caller's content-rating ceiling apply (404 when
+        either fails). `file` is whitelisted to `index.vtt` or
+        `sprite_NNN.jpg`; the VTT's cues name sprites relative to it.
       tags: [Trickplay]
-      security: []
       responses:
         '200':
           description: Sprite/VTT.
           content:
             image/jpeg: {}
             text/vtt:   {}
+        '401': { description: No or invalid credentials. }
+        '404': { description: Unknown item, no access, over the rating ceiling, or no such file. }
+
+  /api/v1/items/{id}/trickplay/{file}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { in: path, name: file, required: true, schema: { type: string, example: index.vtt } }
+    get:
+      summary: Serve a trickplay sprite or VTT (alias)
+      description: |
+        Alias of `GET /trickplay/{id}/{file}` at the path the Tizen and
+        webOS clients use — same handler, same auth (Bearer / cookie, or a
+        `purpose=asset` `?token=`), same library ACL and rating ceiling.
+        Relative sprite names in the VTT resolve to
+        `/api/v1/items/{id}/trickplay/sprite_NNN.jpg`.
+      tags: [Trickplay]
+      responses:
+        '200':
+          description: Sprite/VTT.
+          content:
+            image/jpeg: {}
+            text/vtt:   {}
+        '401': { description: No or invalid credentials. }
+        '404': { description: Unknown item, no access, over the rating ceiling, or no such file. }
 
   # ── Transcode ──────────────────────────────────────────────────────────────
   /api/v1/items/{id}/transcode:
@@ -1745,6 +1962,56 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/Session' }
 
+  /api/v1/sessions/{id}/stop:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        description: A Now Playing card id from GET /api/v1/sessions (a transcode session id, or a direct-play card id such as `10.0.0.5|<item>|<user>`).
+        schema: { type: string }
+    post:
+      summary: Stop a stream (admin)
+      description: |
+        The Now Playing "Stop" for every playback mode — direct play
+        included. Audited as `transcode.stop` (reason `admin_terminated`).
+
+        - A server session (transcode / remux) is torn down exactly like
+          `DELETE /api/v1/transcode/sessions/{sid}`.
+        - The viewer's notification stream receives an ignorable
+          `playback.stop` event whose `data` is
+          `{item_id, session_id?, client_name?, decision?, message?}`;
+          the web player stops and shows "Playback was stopped by the
+          server admin: <message>".
+        - For direct play, direct stream and remux — modes a client can
+          simply restart — the stopped (user, item, client IP) is refused
+          for 2 minutes: `/media/stream/{id}`, transcode start and
+          `playing` progress reports answer 403 `PLAYBACK_STOPPED`. The
+          user's other devices and titles are unaffected. A transcode stop
+          keeps its historical behaviour (teardown only).
+      tags: [Sessions]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                message:
+                  type: string
+                  maxLength: 200
+                  description: Optional note shown to the viewer (control characters are flattened to spaces).
+      responses:
+        '204': { description: Stopped. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`STOP_UNSUPPORTED` — a direct-play entry recorded without a user (only during an upgrade); it ages out within a minute.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
   /api/v1/playback/transfer:
     post:
       summary: Hand a playback state to another device
@@ -1815,6 +2082,25 @@ paths:
     get:
       summary: List collections
       tags: [Collections]
+      description: |
+        The caller's own collections plus server-owned ones (auto-genre,
+        franchise). `franchise` collections (TMDB collections the server
+        holds at least two films of) are **opt-in**: they are returned only
+        with `?include=franchise` (clients that render every collection as a
+        home-screen row would otherwise be flooded). Even then they are
+        listed only when the caller can see at least one of their items —
+        library grant and content-rating ceiling both apply — and carry
+        `tmdb_collection_id` and the TMDB collection `poster_url`.
+        `GET /api/v1/libraries/{id}/collections` always returns franchises.
+      parameters:
+        - in: query
+          name: include
+          required: false
+          description: |
+            Comma-separated (or repeated) extra collection types to include.
+            Currently only `franchise` is recognised; unknown values are
+            ignored.
+          schema: { type: string, example: franchise }
       responses:
         '200':
           description: Collections.
@@ -1854,6 +2140,16 @@ paths:
     get:
       summary: Get a collection
       tags: [Collections]
+      description: |
+        For a `franchise` collection the response adds `parts`: every film
+        of the TMDB collection in release order. A part the caller can see
+        in the server carries its `item_id`; a part that isn't in the server
+        (or isn't visible to the caller) has `item_id: null` plus the
+        caller's own open request status for it (`request_status`: pending,
+        approved or downloading; null when none). Missing parts are listed
+        only for profiles without a content-rating ceiling — TMDB parts
+        carry no certification, so they rank as unrated (most restrictive).
+        A franchise collection with no item visible to the caller is a 404.
       responses:
         '200':
           description: Collection.
@@ -1863,6 +2159,7 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/Collection' }
+        '404': { $ref: '#/components/responses/NotFound' }
     patch:
       summary: Update a collection
       tags: [Collections]
@@ -1884,11 +2181,47 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/Collection' }
+        '409': { description: 'MANAGED_COLLECTION: franchise collections are maintained from TMDB and cannot be edited (DELETE and the item add/remove routes answer the same).' }
     delete:
       summary: Delete a collection
       tags: [Collections]
       responses:
         '204': { description: Deleted. }
+        '409': { description: 'MANAGED_COLLECTION: franchise collections cannot be deleted.' }
+
+  /api/v1/libraries/{id}/collections:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Franchise collections with visible items in a library
+      tags: [Collections]
+      description: |
+        Backs the library page's Collections tab. Returns the franchise
+        collections that have at least one item in this library visible to
+        the caller (content-rating ceiling applied), with that visible
+        `item_count`. `poster_url` is the TMDB collection poster when known;
+        `poster_path` (artwork path) is the first visible member's poster, a
+        fallback cover. 404 when the caller has no grant on the library.
+      responses:
+        '200':
+          description: Collections.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:                 { type: string, format: uuid }
+                        name:               { type: string }
+                        type:               { type: string, enum: [franchise] }
+                        tmdb_collection_id: { type: integer }
+                        poster_url:         { type: string }
+                        poster_path:        { type: string }
+                        item_count:         { type: integer, format: int64 }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/collections/{id}/items:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -2162,11 +2495,19 @@ paths:
   /api/v1/users/{id}/request-permissions:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     put:
-      summary: Set a user's media-request auto-approval (admin)
+      summary: Set a user's media-request policy (admin)
       description: >
-        Per-type auto-approval of the user's media requests. Stored as given, but
-        inert while the user has a content-rating ceiling (their requests always
-        go to the admin queue); admins' own requests are always auto-approved.
+        Per-type auto-approval, the can-request switch and per-type request
+        quotas. Every field is optional but at least one is required; an omitted
+        field keeps its stored value. The auto-approve toggles are stored as
+        given, but inert while the user has a content-rating ceiling (their
+        requests always go to the admin queue); admins' own requests are always
+        auto-approved and never blocked or limited. A quota is the number of
+        requests of that type allowed per rolling window (server setting
+        requests.quota_window_days); null resets it to the server default
+        (requests.quota_movies / quota_tv), 0 means unlimited. Past the quota a
+        request is still created but always waits for an admin. Audited as
+        user.request_permissions_change with the fields that were set.
       tags: [Users]
       requestBody:
         required: true
@@ -2174,13 +2515,19 @@ paths:
           application/json:
             schema:
               type: object
-              required: [auto_approve_movies, auto_approve_tv]
+              minProperties: 1
+              additionalProperties: false
               properties:
                 auto_approve_movies: { type: boolean }
                 auto_approve_tv: { type: boolean }
+                can_request: { type: boolean, description: 'false = the user''s new requests are refused (403 REQUESTS_DISABLED).' }
+                quota_movies: { type: integer, minimum: 0, maximum: 1000, nullable: true, description: 'null = server default, 0 = unlimited.' }
+                quota_tv: { type: integer, minimum: 0, maximum: 1000, nullable: true, description: 'null = server default, 0 = unlimited.' }
       responses:
         '204': { description: Updated. }
+        '400': { description: Malformed body or unknown field. }
         '404': { description: No such user. }
+        '422': { description: No fields given, a null toggle, or a quota out of range. }
 
   /api/v1/upcoming:
     get:
@@ -2804,6 +3151,220 @@ paths:
                       enrichment_queued: { type: integer }
                       dry_run:           { type: boolean }
 
+  /api/v1/items/{id}/issues:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: The caller's own problem reports for an item
+      description: |
+        Newest first, at most 20, any status — lets the Report a problem
+        dialog say "You reported this 2 days ago" and show how an admin
+        closed an earlier report. Items outside the caller's libraries
+        or content-rating ceiling return 404.
+      tags: [Items]
+      responses:
+        '200':
+          description: The caller's reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MediaIssue' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Report a problem with an item
+      description: |
+        Any authenticated user who can see the item (library ACL +
+        content-rating ceiling; 404 otherwise). Every admin gets an
+        `issue_reported` notification. One open report per user, item
+        and kind (409 `ALREADY_REPORTED`); non-admins may have at most
+        10 open reports (429 `TOO_MANY_OPEN_ISSUES`). Rate limited to
+        20 per minute per session. `file_id`, when given, must be one of
+        the item's files (422 otherwise).
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                kind:    { type: string, enum: [video, audio, subtitles, wrong_match, other] }
+                note:    { type: string, maxLength: 1000, nullable: true }
+                file_id: { type: string, format: uuid, nullable: true }
+      responses:
+        '201':
+          description: Report created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MediaIssue' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { description: Invalid kind, note, or file_id. }
+        '429': { description: Too many open reports (`TOO_MANY_OPEN_ISSUES`) or rate limited. }
+
+  /api/v1/admin/issues:
+    get:
+      summary: Problem report queue (admin)
+      description: |
+        Newest first. `status` defaults to `open`; `all` lists every
+        status. Rows carry the item's show context (episodes and
+        seasons), the reporter, and the reported file's base name (never
+        the full server path).
+      tags: [Admin]
+      parameters:
+        - { in: query, name: status, schema: { type: string, enum: [open, resolved, dismissed, all], default: open } }
+        - { in: query, name: limit, schema: { type: integer, default: 50, maximum: 200 } }
+        - { in: query, name: offset, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: One page of reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      items:
+                        type: array
+                        items: { $ref: '#/components/schemas/AdminMediaIssue' }
+                      total: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { description: Unknown status filter. }
+
+  /api/v1/admin/issues/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    patch:
+      summary: Resolve or dismiss a problem report (admin)
+      description: |
+        Closes an open report. The reporter gets an `issue_resolved`
+        notification (with the note, when given) unless the admin closed
+        their own report. Audited as `issue.update`. A report that is
+        already closed returns 409 `NOT_OPEN`.
+      tags: [Admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [resolved, dismissed] }
+                note:   { type: string, maxLength: 1000, nullable: true }
+      responses:
+        '200':
+          description: The closed report.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MediaIssue' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { description: Invalid status or note. }
+
+  /api/v1/admin/library-health:
+    get:
+      summary: Library health overview (admin)
+      description: |
+        Open problem-report count, the files the integrity probe marked
+        damaged (active files of live items, most recently checked
+        first, paged by `limit` / `offset`), and the Unmatched / Missing
+        art counts.
+      tags: [Admin]
+      parameters:
+        - { in: query, name: limit, schema: { type: integer, default: 100, maximum: 500 } }
+        - { in: query, name: offset, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Library health.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      open_issues:       { type: integer }
+                      damaged_files:
+                        type: array
+                        items: { $ref: '#/components/schemas/DamagedFile' }
+                      damaged_total:     { type: integer }
+                      unmatched_count:   { type: integer }
+                      missing_art_count: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/items/{id}/regrab:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Ask Radarr/Sonarr to re-grab an item (admin)
+      description: |
+        Finds the enabled instance that manages the title — Radarr by
+        TMDB id for a movie; Sonarr by the show's TVDB id (or TMDB id
+        via Sonarr's lookup) for a show, season or episode, default
+        instance first — and queues `MoviesSearch`, `SeriesSearch`,
+        `SeasonSearch` or `EpisodeSearch`. With `blocklist: true` the
+        grab that produced the current file (else the most recent grab)
+        is first marked failed via `POST /api/v3/history/failed/{id}`,
+        which blocklists that release. While the *arr app still has a
+        file (`has_file`), its search only grabs an upgrade. Audited as
+        `item.regrab`. 409 `NOT_MANAGED` when no instance manages the
+        title (or the item has no provider ids); 502 `ARR_UNAVAILABLE`
+        when an instance could not be reached or refused the command.
+      tags: [Admin]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                blocklist: { type: boolean, default: false }
+      responses:
+        '200':
+          description: Search queued.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      service_id:          { type: string, format: uuid }
+                      service_name:        { type: string }
+                      service_kind:        { type: string, enum: [radarr, sonarr] }
+                      command:             { type: string, enum: [MoviesSearch, SeriesSearch, SeasonSearch, EpisodeSearch] }
+                      command_id:          { type: integer }
+                      arr_id:              { type: integer, description: 'Movie or series id inside the *arr app.' }
+                      title:               { type: string }
+                      blocklisted:         { type: boolean }
+                      blocklisted_release: { type: string }
+                      has_file:            { type: boolean, description: 'Movie / episode only.' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '422': { description: Item type has no *arr counterpart (music, photos, books, …). }
+        '502': { description: 'An *arr instance was unreachable or refused the command (`ARR_UNAVAILABLE`).' }
+
   /api/v1/maintenance/refresh-missing-art:
     post:
       summary: Re-enrich items lacking poster art (admin)
@@ -2896,6 +3457,146 @@ paths:
                         attrs: { type: object, additionalProperties: true, description: 'Structured attrs (request_id, library_id, err, etc). Errors are stringified for diagnostic readability.' }
         '503':
           description: Log buffer not configured on this build.
+
+  # ── Notification agents (admin) ────────────────────────────────────────────
+  /api/v1/admin/notification-agents:
+    get:
+      summary: List notification agents (admin)
+      description: |
+        Server-wide outbound channels (Discord / Telegram / ntfy / Gotify /
+        email) and their delivery status. Secrets are write-only — each agent
+        reports `secret_configured` instead.
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Agents, oldest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/NotificationAgent' } }
+                  meta: { type: object, properties: { total: { type: integer } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create a notification agent (admin, audited)
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationAgentCreate' }
+      responses:
+        '201':
+          description: Created. Audited as `notification_agent.create` (kind, name, events, destination host — never the secret).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/NotificationAgent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422':
+          description: |
+            Validation failed: unknown kind or event, a Discord webhook URL
+            not on discord.com / discordapp.com, a malformed token or chat id,
+            a public server not on https, a server host that resolves to a
+            private address without `allow_private_network`, bad recipients.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/admin/notification-agents/events:
+    get:
+      summary: Subscribable notification-agent events (admin)
+      description: The event keys an agent can subscribe to, with labels and the kinds that subscribe by default.
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Event catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/NotificationAgentEvent' } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/notification-agents/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    patch:
+      summary: Update a notification agent (admin, audited)
+      description: |
+        Omitted fields are unchanged; `config`, when sent, replaces the whole
+        config. A blank or omitted `secret` keeps the stored one;
+        `clear_secret` removes an optional one (the ntfy token). The kind
+        can't change. Secrets don't follow endpoints: changing an ntfy /
+        Gotify `server_url` while keeping the stored token is refused (422)
+        — re-enter the token with the new URL.
+      tags: [Notifications]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/NotificationAgentUpdate' }
+      responses:
+        '200':
+          description: Updated. Audited as `notification_agent.update`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/NotificationAgent' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: Validation failed, or the server URL changed without the token being re-entered.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    delete:
+      summary: Delete a notification agent (admin, audited)
+      tags: [Notifications]
+      responses:
+        '204': { description: Deleted. Audited as `notification_agent.delete`. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/notification-agents/{id}/test:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Send a test message (admin, audited)
+      description: |
+        Sends the Test event to the agent synchronously — whether or not it is
+        enabled — and records the outcome in `last_success_at` / `last_error`.
+        A delivery failure is still a 200 with `ok: false`; `error` is
+        sanitized (no secret, no webhook URL).
+      tags: [Notifications]
+      responses:
+        '200':
+          description: Test result. Audited as `notification_agent.test`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [ok]
+                    properties:
+                      ok:    { type: boolean }
+                      error: { type: string }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ── Plugins (admin) ────────────────────────────────────────────────────────
   /api/v1/admin/plugins:
@@ -3270,7 +3971,12 @@ paths:
   /api/v1/arr/webhook:
     post:
       summary: Sonarr/Radarr webhook ingestion
-      description: Authenticated by an arr API-key shared secret, not user auth.
+      description: |
+        Authenticated by an arr API-key shared secret, not user auth.
+        Grab, Download, ImportComplete and ManualInteractionRequired events
+        (plus DownloadFailed / DownloadFailure / ImportFailure where a build
+        sends them) also trigger a background refresh of the matching
+        requests' download state (see RequestDownload); bursts coalesce.
       tags: [Arr]
       security: []
       requestBody:
@@ -3408,6 +4114,29 @@ paths:
                 type: object
                 properties: { data: { $ref: '#/components/schemas/ArrService' } }
 
+  /api/v1/admin/arr-services/{id}/health:
+    parameters:
+      - $ref: '#/components/parameters/UUID'
+    get:
+      summary: Instance health — reachability, health checks, disk space, queue size
+      description: |
+        Admin only. Calls the instance's system/status, health, diskspace,
+        rootfolder and queue endpoints (10 s budget). An unreachable instance
+        is still a 200 with `reachable: false` and a generic `error`; each
+        other section degrades on its own (empty checks / disks, null
+        queue_count).
+      tags: [ArrServices]
+      responses:
+        '200':
+          description: Health snapshot.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties: { data: { $ref: '#/components/schemas/ArrServiceHealth' } }
+        '400': { description: Invalid id. }
+        '404': { description: Not found. }
+
   /api/v1/discover/search:
     get:
       summary: TMDB search-multi enriched with library + request state
@@ -3438,6 +4167,42 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/DiscoverItem' }
         '400': { description: Missing query. }
+        '503': { description: TMDB not configured. }
+
+  /api/v1/discover/tv/{tmdb_id}/seasons:
+    get:
+      summary: A show's seasons for the request season picker
+      description: |
+        The show's seasons from TMDB in season order with specials (season 0)
+        last. Each row carries how many of its episodes have aired, how many
+        are on disk in the libraries the caller can see (their library grants
+        and content-rating ceiling apply; unrated counts as the most
+        restrictive rating), and the status of the caller's own active
+        request covering the season, if any. An all-seasons request covers
+        every regular season but not specials. Returns 503 TMDB_UNAVAILABLE
+        when no TMDB key is configured and 502 TMDB_LOOKUP_FAILED when TMDB
+        couldn't be read.
+      tags: [Discover]
+      parameters:
+        - in: path
+          name: tmdb_id
+          required: true
+          schema: { type: integer, minimum: 1 }
+      responses:
+        '200':
+          description: Seasons.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SeasonInfo' }
+        '400': { description: Invalid tmdb id. }
+        '401': { description: Not signed in. }
+        '404': { description: TMDB has no such show. }
+        '502': { description: TMDB lookup failed. }
         '503': { description: TMDB not configured. }
 
   /api/v1/requests:
@@ -3484,22 +4249,88 @@ paths:
                 type:                  { type: string, enum: [movie, show] }
                 tmdb_id:               { type: integer }
                 seasons:
-                  description: Optional season numbers for show requests; omit for full series.
+                  description: >
+                    Optional season numbers for show requests (0 = specials);
+                    omit for every regular season. Each must be listed on
+                    TMDB (422 otherwise). A user may hold several active
+                    requests for one show as long as their seasons don't
+                    overlap. A show request counts once against the TV quota
+                    however many seasons it names.
                   type: array
-                  items: { type: integer }
+                  items: { type: integer, minimum: 0 }
                 requested_service_id:  { type: string, format: uuid, nullable: true, description: User's preferred arr service (e.g. 4K vs 1080p). Admin can override at approve time. }
                 quality_profile_id:    { type: integer, nullable: true }
                 root_folder:           { type: string,  nullable: true }
       responses:
         '201':
-          description: Request created.
+          description: >
+            Request created. over_quota is true when the request took the user
+            past their quota for its type — it was still created, but waits for
+            an admin instead of being auto-approved.
           content:
             application/json:
               schema:
                 type: object
-                properties: { data: { $ref: '#/components/schemas/MediaRequest' } }
+                properties:
+                  data:
+                    allOf:
+                      - $ref: '#/components/schemas/MediaRequest'
+                      - type: object
+                        properties:
+                          over_quota: { type: boolean }
         '400': { description: Validation error. }
-        '409': { description: Already an active request for this title. }
+        '403': { description: 'REQUESTS_DISABLED: an admin turned requesting off for this account.' }
+        '409': { description: 'ALREADY_REQUESTED: an active request for this movie, or for an overlapping set of seasons of this show.' }
+        '422': { description: 'Invalid season list (e.g. a season TMDB does not list).' }
+        '429': { description: 'TOO_MANY_PENDING_REQUESTS: 25 requests already waiting for review.' }
+
+  /api/v1/requests/quota:
+    get:
+      summary: The caller's request allowance
+      description: >
+        Whether the caller may request at all, and per media type the limit
+        (the user's own quota, else the server default; 0 = unlimited), how many
+        non-declined requests they made in the current rolling window, and how
+        many remain (null when unlimited). Admins are always allowed and
+        unlimited.
+      tags: [Requests]
+      responses:
+        '200':
+          description: Allowance.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [can_request, window_days, movies, tv]
+                    properties:
+                      can_request: { type: boolean }
+                      window_days: { type: integer }
+                      movies: { $ref: '#/components/schemas/RequestQuotaUsage' }
+                      tv: { $ref: '#/components/schemas/RequestQuotaUsage' }
+        '401': { description: Not signed in. }
+
+  /api/v1/requests/pending-count:
+    get:
+      summary: Number of requests waiting for approval (admin)
+      description: Backs the admin nav badge.
+      tags: [Requests]
+      responses:
+        '200':
+          description: Pending count.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    required: [count]
+                    properties:
+                      count: { type: integer }
+        '403': { description: Not an admin. }
 
   /api/v1/requests/{id}:
     parameters:
@@ -3619,6 +4450,20 @@ components:
       in: query
       name: offset
       schema: { type: integer, minimum: 0, default: 0 }
+    WatchFilter:
+      in: query
+      name: watch
+      required: false
+      description: |
+        Narrow to the caller's watch state (400 for any other value).
+        Playable videos: watched (finished or marked played, sticky
+        across a rewatch), in_progress (started, not finished),
+        unwatched (never started, or marked unplayed since). Shows and
+        seasons roll up their episodes within the caller's ceiling:
+        watched = at least one episode and all watched; in_progress =
+        some watched or started but not all watched; unwatched = none
+        watched or started. Other types count as unwatched.
+      schema: { type: string, enum: [unwatched, in_progress, watched] }
     ViewAs:
       in: query
       name: view_as
@@ -3671,6 +4516,11 @@ components:
       content:
         application/json:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    NoWatchState:
+      description: The item type has no watch state for this operation (tracks, photos, books, …).
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   schemas:
     # ── Envelopes ──────────────────────────────────────────────────────────
@@ -3685,6 +4535,51 @@ components:
             code:       { type: string, description: 'UPPER_SNAKE_CASE machine code.' }
             message:    { type: string }
             request_id: { type: string }
+    # ── Problem reports ("Report a problem") ────────────────────────────────
+    MediaIssue:
+      type: object
+      properties:
+        id:              { type: string, format: uuid }
+        item_id:         { type: string, format: uuid }
+        file_id:         { type: string, format: uuid }
+        kind:            { type: string, enum: [video, audio, subtitles, wrong_match, other] }
+        note:            { type: string }
+        status:          { type: string, enum: [open, resolved, dismissed] }
+        created_at:      { type: string, format: date-time }
+        resolved_at:     { type: string, format: date-time }
+        resolution_note: { type: string }
+    AdminMediaIssue:
+      allOf:
+        - { $ref: '#/components/schemas/MediaIssue' }
+        - type: object
+          properties:
+            library_id:           { type: string, format: uuid }
+            item_type:            { type: string }
+            item_title:           { type: string }
+            item_year:            { type: integer }
+            show_title:           { type: string, description: 'Episodes and seasons.' }
+            season_number:        { type: integer }
+            episode_number:       { type: integer }
+            poster_path:          { type: string, description: 'Falls back to the season / show poster.' }
+            reporter_id:          { type: string, format: uuid }
+            reporter_username:    { type: string }
+            resolved_by_username: { type: string }
+            file_name:            { type: string, description: 'Base name of the reported file.' }
+    DamagedFile:
+      type: object
+      properties:
+        file_id:          { type: string, format: uuid }
+        item_id:          { type: string, format: uuid }
+        library_id:       { type: string, format: uuid }
+        item_type:        { type: string }
+        title:            { type: string }
+        year:             { type: integer }
+        show_title:       { type: string }
+        season_number:    { type: integer }
+        episode_number:   { type: integer }
+        path_basename:    { type: string }
+        integrity_detail: { type: string }
+        checked_at:       { type: string, format: date-time }
     ListEnvelope:
       type: object
       properties:
@@ -3832,6 +4727,13 @@ components:
             provisioning, admin-create) is automatically granted
             access. No-op on public libraries — the UI hides the
             toggle there since the grant is meaningless.
+        trickplay_enabled:
+          type: boolean
+          description: |
+            v2.5. Automatic seek-bar thumbnail (trickplay) generation: after
+            each scan the library's video items without sprites are queued,
+            and the nightly `trickplay_backfill` task works through the rest.
+            On by default for movie/show/anime/cartoons/home_video libraries.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:
@@ -3854,6 +4756,9 @@ components:
           type: boolean
           default: false
           description: Server silently drops to false on public libraries (is_private=false).
+        trickplay_enabled:
+          type: boolean
+          description: Omit for the per-type default (on for video library types, off otherwise).
     LibraryUpdate:
       type: object
       description: |
@@ -3879,6 +4784,10 @@ components:
         auto_grant_new_users:
           type: boolean
           nullable: true
+        trickplay_enabled:
+          type: boolean
+          nullable: true
+          description: PATCH semantics — omit to preserve current value.
     GenreCount:
       type: object
       properties:
@@ -3903,6 +4812,22 @@ components:
         poster_path:  { type: string, nullable: true }
         thumb_path:   { type: string, nullable: true }
         content_rating: { type: string, nullable: true }
+        watch_state:
+          type: string
+          enum: [watched, in_progress, unwatched]
+          description: Library listing only, playable videos only. The caller's watch state.
+        view_offset_ms:
+          type: integer
+          format: int64
+          description: Library listing only, playable videos only. Resume point, when there is one.
+        leaf_count:
+          type: integer
+          format: int64
+          description: Library listing only, shows and seasons only. Episodes within the caller's content-rating ceiling.
+        unwatched_count:
+          type: integer
+          format: int64
+          description: Library listing only, shows and seasons only. How many of those episodes the caller has not watched.
     MediaItemListEnvelope:
       type: object
       properties:
@@ -4012,7 +4937,8 @@ components:
         parent_id:      { type: string, nullable: true, format: uuid }
         grandparent_id: { type: string, nullable: true, format: uuid, description: 'Parent of the parent: for an episode this is the show id (episode -> season -> show), so a client can open the show page directly instead of replaying history. Best-effort; may be unset when unresolved.' }
         index:          { type: integer, nullable: true }
-        view_offset_ms: { type: integer, format: int64 }
+        view_offset_ms: { type: integer, format: int64, description: 'Resume point, including a rewatch in progress of a watched title.' }
+        watch_state:    { type: string, enum: [watched, in_progress, unwatched], description: 'Playable videos only (omitted otherwise). The caller''s watch state, manual marks included.' }
         is_favorite:    { type: boolean }
         updated_at:     { type: integer, format: int64 }
         files:          { type: array, items: { $ref: '#/components/schemas/ItemFile' } }
@@ -4027,6 +4953,14 @@ components:
         original_year: { type: integer, nullable: true, description: 'Original work release year, distinct from `year` (which may reflect a reissue).' }
         compilation:   { type: boolean, description: 'True for various-artists compilations.' }
         release_type:  { type: string, nullable: true, description: 'MusicBrainz vocabulary: album, single, ep, live, soundtrack, …' }
+        collection:
+          type: object
+          description: 'Movies only, omitted when none: the franchise collection the movie belongs to. part_count is how many films of the franchise the caller would see on the collection page (owned + visible missing parts); owned_count how many of those are in the server and visible to the caller.'
+          properties:
+            id:          { type: string, format: uuid }
+            name:        { type: string }
+            part_count:  { type: integer }
+            owned_count: { type: integer }
     ChildItem:
       type: object
       properties:
@@ -4123,6 +5057,57 @@ components:
             7 days. Same content for every user (no personalisation),
             filtered by the caller's library access + parental
             ceiling. 30 raw rows narrowed to 12 after access-filter.
+        next_up:
+          type: array
+          items: { $ref: '#/components/schemas/NextUpItem' }
+          description: |
+            The next unwatched episode of each show the caller has
+            finished at least one episode of and has nothing resumable
+            in (resumable shows are on continue_watching_tv). Most
+            recent activity first, at most 20. Excludes dismissed shows
+            and episodes/shows over the caller's ceiling. Always present
+            (possibly empty); per-user layout key `next_up`.
+        plan_to_watch:
+          type: array
+          items: { $ref: '#/components/schemas/ChildItem' }
+          description: |
+            Items the caller set to Plan to Watch (watch-status), most
+            recently set first, at most 20, minus anything now fully
+            watched. Always present (possibly empty); per-user layout
+            key `plan_to_watch`.
+    NextUpItem:
+      type: object
+      description: An episode tile. Art is the show's (poster / fanart); thumb_path is the episode still when there is one.
+      properties:
+        id:             { type: string, format: uuid, description: Episode id. }
+        title:          { type: string, description: Episode title. }
+        type:           { type: string, enum: [episode] }
+        show_id:        { type: string, format: uuid }
+        show_title:     { type: string }
+        season_number:  { type: integer, description: '0 when unknown.' }
+        episode_number: { type: integer, description: '0 when unknown.' }
+        year:           { type: integer, nullable: true, description: Show year. }
+        poster_path:    { type: string, nullable: true }
+        fanart_path:    { type: string, nullable: true }
+        thumb_path:     { type: string, nullable: true }
+        duration_ms:    { type: integer, format: int64, nullable: true }
+        updated_at:     { type: integer, format: int64 }
+    UpNext:
+      type: object
+      properties:
+        mode: { type: string, enum: [resume, next, start, rewatch, none] }
+        episode:
+          type: object
+          description: Omitted when mode is none.
+          properties:
+            id:             { type: string, format: uuid }
+            title:          { type: string }
+            season_id:      { type: string, format: uuid }
+            season_number:  { type: integer }
+            episode_number: { type: integer }
+            view_offset_ms: { type: integer, format: int64, description: 'Set in resume mode.' }
+            duration_ms:    { type: integer, format: int64 }
+            thumb_path:     { type: string }
     HubLibraryRow:
       type: object
       properties:
@@ -4200,11 +5185,29 @@ components:
         rating:           { type: number, format: float }
     TrickplayStatus:
       type: object
+      description: |
+        Per-item trickplay state. The per-item GET/POST responses carry it
+        under `data` (the standard envelope) and, for older callers, also
+        repeat the same fields at the top level of the body.
       properties:
-        status:        { type: string, enum: [absent, pending, ready, failed] }
+        status:        { type: string, enum: [not_started, pending, done, failed, skipped] }
         sprite_count:  { type: integer }
-        interval_ms:   { type: integer }
-        index_url:     { type: string, nullable: true }
+        interval_sec:  { type: integer }
+        thumb_width:   { type: integer }
+        thumb_height:  { type: integer }
+        last_error:    { type: string }
+    TrickplayLibraryStatus:
+      type: object
+      description: |
+        Per-library progress over the library's video items that have a
+        playable file. pending = not generated yet (including in progress);
+        failed includes items skipped for having no usable file.
+      properties:
+        enabled: { type: boolean, description: "The library's trickplay_enabled toggle." }
+        total:   { type: integer, format: int64 }
+        done:    { type: integer, format: int64 }
+        pending: { type: integer, format: int64 }
+        failed:  { type: integer, format: int64 }
 
     # ── Transcode ──────────────────────────────────────────────────────────
     TranscodeStartRequest:
@@ -4309,14 +5312,48 @@ components:
       properties:
         id:           { type: string }
         user_id:      { type: string, format: uuid }
-        username:     { type: string }
+        username:
+          type: string
+          description: The viewer's account — for a managed profile, the owning account (see profile_name).
+        profile_name: { type: string, description: Managed profile name when the viewer is one. }
         client_name:  { type: string }
+        client_ip:    { type: string, description: Viewer's address. Admin callers only. }
+        location:     { type: string, enum: [lan, remote], description: Same local-address rule as the first-run setup gate. }
         item_id:      { type: string, format: uuid }
         title:        { type: string }
+        year:         { type: integer }
+        type:         { type: string }
+        poster_path:  { type: string }
+        parent_title: { type: string }
         position_ms:  { type: integer, format: int64 }
         duration_ms:  { type: integer, format: int64 }
-        decision:     { type: string, enum: [direct, transcode] }
+        bitrate_kbps: { type: integer }
+        selected_rendition: { type: string, description: ABR rung the player settled on. }
+        decision:     { type: string, enum: [directPlay, directStream, remux, transcode] }
         started_at:   { type: string, format: date-time }
+        source:       { $ref: '#/components/schemas/StreamFormat' }
+        output:
+          allOf: [{ $ref: '#/components/schemas/StreamFormat' }]
+          description: What the viewer receives. Absent for a direct play (the output is the source).
+        transcode_reasons:
+          type: array
+          items: { type: string }
+          description: Why a remux/transcode isn't a direct play, in words (e.g. "HEVC not supported by client").
+        can_stop:
+          type: boolean
+          description: Whether POST /api/v1/sessions/{id}/stop can act on this card.
+    StreamFormat:
+      type: object
+      description: One side of a Now Playing card's source → output. Codec/container values are scanner identifiers ("hevc", "truehd", "matroska"; "hls" for a server session's output).
+      properties:
+        container:      { type: string }
+        video_codec:    { type: string }
+        audio_codec:    { type: string }
+        width:          { type: integer }
+        height:         { type: integer }
+        bitrate_kbps:   { type: integer }
+        audio_channels: { type: integer }
+        hdr:            { type: string }
 
     # ── Users / preferences / profiles ─────────────────────────────────────
     Preferences:
@@ -4352,8 +5389,8 @@ components:
         summary:    { type: string, nullable: true }
         type:
           type: string
-          enum: [playlist, smart_playlist, auto_genre]
-          description: v2.1 — `smart_playlist` resolves items at query time from `rules`.
+          enum: [playlist, smart_playlist, auto_genre, event_folder, photo_album, franchise]
+          description: v2.1 — `smart_playlist` resolves items at query time from `rules`. `franchise` is a TMDB collection the server holds at least two films of (read-only).
         rules:
           type: object
           nullable: true
@@ -4367,6 +5404,25 @@ components:
         item_count: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        tmdb_collection_id: { type: integer, description: Franchise collections only. }
+        poster_url:   { type: string, description: 'Franchise collections only: TMDB collection poster (absolute URL).' }
+        backdrop_url: { type: string, description: 'Franchise detail only: TMDB collection backdrop.' }
+        parts:
+          type: array
+          description: Franchise detail (GET /collections/{id}) only; see that operation.
+          items: { $ref: '#/components/schemas/FranchisePart' }
+    FranchisePart:
+      type: object
+      properties:
+        tmdb_id:        { type: integer }
+        title:          { type: string }
+        year:           { type: integer }
+        release_date:   { type: string, description: YYYY-MM-DD }
+        poster_url:     { type: string }
+        overview:       { type: string }
+        item_id:        { type: string, format: uuid, nullable: true, description: Set when the film is in the server and visible to the caller. }
+        item_ids:       { type: array, items: { type: string, format: uuid }, description: "Every visible copy of the film (e.g. 4K and 1080p libraries), lowest id first; omitted when none." }
+        request_status: { type: string, nullable: true, enum: [pending, approved, downloading], description: The caller's own open request for a missing part. }
     CollectionItem:
       type: object
       properties:
@@ -4432,6 +5488,76 @@ components:
         endpoint: { type: string, format: uri }
         api_key:  { type: string }
         enabled:  { type: boolean }
+    # ── Notification agents ─────────────────────────────────────────────────
+    NotificationAgentKind:
+      type: string
+      enum: [discord, telegram, ntfy, gotify, email]
+    NotificationAgentConfig:
+      type: object
+      description: Non-secret per-kind fields; only the agent's kind's fields are set.
+      properties:
+        chat_id:    { type: string, description: 'Telegram: numeric chat id (groups are negative) or @channel.' }
+        server_url: { type: string, format: uri, description: 'ntfy / Gotify server. https unless allow_private_network.' }
+        topic:      { type: string, description: 'ntfy topic ([A-Za-z0-9_-], at most 64).' }
+        recipients: { type: array, items: { type: string, format: email }, maxItems: 10, description: 'Email addresses.' }
+    NotificationAgent:
+      type: object
+      properties:
+        id:                    { type: string, format: uuid }
+        kind:                  { $ref: '#/components/schemas/NotificationAgentKind' }
+        name:                  { type: string }
+        enabled:               { type: boolean }
+        events:                { type: array, items: { type: string } }
+        config:                { $ref: '#/components/schemas/NotificationAgentConfig' }
+        secret_configured:     { type: boolean, description: 'Whether a secret is stored. The secret itself is never returned.' }
+        allow_private_network: { type: boolean }
+        last_success_at:       { type: string, format: date-time, nullable: true }
+        last_error:            { type: string, nullable: true, description: 'Last delivery failure, sanitized.' }
+        last_error_at:         { type: string, format: date-time, nullable: true }
+        created_at:            { type: string, format: date-time }
+        updated_at:            { type: string, format: date-time }
+    NotificationAgentCreate:
+      type: object
+      required: [kind, name]
+      properties:
+        kind:    { $ref: '#/components/schemas/NotificationAgentKind' }
+        name:    { type: string, maxLength: 100 }
+        enabled: { type: boolean, default: true }
+        events:
+          type: array
+          items: { type: string }
+          description: Event keys (GET …/events). Omitted = the kind's defaults.
+        config:  { $ref: '#/components/schemas/NotificationAgentConfig' }
+        secret:
+          type: string
+          writeOnly: true
+          description: |
+            Discord: the webhook URL (https://discord.com|discordapp.com/api/webhooks/…).
+            Telegram: the bot token. ntfy: an access token (optional).
+            Gotify: the app token. Email: none. Encrypted at rest.
+        allow_private_network:
+          type: boolean
+          default: false
+          description: ntfy / Gotify only — permit a server on the LAN / this machine (never link-local).
+    NotificationAgentUpdate:
+      type: object
+      properties:
+        kind:         { $ref: '#/components/schemas/NotificationAgentKind' }
+        name:         { type: string, maxLength: 100 }
+        enabled:      { type: boolean }
+        events:       { type: array, items: { type: string } }
+        config:       { $ref: '#/components/schemas/NotificationAgentConfig' }
+        secret:       { type: string, writeOnly: true, description: 'Blank or omitted keeps the stored secret.' }
+        clear_secret: { type: boolean, description: 'Remove an optional stored secret (the ntfy token).' }
+        allow_private_network: { type: boolean }
+    NotificationAgentEvent:
+      type: object
+      properties:
+        key:         { type: string, enum: [request_pending, request_approved, request_available, request_season_available, request_failed, issue_reported, new_content, task_failed, backup_failed, worker_fleet_down] }
+        label:       { type: string }
+        description: { type: string }
+        group:       { type: string, enum: [requests, library, server] }
+        default_for: { type: array, items: { $ref: '#/components/schemas/NotificationAgentKind' } }
     # ── Settings ▸ System (cluster-wide startup toggles) ─────────────────
     SystemSettings:
       type: object
@@ -4669,6 +5795,38 @@ components:
         has_active_request:    { type: boolean }
         active_request_id:     { type: string, format: uuid, nullable: true }
         active_request_status: { type: string, nullable: true }
+        missing_seasons:
+          type: array
+          items: { type: integer }
+          description: >
+            Shows in the caller's library only: the aired regular seasons the
+            library doesn't fully hold ("Request more seasons"). Empty when
+            nothing is missing; absent for movies, shows not in the library,
+            and when the season list couldn't be read.
+        partially_available:
+          type: boolean
+          description: The show is in the caller's library with aired seasons missing. in_library keeps its meaning.
+
+    SeasonInfo:
+      type: object
+      properties:
+        season_number:  { type: integer, description: '0 = specials.' }
+        name:           { type: string }
+        episode_count:  { type: integer, description: Episodes TMDB lists for the season (aired or not). }
+        aired_episodes: { type: integer }
+        air_date:       { type: string, format: date, nullable: true }
+        poster_url:     { type: string }
+        owned_episodes: { type: integer, description: Distinct episodes on disk in libraries the caller can see. }
+        requested:      { type: string, nullable: true, enum: [pending, approved, downloading], description: "Status of the caller's active request covering the season; null when none." }
+        request_id:     { type: string, format: uuid }
+
+    RequestQuotaUsage:
+      type: object
+      required: [limit, used, remaining]
+      properties:
+        limit:     { type: integer, description: 'Requests allowed per window; 0 = unlimited.' }
+        used:      { type: integer, description: 'Non-declined requests of this type created in the window.' }
+        remaining: { type: integer, nullable: true, description: 'limit - used, floored at 0; null when unlimited.' }
 
     MediaRequest:
       type: object
@@ -4682,7 +5840,16 @@ components:
         poster_url:            { type: string, nullable: true }
         overview:              { type: string, nullable: true }
         status:                { type: string, enum: [pending, approved, declined, downloading, available, failed] }
-        seasons:               { type: array, items: { type: integer } }
+        seasons:               { type: array, items: { type: integer }, description: 'Show requests: the seasons asked for; absent = every regular season.' }
+        seasons_available:
+          type: array
+          items: { type: integer }
+          description: >
+            Show requests only: the requested seasons already complete in the
+            library while the rest are still coming ("partially available" —
+            the status stays approved / downloading / failed until every
+            requested season is complete, then becomes available). The
+            requester is notified once per season (request_season_available).
         requested_service_id:  { type: string, format: uuid, nullable: true, description: User's preferred arr service. }
         quality_profile_id:    { type: integer, nullable: true }
         root_folder:           { type: string,  nullable: true }
@@ -4694,3 +5861,64 @@ components:
         fulfilled_at:          { type: string, format: date-time, nullable: true }
         created_at:            { type: string, format: date-time }
         updated_at:            { type: string, format: date-time }
+        username:              { type: string, description: "The requester's username. Present on GET /requests listings (both scopes) and GET /requests/{id}." }
+        download:
+          $ref: '#/components/schemas/RequestDownload'
+
+    RequestDownload:
+      type: object
+      description: |
+        Live Radarr/Sonarr download state of an approved / downloading / failed
+        request, refreshed by the arr_request_sync task (every 5 min) and by
+        the arr webhook on Grab / Download / ImportComplete /
+        ManualInteractionRequired. Omitted from the request until its first
+        sync, and cleared once the request is available. A show aggregates its
+        episodes (size-weighted progress, worst meaningful state). For
+        non-admin callers the message of a stalled or failed download is a
+        plain phrase — the *arr text can name internal hosts and paths.
+      required: [state, updated_at]
+      properties:
+        state:
+          type: string
+          enum: [searching, queued, downloading, import_pending, stalled, failed]
+          description: |
+            searching — monitored, nothing grabbed yet; queued — grabbed,
+            waiting in the download client; downloading — transferring;
+            import_pending — downloaded, waiting for the import / library
+            scan; stalled — the client or *arr app reports a problem;
+            failed — the grab failed and nothing newer was grabbed (the
+            request's status is then `failed`, and the requester and admins
+            were notified once).
+        progress:   { type: number, minimum: 0, maximum: 1, description: Downloaded fraction. }
+        eta:        { type: string, format: date-time }
+        size_bytes: { type: integer, format: int64 }
+        message:    { type: string }
+        updated_at: { type: string, format: date-time, description: When the sync last evaluated the request. }
+
+    ArrServiceHealth:
+      type: object
+      properties:
+        reachable: { type: boolean }
+        version:   { type: string }
+        error:     { type: string, description: 'Short generic reason when reachable is false (details are server-logged only).' }
+        checks:
+          type: array
+          description: "The instance's own health checks (ok rows omitted)."
+          items:
+            type: object
+            properties:
+              type:     { type: string, enum: [notice, warning, error] }
+              source:   { type: string }
+              message:  { type: string }
+              wiki_url: { type: string, description: 'http(s) only; omitted otherwise.' }
+        disks:
+          type: array
+          description: 'Mounts backing the root folders (every sized mount when root folders are unreadable).'
+          items:
+            type: object
+            properties:
+              path:        { type: string }
+              label:       { type: string }
+              free_bytes:  { type: integer, format: int64 }
+              total_bytes: { type: integer, format: int64 }
+        queue_count: { type: integer, nullable: true, description: Downloads the instance is tracking; null when the queue could not be read. }

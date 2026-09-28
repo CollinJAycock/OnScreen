@@ -1,11 +1,25 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { goto } from '$app/navigation';
+  import { goto, replaceState } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, mediaApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection } from '$lib/api';
+  import { libraryApi, mediaApi, itemApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection, type WatchFilter } from '$lib/api';
   import { itemHref as resolveItemHref } from '$lib/itemHref';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
+  import WatchBadge from '$lib/components/WatchBadge.svelte';
+  import CardMenu from '$lib/components/CardMenu.svelte';
+  import CollectionsTab from '$lib/components/CollectionsTab.svelte';
+  import { toast } from '$lib/stores/toast';
+  import {
+    WATCH_FILTER_OPTIONS,
+    parseWatchFilter,
+    urlWithWatchFilter,
+    supportsWatchState,
+    canMarkWatched,
+    watchMenuActions,
+    applyWatchedMark,
+    isNotFound,
+  } from '$lib/watchState';
 
   let playlistPickerItemId = '';
   let showPlaylistPicker = false;
@@ -92,6 +106,8 @@
   let yearMin = '';
   let yearMax = '';
   let ratingMin = '';
+  // Caller's watch state (?watch=unwatched|in_progress|watched); '' = all.
+  let watchFilter: WatchFilter | '' = '';
 
   // Hydrate filters from URL on first load (?genre=Drama, ?year_min=, ?year_max=)
   // so deep-links from the genre/year browse pages preselect the correct filter.
@@ -103,6 +119,8 @@
     selectedGenre = sp.get('genre') ?? '';
     yearMin = sp.get('year_min') ?? '';
     yearMax = sp.get('year_max') ?? '';
+    watchFilter = parseWatchFilter(sp.get('watch'));
+    libTab = tabFromURL($page.url);
 
     const s = sp.get('sort');
     if (s === 'title' || s === 'year' || s === 'rating' || s === 'created_at' || s === 'taken_at') {
@@ -132,6 +150,24 @@
   // overlay-suppressed treatment matches the artist cards visually.
   $: isAudiobookLibrary = library?.type === 'audiobook';
   $: isHomeVideoLibrary = library?.type === 'home_video';
+
+  // Movie libraries get a "Collections" tab: TMDB film series with films in
+  // this library (CollectionsTab). ?tab=collections keeps the choice across
+  // a reload and Back from a collection page.
+  let libTab: 'items' | 'collections' = 'items';
+  $: hasCollectionsTab = library?.type === 'movie';
+  function tabFromURL(u: URL): 'items' | 'collections' {
+    return u.searchParams.get('tab') === 'collections' ? 'collections' : 'items';
+  }
+  function setLibTab(next: 'items' | 'collections') {
+    libTab = next;
+    try {
+      const u = new URL($page.url);
+      if (next === 'collections') u.searchParams.set('tab', 'collections');
+      else u.searchParams.delete('tab');
+      replaceState(u, $page.state);
+    } catch { /* router not ready (tests / early mount) — the tab still switches */ }
+  }
 
   // Date-grouped buckets for home-video libraries: [{ key, label, items }].
   // Group key is "YYYY-MM" so chronological sort just works on the key;
@@ -185,7 +221,73 @@
     if (yearMin) p.year_min = parseInt(yearMin);
     if (yearMax) p.year_max = parseInt(yearMax);
     if (ratingMin) p.rating_min = parseFloat(ratingMin);
+    if (watchFilter && supportsWatchState(library?.type)) p.watch = watchFilter;
     return p;
+  }
+
+  // ── Watch state: filter, Surprise me, mark watched ──────────────────────
+  $: watchable = supportsWatchState(library?.type);
+
+  // The filter lives in ?watch= (same as genre/year deep-links), so a
+  // reload or Back from an item keeps it.
+  function setWatchFilter(next: WatchFilter | '') {
+    watchFilter = next;
+    try {
+      replaceState(urlWithWatchFilter($page.url, next), $page.state);
+    } catch { /* router not ready (tests / early mount) — the filter still applies */ }
+    surpriseMsg = '';
+    applyFilters();
+  }
+
+  let surprising = false;
+  let surpriseMsg = '';
+
+  async function surpriseMe() {
+    if (surprising) return;
+    surprising = true;
+    surpriseMsg = '';
+    try {
+      // Same filters as the grid; randomItem ignores the sort fields.
+      const pick = await mediaApi.randomItem(id, filterParams());
+      goto(resolveItemHref(pick.type, pick.id));
+    } catch (e: unknown) {
+      surpriseMsg = isNotFound(e)
+        ? 'Nothing matches these filters — try widening them.'
+        : (e instanceof Error ? e.message : 'Could not pick something right now.');
+    } finally {
+      surprising = false;
+    }
+  }
+
+  let markingIds = new Set<string>();
+
+  // Optimistic: flip the badge now, roll back if the server says no.
+  async function markItem(item: MediaItem, watched: boolean) {
+    if (markingIds.has(item.id)) return;
+    markingIds = new Set(markingIds).add(item.id);
+    const before = item;
+    const replace = (next: MediaItem) => {
+      allItems = allItems.map((x) => (x.id === before.id ? next : x));
+    };
+    replace(applyWatchedMark(before, watched));
+    try {
+      if (watched) await itemApi.markWatched(before.id);
+      else await itemApi.markUnwatched(before.id);
+    } catch (e: unknown) {
+      replace(before);
+      toast.error(e instanceof Error ? e.message : `Could not mark "${before.title}" ${watched ? 'watched' : 'unwatched'}`);
+    } finally {
+      const next = new Set(markingIds);
+      next.delete(before.id);
+      markingIds = next;
+    }
+  }
+
+  function cardActions(item: MediaItem) {
+    return watchMenuActions(item).map((a) => ({
+      label: a === 'watched' ? 'Mark watched' : 'Mark unwatched',
+      onSelect: () => markItem(item, a === 'watched'),
+    }));
   }
 
   function infiniteScroll(node: HTMLElement) {
@@ -239,6 +341,9 @@
     library = null;
     genres = [];
     selectedGenre = '';
+    watchFilter = parseWatchFilter($page.url.searchParams.get('watch'));
+    libTab = tabFromURL($page.url);
+    surpriseMsg = '';
     sortDefaulted = false;
     loadLibrary().then(() => {
       loadItems();
@@ -434,6 +539,18 @@
     <div class="error-bar">{enrichTimeout}</div>
   {/if}
 
+  {#if hasCollectionsTab}
+    <div class="lib-tabs" role="tablist" aria-label="Library view">
+      <button type="button" role="tab" aria-selected={libTab === 'items'} class:on={libTab === 'items'}
+              on:click={() => setLibTab('items')}>Library</button>
+      <button type="button" role="tab" aria-selected={libTab === 'collections'} class:on={libTab === 'collections'}
+              on:click={() => setLibTab('collections')}>Collections</button>
+    </div>
+  {/if}
+
+  {#if hasCollectionsTab && libTab === 'collections'}
+    <CollectionsTab libraryId={id} />
+  {:else}
   <!-- Controls -->
   <div class="controls">
     <div class="search-box">
@@ -461,6 +578,31 @@
       </select>
     {/if}
 
+    {#if watchable}
+      <select
+        class="filter-select"
+        aria-label="Filter by watch state"
+        value={watchFilter}
+        on:change={(e) => setWatchFilter(parseWatchFilter(e.currentTarget.value))}
+      >
+        {#each WATCH_FILTER_OPTIONS as opt (opt.value)}
+          <option value={opt.value}>{opt.label}</option>
+        {/each}
+      </select>
+      <button
+        type="button"
+        class="surprise-btn"
+        disabled={surprising}
+        on:click={surpriseMe}
+        title="Open a random item that matches the current filters"
+      >
+        <svg viewBox="0 0 16 16" fill="currentColor" width="13" height="13" aria-hidden="true">
+          <path d="M2.5 1A1.5 1.5 0 001 2.5v11A1.5 1.5 0 002.5 15h11a1.5 1.5 0 001.5-1.5v-11A1.5 1.5 0 0013.5 1h-11zM5 4a1 1 0 110 2 1 1 0 010-2zm6 6a1 1 0 110 2 1 1 0 010-2zm-3-3a1 1 0 110 2 1 1 0 010-2zm3-3a1 1 0 110 2 1 1 0 010-2zM5 10a1 1 0 110 2 1 1 0 010-2z"/>
+        </svg>
+        {surprising ? 'Picking…' : 'Surprise me'}
+      </button>
+    {/if}
+
     <div class="browse-links">
       <a href="/libraries/{id}/genres">Browse genres</a>
       <a href="/libraries/{id}/years">Browse years</a>
@@ -470,9 +612,15 @@
       {#if query}{filtered.length} / {allItems.length}{:else}{total} items{/if}
     </div>
   </div>
+  <p class="surprise-msg" role="status" aria-live="polite">{surpriseMsg}</p>
 
   <!-- Grid -->
-  {#if allItems.length === 0 && !loadingItems}
+  {#if allItems.length === 0 && !loadingItems && watchable && watchFilter}
+    <div class="empty">
+      <p class="empty-t">Nothing {WATCH_FILTER_OPTIONS.find((o) => o.value === watchFilter)?.label.toLowerCase()} here</p>
+      <button class="clear-link" on:click={() => setWatchFilter('')}>Show all items</button>
+    </div>
+  {:else if allItems.length === 0 && !loadingItems}
     <div class="empty">
       <div class="empty-icon">⬡</div>
       <p class="empty-t">Library is empty</p>
@@ -565,6 +713,7 @@
                           aria-label="Edit metadata"
                           on:click={(e) => openMetadataEditor(e, item)}>✎</button>
                 {/if}
+                <WatchBadge {item} />
               </div>
             </a>
           {/each}
@@ -573,6 +722,10 @@
     {:else}
     <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary || isAudiobookLibrary}>
       {#each filtered as item (item.id)}
+        {@const withMenu = watchable && canMarkWatched(item.type)}
+        <!-- The cell holds the card link plus the ⋯ menu as a sibling (not
+             nested in the link), so the menu is its own tab stop. -->
+        <div class="item-cell" class:has-menu={withMenu}>
         <a class="item" class:circle-poster={isMusicLibrary || (isAudiobookLibrary && item.type === 'book_author')} href={itemHref(item)} tabindex="0">
           <div class="poster">
             {#if item.poster_path}
@@ -627,12 +780,19 @@
                 on:click={(e) => openMetadataEditor(e, item)}
               >✎</button>
             {/if}
+            <WatchBadge {item} />
           </div>
           <div class="item-foot">
             <div class="item-title">{item.title}</div>
             {#if item.year}<div class="item-year">{item.year}</div>{/if}
           </div>
         </a>
+        {#if withMenu}
+          <div class="item-menu">
+            <CardMenu label="More actions for {item.title}" actions={cardActions(item)} />
+          </div>
+        {/if}
+        </div>
       {/each}
 
       {#if loadingItems}
@@ -653,6 +813,7 @@
         </div>
       {/if}
     {/if}
+  {/if}
   {/if}
 </div>
 
@@ -687,6 +848,14 @@
 
 <style>
   .page { padding: 2.5rem 2.5rem 5rem; }
+
+  .lib-tabs { display: flex; gap: 0.35rem; margin: 0 0 1.25rem; border-bottom: 1px solid var(--border); }
+  .lib-tabs button {
+    background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -1px;
+    padding: 0.45rem 0.8rem; font-size: 0.82rem; font-weight: 600; color: var(--text-muted); cursor: pointer;
+  }
+  .lib-tabs button:hover { color: var(--text-secondary); }
+  .lib-tabs button.on { color: var(--text-primary); border-bottom-color: var(--accent); }
 
   .crumb {
     display: flex; align-items: center; gap: 0.4rem;
@@ -836,6 +1005,30 @@
   }
   .filter-select:focus { outline: none; border-color: var(--accent); }
   .filter-select option { background: var(--bg-elevated); color: var(--text-primary); }
+
+  .surprise-btn {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    padding: 0.35rem 0.7rem;
+    background: var(--bg-hover);
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    white-space: nowrap;
+    transition: border-color 0.12s, color 0.12s;
+  }
+  .surprise-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--text-primary); }
+  .surprise-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .surprise-btn:disabled { opacity: 0.6; cursor: progress; }
+  .surprise-msg { margin: -1rem 0 1.25rem; font-size: 0.78rem; color: var(--text-muted); }
+  .surprise-msg:empty { margin: 0; }
+
+  /* Card + its ⋯ menu. The menu sits in the footer's right edge, outside
+     the link, so the title gets room reserved for it. */
+  .item-cell { position: relative; min-width: 0; display: flex; flex-direction: column; }
+  .item-cell.has-menu .item-foot { padding-right: 1.7rem; }
+  .item-menu { position: absolute; right: 0; bottom: 0; }
 
   .browse-links { display: flex; gap: 0.75rem; align-items: center; }
   .browse-links a {

@@ -725,6 +725,109 @@ export const missingArtApi = {
   list: () => api.get<MissingArtListResponse>('/admin/items/missing-art')
 };
 
+// ── Report a problem (user) + Library health (admin) ─────────────────────────
+
+export type IssueKind = 'video' | 'audio' | 'subtitles' | 'wrong_match' | 'other';
+export type IssueStatus = 'open' | 'resolved' | 'dismissed';
+
+/** A problem report as its reporter sees it. */
+export interface MediaIssue {
+  id: string;
+  item_id: string;
+  file_id?: string;
+  kind: IssueKind;
+  note?: string;
+  status: IssueStatus;
+  created_at: string;
+  resolved_at?: string;
+  resolution_note?: string;
+}
+
+/** One row of the admin queue. file_name is the file's base name only. */
+export interface AdminMediaIssue extends MediaIssue {
+  library_id: string;
+  item_type: string;
+  item_title: string;
+  item_year?: number;
+  show_title?: string;
+  season_number?: number;
+  episode_number?: number;
+  poster_path?: string;
+  reporter_id: string;
+  reporter_username: string;
+  resolved_by_username?: string;
+  file_name?: string;
+}
+
+export interface DamagedFile {
+  file_id: string;
+  item_id: string;
+  library_id: string;
+  item_type: string;
+  title: string;
+  year?: number;
+  show_title?: string;
+  season_number?: number;
+  episode_number?: number;
+  path_basename: string;
+  integrity_detail?: string;
+  checked_at?: string;
+}
+
+export interface LibraryHealth {
+  open_issues: number;
+  damaged_files: DamagedFile[];
+  damaged_total: number;
+  unmatched_count: number;
+  missing_art_count: number;
+}
+
+export interface RegrabResult {
+  service_id: string;
+  service_name: string;
+  service_kind: 'radarr' | 'sonarr';
+  command: 'MoviesSearch' | 'SeriesSearch' | 'SeasonSearch' | 'EpisodeSearch';
+  command_id: number;
+  arr_id: number;
+  title: string;
+  blocklisted: boolean;
+  blocklisted_release?: string;
+  /** Movie / episode only: the *arr app still has a file, so its search
+   *  only grabs an upgrade. */
+  has_file?: boolean;
+}
+
+export const issuesApi = {
+  /** The caller's own reports on an item, newest first. */
+  listMine: (itemId: string) => api.get<MediaIssue[]>(`/items/${encodeURIComponent(itemId)}/issues`),
+  /** 409 ALREADY_REPORTED for a second open report of the same kind;
+   *  429 TOO_MANY_OPEN_ISSUES past the per-user cap. */
+  create: (itemId: string, body: { kind: IssueKind; note?: string; file_id?: string }) =>
+    api.post<MediaIssue>(`/items/${encodeURIComponent(itemId)}/issues`, body),
+  adminList: (params: { status?: IssueStatus | 'all'; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.status) qs.set('status', params.status);
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.offset != null) qs.set('offset', String(params.offset));
+    const q = qs.toString();
+    return api.get<{ items: AdminMediaIssue[]; total: number }>(`/admin/issues${q ? `?${q}` : ''}`);
+  },
+  /** Resolve or dismiss an open report; the reporter is notified. */
+  close: (issueId: string, status: 'resolved' | 'dismissed', note?: string) =>
+    api.patch<MediaIssue>(`/admin/issues/${encodeURIComponent(issueId)}`, note ? { status, note } : { status }),
+  libraryHealth: (params: { limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.limit != null) qs.set('limit', String(params.limit));
+    if (params.offset != null) qs.set('offset', String(params.offset));
+    const q = qs.toString();
+    return api.get<LibraryHealth>(`/admin/library-health${q ? `?${q}` : ''}`);
+  },
+  /** Ask Radarr/Sonarr to search the item again. 409 NOT_MANAGED when no
+   *  instance manages it; 502 ARR_UNAVAILABLE when one can't be reached. */
+  regrab: (itemId: string, blocklist: boolean) =>
+    api.post<RegrabResult>(`/admin/items/${encodeURIComponent(itemId)}/regrab`, { blocklist }),
+};
+
 // ── Admin Maintenance (bulk one-shot operations) ──────────────────────────────
 
 export interface ReprobeResult {
@@ -767,12 +870,24 @@ export interface User {
   // Content-rating ceiling, when the list includes it. Managed profiles'
   // ceilings are also available from profileApi.list().
   max_content_rating?: string | null;
+  // False blocks the user's new requests (admins are never blocked). Older
+  // servers omit it — treat absent as true.
+  can_request?: boolean;
+  // Per-window request limits; null = the server default applies, 0 =
+  // unlimited.
+  request_quota_movies?: number | null;
+  request_quota_tv?: number | null;
 }
 
-/** Body of PUT /users/{id}/request-permissions. */
+/** Body of PUT /users/{id}/request-permissions. Every field is optional (at
+ *  least one required); an omitted field keeps its stored value. A quota of
+ *  null resets it to the server default, 0 is unlimited. */
 export interface RequestPermissions {
-  auto_approve_movies: boolean;
-  auto_approve_tv: boolean;
+  auto_approve_movies?: boolean;
+  auto_approve_tv?: boolean;
+  can_request?: boolean;
+  quota_movies?: number | null;
+  quota_tv?: number | null;
 }
 
 export interface SwitchableUser {
@@ -900,9 +1015,12 @@ export interface UserPreferences {
 }
 
 // One entry of the per-user hub layout. key: "continue_tv",
-// "continue_movies", "continue_other", "trending", or "library:<uuid>".
-// Hub rows not present in the saved layout render enabled, after the
-// configured rows — so new libraries appear without re-saving.
+// "continue_movies", "continue_other", "next_up", "plan_to_watch",
+// "trending", "libraries", or "library:<uuid>". Hub rows not present in the
+// saved layout render enabled, after the configured rows — so new libraries
+// appear without re-saving. Exception: a saved layout that predates
+// next_up / plan_to_watch comes back from GET /users/me/preferences with
+// those two inserted (enabled) right after the continue_* rows.
 export interface HubRowPref {
   key: string;
   enabled: boolean;
@@ -927,11 +1045,33 @@ export interface Library {
   // private libraries — the settings UI hides the toggle for public
   // libraries since the grant is a no-op.
   auto_grant_new_users: boolean;
+  // Automatic seek-bar thumbnail (trickplay) generation after scans and in
+  // the nightly backfill. Optional: servers before v2.5 don't send it.
+  trickplay_enabled?: boolean;
   created_at: string;
   updated_at: string;
 }
 
+// Per-library seek-bar thumbnail progress (admin). pending = not generated
+// yet, including the item generating right now; failed includes items with
+// no usable file.
+export interface LibraryTrickplayStatus {
+  enabled: boolean;
+  total: number;
+  done: number;
+  pending: number;
+  failed: number;
+}
+
 export const libraryApi = {
+  trickplayStatus: (id: string) =>
+    api.get<LibraryTrickplayStatus>(`/libraries/${id}/trickplay/status`),
+  // Queues every item still missing thumbnails; resolves with how many were
+  // newly queued (0 when everything is already done or in the queue).
+  generateTrickplay: (id: string, includeFailed = false) =>
+    api.post<{ status: 'queued'; queued: number }>(
+      `/libraries/${id}/trickplay/generate${includeFailed ? '?include_failed=true' : ''}`
+    ),
   list: () => api.get<Library[]>('/libraries'),
   get: (id: string) => api.get<Library>(`/libraries/${id}`),
   create: (body: Partial<Library>) => api.post<Library>('/libraries', body),
@@ -967,6 +1107,12 @@ export interface MediaItem {
   taken_at?: string;
   created_at: string;
   updated_at: string;
+  // The caller's watch state (movies, episodes, videos). Absent = unwatched.
+  watch_state?: 'watched' | 'in_progress' | 'unwatched';
+  view_offset_ms?: number;
+  // Shows only: episodes in total and episodes the caller hasn't watched.
+  leaf_count?: number;
+  unwatched_count?: number;
 }
 
 export type SortField = 'title' | 'year' | 'rating' | 'created_at' | 'taken_at';
@@ -1001,7 +1147,15 @@ export interface ListItemsParams {
   // list episodes, etc. Validated server-side against an allow-list per
   // library type.
   type?: string;
+  // Narrow by the caller's watch state (server-side; total stays exact).
+  // Videos: watched = finished or marked played; in_progress = started,
+  // not finished; unwatched = never started (or marked unplayed since).
+  // Shows/seasons: watched = every episode watched; in_progress = some
+  // episode watched or started, not all; unwatched = nothing started.
+  watch?: WatchFilter;
 }
+
+export type WatchFilter = 'unwatched' | 'in_progress' | 'watched';
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
@@ -1147,6 +1301,12 @@ export interface GeneralSettings {
 export interface RequestSettings {
   default_auto_approve_movies: boolean;
   default_auto_approve_tv: boolean;
+  // Live server-wide request quotas for users without their own: requests
+  // per quota_window_days-day window, 0 = unlimited. Past the limit a request
+  // still goes through but waits for an admin. Admins are exempt.
+  quota_movies?: number;
+  quota_tv?: number;
+  quota_window_days?: number;
 }
 
 export interface ServerSettings {
@@ -1320,7 +1480,20 @@ export const mediaApi = {
     if (params?.year_max != null) qs.set('year_max', String(params.year_max));
     if (params?.rating_min != null) qs.set('rating_min', String(params.rating_min));
     if (params?.type) qs.set('type', params.type);
+    if (params?.watch) qs.set('watch', params.watch);
     return api.requestList<MediaItem>(`/libraries/${libraryId}/items?${qs.toString()}`);
+  },
+  // One random item matching the same filters as listItems ("Surprise me").
+  // 404 when nothing matches.
+  randomItem: (libraryId: string, params?: Omit<ListItemsParams, 'sort' | 'sort_dir'>) => {
+    const qs = new URLSearchParams();
+    if (params?.genre) qs.set('genre', params.genre);
+    if (params?.year_min != null) qs.set('year_min', String(params.year_min));
+    if (params?.year_max != null) qs.set('year_max', String(params.year_max));
+    if (params?.rating_min != null) qs.set('rating_min', String(params.rating_min));
+    if (params?.type) qs.set('type', params.type);
+    if (params?.watch) qs.set('watch', params.watch);
+    return api.get<{ id: string; type: string }>(`/libraries/${libraryId}/random?${qs.toString()}`);
   },
   genres: (libraryId: string) =>
     api.get<GenreCount[]>(`/libraries/${libraryId}/genres`),
@@ -1546,6 +1719,8 @@ export interface ItemDetail {
   grandparent_id?: string;
   index?: number;
   view_offset_ms: number;
+  // Playable videos only: the caller's watch state (manual marks included).
+  watch_state?: 'watched' | 'in_progress' | 'unwatched';
   updated_at: number;
   is_favorite: boolean;
   // ISO timestamp of media_items.originally_available_at — populated
@@ -1580,6 +1755,9 @@ export interface ItemDetail {
   original_year?: number;
   compilation?: boolean;
   release_type?: string;
+  // Movies only: the TMDB franchise collection the movie belongs to
+  // (the "Part of the <Name>" shelf). Absent when none.
+  collection?: ItemCollectionRef;
 }
 
 export interface FavoriteItem {
@@ -1639,10 +1817,55 @@ export interface Collection {
   id: string;
   name: string;
   description?: string;
-  type: 'auto_genre' | 'playlist';
+  type: 'auto_genre' | 'playlist' | 'franchise' | 'event_folder' | 'photo_album' | 'smart_playlist';
   genre?: string;
   poster_path?: string;
   created_at: string;
+  // Franchise collections only (type 'franchise'): the TMDB collection id
+  // and art. `parts` is set on GET /collections/{id} — every film of the
+  // franchise the caller may see, owned (item_id) or not (item_id null).
+  tmdb_collection_id?: number;
+  poster_url?: string;
+  backdrop_url?: string;
+  parts?: FranchisePart[];
+}
+
+/** One film of a franchise collection. item_id is set when it's in the
+ *  server and visible to the caller; otherwise it's a missing part (only
+ *  listed for profiles without a rating ceiling) with the caller's own
+ *  open request status, if any. */
+export interface FranchisePart {
+  tmdb_id: number;
+  title: string;
+  year?: number;
+  release_date?: string;
+  poster_url?: string;
+  overview?: string;
+  item_id: string | null;
+  // Every copy of this film the caller can see (e.g. a 4K and a 1080p
+  // library), lowest id first; item_id is the first of these.
+  item_ids?: string[];
+  request_status: 'pending' | 'approved' | 'downloading' | null;
+}
+
+/** A franchise collection with visible items in one library
+ *  (GET /libraries/{id}/collections — the library Collections tab). */
+export interface LibraryCollection {
+  id: string;
+  name: string;
+  type: 'franchise';
+  tmdb_collection_id?: number;
+  poster_url?: string;
+  poster_path?: string;
+  item_count: number;
+}
+
+/** The franchise a movie belongs to, on the movie's detail response. */
+export interface ItemCollectionRef {
+  id: string;
+  name: string;
+  part_count: number;
+  owned_count: number;
 }
 
 export interface CollectionItem {
@@ -1657,7 +1880,12 @@ export interface CollectionItem {
 }
 
 export const collectionApi = {
-  list: () => api.get<Collection[]>('/collections'),
+  /** The caller's collections plus server-owned ones. TMDB franchise
+   *  collections are opt-in on the server (?include=franchise) so native
+   *  home screens that render every collection as a row aren't flooded;
+   *  pass includeFranchise where the UI has a place for them. */
+  list: (opts: { includeFranchise?: boolean } = {}) =>
+    api.get<Collection[]>(opts.includeFranchise ? '/collections?include=franchise' : '/collections'),
   get: (id: string) => api.get<Collection>(`/collections/${id}`),
   create: (name: string, description?: string) =>
     api.post<Collection>('/collections', { name, description }),
@@ -1670,6 +1898,9 @@ export const collectionApi = {
     api.post<void>(`/collections/${collectionId}/items`, { media_item_id: mediaItemId }),
   removeItem: (collectionId: string, itemId: string) =>
     api.delete(`/collections/${collectionId}/items/${itemId}`),
+  /** Franchise collections with visible items in a library. */
+  forLibrary: (libraryId: string) =>
+    api.get<LibraryCollection[]>(`/libraries/${libraryId}/collections`),
 };
 
 export interface Playlist {
@@ -1826,6 +2057,16 @@ export const itemApi = {
     api.put<WatchStatus>(`/items/${id}/watch-status`, { status }),
   clearWatchStatus: (id: string) =>
     api.delete(`/items/${id}/watch-status`),
+
+  // Played / unplayed without playing. On a show or season the server
+  // applies it to every episode underneath that the caller can see.
+  markWatched: (id: string) => api.post<void>(`/items/${id}/watched`, {}),
+  markUnwatched: (id: string) => api.delete(`/items/${id}/watched`),
+  // Hide an item from Continue Watching until it's played again.
+  dismissContinueWatching: (id: string) =>
+    api.post<void>(`/items/${id}/dismiss-continue-watching`, {}),
+  // Show or season: which episode Play should start (see UpNext).
+  upNext: (id: string) => api.get<UpNext>(`/items/${id}/up-next`),
 };
 
 export const subtitleApi = {
@@ -2200,6 +2441,81 @@ export const webhookApi = {
   test: (id: string) => api.post<void>(`/webhooks/${id}/test`)
 };
 
+// ── Notification agents (admin) ───────────────────────────────────────────────
+// Server-wide Discord / Telegram / ntfy / Gotify / email channels
+// (Settings → Notifications). Secrets are write-only: responses carry
+// secret_configured, never the value.
+
+export type NotificationAgentKind = 'discord' | 'telegram' | 'ntfy' | 'gotify' | 'email';
+
+export interface NotificationAgentConfig {
+  chat_id?: string;
+  server_url?: string;
+  topic?: string;
+  recipients?: string[];
+}
+
+export interface NotificationAgent {
+  id: string;
+  kind: NotificationAgentKind;
+  name: string;
+  enabled: boolean;
+  events: string[];
+  config: NotificationAgentConfig;
+  secret_configured: boolean;
+  allow_private_network: boolean;
+  last_success_at: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface NotificationAgentEvent {
+  key: string;
+  label: string;
+  description: string;
+  group: 'requests' | 'library' | 'server';
+  default_for: NotificationAgentKind[];
+}
+
+export interface NotificationAgentCreateInput {
+  kind: NotificationAgentKind;
+  name: string;
+  enabled?: boolean;
+  events?: string[];
+  config?: NotificationAgentConfig;
+  secret?: string;
+  allow_private_network?: boolean;
+}
+
+export interface NotificationAgentUpdateInput {
+  name?: string;
+  enabled?: boolean;
+  events?: string[];
+  config?: NotificationAgentConfig;
+  /** Blank or omitted keeps the stored secret. */
+  secret?: string;
+  clear_secret?: boolean;
+  allow_private_network?: boolean;
+}
+
+export interface NotificationAgentTestResult {
+  ok: boolean;
+  error?: string;
+}
+
+export const notificationAgentApi = {
+  list: () => api.requestList<NotificationAgent>('/admin/notification-agents'),
+  events: () => api.get<NotificationAgentEvent[]>('/admin/notification-agents/events'),
+  create: (body: NotificationAgentCreateInput) =>
+    api.post<NotificationAgent>('/admin/notification-agents', body),
+  update: (id: string, body: NotificationAgentUpdateInput) =>
+    api.patch<NotificationAgent>(`/admin/notification-agents/${id}`, body),
+  del: (id: string) => api.del(`/admin/notification-agents/${id}`),
+  test: (id: string) => api.post<NotificationAgentTestResult>(`/admin/notification-agents/${id}/test`)
+};
+
 // ── Plugins (admin) ───────────────────────────────────────────────────────────
 
 export type PluginRole = 'notification' | 'metadata' | 'task';
@@ -2254,6 +2570,31 @@ export interface ActiveSession {
   parent_title?: string; // show/artist for episodes/tracks
   duration_ms?: number;
   bitrate_kbps?: number;
+  selected_rendition?: string; // ABR rung the player settled on
+  // ── Who / where / why (absent on older servers) ──
+  user_id?: string;
+  username?: string;        // owning account (for a managed profile, its owner)
+  profile_name?: string;    // managed profile name, when the viewer is one
+  client_ip?: string;       // admins only
+  location?: 'lan' | 'remote';
+  source?: StreamFormat;
+  output?: StreamFormat;    // absent for direct play (the output IS the source)
+  transcode_reasons?: string[];
+  /** Whether POST /sessions/{id}/stop can act on this card. */
+  can_stop?: boolean;
+}
+
+/** One side of a Now Playing card's source → output line. Codec/container
+ *  values are scanner identifiers ("hevc", "truehd", "matroska"; "hls"). */
+export interface StreamFormat {
+  container?: string;
+  video_codec?: string;
+  audio_codec?: string;
+  width?: number;
+  height?: number;
+  bitrate_kbps?: number;
+  audio_channels?: number;
+  hdr?: string;
 }
 
 export const sessionsApi = {
@@ -2262,7 +2603,14 @@ export const sessionsApi = {
    *  identifies the caller; owners may stop their own sessions and ADMINS
    *  may stop anyone's (audit-logged server-side). The server revokes the
    *  seg token from the session record. */
-  stop: (sessionId: string) => api.del(`/transcode/sessions/${sessionId}`)
+  stop: (sessionId: string) => api.del(`/transcode/sessions/${sessionId}`),
+  /** Admin "stop this stream" for EVERY playback mode (direct play too):
+   *  tears down a server session, messages the viewer over SSE and briefly
+   *  refuses that device's stream. 404 = the stream already ended. The id is
+   *  percent-encoded (direct-play ids embed the client address, e.g. an IPv6
+   *  "::1|item|user"); the server unescapes it before matching. */
+  adminStop: (sessionId: string, message?: string) =>
+    api.post<void>(`/sessions/${encodeURIComponent(sessionId)}/stop`, message ? { message } : {})
 };
 
 // ── Hub (home page) ──────────────────────────────────────────────────────────
@@ -2280,6 +2628,10 @@ export interface HubItem {
   view_offset_ms?: number;
   duration_ms?: number;
   updated_at: number;
+  /** Episode tiles in Next Up: position within the show. */
+  season_number?: number;
+  episode_number?: number;
+  show_id?: string;
 }
 
 export interface HubLibraryRow {
@@ -2306,6 +2658,31 @@ export interface HubData {
   // over the last 7 days. Same content for every user (no
   // personalisation), filtered to library access + parental ceiling.
   trending: HubItem[];
+  // The next unwatched episode of each show the caller is part-way
+  // through (last episode finished, next one not started).
+  next_up?: HubItem[];
+  // Items the caller marked Plan to Watch, newest first.
+  plan_to_watch?: HubItem[];
+}
+
+// What the Play button on a show or season should start.
+//   resume  — an episode is part-watched
+//   next    — the episode after the last one finished
+//   start   — nothing watched yet (first episode)
+//   rewatch — everything watched (first episode again)
+//   none    — no playable episodes
+export interface UpNext {
+  mode: 'resume' | 'next' | 'start' | 'rewatch' | 'none';
+  episode?: {
+    id: string;
+    title: string;
+    season_id: string;
+    season_number: number;
+    episode_number: number;
+    view_offset_ms?: number;
+    duration_ms?: number;
+    thumb_path?: string;
+  };
 }
 
 export const hubApi = {
@@ -2498,11 +2875,34 @@ export interface DiscoverItem {
   has_active_request: boolean;
   active_request_id?: string;
   active_request_status?: string;
+  // Shows in the caller's library only: aired seasons the library doesn't
+  // fully hold ([] = nothing missing). Absent otherwise.
+  missing_seasons?: number[];
+  // In the library with aired seasons missing ("Request more seasons").
+  partially_available?: boolean;
+}
+
+/** One season of a show for the request season picker
+ *  (GET /discover/tv/{tmdb_id}/seasons). Specials (0) come last. */
+export interface SeasonInfo {
+  season_number: number;
+  name: string;
+  episode_count: number;
+  aired_episodes: number;
+  air_date: string | null; // YYYY-MM-DD
+  poster_url?: string;
+  // Episodes on disk in libraries the caller can see.
+  owned_episodes: number;
+  // Status of the caller's active request covering this season, or null.
+  requested: 'pending' | 'approved' | 'downloading' | null;
+  request_id?: string;
 }
 
 export const discoverApi = {
   search: (q: string, limit = 20) =>
     api.get<DiscoverItem[]>(`/discover/search?q=${encodeURIComponent(q)}&limit=${limit}`),
+  /** A show's seasons with library + request state, for the season picker. */
+  seasons: (tmdbId: number) => api.get<SeasonInfo[]>(`/discover/tv/${encodeURIComponent(String(tmdbId))}/seasons`),
 };
 
 // ── Media Requests ───────────────────────────────────────────────────────────
@@ -2541,6 +2941,29 @@ export interface MediaRequest {
   auto_approved: boolean;
   created_at: string;
   updated_at: string;
+  // Who asked. Set on admin (scope=all) listings.
+  username?: string;
+  // Live Radarr/Sonarr state for approved/downloading requests, refreshed
+  // by the server's arr sync. Absent until the first sync after approval.
+  download?: RequestDownload;
+  // Show requests: requested seasons already complete in the library while
+  // the rest are still coming ("partially available"; status is unchanged).
+  seasons_available?: number[];
+}
+
+// searching      — monitored in *arr, no release grabbed yet
+// queued         — grabbed, waiting in the download client
+// downloading    — transferring (progress/eta set)
+// import_pending — downloaded, waiting for *arr to import
+// stalled        — the download client reports no progress / a warning
+// failed         — the grab or import failed (message says why)
+export interface RequestDownload {
+  state: 'searching' | 'queued' | 'downloading' | 'import_pending' | 'stalled' | 'failed';
+  progress?: number; // 0..1
+  eta?: string; // RFC3339
+  size_bytes?: number;
+  message?: string;
+  updated_at: string;
 }
 
 export interface CreateRequestBody {
@@ -2576,9 +2999,28 @@ export const requestsApi = {
   list: (params: { status?: RequestStatus; limit?: number; offset?: number } = {}) =>
     api.requestList<MediaRequest>(`/requests?${buildRequestsQuery({ scope: 'mine', ...params })}`),
   get: (id: string) => api.get<MediaRequest>(`/requests/${id}`),
-  create: (body: CreateRequestBody) => api.post<MediaRequest>('/requests', body),
+  create: (body: CreateRequestBody) => api.post<CreatedRequest>('/requests', body),
   cancel: (id: string) => api.post<void>(`/requests/${id}/cancel`),
+  /** The caller's own request allowance (can_request + per-type quota). */
+  quota: () => api.get<RequestQuota>('/requests/quota'),
 };
+
+/** POST /requests response: the request plus whether it went over the
+ *  requester's quota (and so waits for an admin instead of auto-approving). */
+export type CreatedRequest = MediaRequest & { over_quota?: boolean };
+
+export interface RequestQuotaUsage {
+  limit: number; // 0 = unlimited
+  used: number; // non-declined requests of this type in the window
+  remaining: number | null; // null = unlimited
+}
+
+export interface RequestQuota {
+  can_request: boolean;
+  window_days: number;
+  movies: RequestQuotaUsage;
+  tv: RequestQuotaUsage;
+}
 
 export const requestsAdminApi = {
   list: (params: { status?: RequestStatus; limit?: number; offset?: number } = {}) =>
@@ -2588,6 +3030,8 @@ export const requestsAdminApi = {
   decline: (id: string, reason?: string) =>
     api.post<MediaRequest>(`/admin/requests/${id}/decline`, { reason: reason ?? '' }),
   del: (id: string) => api.del(`/admin/requests/${id}`),
+  /** Requests waiting for approval (admin nav badge). */
+  pendingCount: () => api.get<{ count: number }>('/requests/pending-count'),
 };
 
 // ── Arr Services (admin) ─────────────────────────────────────────────────────
@@ -2675,7 +3119,32 @@ export const arrServicesApi = {
   setDefault: (id: string) =>
     api.post<ArrService>(`/admin/arr-services/${id}/set-default`, {}),
   probe: (body: ArrProbeBody) => api.post<ArrProbeResult>('/admin/arr-services/probe', body),
+  /** Reachability, the instance's own health checks, disk space, queue size. */
+  health: (id: string) => api.get<ArrServiceHealth>(`/admin/arr-services/${id}/health`),
 };
+
+export interface ArrHealthCheck {
+  type: 'notice' | 'warning' | 'error';
+  source: string;
+  message: string;
+  wiki_url?: string; // http(s) only
+}
+
+export interface ArrDisk {
+  path: string;
+  label: string;
+  free_bytes: number;
+  total_bytes: number;
+}
+
+export interface ArrServiceHealth {
+  reachable: boolean;
+  version?: string;
+  error?: string; // short generic reason when !reachable
+  checks: ArrHealthCheck[];
+  disks: ArrDisk[]; // mounts behind the root folders
+  queue_count: number | null; // null = queue unreadable
+}
 
 // ── Upcoming (arr calendar) ──────────────────────────────────────────────────
 

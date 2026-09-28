@@ -194,6 +194,7 @@ type ItemHandler struct {
 	// decisions attributes decision-less progress reports (WithPlayDecisions).
 	// Optional; nil records them as unknown.
 	decisions *PlayDecisionRecorder
+	stops     *PlaybackStopGuard // optional; refuses a direct play an admin just stopped (WithPlaybackStops)
 	subs      ExternalSubLister
 	tracker   *streaming.Tracker
 	sync      *notification.Broker
@@ -205,6 +206,7 @@ type ItemHandler struct {
 	credits   ItemCreditsRefresher // optional; when set, ApplyMatch refreshes cast/crew after the match
 	dlGate    DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
 	store     mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
+	franchise ItemFranchiseDB      // optional; when set, movie details carry their franchise "collection" (items_collection.go)
 	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
 	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
 	// disables caching (extract on every request — the old behaviour).
@@ -579,6 +581,11 @@ type ItemDetailResponse struct {
 	GrandparentID *string `json:"grandparent_id,omitempty"`
 	Index         *int    `json:"index,omitempty"`
 	ViewOffsetMS  int64   `json:"view_offset_ms"`
+	// WatchState is the caller's state for a playable video — "watched",
+	// "in_progress" or "unwatched" (user_watch_state, manual marks
+	// included). Omitted for other types; shows and seasons roll up
+	// through the library listing's leaf_count / unwatched_count instead.
+	WatchState string `json:"watch_state,omitempty"`
 	// LastClientName carries the name of the device that last emitted a
 	// scrobble/stop for this (user, media). Lets clients render "Resume
 	// from Living Room TV" UX instead of a bare position. Nil = never
@@ -624,6 +631,10 @@ type ItemDetailResponse struct {
 	OriginalYear              *int    `json:"original_year,omitempty"`
 	Compilation               bool    `json:"compilation,omitempty"`
 	ReleaseType               *string `json:"release_type,omitempty"`
+
+	// Collection is the TMDB franchise collection a movie belongs to
+	// (additive; movies only, omitted when none). See items_collection.go.
+	Collection *ItemCollectionRef `json:"collection,omitempty"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
@@ -692,13 +703,20 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var viewOffsetMS int64
+	var watchState string
 	var isFavorite bool
 	var lastClientName *string
 	var userRating *float64
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		state, _ := h.watch.GetState(r.Context(), claims.UserID, id)
-		if state.Status == "in_progress" {
+		// Resumable, not Status: rewatching a watched title keeps its
+		// sticky "watched" status but still has a resume point — the same
+		// rule Continue Watching uses, so its tile and this page agree.
+		if state.Status == "in_progress" || state.Resumable {
 			viewOffsetMS = state.PositionMS
+		}
+		if isWatchLeafType(item.Type) {
+			watchState = state.Status
 		}
 		lastClientName = state.LastClientName
 		if h.favorites != nil {
@@ -750,6 +768,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Genres:          genres,
 		Index:           item.Index,
 		ViewOffsetMS:    viewOffsetMS,
+		WatchState:      watchState,
 		LastClientName:  lastClientName,
 		IsFavorite:      isFavorite,
 		UpdatedAt:       item.UpdatedAt.UnixMilli(),
@@ -890,6 +909,10 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		} else {
 			h.logger.WarnContext(r.Context(), "list markers", "item_id", id, "err", err)
 		}
+	}
+
+	if item.Type == "movie" {
+		out.Collection = h.franchiseRef(r.Context(), claims, id)
 	}
 
 	// Episode-poster substitution. Single-item endpoint; only matters
@@ -1161,11 +1184,9 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		var viewOffsetMS int64
 		var watched bool
 		if state, ok := states[c.ID]; ok {
-			switch state.Status {
-			case "in_progress":
+			watched = state.Status == "watched"
+			if state.Status == "in_progress" || state.Resumable {
 				viewOffsetMS = state.PositionMS
-			case "watched":
-				watched = true
 			}
 		}
 		out = append(out, ChildItemResponse{
@@ -1701,6 +1722,13 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Admin stop: a 'playing' beat from the stopped (user, item, client) is
+	// refused like the parental gate above, so a player still running off its
+	// buffer learns it was stopped; pause/stop reports still record below.
+	if body.State == "playing" && playbackStopBlocks(w, r, h.stops, claims.UserID, id) {
+		return
+	}
+
 	// Many clients never report a decision (Android TV / Fire TV, the music
 	// players, the TV web clients, older builds), but the server knows what it
 	// served: a live session's decision, else the last one Start or StreamFile
@@ -1745,10 +1773,13 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		if host, _, err := net.SplitHostPort(clientIP); err == nil {
 			clientIP = host
 		}
+		// Attributed to the viewer (and the decision the client reported) so
+		// Now Playing can name them and an admin stop can target the stream.
+		clientIP = canonicalIP(clientIP)
 		if body.State == "stopped" {
-			h.tracker.RemoveHeartbeat(clientIP, id)
+			h.tracker.RemoveHeartbeatUser(claims.UserID, clientIP, id)
 		} else {
-			h.tracker.Heartbeat(clientIP, id, body.ClientName)
+			h.tracker.HeartbeatUser(claims.UserID, clientIP, id, body.ClientName, normalizePlayDecision(body.Decision))
 		}
 	}
 
@@ -2250,6 +2281,12 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
 			return
 		}
+		// Admin stop: this route serves the same bytes as StreamFile, with
+		// Range support, so a stopped client must not be able to keep
+		// streaming the item through it for the stop window.
+		if playbackStopBlocks(w, r, h.stops, claims.UserID, file.MediaItemID) {
+			return
+		}
 	}
 
 	// Build a friendly filename from the item title — falls back to
@@ -2402,6 +2439,11 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		if watchLimitBlocks(w, r, h.watchLimit, h.logger, claims.UserID) {
 			return
 		}
+		// Admin stop: refuse this (user, item, client) for the stop window so
+		// a client that ignores the playback.stop event stops too.
+		if playbackStopBlocks(w, r, h.stops, claims.UserID, file.MediaItemID) {
+			return
+		}
 		// Accrue usage from the serving path itself (throttled; restricted
 		// users only). Direct play used to enforce the allowed-hours window
 		// here but count NOTHING toward the daily budget unless the client
@@ -2421,7 +2463,13 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		if idx := strings.IndexByte(clientName, '/'); idx > 0 {
 			clientName = clientName[:idx]
 		}
-		h.tracker.Touch(clientIP, file.FilePath, clientName)
+		if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+			// Attributed to the viewer + item so Now Playing can name them
+			// and an admin stop can target exactly this stream.
+			h.tracker.TouchFile(claims.UserID, canonicalIP(clientIP), file.MediaItemID, file.ID, file.FilePath, clientName)
+		} else {
+			h.tracker.Touch(clientIP, file.FilePath, clientName)
+		}
 	}
 
 	// Clear the per-request WriteTimeout for streaming responses.

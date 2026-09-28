@@ -40,7 +40,7 @@ the below:
 | Automatic leader failover for singleton work | ✅ | `internal/worker/master.go` — Valkey lease, 15s TTL, any instance takes over |
 | Read/write DB pool split (read replicas) | ✅ | `DATABASE_RO_URL` (ADR-021) |
 | Distributed transcode tier | ✅ | `cmd/worker` fleet, cost- + capability-aware dispatch |
-| Event-sourced state + materialized views | ✅ | `watch_events` + `watch_state` / `hub_recently_added` / `watch_plays` |
+| Event-sourced state + materialized views | ✅ | `watch_events` + trigger-maintained `watch_progress` / `hub_recently_added` / `watch_plays` |
 | Cacheable, signed asset delivery (CDN-shaped) | ✅ | purpose-scoped asset token in `?token=` URLs |
 
 The singleton background work (hub/matview refresh, partition maintenance,

@@ -4,8 +4,9 @@
 // OnScreen encrypts a handful of values at rest with AES-256-GCM derived from
 // SECRET_KEY: secret-bearing server_settings (TMDB/TVDB/arr/OpenSubtitles/OIDC/
 // SAML/LDAP/SMTP/storage/TLS — stored with an `encv1:` prefix), webhook signing
-// secrets (webhook_endpoints.secret), and per-user TOTP secrets
-// (users.totp_secret). Rotating SECRET_KEY without re-encrypting these orphans
+// secrets (webhook_endpoints.secret), per-user TOTP secrets
+// (users.totp_secret), *arr API keys, ListenBrainz tokens, and notification
+// agent credentials (notification_agents.secret). Rotating SECRET_KEY without re-encrypting these orphans
 // them: the new key can't decrypt them, webhook delivery refuses to send
 // unsigned, and 2FA logins break.
 //
@@ -39,6 +40,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/notifyagents"
 )
 
 // encPrefix must match internal/domain/settings.encPrefix — the sentinel that
@@ -105,6 +107,7 @@ func main() {
 		{"users.totp_secret", rotateTOTPSecrets},
 		{"user_scrobble.listenbrainz_token", rotateScrobbleTokens},
 		{"arr_services.api_key", rotateArrAPIKeys},
+		{"notification_agents.secret", rotateNotificationAgentSecrets},
 	}
 
 	var totalRot, totalSkip int
@@ -298,6 +301,64 @@ func rotateArrAPIKeys(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encry
 		}
 		if _, err := tx.Exec(ctx,
 			`UPDATE arr_services SET api_key = $1 WHERE id = $2`, sealed, r.id); err != nil {
+			return rotated, skipped, fmt.Errorf("update %s: %w", r.id, err)
+		}
+		rotated++
+	}
+	return rotated, skipped, nil
+}
+
+// reEncryptAgentSecret re-seals one notification agent credential. Like the
+// *arr keys it's bound to its row id (notifyagents.SecretContext), so the id is
+// both the associated data and the WHERE key. ok=false leaves the row alone:
+// it didn't open with the old key (wrong key, or sealed for another row).
+func reEncryptAgentSecret(oldEnc, newEnc *auth.Encryptor, id uuid.UUID, stored string) (out string, ok bool) {
+	plain, err := oldEnc.DecryptContext(stored, notifyagents.SecretContext(id))
+	if err != nil {
+		return "", false
+	}
+	sealed, err := newEnc.EncryptContext(plain, notifyagents.SecretContext(id))
+	if err != nil {
+		return "", false
+	}
+	return sealed, true
+}
+
+// rotateNotificationAgentSecrets re-seals notification_agents.secret (Discord
+// webhook URL, Telegram bot token, ntfy/Gotify tokens).
+func rotateNotificationAgentSecrets(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encryptor) (int, int, error) {
+	type row struct {
+		id     uuid.UUID
+		secret string
+	}
+	var rows []row
+	q, err := tx.Query(ctx,
+		`SELECT id, secret FROM notification_agents WHERE secret IS NOT NULL AND secret <> ''`)
+	if err != nil {
+		return 0, 0, fmt.Errorf("select: %w", err)
+	}
+	for q.Next() {
+		var r row
+		if err := q.Scan(&r.id, &r.secret); err != nil {
+			q.Close()
+			return 0, 0, fmt.Errorf("scan: %w", err)
+		}
+		rows = append(rows, r)
+	}
+	q.Close()
+	if err := q.Err(); err != nil {
+		return 0, 0, fmt.Errorf("iterate: %w", err)
+	}
+
+	var rotated, skipped int
+	for _, r := range rows {
+		sealed, ok := reEncryptAgentSecret(oldEnc, newEnc, r.id, r.secret)
+		if !ok {
+			skipped++
+			continue
+		}
+		if _, err := tx.Exec(ctx,
+			`UPDATE notification_agents SET secret = $1 WHERE id = $2`, sealed, r.id); err != nil {
 			return rotated, skipped, fmt.Errorf("update %s: %w", r.id, err)
 		}
 		rotated++

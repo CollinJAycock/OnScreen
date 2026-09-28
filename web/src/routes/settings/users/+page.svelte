@@ -6,6 +6,11 @@
     type RequestPermissions, type RequestSettings
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import {
+    parseUserQuota, parseDefaultQuota, parseWindowDays, quotaDefaultsFrom,
+    quotaPlaceholder, quotaInputValue, limitsSummary, windowHint,
+    type QuotaDefaults
+  } from './requestLimits';
 
   let loading = true;
   let error = '';
@@ -73,6 +78,16 @@
   let requestDefaults: RequestSettings | null = null;
   let defaultsError = '';
   let defaultsSaving = false;
+
+  // Request limits. Per user: can-request + movie/TV quota overrides, edited
+  // in a small expander under the row's auto-approve switches (one open at a
+  // time). Server-wide: the quota defaults + window, in the New users block.
+  let reqLimitsOpen: string | null = null;
+  let reqLimitsMovies = '';
+  let reqLimitsTV = '';
+  let quotaDefaults: QuotaDefaults | null = null;
+  let quotaDraft = { movies: '', tv: '', window: '' };
+  let quotaSaving = false;
 
   // Invite flow
   let showInvite = false;
@@ -142,8 +157,10 @@
         default_auto_approve_movies: !!s.requests?.default_auto_approve_movies,
         default_auto_approve_tv: !!s.requests?.default_auto_approve_tv
       };
+      setQuotaDefaults(quotaDefaultsFrom(s.requests));
     } catch (e: unknown) {
       requestDefaults = null;
+      quotaDefaults = null;
       defaultsError = e instanceof Error ? e.message : 'Failed to load new-user defaults';
     }
   }
@@ -161,6 +178,76 @@
     } finally {
       defaultsSaving = false;
     }
+  }
+
+  function setQuotaDefaults(d: QuotaDefaults) {
+    quotaDefaults = d;
+    quotaDraft = { movies: String(d.quota_movies), tv: String(d.quota_tv), window: String(d.quota_window_days) };
+  }
+
+  async function saveQuotaDefaults() {
+    if (!requestDefaults || quotaSaving) return;
+    const m = parseDefaultQuota(quotaDraft.movies, 'Movies');
+    const t = parseDefaultQuota(quotaDraft.tv, 'TV');
+    const w = parseWindowDays(quotaDraft.window);
+    for (const r of [m, t, w]) {
+      if (!r.ok) { toast.error(r.error); return; }
+    }
+    if (!m.ok || !t.ok || !w.ok) return;
+    const next: QuotaDefaults = { quota_movies: m.value, quota_tv: t.value, quota_window_days: w.value };
+    quotaSaving = true;
+    try {
+      await settingsApi.update({ requests: { ...requestDefaults, ...next } });
+      setQuotaDefaults(next);
+      toast.success('Request limits saved');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save request limits');
+    } finally {
+      quotaSaving = false;
+    }
+  }
+
+  function toggleRequestLimits(user: User) {
+    if (reqLimitsOpen === user.id) { reqLimitsOpen = null; return; }
+    reqLimitsOpen = user.id;
+    reqLimitsMovies = quotaInputValue(user.request_quota_movies);
+    reqLimitsTV = quotaInputValue(user.request_quota_tv);
+  }
+
+  async function savePolicy(user: User, perms: RequestPermissions, patch: Partial<User>, done: string): Promise<boolean> {
+    if (permsSaving.has(user.id)) return false;
+    permsSaving = new Set(permsSaving).add(user.id);
+    try {
+      await userApi.setRequestPermissions(user.id, perms);
+      users = users.map(u => (u.id === user.id ? { ...u, ...patch } : u));
+      toast.success(done);
+      return true;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update request permissions');
+      return false;
+    } finally {
+      const next = new Set(permsSaving);
+      next.delete(user.id);
+      permsSaving = next;
+    }
+  }
+
+  async function toggleCanRequest(user: User) {
+    const on = user.can_request === false; // flipping: off → on, on → off
+    await savePolicy(user, { can_request: on }, { can_request: on },
+      on ? `"${user.username}" can make requests again` : `"${user.username}" can no longer make requests`);
+  }
+
+  async function saveRequestLimits(user: User) {
+    const m = parseUserQuota(reqLimitsMovies, 'Movies');
+    const t = parseUserQuota(reqLimitsTV, 'TV');
+    if (!m.ok) { toast.error(m.error); return; }
+    if (!t.ok) { toast.error(t.error); return; }
+    const ok = await savePolicy(user,
+      { quota_movies: m.value, quota_tv: t.value },
+      { request_quota_movies: m.value, request_quota_tv: t.value },
+      `Request limits saved for "${user.username}"`);
+    if (ok) reqLimitsOpen = null;
   }
 
   async function loadInvites() {
@@ -565,7 +652,7 @@
           <tr>
             <th>Username</th>
             <th>Role</th>
-            <th>Auto-approve</th>
+            <th>Requests</th>
             <th>Created</th>
             <th class="actions-col"></th>
           </tr>
@@ -629,6 +716,56 @@
                   </div>
                   {#if limited}
                     <span class="perm-note" id="perm-note-{user.id}" title="Content rating limit: {limited}">Rating-limited profiles always need approval</span>
+                  {/if}
+                  <!-- Can-request + quota overrides, collapsed to a one-line
+                       summary so the table stays scannable. -->
+                  <button
+                    class="limits-btn"
+                    class:off={user.can_request === false}
+                    aria-expanded={reqLimitsOpen === user.id}
+                    aria-controls="limits-{user.id}"
+                    aria-label="Request limits for {user.username}"
+                    on:click={() => toggleRequestLimits(user)}
+                  >{limitsSummary(user)} <span class="chev" aria-hidden="true">{reqLimitsOpen === user.id ? '▴' : '▾'}</span></button>
+                  {#if reqLimitsOpen === user.id}
+                    <div class="limits-panel" id="limits-{user.id}">
+                      <button
+                        class="perm-toggle"
+                        class:active={user.can_request !== false}
+                        role="switch"
+                        aria-checked={user.can_request !== false}
+                        aria-label="Can request for {user.username}"
+                        disabled={permsSaving.has(user.id)}
+                        on:click={() => toggleCanRequest(user)}
+                      >
+                        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+                        <span class="toggle-label">Can request</span>
+                      </button>
+                      <div class="quota-row">
+                        <label class="quota-field">
+                          <span>Movies</span>
+                          <input
+                            type="text"
+                            inputmode="numeric"
+                            bind:value={reqLimitsMovies}
+                            placeholder={quotaPlaceholder(quotaDefaults?.quota_movies)}
+                            aria-label="Movie request limit for {user.username}"
+                          />
+                        </label>
+                        <label class="quota-field">
+                          <span>TV</span>
+                          <input
+                            type="text"
+                            inputmode="numeric"
+                            bind:value={reqLimitsTV}
+                            placeholder={quotaPlaceholder(quotaDefaults?.quota_tv)}
+                            aria-label="TV request limit for {user.username}"
+                          />
+                        </label>
+                      </div>
+                      <p class="limits-hint">{windowHint(quotaDefaults?.quota_window_days ?? 7)}</p>
+                      <button class="btn-limits-save" disabled={permsSaving.has(user.id)} on:click={() => saveRequestLimits(user)}>Save limits</button>
+                    </div>
                   {/if}
                 {/if}
               </td>
@@ -703,6 +840,27 @@
         </button>
         <p class="defaults-hint">Applies to accounts created from now on. Household profiles start with auto-approve off.</p>
       </div>
+      {#if quotaDefaults}
+        <div class="defaults-card quota-defaults">
+          <h3 class="defaults-sub">Request limits</h3>
+          <div class="quota-row">
+            <label class="quota-field">
+              <span>Movies</span>
+              <input type="text" inputmode="numeric" bind:value={quotaDraft.movies} aria-label="Default movie request limit" />
+            </label>
+            <label class="quota-field">
+              <span>TV</span>
+              <input type="text" inputmode="numeric" bind:value={quotaDraft.tv} aria-label="Default TV request limit" />
+            </label>
+            <label class="quota-field">
+              <span>Window (days)</span>
+              <input type="text" inputmode="numeric" bind:value={quotaDraft.window} aria-label="Request limit window in days" />
+            </label>
+          </div>
+          <p class="defaults-hint">Applies now to every user without their own limit, existing accounts included. 0 = no limit. Past the limit a request still goes through, but waits for approval. Admins are exempt.</p>
+          <button class="btn-limits-save" disabled={quotaSaving} on:click={saveQuotaDefaults}>Save limits</button>
+        </div>
+      {/if}
     {:else if defaultsError}
       <div class="banner error">{defaultsError}</div>
     {/if}
@@ -1100,6 +1258,39 @@
     padding: 0.9rem 1.25rem;
   }
   .defaults-hint { font-size: 0.72rem; color: var(--text-muted); margin: 0.35rem 0 0; line-height: 1.45; }
+  .quota-defaults { margin-top: 0.75rem; }
+  .defaults-sub { font-size: 0.8rem; font-weight: 600; color: var(--text-secondary); margin: 0 0 0.2rem; }
+
+  /* Request limits (per-user expander + server defaults) */
+  .limits-btn {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    margin-top: 0.3rem; padding: 0.15rem 0.45rem;
+    background: none; border: 1px solid var(--border); border-radius: 6px;
+    color: var(--text-muted); font-size: 0.7rem; font-family: inherit; cursor: pointer;
+    transition: color 0.12s, border-color 0.12s;
+  }
+  .limits-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); }
+  .limits-btn.off { color: #f87171; border-color: rgba(248,113,113,0.35); }
+  .limits-btn .chev { font-size: 0.6rem; }
+  .limits-panel {
+    display: flex; flex-direction: column; align-items: flex-start; gap: 0.4rem;
+    margin-top: 0.4rem; padding: 0.55rem 0.65rem; max-width: 240px;
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px;
+  }
+  .quota-row { display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .quota-field { display: flex; flex-direction: column; gap: 0.15rem; font-size: 0.68rem; color: var(--text-muted); }
+  .quota-field input {
+    width: 92px; padding: 0.3rem 0.45rem;
+    background: var(--bg-elevated, rgba(255,255,255,0.05)); border: 1px solid var(--border-strong);
+    border-radius: 6px; color: var(--text-primary); font-size: 0.78rem; font-family: inherit;
+  }
+  .quota-field input:focus { outline: none; border-color: var(--accent); }
+  .limits-hint { font-size: 0.66rem; color: var(--text-muted); margin: 0; line-height: 1.4; }
+  .btn-limits-save {
+    padding: 0.3rem 0.65rem; background: var(--accent); border: none; border-radius: 6px;
+    color: #fff; font-size: 0.72rem; font-weight: 600; cursor: pointer;
+  }
+  .btn-limits-save:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* Buttons */
   .btn-create {

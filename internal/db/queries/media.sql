@@ -839,6 +839,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
@@ -857,6 +858,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY sort_title DESC, id
 LIMIT $3 OFFSET $4;
 
@@ -875,6 +877,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY year ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
@@ -893,6 +896,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY year DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
@@ -911,6 +915,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY rating DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
@@ -929,6 +934,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY rating ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
 
@@ -947,6 +953,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY created_at DESC, id
 LIMIT $3 OFFSET $4;
 
@@ -965,6 +972,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY created_at ASC, id
 LIMIT $3 OFFSET $4;
 
@@ -985,6 +993,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY originally_available_at DESC NULLS LAST, created_at DESC, id
 LIMIT $3 OFFSET $4;
 
@@ -1003,6 +1012,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4;
 
@@ -1013,7 +1023,8 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND (sqlc.narg('year_min')::int IS NULL OR year >= sqlc.narg('year_min'))
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
-  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'));
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text);
 
 -- name: ListDistinctGenres :many
 SELECT DISTINCT g::text AS genre
@@ -1163,7 +1174,7 @@ ORDER BY created_at DESC
 LIMIT sqlc.arg('limit');
 
 -- name: ListContinueWatching :many
--- For movies, every in-progress row passes through. For episodes,
+-- For movies, every resumable row passes through. For episodes,
 -- only the most-recently-watched episode per show is kept — the
 -- user wanted Continue Watching TV Shows to surface one tile per
 -- show, not a wall of three episodes from the same series. The
@@ -1171,6 +1182,15 @@ LIMIT sqlc.arg('limit');
 -- show → season → episode chain) and falls back to parent.id for
 -- the rare flat-layout episode that hangs directly off a show
 -- without a season row.
+--
+-- "Resumable" comes from user_watch_state (migration 00023): the latest
+-- watch event since the user's last manual mark sits between 0 and 90%.
+-- A played/unplayed mark therefore drops the row, and any play tick (not
+-- only a terminal stop) puts it back.
+--
+-- Rows the user dismissed (continue_watching_dismissals, keyed by the same
+-- show key — a show for TV, the movie itself otherwise) stay hidden until
+-- the surviving row has activity newer than the dismissal.
 --
 -- Episode rows additionally surface show_id / show_title /
 -- show_year / show_poster_path / show_fanart_path / show_thumb_path
@@ -1189,7 +1209,7 @@ WITH rows AS (
            m.originally_available_at, m.created_at, m.updated_at, m.deleted_at,
            ws.position_ms AS view_offset,
            ws.duration_ms AS view_duration,
-           ws.last_watched_at,
+           ws.last_activity_at AS last_watched_at,
            COALESCE(grandparent.poster_path, parent.poster_path, m.poster_path,
                     grandparent.thumb_path, parent.thumb_path, m.thumb_path) AS fallback_poster,
            CASE
@@ -1200,12 +1220,12 @@ WITH rows AS (
            -- Anchor for the outer LEFT JOIN. NULL for movies (no
            -- rollup) — outer JOIN then misses, leaving show_* NULL.
            CASE WHEN m.type = 'episode' THEN COALESCE(grandparent.id, parent.id) END AS show_anchor_id
-    FROM watch_state ws
+    FROM user_watch_state ws
     JOIN media_items m ON m.id = ws.media_id
     LEFT JOIN media_items parent ON parent.id = m.parent_id
     LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
     WHERE ws.user_id = $1
-      AND ws.status = 'in_progress'
+      AND ws.resumable
       AND m.deleted_at IS NULL
       AND m.type IN ('movie', 'episode')
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
@@ -1215,7 +1235,7 @@ deduped AS (
            rating, audience_rating, content_rating, duration_ms, genres, tags,
            tmdb_id, tvdb_id, imdb_id, musicbrainz_id, parent_id, index, poster_path,
            fanart_path, thumb_path, originally_available_at, created_at, updated_at, deleted_at,
-           view_offset, view_duration, last_watched_at, fallback_poster, show_anchor_id
+           view_offset, view_duration, last_watched_at, fallback_poster, show_key, show_anchor_id
     FROM (
         SELECT *,
                ROW_NUMBER() OVER (PARTITION BY show_key ORDER BY last_watched_at DESC) AS rn
@@ -1237,6 +1257,12 @@ SELECT d.id, d.library_id, d.type, d.title, d.sort_title, d.original_title, d.ye
        show.thumb_path  AS show_thumb_path
 FROM deduped d
 LEFT JOIN media_items show ON show.id = d.show_anchor_id AND show.deleted_at IS NULL
+WHERE NOT EXISTS (
+    SELECT 1 FROM continue_watching_dismissals cwd
+    WHERE cwd.user_id = $1
+      AND cwd.media_id = d.show_key
+      AND cwd.dismissed_at >= d.last_watched_at
+)
 ORDER BY d.last_watched_at DESC
 LIMIT $2;
 

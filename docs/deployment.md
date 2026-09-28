@@ -567,6 +567,24 @@ at the v2.2.0 cut — the table below matches `internal/db/migrations/`):
 | `00015_user_hub_layout.sql` | Per-user hub row visibility + ordering |
 | `00016_content_rating_rank_anime.sql` | Anime content-rating rank mapping |
 | `00017_collections_type_photo_album.sql` | `photo_album` collections type |
+| `00018_sessions_prev_token_hash.sql` | Refresh-token reuse detection (previous token hash) |
+| `00019_media_file_integrity.sql` | Integrity-probe verdict per media file |
+| `00020_request_auto_approve.sql` | Per-user request auto-approve (movies / TV) |
+| `00021_notification_types.sql` | Notification type format check (request notifications were rejected) |
+| `00022_request_quotas.sql` | Per-user request quotas + can-request switch |
+| `00023_watch_marks.sql` | `watch_progress` rollup, manual watched marks, Continue Watching dismissals; drops the `watch_state` matview |
+| `00024_library_trickplay.sql` | Per-library automatic seek-bar thumbnails (on for existing video libraries) |
+| `00025_request_download_status.sql` | Live Radarr/Sonarr download status on requests |
+| `00026_media_issues.sql` | User problem reports |
+| `00027_franchise_collections.sql` | TMDB franchise collections |
+| `00028_request_seasons.sql` | Season-level TV requests |
+| `00029_notification_agents.sql` | Notification agents (Discord / Telegram / ntfy / Gotify / email) |
+
+`00023` backfills `watch_progress` from the `watch_events` history still
+inside the retention window; on a large install it takes longer than the
+others, and new watch events wait on its lock until it commits. Set `AUTO_MIGRATE=true` to apply pending migrations on startup, or run
+the migrate step above before starting the new binary; `/health/ready` stays
+unready until they're applied.
 
 ---
 

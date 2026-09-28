@@ -32,6 +32,22 @@ type HubDB interface {
 	ListTrending(ctx context.Context, arg gen.ListTrendingParams) ([]gen.ListTrendingRow, error)
 }
 
+// HubWatchDB serves the per-user watch rows (Next Up, Plan to Watch). Kept
+// separate from HubDB so it stays optional: without it those rows come back
+// empty. *gen.Queries satisfies it.
+type HubWatchDB interface {
+	ListNextUp(ctx context.Context, arg gen.ListNextUpParams) ([]gen.ListNextUpRow, error)
+	ListPlanToWatchHub(ctx context.Context, arg gen.ListPlanToWatchHubParams) ([]gen.ListPlanToWatchHubRow, error)
+}
+
+// hubWatchRowLimit caps the Next Up and Plan to Watch rows; the SQL
+// over-fetches by hubWatchRowFetch so rows dropped by the library ACL (which
+// the queries don't know) still leave a full row.
+const (
+	hubWatchRowLimit = 20
+	hubWatchRowFetch = 40
+)
+
 // HubLibraryLister returns the libraries the home page should surface
 // per-library recently-added rows for. Kept as its own interface so
 // the hub handler doesn't need to know how the library list is fetched
@@ -46,6 +62,7 @@ type HubHandler struct {
 	access   LibraryAccessChecker
 	libs     HubLibraryLister
 	epDB     EpisodePosterDB // optional — when set, substitutes show posters for episode rows
+	watchDB  HubWatchDB      // optional — Next Up / Plan to Watch rows (WithWatchRows)
 	logger   *slog.Logger
 	perLib   int32 // items per library row; defaults to 12 if zero
 	trending *trendingCache
@@ -88,6 +105,13 @@ func (h *HubHandler) WithEpisodePoster(db EpisodePosterDB) *HubHandler {
 	return h
 }
 
+// WithWatchRows wires the Next Up and Plan to Watch rows. Without it both
+// come back as empty arrays.
+func (h *HubHandler) WithWatchRows(db HubWatchDB) *HubHandler {
+	h.watchDB = db
+	return h
+}
+
 // WithLibraries wires the library lister that drives the per-library
 // "Recently added to <library>" home-screen rows. Without this the
 // response's ByLibrary field stays empty and the home page just shows
@@ -112,6 +136,14 @@ type HubResponse struct {
 	RecentlyAdded          []HubItem       `json:"recently_added"`
 	ByLibrary              []HubLibraryRow `json:"recently_added_by_library"`
 	Trending               []HubItem       `json:"trending"`
+	// NextUp: per show the caller is part-way through (finished at least one
+	// episode, nothing resumable — those are on Continue Watching TV), the
+	// next unwatched episode. Tiles are episodes carrying show_id /
+	// show_title / season_number / episode_number. See ListNextUp.
+	NextUp []HubItem `json:"next_up"`
+	// PlanToWatch: items the caller set to Plan to Watch, newest first,
+	// minus anything now fully watched.
+	PlanToWatch []HubItem `json:"plan_to_watch"`
 }
 
 // HubLibraryRow is one "Recently added to <library>" strip on the home
@@ -140,6 +172,11 @@ type HubItem struct {
 	ViewOffsetMS *int64  `json:"view_offset_ms,omitempty"`
 	DurationMS   *int64  `json:"duration_ms,omitempty"`
 	UpdatedAt    int64   `json:"updated_at"`
+	// Episode tiles in Next Up: the show the episode belongs to and its
+	// position within it (0 when the scanner recorded no number).
+	ShowID        *string `json:"show_id,omitempty"`
+	SeasonNumber  *int    `json:"season_number,omitempty"`
+	EpisodeNumber *int    `json:"episode_number,omitempty"`
 }
 
 // Get handles GET /api/v1/hub.
@@ -158,6 +195,8 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		RecentlyAdded:          []HubItem{},
 		ByLibrary:              []HubLibraryRow{},
 		Trending:               []HubItem{},
+		NextUp:                 []HubItem{},
+		PlanToWatch:            []HubItem{},
 	}
 
 	// Convert max content rating from claims to a rank for SQL filtering.
@@ -356,6 +395,15 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 		}
+	}
+
+	// Next Up + Plan to Watch — per-user watch rows. Next Up tiles keep
+	// their own art (show poster/fanart + the episode still) and are left
+	// out of the episode-poster substitution below, which would overwrite
+	// the still with a poster.
+	if h.watchDB != nil {
+		out.NextUp = h.nextUpRow(r.Context(), claims.UserID, maxRank, libAllowed)
+		out.PlanToWatch = h.planToWatchRow(r.Context(), claims.UserID, maxRank, libAllowed)
 	}
 
 	// Episode-poster substitution. Collect every episode ID across

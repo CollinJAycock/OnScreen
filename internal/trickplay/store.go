@@ -59,6 +59,73 @@ func (s *PgStore) MarkFailed(ctx context.Context, itemID uuid.UUID, reason strin
 	})
 }
 
+// MarkSkipped records that an item can't get sprites (no playable file or no
+// duration) so the automatic paths stop re-listing it.
+func (s *PgStore) MarkSkipped(ctx context.Context, itemID uuid.UUID, reason string) error {
+	if len(reason) > 1000 {
+		reason = reason[:1000]
+	}
+	return gen.New(s.pool).MarkTrickplaySkipped(ctx, gen.MarkTrickplaySkippedParams{
+		ItemID: itemID,
+		Reason: reason,
+	})
+}
+
+// ResetInterrupted clears the 'pending' row a cancelled generation leaves
+// behind so the item reads as not-started again.
+func (s *PgStore) ResetInterrupted(ctx context.Context, itemID uuid.UUID) error {
+	return gen.New(s.pool).ResetInterruptedTrickplay(ctx, itemID)
+}
+
+// ListCandidates returns eligible items that still need sprites, oldest
+// first. See the ListTrickplayCandidates query for what "eligible" and
+// "need" mean.
+func (s *PgStore) ListCandidates(ctx context.Context, f CandidateFilter) ([]uuid.UUID, error) {
+	limit := f.Limit
+	if limit <= 0 {
+		limit = 1
+	}
+	ids, err := gen.New(s.pool).ListTrickplayCandidates(ctx, gen.ListTrickplayCandidatesParams{
+		LibraryID:     optUUID(f.LibraryID),
+		OnlyEnabled:   f.OnlyEnabled,
+		IncludeFailed: f.IncludeFailed,
+		Lim:           int32(min(limit, maxCandidateBatch)),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list trickplay candidates: %w", err)
+	}
+	return ids, nil
+}
+
+// CountCandidates counts what ListCandidates would return without a limit
+// (failed retries excluded).
+func (s *PgStore) CountCandidates(ctx context.Context, libraryID *uuid.UUID, onlyEnabled bool) (int64, error) {
+	n, err := gen.New(s.pool).CountTrickplayCandidates(ctx, gen.CountTrickplayCandidatesParams{
+		LibraryID:   optUUID(libraryID),
+		OnlyEnabled: onlyEnabled,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("count trickplay candidates: %w", err)
+	}
+	return n, nil
+}
+
+// LibraryCounts returns the progress counts for one library.
+func (s *PgStore) LibraryCounts(ctx context.Context, libraryID uuid.UUID) (LibraryCounts, error) {
+	row, err := gen.New(s.pool).GetLibraryTrickplayCounts(ctx, libraryID)
+	if err != nil {
+		return LibraryCounts{}, fmt.Errorf("library trickplay counts: %w", err)
+	}
+	return NewLibraryCounts(row.Total, row.Done, row.Failed), nil
+}
+
+func optUUID(id *uuid.UUID) pgtype.UUID {
+	if id == nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: *id, Valid: true}
+}
+
 // Status reports the current persisted state for an item; returns (_, false,
 // nil) when no row exists yet. Used by the API handler to tell clients
 // whether trickplay is available.

@@ -3,6 +3,7 @@ package notification
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -15,6 +16,7 @@ type DB interface {
 	CreateNotification(ctx context.Context, arg gen.CreateNotificationParams) (gen.Notification, error)
 	ListAllUserIDs(ctx context.Context) ([]uuid.UUID, error)
 	ListNotifiableUserIDsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
+	ListAdminUserIDs(ctx context.Context) ([]uuid.UUID, error)
 }
 
 // Service creates notifications and publishes them via SSE.
@@ -22,6 +24,10 @@ type Service struct {
 	db     DB
 	broker *Broker
 	logger *slog.Logger
+	// agents, when attached (SetAgentDispatcher), receives every event once
+	// for the outbound notification agents (Discord, ntfy, …). Atomic:
+	// attached at startup while scans may already be notifying.
+	agents atomic.Pointer[agentHolder]
 }
 
 // NewService constructs a notification Service.
@@ -30,7 +36,20 @@ func NewService(db DB, broker *Broker, logger *slog.Logger) *Service {
 }
 
 // Notify creates a notification for a single user and publishes it via SSE.
+// typ must be one of the Type* constants (types.go).
 func (s *Service) Notify(ctx context.Context, userID uuid.UUID, typ, title, body string, itemID *uuid.UUID) {
+	s.forwardToAgents(ctx, AgentScopeUser, &userID, typ, title, body, itemID)
+	s.notifyOne(ctx, userID, typ, title, body, itemID)
+}
+
+// notifyOne persists and publishes one user's copy of a notice. The fan-out
+// helpers call it per recipient so the outbound agents hear each event once.
+func (s *Service) notifyOne(ctx context.Context, userID uuid.UUID, typ, title, body string, itemID *uuid.UUID) {
+	if !IsKnownType(typ) {
+		// Still attempted — the DB only checks the format — but an undeclared
+		// type means the web client has no icon/link for it.
+		s.logger.WarnContext(ctx, "notification type not declared in notification/types.go", "type", typ)
+	}
 	itemPG := pgtype.UUID{}
 	if itemID != nil {
 		itemPG = pgtype.UUID{Bytes: [16]byte(*itemID), Valid: true}
@@ -43,7 +62,7 @@ func (s *Service) Notify(ctx context.Context, userID uuid.UUID, typ, title, body
 		ItemID: itemPG,
 	})
 	if err != nil {
-		s.logger.ErrorContext(ctx, "create notification", "err", err)
+		s.logger.ErrorContext(ctx, "create notification", "type", typ, "err", err)
 		return
 	}
 	var itemStr *string
@@ -64,13 +83,29 @@ func (s *Service) Notify(ctx context.Context, userID uuid.UUID, typ, title, body
 
 // NotifyAllUsers creates a notification for every non-managed user.
 func (s *Service) NotifyAllUsers(ctx context.Context, typ, title, body string, itemID *uuid.UUID) {
+	s.forwardToAgents(ctx, AgentScopeAll, nil, typ, title, body, itemID)
 	ids, err := s.db.ListAllUserIDs(ctx)
 	if err != nil {
 		s.logger.ErrorContext(ctx, "list user ids for broadcast", "err", err)
 		return
 	}
 	for _, uid := range ids {
-		s.Notify(ctx, uid, typ, title, body, itemID)
+		s.notifyOne(ctx, uid, typ, title, body, itemID)
+	}
+}
+
+// NotifyAdmins creates a notification for every admin account (top-level users
+// with is_admin; managed profiles can never be admins). Used for alerts that
+// need an admin's action, such as a media request waiting for approval.
+func (s *Service) NotifyAdmins(ctx context.Context, typ, title, body string, itemID *uuid.UUID) {
+	s.forwardToAgents(ctx, AgentScopeAdmins, nil, typ, title, body, itemID)
+	ids, err := s.db.ListAdminUserIDs(ctx)
+	if err != nil {
+		s.logger.ErrorContext(ctx, "list admin ids for notification", "type", typ, "err", err)
+		return
+	}
+	for _, uid := range ids {
+		s.notifyOne(ctx, uid, typ, title, body, itemID)
 	}
 }
 
@@ -93,14 +128,16 @@ func (s *Service) NotifyScanComplete(ctx context.Context, libraryID uuid.UUID, l
 		s.logger.ErrorContext(ctx, "list library recipients for scan notification", "library_id", libraryID, "err", err)
 		return
 	}
+	// Not forwarded to the outbound agents: they announce new titles in their
+	// own batched new_content message (notifyagents).
 	for _, uid := range ids {
-		s.Notify(ctx, uid, "scan_complete", title, body, nil)
+		s.notifyOne(ctx, uid, TypeScanComplete, title, body, nil)
 	}
 }
 
 // NotifyNewContent sends a "new_content" notification to all users.
 func (s *Service) NotifyNewContent(ctx context.Context, title string, itemID uuid.UUID) {
-	s.NotifyAllUsers(ctx, "new_content", "New: "+title, "", &itemID)
+	s.NotifyAllUsers(ctx, TypeNewContent, "New: "+title, "", &itemID)
 }
 
 func itoa(n int) string {

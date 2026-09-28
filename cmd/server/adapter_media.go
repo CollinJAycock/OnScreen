@@ -859,6 +859,8 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		YearMax:       intPtrToInt32Ptr(f.YearMax),
 		RatingMin:     float64PtrToNumeric(f.RatingMin),
 		MaxRatingRank: intPtrToInt32Ptr(f.MaxRatingRank),
+		Watch:         watchFilterPtr(f.Watch),
+		WatchUserID:   f.WatchUserID,
 	}
 
 	sort := f.Sort
@@ -1060,7 +1062,18 @@ func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uu
 		YearMax:       intPtrToInt32Ptr(f.YearMax),
 		RatingMin:     float64PtrToNumeric(f.RatingMin),
 		MaxRatingRank: intPtrToInt32Ptr(f.MaxRatingRank),
+		Watch:         watchFilterPtr(f.Watch),
+		WatchUserID:   f.WatchUserID,
 	})
+}
+
+// watchFilterPtr maps FilterParams.Watch ("" = no filter) onto the nullable
+// sqlc.narg('watch') the listing queries test with IS NULL.
+func watchFilterPtr(w string) *string {
+	if w == "" {
+		return nil
+	}
+	return &w
 }
 
 func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error) {

@@ -32,6 +32,9 @@ const (
 	ActionLibraryCreate    = "library.create"
 	ActionLibraryDelete    = "library.delete"
 	ActionLibraryScan      = "library.scan"
+	// ActionLibraryTrickplay: admin queued seek-bar thumbnail generation
+	// for a whole library ("Generate now").
+	ActionLibraryTrickplay = "library.trickplay_generate"
 	ActionSettingsUpdate   = "settings.update"
 	ActionInviteCreate     = "invite.create"
 	ActionLoginSuccess     = "auth.login_success"
@@ -71,6 +74,20 @@ const (
 	// A change to a user's media-request auto-approval toggles — granting one
 	// lets that user's requests reach Radarr/Sonarr with no admin review.
 	ActionUserRequestPermsChange = "user.request_permissions_change"
+
+	// Media-issue ("Report a problem") admin actions. issue.update records a
+	// report being resolved or dismissed; item.regrab records an admin asking
+	// Radarr/Sonarr to search again (optionally blocklisting the last grab).
+	ActionIssueUpdate = "issue.update"
+	ActionItemRegrab  = "item.regrab"
+
+	// Outbound notification agents (Discord / Telegram / ntfy / Gotify /
+	// email). Each carries an encrypted credential and an outbound
+	// destination, so CRUD and test sends are recorded like webhooks.
+	ActionNotificationAgentCreate = "notification_agent.create"
+	ActionNotificationAgentUpdate = "notification_agent.update"
+	ActionNotificationAgentDelete = "notification_agent.delete"
+	ActionNotificationAgentTest   = "notification_agent.test"
 
 	// Admin impersonation. ViewAs lets an admin browse the home/library/etc.
 	// surfaces as another user; without an audit trail the request log

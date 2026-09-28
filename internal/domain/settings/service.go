@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"time"
@@ -364,22 +365,63 @@ func (s *Service) SetPinSwitchEnabled(ctx context.Context, enabled bool) error {
 // never touches existing users. Managed household profiles ignore it and
 // always start with both off. The zero value (both false) is the default — a
 // fresh install sends every request to the admin queue.
+//
+// The quota fields are different: they are live server-wide defaults, read at
+// every request, for any user whose own users.request_quota_movies / _tv is
+// NULL. QuotaMovies / QuotaTV are requests allowed per QuotaWindowDays-day
+// rolling window (0 = unlimited, the default); a request past the limit is
+// still created but always waits for an admin. Admins are exempt.
 type RequestsConfig struct {
 	DefaultAutoApproveMovies bool `json:"default_auto_approve_movies"`
 	DefaultAutoApproveTV     bool `json:"default_auto_approve_tv"`
+	QuotaMovies              int  `json:"quota_movies"`
+	QuotaTV                  int  `json:"quota_tv"`
+	QuotaWindowDays          int  `json:"quota_window_days"`
 }
 
-// Requests returns the stored request defaults, or the zero value (both off)
-// if nothing is persisted.
+// Request quota bounds (Settings ▸ Requests and the per-user overrides).
+const (
+	DefaultQuotaWindowDays = 7
+	MinQuotaWindowDays     = 1
+	MaxQuotaWindowDays     = 90
+	// MaxRequestQuota caps a per-window limit; anything larger is
+	// indistinguishable from unlimited (0) in practice.
+	MaxRequestQuota = 1000
+)
+
+// ErrInvalidRequestsConfig is returned by Validate for out-of-range values.
+var ErrInvalidRequestsConfig = errors.New("settings: invalid requests config")
+
+// Validate checks the quota fields' ranges: quotas 0..MaxRequestQuota, window
+// MinQuotaWindowDays..MaxQuotaWindowDays days.
+func (c RequestsConfig) Validate() error {
+	if c.QuotaMovies < 0 || c.QuotaMovies > MaxRequestQuota {
+		return fmt.Errorf("%w: quota_movies must be between 0 and %d", ErrInvalidRequestsConfig, MaxRequestQuota)
+	}
+	if c.QuotaTV < 0 || c.QuotaTV > MaxRequestQuota {
+		return fmt.Errorf("%w: quota_tv must be between 0 and %d", ErrInvalidRequestsConfig, MaxRequestQuota)
+	}
+	if c.QuotaWindowDays < MinQuotaWindowDays || c.QuotaWindowDays > MaxQuotaWindowDays {
+		return fmt.Errorf("%w: quota_window_days must be between %d and %d", ErrInvalidRequestsConfig, MinQuotaWindowDays, MaxQuotaWindowDays)
+	}
+	return nil
+}
+
+// Requests returns the stored request defaults, or the defaults (auto-approve
+// off, quotas unlimited, 7-day window) if nothing is persisted. A config saved
+// before the quota fields existed reads back with the 7-day window.
 func (s *Service) Requests(ctx context.Context) RequestsConfig {
 	raw := s.get(ctx, keyRequestsConfig)
 	if raw == "" {
-		return RequestsConfig{}
+		return RequestsConfig{QuotaWindowDays: DefaultQuotaWindowDays}
 	}
 	var cfg RequestsConfig
 	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
 		s.logger.ErrorContext(ctx, "parse requests_config", "err", err)
-		return RequestsConfig{}
+		return RequestsConfig{QuotaWindowDays: DefaultQuotaWindowDays}
+	}
+	if cfg.QuotaWindowDays <= 0 {
+		cfg.QuotaWindowDays = DefaultQuotaWindowDays
 	}
 	return cfg
 }

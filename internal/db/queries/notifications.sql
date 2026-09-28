@@ -29,6 +29,12 @@ WHERE created_at < NOW() - INTERVAL '30 days';
 -- name: ListAllUserIDs :many
 SELECT id FROM users WHERE parent_user_id IS NULL;
 
+-- name: ListAdminUserIDs :many
+-- Recipients of admin alerts (e.g. a new request waiting for approval): every
+-- admin account. Managed profiles can't be admins (chk_managed_not_admin); the
+-- parent_user_id filter just keeps that explicit.
+SELECT id FROM users WHERE is_admin AND parent_user_id IS NULL ORDER BY id;
+
 -- name: ListNotifiableUserIDsForLibrary :many
 -- Top-level users who may see a library: admins, everyone when the library is
 -- public, and explicit grantees when it is private. Scan notifications go only

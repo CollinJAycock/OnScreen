@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"net/http"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -607,6 +609,185 @@ func (h *ArrServicesHandler) Probe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.Success(w, r, out)
+}
+
+// arrHealthTimeout bounds the whole health fan-out to one instance, so the
+// settings page never hangs on a black-holed Radarr/Sonarr.
+const arrHealthTimeout = 10 * time.Second
+
+// arrHealthCheckDTO is one of the instance's own health warnings.
+type arrHealthCheckDTO struct {
+	// Type is notice, warning or error.
+	Type    string `json:"type"`
+	Source  string `json:"source"`
+	Message string `json:"message"`
+	WikiURL string `json:"wiki_url,omitempty"`
+}
+
+// arrDiskDTO is one mount the instance reports.
+type arrDiskDTO struct {
+	Path       string `json:"path"`
+	Label      string `json:"label"`
+	FreeBytes  int64  `json:"free_bytes"`
+	TotalBytes int64  `json:"total_bytes"`
+}
+
+// arrHealthResponse is GET /admin/arr-services/{id}/health.
+type arrHealthResponse struct {
+	Reachable bool   `json:"reachable"`
+	Version   string `json:"version,omitempty"`
+	// Error is a short generic phrase when !Reachable; the detail (which can
+	// include the base URL) only goes to the server log.
+	Error  string              `json:"error,omitempty"`
+	Checks []arrHealthCheckDTO `json:"checks"`
+	// Disks are the mounts backing the instance's root folders, or every
+	// mount it reports when the root folders can't be matched.
+	Disks []arrDiskDTO `json:"disks"`
+	// QueueCount is how many downloads the instance is tracking; null when
+	// the queue couldn't be read.
+	QueueCount *int `json:"queue_count"`
+}
+
+// Health handles GET /api/v1/admin/arr-services/{id}/health: whether the
+// instance answers, its version, its own health checks, free space on the
+// disks behind its root folders, and its queue size. An unreachable instance
+// is a 200 with reachable=false, not an error — the settings page renders it.
+// Each section degrades independently: a failed diskspace call leaves disks
+// empty without hiding the checks.
+func (h *ArrServicesHandler) Health(w http.ResponseWriter, r *http.Request) {
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid arr service id")
+		return
+	}
+	svc, err := h.db.GetArrService(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "health: get arr service", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out := arrHealthResponse{Checks: []arrHealthCheckDTO{}, Disks: []arrDiskDTO{}}
+
+	plain, err := arrcrypt.Open(h.enc, svc.ID, svc.ApiKey)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "health: open arr api key", "id", svc.ID, "err", err)
+		out.Error = "the stored API key can't be read — re-enter it"
+		respond.Success(w, r, out)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), arrHealthTimeout)
+	defer cancel()
+	client := h.arrClient(svc.BaseUrl, plain)
+
+	status, err := client.Ping(ctx)
+	if err != nil {
+		h.logger.WarnContext(r.Context(), "health: arr instance unreachable", "id", svc.ID, "kind", svc.Kind, "err", err)
+		switch {
+		case errors.Is(err, arr.ErrUnauthorized):
+			out.Error = "the instance rejected the API key"
+		case errors.Is(err, arr.ErrNotFound):
+			out.Error = "the instance returned 404 — check the base URL"
+		default:
+			out.Error = "the instance could not be reached"
+		}
+		respond.Success(w, r, out)
+		return
+	}
+	out.Reachable = true
+	out.Version = status.Version
+
+	var (
+		wg      sync.WaitGroup
+		checks  []arr.HealthCheck
+		disks   []arr.DiskSpace
+		folders []arr.RootFolder
+		count   int
+		errs    [4]error
+	)
+	wg.Add(4)
+	go func() { defer wg.Done(); checks, errs[0] = client.Health(ctx) }()
+	go func() { defer wg.Done(); disks, errs[1] = client.DiskSpace(ctx) }()
+	go func() { defer wg.Done(); folders, errs[2] = client.RootFolders(ctx) }()
+	go func() { defer wg.Done(); count, errs[3] = client.QueueCount(ctx) }()
+	wg.Wait()
+	for i, what := range []string{"health", "diskspace", "rootfolder", "queue"} {
+		if errs[i] != nil {
+			h.logger.WarnContext(r.Context(), "health: arr call failed", "id", svc.ID, "call", what, "err", errs[i])
+		}
+	}
+
+	for _, c := range checks {
+		out.Checks = append(out.Checks, arrHealthCheckDTO{
+			Type: c.Type, Source: c.Source, Message: c.Message, WikiURL: safeWikiURL(string(c.WikiURL)),
+		})
+	}
+	if errs[2] != nil {
+		folders = nil
+	}
+	for _, d := range rootFolderDisks(disks, folders) {
+		out.Disks = append(out.Disks, arrDiskDTO{
+			Path: d.Path, Label: d.Label, FreeBytes: int64(d.FreeSpace), TotalBytes: int64(d.TotalSpace),
+		})
+	}
+	if errs[3] == nil {
+		out.QueueCount = &count
+	}
+	respond.Success(w, r, out)
+}
+
+// rootFolderDisks narrows the instance's mounts to the ones its root folders
+// live on (the longest mount path that prefixes each folder), which is the
+// space downloads compete for — Radarr and Sonarr also list the OS disk,
+// /boot, container overlays and the like. When no folder can be matched
+// (root folders unreadable, or paths the app reports differently), every
+// mount with a known size is returned instead. Order follows the app's list.
+func rootFolderDisks(disks []arr.DiskSpace, folders []arr.RootFolder) []arr.DiskSpace {
+	norm := func(p string) string {
+		p = strings.ToLower(strings.ReplaceAll(p, `\`, "/"))
+		return strings.TrimRight(p, "/") + "/"
+	}
+	keep := map[int]bool{}
+	for _, f := range folders {
+		fp := norm(f.Path)
+		best, bestLen := -1, -1
+		for i, d := range disks {
+			dp := norm(d.Path)
+			if strings.HasPrefix(fp, dp) && len(dp) > bestLen {
+				best, bestLen = i, len(dp)
+			}
+		}
+		if best >= 0 {
+			keep[best] = true
+		}
+	}
+	var out []arr.DiskSpace
+	for i, d := range disks {
+		if len(keep) > 0 {
+			if keep[i] {
+				out = append(out, d)
+			}
+			continue
+		}
+		if d.TotalSpace > 0 {
+			out = append(out, d)
+		}
+	}
+	return out
+}
+
+// safeWikiURL keeps an http(s) wiki link and drops anything else, since the
+// settings page renders it as a link.
+func safeWikiURL(s string) string {
+	s = strings.TrimSpace(s)
+	lower := strings.ToLower(s)
+	if strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "http://") {
+		return s
+	}
+	return ""
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────

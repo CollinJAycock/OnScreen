@@ -35,6 +35,24 @@ type Entry struct {
 	ClientName  string
 	FirstSeen   time.Time
 	LastSeen    time.Time
+
+	// UserID is the authenticated viewer (zero for legacy / middleware
+	// entries that predate user attribution). Set by TouchFile and
+	// HeartbeatUser, which key the entry per user so two viewers behind one
+	// address don't collapse into one card and an admin stop can target the
+	// exact (user, item, device) triple.
+	UserID uuid.UUID
+	// FileID is the media_files row StreamFile served (file-traffic entries
+	// from TouchFile only).
+	FileID uuid.UUID
+	// FromHeartbeat marks an entry refreshed by the player's progress beacon
+	// rather than byte traffic. Its ClientName is the player's self-reported
+	// device name, which is what the web player matches a playback.stop
+	// event against; a byte-traffic ClientName is only a User-Agent prefix.
+	FromHeartbeat bool
+	// Decision is the playback decision the client itself reported on its
+	// heartbeat (already allowlisted by the caller); "" when it didn't say.
+	Decision string
 }
 
 // Tracker records and expires direct-play stream activity.
@@ -103,9 +121,10 @@ func (t *Tracker) GetItemState(mediaItemID uuid.UUID) (positionMS, durationMS in
 	return s.PositionMS, s.DurationMS
 }
 
-// Touch records or refreshes an active stream entry.
-func (t *Tracker) Touch(clientIP, filePath, clientName string) {
-	key := clientIP + "|" + filePath
+// upsert creates the entry under key from init when absent, then applies
+// refresh and stamps LastSeen. Shared by every writer so the Valkey and
+// in-memory modes can't drift apart field by field.
+func (t *Tracker) upsert(key string, init Entry, refresh func(*Entry)) {
 	now := time.Now()
 
 	if t.v != nil {
@@ -114,10 +133,11 @@ func (t *Tracker) Touch(clientIP, filePath, clientName string) {
 			_ = json.Unmarshal([]byte(raw), &e)
 		}
 		if e.FirstSeen.IsZero() {
-			e = Entry{FilePath: filePath, ClientIP: clientIP, FirstSeen: now}
+			e = init
+			e.FirstSeen = now
 		}
+		refresh(&e)
 		e.LastSeen = now
-		e.ClientName = clientName
 		if b, err := json.Marshal(e); err == nil {
 			_ = t.v.Set(context.Background(), streamKey(key), string(b), entryTTL)
 		}
@@ -126,12 +146,36 @@ func (t *Tracker) Touch(clientIP, filePath, clientName string) {
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if e, ok := t.entries[key]; ok {
-		e.LastSeen = now
-		e.ClientName = clientName
-	} else {
-		t.entries[key] = &Entry{FilePath: filePath, ClientIP: clientIP, ClientName: clientName, FirstSeen: now, LastSeen: now}
+	e, ok := t.entries[key]
+	if !ok {
+		fresh := init
+		fresh.FirstSeen = now
+		e = &fresh
+		t.entries[key] = e
 	}
+	refresh(e)
+	e.LastSeen = now
+}
+
+// Touch records or refreshes an active stream entry.
+func (t *Tracker) Touch(clientIP, filePath, clientName string) {
+	t.upsert(clientIP+"|"+filePath, Entry{FilePath: filePath, ClientIP: clientIP}, func(e *Entry) {
+		e.ClientName = clientName
+	})
+}
+
+// TouchFile records byte traffic StreamFile served to an authenticated
+// viewer. Unlike Touch it knows who is watching and which item/file the
+// bytes belong to, so the entry is keyed per (user, client, item) -- one
+// entry per stream no matter how many range requests or which of the item's
+// files -- and the sessions API can resolve it without a path lookup.
+func (t *Tracker) TouchFile(userID uuid.UUID, clientIP string, mediaItemID, fileID uuid.UUID, filePath, clientName string) {
+	init := Entry{UserID: userID, MediaItemID: mediaItemID, ClientIP: clientIP}
+	t.upsert(bytesEntryKey(userID, clientIP, mediaItemID), init, func(e *Entry) {
+		e.FileID = fileID
+		e.FilePath = filePath
+		e.ClientName = clientName
+	})
 }
 
 // Heartbeat records or refreshes a direct-play stream from a player's progress
@@ -143,48 +187,56 @@ func (t *Tracker) Touch(clientIP, filePath, clientName string) {
 // alive for as long as the player reports playing. Carries the media item id so
 // the sessions API can resolve it without a file path.
 func (t *Tracker) Heartbeat(clientIP string, mediaItemID uuid.UUID, clientName string) {
-	key := itemEntryKey(clientIP, mediaItemID)
-	now := time.Now()
+	t.HeartbeatUser(uuid.Nil, clientIP, mediaItemID, clientName, "")
+}
 
-	if t.v != nil {
-		var e Entry
-		if raw, err := t.v.Get(context.Background(), streamKey(key)); err == nil {
-			_ = json.Unmarshal([]byte(raw), &e)
-		}
-		if e.FirstSeen.IsZero() {
-			e = Entry{MediaItemID: mediaItemID, ClientIP: clientIP, FirstSeen: now}
-		}
+// HeartbeatUser is Heartbeat attributed to a viewer, carrying the decision
+// the client reported (already allowlisted by the caller, "" when unknown).
+// A zero userID keys the entry exactly as Heartbeat always has.
+func (t *Tracker) HeartbeatUser(userID uuid.UUID, clientIP string, mediaItemID uuid.UUID, clientName, decision string) {
+	init := Entry{UserID: userID, MediaItemID: mediaItemID, ClientIP: clientIP, FromHeartbeat: true}
+	t.upsert(heartbeatEntryKey(userID, clientIP, mediaItemID), init, func(e *Entry) {
 		e.MediaItemID = mediaItemID
-		e.LastSeen = now
 		e.ClientName = clientName
-		if b, err := json.Marshal(e); err == nil {
-			_ = t.v.Set(context.Background(), streamKey(key), string(b), entryTTL)
+		e.FromHeartbeat = true
+		if decision != "" {
+			e.Decision = decision
 		}
-		return
-	}
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	if e, ok := t.entries[key]; ok {
-		e.MediaItemID = mediaItemID
-		e.LastSeen = now
-		e.ClientName = clientName
-	} else {
-		t.entries[key] = &Entry{MediaItemID: mediaItemID, ClientIP: clientIP, ClientName: clientName, FirstSeen: now, LastSeen: now}
-	}
+	})
 }
 
 // RemoveHeartbeat drops a progress-driven entry immediately, called on a
 // "stopped" beacon so a finished stream leaves "Now Playing" right away instead
 // of lingering for entryTTL.
 func (t *Tracker) RemoveHeartbeat(clientIP string, mediaItemID uuid.UUID) {
-	key := itemEntryKey(clientIP, mediaItemID)
+	t.RemoveHeartbeatUser(uuid.Nil, clientIP, mediaItemID)
+}
+
+// RemoveHeartbeatUser is RemoveHeartbeat for an entry written by HeartbeatUser.
+func (t *Tracker) RemoveHeartbeatUser(userID uuid.UUID, clientIP string, mediaItemID uuid.UUID) {
+	t.remove(heartbeatEntryKey(userID, clientIP, mediaItemID))
+}
+
+// RemoveStream drops every entry of one viewer's stream of an item from one
+// client -- the heartbeat and the byte-traffic entry -- so an admin-stopped
+// direct play leaves "Now Playing" at once instead of lingering for entryTTL.
+func (t *Tracker) RemoveStream(userID uuid.UUID, clientIP string, mediaItemID uuid.UUID) {
+	t.remove(heartbeatEntryKey(userID, clientIP, mediaItemID), bytesEntryKey(userID, clientIP, mediaItemID))
+}
+
+func (t *Tracker) remove(keys ...string) {
 	if t.v != nil {
-		_ = t.v.Del(context.Background(), streamKey(key))
+		full := make([]string, len(keys))
+		for i, k := range keys {
+			full[i] = streamKey(k)
+		}
+		_ = t.v.Del(context.Background(), full...)
 		return
 	}
 	t.mu.Lock()
-	delete(t.entries, key)
+	for _, k := range keys {
+		delete(t.entries, k)
+	}
 	t.mu.Unlock()
 }
 
@@ -258,4 +310,21 @@ func posKey(id uuid.UUID) string       { return fmt.Sprintf("stream:pos:%s", id)
 // keeps it from colliding with a path-keyed (Touch) entry for the same client.
 func itemEntryKey(clientIP string, id uuid.UUID) string {
 	return clientIP + "|item:" + id.String()
+}
+
+// heartbeatEntryKey keys a HeartbeatUser entry. A zero user keeps the legacy
+// itemEntryKey so anonymous callers (and entries written before user
+// attribution) behave exactly as before.
+func heartbeatEntryKey(userID uuid.UUID, clientIP string, id uuid.UUID) string {
+	if userID == uuid.Nil {
+		return itemEntryKey(clientIP, id)
+	}
+	return clientIP + "|u:" + userID.String() + "|item:" + id.String()
+}
+
+// bytesEntryKey keys a TouchFile entry: one per (user, client, item), distinct
+// from the same stream's heartbeat entry so the two writers never overwrite
+// each other's fields.
+func bytesEntryKey(userID uuid.UUID, clientIP string, id uuid.UUID) string {
+	return clientIP + "|u:" + userID.String() + "|bytes:" + id.String()
 }

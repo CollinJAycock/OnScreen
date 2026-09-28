@@ -240,7 +240,9 @@ OnScreen/
 | `users` | Local accounts; bcrypt password + optional PIN |
 | `sessions` | Refresh token store; only hash stored, never raw token |
 | `watch_events` | Immutable play/pause/stop events; monthly partitions (ADR-002) |
-| `watch_state` | Materialized view: per-user per-item status (unwatched/in_progress/watched) |
+| `watch_progress` | Per-user per-item watch rollup (latest position, last completion) kept by a `watch_events` trigger, plus the manual played/unplayed mark |
+| `user_watch_state` | View over `watch_progress`: the one derivation of status (unwatched/in_progress/watched), resume point and Continue Watching eligibility |
+| `continue_watching_dismissals` | Per-user tiles hidden from Continue Watching / Next Up until newer activity |
 | `hub_recently_added` | Materialized recently-added cache; refreshed by background worker |
 | `webhook_endpoints` | Outbound webhook URLs; AES-256-GCM encrypted secrets |
 | `webhook_failures` | Dead-letter for failed webhook deliveries |
@@ -435,11 +437,15 @@ PUT /items/{id}/progress  {view_offset_ms, duration_ms, state: "playing"|"paused
   - state != "stopped":
       SessionStore.UpdatePositionByMedia() → refresh position + LastActivityAt
 
-watch_state (materialized view):
-  - status = "watched"     if position_ms / duration_ms > 0.90
-  - status = "in_progress" if position_ms > 0 and not watched
+watch_progress (trigger-maintained on every watch_events INSERT) → user_watch_state (view):
+  - a manual mark (POST/DELETE /items/{id}/watched) overrides everything before it;
+    events after it derive normally
+  - status = "watched"     if marked watched, or any event since the mark passed 90% (sticky)
+  - status = "in_progress" if the latest event since the mark is partway through
   - status = "unwatched"   otherwise
-  - Used by GET /items/{id} to return view_offset_ms for resume
+  - resumable = latest event since the mark sits between 0 and 90% → Continue Watching
+  - Used by GET /items/{id} (view_offset_ms, watch_state), children, library grid,
+    Continue Watching / Next Up / Plan to Watch hub rows; marks never count as plays
 ```
 
 ---

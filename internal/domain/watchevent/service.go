@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/netip"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,16 +13,22 @@ import (
 	"github.com/onscreen/onscreen/internal/observability"
 )
 
-// WatchState represents the derived playback state for a user+media pair.
+// WatchState represents the derived playback state for a user+media pair,
+// read from the user_watch_state view (migration 00023) — the one derivation
+// every surface shares, manual played/unplayed marks included.
 // LastClient fields carry the most-recent device's attribution so resume
 // UX can say "pick up where you left off on Living Room TV" rather than
 // just showing a bare position.
 type WatchState struct {
-	UserID         uuid.UUID
-	MediaID        uuid.UUID
-	PositionMS     int64
-	DurationMS     *int64
-	Status         string // "watched" | "in_progress" | "unwatched"
+	UserID     uuid.UUID
+	MediaID    uuid.UUID
+	PositionMS int64
+	DurationMS *int64
+	Status     string // "watched" | "in_progress" | "unwatched"
+	// Resumable reports that PositionMS is a mid-way resume point (0 < pos
+	// <= 90%) from activity since the latest manual mark. Independent of the
+	// sticky Status: rewatching a watched title is watched AND resumable.
+	Resumable      bool
 	LastWatchedAt  time.Time
 	LastClientID   *string
 	LastClientName *string
@@ -48,7 +53,6 @@ type RecordParams struct {
 // Querier defines the DB operations the service needs.
 type Querier interface {
 	InsertWatchEvent(ctx context.Context, p InsertWatchEventParams) (InsertWatchEventRow, error)
-	RefreshWatchState(ctx context.Context) error
 	GetWatchState(ctx context.Context, userID, mediaID uuid.UUID) (WatchState, error)
 	GetWatchStatesForItems(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) ([]WatchState, error)
 	ListWatchStateForUser(ctx context.Context, userID uuid.UUID) ([]WatchState, error)
@@ -84,33 +88,22 @@ type InsertWatchEventRow struct {
 type ScrobbleHook func(ctx context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, occurredAt time.Time)
 
 // Service implements watch event business logic.
+//
+// Derived state needs no upkeep here: a trigger on watch_events folds every
+// inserted event into the watch_progress rollup (migration 00023), so reads
+// see a play tick as soon as it commits. (The watch_state materialized view
+// and its debounced full-history refresh that this replaced are gone.)
 type Service struct {
 	rw       Querier
 	ro       Querier
 	logger   *slog.Logger
 	metrics  *observability.Metrics
 	scrobble ScrobbleHook
-
-	// refreshMu/refreshScheduled coalesce watch_state matview refreshes. A
-	// REFRESH ... CONCURRENTLY scans the whole watch_events history, so firing
-	// it per stop/scrobble made the cost of one playback completion O(total
-	// history) and let concurrent stops queue behind the exclusive refresh lock.
-	// See scheduleWatchStateRefresh.
-	refreshMu        sync.Mutex
-	refreshScheduled bool
-	refreshDebounce  time.Duration // defaults to watchStateRefreshDebounce; overridable in tests
 }
-
-// watchStateRefreshDebounce bounds how often the watch_state matview is rebuilt:
-// at most one refresh per window, fired within this delay of the first stop in a
-// burst. Short enough that continue-watching / recommendation rows (which read
-// the matview) stay fresh; long enough that a flurry of concurrent stops
-// collapses to a single full-history refresh instead of one each.
-const watchStateRefreshDebounce = 10 * time.Second
 
 // NewService constructs a watch event Service.
 func NewService(rw, ro Querier, logger *slog.Logger) *Service {
-	return &Service{rw: rw, ro: ro, logger: logger, refreshDebounce: watchStateRefreshDebounce}
+	return &Service{rw: rw, ro: ro, logger: logger}
 }
 
 // WithMetrics enables Prometheus instrumentation (watch events by type). nil is
@@ -127,8 +120,8 @@ func (s *Service) WithScrobbleHook(fn ScrobbleHook) *Service {
 	return s
 }
 
-// Record inserts a watch event. For stop and scrobble events it also
-// triggers an async materialized view refresh.
+// Record inserts a watch event. The watch_progress rollup (and so every
+// derived watch state) is updated by the database in the same statement.
 func (s *Service) Record(ctx context.Context, p RecordParams) error {
 	_, err := s.rw.InsertWatchEvent(ctx, InsertWatchEventParams{
 		UserID:     p.UserID,
@@ -165,43 +158,7 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 			s.scrobble(context.Background(), p.UserID, p.MediaID, p.PositionMS, p.DurationMS, at)
 		})
 	}
-
-	// Refresh watch_state after terminal events so continue-watching /
-	// recommendation rows reflect the updated status. Coalesced (not per-event):
-	// the refresh scans the whole history, so firing it for every stop scaled
-	// with total watch history and serialized concurrent stops behind the
-	// refresh lock.
-	if p.EventType == "stop" || p.EventType == "scrobble" {
-		s.scheduleWatchStateRefresh()
-	}
 	return nil
-}
-
-// scheduleWatchStateRefresh ensures a single watch_state refresh runs within
-// watchStateRefreshDebounce. If one is already pending, this is a no-op — the
-// pending refresh will pick up this event too (the matview reads live data when
-// it fires). This caps refreshes at ≤1 per window regardless of stop volume,
-// turning a per-completion O(history) cost into a per-window one.
-func (s *Service) scheduleWatchStateRefresh() {
-	s.refreshMu.Lock()
-	if s.refreshScheduled {
-		s.refreshMu.Unlock()
-		return
-	}
-	s.refreshScheduled = true
-	s.refreshMu.Unlock()
-
-	observability.SafeGo(s.logger, "watchevent.refresh-state", func() {
-		time.Sleep(s.refreshDebounce)
-		// Clear the flag before the refresh so a stop arriving during the
-		// (potentially slow) refresh re-arms and is captured by the next one.
-		s.refreshMu.Lock()
-		s.refreshScheduled = false
-		s.refreshMu.Unlock()
-		if err := s.rw.RefreshWatchState(context.Background()); err != nil {
-			s.logger.Warn("watch_state refresh failed", "err", err)
-		}
-	})
 }
 
 // GetState returns the current watch state for a user+media pair.

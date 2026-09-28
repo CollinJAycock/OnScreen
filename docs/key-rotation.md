@@ -18,6 +18,9 @@ tokens **and** it's the AES-256-GCM key for the secrets OnScreen stores at rest:
   They keep working — the read path passes an unprefixed value straight
   through — and a `rotate-key` run seals them, so rotation doubles as the
   one-time migration. There is no separate schema change to apply.
+- **notification agent credentials** (`notification_agents.secret` — Discord
+  webhook URLs, Telegram bot tokens, ntfy / Gotify tokens), also bound to the
+  row id.
 
 So you can't just swap `SECRET_KEY` and restart — the new key can't decrypt the
 old ciphertext, webhook delivery refuses to send unsigned, and 2FA logins break.

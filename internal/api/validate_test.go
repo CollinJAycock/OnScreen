@@ -66,6 +66,7 @@ func TestValidateLibraryAccess_CoversEveryFailOpenHandler(t *testing.T) {
 		{"people", Handlers{People: v1.NewPeopleHandler(nil, nil, nil)}},
 		{"subtitles", Handlers{Subtitles: v1.NewSubtitleHandler(nil, nil, nil)}},
 		{"trickplay", Handlers{Trickplay: v1.NewTrickplayHandler(nil, nil, nil)}},
+		{"watch_state", Handlers{WatchState: v1.NewWatchStateHandler(nil, nil, nil)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

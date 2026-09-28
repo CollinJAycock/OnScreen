@@ -8,12 +8,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
@@ -34,6 +37,24 @@ type fakeDB struct {
 	reqs     map[uuid.UUID]gen.MediaRequest
 
 	approveCalls []gen.ApproveMediaRequestParams
+
+	// now stamps created_at on inserted rows (the harness shares its clock
+	// with the service so quota windows line up).
+	now func() time.Time
+	// countErr fails CountRecentMediaRequestsForUser.
+	countErr error
+	// sinceSeen records the window start the service asked about.
+	sinceSeen []time.Time
+	// countPending is what CountMediaRequestsForUser (the flood cap) returns.
+	countPending int64
+	// createErr fails CreateMediaRequest (e.g. a unique violation from a
+	// concurrent duplicate insert).
+	createErr error
+
+	// owned is what ListOwnedEpisodeCountsByShowTMDB reports (seasons_test.go).
+	owned []gen.ListOwnedEpisodeCountsByShowTMDBRow
+	// libraryItems is what ListMediaItemsByTMDBIDs reports.
+	libraryItems []gen.ListMediaItemsByTMDBIDsRow
 }
 
 func newFakeDB() *fakeDB {
@@ -42,7 +63,39 @@ func newFakeDB() *fakeDB {
 		services: map[string]gen.ArrService{},
 		byID:     map[uuid.UUID]gen.ArrService{},
 		reqs:     map[uuid.UUID]gen.MediaRequest{},
+		now:      time.Now,
 	}
+}
+
+// seed stores a pre-existing request (e.g. an older one inside or outside the
+// quota window).
+func (f *fakeDB) seed(userID uuid.UUID, typ, status string, createdAt time.Time) gen.MediaRequest {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := gen.MediaRequest{
+		ID: uuid.New(), UserID: userID, Type: typ, TmdbID: int32(len(f.reqs) + 5000),
+		Title: "seed", Status: status, CreatedAt: pgtype.Timestamptz{Time: createdAt, Valid: true},
+	}
+	f.reqs[r.ID] = r
+	return r
+}
+
+// CountRecentMediaRequestsForUser mirrors the SQL: same user and type,
+// created strictly after since, not declined.
+func (f *fakeDB) CountRecentMediaRequestsForUser(_ context.Context, p gen.CountRecentMediaRequestsForUserParams) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.sinceSeen = append(f.sinceSeen, p.Since.Time)
+	if f.countErr != nil {
+		return 0, f.countErr
+	}
+	var n int64
+	for _, r := range f.reqs {
+		if r.UserID == p.UserID && r.Type == p.Type && r.CreatedAt.Time.After(p.Since.Time) && r.Status != StatusDeclined {
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (f *fakeDB) addService(svc gen.ArrService) {
@@ -77,6 +130,9 @@ func (f *fakeDB) GetUserRequestPermissions(_ context.Context, id uuid.UUID) (gen
 func (f *fakeDB) CreateMediaRequest(_ context.Context, p gen.CreateMediaRequestParams) (gen.MediaRequest, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.createErr != nil {
+		return gen.MediaRequest{}, f.createErr
+	}
 	r := gen.MediaRequest{
 		ID:                 uuid.New(),
 		UserID:             p.UserID,
@@ -89,6 +145,7 @@ func (f *fakeDB) CreateMediaRequest(_ context.Context, p gen.CreateMediaRequestP
 		RequestedServiceID: p.RequestedServiceID,
 		QualityProfileID:   p.QualityProfileID,
 		RootFolder:         p.RootFolder,
+		CreatedAt:          pgtype.Timestamptz{Time: f.now(), Valid: true},
 	}
 	f.reqs[r.ID] = r
 	return r, nil
@@ -104,24 +161,76 @@ func (f *fakeDB) GetMediaRequest(_ context.Context, id uuid.UUID) (gen.MediaRequ
 func (f *fakeDB) FindActiveRequestForUser(_ context.Context, _ gen.FindActiveRequestForUserParams) (gen.MediaRequest, error) {
 	return gen.MediaRequest{}, pgx.ErrNoRows
 }
-func (f *fakeDB) FindActiveRequestsForUserByTMDB(_ context.Context, _ gen.FindActiveRequestsForUserByTMDBParams) ([]gen.MediaRequest, error) {
-	return nil, nil
+
+// FindActiveRequestsForUserByTMDB mirrors the SQL: the user's pending /
+// approved / downloading requests whose tmdb_id is in the list.
+func (f *fakeDB) FindActiveRequestsForUserByTMDB(_ context.Context, p gen.FindActiveRequestsForUserByTMDBParams) ([]gen.MediaRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []gen.MediaRequest
+	for _, r := range f.reqs {
+		if r.UserID != p.UserID || (r.Status != StatusPending && r.Status != StatusApproved && r.Status != StatusDownloading) {
+			continue
+		}
+		for _, id := range p.TmdbIds {
+			if r.TmdbID == id {
+				out = append(out, r)
+			}
+		}
+	}
+	return out, nil
 }
 func (f *fakeDB) ListMediaRequestsForUser(_ context.Context, _ gen.ListMediaRequestsForUserParams) ([]gen.MediaRequest, error) {
 	return nil, nil
 }
 func (f *fakeDB) CountMediaRequestsForUser(_ context.Context, _ gen.CountMediaRequestsForUserParams) (int64, error) {
-	return 0, nil
+	return f.countPending, nil
 }
-func (f *fakeDB) ListAllMediaRequests(_ context.Context, _ gen.ListAllMediaRequestsParams) ([]gen.MediaRequest, error) {
-	return nil, nil
+func (f *fakeDB) ListAllMediaRequests(_ context.Context, p gen.ListAllMediaRequestsParams) ([]gen.MediaRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []gen.MediaRequest
+	for _, r := range f.reqs {
+		if p.Status == nil || r.Status == *p.Status {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
-func (f *fakeDB) CountAllMediaRequests(_ context.Context, _ *string) (int64, error) { return 0, nil }
-func (f *fakeDB) ListActiveMediaRequestsForTMDB(_ context.Context, _ gen.ListActiveMediaRequestsForTMDBParams) ([]gen.MediaRequest, error) {
-	return nil, nil
+func (f *fakeDB) CountAllMediaRequests(_ context.Context, status *string) (int64, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var n int64
+	for _, r := range f.reqs {
+		if status == nil || r.Status == *status {
+			n++
+		}
+	}
+	return n, nil
 }
-func (f *fakeDB) ListMediaItemsByTMDBIDs(_ context.Context, _ gen.ListMediaItemsByTMDBIDsParams) ([]gen.ListMediaItemsByTMDBIDsRow, error) {
-	return nil, nil
+func (f *fakeDB) ListActiveMediaRequestsForTMDB(_ context.Context, p gen.ListActiveMediaRequestsForTMDBParams) ([]gen.MediaRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []gen.MediaRequest
+	for _, r := range f.reqs {
+		if r.Type == p.Type && r.TmdbID == p.TmdbID && (r.Status == StatusApproved || r.Status == StatusDownloading) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
+}
+func (f *fakeDB) ListMediaItemsByTMDBIDs(_ context.Context, p gen.ListMediaItemsByTMDBIDsParams) ([]gen.ListMediaItemsByTMDBIDsRow, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []gen.ListMediaItemsByTMDBIDsRow
+	for _, row := range f.libraryItems {
+		for _, id := range p.TmdbIds {
+			if row.TmdbID != nil && *row.TmdbID == id {
+				out = append(out, row)
+			}
+		}
+	}
+	return out, nil
 }
 func (f *fakeDB) ApproveMediaRequest(_ context.Context, p gen.ApproveMediaRequestParams) (gen.MediaRequest, error) {
 	f.mu.Lock()
@@ -139,8 +248,17 @@ func (f *fakeDB) ApproveMediaRequest(_ context.Context, p gen.ApproveMediaReques
 	f.reqs[r.ID] = r
 	return r, nil
 }
-func (f *fakeDB) DeclineMediaRequest(_ context.Context, _ gen.DeclineMediaRequestParams) (gen.MediaRequest, error) {
-	return gen.MediaRequest{}, pgx.ErrNoRows
+func (f *fakeDB) DeclineMediaRequest(_ context.Context, p gen.DeclineMediaRequestParams) (gen.MediaRequest, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.reqs[p.ID]
+	if !ok || r.Status != StatusPending {
+		return gen.MediaRequest{}, pgx.ErrNoRows
+	}
+	r.Status = StatusDeclined
+	r.DeclineReason = p.DeclineReason
+	f.reqs[r.ID] = r
+	return r, nil
 }
 func (f *fakeDB) MarkMediaRequestDownloading(_ context.Context, id uuid.UUID) error {
 	f.mu.Lock()
@@ -151,7 +269,14 @@ func (f *fakeDB) MarkMediaRequestDownloading(_ context.Context, id uuid.UUID) er
 	}
 	return nil
 }
-func (f *fakeDB) MarkMediaRequestAvailable(_ context.Context, _ gen.MarkMediaRequestAvailableParams) error {
+func (f *fakeDB) MarkMediaRequestAvailable(_ context.Context, p gen.MarkMediaRequestAvailableParams) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r, ok := f.reqs[p.ID]; ok && (r.Status == StatusApproved || r.Status == StatusDownloading) {
+		r.Status = StatusAvailable
+		r.FulfilledItemID = p.FulfilledItemID
+		f.reqs[p.ID] = r
+	}
 	return nil
 }
 func (f *fakeDB) MarkMediaRequestFailed(_ context.Context, _ uuid.UUID) error { return nil }
@@ -177,12 +302,25 @@ type notice struct{ typ, title, body string }
 type fakeNotifier struct {
 	mu   sync.Mutex
 	sent []notice
+	// to / items parallel sent: the recipient and item of each notice.
+	to    []uuid.UUID
+	items []*uuid.UUID
+	// adminSent collects NotifyAdmins calls.
+	adminSent []notice
 }
 
-func (n *fakeNotifier) Notify(_ context.Context, _ uuid.UUID, typ, title, body string, _ *uuid.UUID) {
+func (n *fakeNotifier) Notify(_ context.Context, userID uuid.UUID, typ, title, body string, itemID *uuid.UUID) {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	n.sent = append(n.sent, notice{typ, title, body})
+	n.to = append(n.to, userID)
+	n.items = append(n.items, itemID)
+}
+
+func (n *fakeNotifier) NotifyAdmins(_ context.Context, typ, title, body string, _ *uuid.UUID) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	n.adminSent = append(n.adminSent, notice{typ, title, body})
 }
 
 // fakeArr stands in for Radarr and Sonarr. fail makes every add return 500,
@@ -226,6 +364,10 @@ type harness struct {
 	db     *fakeDB
 	notify *fakeNotifier
 	arr    *fakeArr
+	// now is the fixed clock shared by the service and the fake DB.
+	now time.Time
+	// defaults is what the service's QuotaDefaultsFunc returns.
+	defaults QuotaDefaults
 }
 
 // newHarness wires a Service to the fakes with a default Radarr and Sonarr,
@@ -248,10 +390,23 @@ func newHarness(t *testing.T) *harness {
 	}
 	n := &fakeNotifier{}
 	svc := NewService(db, fakeTMDB{}, n, slog.New(slog.NewTextHandler(io.Discard, nil)))
-	return &harness{svc: svc, db: db, notify: n, arr: fa}
+	h := &harness{svc: svc, db: db, notify: n, arr: fa,
+		now: time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC)}
+	svc.now = func() time.Time { return h.now }
+	db.now = func() time.Time { return h.now }
+	svc.WithQuotaDefaults(func(context.Context) QuotaDefaults { return h.defaults })
+	return h
 }
 
+// user registers a requester with the given policy. can_request is forced on
+// (the column defaults true); use userRow for a blocked account.
 func (h *harness) user(p gen.GetUserRequestPermissionsRow) uuid.UUID {
+	p.CanRequest = true
+	return h.userRow(p)
+}
+
+// userRow registers a requester exactly as given.
+func (h *harness) userRow(p gen.GetUserRequestPermissionsRow) uuid.UUID {
 	id := uuid.New()
 	h.db.perms[id] = p
 	return id
@@ -485,5 +640,258 @@ func TestApprove_ManualRecordsAdminNotAuto(t *testing.T) {
 	last := h.notify.sent[len(h.notify.sent)-1]
 	if last.body != `"Heat" is being downloaded.` {
 		t.Errorf("manual approval notice = %q, want the unchanged text", last.body)
+	}
+}
+
+// ── movie already in Radarr ─────────────────────────────────────────────────
+
+// radarrMovieExistsBody is what Radarr really answers (400) when asked to add
+// a movie already in its library.
+const radarrMovieExistsBody = `[{"propertyName":"TmdbId","errorMessage":"This movie has already been added",
+  "attemptedValue":949,"severity":"error","errorCode":"MovieExistsValidator",
+  "formattedMessagePlaceholderValues":{"propertyName":"Tmdb Id","propertyValue":949}}]`
+
+// movieRadarr is a fake Radarr for the movie add path. With exists set it
+// already manages Heat (movie 7): the tmdbId listing returns it (with raced,
+// only once an add was attempted — another add won the race) and an add is
+// refused with addStatus / addBody (default: Radarr's real 400 answer).
+type movieRadarr struct {
+	mu          sync.Mutex
+	exists      bool
+	raced       bool
+	addStatus   int
+	addBody     string
+	movie       string // GET /api/v3/movie/7 body
+	addAttempts int
+	put         map[string]any
+	commands    []map[string]any
+}
+
+func (a *movieRadarr) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	raw, _ := io.ReadAll(r.Body)
+	w.Header().Set("Content-Type", "application/json")
+	switch {
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie" && r.URL.Query().Get("tmdbId") == "949":
+		if a.exists && (!a.raced || a.addAttempts > 0) {
+			_, _ = io.WriteString(w, `[{"id":7,"tmdbId":949,"title":"Heat"}]`)
+			return
+		}
+		_, _ = io.WriteString(w, `[]`)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie/lookup":
+		_, _ = io.WriteString(w, `[{"title":"Heat","tmdbId":949,"year":1995,"titleSlug":"heat-949"}]`)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v3/movie":
+		a.addAttempts++
+		if a.exists {
+			status, body := a.addStatus, a.addBody
+			if status == 0 {
+				status, body = http.StatusBadRequest, radarrMovieExistsBody
+			}
+			w.WriteHeader(status)
+			_, _ = io.WriteString(w, body)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"id":77,"title":"Heat"}`)
+	case r.Method == http.MethodGet && r.URL.Path == "/api/v3/movie/7":
+		_, _ = io.WriteString(w, a.movie)
+	case r.Method == http.MethodPut && r.URL.Path == "/api/v3/movie/7":
+		_ = json.Unmarshal(raw, &a.put)
+		_, _ = w.Write(raw)
+	case r.Method == http.MethodPost && r.URL.Path == "/api/v3/command":
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
+		a.commands = append(a.commands, body)
+		_, _ = io.WriteString(w, `{"id":5}`)
+	default:
+		http.NotFound(w, r)
+	}
+}
+
+func pointRadarrAt(t *testing.T, h *harness, handler http.Handler) {
+	t.Helper()
+	srv := httptest.NewServer(handler)
+	t.Cleanup(srv.Close)
+	svc := h.db.services["radarr"]
+	svc.BaseUrl = srv.URL
+	h.db.addService(svc)
+}
+
+// approveMovie creates a (queued) request for Heat and approves it.
+func approveMovie(t *testing.T, h *harness, uid uuid.UUID) (gen.MediaRequest, error) {
+	t.Helper()
+	req, err := h.svc.Create(context.Background(), CreateInput{UserID: uid, Type: TypeMovie, TMDBID: 949})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return h.svc.Approve(context.Background(), ApproveInput{RequestID: req.ID, AdminID: uuid.New()})
+}
+
+var moviesSearch7 = []map[string]any{{"name": "MoviesSearch", "movieIds": []any{float64(7)}}}
+
+// A movie Radarr already has isn't re-added (Radarr would refuse it): it is
+// switched to monitored — the rest of the movie sent back untouched — and
+// searched, and the request is approved and linked to it.
+func TestApprove_ExistingMovieMonitoredAndSearched(t *testing.T) {
+	h := newHarness(t)
+	fr := &movieRadarr{exists: true, movie: `{"id":7,"tmdbId":949,"title":"Heat","monitored":false,"hasFile":false,
+	  "path":"/movies/Heat (1995)","qualityProfileId":9,"tags":[3]}`}
+	pointRadarrAt(t, h, fr)
+
+	got, err := approveMovie(t, h, h.user(gen.GetUserRequestPermissionsRow{}))
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if got.Status != StatusDownloading || got.ArrItemID == nil || *got.ArrItemID != 7 {
+		t.Fatalf("status = %q arr item = %v, want downloading linked to movie 7", got.Status, got.ArrItemID)
+	}
+	if fr.addAttempts != 0 {
+		t.Errorf("add attempts = %d; a movie Radarr already has must not be re-added", fr.addAttempts)
+	}
+	if fr.put == nil || fr.put["monitored"] != true {
+		t.Fatalf("PUT = %v, want the movie switched to monitored", fr.put)
+	}
+	if fr.put["path"] != "/movies/Heat (1995)" || fr.put["qualityProfileId"] != float64(9) || fr.put["title"] != "Heat" {
+		t.Errorf("PUT lost movie fields: %v", fr.put)
+	}
+	if !reflect.DeepEqual(fr.commands, moviesSearch7) {
+		t.Errorf("commands = %v, want %v", fr.commands, moviesSearch7)
+	}
+}
+
+// Re-requesting a movie whose download failed: Radarr still has it, monitored
+// and missing. The new request is approved (no add, no PUT) and a search sent.
+func TestApprove_ReRequestAfterFailureSearchesExistingMovie(t *testing.T) {
+	h := newHarness(t)
+	fr := &movieRadarr{exists: true, movie: `{"id":7,"tmdbId":949,"title":"Heat","monitored":true,"hasFile":false}`}
+	pointRadarrAt(t, h, fr)
+	uid := h.user(gen.GetUserRequestPermissionsRow{})
+	old := h.db.seed(uid, TypeMovie, StatusFailed, h.now.Add(-24*time.Hour))
+	old.TmdbID = 949
+	h.db.reqs[old.ID] = old
+
+	got, err := approveMovie(t, h, uid)
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if got.Status != StatusDownloading || got.ArrItemID == nil || *got.ArrItemID != 7 {
+		t.Fatalf("status = %q arr item = %v, want downloading linked to movie 7", got.Status, got.ArrItemID)
+	}
+	if fr.addAttempts != 0 || fr.put != nil {
+		t.Errorf("add attempts = %d, PUT = %v; want neither for a monitored movie", fr.addAttempts, fr.put)
+	}
+	if !reflect.DeepEqual(fr.commands, moviesSearch7) {
+		t.Errorf("commands = %v, want %v", fr.commands, moviesSearch7)
+	}
+}
+
+// With the file already in Radarr a search could only grab an upgrade: the
+// request is approved and linked, nothing searched.
+func TestApprove_ExistingMovieWithFileNotSearched(t *testing.T) {
+	h := newHarness(t)
+	fr := &movieRadarr{exists: true, movie: `{"id":7,"tmdbId":949,"title":"Heat","monitored":true,"hasFile":true}`}
+	pointRadarrAt(t, h, fr)
+	got, err := approveMovie(t, h, h.user(gen.GetUserRequestPermissionsRow{}))
+	if err != nil {
+		t.Fatalf("Approve: %v", err)
+	}
+	if got.ArrItemID == nil || *got.ArrItemID != 7 {
+		t.Errorf("arr item = %v, want 7", got.ArrItemID)
+	}
+	if fr.addAttempts != 0 || fr.put != nil || len(fr.commands) != 0 {
+		t.Errorf("adds=%d put=%v commands=%v, want nothing sent", fr.addAttempts, fr.put, fr.commands)
+	}
+}
+
+// The existence check can miss the movie (another add won the race); Radarr
+// then refuses the add — its real 400 MovieExistsValidator answer, or a 409 —
+// and the request switches to the existing movie instead of failing.
+func TestApprove_ExistingMovieAddRefused(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{"400 MovieExistsValidator", http.StatusBadRequest, radarrMovieExistsBody},
+		{"409", http.StatusConflict, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			fr := &movieRadarr{exists: true, raced: true, addStatus: tc.status, addBody: tc.body,
+				movie: `{"id":7,"tmdbId":949,"title":"Heat","monitored":false,"hasFile":false}`}
+			pointRadarrAt(t, h, fr)
+			got, err := approveMovie(t, h, h.user(gen.GetUserRequestPermissionsRow{}))
+			if err != nil {
+				t.Fatalf("Approve: %v", err)
+			}
+			if fr.addAttempts != 1 {
+				t.Errorf("add attempts = %d, want 1", fr.addAttempts)
+			}
+			if got.Status != StatusDownloading || got.ArrItemID == nil || *got.ArrItemID != 7 {
+				t.Fatalf("status = %q arr item = %v, want downloading linked to movie 7", got.Status, got.ArrItemID)
+			}
+			if fr.put == nil || fr.put["monitored"] != true || !reflect.DeepEqual(fr.commands, moviesSearch7) {
+				t.Errorf("PUT = %v commands = %v, want monitored + MoviesSearch", fr.put, fr.commands)
+			}
+		})
+	}
+}
+
+// Any other 400 from the add is still a rejected add: the request stays
+// pending for an admin.
+func TestApprove_MovieAddValidationErrorStaysPending(t *testing.T) {
+	h := newHarness(t)
+	fr := &movieRadarr{}
+	pointRadarrAt(t, h, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/v3/movie" {
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = io.WriteString(w, `[{"propertyName":"RootFolderPath","errorMessage":"Folder is not writable","errorCode":"FolderWritableValidator"}]`)
+			return
+		}
+		fr.ServeHTTP(w, r)
+	}))
+	uid := h.user(gen.GetUserRequestPermissionsRow{})
+	req, err := h.svc.Create(context.Background(), CreateInput{UserID: uid, Type: TypeMovie, TMDBID: 949})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if _, err := h.svc.Approve(context.Background(), ApproveInput{RequestID: req.ID, AdminID: uuid.New()}); !errors.Is(err, ErrArrAddFailed) {
+		t.Fatalf("Approve err = %v, want ErrArrAddFailed", err)
+	}
+	if st := h.db.get(req.ID).Status; st != StatusPending {
+		t.Errorf("status = %q, want pending", st)
+	}
+}
+
+// ── concurrent duplicate create ─────────────────────────────────────────────
+
+// A double submit / retry can pass the read-then-insert duplicate check
+// together; the loser's insert hits a unique index (migration 00028 covers
+// identical season sets too) and must read as "already requested", not as a
+// server error — and send no notices.
+func TestCreate_UniqueViolationIsAlreadyRequested(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		typ     string
+		seasons []int
+		want    error
+	}{
+		{"movie", TypeMovie, nil, ErrAlreadyRequested},
+		{"all-seasons show", TypeShow, nil, ErrAlreadyRequested},
+		{"same season set", TypeShow, []int{1, 2}, ErrSeasonsAlreadyRequested},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newHarness(t)
+			h.db.createErr = &pgconn.PgError{Code: "23505", ConstraintName: "media_requests_unique_active_seasons"}
+			uid := h.user(gen.GetUserRequestPermissionsRow{IsAdmin: true})
+			_, err := h.svc.Create(context.Background(), CreateInput{UserID: uid, Type: tc.typ, TMDBID: 1399, Seasons: tc.seasons})
+			if !errors.Is(err, tc.want) || !errors.Is(err, ErrAlreadyRequested) {
+				t.Fatalf("err = %v, want %v", err, tc.want)
+			}
+			if len(h.notify.sent)+len(h.notify.adminSent) != 0 || h.arr.calls != 0 {
+				t.Errorf("notices %v / %v, arr calls %d; a refused duplicate sends nothing", h.notify.sent, h.notify.adminSent, h.arr.calls)
+			}
+		})
 	}
 }

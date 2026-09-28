@@ -2,7 +2,15 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { audio, currentTrack, nextTrack, type AudioTrack } from '$lib/stores/audio';
-  import { itemApi, getApiBase, getBearerToken, assetUrl } from '$lib/api';
+  import { itemApi, getApiBase, getBearerToken, assetUrl, getClientName } from '$lib/api';
+  import { playbackStops } from '$lib/stores/notifications';
+  import { toast } from '$lib/stores/toast';
+  import {
+    adminStopText,
+    isPlaybackStoppedError,
+    isStopForPlayer,
+    probePlaybackStopped,
+  } from '$lib/playback-stop';
   import {
     isTauri,
     audioPlayUrl,
@@ -24,6 +32,16 @@
     type ReplayGainMode,
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
+  import { replayGainSettings, setReplayGainMode, setReplayGainPreamp } from '$lib/stores/replayGain';
+  import {
+    replayGainFromFile,
+    replayGainLinear,
+    selectReplayGain,
+    PREAMP_MIN_DB,
+    PREAMP_MAX_DB,
+    type ReplayGainInfo,
+  } from '$lib/replaygain';
+  import { MediaGainRouter, webAudioSupported } from '$lib/webAudioGain';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
   // `audioElB` swap roles every track: when one is "active" (playing
@@ -104,6 +122,164 @@
   // ticking without churning subscribers per frame.
   let nativePollHandle: ReturnType<typeof setInterval> | null = null;
 
+  // ── ReplayGain in the browser (Web Audio) ──────────────────────────
+  // Desktop builds apply ReplayGain inside the native engine (the
+  // replayGainSet* IPC in onMount) and never enter this path — rgRouter
+  // is null under Tauri. In a browser, each <audio> element is tapped
+  // into its own GainNode on one shared AudioContext ($lib/webAudioGain)
+  // — but only once the user has switched ReplayGain on. With it off
+  // (the default) nothing is tapped and playback is exactly as before.
+  let rgMode: ReplayGainMode = 'off';
+  let rgPreampDb = 0;
+  const unsubRg = replayGainSettings.subscribe((s) => {
+    rgMode = s.mode;
+    rgPreampDb = s.preampDb;
+  });
+  const rgRouter: MediaGainRouter | null =
+    typeof window !== 'undefined' && !isTauri() && webAudioSupported() ? new MediaGainRouter() : null;
+  // Why the Web Audio path gave up for this session ('' = it didn't).
+  let rgDisabledReason = '';
+  // Bumped when elements get tapped so the level block re-runs.
+  let rgGraphVersion = 0;
+  // fileId -> tags, for tracks queued without `replayGain` (the transfer
+  // receiver, older callers). Looked up via /items/{id} before the track
+  // starts — for the next track while the current one is still playing.
+  let rgCache = new Map<string, ReplayGainInfo>();
+  const rgLookups = new Map<string, Promise<void>>();
+  // fileId whose prerequisites (graph decision + tags) have resolved.
+  let rgReadyFor = '';
+  const rgPreparing = new Set<string>();
+  let rgMenuOpen = false;
+  let rgWrapEl: HTMLDivElement | null = null;
+  const RG_MODES: { value: ReplayGainMode; label: string }[] = [
+    { value: 'off', label: 'Off' },
+    { value: 'track', label: 'Track' },
+    { value: 'album', label: 'Album' },
+  ];
+
+  $: rgWanted = !!rgRouter && rgMode !== 'off' && rgDisabledReason === '';
+
+  function rgTagsFor(t: AudioTrack | null, cache: Map<string, ReplayGainInfo>): ReplayGainInfo | undefined {
+    if (!t) return undefined;
+    return t.replayGain ?? cache.get(t.fileId);
+  }
+
+  function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('timeout')), ms);
+      p.then(
+        (v) => { clearTimeout(timer); resolve(v); },
+        (e) => { clearTimeout(timer); reject(e); },
+      );
+    });
+  }
+
+  function lookupRg(t: AudioTrack): Promise<void> {
+    if (t.replayGain !== undefined || rgCache.has(t.fileId)) return Promise.resolve();
+    const fileId = t.fileId;
+    let p = rgLookups.get(fileId);
+    if (!p) {
+      p = (async () => {
+        let info: ReplayGainInfo = {};
+        try {
+          const detail = await withTimeout(itemApi.get(t.id), 2500);
+          const f = detail.files?.find((x) => x.id === fileId) ?? detail.files?.[0];
+          info = replayGainFromFile(f);
+        } catch {
+          // Lookup failed or timed out — play at unity rather than hold
+          // the track hostage to a slow metadata call.
+        }
+        rgCache.set(fileId, info);
+        rgCache = rgCache;
+        rgLookups.delete(fileId);
+      })();
+      rgLookups.set(fileId, p);
+    }
+    return p;
+  }
+
+  function rgBothRouted(): boolean {
+    return !!rgRouter && !!audioElA && !!audioElB && rgRouter.isRouted(audioElA) && rgRouter.isRouted(audioElB);
+  }
+
+  // Fast path so a gapless hand-off never waits a microtask: graph up and
+  // the next track's tags already fetched during preload.
+  function rgFastReady(t: AudioTrack | null, cache: Map<string, ReplayGainInfo>, _graph: number): boolean {
+    return !!t && !!rgRouter && rgRouter.running && rgBothRouted() && rgTagsFor(t, cache) !== undefined;
+  }
+
+  // Resolve everything the active track's gain depends on: whether the
+  // elements can be tapped at all (context running, media same-origin)
+  // and the track's tags. The play block holds el.play() until this lands
+  // so a track never starts at unity and jumps to its gain mid-note.
+  async function prepareRg(t: AudioTrack) {
+    const key = t.fileId;
+    if (!rgRouter || rgPreparing.has(key)) return;
+    rgPreparing.add(key);
+    try {
+      const [routeOk] = await Promise.all([
+        rgBothRouted() && rgRouter.running
+          ? Promise.resolve(true)
+          : rgRouter.canRoute(assetUrl(`/media/stream/${key}`)),
+        lookupRg(t),
+      ]);
+      if (routeOk && audioElA && audioElB && !rgBothRouted()) {
+        // Tap BOTH elements now, the preload one included, so a gapless
+        // hand-off never builds graph nodes at the track boundary. The
+        // initial gain is the element's current volume; applyLevels()
+        // below (same task) pins element.volume to 1 and sets the real
+        // gain, so an element that's already playing doesn't blip.
+        rgRouter.attach(audioElA, audioElA.volume);
+        rgRouter.attach(audioElB, audioElB.volume);
+        rgGraphVersion += 1;
+      }
+    } finally {
+      rgPreparing.delete(key);
+      rgDisabledReason = rgRouter.disabledReason;
+      applyLevels(activeIsA, volume, muted, rgMode, rgPreampDb, track, rgCache, rgGraphVersion);
+      if (track?.fileId === key) rgReadyFor = key;
+    }
+  }
+
+  // Unlock the AudioContext from real user gestures — the click that
+  // starts an album on another page arrives here first (capture phase),
+  // so the context is created inside the gesture the autoplay policy
+  // requires. No-op while ReplayGain is off.
+  function onRgGesture() {
+    if (rgRouter && rgMode !== 'off') rgRouter.unlock();
+  }
+
+  function chooseRgMode(m: ReplayGainMode) {
+    setReplayGainMode(m);
+    // This click is itself a gesture — start the graph now so the
+    // current track picks the gain up immediately.
+    if (m !== 'off') rgRouter?.unlock();
+  }
+
+  function onRgPreampInput(e: Event) {
+    const v = parseFloat((e.target as HTMLInputElement).value);
+    if (Number.isFinite(v)) setReplayGainPreamp(v);
+  }
+
+  function onRgWindowClick(e: MouseEvent) {
+    if (rgMenuOpen && rgWrapEl && !rgWrapEl.contains(e.target as Node)) rgMenuOpen = false;
+  }
+
+  function onRgKeydown(e: KeyboardEvent) {
+    if (rgMenuOpen && e.key === 'Escape') rgMenuOpen = false;
+  }
+
+  function fmtDb(db: number, digits = 1): string {
+    const s = Math.abs(db).toFixed(digits);
+    if (Number(s) === 0) return `${s} dB`;
+    return `${db > 0 ? '+' : '−'}${s} dB`;
+  }
+
+  // What the menu reports for the current track.
+  $: rgCurrentTags = rgTagsFor(track, rgCache);
+  $: rgCurrentSel = selectReplayGain(rgCurrentTags, rgMode);
+  $: rgAppliedDb = 20 * Math.log10(replayGainLinear(rgCurrentTags, rgMode, rgPreampDb));
+
   // Scrobble cadence — report `playing` every 10s so Continue Watching reflects
   // current position without flooding the API. Pause/stop are reported immediately.
   let lastReportedMS = 0;
@@ -172,10 +348,17 @@
         durationMs: t.durationMS ?? null,
       });
     }
+    // currentTrack is derived from the whole audio store, and Svelte treats
+    // objects as always-changed, so this callback also runs on every
+    // setPosition tick. Only a real track change may reset the 10 s progress
+    // throttle — resetting it per tick sent a 'playing' report ~4×/second.
+    const trackChanged = (prevTrack?.id ?? null) !== (t?.id ?? null);
     prevTrack = t;
     track = t;
-    lastReportedMS = 0;
-    lastReportedID = '';
+    if (trackChanged) {
+      lastReportedMS = 0;
+      lastReportedID = '';
+    }
   });
   const unsubN = nextTrack.subscribe((n) => {
     upcoming = n;
@@ -183,11 +366,44 @@
 
   async function report(state: 'playing' | 'paused' | 'stopped') {
     if (!track) return;
+    const t = track;
     try {
-      await itemApi.progress(track.id, positionMS, durationMS || (track.durationMS ?? 0), state);
+      await itemApi.progress(t.id, positionMS, durationMS || (t.durationMS ?? 0), state);
       lastReportedMS = positionMS;
-      lastReportedID = track.id;
-    } catch { /* offline — drop the event */ }
+      lastReportedID = t.id;
+    } catch (e) {
+      // An admin stopped this stream and the playback.stop event didn't reach
+      // us (SSE down, another tab): the server refuses the 'playing' beat
+      // with 403 PLAYBACK_STOPPED. Anything else is offline — drop the event.
+      if (isPlaybackStoppedError(e) && track === t) handleAdminStop(e.message);
+    }
+  }
+
+  // Admin "stop this stream" (Now Playing → Stop) for music. The same user's
+  // playback.stop SSE event reaches every open player, so only stop when it
+  // targets this track (and this client, when the event names one). The
+  // store replays its last value on subscribe; skip that so an old stop
+  // can't end a fresh listen.
+  let playbackStopsPrimed = false;
+  const unsubStop = playbackStops.subscribe((evt) => {
+    if (!playbackStopsPrimed || !evt || !track) return;
+    if (!isStopForPlayer(evt, { itemId: track.id, sessionId: null, clientName: getClientName() })) return;
+    handleAdminStop(adminStopText(evt.message));
+  });
+  playbackStopsPrimed = true;
+
+  // Stop music because an admin stopped it: halt the element now, drop the
+  // queue (the track-change subscriber reports the cut-off position as
+  // 'stopped', which the server never refuses) — NOT skip to the next track —
+  // and tell the listener why, in a toast since the player bar goes away.
+  // Idempotent: the SSE event, a refused beat and a refused range request can
+  // all land for one stop.
+  function handleAdminStop(text: string) {
+    if (!track) return;
+    stopNativePolling();
+    if (audioElA && audioElB && !activeEl().paused) activeEl().pause();
+    audio.clear();
+    toast.info(text, 15000);
   }
 
   // OS media-key listener handle. Registered on mount, torn down
@@ -222,6 +438,12 @@
       void audioSetExclusiveMode(true);
     }
 
+    if (rgRouter) {
+      window.addEventListener('pointerdown', onRgGesture, true);
+      window.addEventListener('keydown', onRgGesture, true);
+      window.addEventListener('click', onRgGesture, true);
+    }
+
     // Wire OS media keys → audio store. The Rust side registers the
     // shortcuts globally so they fire whether or not OnScreen is
     // focused. Guards against double-firing while no track is
@@ -248,7 +470,12 @@
   });
 
   onDestroy(() => {
-    unsubA(); unsubT(); unsubN(); unsubE();
+    unsubA(); unsubT(); unsubN(); unsubE(); unsubRg(); unsubStop();
+    if (rgRouter) {
+      window.removeEventListener('pointerdown', onRgGesture, true);
+      window.removeEventListener('keydown', onRgGesture, true);
+      window.removeEventListener('click', onRgGesture, true);
+    }
     if (nativePollHandle) clearInterval(nativePollHandle);
     if (mediaKeyUnlisten) mediaKeyUnlisten();
     // Stop the native engine on player destroy so it doesn't keep
@@ -487,6 +714,65 @@
     el.load();
   }
 
+  // ReplayGain prerequisites for the current track (browser + RG on only),
+  // and the next track's tags while this one is still playing so the
+  // gapless hand-off already knows its gain.
+  $: if (track && rgWanted && audioElA && audioElB) void prepareRg(track);
+  $: if (rgWanted && upcoming && upcoming.replayGain === undefined) void lookupRg(upcoming);
+  $: rgGate = rgWanted && !!track && rgReadyFor !== track.fileId && !rgFastReady(track, rgCache, rgGraphVersion);
+
+  // Output level per element: user volume/mute x ReplayGain.
+  //
+  // Untapped elements (ReplayGain off, Tauri, or the Web Audio path
+  // unavailable) keep the original behaviour: element.volume carries the
+  // user level on the active element, 0 on the preload one.
+  //
+  // Tapped elements pin element.volume to 1 and carry the whole level in
+  // their GainNode. The Web Audio spec says a tapped element's volume must
+  // still apply ahead of the tap, and Chrome and Firefox follow it — so
+  // slider-on-element.volume + ReplayGain-in-the-GainNode would work
+  // there, but it's two gain stages whose product depends on each engine
+  // getting that detail right, and iOS WebKit treats element.volume as
+  // read-only 1 (the slider would do nothing). One GainNode = one float
+  // multiply, identical on every engine; pinning element.volume to 1 means
+  // the slider can never be applied twice; mute is gain 0.
+  //
+  // activeIsA is passed directly (not via activeEl()) so Svelte's dep
+  // tracker re-runs this on a gapless swap — otherwise the old preload
+  // element would start the next track at volume 0. Declared BEFORE the
+  // play block so a track's gain is set before el.play() in the same
+  // flush: the new track's first samples already see it.
+  function applyLevels(
+    aIsActive: boolean,
+    vol: number,
+    isMuted: boolean,
+    mode: ReplayGainMode,
+    preampDb: number,
+    cur: AudioTrack | null,
+    cache: Map<string, ReplayGainInfo>,
+    _graph: number,
+  ) {
+    if (!audioElA || !audioElB) return;
+    const active = aIsActive ? audioElA : audioElB;
+    const preload = aIsActive ? audioElB : audioElA;
+    const level = isMuted ? 0 : vol;
+    for (const [el, isActive] of [[active, true], [preload, false]] as const) {
+      if (rgRouter?.isRouted(el)) {
+        el.volume = 1;
+        const rg = isActive ? replayGainLinear(rgTagsFor(cur, cache), mode, preampDb) : 0;
+        // Fade only when the element is audible right now; a paused
+        // element about to start must have its exact gain from sample 0.
+        rgRouter.setGain(el, isActive ? level * rg : 0, !el.paused);
+      } else {
+        el.volume = isActive ? level : 0;
+      }
+    }
+  }
+
+  $: if (audioElA && audioElB) {
+    applyLevels(activeIsA, volume, muted, rgMode, rgPreampDb, track, rgCache, rgGraphVersion);
+  }
+
   // Mirror playing flag to the element. Browser autoplay policies may reject;
   // catch and pause the store so the UI matches reality. Skipped when
   // native engine is active — its own pause/resume sync block above
@@ -494,21 +780,16 @@
   $: if (audioElA && audioElB && loadedSrc && !nativeActive()) {
     const el = activeEl();
     if (playing && el.paused) {
-      el.play().catch(() => audio.pause());
+      // rgGate holds the start until this track's ReplayGain is known
+      // (a few ms normally; bounded by the lookup/start timeouts). It is
+      // always false with ReplayGain off, so the default path is as before.
+      if (!rgGate) {
+        if (rgRouter?.isRouted(el)) rgRouter.resume();
+        el.play().catch(() => audio.pause());
+      }
     } else if (!playing && !el.paused) {
       el.pause();
     }
-  }
-
-  // activeIsA referenced directly (not via activeEl() helper) so Svelte's
-  // dep tracker re-runs this block on gapless swap. Without that, the
-  // element that was the silent preload buffer becomes active and plays
-  // the next track at volume=0.
-  $: if (audioElA && audioElB) {
-    const active = activeIsA ? audioElA : audioElB;
-    const preload = activeIsA ? audioElB : audioElA;
-    active.volume = muted ? 0 : volume;
-    preload.volume = 0;
   }
 
   // Mirror volume to the native engine so the slider works in Tauri
@@ -571,7 +852,19 @@
     audio.next();
   }
 
-  function onAudioError() {
+  async function onAudioError() {
+    // The element can't say why it failed. A stream refused after an admin
+    // stop (403 PLAYBACK_STOPPED on the range request) must end playback
+    // with the admin's message — skipping to the next track would just keep
+    // the music going — so ask the server before treating it as unplayable.
+    const t = track;
+    const src = loadedSrc;
+    const stopped = t && src ? await probePlaybackStopped(src) : null;
+    if (track !== t) return; // the listener moved on while we asked
+    if (stopped !== null) {
+      handleAdminStop(stopped);
+      return;
+    }
     // Skip past unplayable files instead of getting stuck.
     audio.next();
   }
@@ -637,6 +930,8 @@
     persistVolume();
   }
 </script>
+
+<svelte:window on:click={onRgWindowClick} on:keydown={onRgKeydown} />
 
 <!-- Two audio elements rotated for gapless transitions. The "active"
      one (whichever activeIsA points at) carries the timeupdate /
@@ -759,6 +1054,64 @@
     </div>
 
     <div class="right">
+      {#if rgRouter}
+        <!-- Browser ReplayGain. Desktop builds configure the native
+             engine's ReplayGain on /native/audio instead. -->
+        <div class="rg-wrap" bind:this={rgWrapEl}>
+          <button
+            class="rg-btn"
+            class:on={rgMode !== 'off'}
+            on:click={() => (rgMenuOpen = !rgMenuOpen)}
+            title={rgMode === 'off' ? 'ReplayGain: off' : `ReplayGain: ${rgMode} mode`}
+            aria-label="ReplayGain settings"
+            aria-haspopup="dialog"
+            aria-expanded={rgMenuOpen}
+          >RG{#if rgMode !== 'off'}<span class="rg-btn-mode">{rgMode === 'track' ? 'T' : 'A'}</span>{/if}</button>
+          {#if rgMenuOpen}
+            <div class="rg-menu" role="dialog" aria-label="ReplayGain">
+              <div class="rg-head">ReplayGain</div>
+              <div class="rg-modes" role="radiogroup" aria-label="ReplayGain mode">
+                {#each RG_MODES as m (m.value)}
+                  <button
+                    class="rg-mode"
+                    class:active={rgMode === m.value}
+                    role="radio"
+                    aria-checked={rgMode === m.value}
+                    on:click={() => chooseRgMode(m.value)}
+                  >{m.label}</button>
+                {/each}
+              </div>
+              <label class="rg-preamp">
+                <span>Preamp</span>
+                <input
+                  type="range"
+                  min={PREAMP_MIN_DB}
+                  max={PREAMP_MAX_DB}
+                  step="0.5"
+                  value={rgPreampDb}
+                  disabled={rgMode === 'off'}
+                  on:input={onRgPreampInput}
+                  aria-label="ReplayGain preamp"
+                />
+                <span class="rg-db">{fmtDb(rgPreampDb)}</span>
+              </label>
+              {#if rgDisabledReason}
+                <p class="rg-note warn">Unavailable in this browser: {rgDisabledReason}.</p>
+              {:else if rgMode !== 'off' && rgCurrentTags !== undefined}
+                {#if rgCurrentSel}
+                  <p class="rg-note">
+                    This track: {fmtDb(rgAppliedDb, 2)}{#if rgMode === 'album' && rgCurrentTags.albumGain === undefined}
+                      (no album tag, using track){/if}
+                  </p>
+                {:else}
+                  <p class="rg-note">This track has no ReplayGain tags — playing at its native level.</p>
+                {/if}
+              {/if}
+              <a class="rg-link" href="/native/audio" on:click={() => (rgMenuOpen = false)}>Audio settings</a>
+            </div>
+          {/if}
+        </div>
+      {/if}
       <button class="vol-btn" on:click={toggleMute} aria-label={muted ? 'Unmute' : 'Mute'}>
         {#if muted || volume === 0}
           <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M6.717 3.55A.5.5 0 0 1 7 4v8a.5.5 0 0 1-.812.39L3.825 10.5H1.5A.5.5 0 0 1 1 10V6a.5.5 0 0 1 .5-.5h2.325l2.363-1.89a.5.5 0 0 1 .529-.06zm5.927.346a.5.5 0 0 1 .708 0L15 5.293l1.646-1.647a.5.5 0 0 1 .708.708L15.707 6l1.647 1.646a.5.5 0 0 1-.707.708L15 6.707l-1.646 1.647a.5.5 0 0 1-.708-.708L14.293 6l-1.647-1.646a.5.5 0 0 1 0-.708z"/></svg>
@@ -865,6 +1218,38 @@
     width: 10px; height: 10px; border-radius: 50%;
     background: var(--text-primary); cursor: pointer; border: 0;
   }
+
+  .rg-wrap { position: relative; display: inline-flex; }
+  .rg-btn {
+    background: none; border: 1px solid var(--border-strong); cursor: pointer;
+    color: var(--text-muted); border-radius: 4px; padding: 0.1rem 0.35rem;
+    font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em; line-height: 1.4;
+  }
+  .rg-btn:hover { color: var(--text-primary); }
+  .rg-btn.on { color: var(--accent); border-color: var(--accent); }
+  .rg-btn-mode { margin-left: 0.2rem; }
+  .rg-menu {
+    position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 60;
+    width: 240px; padding: 0.75rem;
+    background: var(--bg-elevated, var(--bg-secondary)); border: 1px solid var(--border);
+    border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.35);
+    display: flex; flex-direction: column; gap: 0.6rem;
+  }
+  .rg-head { font-size: 0.78rem; font-weight: 600; color: var(--text-primary); }
+  .rg-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.3rem; }
+  .rg-mode {
+    background: none; border: 1px solid var(--border); border-radius: 5px; cursor: pointer;
+    color: var(--text-secondary); font-size: 0.72rem; padding: 0.3rem 0;
+  }
+  .rg-mode:hover { border-color: var(--accent); }
+  .rg-mode.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .rg-preamp { display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; color: var(--text-muted); }
+  .rg-preamp input { flex: 1; min-width: 0; }
+  .rg-db { min-width: 3.6rem; text-align: right; font-variant-numeric: tabular-nums; }
+  .rg-note { margin: 0; font-size: 0.7rem; color: var(--text-muted); line-height: 1.35; }
+  .rg-note.warn { color: var(--warning, #f59e0b); }
+  .rg-link { font-size: 0.7rem; color: var(--text-secondary); text-decoration: none; align-self: flex-start; }
+  .rg-link:hover { color: var(--text-primary); text-decoration: underline; }
 
   .close-btn {
     background: none; border: 0; cursor: pointer;

@@ -67,6 +67,9 @@ func (h *NativeTranscodeHandler) startABR(
 	file *media.File, ladder []transcode.Rendition,
 	audioStreamIndex, audioChannels int, needsToneMap bool, codec string, positionMS int64,
 	maxSessionsPerUser int,
+	// decorate stamps display-only attribution (client IP, transcode
+	// reasons — see sessionPlaybackMeta) on the parent before it is stored.
+	decorate ...func(*transcode.Session),
 ) {
 	ctx := r.Context()
 	sess := transcode.Session{
@@ -110,6 +113,11 @@ func (h *NativeTranscodeHandler) startABR(
 	}
 	if file.FrameRate != nil {
 		sess.FrameRate = *file.FrameRate
+	}
+	for _, d := range decorate {
+		if d != nil {
+			d(&sess)
+		}
 	}
 	if h.audit != nil {
 		actor := userID

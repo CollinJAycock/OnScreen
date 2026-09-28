@@ -4,7 +4,7 @@ A modern, open-source media server. PostgreSQL-native. Single binary. Native cli
 
 ![OnScreen hub page](screenshots/hero.png)
 
-> **Status:** v2.4.0 release candidate — the release is prepped and awaiting the tag (v2.3.0 is the last tagged release; the [server-lock posture](docs/server-lock.md) was lifted after v2.3.0, so v2.4 lands coordinated breaking changes across the client fleet — one: the asset-token migration, called out in [CHANGELOG.md](CHANGELOG.md)). A private beta is running. Headline v2.4: a **multi-node transcode fleet** with cost-weighted, capability-aware dispatch (storage-less workers pull the source over HTTP); an **on-demand adaptive-bitrate HLS ladder** (H.264 / HEVC / AV1 rungs); **TOTP two-factor auth**; **capability-profile playback decisions** with runtime codec demotion; GPU HDR→SDR tonemap on every vendor family. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md); what's next in [docs/v2.5-roadmap.md](docs/v2.5-roadmap.md).
+> **Status:** v2.4.1 is the latest tagged release; v2.5 is in development on `main` (see the unreleased section of [CHANGELOG.md](CHANGELOG.md)). The [server-lock posture](docs/server-lock.md) was lifted after v2.3.0, so v2.4 landed coordinated breaking changes across the client fleet — one: the asset-token migration, called out in the CHANGELOG. A private beta is running. Headline v2.4: a **multi-node transcode fleet** with cost-weighted, capability-aware dispatch (storage-less workers pull the source over HTTP); an **on-demand adaptive-bitrate HLS ladder** (H.264 / HEVC / AV1 rungs); **TOTP two-factor auth**; **capability-profile playback decisions** with runtime codec demotion; GPU HDR→SDR tonemap on every vendor family. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md); what's next in [docs/v2.5-roadmap.md](docs/v2.5-roadmap.md).
 
 ## Why another media server?
 
@@ -38,9 +38,10 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - Movies, TV shows, **anime** (typed library with AniList primary metadata), music, photos, **audiobooks**, **books / comics** (CBZ + CBR + EPUB), **music videos**, **home videos**, podcasts (local files); all scanned with ffprobe / EXIF / tag readers
 - TMDB + TVDB + AniList + MusicBrainz metadata enrichment with Cover Art Archive fallback
 - Watching status (Plan to Watch / Watching / On Hold / Completed / Dropped) — generic, not anime-only — synced across every client
-- Audiophile-grade music: ID3/Vorbis/MP4 tag reading, MusicBrainz IDs, ReplayGain (track + album), bit depth, sample rate, channel layout, lossless detection
+- TMDB franchise collections, created automatically once two films of a collection are in the library; the collection page lists the missing films with a Request button
+- Audiophile-grade music: ID3/Vorbis/MP4 tag reading, MusicBrainz IDs, ReplayGain (track + album, applied by the web player and the desktop engine), bit depth, sample rate, channel layout, lossless detection
 - Audiobook hierarchy: `book_author → book_series → audiobook → audiobook_chapter` with multi-file resume snapping to chapter boundary
-- Photo libraries with EXIF (camera, lens, GPS, capture time), date-grouped browsing, EXIF search, map view, user-curated photo albums
+- Photo libraries with EXIF (camera, lens, GPS, capture time), date-grouped browsing, EXIF search, a map view (Android phone app), and a photo-album API (no client UI yet)
 - Home videos as a distinct type with on-disk metadata edits (rename file + stamp mtime so user titles travel across tools)
 - Two-pass admin dedupe for shows/movies (handles `"Title"` vs `"Title YYYY"`, apostrophes, `&` vs `and`, HTML entities, prefix-extension folder names)
 
@@ -54,11 +55,13 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - Subtitle OCR for image-based formats (PGS, VOBSUB, DVB) — ffmpeg + tesseract converts cues to WebVTT
 - OpenSubtitles search and download from inside the player; OCR'd and downloaded subs share one `external_subtitles` table
 - Per-session supersede — one stream per user/item; opening the same item on a phone stops the in-progress TV session
-- Trickplay seek-bar thumbnails generated from the source file
+- Trickplay seek-bar thumbnails, generated automatically after scans with a nightly backfill (per-library switch)
 - Intro / credits markers (auto + manual) with per-episode skip prompts
 - Chapter navigation (jump-to-chapter, next/prev buttons)
-- Continue Watching split into TV / Movies / Other rows; Recently Added per library; Trending row; smart playlists (rule-based, query-time eval)
-- Event-sourced watch state (immutable `watch_events` partitioned by month)
+- "Play on…" — send what you're watching in the web player to another of your devices
+- Home rows: Continue Watching split into TV / Movies / Other (titles can be removed), Next Up, Plan to Watch, Recently Added per library, Trending; smart playlists (rule-based, query-time eval)
+- Mark watched / unwatched on items, seasons and shows; watched badges, unwatched counts, a watch filter and "Surprise me" in library grids
+- Event-sourced watch state (immutable `watch_events` partitioned by month, rolled up per user and item by a trigger)
 
 **Native clients**
 - **Web** (SvelteKit) — touch-optimised player, bottom-sheet menus, orientation lock, safe-area insets
@@ -87,14 +90,16 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - **Pluggable media storage** — local disk by default, or S3-compatible object storage (S3 / MinIO / Backblaze B2 / Wasabi / Cloudflare R2) set live from the admin UI; every read **and** write path routes through it, with `SignedURL` CDN offload so cacheable bytes skip the app tier
 - **Optional HA across every tier** (all off by default): Valkey Sentinel, a multi-host Postgres failover DSN over streaming replication, **static-ABR** pre-encode of popular titles (served straight from the CDN, not the live fleet), and multi-site active/passive DR with per-site content addressing + a `/health/cluster` role/lag surface — see [docs/dr-runbook.md](docs/dr-runbook.md)
 - Webhooks with HMAC-SHA256 signing and retry (compatible with Overseerr/Tautulli receivers)
-- TMDB discover + request workflow inline in search — no Overseerr / Ombi / Jellyseerr companion needed
+- Notification agents — Discord, Telegram, ntfy, Gotify and email — for requests, reported problems, new content, failed tasks/backups and transcode-worker outages
+- TMDB discover + request workflow inline in search — no Overseerr / Ombi / Jellyseerr companion needed: per-user auto-approve and quotas, season-level TV requests, an approve dialog (instance / quality profile / root folder), live Radarr/Sonarr download status, and an Upcoming calendar
+- "Report a problem" for users, and an admin Library health page (open reports, integrity-probe results, unmatched / missing-art counts) with one-click Radarr/Sonarr re-grab
 - `/health/ready` gated on schema-vs-code parity — container stays unhealthy until `goose up` has run; optional `AUTO_MIGRATE=true` applies pending migrations on startup for single-container deploys with no separate migrate step
 - Backup/restore round-trip with schema-version gating (`409 DUMP_NEWER_THAN_SERVER` on a too-new dump; `pg_restore --clean --if-exists` + `goose up` on an older one)
 - Prometheus metrics on a separate port
 - OpenTelemetry tracing (OTLP/gRPC) — auto-instruments HTTP + Postgres; logs carry trace IDs
 - Admin logs API (in-process 2000-entry slog ring buffer) for environments without SSH/kubectl access
 - Audit log of admin / playback / auth events
-- Analytics dashboard (play counts, bandwidth, codec distribution, top played)
+- Analytics dashboard (play counts, bandwidth, codec distribution, top played) with Now Playing — user, device, LAN/remote, decision and transcode reasons — and an admin Stop for any stream
 
 ## Screenshots
 

@@ -149,6 +149,37 @@ func TestAddSeries_PostsRequest(t *testing.T) {
 	}
 }
 
+// Sonarr answers an add of a series already in its library with a 400
+// SeriesExistsValidator, not a 409.
+func TestAddSeries_AlreadyAddedIsErrConflict(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `[{"propertyName":"TvdbId","errorMessage":"This series has already been added",
+			"attemptedValue":371980,"severity":"error","errorCode":"SeriesExistsValidator",
+			"formattedMessagePlaceholderValues":{"propertyName":"Tvdb Id","propertyValue":371980}}]`)
+	}))
+	defer srv.Close()
+	_, err := newTestClient(srv, "k").AddSeries(context.Background(), AddSeriesRequest{TVDBID: 371980})
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("got %v, want ErrConflict", err)
+	}
+}
+
+// A lookup result for a series already in the library carries its id.
+func TestLookupSeries_DecodesLibraryID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `[{"id":42,"title":"Severance","tvdbId":371980,"year":2022}]`)
+	}))
+	defer srv.Close()
+	got, err := newTestClient(srv, "k").LookupSeriesByTVDB(context.Background(), 371980)
+	if err != nil {
+		t.Fatalf("LookupSeriesByTVDB: %v", err)
+	}
+	if got.ID != 42 {
+		t.Errorf("id = %d, want 42", got.ID)
+	}
+}
+
 func TestSonarrCalendar_QueryAndDecode(t *testing.T) {
 	// includeSeries=true is what makes the series block (title, path,
 	// certification, network, images) come back on every row.

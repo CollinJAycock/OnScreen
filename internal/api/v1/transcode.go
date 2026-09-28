@@ -93,6 +93,9 @@ type NativeTranscodeHandler struct {
 	// decisions remembers each created session's decision so the item's
 	// progress reports are attributed after the session is gone. Optional.
 	decisions *PlayDecisionRecorder
+	// stops refuses Start for a (user, item, client) an admin just stopped
+	// (WithPlaybackStops). Optional; nil blocks nothing.
+	stops *PlaybackStopGuard
 	// tokens mints the per-file stream token embedded in a job's SourceURL
 	// so a remote worker without shared storage can pull the source over
 	// HTTP. Optional — when nil, jobs carry no SourceURL and workers must
@@ -424,6 +427,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Admin-stop window: a remux / direct-stream client an admin just stopped
+	// must not spin up a replacement session (see playback_stop.go).
+	if playbackStopBlocks(w, r, h.stops, claims.UserID, itemID) {
+		return
+	}
+
 	// Select the file to transcode.
 	var file *media.File
 	if body.FileID != nil && *body.FileID != "" {
@@ -635,9 +644,11 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// Per-user bitrate cap: a direct-play (copy) whose source exceeds the ceiling
 	// is forced into a clamped transcode so a guest can't sail past their cap;
 	// transcodes are clamped to it below.
+	capForced := false
 	if streamCaps.BitrateKbps > 0 && body.VideoCopy && file.Bitrate != nil &&
 		int(*file.Bitrate/1000) > streamCaps.BitrateKbps {
 		body.VideoCopy = false
+		capForced = true
 	}
 
 	// Resolve the client's playback capabilities BEFORE quality selection: the
@@ -816,6 +827,21 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		sessionBitrate = int(*file.Bitrate / 1000)
 	}
 
+	// Now Playing attribution (display only): the viewer's address, why this
+	// isn't a direct play, and the output shape. See playback_reasons.go.
+	playMeta := sessionPlaybackMeta{
+		clientIP:      canonicalIP(audit.ClientIP(r)),
+		reasons:       startReasons(file, caps, decision, body.Height, sourceH, streamCaps.BitrateKbps, capForced),
+		outW:          width,
+		outH:          height,
+		audioCodec:    "aac",
+		audioChannels: audioChannels,
+	}
+	if audioCopy {
+		playMeta.audioCodec = "copy"
+		playMeta.audioChannels = transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx)
+	}
+
 	// ── Adaptive-bitrate ladder (on-demand) ───────────────────────────────
 	// When ABR is enabled and this is a full re-encode of a file with a
 	// known duration + resolution that yields more than one rung, serve a
@@ -883,7 +909,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap, abrMaxBitrate)
 		if len(ladder) > 1 {
-			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser)
+			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser, playMeta.apply)
 			// startABR answers the client itself; its parent session existing
 			// under sessionID is the success signal.
 			if h.decisions != nil {
@@ -911,6 +937,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		HEVCOutput:  sessVout.HEVC,
 		AV1Output:   sessVout.AV1,
 	}
+	playMeta.apply(&sess)
 	if h.audit != nil {
 		actor := claims.UserID
 		h.audit.Log(ctx, &actor, audit.ActionTranscodeStart, sessionID,
@@ -1226,6 +1253,14 @@ func (h *NativeTranscodeHandler) Stop(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.NoContent(w)
+}
+
+// TerminateSession tears sess down exactly as Stop does — kill ffmpeg (and
+// ABR rung children), revoke the segment token, delete the session, wipe its
+// directory. Used by the admin Now Playing stop (POST /sessions/{id}/stop),
+// which does its own authorization and audit logging.
+func (h *NativeTranscodeHandler) TerminateSession(ctx context.Context, sess *transcode.Session) {
+	h.tearDown(ctx, sess, "")
 }
 
 // tearDown executes the kill-revoke-delete-rmrf cleanup for a single

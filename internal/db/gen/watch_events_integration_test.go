@@ -36,10 +36,10 @@ func insertWatch(t *testing.T, q *gen.Queries, userID, mediaID uuid.UUID, eventT
 }
 
 // TestWatchEvents_Integration_StateReadsLatestEvent proves a stop
-// event surfaces immediately on the next GetWatchState — no
-// RefreshWatchState required, since GetWatchState reads
-// watch_events directly. This is the loop the resume button
-// depends on.
+// event surfaces immediately on the next GetWatchState — the
+// watch_progress rollup is maintained by a trigger in the same
+// statement as the insert, so there is nothing to refresh. This is
+// the loop the resume button depends on.
 func TestWatchEvents_Integration_StateReadsLatestEvent(t *testing.T) {
 	pool := testdb.New(t)
 	q := gen.New(pool)
@@ -138,7 +138,7 @@ func TestWatchEvents_Integration_GetMissingStateReturnsErrNoRows(t *testing.T) {
 }
 
 // TestWatchEvents_Integration_LatestEventWins proves a series of events
-// for the same item resolves to the latest position after refresh —
+// for the same item resolves to the latest position —
 // load-bearing for "I scrubbed forward then closed the tab; resume
 // should pick up where I scrubbed, not where I started."
 func TestWatchEvents_Integration_LatestEventWins(t *testing.T) {
@@ -155,10 +155,6 @@ func TestWatchEvents_Integration_LatestEventWins(t *testing.T) {
 	insertWatch(t, q, user, item, "scrobble", 30000, now.Add(-2*time.Minute))
 	insertWatch(t, q, user, item, "scrobble", 60000, now.Add(-1*time.Minute))
 	insertWatch(t, q, user, item, "stop", 90000, now)
-
-	if err := q.RefreshWatchState(ctx); err != nil {
-		t.Fatalf("RefreshWatchState: %v", err)
-	}
 
 	state, err := q.GetWatchState(ctx, gen.GetWatchStateParams{UserID: user, MediaID: item})
 	if err != nil {
@@ -290,8 +286,7 @@ func TestWatchEvents_Integration_PartitionRoutingByMonth(t *testing.T) {
 
 // TestWatchEvents_Integration_ListStateMultipleItems proves the
 // ListWatchStateForUser query returns one row per (user, media)
-// combination, sorted by recency. The hub's "Continue Watching" rail
-// reads this in lieu of the materialized view directly.
+// combination, sorted by recency.
 func TestWatchEvents_Integration_ListStateMultipleItems(t *testing.T) {
 	pool := testdb.New(t)
 	q := gen.New(pool)
@@ -305,10 +300,6 @@ func TestWatchEvents_Integration_ListStateMultipleItems(t *testing.T) {
 	now := time.Now()
 	insertWatch(t, q, user, itemA, "stop", 1000, now.Add(-5*time.Minute))
 	insertWatch(t, q, user, itemB, "stop", 2000, now)
-
-	if err := q.RefreshWatchState(ctx); err != nil {
-		t.Fatalf("RefreshWatchState: %v", err)
-	}
 
 	rows, err := q.ListWatchStateForUser(ctx, user)
 	if err != nil {

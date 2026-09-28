@@ -12,7 +12,6 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -53,9 +52,13 @@ type LibraryResponse struct {
 	// OIDC/SAML/LDAP JIT, admin Create) is automatically granted
 	// access. Only meaningful when IsPrivate=true; the frontend hides
 	// the toggle on public libraries since the grant is a no-op.
-	AutoGrantNewUsers bool   `json:"auto_grant_new_users"`
-	CreatedAt         string `json:"created_at"`
-	UpdatedAt         string `json:"updated_at"`
+	AutoGrantNewUsers bool `json:"auto_grant_new_users"`
+	// TrickplayEnabled: automatic seek-bar thumbnail generation after scans
+	// and in the nightly backfill. Additive (v2.5); on by default for new
+	// video libraries.
+	TrickplayEnabled bool   `json:"trickplay_enabled"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
 }
 
 // toLibraryResponse converts a domain Library into the API response.
@@ -71,6 +74,7 @@ func toLibraryResponse(lib *library.Library, includeScanPaths bool) LibraryRespo
 		Language:          lib.Lang,
 		IsPrivate:         lib.IsPrivate,
 		AutoGrantNewUsers: lib.AutoGrantNewUsers,
+		TrickplayEnabled:  lib.TrickplayEnabled,
 		CreatedAt:         lib.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         lib.UpdatedAt.Format(time.RFC3339),
 	}
@@ -124,6 +128,16 @@ type MediaItemResponse struct {
 	TakenAt   *time.Time `json:"taken_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt int64      `json:"updated_at"`
+	// The caller's watch state (see attachWatchState). WatchState and
+	// ViewOffsetMS are set on playable video leaves (movie, episode, music
+	// video, home video); ViewOffsetMS only when there is a resume point.
+	// LeafCount / UnwatchedCount are set on shows and seasons: episodes
+	// within the caller's rating ceiling, and how many of those are not
+	// watched. All omitted when the watch store is not wired.
+	WatchState     *string `json:"watch_state,omitempty"`
+	ViewOffsetMS   *int64  `json:"view_offset_ms,omitempty"`
+	LeafCount      *int64  `json:"leaf_count,omitempty"`
+	UnwatchedCount *int64  `json:"unwatched_count,omitempty"`
 }
 
 // LibraryServiceIface defines the domain operations the handler needs.
@@ -150,7 +164,8 @@ type LibraryHandler struct {
 	media    MediaItemLister // optional; enables GET /libraries/:id/items
 	detector IntroDetectorRunner
 	logger   *slog.Logger
-	audit    *audit.Logger // optional; nil disables admin-action audit logging
+	audit    *audit.Logger  // optional; nil disables admin-action audit logging
+	watchDB  LibraryWatchDB // optional; per-item watch fields + GET /libraries/:id/random (WithWatchState)
 }
 
 // NewLibraryHandler creates a LibraryHandler.
@@ -247,6 +262,8 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MetadataRefreshInterval time.Duration `json:"metadata_refresh_interval_ns"`
 		IsPrivate               bool          `json:"is_private"`
 		AutoGrantNewUsers       bool          `json:"auto_grant_new_users"`
+		// Omitted = per-type default (on for video libraries).
+		TrickplayEnabled *bool `json:"trickplay_enabled"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -287,6 +304,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		MetadataRefreshInterval: body.MetadataRefreshInterval,
 		IsPrivate:               body.IsPrivate,
 		AutoGrantNewUsers:       autoGrant,
+		TrickplayEnabled:        body.TrickplayEnabled,
 	})
 	if err != nil {
 		var ve *library.ValidationError
@@ -354,6 +372,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MetadataRefreshInterval *time.Duration `json:"metadata_refresh_interval_ns,omitempty"`
 		IsPrivate               *bool          `json:"is_private,omitempty"`
 		AutoGrantNewUsers       *bool          `json:"auto_grant_new_users,omitempty"`
+		TrickplayEnabled        *bool          `json:"trickplay_enabled,omitempty"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -424,6 +443,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		MetadataRefreshInterval: metadataInterval,
 		IsPrivate:               body.IsPrivate,
 		AutoGrantNewUsers:       body.AutoGrantNewUsers,
+		TrickplayEnabled:        body.TrickplayEnabled,
 	})
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
@@ -581,22 +601,7 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 
 	// Parse filter/sort params.
 	q := r.URL.Query()
-	fp := media.FilterParams{
-		Sort:    "title",
-		SortAsc: true,
-	}
-	if g := q.Get("genre"); g != "" {
-		fp.Genre = &g
-	}
-	if v, err := strconv.Atoi(q.Get("year_min")); err == nil {
-		fp.YearMin = &v
-	}
-	if v, err := strconv.Atoi(q.Get("year_max")); err == nil {
-		fp.YearMax = &v
-	}
-	if v, err := strconv.ParseFloat(q.Get("rating_min"), 64); err == nil {
-		fp.RatingMin = &v
-	}
+	fp := parseItemFilterParams(q)
 	if s := q.Get("sort"); s != "" {
 		fp.Sort = s
 	}
@@ -615,7 +620,16 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Sort != "title" || !fp.SortAsc
+	// ?watch= narrows to the caller's watch state, in SQL, so the page, sort,
+	// other filters and total stay consistent. Semantics: parseWatchFilter.
+	watch, ok := parseWatchFilter(q.Get("watch"))
+	if !ok {
+		respond.BadRequest(w, r, watchFilterError)
+		return
+	}
+	fp.Watch, fp.WatchUserID = watch, claims.UserID
+
+	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Sort != "title" || !fp.SortAsc || fp.Watch != ""
 
 	// `?type=` lets callers list a non-root item type within the library —
 	// e.g. ?type=music_video on a music library returns the videos that
@@ -668,6 +682,7 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 			UpdatedAt:     item.UpdatedAt.UnixMilli(),
 		}
 	}
+	h.attachWatchState(r.Context(), claims.UserID, fp.MaxRatingRank, items, out)
 	respond.List(w, r, out, total, "")
 }
 

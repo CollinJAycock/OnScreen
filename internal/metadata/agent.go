@@ -27,6 +27,13 @@ type MovieResult struct {
 	ReleaseDate   time.Time
 	PosterURL     string
 	FanartURL     string
+	// Collection is the TMDB collection (franchise) the movie belongs to.
+	// CollectionChecked says whether the answer is known: true when the
+	// result came from a movie-details payload, where a nil Collection is a
+	// definitive "belongs to none"; false for search-derived results, which
+	// never carry the field. See collection.go.
+	Collection        *CollectionRef
+	CollectionChecked bool
 }
 
 // TVShowResult holds TV show metadata returned by an agent.

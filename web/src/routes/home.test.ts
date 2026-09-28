@@ -10,6 +10,7 @@ const mockGetPreferences = vi.hoisted(() => vi.fn());
 const mockSetHubLayout = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
+const mockDismissCW = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/api', () => ({
@@ -20,6 +21,8 @@ vi.mock('$lib/api', () => ({
   },
   hubApi: { get: mockHubGet },
   userApi: { getPreferences: mockGetPreferences, setHubLayout: mockSetHubLayout },
+  itemApi: { dismissContinueWatching: mockDismissCW },
+  assetUrl: (p: string) => p,
 }));
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
@@ -271,5 +274,135 @@ describe('Libraries section in hub layout', () => {
     render(Page);
     await waitFor(() => expect(screen.getByText('Trending this week')).toBeTruthy());
     expect(screen.queryByText('New Library')).toBeNull();
+  });
+});
+
+describe('Next Up and Plan to Watch rows', () => {
+  beforeEach(() => {
+    localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'admin' }));
+    mockListLibraries.mockResolvedValue([]);
+  });
+
+  it('renders Next Up episode tiles with show title and S·E label, linking to playback', async () => {
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      next_up: [
+        { id: 'ep-25', title: 'The Wedding', show_title: 'Friends', type: 'episode',
+          season_number: 2, episode_number: 5, show_id: 'show-1', updated_at: 1 },
+      ],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Next Up')).toBeTruthy());
+    expect(screen.getByText('Friends')).toBeTruthy();
+    expect(screen.getByText('S2 · E5 — The Wedding')).toBeTruthy();
+    const link = screen.getByText('Friends').closest('a');
+    expect(link?.getAttribute('href')).toBe('/watch/ep-25');
+  });
+
+  it('renders Plan to Watch and hides both rows when empty', async () => {
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      next_up: [],
+      plan_to_watch: [{ id: 'm-1', title: 'Dune', type: 'movie', year: 2021, updated_at: 1 }],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Plan to Watch')).toBeTruthy());
+    expect(screen.getByText('Dune')).toBeTruthy();
+    expect(screen.queryByText('Next Up')).toBeNull();
+  });
+
+  it('tolerates a hub without the new rows', async () => {
+    mockHubGet.mockResolvedValue({ continue_watching: [], recently_added: [] });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Customize rows')).toBeTruthy());
+    expect(screen.queryByText('Next Up')).toBeNull();
+    expect(screen.queryByText('Plan to Watch')).toBeNull();
+  });
+
+  it('orders the new rows by the saved layout and lists them in the editor', async () => {
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      trending: [{ id: 't1', title: 'Trending Thing', updated_at: 1 }],
+      next_up: [{ id: 'e1', title: 'Ep', show_title: 'Show A', type: 'episode', season_number: 1, episode_number: 2, updated_at: 1 }],
+      plan_to_watch: [{ id: 'p1', title: 'Planned', type: 'movie', updated_at: 1 }],
+    });
+    mockGetPreferences.mockResolvedValue({
+      hub_layout: [
+        { key: 'plan_to_watch', enabled: true },
+        { key: 'trending', enabled: true },
+        { key: 'next_up', enabled: false },
+      ],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Plan to Watch')).toBeTruthy());
+    expect(screen.queryByText('Next Up')).toBeNull();
+    const titles = Array.from(document.querySelectorAll('.hub-title')).map((el) => el.textContent?.trim());
+    expect(titles.indexOf('Plan to Watch')).toBeLessThan(titles.indexOf('Trending this week'));
+
+    await fireEvent.click(screen.getByText('Customize rows'));
+    await waitFor(() => expect(screen.getByText('Hub rows')).toBeTruthy());
+    const names = Array.from(document.querySelectorAll('.edit-name')).map((el) => el.textContent?.trim() ?? '');
+    expect(names.some((n) => n.startsWith('Next Up'))).toBe(true);
+    expect(names.some((n) => n.startsWith('Plan to Watch'))).toBe(true);
+  });
+});
+
+describe('Continue Watching remove', () => {
+  const cw = [
+    { id: 'm-1', title: 'The Matrix', type: 'movie', view_offset_ms: 1000, duration_ms: 4000, updated_at: 1 },
+    { id: 'm-2', title: 'Heat', type: 'movie', view_offset_ms: 1000, duration_ms: 4000, updated_at: 1 },
+  ];
+
+  beforeEach(() => {
+    localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'admin' }));
+    mockListLibraries.mockResolvedValue([]);
+    mockHubGet.mockResolvedValue({
+      continue_watching: cw,
+      continue_watching_movies: cw,
+      continue_watching_tv: [],
+      continue_watching_other: [],
+      recently_added: [],
+    });
+  });
+
+  it('removes the tile at once and calls the API', async () => {
+    let resolve: () => void = () => {};
+    mockDismissCW.mockReturnValue(new Promise<void>((r) => { resolve = r; }));
+    render(Page);
+    const btn = await screen.findByRole('button', { name: 'Remove The Matrix from Continue Watching' });
+    await fireEvent.click(btn);
+    // Gone before the server answers.
+    await waitFor(() => expect(screen.queryByText('The Matrix')).toBeNull());
+    expect(mockDismissCW).toHaveBeenCalledWith('m-1');
+    expect(screen.getByText('Heat')).toBeTruthy();
+    resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByText('The Matrix')).toBeNull();
+    expect(mockToastError).not.toHaveBeenCalled();
+  });
+
+  it('puts the tile back in place when the call fails', async () => {
+    mockDismissCW.mockRejectedValue(new Error('boom'));
+    render(Page);
+    const btn = await screen.findByRole('button', { name: 'Remove The Matrix from Continue Watching' });
+    await fireEvent.click(btn);
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('boom'));
+    await waitFor(() => expect(screen.getByText('The Matrix')).toBeTruthy());
+    const labels = Array.from(document.querySelectorAll('.hub-label')).map((el) => el.textContent);
+    expect(labels).toEqual(['The Matrix', 'Heat']);
+  });
+
+  it('only continue rows get the remove button', async () => {
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      trending: [{ id: 't1', title: 'Trending Thing', updated_at: 1 }],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Trending Thing')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: /from Continue Watching/ })).toBeNull();
   });
 });

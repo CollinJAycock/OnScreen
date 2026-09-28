@@ -4,8 +4,10 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -40,16 +42,21 @@ func (h *RequestHandler) WithAudit(a *audit.Logger) *RequestHandler {
 // ── DTOs ──────────────────────────────────────────────────────────────────
 
 type requestDTO struct {
-	ID                 uuid.UUID  `json:"id"`
-	UserID             uuid.UUID  `json:"user_id"`
-	Type               string     `json:"type"`
-	TMDBID             int32      `json:"tmdb_id"`
-	Title              string     `json:"title"`
-	Year               *int32     `json:"year,omitempty"`
-	PosterURL          *string    `json:"poster_url,omitempty"`
-	Overview           *string    `json:"overview,omitempty"`
-	Status             string     `json:"status"`
-	Seasons            []int      `json:"seasons,omitempty"`
+	ID        uuid.UUID `json:"id"`
+	UserID    uuid.UUID `json:"user_id"`
+	Type      string    `json:"type"`
+	TMDBID    int32     `json:"tmdb_id"`
+	Title     string    `json:"title"`
+	Year      *int32    `json:"year,omitempty"`
+	PosterURL *string   `json:"poster_url,omitempty"`
+	Overview  *string   `json:"overview,omitempty"`
+	Status    string    `json:"status"`
+	Seasons   []int     `json:"seasons,omitempty"`
+	// SeasonsAvailable (show requests only) lists the requested seasons that
+	// are already complete in the library while the rest are still coming —
+	// "partially available" without a new status value. [] until the first
+	// season lands.
+	SeasonsAvailable   *[]int     `json:"seasons_available,omitempty"`
 	RequestedServiceID *uuid.UUID `json:"requested_service_id,omitempty"`
 	QualityProfileID   *int32     `json:"quality_profile_id,omitempty"`
 	RootFolder         *string    `json:"root_folder,omitempty"`
@@ -65,8 +72,77 @@ type requestDTO struct {
 	AutoApproved bool   `json:"auto_approved"`
 	CreatedAt    string `json:"created_at"`
 	UpdatedAt    string `json:"updated_at"`
+	// Username is the requester's name, on listings and single gets.
+	Username string `json:"username,omitempty"`
+	// Download is the live Radarr/Sonarr state the arr sync keeps for an
+	// in-flight request; absent until its first sync and once available.
+	Download *requestDownloadDTO `json:"download,omitempty"`
 }
 
+// requestDownloadDTO is the web client's RequestDownload.
+type requestDownloadDTO struct {
+	// State: searching | queued | downloading | import_pending | stalled | failed.
+	State string `json:"state"`
+	// Progress is the downloaded fraction, 0..1.
+	Progress  *float64 `json:"progress,omitempty"`
+	ETA       *string  `json:"eta,omitempty"`
+	SizeBytes *int64   `json:"size_bytes,omitempty"`
+	Message   string   `json:"message,omitempty"`
+	UpdatedAt string   `json:"updated_at"`
+}
+
+// toRequestDownloadDTO renders the download columns, nil when the request
+// has no download state.
+func toRequestDownloadDTO(req gen.MediaRequest) *requestDownloadDTO {
+	if req.DownloadState == nil || *req.DownloadState == "" {
+		return nil
+	}
+	d := &requestDownloadDTO{State: *req.DownloadState}
+	if req.DownloadProgress != nil {
+		// float32 in the column; round so 0.6 doesn't render as 0.6000000238.
+		p := math.Round(float64(*req.DownloadProgress)*10000) / 10000
+		d.Progress = &p
+	}
+	if req.DownloadEta.Valid {
+		t := req.DownloadEta.Time.UTC().Format(time.RFC3339)
+		d.ETA = &t
+	}
+	d.SizeBytes = req.DownloadSizeBytes
+	if req.DownloadMessage != nil {
+		d.Message = *req.DownloadMessage
+	}
+	updated := req.DownloadUpdatedAt
+	if !updated.Valid {
+		updated = req.UpdatedAt
+	}
+	d.UpdatedAt = updated.Time.UTC().Format(time.RFC3339)
+	return d
+}
+
+// userDownloadMessages replaces the reason on the states whose message can be
+// the *arr app's own text — a download client's error, an import path, a
+// release name — with a plain phrase for non-admin callers. That text can
+// name internal hosts and folders; the requester only needs the gist, and
+// admins see the detail. The other states only ever carry messages the sync
+// writes itself ("Waiting for release", "3 of 10 episodes downloaded").
+var userDownloadMessages = map[string]string{
+	requests.DownloadStalled: "The download needs attention — an admin has the details",
+	requests.DownloadFailed:  "The download failed — an admin has the details",
+}
+
+// toRequestDTOFor is toRequestDTO for a caller: non-admins get the redacted
+// download message.
+func toRequestDTOFor(req gen.MediaRequest, admin bool) requestDTO {
+	dto := toRequestDTO(req)
+	if !admin && dto.Download != nil {
+		if msg, ok := userDownloadMessages[dto.Download.State]; ok {
+			dto.Download.Message = msg
+		}
+	}
+	return dto
+}
+
+// toRequestDTO renders a request in full (the admin view).
 func toRequestDTO(req gen.MediaRequest) requestDTO {
 	dto := requestDTO{
 		ID:               req.ID,
@@ -87,6 +163,13 @@ func toRequestDTO(req gen.MediaRequest) requestDTO {
 	}
 	if seasons, _ := decodeIntSlice(req.Seasons); len(seasons) > 0 {
 		dto.Seasons = seasons
+	}
+	if req.Type == requests.TypeShow {
+		avail := make([]int, 0, len(req.SeasonsAvailable))
+		for _, n := range req.SeasonsAvailable {
+			avail = append(avail, int(n))
+		}
+		dto.SeasonsAvailable = &avail
 	}
 	if req.RequestedServiceID.Valid {
 		id := uuid.UUID(req.RequestedServiceID.Bytes)
@@ -112,6 +195,7 @@ func toRequestDTO(req gen.MediaRequest) requestDTO {
 		t := req.FulfilledAt.Time.UTC().Format("2006-01-02T15:04:05Z")
 		dto.FulfilledAt = &t
 	}
+	dto.Download = toRequestDownloadDTO(req)
 	return dto
 }
 
@@ -153,7 +237,7 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 		body.QualityProfileID = nil
 		body.RootFolder = nil
 	}
-	req, err := h.svc.Create(r.Context(), requests.CreateInput{
+	res, err := h.svc.Create(r.Context(), requests.CreateInput{
 		UserID:             claims.UserID,
 		Type:               strings.ToLower(strings.TrimSpace(body.Type)),
 		TMDBID:             body.TMDBID,
@@ -168,22 +252,30 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 			respond.ValidationError(w, r, "type must be 'movie' or 'show'")
 		case errors.Is(err, requests.ErrInvalidTMDBID):
 			respond.ValidationError(w, r, "tmdb_id is required")
+		case errors.Is(err, requests.ErrSeasonsAlreadyRequested):
+			respond.Error(w, r, http.StatusConflict, "ALREADY_REQUESTED",
+				"you already have an active request for one of these seasons")
 		case errors.Is(err, requests.ErrAlreadyRequested):
 			respond.Error(w, r, http.StatusConflict, "ALREADY_REQUESTED",
 				"you already have an active request for this title")
 		case errors.Is(err, requests.ErrTMDBLookupFailed):
 			respond.ValidationError(w, r, "tmdb lookup failed — verify the tmdb_id")
 		case errors.Is(err, requests.ErrInvalidSeasons):
-			respond.ValidationError(w, r, "invalid season list")
+			// "invalid season list: season 9 is not listed on TMDB"
+			respond.ValidationError(w, r, strings.TrimPrefix(err.Error(), "requests: "))
 		case errors.Is(err, requests.ErrTooManyPending):
 			respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_PENDING_REQUESTS",
 				"you have too many pending requests; wait for some to be reviewed")
+		case errors.Is(err, requests.ErrRequestsDisabled):
+			respond.Error(w, r, http.StatusForbidden, "REQUESTS_DISABLED",
+				"requesting is turned off for your account; ask an admin")
 		default:
 			h.logger.ErrorContext(r.Context(), "create request", "err", err)
 			respond.InternalError(w, r)
 		}
 		return
 	}
+	req := res.MediaRequest
 	if req.AutoApproved {
 		// Same audit action as an admin approval so the trail shows every
 		// title that was sent to an arr; "automatic" tells the two apart and
@@ -196,7 +288,80 @@ func (h *RequestHandler) Create(w http.ResponseWriter, r *http.Request) {
 			"automatic": true,
 		})
 	}
-	respond.Created(w, r, toRequestDTO(req))
+	respond.Created(w, r, createdRequestDTO{requestDTO: toRequestDTOFor(req, claims.IsAdmin), OverQuota: res.OverQuota})
+}
+
+// createdRequestDTO is the POST /requests response: the request plus
+// over_quota, true when the request exceeded the user's quota for its type and
+// so is waiting for an admin rather than auto-approved.
+type createdRequestDTO struct {
+	requestDTO
+	OverQuota bool `json:"over_quota"`
+}
+
+type quotaUsageDTO struct {
+	Limit int `json:"limit"`
+	Used  int `json:"used"`
+	// Remaining is null when the limit is 0 (unlimited).
+	Remaining *int `json:"remaining"`
+}
+
+type quotaDTO struct {
+	CanRequest bool          `json:"can_request"`
+	WindowDays int           `json:"window_days"`
+	Movies     quotaUsageDTO `json:"movies"`
+	TV         quotaUsageDTO `json:"tv"`
+}
+
+// Quota handles GET /api/v1/requests/quota: the caller's own request
+// allowance — whether they may request at all, and per type the limit, how
+// many they've used in the current window and how many remain (null =
+// unlimited). Admins are always allowed and unlimited.
+func (h *RequestHandler) Quota(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	st, err := h.svc.Quota(r.Context(), claims.UserID)
+	if err != nil {
+		if errors.Is(err, requests.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "request quota", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, quotaDTO{
+		CanRequest: st.CanRequest,
+		WindowDays: st.WindowDays,
+		Movies:     quotaUsageDTO{Limit: st.Movies.Limit, Used: st.Movies.Used, Remaining: st.Movies.Remaining},
+		TV:         quotaUsageDTO{Limit: st.TV.Limit, Used: st.TV.Used, Remaining: st.TV.Remaining},
+	})
+}
+
+// PendingCount handles GET /api/v1/requests/pending-count (admin only): the
+// number of requests waiting for approval, for the nav badge.
+func (h *RequestHandler) PendingCount(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	// The route is mounted behind AdminRequired; checked again so the handler
+	// is safe wherever it's mounted.
+	if !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	n, err := h.svc.CountPending(r.Context())
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "count pending requests", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	respond.Success(w, r, map[string]int64{"count": n})
 }
 
 // List handles GET /api/v1/requests. Users see their own history; admins
@@ -222,7 +387,7 @@ func (h *RequestHandler) List(w http.ResponseWriter, r *http.Request) {
 			respond.InternalError(w, r)
 			return
 		}
-		respond.List(w, r, dtoSlice(rows), total, "")
+		respond.List(w, r, h.dtoSlice(r, rows, true), total, "")
 		return
 	}
 
@@ -232,7 +397,7 @@ func (h *RequestHandler) List(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.List(w, r, dtoSlice(rows), total, "")
+	respond.List(w, r, h.dtoSlice(r, rows, claims.IsAdmin), total, "")
 }
 
 // Get handles GET /api/v1/requests/{id}. Owner or admin only.
@@ -261,7 +426,9 @@ func (h *RequestHandler) Get(w http.ResponseWriter, r *http.Request) {
 		respond.Forbidden(w, r)
 		return
 	}
-	respond.Success(w, r, toRequestDTO(req))
+	dto := toRequestDTOFor(req, claims.IsAdmin)
+	dto.Username = h.svc.Usernames(r.Context(), []gen.MediaRequest{req})[req.UserID]
+	respond.Success(w, r, dto)
 }
 
 // Cancel handles POST /api/v1/requests/{id}/cancel. Withdraw a still-pending
@@ -444,10 +611,15 @@ func (h *RequestHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // ── helpers ───────────────────────────────────────────────────────────────
 
-func dtoSlice(rows []gen.MediaRequest) []requestDTO {
+// dtoSlice renders a page of requests with their requesters' usernames (one
+// batched lookup) and the download message redacted unless admin.
+func (h *RequestHandler) dtoSlice(r *http.Request, rows []gen.MediaRequest, admin bool) []requestDTO {
+	names := h.svc.Usernames(r.Context(), rows)
 	out := make([]requestDTO, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, toRequestDTO(r))
+	for _, row := range rows {
+		dto := toRequestDTOFor(row, admin)
+		dto.Username = names[row.UserID]
+		out = append(out, dto)
 	}
 	return out
 }

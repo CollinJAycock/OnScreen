@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
 import Page from './+page.svelte';
 import {
   NOT_REPORTED_NOTE, fmtShare, normalizeStreamDay, reportedShares, resolveTotals,
@@ -9,12 +9,13 @@ const mockGoto = vi.hoisted(() => vi.fn());
 const mockGetUser = vi.hoisted(() => vi.fn());
 const mockAnalytics = vi.hoisted(() => vi.fn());
 const mockSessions = vi.hoisted(() => vi.fn());
+const mockAdminStop = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/api', () => ({
   api: { getUser: mockGetUser },
   analyticsApi: { get: mockAnalytics },
-  sessionsApi: { list: mockSessions },
+  sessionsApi: { list: mockSessions, adminStop: mockAdminStop },
 }));
 
 const emptyAnalytics = {
@@ -140,6 +141,70 @@ describe('Analytics page', () => {
 
     await waitFor(() => expect(screen.getByText('Analytics')).toBeTruthy());
     expect(screen.queryByText(/Now playing/i)).toBeNull();
+  });
+});
+
+describe('Analytics page — Now Playing stop', () => {
+  const directPlay = {
+    id: '10.0.0.5|item-1|user-1',
+    title: 'Dune',
+    decision: 'directPlay',
+    position_ms: 1000,
+    duration_ms: 10000,
+    started_at: '2026-09-28T10:00:00Z',
+    username: 'sam',
+    client_name: 'Living Room TV',
+    location: 'lan',
+    can_stop: true,
+  };
+
+  beforeEach(() => {
+    mockGetUser.mockReturnValue({ user_id: 'u1', is_admin: true });
+    mockSessions.mockResolvedValue([directPlay]);
+  });
+
+  async function openStop() {
+    render(Page);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Stop' }));
+    return screen.getByRole('dialog');
+  }
+
+  it('asks first, then stops a direct play with the message and drops the card', async () => {
+    mockAdminStop.mockResolvedValue(undefined);
+    const dialog = await openStop();
+    expect(dialog.textContent).toContain('Dune');
+    expect(mockAdminStop).not.toHaveBeenCalled();
+
+    await fireEvent.input(screen.getByLabelText(/Message to the viewer/), { target: { value: 'Bedtime' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop stream' }));
+
+    await waitFor(() => expect(mockAdminStop).toHaveBeenCalledWith(directPlay.id, 'Bedtime'));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(screen.queryByText('Dune')).toBeNull();
+  });
+
+  it('treats 404 as already ended', async () => {
+    mockAdminStop.mockRejectedValue(Object.assign(new Error('resource not found'), { status: 404 }));
+    await openStop();
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop stream' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    expect(mockAdminStop).toHaveBeenCalledWith(directPlay.id, undefined);
+    expect(screen.queryByText('Dune')).toBeNull();
+  });
+
+  it('keeps the dialog open with the error on failure', async () => {
+    mockAdminStop.mockRejectedValue(Object.assign(new Error('boom'), { status: 500 }));
+    await openStop();
+    await fireEvent.click(screen.getByRole('button', { name: 'Stop stream' }));
+    await waitFor(() => expect(screen.getByRole('alert').textContent).toBe('boom'));
+    expect(document.querySelector('[data-testid="stream-card"]')).toBeTruthy(); // card kept
+  });
+
+  it('hides Stop where the server cannot act', async () => {
+    mockSessions.mockResolvedValue([{ ...directPlay, can_stop: false }]);
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Dune')).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
   });
 });
 

@@ -115,6 +115,23 @@ type Session struct {
 	// selected_rendition on /api/v1/sessions so operators see which bitrate
 	// the player's ABR logic actually settled on.
 	SelectedRendition string `json:"selected_rendition,omitempty"`
+
+	// ── Now Playing attribution (display + admin stop; additive) ──────────
+	// ClientIP is the viewer's address as the API saw it at Start (after
+	// TrustedRealIP). Shown on the admin Now Playing card and scopes an admin
+	// stop's refusal window to that one device.
+	ClientIP string `json:"client_ip,omitempty"`
+	// TranscodeReasons says, in words, why this session isn't a direct play
+	// ("HEVC not supported by client", "over the user's bitrate cap", …).
+	TranscodeReasons []string `json:"transcode_reasons,omitempty"`
+	// OutputWidth/OutputHeight are the encode's target dimensions (zero for a
+	// remux, which keeps the source's; an ABR parent reports its rungs).
+	OutputWidth  int `json:"output_width,omitempty"`
+	OutputHeight int `json:"output_height,omitempty"`
+	// OutputAudioCodec is "aac" (re-encoded) or "copy" (passthrough), with
+	// OutputAudioChannels the resulting channel count.
+	OutputAudioCodec    string `json:"output_audio_codec,omitempty"`
+	OutputAudioChannels int    `json:"output_audio_channels,omitempty"`
 }
 
 // VideoOutput reads the two *Output flags back as the container question they

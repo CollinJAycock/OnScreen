@@ -126,6 +126,33 @@ type Scheduler struct {
 
 	interval  time.Duration
 	batchSize int
+
+	// onResult, when set, hears every finished run (runErr nil on success).
+	// The outbound notification agents use it for task_failed /
+	// backup_failed alerts.
+	onResult func(ctx context.Context, t Task, runErr error)
+}
+
+// OnResult registers a hook called after every task run with the handler's
+// error (nil on success). It runs on the task's goroutine, so it must not
+// block for long. Call before Run. Returns s for chaining.
+func (s *Scheduler) OnResult(fn func(ctx context.Context, t Task, runErr error)) *Scheduler {
+	s.onResult = fn
+	return s
+}
+
+// reportResult invokes the result hook, if any, shielding the scheduler from
+// a panicking hook.
+func (s *Scheduler) reportResult(ctx context.Context, t Task, runErr error) {
+	if s.onResult == nil {
+		return
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			s.logger.Error("scheduler: result hook panicked", "task_id", t.ID, "panic", r)
+		}
+	}()
+	s.onResult(ctx, t, runErr)
 }
 
 // New constructs a Scheduler with default interval (30 s) and batch size (16).
@@ -201,6 +228,7 @@ func (s *Scheduler) execute(ctx context.Context, t Task) {
 	if !ok {
 		logger.Warn("scheduler: unknown task type — marking failed")
 		s.recordFailure(ctx, t.ID, uuid.Nil, "", "unknown task type: "+t.Type)
+		s.reportResult(ctx, t, fmt.Errorf("unknown task type: %s", t.Type))
 		return
 	}
 
@@ -214,10 +242,12 @@ func (s *Scheduler) execute(ctx context.Context, t Task) {
 	if runErr != nil {
 		logger.Warn("scheduler: handler failed", "err", runErr)
 		s.recordFailure(ctx, t.ID, runID, output, runErr.Error())
+		s.reportResult(ctx, t, runErr)
 		return
 	}
 	logger.Info("scheduler: handler succeeded", "output_bytes", len(output))
 	s.recordSuccess(ctx, t.ID, runID, output)
+	s.reportResult(ctx, t, nil)
 }
 
 // safeRun wraps the handler in panic recovery, capturing the panic value

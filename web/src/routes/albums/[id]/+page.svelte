@@ -5,6 +5,7 @@
   import { itemApi, assetUrl, type ItemDetail, type ItemFile, type ChildItem } from '$lib/api';
   import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
   import TrackInfo from '$lib/components/TrackInfo.svelte';
+  import { replayGainFromFile } from '$lib/replaygain';
 
   let album: ItemDetail | null = null;
   let tracks: ChildItem[] = [];
@@ -94,7 +95,10 @@
         albumId: album?.id,
         artist: artist?.title,
         artistId: artist?.id,
-        posterPath: album?.poster_path
+        posterPath: album?.poster_path,
+        // Tags ride along so the browser player knows each track's
+        // ReplayGain before it starts (no per-track lookup).
+        replayGain: replayGainFromFile(td?.files[0])
       });
     }
     return { queue, index };

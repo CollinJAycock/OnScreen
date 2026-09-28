@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -32,7 +33,22 @@ import (
 const (
 	cachePosTTL = 7 * 24 * time.Hour
 	cacheNegTTL = 3 * 24 * time.Hour
+	// cacheCollectionTTL is the positive TTL for /collection/{id}. A
+	// collection's parts list is the one TMDB answer that grows on its own
+	// (a sequel gets announced and added), and it backs the franchise page's
+	// "missing — request it" rows, so it refreshes more often than a
+	// title's metadata does. Still days, not hours: collections change a
+	// few times a year.
+	cacheCollectionTTL = 3 * 24 * time.Hour
 )
+
+// positiveTTLFor returns the positive-entry TTL for an API path.
+func positiveTTLFor(path string) time.Duration {
+	if strings.HasPrefix(path, "/collection/") {
+		return cacheCollectionTTL
+	}
+	return cachePosTTL
+}
 
 type diskCache struct{ dir string }
 
@@ -64,8 +80,9 @@ func (d *diskCache) file(key string) string {
 }
 
 // lookup returns the cached body (nil for negative entries) when a fresh
-// entry exists.
-func (d *diskCache) lookup(key string) (body []byte, negative, ok bool) {
+// entry exists. posTTL is the positive-entry TTL for the request's path
+// (positiveTTLFor); negative entries always use cacheNegTTL.
+func (d *diskCache) lookup(key string, posTTL time.Duration) (body []byte, negative, ok bool) {
 	raw, err := os.ReadFile(d.file(key))
 	if err != nil {
 		return nil, false, false
@@ -74,7 +91,7 @@ func (d *diskCache) lookup(key string) (body []byte, negative, ok bool) {
 	if json.Unmarshal(raw, &env) != nil {
 		return nil, false, false
 	}
-	ttl := cachePosTTL
+	ttl := posTTL
 	if env.Negative {
 		ttl = cacheNegTTL
 	}

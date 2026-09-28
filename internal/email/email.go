@@ -80,15 +80,46 @@ func (s *Sender) Send(ctx context.Context, to []string, subject, htmlBody string
 	if !cfg.Enabled || !cfg.complete() {
 		return ErrNotConfigured
 	}
+	if err := validateRecipients(to); err != nil {
+		return err
+	}
+	return deliver(ctx, cfg, to, buildMessage(cfg.From, to, subject, htmlBody))
+}
+
+// SendWithText sends a multipart/alternative message carrying both a plain
+// text and an HTML body, for mail that is read in terminals and notification
+// previews as often as in a rich client (the outbound notification agents).
+// The subject is sanitised (CR/LF folded) and RFC 2047-encoded when it isn't
+// plain ASCII, since it can carry user-supplied titles. Same transport, TLS
+// posture and ErrNotConfigured semantics as Send.
+func (s *Sender) SendWithText(ctx context.Context, to []string, subject, textBody, htmlBody string) error {
+	cfg := s.config(ctx)
+	if !cfg.Enabled || !cfg.complete() {
+		return ErrNotConfigured
+	}
+	if err := validateRecipients(to); err != nil {
+		return err
+	}
+	msg, err := buildAlternativeMessage(cfg.From, to, subject, textBody, htmlBody)
+	if err != nil {
+		return err
+	}
+	return deliver(ctx, cfg, to, msg)
+}
+
+// validateRecipients parses every address before it reaches RCPT TO (see Send).
+func validateRecipients(to []string) error {
 	for _, addr := range to {
 		if _, err := mail.ParseAddress(addr); err != nil {
 			return fmt.Errorf("email: invalid recipient %q: %w", addr, err)
 		}
 	}
+	return nil
+}
 
+// deliver runs the SMTP exchange for an already-built RFC 5322 message.
+func deliver(ctx context.Context, cfg Config, to []string, msg string) error {
 	addr := net.JoinHostPort(cfg.Host, fmt.Sprintf("%d", cfg.Port))
-
-	msg := buildMessage(cfg.From, to, subject, htmlBody)
 
 	// Connect to the SMTP server with a bounded deadline.
 	dialer := &net.Dialer{Timeout: 30 * time.Second}

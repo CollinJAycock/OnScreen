@@ -86,6 +86,19 @@ var requiredSystemTasks = []systemTask{
 		enabled:  true,
 	},
 	{
+		name:     "Request download status (Radarr/Sonarr)",
+		taskType: "arr_request_sync",
+		// Every 5 min: refreshes the live download state of in-flight media
+		// requests (queued / downloading / stalled / failed) from their
+		// Radarr/Sonarr instances and sends the one-time "download failed"
+		// notices. One queue fetch per enabled instance plus a bounded
+		// number of per-title lookups, so cheap at this cadence; the arr
+		// webhook triggers targeted syncs in between. With no requests in
+		// flight a run makes no outbound calls at all.
+		cronExpr: "*/5 * * * *",
+		enabled:  true,
+	},
+	{
 		name:     "OCR image subtitles",
 		taskType: "ocr_subtitles",
 		// Weekly, Sunday 4:00am local — a full-library OCR sweep of image-based
@@ -109,6 +122,35 @@ var requiredSystemTasks = []systemTask{
 		// one click discoverable in the Tasks UI but never run unprompted.
 		cronExpr: "41 3 * * *",
 		enabled:  false,
+	},
+	{
+		name:     "Seek-bar thumbnail backfill",
+		taskType: "trickplay_backfill",
+		// Nightly at 2:29am local (prime-offset, and clear of the 3am
+		// block of other off-peak jobs). Generates trickplay sprites for
+		// items in trickplay-enabled libraries that never had them —
+		// oldest first, within a 45-minute budget, one ffmpeg job at a
+		// time, and paused while any transcode is active. Seeded ENABLED:
+		// unlike the OCR/integrity sweeps this is the feature working as
+		// designed (seek previews for the existing catalogue), each
+		// library has its own off switch, and the budget bounds the cost.
+		cronExpr: "29 2 * * *",
+		enabled:  true,
+	},
+	{
+		name:     "Franchise collections",
+		taskType: "franchise_collections",
+		// Nightly at 4:53am local (prime-offset, clear of the other
+		// off-peak jobs). Looks up the TMDB collection of movies matched
+		// before franchise tracking existed — a bounded batch per run
+		// (default 200 movie-details lookups, most served from the TMDB
+		// disk cache, plus at most 100 collection fetches) — refreshes
+		// stale collection snapshots, and reconciles franchise
+		// collections whose members were added or deleted. Seeded
+		// ENABLED: it is the feature converging on an existing library,
+		// and the per-run budgets bound the TMDB traffic.
+		cronExpr: "53 4 * * *",
+		enabled:  true,
 	},
 }
 

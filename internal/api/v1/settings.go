@@ -588,17 +588,25 @@ type settingsResponse struct {
 }
 
 // requestsSettingDTO mirrors settings.RequestsConfig: the media-request
-// auto-approval toggles a NEW full account starts with. Changing them never
-// touches existing users; managed profiles always start with both off.
+// auto-approval toggles a NEW full account starts with (changing them never
+// touches existing users; managed profiles always start with both off), and
+// the live server-wide request quotas for users without their own (0 =
+// unlimited) over a quota_window_days rolling window.
 type requestsSettingDTO struct {
 	DefaultAutoApproveMovies bool `json:"default_auto_approve_movies"`
 	DefaultAutoApproveTV     bool `json:"default_auto_approve_tv"`
+	QuotaMovies              int  `json:"quota_movies"`
+	QuotaTV                  int  `json:"quota_tv"`
+	QuotaWindowDays          int  `json:"quota_window_days"`
 }
 
 func toRequestsDTO(cfg settings.RequestsConfig) requestsSettingDTO {
 	return requestsSettingDTO{
 		DefaultAutoApproveMovies: cfg.DefaultAutoApproveMovies,
 		DefaultAutoApproveTV:     cfg.DefaultAutoApproveTV,
+		QuotaMovies:              cfg.QuotaMovies,
+		QuotaTV:                  cfg.QuotaTV,
+		QuotaWindowDays:          cfg.QuotaWindowDays,
 	}
 }
 
@@ -1032,6 +1040,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		Requests *struct {
 			DefaultAutoApproveMovies *bool `json:"default_auto_approve_movies"`
 			DefaultAutoApproveTV     *bool `json:"default_auto_approve_tv"`
+			QuotaMovies              *int  `json:"quota_movies"`
+			QuotaTV                  *int  `json:"quota_tv"`
+			QuotaWindowDays          *int  `json:"quota_window_days"`
 		} `json:"requests"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
@@ -1069,6 +1080,35 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.OIDC != nil && endpointMovesStoredSecret(h.svc.OIDC(ctx).IssuerURL, body.OIDC.IssuerURL, h.svc.OIDC(ctx).ClientSecret, body.OIDC.ClientSecret) {
 		respond.ValidationError(w, r, "re-enter the OIDC client secret when changing the issuer URL")
 		return
+	}
+	// Request quotas are range-checked up front too, so a bad value refuses
+	// the whole save rather than half-applying it.
+	var nextRequests settings.RequestsConfig
+	if body.Requests != nil {
+		// Read-modify-write so flipping one field doesn't reset the others.
+		nextRequests = h.svc.Requests(ctx)
+		if nextRequests.QuotaWindowDays <= 0 {
+			nextRequests.QuotaWindowDays = settings.DefaultQuotaWindowDays
+		}
+		if body.Requests.DefaultAutoApproveMovies != nil {
+			nextRequests.DefaultAutoApproveMovies = *body.Requests.DefaultAutoApproveMovies
+		}
+		if body.Requests.DefaultAutoApproveTV != nil {
+			nextRequests.DefaultAutoApproveTV = *body.Requests.DefaultAutoApproveTV
+		}
+		if body.Requests.QuotaMovies != nil {
+			nextRequests.QuotaMovies = *body.Requests.QuotaMovies
+		}
+		if body.Requests.QuotaTV != nil {
+			nextRequests.QuotaTV = *body.Requests.QuotaTV
+		}
+		if body.Requests.QuotaWindowDays != nil {
+			nextRequests.QuotaWindowDays = *body.Requests.QuotaWindowDays
+		}
+		if err := nextRequests.Validate(); err != nil {
+			respond.ValidationError(w, r, strings.TrimPrefix(err.Error(), settings.ErrInvalidRequestsConfig.Error()+": "))
+			return
+		}
 	}
 	// maskedSecret is the sentinel GET writes in place of every stored secret
 	// (see maskAPIKey). A PATCH carrying it back means "unchanged" — the admin
@@ -1366,15 +1406,8 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Requests != nil {
-		// Read-modify-write so flipping one default doesn't reset the other.
-		cur := h.svc.Requests(ctx)
-		if body.Requests.DefaultAutoApproveMovies != nil {
-			cur.DefaultAutoApproveMovies = *body.Requests.DefaultAutoApproveMovies
-		}
-		if body.Requests.DefaultAutoApproveTV != nil {
-			cur.DefaultAutoApproveTV = *body.Requests.DefaultAutoApproveTV
-		}
-		if err := h.svc.SetRequests(ctx, cur); err != nil {
+		// Built and validated above, before anything was written.
+		if err := h.svc.SetRequests(ctx, nextRequests); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "requests", "err", err)
 			respond.InternalError(w, r)
 			return
@@ -1422,9 +1455,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			// Record the resulting values, not just "changed": these decide
 			// whether new accounts' requests bypass admin review.
 			cur := h.svc.Requests(ctx)
-			detail["requests"] = map[string]bool{
+			detail["requests"] = map[string]any{
 				"default_auto_approve_movies": cur.DefaultAutoApproveMovies,
 				"default_auto_approve_tv":     cur.DefaultAutoApproveTV,
+				"quota_movies":                cur.QuotaMovies,
+				"quota_tv":                    cur.QuotaTV,
+				"quota_window_days":           cur.QuotaWindowDays,
 			}
 		}
 		// Always log, even if claims are somehow nil — the route is admin-gated,

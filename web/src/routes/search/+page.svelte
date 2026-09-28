@@ -9,9 +9,12 @@
     type SearchResult,
     type DiscoverItem,
     type MediaRequest,
+    type RequestQuota,
   } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
+  import SeasonPicker from '$lib/components/SeasonPicker.svelte';
+  import { OVER_QUOTA_MESSAGE, REQUESTS_DISABLED_MESSAGE, quotaLines, isRequestsDisabledError } from './quota';
 
   let query = '';
 
@@ -40,6 +43,21 @@
   let debounceTimer: ReturnType<typeof setTimeout>;
   let creatingFor = new Set<number>(); // tmdb_ids of in-flight Request clicks
 
+  // The caller's request allowance (GET /requests/quota). null = unknown
+  // (older server, or the call failed) — the Request buttons then behave as
+  // before and the server stays the authority.
+  let quota: RequestQuota | null = null;
+  $: canRequest = quota?.can_request !== false;
+  $: quotaHints = quotaLines(quota);
+
+  async function loadQuota() {
+    try {
+      quota = (await requestsApi.quota()) ?? null;
+    } catch {
+      quota = null;
+    }
+  }
+
   onMount(() => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     try {
@@ -49,6 +67,7 @@
         libraryFilters = { ...defaultFilters, ...parsed };
       }
     } catch { /* corrupt storage — fall back to defaults */ }
+    loadQuota();
   });
 
   $: {
@@ -91,11 +110,31 @@
     return s;
   })();
 
+  // A show already in the library stays here when it has aired seasons the
+  // library is missing — that card offers "Request more seasons".
   $: visibleDiscoverResults = discoverResults.filter(it => {
+    if (isPartialShow(it)) return true;
     if (it.in_library) return false;
     if (libraryTitleKeys.has(normalizeTitle(it.title))) return false;
     return true;
   });
+
+  function isPartialShow(it: DiscoverItem): boolean {
+    return it.type === 'show' && it.in_library && it.partially_available === true;
+  }
+
+  // The show whose season picker is open (null = closed).
+  let pickerFor: DiscoverItem | null = null;
+
+  function requestLabel(it: DiscoverItem): string {
+    if (it.type !== 'show') return 'Request for admin to acquire';
+    return isPartialShow(it) ? 'Request more seasons' : 'Request';
+  }
+
+  function missingNote(it: DiscoverItem): string {
+    const n = it.missing_seasons?.length ?? 0;
+    return `In your library · ${n} season${n === 1 ? '' : 's'} missing`;
+  }
 
   function normalizeTitle(s: string): string {
     return s.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
@@ -131,8 +170,9 @@
     const discoverPromise = discoverApi.search(q, 12)
       .then(r => {
         // Drop in-library entries — they're already in libraryResults
-        // above, so the side-by-side rendering would dupe them.
-        discoverResults = (r ?? []).filter(it => !it.in_library);
+        // above, so the side-by-side rendering would dupe them — except
+        // shows with seasons still to request.
+        discoverResults = (r ?? []).filter(it => !it.in_library || isPartialShow(it));
         discoverError = '';
       })
       .catch(e => {
@@ -152,13 +192,41 @@
     goto(itemHref(item.type, item.id));
   }
 
-  async function requestItem(item: DiscoverItem) {
+  // Movies are requested straight from the card; shows open the season
+  // picker, which sends its choice through requestSeasons below.
+  function onRequestClick(item: DiscoverItem) {
+    if (item.type === 'show') pickerFor = item;
+    else requestItem(item);
+  }
+
+  // The picker's submit: the same request flow, but a failure is shown in
+  // the picker (a toast would sit behind the modal) instead of a toast.
+  async function requestSeasons(item: DiscoverItem, seasons: number[] | undefined): Promise<string | null> {
+    let failure: string | null = null;
+    await requestItem(item, seasons, (msg) => { failure = msg; });
+    return failure;
+  }
+
+  async function requestItem(
+    item: DiscoverItem,
+    seasons?: number[],
+    onError?: (message: string) => void,
+  ) {
     creatingFor = new Set(creatingFor).add(item.tmdb_id);
     try {
-      const created = await requestsApi.create({ type: item.type, tmdb_id: item.tmdb_id });
-      toast.success(wasAutoApproved(created)
-        ? `Approved automatically — it's on its way: ${item.title}`
-        : `Requested: ${item.title} — awaiting admin approval`);
+      const created = await requestsApi.create({
+        type: item.type,
+        tmdb_id: item.tmdb_id,
+        ...(seasons ? { seasons } : {}),
+      });
+      if (created.over_quota) {
+        // Created, but held for an admin because it's past the user's quota.
+        toast.info(`${OVER_QUOTA_MESSAGE}: ${item.title}`);
+      } else {
+        toast.success(wasAutoApproved(created)
+          ? `Approved automatically — it's on its way: ${item.title}`
+          : `Requested: ${item.title} — awaiting admin approval`);
+      }
       // Mirror the server's response into the row so the card flips
       // immediately without a re-search.
       discoverResults = discoverResults.map(r =>
@@ -167,11 +235,20 @@
           : r,
       );
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Request failed');
+      const report = onError ?? ((msg: string) => toast.error(msg));
+      if (isRequestsDisabledError(e)) {
+        // An admin switched requesting off since the page loaded.
+        report(REQUESTS_DISABLED_MESSAGE);
+        if (quota) quota = { ...quota, can_request: false };
+      } else {
+        report(e instanceof Error ? e.message : 'Request failed');
+      }
     } finally {
       const next = new Set(creatingFor);
       next.delete(item.tmdb_id);
       creatingFor = next;
+      // Refresh "N requests left" after every attempt.
+      if (quota) loadQuota();
     }
   }
 
@@ -305,6 +382,13 @@
     <!-- ── Request from outside library ────────────────────────────────── -->
     <section class="result-section">
       <h2 class="section-title">Ask your admin to add</h2>
+      {#if quotaHints.length > 0}
+        <div class="quota-hints" class:disabled={!canRequest} data-testid="request-quota">
+          {#each quotaHints as line}
+            <p class="quota-line">{line}</p>
+          {/each}
+        </div>
+      {/if}
       {#if discoverError}
         <div class="banner-error">{discoverError}</div>
       {:else if discoverLoading}
@@ -333,17 +417,27 @@
               <div class="result-info">
                 <div class="result-title" title={item.title}>{item.title}</div>
                 {#if item.year}<div class="result-year">{item.year}</div>{/if}
+                {#if isPartialShow(item)}<div class="partial-note">{missingNote(item)}</div>{/if}
                 {#if item.has_active_request}
                   <span class="status-pill status-{item.active_request_status ?? 'pending'}">
                     {statusLabel(item.active_request_status ?? 'pending')}
                   </span>
+                  {#if item.type === 'show' && canRequest}
+                    <!-- A show can take further requests for other seasons. -->
+                    <button class="more-seasons-btn" on:click={() => (pickerFor = item)}>More seasons</button>
+                  {/if}
                 {:else}
                   <button
                     class="request-btn"
-                    disabled={creatingFor.has(item.tmdb_id)}
-                    on:click={() => requestItem(item)}
+                    disabled={!canRequest || creatingFor.has(item.tmdb_id)}
+                    title={canRequest ? undefined : REQUESTS_DISABLED_MESSAGE}
+                    on:click={() => onRequestClick(item)}
                   >
-                    {creatingFor.has(item.tmdb_id) ? 'Sending…' : 'Request for admin to acquire'}
+                    {#if !canRequest}
+                      Requests turned off
+                    {:else}
+                      {creatingFor.has(item.tmdb_id) ? 'Sending…' : requestLabel(item)}
+                    {/if}
                   </button>
                 {/if}
               </div>
@@ -352,6 +446,16 @@
         </div>
       {/if}
     </section>
+
+    {#if pickerFor}
+      {@const target = pickerFor}
+      <SeasonPicker
+        tmdbId={target.tmdb_id}
+        title={target.year ? `${target.title} (${target.year})` : target.title}
+        onsubmit={(seasons) => requestSeasons(target, seasons)}
+        onclose={() => (pickerFor = null)}
+      />
+    {/if}
 
     {#if nothingFound}
       <div class="empty">
@@ -472,6 +576,21 @@
     padding: 0.5rem 0 1rem;
   }
 
+  /* Request allowance under "Ask your admin to add" */
+  .quota-hints {
+    margin: 0.4rem 0 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+  }
+  .quota-line {
+    margin: 0;
+    font-size: 0.76rem;
+    color: var(--text-muted);
+    line-height: 1.4;
+  }
+  .quota-hints.disabled .quota-line { color: var(--text-secondary); }
+
   .banner-error {
     background: rgba(248,113,113,0.1);
     border: 1px solid rgba(248,113,113,0.2);
@@ -584,6 +703,24 @@
   }
   .request-btn:hover:not(:disabled) { background: var(--accent-hover); }
   .request-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .partial-note {
+    font-size: 0.62rem;
+    color: #6ee7b7;
+    margin-top: 0.15rem;
+  }
+  .more-seasons-btn {
+    display: block;
+    margin-top: 0.35rem;
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--accent-text);
+    font-size: 0.68rem;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .more-seasons-btn:hover { text-decoration: underline; }
 
   .status-pill {
     display: inline-block;

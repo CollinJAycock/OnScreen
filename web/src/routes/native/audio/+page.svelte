@@ -14,6 +14,7 @@
     type PlaybackStatus,
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
+  import { replayGainSettings, setReplayGainMode, setReplayGainPreamp } from '$lib/stores/replayGain';
 
   // Defaults match the Rust-side atomics: off + 0 dB preamp. Stored
   // in localStorage so reopening the desktop app picks up the user's
@@ -31,6 +32,14 @@
     const unsub = nativeEngine.subscribe((v) => { engineEnabled = v; });
     return unsub;
   });
+  // Follow the shared ReplayGain setting so a change made from the
+  // player's RG menu shows up here while the page is open.
+  $effect(() =>
+    replayGainSettings.subscribe((s) => {
+      mode = s.mode;
+      preampDb = s.preampDb;
+    }),
+  );
   let busyMode = $state(false);
   let busyPreamp = $state(false);
   let busyExclusive = $state(false);
@@ -170,8 +179,10 @@
     busyMode = true;
     saveError = '';
     try {
+      // Native engine first (no-op outside the desktop app), then the
+      // shared per-device setting the browser player also reads.
       await replayGainSetMode(next);
-      localStorage.setItem('onscreen_native_rg_mode', next);
+      setReplayGainMode(next);
       mode = next;
     } catch (e) {
       saveError = e instanceof Error ? e.message : String(e);
@@ -190,7 +201,7 @@
     if (clamped !== preampDb) preampDb = clamped;
     try {
       await replayGainSetPreamp(clamped);
-      localStorage.setItem('onscreen_native_rg_preamp', String(clamped));
+      setReplayGainPreamp(clamped);
     } catch (e) {
       saveError = e instanceof Error ? e.message : String(e);
     } finally {
@@ -201,14 +212,89 @@
 
 <svelte:head><title>Audio · OnScreen</title></svelte:head>
 
+<!-- ReplayGain + preamp are shared: the desktop native engine and the
+     browser player (Web Audio gain) both read this one per-device
+     setting, so both builds render these two sections. -->
+{#snippet replayGainSection()}
+  <section>
+    <h2>ReplayGain</h2>
+    <p class="desc">
+      Normalises perceived loudness across the catalog by applying the
+      gain encoded in each file's <code>REPLAYGAIN_*</code> tags. Track
+      mode varies song-to-song and is best for shuffle; album mode
+      preserves intentional loudness differences within an album and
+      is best for sequential listening.
+      {#if inTauri}
+        Settings apply on the next track — the currently-playing track
+        stays at its original level until it ends or you skip.
+      {:else}
+        Changes apply immediately. Files without tags play at their
+        native level, and the gain is capped at each file's peak so it
+        never clips.
+      {/if}
+    </p>
+
+    <div class="mode-row">
+      {#each [
+        ['off', 'Off', 'Play at native level — no normalisation'],
+        ['track', 'Track', 'Normalise per-track loudness'],
+        ['album', 'Album', 'Normalise per-album, preserve in-album dynamics'],
+      ] as [val, label, hint] (val)}
+        <button
+          class="mode"
+          class:active={mode === val}
+          disabled={busyMode}
+          onclick={() => applyMode(val as ReplayGainMode)}
+        >
+          <div class="mode-label">{label}</div>
+          <div class="mode-hint">{hint}</div>
+        </button>
+      {/each}
+    </div>
+  </section>
+{/snippet}
+
+{#snippet preampSection()}
+  <section>
+    <h2>Preamp</h2>
+    <p class="desc">
+      Adjusts the overall ReplayGain output by a fixed dB offset.
+      ReplayGain's reference is conservative; +6 dB is a common boost
+      for catalogs mastered hot enough that the default attenuation
+      feels quiet. Clamped to ±15 dB — peak limiting still applies, so
+      positive boosts won't clip.
+    </p>
+    <div class="preamp-row">
+      <input
+        type="range"
+        min="-15"
+        max="15"
+        step="0.5"
+        bind:value={preampDb}
+        disabled={busyPreamp || mode === 'off'}
+        onchange={applyPreamp}
+      />
+      <div class="preamp-value">
+        {preampDb > 0 ? '+' : ''}{preampDb.toFixed(1)} dB
+      </div>
+    </div>
+  </section>
+{/snippet}
+
 <div class="page">
-  <h1>Audio (native engine)</h1>
+  <h1>{inTauri ? 'Audio (native engine)' : 'Audio'}</h1>
 
   {#if !inTauri}
     <p class="hint">
-      This page configures the OnScreen desktop client's native audio
-      engine. Open the desktop app to adjust these settings.
+      These settings apply to music played in this browser. The native
+      audio engine, exclusive output and bit-perfect options live in the
+      OnScreen desktop app.
     </p>
+    {#if saveError}
+      <p class="err">{saveError}</p>
+    {/if}
+    {@render replayGainSection()}
+    {@render preampSection()}
   {:else}
     {#if saveError}
       <p class="err">{saveError}</p>
@@ -235,36 +321,7 @@
       </label>
     </section>
 
-    <section>
-      <h2>ReplayGain</h2>
-      <p class="desc">
-        Normalises perceived loudness across the catalog by applying the
-        gain encoded in each file's <code>REPLAYGAIN_*</code> tags. Track
-        mode varies song-to-song and is best for shuffle; album mode
-        preserves intentional loudness differences within an album and
-        is best for sequential listening. Settings apply on the next
-        track — the currently-playing track stays at its original level
-        until it ends or you skip.
-      </p>
-
-      <div class="mode-row">
-        {#each [
-          ['off', 'Off', 'Play at native level — no normalisation'],
-          ['track', 'Track', 'Normalise per-track loudness'],
-          ['album', 'Album', 'Normalise per-album, preserve in-album dynamics'],
-        ] as [val, label, hint] (val)}
-          <button
-            class="mode"
-            class:active={mode === val}
-            disabled={busyMode}
-            onclick={() => applyMode(val as ReplayGainMode)}
-          >
-            <div class="mode-label">{label}</div>
-            <div class="mode-hint">{hint}</div>
-          </button>
-        {/each}
-      </div>
-    </section>
+    {@render replayGainSection()}
 
     <section>
       <h2>Exclusive output</h2>
@@ -338,30 +395,7 @@
       {/if}
     </section>
 
-    <section>
-      <h2>Preamp</h2>
-      <p class="desc">
-        Adjusts the overall ReplayGain output by a fixed dB offset.
-        ReplayGain's reference is conservative; +6 dB is a common boost
-        for catalogs mastered hot enough that the default attenuation
-        feels quiet. Clamped to ±15 dB — peak limiting still applies, so
-        positive boosts won't clip.
-      </p>
-      <div class="preamp-row">
-        <input
-          type="range"
-          min="-15"
-          max="15"
-          step="0.5"
-          bind:value={preampDb}
-          disabled={busyPreamp || mode === 'off'}
-          onchange={applyPreamp}
-        />
-        <div class="preamp-value">
-          {preampDb > 0 ? '+' : ''}{preampDb.toFixed(1)} dB
-        </div>
-      </div>
-    </section>
+    {@render preampSection()}
   {/if}
 </div>
 

@@ -64,6 +64,8 @@ type emailTemplate struct {
 	ButtonText string
 	ButtonURL  string
 	Footer     string
+	// PreserveBreaks renders the body's line breaks as <br> (after escaping).
+	PreserveBreaks bool
 }
 
 func render(t emailTemplate) string {
@@ -74,6 +76,9 @@ func render(t emailTemplate) string {
 	// cannot land stored XSS in recipients' mail clients.
 	heading := html.EscapeString(t.Heading)
 	body := html.EscapeString(t.Body)
+	if t.PreserveBreaks {
+		body = strings.ReplaceAll(body, "\n", "<br>")
+	}
 	footer := html.EscapeString(t.Footer)
 
 	var btn string

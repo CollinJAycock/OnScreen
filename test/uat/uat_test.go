@@ -853,6 +853,15 @@ func TestUserRequestPermissions_RouteAdminOnly(t *testing.T) {
 	resp = ts.do("PUT", path, ts.adminToken(), body)
 	assertStatus(t, resp, http.StatusNoContent)
 	resp.Body.Close()
+
+	// The quota / can-request fields ride the same admin-only route.
+	quota := map[string]any{"can_request": false, "quota_movies": 3, "quota_tv": nil}
+	resp = ts.do("PUT", path, ts.userToken(), quota)
+	assertStatus(t, resp, http.StatusForbidden)
+	resp.Body.Close()
+	resp = ts.do("PUT", path, ts.adminToken(), quota)
+	assertStatus(t, resp, http.StatusNoContent)
+	resp.Body.Close()
 }
 
 // TestLibraries_ListEmpty returns an empty list when no libraries exist.

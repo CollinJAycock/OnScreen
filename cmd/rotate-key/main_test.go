@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
+
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/notifyagents"
 )
 
 func mustEnc(t *testing.T, key string) *auth.Encryptor {
@@ -111,5 +114,32 @@ func TestReEncrypt_WrongOldKeySkips(t *testing.T) {
 	}
 	if _, ok := reEncrypt(old, nw, stored); ok {
 		t.Error("must NOT rotate a value the old key can't decrypt")
+	}
+}
+
+// Notification agent credentials are bound to their row id: they re-seal to
+// the new key under the same id, and a ciphertext moved to another row (or
+// opened with the wrong old key) is skipped, never rewritten.
+func TestReEncryptAgentSecret(t *testing.T) {
+	old := mustEnc(t, strings.Repeat("a", 32))
+	nw := mustEnc(t, strings.Repeat("b", 32))
+	id, other := uuid.New(), uuid.New()
+
+	stored, err := old.EncryptContext("tk_secret", notifyagents.SecretContext(id))
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	out, ok := reEncryptAgentSecret(old, nw, id, stored)
+	if !ok {
+		t.Fatal("expected the agent secret to rotate")
+	}
+	if got, err := nw.DecryptContext(out, notifyagents.SecretContext(id)); err != nil || got != "tk_secret" {
+		t.Fatalf("new key should open it for the same row: %q, %v", got, err)
+	}
+	if _, ok := reEncryptAgentSecret(old, nw, other, stored); ok {
+		t.Error("a secret sealed for another row must be skipped")
+	}
+	if _, ok := reEncryptAgentSecret(nw, old, id, stored); ok {
+		t.Error("a wrong old key must be skipped")
 	}
 }

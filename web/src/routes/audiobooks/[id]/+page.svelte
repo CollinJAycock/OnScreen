@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
   import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
+  import { replayGainFromFile } from '$lib/replaygain';
 
   // Audiobook detail page: shows the book + lists its chapters (when the
   // book is multi-file, each audiobook_chapter is its own row with its
@@ -154,6 +155,7 @@
         artist: author?.title,     // narrator/author byline
         artistId: author?.id,
         posterPath: book?.poster_path,
+        replayGain: replayGainFromFile(cd?.files[0]),
       });
     }
     return { queue, index };

@@ -3,6 +3,7 @@
   import { notifications, markRead, markAllRead } from '$lib/stores/notifications';
   import type { Notification } from '$lib/api';
   import { createEventDispatcher } from 'svelte';
+  import { notificationKind, notificationHref, NOTIFICATION_ICONS } from '$lib/notificationDisplay';
 
   const dispatch = createEventDispatcher();
 
@@ -17,18 +18,15 @@
     return `${days}d ago`;
   }
 
-  function iconFor(type: string): string {
-    if (type === 'new_content') return 'M10 18a8 8 0 100-16 8 8 0 000 16zm.75-11.25a.75.75 0 00-1.5 0v2.5h-2.5a.75.75 0 000 1.5h2.5v2.5a.75.75 0 001.5 0v-2.5h2.5a.75.75 0 000-1.5h-2.5v-2.5z';
-    if (type === 'scan_complete') return 'M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z';
-    return 'M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a.75.75 0 000 1.5h.253a.25.25 0 01.244.304l-.459 2.066A1.75 1.75 0 0010.747 15H11a.75.75 0 000-1.5h-.253a.25.25 0 01-.244-.304l.459-2.066A1.75 1.75 0 009.253 9H9z';
-  }
-
   async function handleClick(notif: Notification) {
     if (!notif.read) {
       await markRead(notif.id);
     }
-    if (notif.item_id) {
-      goto(`/watch/${notif.item_id}`);
+    // Request notices open the Requests page (a fulfilled one opens the
+    // title); others open their item, when they have one.
+    const href = notificationHref(notif);
+    if (href) {
+      goto(href);
       dispatch('close');
     }
   }
@@ -53,14 +51,15 @@
       <div class="empty">No notifications</div>
     {:else}
       {#each $notifications as notif (notif.id)}
+        {@const kind = notificationKind(notif.type)}
         <button
           class="item"
           class:unread={!notif.read}
           on:click={() => handleClick(notif)}
         >
-          <div class="icon" class:new_content={notif.type === 'new_content'} class:scan_complete={notif.type === 'scan_complete'}>
-            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14">
-              <path fill-rule="evenodd" d={iconFor(notif.type)} clip-rule="evenodd"/>
+          <div class="icon {kind}" data-kind={kind}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="14" height="14" aria-hidden="true">
+              <path fill-rule="evenodd" d={NOTIFICATION_ICONS[kind]} clip-rule="evenodd"/>
             </svg>
           </div>
           <div class="content">
@@ -171,6 +170,13 @@
   }
   .icon.new_content { background: var(--accent-bg); color: var(--accent); }
   .icon.scan_complete { background: var(--success-bg); color: var(--success); }
+  .icon.request_pending { background: var(--accent-bg); color: var(--accent); }
+  .icon.request_waiting { background: var(--bg-hover); color: var(--text-secondary); }
+  .icon.request_approved { background: var(--success-bg); color: var(--success); }
+  .icon.request_available { background: var(--success-bg); color: var(--success); }
+  .icon.request_problem { background: rgba(248, 113, 113, 0.12); color: #f87171; }
+  .icon.issue_reported { background: rgba(251, 191, 36, 0.12); color: #fbbf24; }
+  .icon.issue_resolved { background: var(--success-bg); color: var(--success); }
 
   .content {
     flex: 1;

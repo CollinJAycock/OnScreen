@@ -16,6 +16,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1305,6 +1306,9 @@ func (s *stubRequestsDB) ListMediaRequestsForUser(_ context.Context, _ gen.ListM
 func (s *stubRequestsDB) CountMediaRequestsForUser(_ context.Context, _ gen.CountMediaRequestsForUserParams) (int64, error) {
 	return 0, nil
 }
+func (s *stubRequestsDB) CountRecentMediaRequestsForUser(_ context.Context, _ gen.CountRecentMediaRequestsForUserParams) (int64, error) {
+	return 0, nil
+}
 func (s *stubRequestsDB) ListAllMediaRequests(_ context.Context, _ gen.ListAllMediaRequestsParams) ([]gen.MediaRequest, error) {
 	return nil, nil
 }
@@ -1356,6 +1360,63 @@ func TestRequests_ListAcceptsUser(t *testing.T) {
 	resp := ts.do("GET", "/api/v1/requests", ts.userToken(), nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("status = %d, want 200 — body=%s", resp.StatusCode, readBody(resp))
+	}
+}
+
+// stubQuotaRequestsDB is stubRequestsDB with a requester row, so the quota
+// endpoint has a policy to report.
+type stubQuotaRequestsDB struct{ stubRequestsDB }
+
+func (s *stubQuotaRequestsDB) GetUserRequestPermissions(_ context.Context, _ uuid.UUID) (gen.GetUserRequestPermissionsRow, error) {
+	return gen.GetUserRequestPermissionsRow{CanRequest: true}, nil
+}
+
+// TestRequests_PendingCountRouteAdminOnly proves GET /requests/pending-count
+// (the admin nav badge) is behind AdminRequired and answers {"count": N}.
+func TestRequests_PendingCountRouteAdminOnly(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		svc := requests.NewService(&stubRequestsDB{}, nil, nil, slog.Default())
+		h.Requests = v1.NewRequestHandler(svc, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/requests/pending-count", "", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("anonymous: status = %d, want 401", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = ts.do("GET", "/api/v1/requests/pending-count", ts.userToken(), nil)
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("non-admin: status = %d, want 403", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = ts.do("GET", "/api/v1/requests/pending-count", ts.adminToken(), nil)
+	body := readBody(resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"count":0`) {
+		t.Errorf("admin: status = %d body=%s, want 200 with count", resp.StatusCode, body)
+	}
+}
+
+// TestRequests_QuotaRoute proves GET /requests/quota is open to any signed-in
+// user and isn't swallowed by /requests/{id} (which would 400 on "quota").
+func TestRequests_QuotaRoute(t *testing.T) {
+	ts := newExtrasServer(t, func(h *api.Handlers) {
+		svc := requests.NewService(&stubQuotaRequestsDB{}, nil, nil, slog.Default())
+		h.Requests = v1.NewRequestHandler(svc, slog.Default())
+	})
+
+	resp := ts.do("GET", "/api/v1/requests/quota", "", nil)
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("anonymous: status = %d, want 401", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = ts.do("GET", "/api/v1/requests/quota", ts.userToken(), nil)
+	body := readBody(resp)
+	if resp.StatusCode != http.StatusOK || !strings.Contains(body, `"can_request":true`) ||
+		!strings.Contains(body, `"window_days":7`) {
+		t.Errorf("user: status = %d body=%s, want 200 with can_request + window_days", resp.StatusCode, body)
 	}
 }
 

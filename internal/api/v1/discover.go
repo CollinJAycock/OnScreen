@@ -50,6 +50,11 @@ type DiscoverHandler struct {
 	// access scopes the in-library lookup to what the caller may actually
 	// see. nil = no ACL wired (tests / minimal deployments) → no filtering.
 	access LibraryAccessChecker
+	// seasons / seasonDB back season-level requests (discover_seasons.go):
+	// the per-season endpoint and the missing_seasons decoration. nil = not
+	// wired; the endpoint then answers 503 and results carry no season info.
+	seasons  DiscoverSeasonTMDB
+	seasonDB DiscoverSeasonDB
 }
 
 // NewDiscoverHandler builds a handler. tmdb may be nil — the endpoint will
@@ -82,6 +87,14 @@ type DiscoverItem struct {
 	FanartURL   string  `json:"fanart_url,omitempty"`
 	InLibrary   bool    `json:"in_library"`
 	LibraryItem *string `json:"library_item_id,omitempty"`
+	// MissingSeasons (shows in the caller's library only) lists the aired
+	// regular seasons the library doesn't fully hold — what "Request more
+	// seasons" would offer. [] when nothing is missing; absent for shows not
+	// in the library, movies, and when the season list couldn't be read.
+	MissingSeasons *[]int `json:"missing_seasons,omitempty"`
+	// PartiallyAvailable: the show is in the caller's library but some aired
+	// seasons are missing (in_library keeps its old meaning for older clients).
+	PartiallyAvailable bool `json:"partially_available"`
 	// Request state from the perspective of the requesting user.
 	HasActiveRequest bool       `json:"has_active_request"`
 	ActiveRequestID  *uuid.UUID `json:"active_request_id,omitempty"`
@@ -188,7 +201,39 @@ func (h *DiscoverHandler) Search(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Shows already in the library: which aired seasons are still missing.
+	h.decorateMissingSeasons(r.Context(), out)
+
 	respond.Success(w, r, out)
+}
+
+// callerScope is the caller's own view of the library: their granted
+// libraries (nil = all, for admins / no ACL wired) and their content-rating
+// ceiling (nil = none). ok=false when the grants couldn't be read — callers
+// then fail CLOSED and report nothing as in the library rather than answer
+// across the whole catalogue.
+func (h *DiscoverHandler) callerScope(ctx context.Context) (libIDs []uuid.UUID, maxRank *int32, ok bool) {
+	claims := middleware.ClaimsFromContext(ctx)
+	if claims == nil {
+		return nil, nil, true
+	}
+	maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+	if h.access == nil {
+		return nil, maxRank, true
+	}
+	allowed, err := h.access.AllowedLibraryIDs(ctx, claims.UserID, claims.IsAdmin)
+	if err != nil {
+		h.logger.WarnContext(ctx, "discover: allowed libraries failed; suppressing in-library flags",
+			"err", err)
+		return nil, nil, false
+	}
+	if allowed != nil {
+		libIDs = make([]uuid.UUID, 0, len(allowed))
+		for id := range allowed {
+			libIDs = append(libIDs, id)
+		}
+	}
+	return libIDs, maxRank, true
 }
 
 func (h *DiscoverHandler) lookupLibrary(ctx context.Context, mediaType string, ids []int32) map[int32]uuid.UUID {
@@ -198,26 +243,9 @@ func (h *DiscoverHandler) lookupLibrary(ctx context.Context, mediaType string, i
 	// Scope to the caller's own view: their granted libraries and their
 	// content-rating ceiling. A hit they cannot see must report as "not in
 	// library" with no id, exactly as it would from every other endpoint.
-	var libIDs []uuid.UUID
-	var maxRank *int32
-	if claims := middleware.ClaimsFromContext(ctx); claims != nil {
-		maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
-		if h.access != nil {
-			allowed, aerr := h.access.AllowedLibraryIDs(ctx, claims.UserID, claims.IsAdmin)
-			if aerr != nil {
-				// Fail CLOSED: degrade to "nothing is in your library" rather
-				// than answering across the whole catalogue.
-				h.logger.WarnContext(ctx, "discover: allowed libraries failed; suppressing in-library flags",
-					"err", aerr)
-				return nil
-			}
-			if allowed != nil {
-				libIDs = make([]uuid.UUID, 0, len(allowed))
-				for id := range allowed {
-					libIDs = append(libIDs, id)
-				}
-			}
-		}
+	libIDs, maxRank, ok := h.callerScope(ctx)
+	if !ok {
+		return nil
 	}
 	rows, err := h.db.ListMediaItemsByTMDBIDs(ctx, gen.ListMediaItemsByTMDBIDsParams{
 		Type:          libraryItemType(mediaType),

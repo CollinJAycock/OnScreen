@@ -185,16 +185,16 @@ LIMIT 24`,
 		"continue_watching": {
 			requiredParams: []string{"user_id (or be authenticated)"},
 			args:           []any{userID},
-			sql: `SELECT m.id, m.title, ws.position_ms, ws.last_watched_at
-FROM watch_state ws
+			sql: `SELECT m.id, m.title, ws.position_ms, ws.last_activity_at
+FROM user_watch_state ws
 JOIN media_items m ON m.id = ws.media_id
 LEFT JOIN media_items parent ON parent.id = m.parent_id
 LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ws.user_id = $1
-  AND ws.status = 'in_progress'
+  AND ws.resumable
   AND m.deleted_at IS NULL
   AND m.type IN ('movie', 'episode')
-ORDER BY ws.last_watched_at DESC
+ORDER BY ws.last_activity_at DESC
 LIMIT 20`,
 		},
 		"trending": {

@@ -36,6 +36,14 @@ func isLocalPeer(r *http.Request) bool {
 	if err != nil {
 		host = r.RemoteAddr
 	}
+	return isLocalAddr(host)
+}
+
+// isLocalAddr is isLocalPeer's classifier for a bare IP string (no port):
+// loopback, private, link-local, Tailscale/CGNAT, or inside one of this
+// host's own on-link IPv6 prefixes. Also labels Now Playing streams LAN vs
+// remote, so the two surfaces can't disagree about what "local" means.
+func isLocalAddr(host string) bool {
 	ip := net.ParseIP(host)
 	if ip == nil {
 		return false

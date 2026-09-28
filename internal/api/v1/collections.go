@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -42,6 +43,10 @@ type CollectionHandler struct {
 	db     CollectionDB
 	access LibraryAccessChecker
 	logger *slog.Logger
+	// franchise / franchiseReqs power the TMDB franchise additions
+	// (collections_franchise.go). Optional; wired via WithFranchise.
+	franchise     CollectionFranchiseDB
+	franchiseReqs FranchiseRequestLookup
 }
 
 // NewCollectionHandler creates a CollectionHandler.
@@ -67,17 +72,27 @@ type collectionResponse struct {
 	Genre       *string `json:"genre,omitempty"`
 	PosterPath  *string `json:"poster_path,omitempty"`
 	CreatedAt   string  `json:"created_at"`
+
+	// Franchise collections only (type "franchise"; all additive).
+	// PosterURL/BackdropURL are TMDB collection art; Parts is set on the
+	// detail endpoint (GET /collections/{id}) — every film of the TMDB
+	// collection the caller may see, owned or not.
+	TMDBCollectionID *int32                  `json:"tmdb_collection_id,omitempty"`
+	PosterURL        *string                 `json:"poster_url,omitempty"`
+	BackdropURL      *string                 `json:"backdrop_url,omitempty"`
+	Parts            []franchisePartResponse `json:"parts,omitempty"`
 }
 
 func toCollectionResponse(c gen.Collection) collectionResponse {
 	return collectionResponse{
-		ID:          c.ID.String(),
-		Name:        c.Name,
-		Description: c.Description,
-		Type:        c.Type,
-		Genre:       c.Genre,
-		PosterPath:  c.PosterPath,
-		CreatedAt:   c.CreatedAt.Time.Format(time.RFC3339),
+		ID:               c.ID.String(),
+		Name:             c.Name,
+		Description:      c.Description,
+		Type:             c.Type,
+		Genre:            c.Genre,
+		PosterPath:       c.PosterPath,
+		CreatedAt:        c.CreatedAt.Time.Format(time.RFC3339),
+		TMDBCollectionID: c.TmdbCollectionID,
 	}
 }
 
@@ -128,8 +143,18 @@ func (h *CollectionHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Franchise collections are opt-in: the Android TV / phone home screens
+	// build a row from EVERY collection this returns, so the (potentially
+	// hundreds of) TMDB franchises would flood them with placeholder-art
+	// tiles. Callers that render franchises ask for them with
+	// ?include=franchise; GET /libraries/{id}/collections is unaffected.
+	includeFranchise := queryIncludes(r, collectionTypeFranchise)
+
 	out := make([]collectionResponse, 0, len(cols))
 	for _, c := range cols {
+		if c.Type == collectionTypeFranchise && !includeFranchise {
+			continue
+		}
 		// allowed == nil means admin (or no ACL wired) → no filtering.
 		// A collection with no library_id is server-wide (auto_genre).
 		if allowed != nil && c.LibraryID.Valid {
@@ -139,7 +164,24 @@ func (h *CollectionHandler) List(w http.ResponseWriter, r *http.Request) {
 		}
 		out = append(out, toCollectionResponse(c))
 	}
+	out, ok := h.decorateFranchiseList(w, r, out)
+	if !ok {
+		return
+	}
 	respond.Success(w, r, out)
+}
+
+// queryIncludes reports whether the ?include= list (comma-separated, and/or
+// repeated) names want.
+func queryIncludes(r *http.Request, want string) bool {
+	for _, v := range r.URL.Query()["include"] {
+		for _, part := range strings.Split(v, ",") {
+			if strings.TrimSpace(part) == want {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // Get handles GET /api/v1/collections/{id}.
@@ -157,7 +199,11 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if !h.requireOwnerOrAdmin(w, r, col) {
 		return
 	}
-	respond.Success(w, r, toCollectionResponse(col))
+	resp := toCollectionResponse(col)
+	if col.Type == collectionTypeFranchise && !h.franchiseDetail(w, r, col, &resp) {
+		return
+	}
+	respond.Success(w, r, resp)
 }
 
 // requireOwnerOrAdmin returns true when the caller may mutate or read the
@@ -261,7 +307,7 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.requireOwnerOrAdminMutate(w, r, existing) {
+	if !h.requireOwnerOrAdminMutate(w, r, existing) || rejectManagedMutation(w, r, existing) {
 		return
 	}
 	var body struct {
@@ -296,7 +342,7 @@ func (h *CollectionHandler) Delete(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.requireOwnerOrAdminMutate(w, r, existing) {
+	if !h.requireOwnerOrAdminMutate(w, r, existing) || rejectManagedMutation(w, r, existing) {
 		return
 	}
 	if err := h.db.DeleteCollection(r.Context(), id); err != nil {
@@ -476,7 +522,7 @@ func (h *CollectionHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.requireOwnerOrAdminMutate(w, r, col) {
+	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) {
 		return
 	}
 	var body struct {
@@ -528,7 +574,7 @@ func (h *CollectionHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.requireOwnerOrAdminMutate(w, r, col) {
+	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) {
 		return
 	}
 	itemID, err := uuid.Parse(chi.URLParam(r, "itemId"))

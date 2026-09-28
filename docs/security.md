@@ -3,7 +3,8 @@
 This document records OnScreen's server-side security posture: the network
 surfaces an operator must control, the behaviors that differ from a naive
 default, and the residual risks that are accepted by design. It reflects the
-hardening pass tracked in the codebase as of v2.4.
+hardening pass tracked in the codebase as of v2.4, plus the unreleased v2.5
+additions listed under [v2.5 additions](#v25-additions-unreleased).
 
 ## Ports & network exposure
 
@@ -86,6 +87,77 @@ These differ from prior behavior; operators upgrading should be aware:
 18. **First-run "local" peers** also include Tailscale/CGNAT (`100.64.0.0/10`)
     and addresses inside this host's own IPv6 /64s, so dual-stack LANs can
     complete setup over IPv6.
+
+## v2.5 additions (unreleased)
+
+**Notification agents** (Settings → Notifications; `/api/v1/admin/notification-agents`)
+
+- Admin-only. Every create, update, delete and "Send test" is audit-logged
+  with the kind, name, events and — for ntfy / Gotify — the destination
+  host. The secret is never logged, and neither is a Discord webhook URL
+  (the URL is the secret).
+- The secret (Discord webhook URL, Telegram bot token, ntfy access token,
+  Gotify app token) is AES-256-GCM encrypted with the settings key and bound
+  to the agent's row id as associated data, so a ciphertext copied to
+  another row won't decrypt. It is write-only: responses carry
+  `secret_configured`, never the value. Non-secret config (Telegram chat id,
+  ntfy / Gotify server URL and topic, email recipients) is returned as-is.
+- Moving an ntfy / Gotify agent to a different server URL requires
+  re-entering its token in the same save (the rule in item 17), so a
+  hijacked admin session can't redirect a stored token to a host it
+  controls. An agent's kind can't be changed.
+- Agent secrets are bound to the agent's row id and are re-sealed by
+  `cmd/rotate-key` along with every other at-rest secret; a ciphertext
+  copied onto another agent's row fails to decrypt.
+- Egress: see [SSRF posture](#ssrf-posture). Discord URLs must be `https`
+  on `discord.com` / `discordapp.com` with the webhook path shape; Telegram
+  always goes to `api.telegram.org`. Redirects are never followed (a 3xx
+  would carry the POST, and for Discord / Telegram the secret-bearing path,
+  to an unapproved host). The stored `last_error` has secret-bearing URLs
+  stripped and is capped at 500 characters. Email agents send through the
+  server's SMTP settings, so the STARTTLS rule in item 3 applies.
+- Content: request events name the title and the requesting usernames;
+  new-content messages cover public libraries only.
+
+**Admin playback stop** (`POST /api/v1/sessions/{id}/stop`, admin only)
+
+- A transcode is torn down. Every stop publishes a `playback.stop` event on
+  the viewer's SSE stream; a cooperating player stops and shows the admin's
+  message (at most 200 characters).
+- Direct play, direct stream and remux have no server session to kill, so
+  the stop is also enforced server-side: for 2 minutes, media-byte requests,
+  transcode start and "playing" progress beacons for that exact user + item
+  + client IP answer `403 PLAYBACK_STOPPED`. The same user's other titles,
+  and other users, are unaffected. The block is stored in Valkey (with a
+  per-process fallback when Valkey is unreachable). Each stop is audited
+  with the admin, the owner, the item, the decision, the client IP and the
+  message.
+
+**Per-user limits added in v2.5**
+
+- **Problem reports:** one open report per user, item and kind (a unique
+  partial index, so concurrent submits can't both land); at most 10 open
+  reports per non-admin; 20 submissions per minute per user. The handler
+  applies the library ACL and rating ceiling to the item. Each report
+  notifies every admin, which is why the caps exist.
+- **Request quotas** are an approval gate, not a creation limit: an
+  over-quota request is still created but waits for an admin. The existing
+  cap of 25 pending requests per user (item 14) still bounds the queue, and
+  `can_request=false` refuses creation (`403 REQUESTS_DISABLED`). Quota,
+  can-request and auto-approve are read from the `users` row at request
+  time, never from token claims, so an admin's change applies immediately.
+  A profile with a rating ceiling is never auto-approved.
+- **Watch marks:** mark watched / unwatched and "remove from Continue
+  Watching" share one bucket of 60 requests per minute per user (a show-level
+  mark writes one row per episode, which the general 1000/min session limit
+  would otherwise allow at scale). Show / season marks only touch episodes
+  within the caller's rating ceiling.
+
+**Rating ceiling and ACL on the new surfaces:** Next Up, Plan to Watch, the
+library watch filter and "Surprise me", franchise collections, the Upcoming
+calendar and problem reports apply the library ACL and the content-rating
+ceiling. Franchise films the server doesn't have (no rating to check) are
+listed only for profiles without a ceiling.
 
 ## Deployment, packaging & supply-chain hardening
 
@@ -231,7 +303,9 @@ Outbound HTTP goes through `internal/safehttp`, which validates the
 every redirect hop. The default policy blocks loopback, RFC1918, RFC6598 CGNAT
 (`100.64/10`), link-local (incl. cloud-metadata `169.254.169.254`),
 unspecified, multicast, and IPv4 embedded in **NAT64 (`64:ff9b::/96`) / 6to4
-(`2002::/16`)** wrappers. The plugin egress path shares this denylist.
+(`2002::/16`)** wrappers. The plugin egress path shares this denylist, and so
+do notification agents (v2.5), which also ignore any environment proxy (a
+proxy would move the real dial outside the check).
 
 **Accepted exceptions** (admin-configured destinations that legitimately live on
 the LAN for a self-hosted deployment): OIDC/SAML metadata, LDAP, Sonarr/Radarr,
@@ -241,6 +315,16 @@ additionally permits link-local for tuner auto-config. In every case the
 so these cannot be used to reach `169.254.169.254`. The residual risk — a
 compromised admin using the server to probe its own LAN, or a same-LAN attacker
 spoofing an HDHomeRun — is accepted for the self-hosted threat model.
+
+**Notification agents** follow the default policy unless an admin turns on
+the per-agent **Allow private network** opt-in, which exists only for ntfy and
+Gotify (a database CHECK refuses it for Discord and Telegram). With the
+opt-in, delivery may also reach RFC1918, CGNAT and loopback addresses;
+link-local stays blocked. Plain `http` is accepted only with the opt-in, and
+then only to those private addresses — checked when the agent is saved and
+again at every dial, so a token sent in cleartext never reaches a public
+address, even if a LAN name later resolves to one. Without the opt-in, an
+ntfy / Gotify server must use `https`.
 
 ## Accepted residual risks (by design)
 
@@ -307,6 +391,27 @@ spoofing an HDHomeRun — is accepted for the self-hosted threat model.
   cap × ladder size. ABR is off by default (`TRANSCODE_ABR=false`).
 - **`/admin/debug/explain/{name}`** runs `EXPLAIN (ANALYZE)`, which *executes*
   the (allowlisted, parameterized) query. Admin-only.
+- **Overlapping season requests can race.** The "no overlapping seasons"
+  rule for TV requests is a pre-insert check in the request service; the
+  unique index only covers movies and all-seasons show requests. Two
+  concurrent requests from the same user for overlapping seasons can both be
+  created. The cost is a duplicate row in the admin queue (or a redundant
+  Sonarr monitor call), not an escalation.
+- **Request quotas aren't atomic.** Usage is counted before the insert, so
+  concurrent requests from one user can each see the same count and all be
+  auto-approved past the limit. The 25-pending cap and the per-user request
+  rate limit bound how far this can go.
+- **The playback-stop block is keyed by client IP.** Devices of the same user
+  behind one NAT that play the same item are blocked together for the
+  2-minute window, and a client whose address changes (for example a phone
+  switching networks) is not covered. Other items and other users are never
+  affected.
+- **The `playback.stop` SSE event reaches only viewers connected to the API
+  instance that handled the stop** (the SSE broker is per process). On a
+  multi-instance deployment a player connected elsewhere doesn't get the
+  message, but the server-side block still applies on every instance through
+  Valkey. If Valkey is unreachable, the block falls back to the instance
+  that recorded it.
 
 ## Operator checklist
 
@@ -318,6 +423,9 @@ spoofing an HDHomeRun — is accepted for the self-hosted threat model.
 - [ ] Use a TLS SMTP relay (port 465 or STARTTLS); cleartext to a remote relay is refused.
 - [ ] Disable LAN discovery on untrusted segments.
 - [ ] Leave LDAP `skip_tls_verify` off in production.
+- [ ] Turn on a notification agent's "Allow private network" only for a
+      self-hosted ntfy / Gotify on your LAN; after rotating `SECRET_KEY`,
+      re-enter each agent's secret.
 - [ ] Set a strong `DB_PASS` (compose files refuse to start without one).
 - [ ] Behind a reverse proxy, confirm it forwards `X-Forwarded-For`/`-Proto` on
       every route (the first-run setup gate and rate limits depend on it); set

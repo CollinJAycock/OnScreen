@@ -23,10 +23,10 @@ FROM (
     SELECT ic2.item_a AS other_id, ic2.score FROM item_cooccurrence ic2 WHERE ic2.item_b = $1
 ) co
 JOIN media_items m ON m.id = co.other_id
-LEFT JOIN watch_state ws ON ws.media_id = m.id AND ws.user_id = $2
+LEFT JOIN user_watch_state ws ON ws.media_id = m.id AND ws.user_id = $2
 WHERE m.deleted_at IS NULL
   AND m.type IN ('movie', 'episode')
-  AND ws.media_id IS NULL  -- exclude already-watched
+  AND COALESCE(ws.status, 'unwatched') = 'unwatched'  -- exclude watched / started
   AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
 ORDER BY co.score DESC, m.updated_at DESC
 LIMIT $4::int
@@ -55,8 +55,9 @@ type ListCooccurrentItemsRow struct {
 
 // Top N items most cooccurrent with the given seed item. Symmetric:
 // the seed could be in either column of the stored pair, so we union
-// both directions. Filters out items the user has already watched
-// (any non-empty watch_state row counts as watched), and items whose
+// both directions. Filters out items the user has already watched or
+// started (user_watch_state status watched / in_progress — an item the user
+// marked unplayed becomes recommendable again), and items whose
 // type isn't directly playable (no shows / artists / podcasts as
 // recommendation targets — only movie / episode).
 //
@@ -102,14 +103,13 @@ func (q *Queries) ListCooccurrentItems(ctx context.Context, arg ListCooccurrentI
 
 const listSeedItemsForUser = `-- name: ListSeedItemsForUser :many
 SELECT m.id, m.title, m.poster_path, m.thumb_path, m.updated_at
-FROM watch_state ws
+FROM user_watch_state ws
 JOIN media_items m ON m.id = ws.media_id
 WHERE ws.user_id = $1
   AND m.deleted_at IS NULL
   AND m.type IN ('movie', 'episode')
-  AND (ws.status = 'completed'
-       OR (ws.duration_ms > 0 AND ws.position_ms::float / ws.duration_ms::float >= 0.9))
-ORDER BY ws.last_watched_at DESC
+  AND ws.status = 'watched'
+ORDER BY ws.last_activity_at DESC
 LIMIT $2
 `
 
@@ -127,11 +127,10 @@ type ListSeedItemsForUserRow struct {
 }
 
 // The user's most-recently completed items, used as seeds for
-// "Because you watched X" rows. "Completed" here is generous —
-// watch_state.status can be 'completed' (explicit) or position past
-// 90% of duration (implicit). Stops at LIMIT seeds because the home
-// hub renders one row per seed; > 3 rows of the same shape gets
-// noisy.
+// "Because you watched X" rows. "Completed" is user_watch_state's
+// sticky 'watched' status — a play past 90% or a manual played mark since
+// the latest unplayed mark. Stops at LIMIT seeds because the home hub
+// renders one row per seed; > 3 rows of the same shape gets noisy.
 func (q *Queries) ListSeedItemsForUser(ctx context.Context, arg ListSeedItemsForUserParams) ([]ListSeedItemsForUserRow, error) {
 	rows, err := q.db.Query(ctx, listSeedItemsForUser, arg.UserID, arg.Limit)
 	if err != nil {

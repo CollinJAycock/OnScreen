@@ -6,6 +6,8 @@
     STREAM_SEGMENTS, REPORTED_SEGMENTS, NOT_REPORTED_NOTE, emptyCounts, normalizeStreamDay, countTotal,
     resolveTotals, reportedShares, fmtShare, segmentWidth, streamBreakdown, type StreamDay
   } from './stream-types';
+  import NowPlayingCard from './NowPlayingCard.svelte';
+  import StopStreamDialog from './StopStreamDialog.svelte';
 
   let data: AnalyticsData | null = null;
   let loading = true;
@@ -53,17 +55,43 @@
     } catch (e) { if (alive) console.warn(e); }
   }
 
-  // Admin stream termination (server enforces owner-or-admin + audit-logs
-  // the cross-user case). Optimistically drop the card; the next poll is
-  // the source of truth if the stop failed.
+  // Admin "stop this stream" — every playback mode, direct play included
+  // (POST /sessions/{id}/stop; audited server-side). Stop opens a confirm
+  // with an optional message for the viewer; on success the card is dropped
+  // (the next poll is the source of truth). 404 = the stream already ended.
   let stoppingId: string | null = null;
-  async function stopSession(id: string) {
+  let stopTarget: ActiveSession | null = null;
+  let stopError = '';
+
+  function askStop(s: ActiveSession) {
+    stopTarget = s;
+    stopError = '';
+  }
+
+  function cancelStop() {
+    if (stoppingId) return;
+    stopTarget = null;
+    stopError = '';
+  }
+
+  async function confirmStop(message: string) {
+    if (!stopTarget) return;
+    const id = stopTarget.id;
     stoppingId = id;
+    stopError = '';
     try {
-      await sessionsApi.stop(id);
+      await sessionsApi.adminStop(id, message || undefined);
       sessions = sessions.filter((s) => s.id !== id);
+      stopTarget = null;
     } catch (e) {
-      console.warn('stop session failed', e);
+      if ((e as { status?: number } | null)?.status === 404) {
+        // Ended between the poll and the click — nothing left to stop.
+        sessions = sessions.filter((s) => s.id !== id);
+        stopTarget = null;
+      } else {
+        console.warn('stop session failed', e);
+        stopError = e instanceof Error && e.message ? e.message : 'Couldn’t stop the stream.';
+      }
     } finally {
       stoppingId = null;
     }
@@ -111,16 +139,6 @@
     if (h === 0) return `${m} min`;
     if (m === 0) return `${h}h`;
     return `${h}h ${m}m`;
-  }
-
-  // Player-style clock for session positions (1:02:35 / 0:45).
-  function fmtClock(ms: number): string {
-    const s = Math.floor(ms / 1000);
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    const mm = h > 0 ? String(m).padStart(2, '0') : String(m);
-    return `${h > 0 ? h + ':' : ''}${mm}:${String(sec).padStart(2, '0')}`;
   }
 
   // d is a date-only "YYYY-MM-DD" key in the viewer's timezone. Parse the
@@ -306,44 +324,16 @@
         <h2>Now playing <span class="live-dot"></span></h2>
         <div class="stream-list">
           {#each sessions as s}
-            {@const pct = s.duration_ms && s.duration_ms > 0 ? Math.min(100, (s.position_ms / s.duration_ms) * 100) : 0}
-            <div class="stream-card">
-              {#if s.poster_path}
-                <img class="stream-poster" src={artworkSrc(s.poster_path, 150)}
-                     srcset="{artworkSrc(s.poster_path, 75)} 75w, {artworkSrc(s.poster_path, 150)} 150w, {artworkSrc(s.poster_path, 300)} 300w"
-                     sizes="80px"
-                     alt={s.title} />
-              {:else}
-                <div class="stream-poster placeholder"></div>
-              {/if}
-              <div class="stream-info">
-                <div class="stream-title">
-                  {#if s.parent_title}<span class="muted">{s.parent_title} · </span>{/if}{s.title}{#if s.year} <span class="muted">({s.year})</span>{/if}
-                </div>
-                <div class="stream-meta">
-                  <span class="stream-decision" class:transcode={s.decision === 'transcode'}>{s.decision === 'directPlay' ? 'Direct Play' : s.decision === 'directStream' ? 'Direct Stream' : s.decision === 'remux' ? 'Remux' : 'Transcoding'}</span>
-                  {#if s.bitrate_kbps}<span class="muted">· {(s.bitrate_kbps / 1000).toFixed(1)} Mbps</span>{/if}
-                  {#if s.client_name}<span class="muted">· {s.client_name}</span>{/if}
-                </div>
-                <div class="stream-progress-track">
-                  <div class="stream-progress-fill" style="width:{pct}%"></div>
-                </div>
-                <div class="stream-times muted">
-                  {fmtClock(s.position_ms)}{#if s.duration_ms} / {fmtClock(s.duration_ms)}{/if}
-                </div>
-              </div>
-              <!-- Owners can stop their own stream; admins can stop anyone's
-                   (the server enforces + audit-logs; non-admins only ever see
-                   their own sessions in this list anyway). -->
-              <button class="stream-stop" title="Stop this stream"
-                      disabled={stoppingId === s.id}
-                      on:click={() => stopSession(s.id)}>
-                {stoppingId === s.id ? 'Stopping…' : 'Stop'}
-              </button>
-            </div>
+            <!-- Who / where / how + why; Stop asks first (optional message
+                 to the viewer) and works for direct play too. -->
+            <NowPlayingCard session={s} stopping={stoppingId === s.id} onstop={askStop} />
           {/each}
         </div>
       </section>
+    {/if}
+    {#if stopTarget}
+      <StopStreamDialog session={stopTarget} busy={stoppingId !== null} error={stopError}
+                        onconfirm={confirmStop} oncancel={cancelStop} />
     {/if}
 
     <div class="grid">
@@ -957,45 +947,8 @@
   @media (prefers-reduced-motion: reduce) {
     .live-dot { animation: none; }
   }
-  .stream-list { display: flex; flex-direction: column; gap: 0.75rem; }
-  .stream-card {
-    display: flex; align-items: center; gap: 0.9rem;
-  }
-  .stream-poster {
-    width: 44px; height: 64px; border-radius: 4px;
-    object-fit: cover; flex-shrink: 0; background: var(--bg-secondary);
-  }
-  .stream-poster.placeholder { background: var(--bg-secondary); }
-  .stream-info { flex: 1; min-width: 0; }
-  .stream-stop {
-    flex-shrink: 0; padding: 0.3rem 0.7rem;
-    background: transparent; color: var(--text-muted);
-    border: 1px solid var(--border); border-radius: 6px;
-    font-size: 0.75rem; cursor: pointer;
-    transition: color 0.15s, border-color 0.15s;
-  }
-  .stream-stop:hover:not(:disabled) { color: #f87171; border-color: #f87171; }
-  .stream-stop:disabled { opacity: 0.6; cursor: default; }
-  .stream-title {
-    font-size: 0.85rem; font-weight: 600; color: var(--text-primary);
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-    margin-bottom: 0.2rem;
-  }
-  .stream-meta {
-    font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.4rem;
-    display: flex; align-items: center; gap: 0.4rem;
-  }
-  .stream-decision { color: #3ab8f7; }
-  .stream-decision.transcode { color: #f7a03a; }
-  .stream-progress-track {
-    height: 3px; background: var(--border-strong);
-    border-radius: 2px; overflow: hidden; margin-bottom: 0.25rem;
-  }
-  .stream-progress-fill {
-    height: 100%; background: var(--accent);
-    border-radius: 2px; transition: width 1s linear;
-  }
-  .stream-times { font-size: 0.68rem; }
+  .stream-list { display: flex; flex-direction: column; gap: 0.9rem; }
+  /* Card styles live in NowPlayingCard.svelte. */
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {

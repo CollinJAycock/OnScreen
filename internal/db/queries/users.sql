@@ -12,7 +12,8 @@ SELECT * FROM users WHERE username = $1;
 SELECT id, username, email, is_admin,
        created_at, updated_at,
        auto_approve_movies, auto_approve_tv,
-       max_content_rating
+       max_content_rating,
+       can_request, request_quota_movies, request_quota_tv
 FROM users
 ORDER BY username
 LIMIT 1000;
@@ -294,21 +295,34 @@ WHERE id = $1;
 -- Everything the media-request service needs to decide whether a new request
 -- is auto-approved, read from the row rather than the caller's token claims
 -- (claims can lag an admin's change by a token lifetime). is_admin wins, then a
--- set max_content_rating vetoes, then the per-type toggle decides.
-SELECT is_admin, max_content_rating, auto_approve_movies, auto_approve_tv
+-- set max_content_rating vetoes, then the per-type toggle decides. can_request
+-- and the per-type quotas (NULL = server default, 0 = unlimited) gate Create;
+-- username labels the admin "new request" alert.
+SELECT is_admin, max_content_rating, auto_approve_movies, auto_approve_tv,
+       can_request, request_quota_movies, request_quota_tv, username
 FROM users
 WHERE id = $1;
 
 -- name: SetUserRequestPermissions :execrows
--- Admin-set per-user auto-approval toggles. Stored as given even while the
--- user has a content-rating ceiling (which overrides them at request time), so
--- lifting the ceiling later restores what the admin chose. Rows affected lets
--- the handler 404 an unknown id.
+-- Admin-set per-user request policy. Every field is optional: a NULL toggle
+-- keeps the stored value, and each quota is only written when its set_* flag
+-- is true (so a NULL quota can mean "reset to the server default" rather than
+-- "leave alone"). Toggles are stored as given even while the user has a
+-- content-rating ceiling (which overrides them at request time), so lifting
+-- the ceiling later restores what the admin chose. Rows affected lets the
+-- handler 404 an unknown id.
 UPDATE users
-SET auto_approve_movies = $2,
-    auto_approve_tv     = $3,
-    updated_at          = NOW()
-WHERE id = $1;
+SET auto_approve_movies  = COALESCE(sqlc.narg('auto_approve_movies')::boolean, auto_approve_movies),
+    auto_approve_tv      = COALESCE(sqlc.narg('auto_approve_tv')::boolean, auto_approve_tv),
+    can_request          = COALESCE(sqlc.narg('can_request')::boolean, can_request),
+    request_quota_movies = CASE WHEN @set_quota_movies::boolean
+                                THEN sqlc.narg('request_quota_movies')::integer
+                                ELSE request_quota_movies END,
+    request_quota_tv     = CASE WHEN @set_quota_tv::boolean
+                                THEN sqlc.narg('request_quota_tv')::integer
+                                ELSE request_quota_tv END,
+    updated_at           = NOW()
+WHERE id = @id;
 
 -- name: SetProfileInheritLibraryAccess :execrows
 -- Toggles whether a managed profile inherits the parent's library

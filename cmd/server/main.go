@@ -42,6 +42,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/domain/watchstatus"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/franchise"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/lyrics"
@@ -54,6 +55,7 @@ import (
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
 	"github.com/onscreen/onscreen/internal/notification"
+	"github.com/onscreen/onscreen/internal/notifyagents"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/plugin"
@@ -564,6 +566,12 @@ func run() error {
 	// No API key required.
 	caaClient := coverartarchive.New()
 	metaAgent.SetAlbumCoverByMBIDFn(func() scanner.AlbumCoverByMBIDAgent { return caaClient })
+	// Franchise collections: every enriched movie reports its TMDB
+	// collection (belongs_to_collection) so "Alien Collection"-style
+	// collections appear once two of its films are in the server.
+	franchiseSvc := franchise.New(gen.New(rwPool),
+		func() franchise.TMDB { return &franchiseTMDBAdapter{agentFn: agentFn} }, logger)
+	metaAgent.SetFranchiseRecorder(franchiseSvc)
 
 	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger).WithMetrics(metrics).
 		// Admin-set missing-file grace (System settings override the env
@@ -615,16 +623,6 @@ func run() error {
 			})
 		}
 		return roots
-	}
-
-	// Start watching all libraries that already exist (from a previous run).
-	if existingLibs, err := libSvc.List(ctx); err == nil {
-		for _, lib := range existingLibs {
-			lib := lib
-			libEnqueuer.watchLibrary(lib.ID, lib.Paths)
-		}
-	} else {
-		logger.Warn("could not load libraries for fs watching", "err", err)
 	}
 
 	// External scrobbling (ListenBrainz) — per-user, opt-in. The dispatcher is
@@ -687,7 +685,8 @@ func run() error {
 	libHandler := v1.NewLibraryHandler(libSvc, logger).
 		WithMedia(mediaSvc).
 		WithDetector(libEnqueuer.introDetector).
-		WithAudit(auditLogger)
+		WithAudit(auditLogger).
+		WithWatchState(gen.New(roPool))
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 
@@ -734,7 +733,8 @@ func run() error {
 	hubHandler := v1.NewHubHandler(gen.New(roPool), logger).
 		WithLibraryAccess(libSvc).
 		WithLibraries(libSvc).
-		WithEpisodePoster(gen.New(roPool))
+		WithEpisodePoster(gen.New(roPool)).
+		WithWatchRows(gen.New(roPool))
 	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
@@ -811,19 +811,31 @@ func run() error {
 	v1.SetWorkerSegToken(transcode.SegmentProxyToken(cfg.SecretKey))
 
 	// ── Trickplay (seekbar thumbnail previews) ───────────────────────────────
-	// rootDir holds sprite_NNN.jpg + index.vtt per item. Lives alongside the
-	// artwork resize cache; both are regenerable and safe to nuke.
-	trickplayRoot := cfg.CachePath
-	if trickplayRoot == "" {
-		trickplayRoot = filepath.Join(os.TempDir(), "onscreen-trickplay")
-	} else {
-		trickplayRoot = filepath.Join(filepath.Dir(trickplayRoot), "trickplay")
-	}
+	// rootDir holds sprite_NNN.jpg + index.vtt per item, under the writable
+	// cache volume (see trickplayRootDir). Regenerable and safe to nuke.
+	trickplayRoot := trickplayRootDir(cfg)
 	trickplayStore := trickplay.NewStore(rwPool)
 	trickplayGen := trickplay.NewWithService(trickplayRoot, trickplayStore, mediaSvc, logger)
 	trickplaySvc := trickplay.NewService(trickplayGen, trickplayStore)
+	// Automatic generation: ONE bounded background worker shared by the
+	// post-scan hook, the admin per-library/per-item endpoints and the
+	// nightly trickplay_backfill task — a single ffmpeg sprite job at a
+	// time, deduped, and paused while any transcode session is live (see
+	// hasLivePlayback — abandoned sessions linger in the store for hours) so
+	// sprite extraction never competes with a viewer's stream. Started in
+	// the errgroup below so shutdown waits for the in-flight item to be
+	// cancelled and its status reset.
+	trickplayQueue := trickplay.NewQueue(trickplaySvc, trickplayStore, logger).
+		WithBusy(func(ctx context.Context) bool {
+			sessions, err := sessionStore.List(ctx)
+			return err == nil && hasLivePlayback(sessions, time.Now())
+		}, 30*time.Second)
+	trickplayPlanner := trickplay.NewPlanner(trickplayQueue, trickplayStore, logger)
+	libEnqueuer.trickplay = trickplayPlanner
 	trickplayHandler := v1.NewTrickplayHandler(trickplaySvc, mediaSvc, logger).
-		WithLibraryAccess(libSvc)
+		WithLibraryAccess(libSvc).
+		WithPlanner(trickplayPlanner, libSvc).
+		WithAudit(auditLogger)
 
 	// ── External subtitles (OpenSubtitles, etc.) ─────────────────────────────
 	// On-disk *.vtt files keyed by file id, plus the OCR working dirs. Roots
@@ -904,7 +916,8 @@ func run() error {
 		WithCreditsRefresher(peopleSvc).
 		WithDownloadGate(settingsSvc).
 		WithRatings(ratingsSvc).
-		WithMediaStore(mediaStoreProvider)
+		WithMediaStore(mediaStoreProvider).
+		WithFranchise(gen.New(roPool))
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
@@ -1160,11 +1173,51 @@ func run() error {
 
 	// ── Notifications ────────────────────────────────────────────────────────
 	_ = notifServiceEarly // used by scanEnqueuer above
+
+	// Outbound notification agents (Settings → Notifications): Discord /
+	// Telegram / ntfy / Gotify / email. The notification service hands them
+	// every event once; scans report new content for the batched message;
+	// the scheduler and the fleet monitor (below) report ops failures. Links
+	// use the configured public base URL only — none when it isn't set.
+	notifyAgents := notifyagents.New(notifyagents.Options{
+		DB:        gen.New(rwPool),
+		Encrypter: encryptor,
+		Email:     emailSender,
+		BaseURL:   func(ctx context.Context) string { return settingsSvc.General(ctx).BaseURL },
+		Logger:    logger,
+	})
+	defer notifyAgents.Close()
+	notifServiceEarly.SetAgentDispatcher(notifyAgents)
+	libEnqueuer.newContent = notifyAgents
+	notifyAgentsHandler := v1.NewNotificationAgentHandler(notifyAgents, logger).WithAudit(auditLogger)
+	fleetMonitor := notifyagents.NewFleetMonitor(notifyAgents, func(ctx context.Context) (int, error) {
+		workers, err := sessionStore.ListWorkers(ctx)
+		return len(workers), err
+	}, logger).WithClaim(func(ctx context.Context, key string, ttl time.Duration) bool {
+		ok, err := valkeyClient.SetNX(ctx, key, "1", ttl)
+		return err == nil && ok
+	})
 	notifHandler := v1.NewNotificationHandler(gen.New(roPool), notifBrokerEarly, logger).
 		WithSessionValidator(authMiddleware) // close open SSE streams once the session is revoked
 
 	// ── Cross-device playback transfer ───────────────────────────────────────
 	playbackHandler := v1.NewPlaybackHandler(gen.New(roPool), notifBrokerEarly, logger)
+
+	// ── Now Playing: who/where/why + an admin stop that works for every mode ─
+	// The guard is shared by the stop endpoint (writer) and the serving paths
+	// (StreamFile, transcode Start, progress beacons) that refuse a stopped
+	// (user, item, client) for a short window.
+	playbackStops := v1.NewPlaybackStopGuard(valkeyClient, logger)
+	itemHandler.WithPlaybackStops(playbackStops)
+	nativeTranscodeHandler.WithPlaybackStops(playbackStops)
+	nativeSessionsHandler.
+		WithUsers(gen.New(roPool)).
+		WithFiles(mediaSvc).
+		WithPlayDecisions(playDecisions).
+		WithPlaybackStops(playbackStops).
+		WithTerminator(nativeTranscodeHandler).
+		WithSyncBroker(notifBrokerEarly).
+		WithAudit(auditLogger)
 
 	// ── Maintenance (admin one-shot operations) ──────────────────────────────
 	maintenanceHandler := v1.NewMaintenanceHandler(mediaSvc, libSvc, rwMQ, metaAgent, logger)
@@ -1183,7 +1236,8 @@ func run() error {
 	// snapshot at create time and to resolve TVDB ids for Sonarr lookups.
 	requestsTMDB := &requestsTMDBAdapter{agentFn: agentFn}
 	requestsSvc := requests.NewService(gen.New(rwPool), requestsTMDB, notifServiceEarly, logger).
-		WithEncryptor(encryptor)
+		WithEncryptor(encryptor).
+		WithQuotaDefaults(v1.RequestQuotaDefaults(settingsSvc))
 	requestsHandler := v1.NewRequestHandler(requestsSvc, logger).WithAudit(auditLogger)
 	arrServicesHandler := v1.NewArrServicesHandler(gen.New(rwPool), logger).
 		WithAudit(auditLogger).
@@ -1194,16 +1248,41 @@ func run() error {
 		// Scope the in-library flag to the caller's grants + rating ceiling,
 		// so Discover can't answer "does this title exist on the server" for
 		// content the caller has no other way to see.
-		WithAccess(libSvc)
+		WithAccess(libSvc).
+		// Season-level requests: the season picker and missing_seasons.
+		WithSeasons(requestsTMDB, gen.New(roPool))
 	// Upcoming calendar: fans out to the same arr_services, filtered per
 	// caller by rating ceiling and by the library each *arr folder maps into.
 	upcomingHandler := v1.NewUpcomingHandler(gen.New(roPool), libSvc, libSvc, settingsSvc, logger).
+		WithEncryptor(encryptor)
+	// "Report a problem" + admin Library health / re-grab. A report notifies
+	// every admin; closing one notifies the reporter; admin actions are
+	// audited; re-grab opens sealed arr_services keys with the encryptor.
+	issuesHandler := v1.NewIssueHandler(gen.New(rwPool), libSvc, logger).
+		WithNotifier(notifServiceEarly).
+		WithAudit(auditLogger).
 		WithEncryptor(encryptor)
 	// Back-fill the scan enqueuer so post-scan goroutines can settle
 	// any media-requests whose download just landed, and let the arr
 	// webhook also fire a reconcile on Download events.
 	libEnqueuer.requestsSvc = requestsSvc
 	arrHandler.WithRequestReconciler(requestsSvc)
+	// Grab / import / failure webhooks refresh the affected requests' live
+	// download state right away (between arr_request_sync runs).
+	arrHandler.WithDownloadSyncer(requestsSvc)
+
+	// Start watching all libraries that already exist (from a previous run).
+	// Deliberately AFTER every late-bound libEnqueuer field (webhookDispatcher,
+	// trickplay, newContent, requestsSvc) is assigned: a watcher's directory
+	// scan goroutine reads those fields without a lock, so starting watchers
+	// earlier raced those writes (TestLibraryWatchersStartAfterEnqueuerWiring).
+	if existingLibs, err := libSvc.List(ctx); err == nil {
+		for _, lib := range existingLibs {
+			libEnqueuer.watchLibrary(lib.ID, lib.Paths)
+		}
+	} else {
+		logger.Warn("could not load libraries for fs watching", "err", err)
+	}
 
 	// ── Scheduler (cron-driven admin tasks) ──────────────────────────────────
 	// Registry holds handler implementations keyed by task_type. Built-ins
@@ -1274,11 +1353,25 @@ func run() error {
 			return rep.Status, rep.Detail, nil
 		},
 		logger))
+	// Nightly seek-bar thumbnail backfill for trickplay-enabled libraries:
+	// oldest items first within a time budget, through the same single
+	// worker slot as post-scan generation (seeded enabled below).
+	schedRegistry.Register("trickplay_backfill",
+		scheduler.NewTrickplayBackfillHandler(trickplayPlanner, logger))
+	// Nightly franchise-collection pass: bounded TMDB-collection backfill for
+	// movies enriched before franchise tracking, stale-snapshot refresh, and a
+	// DB-only reconcile (seeded enabled below).
+	schedRegistry.Register("franchise_collections",
+		scheduler.NewFranchiseCollectionsHandler(franchiseSvc, logger))
 	// Rebuild the watch_plays materialized view off the request path so the
 	// analytics dashboard reads a cheap indexed copy instead of recomputing a
 	// full-history lead() window on every load (migration 00004).
 	schedRegistry.Register("refresh_watch_plays",
 		scheduler.NewRefreshWatchPlaysHandler(rwPool, logger))
+	// Live Radarr/Sonarr download state for in-flight media requests, plus
+	// the once-per-failure "download failed" notices (seeded every 5 min).
+	schedRegistry.Register("arr_request_sync",
+		scheduler.NewArrRequestSyncHandler(requestsSvc))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the
@@ -1316,7 +1409,10 @@ func run() error {
 	// Without it, a fresh install has handlers registered in memory but
 	// nothing to trigger them — DVR silently stops recording.
 	seedSystemTasks(ctx, gen.New(rwPool), logger)
-	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger)
+	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger).
+		OnResult(func(ctx context.Context, t scheduler.Task, runErr error) {
+			notifyAgents.TaskResult(ctx, t.ID, t.Name, t.Type, runErr) // task_failed / backup_failed
+		})
 	tasksHandler := v1.NewTasksHandler(gen.New(rwPool), schedRegistry, logger)
 
 	// Jobs status feed — drives the frontend "scanning…", "N items
@@ -1353,12 +1449,13 @@ func run() error {
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
+		WatchState:      v1.NewWatchStateHandler(gen.New(rwPool), libSvc, logger),
 		Photos:          photosHandler,
 		Books:           booksHandler,
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,
-		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc),
 		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		PhotoAlbums:     v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		LiveTV:          liveTVHandler,
@@ -1389,6 +1486,7 @@ func run() error {
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
 		Upcoming:        upcomingHandler,
+		Issues:          issuesHandler,
 		Favorites:       favoritesHandler,
 		StreamTracker:   streamTracker,
 		Artwork:         artworkMgr,
@@ -1426,6 +1524,7 @@ func run() error {
 		RateLimiter:        rateLimiter,
 		CORSAllowedOrigins: corsAllowedOrigins,
 		DevFrontendURL:     cfg.DevFrontendURL,
+		NotificationAgents: notifyAgentsHandler,
 	}
 	// Fail fast if a security-critical handler was built without its
 	// per-library access checker — a nil checker fails open (serves every
@@ -1628,6 +1727,20 @@ func run() error {
 		return nil
 	})
 
+	// worker_fleet_down alerts: one node watches the transcode worker registry.
+	g.Go(func() error {
+		masterLock.RunIfMaster(gCtx, fleetMonitor.Run)
+		return nil
+	})
+
+	// Trickplay generation worker. Runs on every instance (each drains what
+	// its own scans and admin requests queued); returns once the in-flight
+	// item has been cancelled and its row reset, before the pools close.
+	g.Go(func() error {
+		trickplayQueue.Run(gCtx)
+		return nil
+	})
+
 	if embeddedWorker != nil {
 		g.Go(func() error {
 			if err := embeddedWorker.Start(gCtx); err != nil {
@@ -1775,6 +1888,13 @@ type scanEnqueuer struct {
 	// requests to available when the matching media_item lands. Optional —
 	// nil disables fulfillment polling, matching the pre-Requests behaviour.
 	requestsSvc *requests.Service
+	// trickplay queues a scanned library's items that still need seek-bar
+	// thumbnails (a no-op for libraries with the toggle off). Optional —
+	// nil disables automatic generation.
+	trickplay trickplayAfterScan
+	// newContent hears about libraries a scan added items to, for the
+	// notification agents' batched new_content message. Optional.
+	newContent interface{ LibraryHasNewContent(libraryID uuid.UUID) }
 
 	watchMu      sync.Mutex
 	watchers     map[uuid.UUID]*scanner.Watcher // one watcher per library
@@ -1859,6 +1979,9 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		if e.notifService != nil && result.New > 0 {
 			e.notifService.NotifyScanComplete(context.WithoutCancel(e.serverCtx), libraryID, lib.Name, result.New)
 		}
+		if e.newContent != nil && result.New > 0 {
+			e.newContent.LibraryHasNewContent(libraryID)
+		}
 		// Intro/credits detection runs on show + anime libraries, and only
 		// when the admin has left detection on auto. Movies are excluded —
 		// users typically mark them manually if at all. Anime libraries
@@ -1876,8 +1999,30 @@ func (e *scanEnqueuer) EnqueueScan(ctx context.Context, libraryID uuid.UUID) err
 		if e.requestsSvc != nil && result.New > 0 {
 			e.requestsSvc.ReconcileFulfillments(context.WithoutCancel(e.serverCtx))
 		}
+		// Queue seek-bar thumbnails for whatever in the library still lacks
+		// them — after every full scan, not just ones that found new files,
+		// so items a restart dropped from the in-memory queue catch up.
+		e.queueTrickplay(libraryID)
 	}()
 	return nil
+}
+
+// trickplayAfterScan is the post-scan trickplay hook. Satisfied by
+// *trickplay.Planner.
+type trickplayAfterScan interface {
+	AfterScan(ctx context.Context, libraryID uuid.UUID) (int, error)
+}
+
+// queueTrickplay hands the library to the trickplay planner. Cheap and
+// non-blocking: one candidate query plus an in-memory enqueue; generation
+// happens on the planner's single background worker.
+func (e *scanEnqueuer) queueTrickplay(libraryID uuid.UUID) {
+	if e.trickplay == nil {
+		return
+	}
+	if _, err := e.trickplay.AfterScan(context.WithoutCancel(e.serverCtx), libraryID); err != nil {
+		e.logger.Warn("queue trickplay after scan", "library_id", libraryID, "err", err)
+	}
 }
 
 // runIntroDetection walks every season in a show library and kicks off
@@ -1942,12 +2087,16 @@ func (e *scanEnqueuer) TriggerDirectoryScan(_ context.Context, libraryID uuid.UU
 			if err := e.db.RefreshHubRecentlyAdded(context.WithoutCancel(e.serverCtx)); err != nil {
 				e.logger.Warn("refresh hub after dir scan", "err", err)
 			}
+			if e.newContent != nil {
+				e.newContent.LibraryHasNewContent(libraryID)
+			}
 			// Settle any media-requests whose download just landed. The arr
 			// webhook also fires this directly, but a watcher-driven scan
 			// (no webhook) needs its own trigger.
 			if e.requestsSvc != nil {
 				e.requestsSvc.ReconcileFulfillments(context.WithoutCancel(e.serverCtx))
 			}
+			e.queueTrickplay(libraryID)
 		}
 	}()
 	return nil

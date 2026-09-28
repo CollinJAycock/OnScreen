@@ -19,7 +19,9 @@
 
   async function load() {
     loading = true;
-    try { collections = await collectionApi.list(); }
+    // Franchises are opt-in on GET /collections; this page's "Film series"
+    // section is where they live.
+    try { collections = await collectionApi.list({ includeFranchise: true }); }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
     finally { loading = false; }
   }
@@ -45,6 +47,8 @@
   }
 
   $: genreCollections = collections.filter(c => c.type === 'auto_genre');
+  // TMDB film series the server holds at least two films of.
+  $: franchises = collections.filter(c => c.type === 'franchise');
   $: playlists = collections.filter(c => c.type === 'playlist');
 </script>
 
@@ -82,6 +86,24 @@
               <div class="card-icon">&#9835;</div>
               <div class="card-name">{col.name}</div>
               <button class="card-delete" title="Delete" on:click|preventDefault|stopPropagation={() => deleteCollection(col.id)}>×</button>
+            </a>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
+    {#if franchises.length > 0}
+      <section>
+        <h2>Film series</h2>
+        <div class="grid">
+          {#each franchises as col (col.id)}
+            <a class="card franchise" href="/collections/{col.id}" title={col.name}>
+              {#if col.poster_url}
+                <img class="franchise-poster" src={col.poster_url} alt={col.name} loading="lazy" referrerpolicy="no-referrer" />
+              {:else}
+                <div class="card-icon">&#9707;</div>
+              {/if}
+              <div class="card-name">{col.name}</div>
             </a>
           {/each}
         </div>
@@ -190,6 +212,9 @@
   .card-name { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); text-align: center; }
 
   .card.genre { padding: 1rem; }
+  .card.franchise { padding: 0 0 0.75rem; overflow: hidden; justify-content: flex-start; }
+  .card.franchise .card-icon { margin: 1.5rem 0 0.5rem; }
+  .franchise-poster { width: 100%; aspect-ratio: 2/3; object-fit: cover; display: block; margin-bottom: 0.6rem; }
   .card.genre .card-name { color: var(--text-secondary); }
 
   .card-delete {

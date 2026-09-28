@@ -32,6 +32,12 @@ type MediaLookup interface {
 // extract thumbnails from. Callers typically log and skip.
 var ErrNoFile = errors.New("trickplay: item has no playable file")
 
+// ErrZeroDuration is returned when the item's primary file has no known
+// duration — the VTT index can't be timed without one. Like ErrNoFile it is
+// a property of the item, not a transient failure, so the automatic queue
+// marks the item skipped instead of retrying it.
+var ErrZeroDuration = errors.New("trickplay: item has zero duration")
+
 // Generator renders trickplay sprite sheets + WebVTT indexes for media items
 // and records state in the trickplay_status table.
 //
@@ -82,8 +88,11 @@ func (g *Generator) Generate(ctx context.Context, itemID uuid.UUID) error {
 	if path == "" {
 		return ErrNoFile
 	}
-	if duration <= 0 {
-		return fmt.Errorf("trickplay: item %s has zero duration", itemID)
+	// A clip shorter than one sampling interval yields no frames at all
+	// (fps=1/N emits nothing before N seconds), so it's skipped like a
+	// zero-duration item rather than recorded as a failure.
+	if duration <= 0 || duration < g.spec.IntervalSec {
+		return fmt.Errorf("%w: %s", ErrZeroDuration, itemID)
 	}
 
 	if err := g.store.UpsertPending(ctx, itemID, fileID, g.spec); err != nil {

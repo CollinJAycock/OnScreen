@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -17,16 +16,9 @@ type mockQuerier struct {
 	insertCalled bool
 	insertParams InsertWatchEventParams
 	insertErr    error
-	refreshCount atomic.Int32 // refreshes are fired from a background goroutine
-	refreshErr   error
 
 	states map[string]WatchState // key: userID+":"+mediaID
 }
-
-// refreshed reports whether ≥1 watch_state refresh has run; refreshes reports
-// how many (the coalesce test asserts a burst collapses to one).
-func (m *mockQuerier) refreshed() bool { return m.refreshCount.Load() > 0 }
-func (m *mockQuerier) refreshes() int  { return int(m.refreshCount.Load()) }
 
 func newMockQuerier() *mockQuerier {
 	return &mockQuerier{states: make(map[string]WatchState)}
@@ -39,11 +31,6 @@ func (m *mockQuerier) InsertWatchEvent(_ context.Context, p InsertWatchEventPara
 		return InsertWatchEventRow{}, m.insertErr
 	}
 	return InsertWatchEventRow{ID: uuid.New(), OccurredAt: p.OccurredAt}, nil
-}
-
-func (m *mockQuerier) RefreshWatchState(_ context.Context) error {
-	m.refreshCount.Add(1)
-	return m.refreshErr
 }
 
 func (m *mockQuerier) GetWatchState(_ context.Context, userID, mediaID uuid.UUID) (WatchState, error) {
@@ -79,8 +66,6 @@ func newTestService(t *testing.T) (*Service, *mockQuerier) {
 	t.Helper()
 	q := newMockQuerier()
 	svc := NewService(q, q, slog.Default())
-	// Tiny debounce so the coalesced refresh fires quickly under test.
-	svc.refreshDebounce = time.Millisecond
 	return svc, q
 }
 
@@ -124,78 +109,6 @@ func TestRecord_InsertError_Propagates(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
-	}
-}
-
-func TestRecord_StopTriggersRefresh(t *testing.T) {
-	svc, q := newTestService(t)
-
-	err := svc.Record(context.Background(), RecordParams{
-		UserID:     uuid.New(),
-		MediaID:    uuid.New(),
-		EventType:  "stop",
-		OccurredAt: time.Now(),
-	})
-	if err != nil {
-		t.Fatalf("Record returned error: %v", err)
-	}
-	// Give the goroutine a moment to run.
-	time.Sleep(10 * time.Millisecond)
-	if !q.refreshed() {
-		t.Error("expected RefreshWatchState to be called after stop event")
-	}
-}
-
-func TestRecord_ScrobbleTriggersRefresh(t *testing.T) {
-	svc, q := newTestService(t)
-
-	err := svc.Record(context.Background(), RecordParams{
-		UserID:     uuid.New(),
-		MediaID:    uuid.New(),
-		EventType:  "scrobble",
-		OccurredAt: time.Now(),
-	})
-	if err != nil {
-		t.Fatalf("Record returned error: %v", err)
-	}
-	time.Sleep(10 * time.Millisecond)
-	if !q.refreshed() {
-		t.Error("expected RefreshWatchState to be called after scrobble event")
-	}
-}
-
-// TestRecord_RefreshesCoalesce is the regression for the O(history)-per-stop
-// fix: a burst of terminal events must collapse to a single matview refresh, not
-// one per event.
-func TestRecord_RefreshesCoalesce(t *testing.T) {
-	svc, q := newTestService(t)
-	svc.refreshDebounce = 40 * time.Millisecond // long enough to absorb the burst below
-	user, media := uuid.New(), uuid.New()
-	for i := 0; i < 10; i++ {
-		if err := svc.Record(context.Background(), RecordParams{
-			UserID: user, MediaID: media, EventType: "stop", OccurredAt: time.Now(),
-		}); err != nil {
-			t.Fatalf("Record[%d]: %v", i, err)
-		}
-	}
-	time.Sleep(120 * time.Millisecond) // > debounce + refresh slack
-	if n := q.refreshes(); n != 1 {
-		t.Errorf("burst of 10 stops should coalesce to 1 refresh, got %d", n)
-	}
-}
-
-func TestRecord_PlayNoRefresh(t *testing.T) {
-	svc, q := newTestService(t)
-
-	_ = svc.Record(context.Background(), RecordParams{
-		UserID:     uuid.New(),
-		MediaID:    uuid.New(),
-		EventType:  "play",
-		OccurredAt: time.Now(),
-	})
-	time.Sleep(10 * time.Millisecond)
-	if q.refreshed() {
-		t.Error("did not expect RefreshWatchState for play event")
 	}
 }
 
@@ -248,8 +161,7 @@ func TestRecord_StopFiresScrobbleHook(t *testing.T) {
 }
 
 // Only 'stop' triggers the hook. In particular the legacy 'scrobble' event
-// still refreshes the matview (see TestRecord_ScrobbleTriggersRefresh) but must
-// NOT double-dispatch a listen now that the trigger moved to 'stop'.
+// must NOT double-dispatch a listen now that the trigger moved to 'stop'.
 func TestRecord_NonStopDoesNotFireScrobbleHook(t *testing.T) {
 	for _, et := range []string{"play", "pause", "resume", "seek", "scrobble"} {
 		t.Run(et, func(t *testing.T) {
@@ -367,9 +279,6 @@ type errListQuerier struct{ inner *mockQuerier }
 
 func (e *errListQuerier) InsertWatchEvent(ctx context.Context, p InsertWatchEventParams) (InsertWatchEventRow, error) {
 	return e.inner.InsertWatchEvent(ctx, p)
-}
-func (e *errListQuerier) RefreshWatchState(ctx context.Context) error {
-	return e.inner.RefreshWatchState(ctx)
 }
 func (e *errListQuerier) GetWatchState(ctx context.Context, userID, mediaID uuid.UUID) (WatchState, error) {
 	return e.inner.GetWatchState(ctx, userID, mediaID)

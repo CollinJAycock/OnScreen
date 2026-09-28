@@ -56,18 +56,19 @@ type Channel struct {
 }
 
 type Collection struct {
-	ID          uuid.UUID          `json:"id"`
-	UserID      pgtype.UUID        `json:"user_id"`
-	Name        string             `json:"name"`
-	Description *string            `json:"description"`
-	Type        string             `json:"type"`
-	Genre       *string            `json:"genre"`
-	PosterPath  *string            `json:"poster_path"`
-	SortOrder   int32              `json:"sort_order"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	Rules       []byte             `json:"rules"`
-	LibraryID   pgtype.UUID        `json:"library_id"`
+	ID               uuid.UUID          `json:"id"`
+	UserID           pgtype.UUID        `json:"user_id"`
+	Name             string             `json:"name"`
+	Description      *string            `json:"description"`
+	Type             string             `json:"type"`
+	Genre            *string            `json:"genre"`
+	PosterPath       *string            `json:"poster_path"`
+	SortOrder        int32              `json:"sort_order"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	Rules            []byte             `json:"rules"`
+	LibraryID        pgtype.UUID        `json:"library_id"`
+	TmdbCollectionID *int32             `json:"tmdb_collection_id"`
 }
 
 type CollectionItem struct {
@@ -76,6 +77,12 @@ type CollectionItem struct {
 	MediaItemID  uuid.UUID          `json:"media_item_id"`
 	Position     int32              `json:"position"`
 	AddedAt      pgtype.Timestamptz `json:"added_at"`
+}
+
+type ContinueWatchingDismissal struct {
+	UserID      uuid.UUID          `json:"user_id"`
+	MediaID     uuid.UUID          `json:"media_id"`
+	DismissedAt pgtype.Timestamptz `json:"dismissed_at"`
 }
 
 type EpgProgram struct {
@@ -107,6 +114,12 @@ type EpgSource struct {
 	LastError          *string            `json:"last_error"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type EpisodeAncestry struct {
+	ContainerID   pgtype.UUID `json:"container_id"`
+	EpisodeID     uuid.UUID   `json:"episode_id"`
+	ContentRating *string     `json:"content_rating"`
 }
 
 type ExternalSubtitle struct {
@@ -180,6 +193,7 @@ type Library struct {
 	DeletedAt               pgtype.Timestamptz `json:"deleted_at"`
 	IsPrivate               bool               `json:"is_private"`
 	AutoGrantNewUsers       bool               `json:"auto_grant_new_users"`
+	TrickplayEnabled        bool               `json:"trickplay_enabled"`
 }
 
 type LibraryAccess struct {
@@ -233,6 +247,20 @@ type MediaFile struct {
 	IntegrityDetail     *string            `json:"integrity_detail"`
 }
 
+type MediaIssue struct {
+	ID             uuid.UUID          `json:"id"`
+	ItemID         uuid.UUID          `json:"item_id"`
+	FileID         pgtype.UUID        `json:"file_id"`
+	UserID         uuid.UUID          `json:"user_id"`
+	Kind           string             `json:"kind"`
+	Note           *string            `json:"note"`
+	Status         string             `json:"status"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	ResolvedAt     pgtype.Timestamptz `json:"resolved_at"`
+	ResolvedBy     pgtype.UUID        `json:"resolved_by"`
+	ResolutionNote *string            `json:"resolution_note"`
+}
+
 type MediaItem struct {
 	ID                        uuid.UUID          `json:"id"`
 	LibraryID                 uuid.UUID          `json:"library_id"`
@@ -282,6 +310,13 @@ type MediaItem struct {
 	FranchiseID               *int32             `json:"franchise_id"`
 }
 
+type MediaItemTmdbCollection struct {
+	MediaItemID      uuid.UUID          `json:"media_item_id"`
+	TmdbID           int32              `json:"tmdb_id"`
+	TmdbCollectionID *int32             `json:"tmdb_collection_id"`
+	CheckedAt        pgtype.Timestamptz `json:"checked_at"`
+}
+
 type MediaRequest struct {
 	ID                 uuid.UUID          `json:"id"`
 	UserID             uuid.UUID          `json:"user_id"`
@@ -305,6 +340,14 @@ type MediaRequest struct {
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
 	AutoApproved       bool               `json:"auto_approved"`
+	ArrItemID          *int32             `json:"arr_item_id"`
+	DownloadState      *string            `json:"download_state"`
+	DownloadProgress   *float32           `json:"download_progress"`
+	DownloadEta        pgtype.Timestamptz `json:"download_eta"`
+	DownloadSizeBytes  *int64             `json:"download_size_bytes"`
+	DownloadMessage    *string            `json:"download_message"`
+	DownloadUpdatedAt  pgtype.Timestamptz `json:"download_updated_at"`
+	SeasonsAvailable   []int32            `json:"seasons_available"`
 }
 
 type NodeSetting struct {
@@ -322,6 +365,22 @@ type Notification struct {
 	ItemID    pgtype.UUID        `json:"item_id"`
 	Read      bool               `json:"read"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type NotificationAgent struct {
+	ID                  uuid.UUID          `json:"id"`
+	Kind                string             `json:"kind"`
+	Name                string             `json:"name"`
+	Enabled             bool               `json:"enabled"`
+	Events              []string           `json:"events"`
+	Config              []byte             `json:"config"`
+	Secret              *string            `json:"secret"`
+	AllowPrivateNetwork bool               `json:"allow_private_network"`
+	LastSuccessAt       pgtype.Timestamptz `json:"last_success_at"`
+	LastError           *string            `json:"last_error"`
+	LastErrorAt         pgtype.Timestamptz `json:"last_error_at"`
+	CreatedAt           pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PasswordResetToken struct {
@@ -464,6 +523,16 @@ type TaskRun struct {
 	Error     string             `json:"error"`
 }
 
+type TmdbCollection struct {
+	TmdbCollectionID int32              `json:"tmdb_collection_id"`
+	Name             string             `json:"name"`
+	Overview         *string            `json:"overview"`
+	PosterUrl        *string            `json:"poster_url"`
+	BackdropUrl      *string            `json:"backdrop_url"`
+	Parts            []byte             `json:"parts"`
+	FetchedAt        pgtype.Timestamptz `json:"fetched_at"`
+}
+
 type TotpRecoveryCode struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    uuid.UUID          `json:"user_id"`
@@ -537,6 +606,9 @@ type User struct {
 	HubLayout             []byte             `json:"hub_layout"`
 	AutoApproveMovies     bool               `json:"auto_approve_movies"`
 	AutoApproveTv         bool               `json:"auto_approve_tv"`
+	CanRequest            bool               `json:"can_request"`
+	RequestQuotaMovies    *int32             `json:"request_quota_movies"`
+	RequestQuotaTv        *int32             `json:"request_quota_tv"`
 }
 
 type UserFavorite struct {
@@ -568,6 +640,21 @@ type UserWatchLimit struct {
 	AllowedEndMinute   *int32             `json:"allowed_end_minute"`
 	CreatedAt          pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserWatchState struct {
+	UserID         uuid.UUID          `json:"user_id"`
+	MediaID        uuid.UUID          `json:"media_id"`
+	PositionMs     int64              `json:"position_ms"`
+	DurationMs     *int64             `json:"duration_ms"`
+	Status         string             `json:"status"`
+	Resumable      bool               `json:"resumable"`
+	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
+	LastEventAt    pgtype.Timestamptz `json:"last_event_at"`
+	LastClientID   *string            `json:"last_client_id"`
+	LastClientName *string            `json:"last_client_name"`
+	MarkState      *string            `json:"mark_state"`
+	MarkedAt       pgtype.Timestamptz `json:"marked_at"`
 }
 
 type UserWatchStatus struct {
@@ -677,15 +764,17 @@ type WatchPlay struct {
 	OccurredAt pgtype.Timestamptz `json:"occurred_at"`
 }
 
-type WatchState struct {
-	UserID         uuid.UUID          `json:"user_id"`
-	MediaID        uuid.UUID          `json:"media_id"`
-	PositionMs     int64              `json:"position_ms"`
-	DurationMs     *int64             `json:"duration_ms"`
-	Status         string             `json:"status"`
-	LastWatchedAt  pgtype.Timestamptz `json:"last_watched_at"`
-	LastClientID   *string            `json:"last_client_id"`
-	LastClientName *string            `json:"last_client_name"`
+type WatchProgress struct {
+	UserID          uuid.UUID          `json:"user_id"`
+	MediaID         uuid.UUID          `json:"media_id"`
+	PositionMs      int64              `json:"position_ms"`
+	DurationMs      *int64             `json:"duration_ms"`
+	LastEventAt     pgtype.Timestamptz `json:"last_event_at"`
+	LastClientID    *string            `json:"last_client_id"`
+	LastClientName  *string            `json:"last_client_name"`
+	LastCompletedAt pgtype.Timestamptz `json:"last_completed_at"`
+	MarkState       *string            `json:"mark_state"`
+	MarkedAt        pgtype.Timestamptz `json:"marked_at"`
 }
 
 type WebhookEndpoint struct {

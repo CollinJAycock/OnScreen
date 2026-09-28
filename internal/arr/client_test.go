@@ -90,6 +90,63 @@ func TestDo_409MapsToErrConflict(t *testing.T) {
 	}
 }
 
+// Radarr and Sonarr don't answer an add of a title already in their library
+// with 409: they answer 400 with a validation array naming the exists
+// validator. That must read as ErrConflict so callers switch to the existing
+// title; any other 400 must not.
+func TestDo_400AlreadyAddedMapsToErrConflict(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+		want bool
+	}{
+		{"radarr MovieExistsValidator", `[{"propertyName":"TmdbId","errorMessage":"This movie has already been added",
+			"attemptedValue":603,"severity":"error","errorCode":"MovieExistsValidator"}]`, true},
+		{"sonarr SeriesExistsValidator", `[{"propertyName":"TvdbId","errorMessage":"This series has already been added",
+			"attemptedValue":81189,"severity":"error","errorCode":"SeriesExistsValidator"}]`, true},
+		{"message only (no error code)", `[{"propertyName":"TvdbId","errorMessage":"This series has already been added"}]`, true},
+		{"exists validator after a long first failure", `[{"propertyName":"Path","errorMessage":"` +
+			strings.Repeat("x", 6000) + `"},{"errorCode":"SeriesExistsValidator"}]`, true},
+		{"other validation error", `[{"propertyName":"RootFolderPath","errorMessage":"Folder is not writable",
+			"errorCode":"FolderWritableValidator"}]`, false},
+		{"empty body", ``, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			_, err := newTestClient(srv, "k").AddSeries(context.Background(), AddSeriesRequest{TVDBID: 81189})
+			if err == nil {
+				t.Fatal("expected an error on 400")
+			}
+			if got := errors.Is(err, ErrConflict); got != tc.want {
+				t.Errorf("errors.Is(err, ErrConflict) = %v, want %v (err %v)", got, tc.want, err)
+			}
+			if len(err.Error()) > 4096+200 {
+				t.Errorf("error message length %d exceeds the snippet cap", len(err.Error()))
+			}
+		})
+	}
+}
+
+// Only a 400 is a validation answer; a 500 quoting the validator is a server
+// error.
+func TestDo_500WithValidatorTextIsNotConflict(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = io.WriteString(w, `{"message":"SeriesExistsValidator crashed"}`)
+	}))
+	defer srv.Close()
+	_, err := newTestClient(srv, "k").AddSeries(context.Background(), AddSeriesRequest{})
+	if err == nil || errors.Is(err, ErrConflict) {
+		t.Errorf("err = %v, want a non-conflict error", err)
+	}
+}
+
 func TestDo_OtherErrorIncludesBodySnippet(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)

@@ -1,15 +1,24 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import {
     api,
     requestsApi,
     requestsAdminApi,
+    type ApproveRequestBody,
     type MediaRequest,
     type RequestStatus,
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import { refreshPendingRequests } from '$lib/stores/pendingRequests';
   import Upcoming from './Upcoming.svelte';
+  import ApproveDialog from './ApproveDialog.svelte';
+  import DownloadStatus from './DownloadStatus.svelte';
+  import { createArrOptionsLoader } from './approveOptions';
+  import {
+    createPoller, failureReason, hasActiveRequests, showsDownload, timeAgo,
+  } from './requestRows';
+  import { isPartiallyAvailable, seasonsProgressLabel } from './seasonProgress';
 
   // Discover used to live here as a third tab; it's now folded into /search
   // (search results show library hits + a "Request" section for TMDB
@@ -40,6 +49,45 @@
   // and surfaces "request is no longer pending" as a spurious error toast.
   let processing = new Set<string>();
 
+  // Approve-with-options dialog. The loader caches the arr instance list and
+  // each instance's profiles / folders for the page's lifetime; the queue
+  // also uses the list to name a request's preferred instance.
+  const arrOptions = createArrOptionsLoader();
+  let approveFor: MediaRequest | null = null;
+  let approveReturnFocus: HTMLElement | null = null;
+  let serviceNames = new Map<string, string>();
+
+  // Reference time for relative dates and download ETAs; bumped on every load.
+  let now = Date.now();
+  // Only the latest load of each list may land (filter changes and polls race).
+  let mineSeq = 0;
+  let queueSeq = 0;
+
+  // While a visible row is still searching / downloading, re-read the list
+  // every 30 s — but only while the browser tab is visible.
+  const poller = createPoller({
+    isActive: () => hasActiveRequests(visibleItems()),
+    tick: refreshVisible,
+  });
+  onDestroy(() => poller.stop());
+
+  function visibleItems(): MediaRequest[] {
+    if (activeTab === 'mine' && !mineLoading) return mineItems;
+    if (activeTab === 'queue' && isAdmin && !queueLoading) return queueItems;
+    return [];
+  }
+
+  async function refreshVisible() {
+    if (activeTab === 'mine') await loadMine(true);
+    else if (activeTab === 'queue' && isAdmin) await loadQueue(true);
+  }
+
+  // Re-arm (or disarm) polling whenever the visible list or tab changes.
+  $: syncPolling(activeTab, mineItems, queueItems, mineLoading, queueLoading);
+  function syncPolling(..._deps: unknown[]) {
+    poller.sync();
+  }
+
   onMount(async () => {
     const user = api.getUser();
     if (!user) { goto('/login'); return; }
@@ -51,16 +99,22 @@
 
   // ── My Requests ───────────────────────────────────────────────────────────
 
-  async function loadMine() {
-    mineLoading = true; mineError = '';
+  /** silent = a background poll: no skeleton, and a failure keeps the list. */
+  async function loadMine(silent = false) {
+    const seq = ++mineSeq;
+    if (!silent) { mineLoading = true; mineError = ''; }
     try {
       const params = mineFilter === 'all' ? {} : { status: mineFilter };
       const res = await requestsApi.list(params);
+      if (seq !== mineSeq) return;
       mineItems = res.items;
+      mineError = '';
+      now = Date.now();
     } catch (e: unknown) {
+      if (seq !== mineSeq || silent) return;
       mineError = e instanceof Error ? e.message : 'Failed to load requests';
     } finally {
-      mineLoading = false;
+      if (seq === mineSeq) mineLoading = false;
     }
   }
 
@@ -70,6 +124,8 @@
     try {
       await requestsApi.cancel(req.id);
       toast.success('Request cancelled');
+      // An admin cancelling their own pending request shrinks the queue too.
+      if (isAdmin) refreshPendingRequests(true);
       await loadMine();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Cancel failed');
@@ -80,17 +136,32 @@
 
   // ── Admin queue ───────────────────────────────────────────────────────────
 
-  async function loadQueue() {
-    queueLoading = true; queueError = '';
+  async function loadQueue(silent = false) {
+    const seq = ++queueSeq;
+    if (!silent) { queueLoading = true; queueError = ''; }
+    if (!silent) void loadServiceNames();
     try {
       const params = queueFilter === 'all' ? {} : { status: queueFilter };
       const res = await requestsAdminApi.list(params);
+      if (seq !== queueSeq) return;
       queueItems = res.items;
+      queueError = '';
+      now = Date.now();
     } catch (e: unknown) {
+      if (seq !== queueSeq || silent) return;
       queueError = e instanceof Error ? e.message : 'Failed to load queue';
     } finally {
-      queueLoading = false;
+      if (seq === queueSeq) queueLoading = false;
     }
+  }
+
+  // Names for "Prefers <instance>" on queue rows. Best effort: without them
+  // the row still says a specific instance was requested.
+  async function loadServiceNames() {
+    try {
+      const list = await arrOptions.services();
+      serviceNames = new Map(list.map((s) => [s.id, s.name]));
+    } catch { /* keep whatever we had */ }
   }
 
   function markProcessing(id: string, on: boolean) {
@@ -99,14 +170,32 @@
     processing = next;
   }
 
-  async function approve(req: MediaRequest) {
+  function openApprove(req: MediaRequest, e: MouseEvent) {
+    if (processing.has(req.id)) return;
+    approveReturnFocus = e.currentTarget as HTMLElement;
+    approveFor = req;
+  }
+
+  async function closeApprove() {
+    approveFor = null;
+    const el = approveReturnFocus;
+    approveReturnFocus = null;
+    await tick();
+    // After an approval the row may have left the list (Pending filter).
+    if (el?.isConnected) el.focus();
+  }
+
+  async function approve(req: MediaRequest, body: ApproveRequestBody) {
     if (processing.has(req.id)) return;
     markProcessing(req.id, true);
     try {
-      await requestsAdminApi.approve(req.id);
+      await requestsAdminApi.approve(req.id, body);
       toast.success(`Approved: ${req.title}`);
+      refreshPendingRequests(true); // nav badge
+      if (approveFor?.id === req.id) void closeApprove();
       await loadQueue();
     } catch (e: unknown) {
+      // The dialog stays open so a bad profile / folder can be changed.
       toast.error(e instanceof Error ? e.message : 'Approve failed');
     } finally {
       markProcessing(req.id, false);
@@ -127,6 +216,7 @@
       await requestsAdminApi.decline(target.id, declineReason);
       toast.success(`Declined: ${target.title}`);
       declineFor = null;
+      refreshPendingRequests(true); // nav badge
       await loadQueue();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Decline failed');
@@ -142,12 +232,25 @@
     try {
       await requestsAdminApi.del(req.id);
       toast.success('Request deleted');
+      refreshPendingRequests(true); // nav badge
       await loadQueue();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Delete failed');
     } finally {
       markProcessing(req.id, false);
     }
+  }
+
+  // Filters read the element's value on change (rather than bind:value) so
+  // the handler always sees the new filter.
+  function onMineFilter(e: Event) {
+    mineFilter = (e.currentTarget as HTMLSelectElement).value as RequestStatus | 'all';
+    loadMine();
+  }
+
+  function onQueueFilter(e: Event) {
+    queueFilter = (e.currentTarget as HTMLSelectElement).value as RequestStatus | 'all';
+    loadQueue();
   }
 
   function statusLabel(s: string): string {
@@ -180,7 +283,7 @@
 
   {#if activeTab === 'mine'}
     <div class="filter-row">
-      <select bind:value={mineFilter} on:change={loadMine}>
+      <select value={mineFilter} on:change={onMineFilter} aria-label="Filter my requests by status">
         <option value="all">All</option>
         <option value="pending">Pending</option>
         <option value="approved">Approved</option>
@@ -210,13 +313,23 @@
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
               <span class="status-pill status-{req.status}">{statusLabel(req.status)}</span>
+              {#if isPartiallyAvailable(req)}<span class="partial-pill">Partially available</span>{/if}
               {#if req.auto_approved}<span class="auto-pill" title="Approved automatically when it was requested">Auto-approved</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
+            {#if req.download && showsDownload(req)}
+              <DownloadStatus download={req.download} {now} />
+            {/if}
+            {#if failureReason(req)}
+              <div class="row-meta failure-reason">{failureReason(req)}</div>
+            {/if}
             {#if req.status === 'declined' && req.decline_reason}
               <div class="row-meta decline-reason">Reason: {req.decline_reason}</div>
             {/if}
-            <div class="row-meta">Requested {new Date(req.created_at).toLocaleString()}</div>
+            <div class="row-meta">
+              <span title={new Date(req.created_at).toLocaleString()}>Requested {timeAgo(req.created_at, now)}</span>
+              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req)}</span>{/if}
+            </div>
           </div>
           <div class="row-actions">
             {#if req.status === 'available' && req.fulfilled_item_id}
@@ -239,7 +352,7 @@
 
   {#if activeTab === 'queue' && isAdmin}
     <div class="filter-row">
-      <select bind:value={queueFilter} on:change={loadQueue}>
+      <select value={queueFilter} on:change={onQueueFilter} aria-label="Filter the queue by status">
         <option value="pending">Pending</option>
         <option value="approved">Approved</option>
         <option value="downloading">Downloading</option>
@@ -270,17 +383,37 @@
               {req.title}
               {#if req.year}<span class="row-year">({req.year})</span>{/if}
               <span class="status-pill status-{req.status}">{statusLabel(req.status)}</span>
+              {#if isPartiallyAvailable(req)}<span class="partial-pill">Partially available</span>{/if}
               {#if req.auto_approved}<span class="auto-pill" title="Approved automatically when it was requested">Auto-approved</span>{/if}
             </div>
             {#if req.overview}<div class="row-overview">{req.overview}</div>{/if}
+            {#if req.download && showsDownload(req)}
+              <DownloadStatus download={req.download} {now} />
+            {/if}
+            {#if failureReason(req)}
+              <div class="row-meta failure-reason">{failureReason(req)}</div>
+            {/if}
+            {#if req.status === 'declined' && req.decline_reason}
+              <div class="row-meta decline-reason">Reason: {req.decline_reason}</div>
+            {/if}
             <div class="row-meta">
-              Requested {new Date(req.created_at).toLocaleString()}
-              {#if req.requested_service_id}· requested service preference{/if}
+              {#if req.username}
+                <span class="requester">Requested by <strong>{req.username}</strong></span>
+                <span class="sep">·</span>
+                <span title={new Date(req.created_at).toLocaleString()}>{timeAgo(req.created_at, now)}</span>
+              {:else}
+                <span title={new Date(req.created_at).toLocaleString()}>Requested {timeAgo(req.created_at, now)}</span>
+              {/if}
+              {#if req.type === 'show'}<span class="sep">·</span><span>{seasonsProgressLabel(req)}</span>{/if}
+              {#if req.requested_service_id}
+                <span class="sep">·</span>
+                <span>{serviceNames.has(req.requested_service_id) ? `Prefers ${serviceNames.get(req.requested_service_id)}` : 'Prefers a specific instance'}</span>
+              {/if}
             </div>
           </div>
           <div class="row-actions">
             {#if req.status === 'pending'}
-              <button class="btn primary sm" on:click={() => approve(req)} disabled={processing.has(req.id)}>
+              <button class="btn primary sm" on:click={(e) => openApprove(req, e)} disabled={processing.has(req.id)}>
                 {processing.has(req.id) ? 'Approving…' : 'Approve'}
               </button>
               <button class="btn ghost sm" on:click={() => openDecline(req)} disabled={processing.has(req.id)}>
@@ -298,7 +431,7 @@
     {#if declineFor}
       <div class="modal-overlay" on:click={() => (declineFor = null)} on:keydown={e => e.key === 'Escape' && (declineFor = null)} role="button" tabindex="-1">
         <!-- svelte-ignore a11y_click_events_have_key_events -->
-        <div class="modal" on:click|stopPropagation role="dialog" aria-label="Decline request">
+        <div class="modal" on:click|stopPropagation role="dialog" aria-modal="true" tabindex="-1" aria-label="Decline request">
           <p class="modal-text">Decline "{declineFor.title}"?</p>
           <textarea bind:value={declineReason} placeholder="Optional reason — shown to the requester" rows="3"></textarea>
           <div class="modal-actions">
@@ -309,6 +442,19 @@
           </div>
         </div>
       </div>
+    {/if}
+
+    {#if approveFor}
+      {@const target = approveFor}
+      {#key target.id}
+        <ApproveDialog
+          request={target}
+          loader={arrOptions}
+          busy={processing.has(target.id)}
+          onapprove={(body) => approve(target, body)}
+          oncancel={closeApprove}
+        />
+      {/key}
     {/if}
   {/if}
 </div>
@@ -421,10 +567,13 @@
   .row-overview {
     font-size: 0.78rem; color: var(--text-secondary);
     margin: 0.25rem 0;
-    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+    display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
   }
-  .row-meta { font-size: 0.7rem; color: var(--text-muted); }
+  .row-meta { font-size: 0.7rem; color: var(--text-muted); display: flex; flex-wrap: wrap; column-gap: 0.35rem; row-gap: 0.1rem; }
+  .row-meta + .row-meta { margin-top: 0.15rem; }
+  .requester strong { color: var(--text-secondary); font-weight: 600; }
   .decline-reason { color: #fca5a5; }
+  .failure-reason { color: var(--error); font-size: 0.72rem; overflow-wrap: anywhere; }
   .row-actions { display: flex; flex-direction: column; gap: 0.4rem; align-items: stretch; flex-shrink: 0; min-width: 100px; }
 
   .status-pill {
@@ -443,6 +592,16 @@
   .status-failed       { background: rgba(248,113,113,0.15); color: #fca5a5; }
   /* Outlined rather than filled so it reads as a note on the status, not a
      second status. */
+  .partial-pill {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.12rem 0.5rem;
+    border-radius: 10px;
+    background: rgba(52,211,153,0.12);
+    color: #6ee7b7;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
   .auto-pill {
     font-size: 0.65rem;
     font-weight: 600;

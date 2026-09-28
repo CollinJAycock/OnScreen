@@ -70,6 +70,33 @@ func (q *Queries) DeleteOldNotifications(ctx context.Context) error {
 	return err
 }
 
+const listAdminUserIDs = `-- name: ListAdminUserIDs :many
+SELECT id FROM users WHERE is_admin AND parent_user_id IS NULL ORDER BY id
+`
+
+// Recipients of admin alerts (e.g. a new request waiting for approval): every
+// admin account. Managed profiles can't be admins (chk_managed_not_admin); the
+// parent_user_id filter just keeps that explicit.
+func (q *Queries) ListAdminUserIDs(ctx context.Context) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listAdminUserIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAllUserIDs = `-- name: ListAllUserIDs :many
 SELECT id FROM users WHERE parent_user_id IS NULL
 `

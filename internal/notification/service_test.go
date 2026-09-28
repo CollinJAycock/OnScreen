@@ -22,6 +22,16 @@ type mockDB struct {
 	// libUserIDs, when non-nil, is the library-scoped recipient set.
 	libUserIDs    []uuid.UUID
 	lastLibraryID uuid.UUID
+	// adminIDs is what ListAdminUserIDs returns.
+	adminIDs    []uuid.UUID
+	adminIDsErr error
+}
+
+func (m *mockDB) ListAdminUserIDs(_ context.Context) ([]uuid.UUID, error) {
+	if m.adminIDsErr != nil {
+		return nil, m.adminIDsErr
+	}
+	return m.adminIDs, nil
 }
 
 func (m *mockDB) CreateNotification(_ context.Context, arg gen.CreateNotificationParams) (gen.Notification, error) {
@@ -264,5 +274,48 @@ func TestNotifyScanComplete_OnlyLibraryRecipients(t *testing.T) {
 	}
 	if len(db.created) != 1 {
 		t.Errorf("expected exactly one notification (to the allowed user); got %d", len(db.created))
+	}
+}
+
+// TestNotifyAdmins_OnlyAdmins pins that an admin alert goes to exactly the
+// accounts ListAdminUserIDs returns — never a broadcast to every user.
+func TestNotifyAdmins_OnlyAdmins(t *testing.T) {
+	admin1, admin2, regular := uuid.New(), uuid.New(), uuid.New()
+	db := &mockDB{userIDs: []uuid.UUID{admin1, admin2, regular}, adminIDs: []uuid.UUID{admin1, admin2}}
+	broker := NewBroker()
+	svc := NewService(db, broker, slog.Default())
+
+	ch := broker.Subscribe(admin2)
+	defer broker.Unsubscribe(admin2, ch)
+
+	svc.NotifyAdmins(context.Background(), TypeRequestPending, "New request", `alice requested "Heat (1995)"`, nil)
+
+	if len(db.created) != 2 {
+		t.Fatalf("created %d notifications, want 2 (one per admin)", len(db.created))
+	}
+	for _, c := range db.created {
+		if c.UserID == regular {
+			t.Fatal("a non-admin received an admin alert")
+		}
+		if c.Type != TypeRequestPending {
+			t.Errorf("type = %q, want %q", c.Type, TypeRequestPending)
+		}
+	}
+	select {
+	case ev := <-ch:
+		if ev.Type != TypeRequestPending || ev.Title != "New request" {
+			t.Errorf("event = %+v, want a request_pending 'New request'", ev)
+		}
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("admin did not get the SSE event")
+	}
+}
+
+func TestNotifyAdmins_ListErrorSendsNothing(t *testing.T) {
+	db := &mockDB{adminIDsErr: context.DeadlineExceeded, userIDs: []uuid.UUID{uuid.New()}}
+	svc := NewService(db, NewBroker(), slog.Default())
+	svc.NotifyAdmins(context.Background(), TypeRequestPending, "New request", "", nil)
+	if len(db.created) != 0 {
+		t.Errorf("created %d notifications after a failed admin lookup, want 0", len(db.created))
 	}
 }

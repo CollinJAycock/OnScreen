@@ -96,7 +96,7 @@ func (q *Queries) CountItemsByGenre(ctx context.Context, arg CountItemsByGenrePa
 const createCollection = `-- name: CreateCollection :one
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 `
 
 type CreateCollectionParams struct {
@@ -134,6 +134,7 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.UpdatedAt,
 		&i.Rules,
 		&i.LibraryID,
+		&i.TmdbCollectionID,
 	)
 	return i, err
 }
@@ -148,7 +149,7 @@ func (q *Queries) DeleteCollection(ctx context.Context, id uuid.UUID) error {
 }
 
 const getCollection = `-- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 FROM collections WHERE id = $1
 `
 
@@ -168,12 +169,13 @@ func (q *Queries) GetCollection(ctx context.Context, id uuid.UUID) (Collection, 
 		&i.UpdatedAt,
 		&i.Rules,
 		&i.LibraryID,
+		&i.TmdbCollectionID,
 	)
 	return i, err
 }
 
 const listAutoGenreCollections = `-- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name
@@ -201,6 +203,7 @@ func (q *Queries) ListAutoGenreCollections(ctx context.Context) ([]Collection, e
 			&i.UpdatedAt,
 			&i.Rules,
 			&i.LibraryID,
+			&i.TmdbCollectionID,
 		); err != nil {
 			return nil, err
 		}
@@ -300,7 +303,7 @@ func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionIte
 }
 
 const listCollections = `-- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 FROM collections
 WHERE user_id IS NULL OR user_id = $1
 ORDER BY sort_order, name
@@ -328,6 +331,7 @@ func (q *Queries) ListCollections(ctx context.Context, userID pgtype.UUID) ([]Co
 			&i.UpdatedAt,
 			&i.Rules,
 			&i.LibraryID,
+			&i.TmdbCollectionID,
 		); err != nil {
 			return nil, err
 		}
@@ -491,7 +495,7 @@ func (q *Queries) RemoveCollectionItem(ctx context.Context, arg RemoveCollection
 const updateCollection = `-- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
 `
 
 type UpdateCollectionParams struct {
@@ -516,6 +520,7 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.UpdatedAt,
 		&i.Rules,
 		&i.LibraryID,
+		&i.TmdbCollectionID,
 	)
 	return i, err
 }
