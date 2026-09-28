@@ -11,6 +11,7 @@ import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AuthRepository
+import tv.onscreen.mobile.playback.ReplayGainMode
 import tv.onscreen.mobile.playback.SignOutTeardown
 import javax.inject.Inject
 
@@ -26,6 +27,11 @@ class SettingsViewModel @Inject constructor(
     val downloadOnWifiOnly: Flow<Boolean> = prefs.downloadOnWifiOnly
     val warnOnCellularStream: Flow<Boolean> = prefs.warnOnCellularStream
 
+    /** Music ReplayGain (Settings → Playback). Applied live by
+     *  PlaybackService's audio stage — a change reaches the playing track. */
+    val replayGainMode: Flow<ReplayGainMode> = prefs.replayGainMode
+    val replayGainPreampDb: Flow<Double> = prefs.replayGainPreampDb
+
     /** Currently bound server URL (for the About row + the
      *  disconnect-confirm message). Empty when none — that should
      *  never happen on this screen since auth gating routes back to
@@ -39,6 +45,15 @@ class SettingsViewModel @Inject constructor(
 
     fun setWarnOnCellularStream(value: Boolean) {
         viewModelScope.launch { prefs.setWarnOnCellularStream(value) }
+    }
+
+    fun setReplayGainMode(mode: ReplayGainMode) {
+        viewModelScope.launch { prefs.setReplayGainMode(mode) }
+    }
+
+    /** Snapped to the -6..+6 dB, 0.5 dB grid by PlaybackPrefs. */
+    fun setReplayGainPreampDb(db: Double) {
+        viewModelScope.launch { prefs.setReplayGainPreampDb(db) }
     }
 
     /** Sign out without forgetting the server URL — next launch

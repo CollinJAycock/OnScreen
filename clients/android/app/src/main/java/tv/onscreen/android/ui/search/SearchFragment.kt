@@ -37,9 +37,8 @@ import javax.inject.Inject
  * third-party acquisition, and rejected three builds over it. The
  * request flow remains on the web app.
  *
- * Library-scoped searches (the Y / menu key opens a picker) skip
- * the TMDB row — the user has narrowed to a specific shelf and
- * cross-library suggestions would be confusing.
+ * Library-scoped searches (the Y / menu key opens a picker) narrow
+ * the results to that one library.
  */
 @AndroidEntryPoint
 class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResultProvider {

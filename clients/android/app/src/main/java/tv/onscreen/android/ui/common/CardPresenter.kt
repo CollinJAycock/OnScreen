@@ -13,6 +13,7 @@ import android.view.ViewOutlineProvider
 import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.leanback.widget.Presenter
 import coil.load
@@ -37,7 +38,17 @@ import tv.onscreen.android.data.model.MediaCollection
  *    are readable at rest, and there's nowhere else for the title to
  *    surface in this layout.
  */
-class CardPresenter(private val context: Context, private val serverUrl: String = "") : Presenter() {
+class CardPresenter(
+    private val context: Context,
+    private val serverUrl: String = "",
+    /**
+     * Secondary action for a card, fired on a long-press of OK/Enter (the
+     * Android TV / Fire TV convention for a card's context menu). Null leaves
+     * the card with its click action only. HomeFragment passes one for the
+     * Continue Watching rows (Remove from Continue Watching).
+     */
+    private val onLongPress: ((Any) -> Unit)? = null,
+) : Presenter() {
 
     companion object {
         // dp — converted at inflate time. These were raw PIXELS while every
@@ -105,6 +116,65 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
         }
         posterFrame.addView(imageView)
 
+        // Watch-state overlays (v2.5): a check for fully-watched items, an
+        // unwatched-episode count for shows, a progress bar for in-progress
+        // videos. All GONE unless the bound item carries the fields, so cards
+        // for older servers / music / photos render exactly as before.
+        val badgeMargin = (6 * density).toInt()
+        val watchedBadge = FrameLayout(context).apply {
+            val size = (24 * density).toInt()
+            layoutParams = FrameLayout.LayoutParams(size, size, Gravity.TOP or Gravity.END).apply {
+                topMargin = badgeMargin
+                marginEnd = badgeMargin
+            }
+            background = context.getDrawable(R.drawable.watched_badge_bg)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            visibility = View.GONE
+            tag = "watched"
+            addView(
+                ImageView(context).apply {
+                    val icon = (16 * density).toInt()
+                    layoutParams = FrameLayout.LayoutParams(icon, icon, Gravity.CENTER)
+                    setImageResource(R.drawable.ic_check)
+                },
+            )
+        }
+        val countBadge = TextView(context).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                FrameLayout.LayoutParams.WRAP_CONTENT,
+                Gravity.TOP or Gravity.END,
+            ).apply {
+                topMargin = badgeMargin
+                marginEnd = badgeMargin
+            }
+            background = context.getDrawable(R.drawable.badge_bg)
+            minWidth = (22 * density).toInt()
+            gravity = Gravity.CENTER
+            setPadding((7 * density).toInt(), (2 * density).toInt(), (7 * density).toInt(), (2 * density).toInt())
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            visibility = View.GONE
+            tag = "count"
+        }
+        val progressBar = ProgressBar(context, null, android.R.attr.progressBarStyleHorizontal).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                (3 * density).toInt(),
+                Gravity.BOTTOM,
+            )
+            progressDrawable = context.getDrawable(R.drawable.progress_bar_episode)
+            max = 100
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            visibility = View.GONE
+            tag = "progress"
+        }
+        posterFrame.addView(watchedBadge)
+        posterFrame.addView(countBadge)
+        posterFrame.addView(progressBar)
+
         val titleView = TextView(context).apply {
             layoutParams = LinearLayout.LayoutParams(cardWidth, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
                 topMargin = (10 * density).toInt()
@@ -126,8 +196,24 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
             tag = "title"
         }
 
+        // Second line for episode tiles (Next Up, recently-added episodes):
+        // the show is the title, this is "S2 · E5 — Episode title". When it's
+        // shown the title drops to one line, so the card keeps its two-line
+        // text height and the row / grid stays aligned.
+        val subtitleView = TextView(context).apply {
+            layoutParams = LinearLayout.LayoutParams(cardWidth, ViewGroup.LayoutParams.WRAP_CONTENT)
+            gravity = Gravity.CENTER_HORIZONTAL
+            maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            setTextColor(context.getColor(R.color.text_secondary))
+            textSize = 12f
+            visibility = View.GONE
+            tag = "subtitle"
+        }
+
         container.addView(posterFrame)
         container.addView(titleView)
+        container.addView(subtitleView)
 
         // Focus animation: small scale, elevation lift, title pop.
         // ObjectAnimator on `elevation` is the cheapest way to drive
@@ -160,9 +246,38 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
         val container = viewHolder.view as LinearLayout
         val imageView = container.findViewWithTag<ImageView>("poster")
         val titleView = container.findViewWithTag<TextView>("title")
+        val subtitleView = container.findViewWithTag<TextView>("subtitle")
         val data = extractCardData(item) ?: return
 
-        titleView.text = data.title
+        val episodeTitles = (item as? HubItem)?.let { WatchStateUi.episodeTileTitles(it) }
+        if (episodeTitles != null) {
+            titleView.text = episodeTitles.first
+            titleView.minLines = 1
+            titleView.maxLines = 1
+            subtitleView.text = episodeTitles.second
+            subtitleView.visibility = View.VISIBLE
+        } else {
+            titleView.text = data.title
+            titleView.minLines = 2
+            titleView.maxLines = 2
+            subtitleView.text = null
+            subtitleView.visibility = View.GONE
+        }
+
+        val badgeLabel = bindWatchBadge(container, item)
+        container.contentDescription = listOfNotNull(
+            titleView.text?.toString(),
+            episodeTitles?.second,
+            badgeLabel,
+        ).joinToString(", ")
+
+        val longPress = onLongPress
+        if (longPress != null) {
+            container.setOnLongClickListener { longPress(item); true }
+        } else {
+            container.setOnLongClickListener(null)
+            container.isLongClickable = false
+        }
 
         // Audiobooks (and some photos) come back without a
         // poster_path / thumb_path because the server stores their
@@ -193,6 +308,43 @@ class CardPresenter(private val context: Context, private val serverUrl: String 
         val container = viewHolder.view as LinearLayout
         val imageView = container.findViewWithTag<ImageView>("poster")
         imageView.setImageDrawable(null)
+        container.setOnLongClickListener(null)
+    }
+
+    /** Show the watch overlay for [item] (see [WatchStateUi.cardBadge]) and
+     *  return its spoken label, or null when the card has none. */
+    private fun bindWatchBadge(container: LinearLayout, item: Any): String? {
+        val watched = container.findViewWithTag<View>("watched")
+        val count = container.findViewWithTag<TextView>("count")
+        val progress = container.findViewWithTag<ProgressBar>("progress")
+        val badge = when (item) {
+            is MediaItem -> WatchStateUi.cardBadge(item)
+            is HubItem -> WatchStateUi.cardBadge(item)
+            else -> null
+        }
+        watched.visibility = if (badge is WatchStateUi.CardBadge.Watched) View.VISIBLE else View.GONE
+        if (badge is WatchStateUi.CardBadge.Unwatched) {
+            count.text = if (badge.count > 99) "99+" else badge.count.toString()
+            count.visibility = View.VISIBLE
+        } else {
+            count.visibility = View.GONE
+        }
+        if (badge is WatchStateUi.CardBadge.Progress) {
+            progress.progress = badge.pct
+            progress.visibility = View.VISIBLE
+        } else {
+            progress.visibility = View.GONE
+        }
+        val res = context.resources
+        return when (badge) {
+            is WatchStateUi.CardBadge.Watched -> res.getString(R.string.watch_badge_watched)
+            is WatchStateUi.CardBadge.Unwatched -> {
+                val n = badge.count.coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+                res.getQuantityString(R.plurals.watch_badge_unwatched, n, n)
+            }
+            is WatchStateUi.CardBadge.Progress -> res.getString(R.string.watch_badge_progress, badge.pct)
+            null -> null
+        }
     }
 
     private data class CardData(

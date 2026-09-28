@@ -134,6 +134,19 @@ open class ItemRepository @Inject constructor(
         api.clearWatchStatus(itemId)
     }
 
+    /** Mark played ([watched] = true) or unplayed. A show / season expands
+     *  to every episode under it server-side; either way the resume point
+     *  goes away. Throws on failure (429 when rate-limited, 422 for a type
+     *  with no watch state) so callers can roll back an optimistic flip. */
+    open suspend fun setWatched(itemId: String, watched: Boolean) {
+        if (watched) api.markWatched(itemId) else api.markUnwatched(itemId)
+    }
+
+    /** What Play on a show / season starts. Throws on failure — callers
+     *  treat any error (incl. a pre-v2.5 server's 404) as "no up-next". */
+    open suspend fun getUpNext(itemId: String): tv.onscreen.mobile.data.model.UpNext =
+        api.getUpNext(itemId).data
+
     /** EXIF for a photo. Server returns 200 with empty fields when
      *  the photo has no EXIF block (PNG, scanner-skipped HEIC) — we
      *  surface that as the [tv.onscreen.mobile.data.model.PhotoExif]

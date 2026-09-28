@@ -367,6 +367,28 @@ class ProgressTrackerTest {
         }
 
     @Test
+    fun `PLAYBACK_STOPPED 403 on a heartbeat fires the admin-stop sentinel with the server sentence`() =
+        runTest(StandardTestDispatcher()) {
+            Dispatchers.setMain(StandardTestDispatcher(testScheduler))
+            try {
+                // Admin stop from Now Playing: the server refuses the stopped
+                // stream's 'playing' beacon for the stop window.
+                val (blocked, keptReporting) = heartbeatRejectedWith(
+                    http403(
+                        """{"error":{"code":"PLAYBACK_STOPPED",""" +
+                            """"message":"Playback was stopped by the server admin: bedtime"}}""",
+                    ),
+                )
+                assertThat(blocked)
+                    .isEqualTo("playback_stopped:Playback was stopped by the server admin: bedtime")
+                assertThat(tv.onscreen.android.data.api.PlaybackStop.isSentinel(blocked)).isTrue()
+                assertThat(keptReporting).isFalse()
+            } finally {
+                Dispatchers.resetMain()
+            }
+        }
+
+    @Test
     fun `403 without an error envelope still tears playback down`() =
         runTest(StandardTestDispatcher()) {
             Dispatchers.setMain(StandardTestDispatcher(testScheduler))
@@ -392,6 +414,71 @@ class ProgressTrackerTest {
             } finally {
                 Dispatchers.resetMain()
             }
+        }
+
+    // ── probeRefusal (stream died under the player) ─────────────────────────
+
+    @Test
+    fun `probe after the stream died reports the admin stop even though the tracker is paused`() =
+        runTest(StandardTestDispatcher()) {
+            val repo = FakeRepo()
+            val tracker = newTracker(repo, this)
+            var fired: String? = null
+            tracker.onBlocked = { fired = it }
+            tracker.start("item-1", hlsOffsetMs = 1_000L)
+            // The stopped stream's 404 paused the player → the heartbeat paused.
+            tracker.onPause()
+            runCurrent()
+
+            repo.throwNext = http403(
+                """{"error":{"code":"PLAYBACK_STOPPED",""" +
+                    """"message":"Playback was stopped by the server admin: bedtime"}}""",
+            )
+            val sentinel = tracker.probeRefusal()
+
+            assertThat(sentinel)
+                .isEqualTo("playback_stopped:Playback was stopped by the server admin: bedtime")
+            // The caller acts on the return value; the callback stays quiet.
+            assertThat(fired).isNull()
+            // No further heartbeats after a refusal.
+            repo.throwNext = null
+            val before = repo.calls.size
+            advanceTimeBy(30_000)
+            runCurrent()
+            assertThat(repo.calls.size).isEqualTo(before)
+        }
+
+    @Test
+    fun `probe sends one playing beat at the content position and returns null when accepted`() =
+        runTest(StandardTestDispatcher()) {
+            val repo = FakeRepo()
+            val tracker = newTracker(repo, this)
+            tracker.start("item-1", hlsOffsetMs = 1_000L)
+            tracker.stop()
+
+            assertThat(tracker.probeRefusal()).isNull()
+            assertThat(repo.calls).containsExactly(FakeRepo.Call("item-1", 6_000L, 60_000L, "playing"))
+        }
+
+    @Test
+    fun `probe failures other than a 403 are not refusals`() =
+        runTest(StandardTestDispatcher()) {
+            for (failure in listOf(http(404), http(500), RuntimeException("network down"))) {
+                val repo = FakeRepo().apply { throwNext = failure }
+                val tracker = newTracker(repo, this)
+                tracker.start("item-1")
+                assertThat(tracker.probeRefusal()).isNull()
+                tracker.stop()
+            }
+        }
+
+    @Test
+    fun `probe before the tracker ever started sends nothing`() =
+        runTest(StandardTestDispatcher()) {
+            val repo = FakeRepo()
+            val tracker = newTracker(repo, this)
+            assertThat(tracker.probeRefusal()).isNull()
+            assertThat(repo.calls).isEmpty()
         }
 
     @Test

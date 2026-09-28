@@ -11,7 +11,9 @@ data class UserPreferences(
     // Per-user home (hub) row order + visibility, configured on the web home page
     // and shared across devices via the user prefs. null = never customized
     // (render the default layout). Keys: continue_tv, continue_movies,
-    // continue_other, trending, library:<uuid>, libraries. The regular prefs PUT
+    // continue_other, next_up, plan_to_watch, trending, library:<uuid>,
+    // libraries (the server back-fills next_up / plan_to_watch into layouts
+    // saved before those rows existed). The regular prefs PUT
     // ignores this field (it's written via PUT /users/me/hub-layout), so
     // round-tripping it on a settings save is harmless.
     val hub_layout: List<HubRowPref>? = null,

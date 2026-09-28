@@ -15,6 +15,7 @@ import okhttp3.sse.EventSource
 import okhttp3.sse.EventSourceListener
 import okhttp3.sse.EventSources
 import tv.onscreen.android.data.model.NotificationItem
+import tv.onscreen.android.data.model.isHiddenNotificationType
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -27,6 +28,9 @@ import javax.inject.Singleton
  * subscribers receive every parsed [NotificationItem] and branch on the
  * `type` field. Reconnects are the caller's responsibility — typically a
  * coroutine that collects the flow and restarts on completion.
+ *
+ * Media-request notifications (`request_*`) are dropped here and never
+ * emitted — see [isHiddenNotificationType].
  *
  * The injected OkHttpClient carries [BaseUrlInterceptor] (rewrites
  * localhost → configured server) and [AuthInterceptor] (Bearer header), so
@@ -97,7 +101,9 @@ class NotificationsStream @Inject constructor(
                     lastActivityMs.set(System.currentTimeMillis())
                     try {
                         val item = adapter.fromJson(data)
-                        if (item != null) trySend(item)
+                        // Media-request notifications are never surfaced by
+                        // this app — drop them here, before any subscriber.
+                        if (item != null && !isHiddenNotificationType(item.type)) trySend(item)
                     } catch (_: Exception) {
                         // Malformed event — skip.
                     }

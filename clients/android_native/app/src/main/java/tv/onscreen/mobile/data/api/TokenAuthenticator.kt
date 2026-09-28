@@ -66,9 +66,9 @@ class TokenAuthenticator(
     override fun authenticate(route: Route?, response: Response): Request? {
         // Scope auth to our own server — the same guard AuthInterceptor
         // applies, and it must be repeated here. This client is also Coil's
-        // image backend and fetches third-party URLs (TMDB Discover posters
-        // arrive as absolute foreign URLs in DiscoverItem.poster_url, and
-        // BaseUrlInterceptor passes those through untouched). AuthInterceptor
+        // image backend and fetches third-party URLs (any absolute foreign
+        // image URL a server response carries — BaseUrlInterceptor passes
+        // those through untouched). AuthInterceptor
         // correctly withholds the Bearer from them, but OkHttp invokes the
         // client Authenticator on a 401 from ANY host, and the follow-up
         // request it returns is dispatched from inside

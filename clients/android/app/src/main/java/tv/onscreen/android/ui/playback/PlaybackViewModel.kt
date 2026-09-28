@@ -12,6 +12,7 @@ import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.ItemFile
 import tv.onscreen.android.data.model.Marker
 import retrofit2.HttpException
+import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.apiError
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -122,6 +123,12 @@ class PlaybackViewModel @Inject constructor(
     var hlsOffsetMs: Long = 0L
         private set
 
+    /** The live server session (transcode / remux), or null on direct play.
+     *  A `playback.stop` event naming a session_id targets this player when
+     *  it matches (see PlaybackStop.targets). */
+    val activeSessionId: String?
+        get() = transcodeSessionId
+
     // Cache the inputs needed to re-issue a transcode session when
     // the user picks a different audio track. ExoPlayer's
     // setPreferredAudioLanguage works for direct play (the player
@@ -152,6 +159,12 @@ class PlaybackViewModel @Inject constructor(
     // so a transcode that also fails surfaces the real error instead of
     // looping.
     private var directPlayContext: DirectPlayContext? = null
+
+    /** Set once the server ended this playback (admin stop / refused
+     *  heartbeat — see [stopForRefusal]). A session start still in flight at
+     *  that moment (seek re-issue, audio switch, direct-play fallback) must
+     *  not become the new source. */
+    private var refused = false
 
     private data class DirectPlayContext(
         val itemId: String,
@@ -256,8 +269,10 @@ class PlaybackViewModel @Inject constructor(
                             startMs,
                         )
                     }
-                    is PlaybackMode.Remux -> startTranscode(itemId, 0, startMs, file.id, true, serverUrl)
-                    is PlaybackMode.Transcode -> startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl)
+                    is PlaybackMode.Remux ->
+                        startTranscode(itemId, 0, startMs, file.id, true, serverUrl) ?: return@launch
+                    is PlaybackMode.Transcode ->
+                        startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl) ?: return@launch
                 }
 
                 // Markers (intro/credits) are episode-only on the
@@ -301,11 +316,24 @@ class PlaybackViewModel @Inject constructor(
     private fun playbackErrorMessage(e: Exception): String? = when {
         e is HttpException && e.code() == 403 -> {
             val err = e.apiError()
-            if (err?.code == "PARENTAL_LIMIT") "watch_limit:${err.message ?: ""}"
-            else "content_restricted"
+            when (err?.code) {
+                "PARENTAL_LIMIT" -> "watch_limit:${err.message ?: ""}"
+                // An admin stopped this stream and the server refuses a
+                // replacement session for the stop window (transcode Start →
+                // 403 PLAYBACK_STOPPED, message already the full sentence).
+                PlaybackStop.ERROR_CODE ->
+                    PlaybackStop.sentinel(PlaybackStop.textFromServer(err.message))
+                else -> "content_restricted"
+            }
         }
         else -> e.message
     }
+
+    /** The admin-stop sentinel when [e] is a 403 PLAYBACK_STOPPED, else null.
+     *  The session re-issue paths (seek, audio switch) are best-effort and
+     *  swallow failures — except this one, which must end playback. */
+    private fun adminStopSentinel(e: Exception): String? =
+        playbackErrorMessage(e)?.takeIf { PlaybackStop.isSentinel(it) }
 
     private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
         // Same resolver the MediaSessionService uses on its own
@@ -375,7 +403,7 @@ class PlaybackViewModel @Inject constructor(
         videoCopy: Boolean,
         serverUrl: String,
         audioStreamIndex: Int? = null,
-    ): PlaybackSource {
+    ): PlaybackSource.Hls? {
         // Capture the outgoing session but DON'T tear it down yet. Stopping
         // first meant a failed start (server 5xx, network blip, rate limit)
         // left the caller with nothing playing at all — the catch blocks in
@@ -395,6 +423,16 @@ class PlaybackViewModel @Inject constructor(
             supportsHevc = PlaybackHelper.supportsHevc(),
             supportsAv1 = PlaybackHelper.supportsAv1(),
         )
+
+        // The server ended this playback while the start was in flight. It
+        // refuses only NON-transcode restarts inside the stop window
+        // (sessions.go), so a transcode re-issue comes back live: retire it at
+        // once (the same DELETE teardown sends) and hand the caller nothing,
+        // or it plays behind the "Playback stopped" dialog.
+        if (refused) {
+            appScope.launch { transcodeRepo.stop(session.session_id, session.token) }
+            return null
+        }
 
         transcodeSessionId = session.session_id
         transcodeToken = session.token
@@ -452,6 +490,7 @@ class PlaybackViewModel @Inject constructor(
      * the new session is keyframe-snapped to where the user was.
      */
     fun switchAudioStream(audioStreamOrdinal: Int, currentPositionMs: Long) {
+        if (refused) return
         val req = lastTranscodeRequest ?: return
         // Range-check the ordinal against the track list. The server consumes
         // this as `-map 0:a:N` (the Nth AUDIO stream), but the API's
@@ -481,10 +520,12 @@ class PlaybackViewModel @Inject constructor(
                     videoCopy = req.videoCopy,
                     serverUrl = req.serverUrl,
                     audioStreamIndex = audioStreamOrdinal,
-                )
+                ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source)
-            } catch (_: Exception) {
-                // Best-effort — leave the existing session running.
+            } catch (e: Exception) {
+                // Best-effort — leave the existing session running. An admin
+                // stop is the exception: surface it so the player ends.
+                adminStopSentinel(e)?.let { _uiState.value = _uiState.value.copy(error = it) }
             }
         }
     }
@@ -504,6 +545,7 @@ class PlaybackViewModel @Inject constructor(
      * replaces; startTranscode's supersede path retires the old session.
      */
     fun reissueAt(contentPositionMs: Long) {
+        if (refused) return
         val req = lastTranscodeRequest ?: return
         if (reissueInFlight) return
         reissueInFlight = true
@@ -518,11 +560,13 @@ class PlaybackViewModel @Inject constructor(
                     videoCopy = req.videoCopy,
                     serverUrl = req.serverUrl,
                     audioStreamIndex = req.audioStreamIndex,
-                )
+                ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source)
-            } catch (_: Exception) {
+            } catch (e: Exception) {
                 // Best-effort — leave the existing session running; the bar
-                // snaps back to the real position on the next tick.
+                // snaps back to the real position on the next tick. An admin
+                // stop is the exception: surface it so the player ends.
+                adminStopSentinel(e)?.let { _uiState.value = _uiState.value.copy(error = it) }
             } finally {
                 reissueInFlight = false
             }
@@ -605,7 +649,7 @@ class PlaybackViewModel @Inject constructor(
                     fileId = ctx.fileId,
                     videoCopy = false,
                     serverUrl = ctx.serverUrl,
-                )
+                ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source, error = null)
             } catch (e: Exception) {
                 // Route through the same sentinel mapping as prepare(): when
@@ -618,6 +662,17 @@ class PlaybackViewModel @Inject constructor(
                 )
             }
         }
+    }
+
+    /**
+     * The server ended this playback (admin stop, refused heartbeat): tear the
+     * live session down and refuse every later source. A seek re-issue / audio
+     * switch already in flight comes back with a new, live transcode session —
+     * startTranscode retires it and drops the result instead of emitting it.
+     */
+    fun stopForRefusal(scope: kotlinx.coroutines.CoroutineScope = appScope) {
+        refused = true
+        stopActiveTranscode(scope)
     }
 
     /**

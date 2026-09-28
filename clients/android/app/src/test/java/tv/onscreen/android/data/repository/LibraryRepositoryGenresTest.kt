@@ -4,6 +4,7 @@ import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Test
 import tv.onscreen.android.data.api.ApiResponse
 import tv.onscreen.android.data.api.OnScreenApi
@@ -33,5 +34,27 @@ class LibraryRepositoryGenresTest {
         val repo = LibraryRepository(api)
 
         assertThat(repo.getGenres("lib1")).isEmpty()
+    }
+    @Test
+    fun `random pick maps 404 to null and passes the filters`() = runTest {
+        val api = mockk<OnScreenApi>()
+        coEvery { api.getRandomLibraryItem("lib1", "Drama", "unwatched") } returns
+            ApiResponse(tv.onscreen.android.data.model.RandomLibraryItem("m1", "movie"))
+        coEvery { api.getRandomLibraryItem("lib1", null, "watched") } throws
+            retrofit2.HttpException(retrofit2.Response.error<Any>(404, "".toResponseBody(null)))
+        val repo = LibraryRepository(api)
+
+        assertThat(repo.pickRandom("lib1", "Drama", "unwatched")?.id).isEqualTo("m1")
+        assertThat(repo.pickRandom("lib1", null, "watched")).isNull()
+    }
+
+    @Test
+    fun `library items forward the watch filter`() = runTest {
+        val api = mockk<OnScreenApi>()
+        coEvery { api.getLibraryItems("lib1", 50, 0, "title", "asc", null, "in_progress") } returns
+            tv.onscreen.android.data.api.ApiListResponse(emptyList(), tv.onscreen.android.data.api.Meta(0, null))
+        val repo = LibraryRepository(api)
+
+        assertThat(repo.getItems("lib1", 50, 0, "title", "asc", null, "in_progress").second).isEqualTo(0)
     }
 }

@@ -183,4 +183,44 @@ class PlaybackHelperTest {
             PlaybackHelper.contentDurationMs(0L, playerDurationMs = 60_000L, hlsOffsetMs = 5_000L),
         ).isEqualTo(65_000L)
     }
+
+    // ── isStoppedStreamStatus ───────────────────────────────────────────────
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun badStatus(code: Int) =
+        androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException(
+            code,
+            "status $code",
+            null,
+            emptyMap(),
+            androidx.media3.datasource.DataSpec(io.mockk.mockk<android.net.Uri>(relaxed = true)),
+            ByteArray(0),
+        )
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun playerError(cause: Throwable?) = androidx.media3.common.PlaybackException(
+        "boom",
+        cause,
+        androidx.media3.common.PlaybackException.ERROR_CODE_IO_BAD_HTTP_STATUS,
+    )
+
+    @Test
+    fun `a 403 or 404 load is what a server-stopped stream looks like`() {
+        // A terminated session's playlist/segments 404; a stopped direct play /
+        // remux is refused 403 for the stop window.
+        assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(badStatus(404)))).isTrue()
+        assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(badStatus(403)))).isTrue()
+        // Found anywhere down the cause chain.
+        assertThat(
+            PlaybackHelper.isStoppedStreamStatus(playerError(RuntimeException("wrapped", badStatus(404)))),
+        ).isTrue()
+    }
+
+    @Test
+    fun `other failures are ordinary playback errors`() {
+        assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(badStatus(500)))).isFalse()
+        assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(badStatus(401)))).isFalse()
+        assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(java.io.IOException("reset")))).isFalse()
+        assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(null))).isFalse()
+    }
 }

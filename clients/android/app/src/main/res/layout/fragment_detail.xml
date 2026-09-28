@@ -185,6 +185,25 @@
                     android:visibility="gone"
                     android:text="@string/play_from_beginning" />
 
+                <!-- Watched marks: "Mark watched / unwatched" on a movie or
+                     episode, "Mark all …" on a show or season. Hidden for
+                     types without a watch state; DetailFragment wires it. -->
+                <Button
+                    android:id="@+id/btn_mark_watched"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="14dp"
+                    android:paddingHorizontal="28dp"
+                    android:background="@drawable/btn_pill_secondary"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textAllCaps="false"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:visibility="gone"
+                    android:text="@string/mark_watched" />
+
                 <ImageView
                     android:id="@+id/btn_favorite"
                     android:layout_width="52dp"
@@ -197,6 +216,26 @@
                     android:focusable="true"
                     android:focusableInTouchMode="true"
                     android:contentDescription="@string/favorite" />
+
+                <!-- "Report a problem" (movie / episode / show). Hidden for
+                     other types; DetailFragment wires it to
+                     ReportProblemDialog. Last in the row: a secondary action
+                     that never takes initial focus. -->
+                <Button
+                    android:id="@+id/btn_report_problem"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="14dp"
+                    android:paddingHorizontal="28dp"
+                    android:background="@drawable/btn_pill_secondary"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textAllCaps="false"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:visibility="gone"
+                    android:text="@string/report_problem" />
             </LinearLayout>
 
             <!-- Episodes / tracks / albums section. Hidden until

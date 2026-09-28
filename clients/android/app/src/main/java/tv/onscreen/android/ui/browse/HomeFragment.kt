@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
+import android.widget.Toast
 import androidx.leanback.app.BrowseSupportFragment
 import androidx.leanback.widget.*
 import androidx.lifecycle.ViewModelProvider
@@ -41,6 +42,7 @@ import javax.inject.Inject
 class HomeFragment : BrowseSupportFragment() {
 
     @Inject lateinit var prefs: ServerPrefs
+    @Inject lateinit var watchNext: tv.onscreen.android.playback.WatchNextManager
     private lateinit var viewModel: HomeViewModel
     // Only for the "Change server" escape hatch below, which needs the same
     // full teardown (revoke + Watch Next purge + stop background audio) that
@@ -62,6 +64,15 @@ class HomeFragment : BrowseSupportFragment() {
     // rebuilds the rows from a fresh adapter, which snaps focus back to the first
     // row. Remember the selected row and re-apply it after the rebuild.
     private val scroll = GridScrollMemory()
+    // Header of the row Home was left from. Rows above it come and go between
+    // visits (Continue Watching, Next Up, Plan to Watch — a mark or a finished
+    // episode on the detail screen changes them), so the saved index alone put
+    // focus on a neighbouring row; the restore looks the row up by name first.
+    private var leftFromRow: String? = null
+    // (row, item) to put focus back on after the rebuild a Continue Watching
+    // removal triggers — without it the rebuilt adapter snaps focus to the
+    // first row, far from where the user just was.
+    private var pendingFocus: Pair<Int, Int>? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -83,7 +94,29 @@ class HomeFragment : BrowseSupportFragment() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[HomeViewModel::class.java]
-        scroll.onViewRecreated()
+        // Arm on every return (leftFromRow set by onDestroyView), not only when
+        // the saved index is nonzero: a row can appear above row 0 meanwhile.
+        scroll.onViewRecreated(returning = leftFromRow != null)
+
+        // One-shot results of Continue Watching removals.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.events.collect { event ->
+                when (event) {
+                    // Also drop it from the launcher's Continue Watching row
+                    // (Google TV Watch Next) — rows there are keyed by the
+                    // played item, so this matches movies / other videos; a
+                    // show tile's id finds nothing and is a no-op.
+                    is HomeEvent.Dismissed -> lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching { watchNext.remove(event.itemId) }
+                    }
+                    is HomeEvent.DismissFailed -> Toast.makeText(
+                        requireContext(),
+                        if (event.rateLimited) R.string.watch_rate_limited else R.string.cw_remove_failed,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
 
         // Read serverUrl FIRST, then start collecting UI state. Two
         // parallel coroutines raced before — if the cached API response
@@ -101,6 +134,8 @@ class HomeFragment : BrowseSupportFragment() {
                     state.continueWatchingOther.isNotEmpty() ||
                     state.recentlyAdded.isNotEmpty() ||
                     state.trending.isNotEmpty() ||
+                    state.nextUp.isNotEmpty() ||
+                    state.planToWatch.isNotEmpty() ||
                     state.libraryPreviews.any { it.second.isNotEmpty() } ||
                     state.collections.isNotEmpty()
                 if (state.error != null && !hasContent) {
@@ -180,13 +215,20 @@ class HomeFragment : BrowseSupportFragment() {
                     if (state != lastBuiltState) {
                         lastBuiltState = state
                         buildRows(state)
+                        pendingFocus?.let { (row, index) ->
+                            pendingFocus = null
+                            restoreFocus(row, index)
+                        }
                     }
                     // Returning here recreated the view: a rebuild (content changed)
                     // reassigns the adapter and a skipped rebuild (unchanged) reuses
                     // the retained one — either way put focus back on the row the user
-                    // left from instead of snapping to the top.
+                    // left from instead of snapping to the top. By name first —
+                    // the saved index is off by one per row that came or went
+                    // above it, and out of range when the user left from the
+                    // last row — falling back to the index.
                     val rows = (adapter as? ArrayObjectAdapter)?.size() ?: 0
-                    scroll.restoreIfPending(rows) { setSelectedPosition(it) }
+                    scroll.restoreIfPending(rows, resolve = { rowNamed(leftFromRow) }) { setSelectedPosition(it) }
                 }
             }
         }
@@ -263,6 +305,20 @@ class HomeFragment : BrowseSupportFragment() {
         }
     }
 
+    override fun onDestroyView() {
+        val rows = adapter as? ArrayObjectAdapter
+        leftFromRow = rows?.takeIf { selectedPosition in 0 until it.size() }
+            ?.let { (it.get(selectedPosition) as? ListRow)?.headerItem?.name }
+        super.onDestroyView()
+    }
+
+    /** Index of the row whose header is [name], or null. */
+    private fun rowNamed(name: String?): Int? {
+        val rows = adapter as? ArrayObjectAdapter ?: return null
+        name ?: return null
+        return (0 until rows.size()).firstOrNull { (rows.get(it) as? ListRow)?.headerItem?.name == name }
+    }
+
     override fun onResume() {
         super.onResume()
         // Refresh unread count / new items after returning from sub-screens.
@@ -275,6 +331,11 @@ class HomeFragment : BrowseSupportFragment() {
             selectEffectEnabled = false
         })
         val cardPresenter = CardPresenter(requireContext(), serverUrl)
+        // Continue Watching cards get a long-press menu (Remove from Continue
+        // Watching); every other row keeps the plain presenter.
+        val continuePresenter = CardPresenter(requireContext(), serverUrl) { item ->
+            if (item is HubItem) showContinueWatchingMenu(item)
+        }
         val navPresenter = NavCardPresenter(requireContext())
         var headerId = 0L
 
@@ -290,23 +351,28 @@ class HomeFragment : BrowseSupportFragment() {
 
         // A row whose items are HubItems (continue-watching, trending, recently
         // added). Returns null for an empty bucket so the row is skipped.
-        fun hubRow(title: String, items: List<HubItem>): ListRow? {
+        fun hubRow(title: String, items: List<HubItem>, presenter: Presenter = cardPresenter): ListRow? {
             if (items.isEmpty()) return null
-            val a = ArrayObjectAdapter(cardPresenter)
+            val a = ArrayObjectAdapter(presenter)
             items.forEach { a.add(it) }
             return ListRow(HeaderItem(headerId++, title), a)
         }
 
         // Candidate home rows in DEFAULT order, each keyed so the user's saved hub
         // layout (configured on the web home, shared per-account via prefs) can
-        // reorder + hide them. The web-shared keys are continue_*, trending and
-        // library:<uuid>; recently_added / collections are TV-only extras the web
-        // never emits, so they fall through to their default position.
+        // reorder + hide them. The web-shared keys are continue_*, next_up,
+        // plan_to_watch, trending and library:<uuid>; recently_added / collections
+        // are TV-only extras the web never emits, so they fall through to their
+        // default position. Default order mirrors the web home: Next Up right
+        // under Continue Watching TV, Plan to Watch after the Continue rows (the
+        // server also slots both there in layouts saved before they existed).
         class Section(val key: String, val build: () -> ListRow?)
         val sections = buildList {
-            add(Section("continue_tv") { hubRow(getString(R.string.continue_watching_tv), state.continueWatchingTV) })
-            add(Section("continue_movies") { hubRow(getString(R.string.continue_watching_movies), state.continueWatchingMovies) })
-            add(Section("continue_other") { hubRow(getString(R.string.continue_watching), state.continueWatchingOther) })
+            add(Section("continue_tv") { hubRow(getString(R.string.continue_watching_tv), state.continueWatchingTV, continuePresenter) })
+            add(Section("next_up") { hubRow(getString(R.string.hub_next_up), state.nextUp) })
+            add(Section("continue_movies") { hubRow(getString(R.string.continue_watching_movies), state.continueWatchingMovies, continuePresenter) })
+            add(Section("continue_other") { hubRow(getString(R.string.continue_watching), state.continueWatchingOther, continuePresenter) })
+            add(Section("plan_to_watch") { hubRow(getString(R.string.hub_plan_to_watch), state.planToWatch) })
             add(Section("trending") { hubRow(getString(R.string.trending), state.trending) })
             add(Section("recently_added") { hubRow(getString(R.string.recently_added), state.recentlyAdded) })
             state.libraryPreviews.forEach { (library, items) ->
@@ -360,6 +426,8 @@ class HomeFragment : BrowseSupportFragment() {
             state.continueWatchingOther.isNotEmpty() ||
             state.recentlyAdded.isNotEmpty() ||
             state.trending.isNotEmpty() ||
+            state.nextUp.isNotEmpty() ||
+            state.planToWatch.isNotEmpty() ||
             state.libraryPreviews.any { it.second.isNotEmpty() } ||
             state.collections.isNotEmpty()
         if (!hasContent) {
@@ -390,6 +458,49 @@ class HomeFragment : BrowseSupportFragment() {
         rowsAdapter.add(ListRow(HeaderItem(headerId++, getString(R.string.browse)), navAdapter))
 
         adapter = rowsAdapter
+    }
+
+    /**
+     * Long-press menu for a Continue Watching card. A list dialog (not a
+     * button-only one) so the D-pad lands on the action straight away; Back
+     * cancels. Removal is optimistic — the card disappears at once and comes
+     * back with a toast if the server call fails.
+     */
+    private fun showContinueWatchingMenu(item: HubItem) {
+        if (!isAdded) return
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(item.title)
+            .setItems(arrayOf(getString(R.string.cw_remove))) { d, _ ->
+                d.dismiss()
+                if (!isAdded) return@setItems
+                pendingFocus = locate(item)
+                viewModel.dismissContinueWatching(item)
+            }
+            .create()
+            .dismissOnViewDestroyed(this)
+            .show()
+    }
+
+    /** (row, index-in-row) of [item] in the current rows, or null. */
+    private fun locate(item: Any): Pair<Int, Int>? {
+        val rows = adapter as? ArrayObjectAdapter ?: return null
+        for (r in 0 until rows.size()) {
+            val row = rows.get(r) as? ListRow ?: continue
+            val index = (row.adapter as? ArrayObjectAdapter)?.indexOf(item) ?: -1
+            if (index >= 0) return r to index
+        }
+        return null
+    }
+
+    /** Select row [row] (clamped) and the card at [index] within it (clamped
+     *  to the row's new size — the removed card's neighbour slides in). */
+    private fun restoreFocus(row: Int, index: Int) {
+        val rows = adapter as? ArrayObjectAdapter ?: return
+        if (rows.size() == 0) return
+        val r = row.coerceIn(0, rows.size() - 1)
+        val rowSize = ((rows.get(r) as? ListRow)?.adapter?.size() ?: 0)
+        val i = index.coerceIn(0, (rowSize - 1).coerceAtLeast(0))
+        setSelectedPosition(r, false, ListRowPresenter.SelectItemViewHolderTask(i))
     }
 
     private fun showResumeDialog(resumeMs: Long, onChoice: (Long) -> Unit) {

@@ -38,6 +38,18 @@ class HeartbeatRefusalTest {
     }
 
     @Test
+    fun `PLAYBACK_STOPPED 403 on playing is an admin-stop refusal carrying the sentence`() {
+        val body = """{"error":{"code":"PLAYBACK_STOPPED","message":"Playback was stopped by the server admin: bye"}}"""
+        assertThat(HeartbeatRefusal.of("playing", http(403, body)))
+            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin: bye"))
+        // No message: the generic sentence, never an empty dialog.
+        assertThat(HeartbeatRefusal.of("playing", http(403, """{"error":{"code":"PLAYBACK_STOPPED"}}""")))
+            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin."))
+        // The server only gates 'playing'.
+        assertThat(HeartbeatRefusal.of("paused", http(403, body))).isNull()
+    }
+
+    @Test
     fun `only playing reports are refusals`() {
         // The server gates only 'playing'; a refused pause/stop is not a
         // reason to stop playback.

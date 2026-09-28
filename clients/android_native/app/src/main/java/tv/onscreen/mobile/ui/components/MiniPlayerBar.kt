@@ -11,6 +11,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -44,7 +45,9 @@ import tv.onscreen.mobile.playback.PlaybackService
  * background service holds a current item, and only on shell destinations
  * (AppNav hides it on immersive routes and on the player itself).
  *
- * Tap → reopen the full player for the current item. The ✕ stops playback
+ * Tap → reopen the full player for the current item. Next skips within
+ * the service's queue (the album, gapless — see PlaybackService) and only
+ * shows when there is a next track. The ✕ stops playback
  * via controller.stop(); PlaybackService reacts to STATE_IDLE by publishing
  * the terminal progress report and tearing itself down, so the notification
  * doesn't linger as a paused ghost.
@@ -56,6 +59,7 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
     var mediaId by remember { mutableStateOf<String?>(null) }
     var title by remember { mutableStateOf("") }
     var playing by remember { mutableStateOf(false) }
+    var hasNext by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
@@ -65,6 +69,7 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
                 mediaId = player.currentMediaItem?.mediaId
                 title = player.mediaMetadata.title?.toString().orEmpty()
                 playing = player.isPlaying
+                hasNext = player.hasNextMediaItem()
             }
         }
         future.addListener({
@@ -76,6 +81,7 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
             mediaId = c.currentMediaItem?.mediaId
             title = c.mediaMetadata.title?.toString().orEmpty()
             playing = c.isPlaying
+            hasNext = c.hasNextMediaItem()
         }, ContextCompat.getMainExecutor(context))
         onDispose {
             controller?.removeListener(listener)
@@ -119,6 +125,11 @@ fun MiniPlayerBar(onOpen: (String) -> Unit) {
                     if (playing) Icons.Default.Pause else Icons.Default.PlayArrow,
                     contentDescription = if (playing) "Pause" else "Play",
                 )
+            }
+            if (hasNext) {
+                IconButton(onClick = { controller?.seekToNextMediaItem() }) {
+                    Icon(Icons.Default.SkipNext, contentDescription = "Next track")
+                }
             }
             IconButton(onClick = {
                 // stop() FIRST — the service's STATE_IDLE handler publishes

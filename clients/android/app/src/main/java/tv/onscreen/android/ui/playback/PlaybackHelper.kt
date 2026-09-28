@@ -193,6 +193,25 @@ object PlaybackHelper {
     }
 
     /**
+     * True when [error] is a load answered 403 or 404 — how a stream the
+     * server stopped (admin stop from Now Playing) dies: the terminated
+     * session's playlist/segments 404, and a stopped direct play / remux is
+     * refused 403 for the stop window. The player then probes the progress
+     * route once to tell a stop apart from an ordinary broken stream.
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun isStoppedStreamStatus(error: Throwable): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+                return cause.responseCode == 403 || cause.responseCode == 404
+            }
+            cause = cause.cause
+        }
+        return false
+    }
+
+    /**
      * Builds the X-Client-Capabilities header value from this device's decode
      * support — the declarative profile the server uses for transcode target
      * selection and (once adopted) the POST /items/{id}/playback-decision

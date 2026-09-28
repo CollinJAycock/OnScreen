@@ -3,11 +3,14 @@ package tv.onscreen.android.ui.browse
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.repository.LibraryRepository
+import tv.onscreen.android.ui.common.WatchStateUi
 import javax.inject.Inject
 
 data class LibrarySort(val sort: String, val sortDir: String) {
@@ -55,6 +58,16 @@ class LibraryViewModel @Inject constructor(
 
     private val _genres = MutableStateFlow<List<String>>(emptyList())
     val genres: StateFlow<List<String>> = _genres
+
+    /** v2.5 Watch filter, sent as `?watch=` — one of [WatchFilter]'s values
+     *  (unwatched / in_progress / watched), null = all items. */
+    private val _watch = MutableStateFlow<String?>(null)
+    val watch: StateFlow<String?> = _watch
+
+    /** One-shot results of "Surprise me". */
+    private val _events = MutableSharedFlow<LibraryEvent>(extraBufferCapacity = 2)
+    val events: SharedFlow<LibraryEvent> = _events
+    private var picking = false
 
     private var libraryId: String? = null
     private var offset = 0
@@ -105,7 +118,65 @@ class LibraryViewModel @Inject constructor(
         resetAndReload()
     }
 
-    /** Bumped whenever sort/genre changes. In-flight page fetches capture
+    /**
+     * Re-read the page holding [itemId] (same query) and swap in any items
+     * whose content changed — watch_state / progress / unwatched counts after
+     * the user marked or watched something on the detail screen. One request;
+     * membership is left alone (an item that no longer matches a Watch filter
+     * stays until the next full reload), so focus and scroll are undisturbed.
+     */
+    fun refreshAround(itemId: String) {
+        val id = libraryId ?: return
+        val index = _items.value.indexOfFirst { it.id == itemId }
+        if (index < 0) return
+        val pageOffset = (index / pageSize) * pageSize
+        val s = _sort.value
+        val g = _genre.value
+        val w = _watch.value
+        val gen = queryGeneration
+        viewModelScope.launch {
+            val fresh = try {
+                libraryRepo.getItems(id, pageSize, pageOffset, s.sort, s.sortDir, g, w).first
+            } catch (_: Exception) {
+                return@launch // best-effort: keep what's on screen
+            }
+            if (gen != queryGeneration) return@launch
+            val byId = fresh.associateBy { it.id }
+            val cur = _items.value
+            val next = cur.map { byId[it.id] ?: it }
+            if (next != cur) _items.value = next
+        }
+    }
+
+    /** Pick a random item under the current genre + watch filters (the
+     *  server ignores sort) and ask the fragment to open it. */
+    fun surpriseMe() {
+        val id = libraryId ?: return
+        if (picking) return
+        picking = true
+        val g = _genre.value
+        val w = _watch.value
+        viewModelScope.launch {
+            try {
+                val pick = libraryRepo.pickRandom(id, g, w)
+                _events.tryEmit(if (pick != null) LibraryEvent.Open(pick.id, pick.type) else LibraryEvent.NothingToPick)
+            } catch (_: Exception) {
+                _events.tryEmit(LibraryEvent.PickFailed)
+            } finally {
+                picking = false
+            }
+        }
+    }
+
+    /** Anything that isn't a known [WatchFilter] value clears the filter. */
+    fun setWatchFilter(watch: String?) {
+        val w = WatchStateUi.parseWatchFilter(watch)
+        if (_watch.value == w) return
+        _watch.value = w
+        resetAndReload()
+    }
+
+    /** Bumped whenever sort/genre/watch changes. In-flight page fetches capture
      *  the generation they were issued under and drop their results if it
      *  moved — without this, changing sort while page 1 was in flight (a)
      *  hit the `loading` guard and silently discarded the NEW query, and
@@ -133,10 +204,11 @@ class LibraryViewModel @Inject constructor(
 
         val s = _sort.value
         val g = _genre.value
+        val w = _watch.value
         val gen = queryGeneration
         viewModelScope.launch {
             try {
-                val (page, count) = libraryRepo.getItems(id, pageSize, offset, s.sort, s.sortDir, g)
+                val (page, count) = libraryRepo.getItems(id, pageSize, offset, s.sort, s.sortDir, g, w)
                 if (gen != queryGeneration) return@launch // stale sort/genre
                 total = count
                 offset += page.size
@@ -154,4 +226,13 @@ class LibraryViewModel @Inject constructor(
             }
         }
     }
+}
+
+sealed interface LibraryEvent {
+    /** "Surprise me" picked this item. */
+    data class Open(val id: String, val type: String) : LibraryEvent
+    /** Nothing in the library matches the current filters. */
+    data object NothingToPick : LibraryEvent
+    /** The pick failed (network, or an older server without the endpoint). */
+    data object PickFailed : LibraryEvent
 }

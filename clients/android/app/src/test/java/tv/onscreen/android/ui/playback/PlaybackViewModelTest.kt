@@ -387,13 +387,15 @@ class PlaybackViewModelTest {
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
-        vm.stopActiveTranscode()
+        // Pass the test scope: the default is the IO-backed appScope, which
+        // advanceUntilIdle() doesn't drive — verifying against it raced.
+        vm.stopActiveTranscode(this)
         advanceUntilIdle()
 
         coVerify(exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
 
         // Calling again should not re-issue the stop.
-        vm.stopActiveTranscode()
+        vm.stopActiveTranscode(this)
         advanceUntilIdle()
         coVerify(exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
     }
@@ -820,4 +822,142 @@ class PlaybackViewModelTest {
         assertThat(vm.uiState.value.error).isEqualTo("dolby_vision")
         assertThat(vm.uiState.value.source).isNull()
     }
+    // ── Admin stop (403 PLAYBACK_STOPPED) ───────────────────────────────────
+
+    private fun stopped403(message: String = "Playback was stopped by the server admin: bedtime") =
+        retrofit2.HttpException(
+            retrofit2.Response.error<Unit>(
+                403,
+                okhttp3.ResponseBody.create(
+                    null,
+                    """{"error":{"code":"PLAYBACK_STOPPED","message":"$message"}}""",
+                ),
+            ),
+        )
+
+    @Test
+    fun `a refused session start after an admin stop surfaces the stop sentinel`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } throws stopped403()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        val err = vm.uiState.value.error
+        assertThat(tv.onscreen.android.data.api.PlaybackStop.isSentinel(err)).isTrue()
+        assertThat(tv.onscreen.android.data.api.PlaybackStop.sentenceOf(err!!))
+            .isEqualTo("Playback was stopped by the server admin: bedtime")
+        assertThat(vm.uiState.value.source).isNull()
+    }
+
+    @Test
+    fun `a seek re-issue refused by an admin stop ends playback, other failures stay silent`() =
+        runTest(dispatcher) {
+            val itemRepo = itemRepo()
+            val transcodeRepo = transcodeRepoMock(relaxed = true)
+            coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+            coEvery {
+                transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+            } returns TranscodeSession(session_id = "sess-live", playlist_url = "/p.m3u8", token = "tok-live")
+
+            val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+            vm.prepare("movie-1", 0L, "http://srv")
+            advanceUntilIdle()
+            assertThat(vm.activeSessionId).isEqualTo("sess-live")
+            val original = vm.uiState.value.source
+
+            // A plain failure: best-effort, nothing surfaces.
+            coEvery {
+                transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+            } throws RuntimeException("503")
+            vm.reissueAt(60_000L)
+            advanceUntilIdle()
+            assertThat(vm.uiState.value.error).isNull()
+
+            // The admin stop: surfaced so the fragment tears playback down.
+            coEvery {
+                transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+            } throws stopped403()
+            vm.reissueAt(60_000L)
+            advanceUntilIdle()
+            assertThat(tv.onscreen.android.data.api.PlaybackStop.isSentinel(vm.uiState.value.error)).isTrue()
+            assertThat(vm.uiState.value.source).isSameInstanceAs(original)
+        }
+
+    /**
+     * The server refuses only NON-transcode restarts after an admin stop, so a
+     * transcode re-issue (seek / audio switch) that was already in flight when
+     * the stop landed comes back with a live session. Emitting it started
+     * playback behind the "Playback stopped" dialog; it must be dropped and
+     * its new session retired.
+     */
+    private fun kotlinx.coroutines.test.TestScope.lateReissueAfterStop(
+        reissue: (PlaybackViewModel) -> Unit,
+    ) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(
+            transcodeFile().copy(
+                audio_streams = listOf(
+                    AudioStream(1, "ac3", 6, "en", "English"),
+                    AudioStream(2, "ac3", 6, "de", "Deutsch"),
+                ),
+            ),
+        )
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "sess-live", playlist_url = "/live.m3u8", token = "tok-live")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+        val original = vm.uiState.value.source
+
+        // The re-issue's start is in flight...
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } coAnswers {
+            gate.await()
+            TranscodeSession(session_id = "sess-late", playlist_url = "/late.m3u8", token = "tok-late")
+        }
+        reissue(vm)
+        advanceUntilIdle()
+
+        // ...when the admin stop lands (the fragment's stopForRefusedPlayback).
+        vm.stopForRefusal(this)
+        advanceUntilIdle()
+        gate.complete(Unit)
+        advanceUntilIdle()
+
+        // The late session never becomes the source...
+        assertThat(vm.uiState.value.source).isSameInstanceAs(original)
+        assertThat(vm.activeSessionId).isNull()
+        // ...and both sessions are torn down server-side.
+        coVerify(exactly = 1) { transcodeRepo.stop("sess-live", "tok-live") }
+        coVerify(timeout = 2_000, exactly = 1) { transcodeRepo.stop("sess-late", "tok-late") }
+
+        // Nothing re-issues after the stop.
+        vm.reissueAt(90_000L)
+        vm.switchAudioStream(audioStreamOrdinal = 0, currentPositionMs = 0L)
+        advanceUntilIdle()
+        coVerify(exactly = 2) {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        }
+    }
+
+    @Test
+    fun `a seek re-issue in flight when an admin stop lands is dropped and its session retired`() =
+        runTest(dispatcher) { lateReissueAfterStop { it.reissueAt(60_000L) } }
+
+    @Test
+    fun `an audio switch in flight when an admin stop lands is dropped and its session retired`() =
+        runTest(dispatcher) {
+            lateReissueAfterStop { it.switchAudioStream(audioStreamOrdinal = 1, currentPositionMs = 5_000L) }
+        }
 }

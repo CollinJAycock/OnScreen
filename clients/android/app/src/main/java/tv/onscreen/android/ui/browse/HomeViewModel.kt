@@ -5,7 +5,9 @@ import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -23,6 +25,9 @@ data class HomeUiState(
     val continueWatchingOther: List<HubItem> = emptyList(),
     val recentlyAdded: List<HubItem> = emptyList(),
     val trending: List<HubItem> = emptyList(),
+    // v2.5 per-user watch rows (empty on older servers → rows hidden).
+    val nextUp: List<HubItem> = emptyList(),
+    val planToWatch: List<HubItem> = emptyList(),
     val libraryPreviews: List<Pair<Library, List<MediaItem>>> = emptyList(),
     val collections: List<MediaCollection> = emptyList(),
     // User's saved hub row order + visibility (from web). Empty = default layout.
@@ -37,6 +42,8 @@ data class HomeUiState(
             continueWatchingOther.isNotEmpty() ||
             recentlyAdded.isNotEmpty() ||
             trending.isNotEmpty() ||
+            nextUp.isNotEmpty() ||
+            planToWatch.isNotEmpty() ||
             libraryPreviews.isNotEmpty() ||
             collections.isNotEmpty()
 }
@@ -52,12 +59,32 @@ class HomeViewModel @Inject constructor(
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState
 
+    /** One-shot UI events (toasts). Kept out of [HomeUiState] on purpose: the
+     *  fragment rebuilds every row whenever the state changes, and a message
+     *  riding in the state would force a rebuild just to show a toast. */
+    private val _events = MutableSharedFlow<HomeEvent>(extraBufferCapacity = 4)
+    val events: SharedFlow<HomeEvent> = _events
+
+    /** Continue Watching ids a hub refresh must not bring back yet, mapped to
+     *  the [loadSeq] current when the server committed the dismissal
+     *  ([DISMISS_IN_FLIGHT] until then). A refresh (onResume reloads on every
+     *  return) whose read may predate the commit — one in flight during the
+     *  POST, or started before it — would re-add the tile, so it is filtered.
+     *  Only until a load that STARTED after the commit completes: from then on
+     *  the server stops returning the item on its own, and it SHOULD come back
+     *  later if the user watches it again. */
+    private val pendingDismiss = mutableMapOf<String, Long>()
+
+    /** Incremented as each [load] starts. */
+    private var loadSeq = 0L
+
     // NOTE: no init{load()} — HomeFragment.onResume() drives the load. Having both
     // double-fetched every endpoint on launch and rebuilt the rows twice (flicker +
     // focus reset). onResume always fires after onViewCreated, so the first launch
     // still loads exactly once.
 
     fun load() {
+        val seq = ++loadSeq
         viewModelScope.launch {
             // Mark loading WITHOUT discarding the current rows: onResume
             // refreshes on every return to Home, and blanking here made the
@@ -116,13 +143,24 @@ class HomeViewModel @Inject constructor(
                 val other = hub.continue_watching_other
                     ?: hub.continue_watching.filter { it.type != "episode" && it.type != "movie" }
 
+                // Dismissals this read may predate: still in flight, or
+                // committed after this load started.
+                val stale = pendingDismiss.filterValues { it >= seq }.keys
+                fun List<HubItem>.withoutPending() =
+                    if (stale.isEmpty()) this else filterNot { it.id in stale }
+                // This read began after the rest committed — the server's
+                // answer is authoritative for them from here on.
+                pendingDismiss.entries.removeAll { it.value < seq }
+
                 _uiState.value = HomeUiState(
                     isLoading = false,
-                    continueWatchingTV = tv,
-                    continueWatchingMovies = movies,
-                    continueWatchingOther = other,
+                    continueWatchingTV = tv.withoutPending(),
+                    continueWatchingMovies = movies.withoutPending(),
+                    continueWatchingOther = other.withoutPending(),
                     recentlyAdded = hub.recently_added,
                     trending = hub.trending,
+                    nextUp = hub.next_up,
+                    planToWatch = hub.plan_to_watch,
                     libraryPreviews = previews,
                     collections = cols,
                     hubLayout = layout,
@@ -143,4 +181,75 @@ class HomeViewModel @Inject constructor(
             }
         }
     }
+
+    /**
+     * Remove a Continue Watching tile: gone from every CW row at once
+     * (optimistic), then POST /items/{id}/dismiss-continue-watching. On
+     * failure the tile goes back where it was — unless a refresh already
+     * brought it back — and a [HomeEvent.DismissFailed] is emitted.
+     */
+    fun dismissContinueWatching(item: HubItem) {
+        if (item.id in pendingDismiss) return
+        pendingDismiss[item.id] = DISMISS_IN_FLIGHT
+        val before = _uiState.value
+        val tv = removeById(before.continueWatchingTV, item.id)
+        val movies = removeById(before.continueWatchingMovies, item.id)
+        val other = removeById(before.continueWatchingOther, item.id)
+        _uiState.value = before.copy(
+            // Rendered now even while an onResume refresh is in flight — the
+            // fragment skips isLoading states, so copying that flag hid the
+            // removal until the refresh landed.
+            isLoading = false,
+            continueWatchingTV = tv.first,
+            continueWatchingMovies = movies.first,
+            continueWatchingOther = other.first,
+        )
+        viewModelScope.launch {
+            try {
+                hubRepo.dismissContinueWatching(item.id)
+                // Keep filtering until a load that starts after this commit
+                // completes (see pendingDismiss).
+                pendingDismiss[item.id] = loadSeq
+                _events.tryEmit(HomeEvent.Dismissed(item.id))
+            } catch (e: Exception) {
+                pendingDismiss.remove(item.id)
+                val cur = _uiState.value
+                _uiState.value = cur.copy(
+                    continueWatchingTV = restoreAt(cur.continueWatchingTV, tv.second),
+                    continueWatchingMovies = restoreAt(cur.continueWatchingMovies, movies.second),
+                    continueWatchingOther = restoreAt(cur.continueWatchingOther, other.second),
+                )
+                _events.tryEmit(HomeEvent.DismissFailed(rateLimited = (e as? retrofit2.HttpException)?.code() == 429))
+            }
+        }
+    }
+
+    companion object {
+        /** [pendingDismiss] marker for a dismissal the server hasn't answered. */
+        private const val DISMISS_IN_FLIGHT = Long.MAX_VALUE
+
+        /** Remove by id: the new list plus the removed item and its old index
+         *  (null when absent). */
+        internal fun removeById(list: List<HubItem>, id: String): Pair<List<HubItem>, IndexedValue<HubItem>?> {
+            val index = list.indexOfFirst { it.id == id }
+            if (index < 0) return list to null
+            return (list.subList(0, index) + list.subList(index + 1, list.size)) to IndexedValue(index, list[index])
+        }
+
+        /** Put a removed item back at its old position, unless something (a
+         *  refresh) re-added it meanwhile. */
+        internal fun restoreAt(list: List<HubItem>, removed: IndexedValue<HubItem>?): List<HubItem> {
+            removed ?: return list
+            if (list.any { it.id == removed.value.id }) return list
+            val at = removed.index.coerceIn(0, list.size)
+            return list.subList(0, at) + removed.value + list.subList(at, list.size)
+        }
+    }
+}
+
+sealed interface HomeEvent {
+    /** A Continue Watching tile was removed server-side. */
+    data class Dismissed(val itemId: String) : HomeEvent
+    /** Removing a Continue Watching tile failed; the tile was restored. */
+    data class DismissFailed(val rateLimited: Boolean) : HomeEvent
 }

@@ -17,8 +17,8 @@ import tv.onscreen.android.data.prefs.ServerPrefs
 
 /**
  * Regression guard for the token-leak defect: the shared OkHttpClient is also
- * Coil's image backend and fetches third-party URLs (TMDB Discover posters,
- * M3U channel logos). [AuthInterceptor] withholds the Bearer from non-server
+ * Coil's image backend and fetches third-party URLs (M3U channel logos,
+ * external artwork). [AuthInterceptor] withholds the Bearer from non-server
  * hosts, but OkHttp invokes the client Authenticator on a 401 from ANY host,
  * and dispatches its follow-up request from inside RetryAndFollowUpInterceptor
  * — BELOW the application interceptors — so the interceptor never gets a

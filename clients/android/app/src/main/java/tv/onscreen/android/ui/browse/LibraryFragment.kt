@@ -19,11 +19,13 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.MediaItem
+import tv.onscreen.android.data.model.WatchFilter
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.GridScrollMemory
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.common.WatchStateUi
 import tv.onscreen.android.ui.common.syncItems
 import tv.onscreen.android.ui.photo.PhotoViewFragment
 import javax.inject.Inject
@@ -36,10 +38,20 @@ class LibraryFragment : VerticalGridSupportFragment() {
     private lateinit var viewModel: LibraryViewModel
     private lateinit var gridAdapter: ArrayObjectAdapter
     private var baseTitle: String = ""
+    private var libraryType: String = ""
     private var errorOverlay: ErrorOverlay? = null
     // Restores the grid position across the view recreation a detail/back round-trip
     // causes (see GridScrollMemory) — else the grid snaps back to the top on return.
     private val scroll = GridScrollMemory()
+    // The card last opened from this grid. On return its page is re-read so a
+    // watched mark made on the detail screen (or a finished playback) shows on
+    // the card; survives the view teardown the round-trip causes.
+    private var lastOpenedId: String? = null
+    // Set when a Sort / genre / Watch pick changes the query. The reload empties
+    // the grid, which knocks focus off the orb onto the focusable wrapper root —
+    // where the D-pad finds nothing and the remote goes dead until BACK. The
+    // first page of the new query takes focus instead.
+    private var focusGridOnReload = false
 
     companion object {
         private const val ARG_LIBRARY_ID = "library_id"
@@ -75,6 +87,7 @@ class LibraryFragment : VerticalGridSupportFragment() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         baseTitle = arguments?.getString(ARG_LIBRARY_NAME) ?: ""
+        libraryType = arguments?.getString(ARG_LIBRARY_TYPE) ?: ""
         title = baseTitle
 
         val presenter = VerticalGridPresenter(FocusHighlight.ZOOM_FACTOR_NONE).apply {
@@ -122,16 +135,29 @@ class LibraryFragment : VerticalGridSupportFragment() {
             scroll.onViewRecreated() // arm position restore for a detail/back return
 
             viewModel.load(libraryId, libraryType)
+            lastOpenedId?.let { opened ->
+                lastOpenedId = null
+                // Only libraries whose items carry a watch state can change.
+                if (WatchStateUi.supportsWatchFilter(libraryType)) viewModel.refreshAround(opened)
+            }
 
             launch {
                 viewModel.items.collectLatest { items ->
                     // Append-or-rebuild preserving focus/scroll — critical for the
                     // pagination path: a new page must stream in WITHOUT yanking the
                     // user back to the top mid-scroll.
-                    gridAdapter.syncItems(items) { it.id }
+                    // updateChanged: a refreshed page (refreshAround, after a
+                    // detail round-trip) swaps changed cards in place so new
+                    // watch badges show without disturbing focus.
+                    gridAdapter.syncItems(items, updateChanged = true) { it.id }
                     // Restore the pre-navigation position once the recreated grid has
                     // repopulated (the view is destroyed on a detail/back round-trip).
                     scroll.restoreIfPending(gridAdapter.size(), ::setSelectedPosition)
+                    if (focusGridOnReload && items.isNotEmpty()) {
+                        focusGridOnReload = false
+                        setSelectedPosition(0)
+                        view.findViewById<View>(androidx.leanback.R.id.browse_grid)?.requestFocus()
+                    }
                 }
             }
             launch {
@@ -140,6 +166,25 @@ class LibraryFragment : VerticalGridSupportFragment() {
             }
             launch {
                 viewModel.genre.collectLatest { updateTitle() }
+            }
+            launch {
+                viewModel.watch.collectLatest { updateTitle() }
+            }
+            launch {
+                viewModel.events.collect { event ->
+                    when (event) {
+                        is LibraryEvent.Open -> {
+                            lastOpenedId = event.id
+                            Navigator.open(parentFragmentManager, event.id, event.type, 0)
+                        }
+                        LibraryEvent.NothingToPick -> android.widget.Toast.makeText(
+                            requireContext(), R.string.surprise_nothing, android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                        LibraryEvent.PickFailed -> android.widget.Toast.makeText(
+                            requireContext(), R.string.surprise_failed, android.widget.Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
             }
             launch {
                 // Error wins; otherwise a loaded-but-empty library/zero-match filter
@@ -164,6 +209,7 @@ class LibraryFragment : VerticalGridSupportFragment() {
 
         setOnItemViewClickedListener { _, item, _, _ ->
             if (item is MediaItem) {
+                lastOpenedId = item.id
                 if (item.type == "photo") {
                     // Pass the surrounding photos as a sibling list so
                     // PhotoViewFragment's D-pad left/right cycles
@@ -239,10 +285,35 @@ class LibraryFragment : VerticalGridSupportFragment() {
         }?.third ?: "Sort"
         val genre = viewModel.genre.value
         val genrePart = if (genre != null) "  ·  $genre" else ""
+        val watchPart = viewModel.watch.value?.let { "  ·  ${watchFilterLabel(it)}" } ?: ""
         // No key hint here: the singleLine 44sp TitleView ellipsized it (and
         // on Fire TV the named keys don't even exist on the remote). The
         // Sort/Filter orb is the discoverable entry point.
-        title = "$baseTitle  ·  $label$genrePart"
+        title = "$baseTitle  ·  $label$genrePart$watchPart"
+    }
+
+    private fun watchFilterLabel(filter: String?): String = getString(
+        when (filter) {
+            WatchFilter.Unwatched -> R.string.watch_filter_unwatched
+            WatchFilter.InProgress -> R.string.watch_filter_in_progress
+            WatchFilter.Watched -> R.string.watch_filter_watched
+            else -> R.string.watch_filter_all
+        },
+    )
+
+    /** All items / Unwatched / In progress / Watched, sent as `?watch=`.
+     *  Only offered for library types whose items carry a watch state. */
+    private fun showWatchFilterMenu() {
+        val options = WatchStateUi.WATCH_FILTERS
+        val labels = options.map { watchFilterLabel(it) }.toTypedArray()
+        val checked = options.indexOf(viewModel.watch.value).coerceAtLeast(0)
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(R.string.watch_filter_title)
+            .setSingleChoiceItems(labels, checked) { d, idx ->
+                changeQuery { viewModel.setWatchFilter(options[idx]) }
+                d.dismiss()
+            }
+            .show()
     }
 
     /** Two-step chooser shown when the user activates the title-bar
@@ -251,17 +322,34 @@ class LibraryFragment : VerticalGridSupportFragment() {
      *  This is the no-MENU-button entry point for TV-DM
      *  compliance. */
     private fun showSortFilterChooser() {
-        val labels = arrayOf(getString(R.string.sort_by), getString(R.string.filter_by_genre))
+        // (label, action) so the Watch entry can be left out for library types
+        // without a watch state (music, photos, books, podcasts).
+        val entries = buildList<Pair<String, () -> Unit>> {
+            add(getString(R.string.sort_by) to ::showSortMenu)
+            add(getString(R.string.filter_by_genre) to ::showGenreMenu)
+            if (WatchStateUi.supportsWatchFilter(libraryType)) {
+                add(getString(R.string.filter_by_watch) to ::showWatchFilterMenu)
+                add(getString(R.string.surprise_me) to viewModel::surpriseMe)
+            }
+        }
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.sort_and_filter)
-            .setItems(labels) { d, idx ->
+            .setItems(entries.map { it.first }.toTypedArray()) { d, idx ->
                 d.dismiss()
-                when (idx) {
-                    0 -> showSortMenu()
-                    1 -> showGenreMenu()
-                }
+                entries.getOrNull(idx)?.second?.invoke()
             }
             .show()
+    }
+
+    /** Apply a Sort / genre / Watch pick. Only a pick that changed the query
+     *  reloads the grid, so only that one arms [focusGridOnReload] — an
+     *  unchanged pick must not yank focus on the next refresh. */
+    private fun changeQuery(change: () -> Unit) {
+        val before = Triple(viewModel.sort.value, viewModel.genre.value, viewModel.watch.value)
+        change()
+        if (Triple(viewModel.sort.value, viewModel.genre.value, viewModel.watch.value) != before) {
+            focusGridOnReload = true
+        }
     }
 
     private fun showGenreMenu() {
@@ -273,7 +361,7 @@ class LibraryFragment : VerticalGridSupportFragment() {
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle("Filter by genre")
             .setSingleChoiceItems(labels, checked.coerceAtLeast(0)) { d, idx ->
-                viewModel.setGenre(if (idx == 0) null else genres[idx - 1])
+                changeQuery { viewModel.setGenre(if (idx == 0) null else genres[idx - 1]) }
                 d.dismiss()
             }
             .show()
@@ -288,7 +376,7 @@ class LibraryFragment : VerticalGridSupportFragment() {
             .setTitle("Sort by")
             .setSingleChoiceItems(labels, checked) { d, idx ->
                 val opt = SORT_OPTIONS[idx]
-                viewModel.setSort(opt.first, opt.second)
+                changeQuery { viewModel.setSort(opt.first, opt.second) }
                 d.dismiss()
             }
             .show()

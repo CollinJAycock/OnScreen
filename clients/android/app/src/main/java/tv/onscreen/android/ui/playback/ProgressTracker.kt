@@ -2,6 +2,7 @@ package tv.onscreen.android.ui.playback
 
 import kotlinx.coroutines.*
 import tv.onscreen.android.data.api.HeartbeatRefusal
+import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.repository.ItemRepository
 
 /**
@@ -38,6 +39,8 @@ class ProgressTracker(
      *  error-dialog vocabulary:
      *   - `watch_limit:<reason>` — PARENTAL_LIMIT: daily cap reached or the
      *     allowed-hours window closed mid-session.
+     *   - `playback_stopped:<sentence>` — PLAYBACK_STOPPED: an admin stopped
+     *     this stream (see PlaybackStop).
      *   - [CONTENT_REVOKED] — anything else: library access revoked or the
      *     content-rating ceiling lowered while this was playing. */
     var onBlocked: ((sentinel: String) -> Unit)? = null
@@ -84,6 +87,28 @@ class ProgressTracker(
 
     fun updateOffset(offsetMs: Long) {
         this.hlsOffsetMs = offsetMs
+    }
+
+    /**
+     * One immediate 'playing' heartbeat, sent when the stream died under the
+     * player (an HLS 403/404 — what a server-side stop looks like from
+     * ExoPlayer). By then the player has paused this tracker, so the periodic
+     * heartbeat — whose 403 is the backstop for a missed `playback.stop` SSE
+     * event — would never run again. Returns the [onBlocked]-vocabulary
+     * sentinel when the server refused the beat (and stops the tracker), else
+     * null: accepted, or failed for any other reason. Call on the main thread
+     * (it reads the player); [onBlocked] is NOT fired — the caller acts on the
+     * return value.
+     */
+    suspend fun probeRefusal(): String? {
+        val id = itemId ?: return null
+        val (rawPos, dur) = snapshot() ?: return null
+        if (dur <= 0) return null
+        val refusal = HeartbeatRefusal.heartbeat {
+            itemRepo.updateProgress(id, rawPos + hlsOffsetMs, dur, "playing")
+        } ?: return null
+        stop()
+        return blockSentinel(refusal)
     }
 
     /** Content position reported by the most recent successful publish.
@@ -149,8 +174,11 @@ class ProgressTracker(
         const val CONTENT_REVOKED = "content_revoked"
 
         /** Map a heartbeat refusal onto the fragment's error-dialog sentinel. */
-        private fun blockSentinel(refusal: HeartbeatRefusal): String = when (refusal) {
+        internal fun blockSentinel(refusal: HeartbeatRefusal): String = when (refusal) {
             is HeartbeatRefusal.WatchLimit -> "watch_limit:${refusal.reason ?: ""}"
+            // Admin stop (403 PLAYBACK_STOPPED) — the same sentinel the SSE
+            // playback.stop path produces, so both show one message.
+            is HeartbeatRefusal.PlaybackStopped -> PlaybackStop.sentinel(refusal.message)
             HeartbeatRefusal.ContentRevoked -> CONTENT_REVOKED
         }
     }

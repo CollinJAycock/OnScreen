@@ -13,19 +13,27 @@ import androidx.leanback.widget.ArrayObjectAdapter
  * users as the UI "jumping to the top" or focus disappearing mid-scroll.
  *
  * Behaviour, comparing [newItems] to the current contents by [id]:
- *  - identical (same ids, same order) -> no-op, keep focus/scroll
+ *  - identical (same ids, same order) -> no-op, keep focus/scroll; with
+ *    [updateChanged], entries whose content changed are replaced IN PLACE
+ *    (a per-item change notification — focus and scroll stay put), e.g. a
+ *    library card whose watch state was refreshed after a detail round-trip
  *  - pure append (the current ids are a prefix of the new list) -> add only the
  *    new tail, so pagination streams in without disturbing the user's position
  *  - otherwise (reorder / removal / changed content) -> rebuild
  */
-fun <T : Any> ArrayObjectAdapter.syncItems(newItems: List<T>, id: (T) -> Any?) {
+fun <T : Any> ArrayObjectAdapter.syncItems(newItems: List<T>, updateChanged: Boolean = false, id: (T) -> Any?) {
     val current = ArrayList<Any?>(size())
     for (i in 0 until size()) {
         @Suppress("UNCHECKED_CAST")
         current.add(id(get(i) as T))
     }
     val incoming = newItems.map(id)
-    if (current == incoming) return
+    if (current == incoming) {
+        if (updateChanged) {
+            for (i in newItems.indices) if (get(i) != newItems[i]) replace(i, newItems[i])
+        }
+        return
+    }
     // Pure append (e.g. the next pagination page): keep existing rows + focus.
     if (incoming.size > current.size && incoming.subList(0, current.size) == current) {
         for (i in current.size until newItems.size) add(newItems[i])

@@ -71,12 +71,17 @@ import tv.onscreen.mobile.data.downloads.DownloadEntry
 import tv.onscreen.mobile.data.downloads.DownloadWorker
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.ItemDetail
+import tv.onscreen.mobile.data.model.WatchStateValue
 import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.FavoritesRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.playback.MusicQueue
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.watch.isWatchContainerType
+import tv.onscreen.mobile.ui.watch.isWatchLeafType
+import tv.onscreen.mobile.ui.watch.leafPlayLabel
 import javax.inject.Inject
 
 @HiltViewModel
@@ -136,6 +141,17 @@ class ItemDetailViewModel @Inject constructor(
                             _state.value = _state.value.copy(children = kids)
                         }
                 }
+                // Album / artist: no files of their own - Play starts the
+                // first track (an artist's first album), and the playback
+                // service queues the rest around it (MusicQueue).
+                if (MusicQueue.startsFromContainer(detail.type)) {
+                    val start = runCatching {
+                        MusicQueue.playStart(detail.type, _state.value.children) { repo.getChildren(it) }
+                    }.getOrNull()
+                    if (_state.value.detail?.id == itemId) {
+                        _state.value = _state.value.copy(playStartId = start, playStartResolved = true)
+                    }
+                }
             } catch (e: Exception) {
                 _state.value = ItemDetailUi(loading = false, error = e.message)
             }
@@ -147,7 +163,10 @@ class ItemDetailViewModel @Inject constructor(
      *  are leaves (Play action only). book_author and book_series
      *  redirect to dedicated screens before children would render. */
     private fun isContainer(type: String): Boolean = type in setOf(
-        "show", "season", "anime", "album", "artist", "audiobook", "podcast",
+        // show / season are not listed: ItemWatchViewModel owns their
+        // season → episode lists (with watch state), so fetching them here
+        // too would be a duplicate round trip.
+        "anime", "album", "artist", "audiobook", "podcast",
     )
 
     /** Re-pull the watching-status row. Called after a load and after
@@ -277,6 +296,10 @@ data class ItemDetailUi(
      *  book_author/book_series — the last two route to dedicated
      *  screens). */
     val children: List<tv.onscreen.mobile.data.model.ChildItem> = emptyList(),
+    /** Album / artist: the track Play starts ([MusicQueue.playStart]); null
+     *  until resolved or when there's nothing to play. */
+    val playStartId: String? = null,
+    val playStartResolved: Boolean = false,
     val error: String? = null,
     /** Transient enqueue/delete error from the Download button. The
      *  screen reads this to show a Toast, then calls clearDownloadError
@@ -389,6 +412,8 @@ private fun formatDuration(ms: Long): String {
 fun ItemDetailScreen(
     itemId: String,
     onPlay: (String) -> Unit,
+    /** Play ignoring the resume point (album / artist → first track). */
+    onPlayFromStart: (String) -> Unit = onPlay,
     onOpenItem: (String) -> Unit,
     onOpenPhoto: (String) -> Unit,
     onOpenAuthor: (String) -> Unit,
@@ -396,9 +421,17 @@ fun ItemDetailScreen(
     onOpenBook: (String) -> Unit,
     onBack: () -> Unit,
     vm: ItemDetailViewModel = hiltViewModel(),
+    watchVm: ItemWatchViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.load(itemId) }
     val ui by vm.state.collectAsStateWithLifecycle()
+
+    // Watch state (watched toggle / up-next / episode marks) binds to each
+    // detail load — incl. the reload on return from the player, which is
+    // what refreshes resume points and marks. Keyed on the id so a
+    // favourite toggle (a detail copy) doesn't re-fetch episodes.
+    val watchUi by watchVm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(ui.detail?.id) { ui.detail?.let(watchVm::bind) }
 
     // Surface enqueue / delete failures from the Download button as a
     // Toast so the user gets feedback instead of a silent no-op.
@@ -407,6 +440,11 @@ fun ItemDetailScreen(
         val msg = ui.downloadError ?: return@LaunchedEffect
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
         vm.clearDownloadError()
+    }
+    LaunchedEffect(watchUi.message) {
+        val msg = watchUi.message ?: return@LaunchedEffect
+        android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+        watchVm.consumeMessage()
     }
 
     // Type-based redirects: photos open straight into the full-screen
@@ -444,6 +482,13 @@ fun ItemDetailScreen(
                                 contentDescription = if (d.is_favorite) "Remove from favorites" else "Add to favorites",
                             )
                         }
+                        // Report a problem (movies / episodes / shows / seasons).
+                        ReportProblemAction(
+                            itemId = d.id,
+                            itemType = d.type,
+                            fileId = d.files.firstOrNull()?.id,
+                            itemLabel = d.title,
+                        )
                     }
                 },
             )
@@ -499,7 +544,19 @@ fun ItemDetailScreen(
                                     Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
                                 }
                                 Spacer(Modifier.height(16.dp))
-                                Row {
+                                // Show / season: the up-next button + Mark
+                                // all (ItemWatchSections) replace Play —
+                                // a container has no files of its own.
+                                if (isWatchContainerType(d.type)) {
+                                    ContainerWatchHeader(
+                                        ui = watchUi,
+                                        itemId = itemId,
+                                        itemType = d.type,
+                                        itemTitle = d.title,
+                                        onPlay = onPlay,
+                                        onMarkAll = watchVm::markAll,
+                                    )
+                                } else Row {
                                     // Books route to the dedicated reader
                                     // (CBZ/CBR page-flip or EPUB WebView);
                                     // every other type goes to ExoPlayer.
@@ -507,19 +564,42 @@ fun ItemDetailScreen(
                                     // No playable file → no Play action.
                                     // Books still open the reader (their
                                     // bytes are the archive itself, not
-                                    // surfaced as a "file"); every other
+                                    // surfaced as a "file"); albums and
+                                    // artists play their first track (see
+                                    // ItemDetailUi.playStartId); every other
                                     // type with an empty files list would
                                     // hand the player nothing and error,
                                     // so show a disabled affordance + note
                                     // instead.
                                     val hasFile = d.files.isNotEmpty()
+                                    val musicStart = ui.playStartId
                                     if (isBook || hasFile) {
+                                        // The player starts at the resume
+                                        // point (PlayerViewModel.prepare reads
+                                        // view_offset_ms), so say so. The
+                                        // watch VM's copy wins once bound: a
+                                        // mark clears the resume point.
+                                        val bound = watchUi.itemId == d.id
+                                        val label = if (isBook) "Read" else leafPlayLabel(
+                                            resumeMs = if (bound) watchUi.resumeMs else d.view_offset_ms,
+                                            watched = if (bound) watchUi.itemWatched
+                                                else d.watch_state == WatchStateValue.WATCHED,
+                                        )
                                         Button(onClick = {
                                             if (isBook) onOpenBook(itemId) else onPlay(itemId)
                                         }) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                                             Spacer(Modifier.width(6.dp))
-                                            Text(if (isBook) "Read" else "Play")
+                                            Text(label)
+                                        }
+                                    } else if (musicStart != null) {
+                                        // From 0:00: a partial play of track 1
+                                        // leaves a resume point, but "play the
+                                        // album" means from the top.
+                                        Button(onClick = { onPlayFromStart(musicStart) }) {
+                                            Icon(Icons.Default.PlayArrow, contentDescription = null)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Play")
                                         }
                                     } else {
                                         Button(onClick = {}, enabled = false) {
@@ -542,12 +622,25 @@ fun ItemDetailScreen(
                                         )
                                     }
                                 }
-                                if (d.files.isEmpty() && d.type != "book") {
+                                // (Albums / artists: only once the first
+                                // track lookup came back empty.)
+                                val musicPending = MusicQueue.startsFromContainer(d.type) &&
+                                    (ui.playStartId != null || !ui.playStartResolved)
+                                if (d.files.isEmpty() && d.type != "book" && !isWatchContainerType(d.type) && !musicPending) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
                                         "No playable files for this item.",
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                // Movie / episode: watched toggle.
+                                if (isWatchLeafType(d.type)) {
+                                    Spacer(Modifier.height(8.dp))
+                                    LeafWatchedToggle(
+                                        watched = watchUi.itemWatched,
+                                        busy = watchUi.markBusy,
+                                        onToggle = watchVm::toggleItemWatched,
                                     )
                                 }
                                 // Watching-status picker. Renders for the
@@ -611,7 +704,18 @@ fun ItemDetailScreen(
                         // under a season, tracks under an album, etc.
                         // The header noun adapts to the parent type so
                         // the section heading isn't always "Children".
-                        if (ui.children.isNotEmpty()) {
+                        // Shows / seasons get the watch-aware season →
+                        // episode list instead (ItemWatchSections).
+                        if (isWatchContainerType(d.type)) {
+                            watchEpisodeSection(
+                                ui = watchUi,
+                                onSelectSeason = watchVm::selectSeason,
+                                onOpenEpisode = onOpenItem,
+                                onToggleEpisode = watchVm::toggleEpisodeWatched,
+                                onMarkSeason = watchVm::markSeason,
+                                onRetry = watchVm::retry,
+                            )
+                        } else if (ui.children.isNotEmpty()) {
                             item(key = "children-header") {
                                 Column(modifier = Modifier.padding(horizontal = 16.dp)) {
                                     Spacer(Modifier.height(16.dp))

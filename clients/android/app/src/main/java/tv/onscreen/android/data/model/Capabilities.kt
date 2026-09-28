@@ -50,7 +50,6 @@ data class CapabilitiesFeatures(
     val music: Boolean = false,
     val webhooks: Boolean = false,
     val notifications: Boolean = false,
-    val requests: Boolean = false,
     val live_tv: Boolean = false,
     val dvr: Boolean = false,
     val lyrics: Boolean = false,

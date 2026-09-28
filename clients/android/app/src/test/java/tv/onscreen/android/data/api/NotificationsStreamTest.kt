@@ -142,6 +142,47 @@ class NotificationsStreamTest {
     }
 
     @Test
+    fun `media-request notifications are never emitted`() = runBlocking {
+        // Requests are not a feature of the Android apps: every request_*
+        // type is dropped at the parse layer, before any subscriber, while
+        // the other types keep flowing in order.
+        server.enqueue(
+            sse(
+                "data: {\"id\":\"r1\",\"type\":\"request_pending\",\"title\":\"New request\"}\n\n" +
+                    "data: {\"id\":\"r2\",\"type\":\"request_available\",\"title\":\"Available\"}\n\n" +
+                    "data: {\"id\":\"n1\",\"type\":\"playback.stop\",\"data\":{\"item_id\":\"i1\"}}\n\n" +
+                    "data: {\"id\":\"r3\",\"type\":\"request_season_available\",\"title\":\"S2\"}\n\n" +
+                    "data: {\"id\":\"n2\",\"type\":\"issue_resolved\",\"title\":\"Fixed\"}\n\n",
+            ),
+        )
+
+        val seen = mutableListOf<String>()
+        try {
+            withTimeout(10_000) { stream().subscribe().collect { seen.add(it.id) } }
+        } catch (_: Throwable) {
+            // The server closing the body ends the flow exceptionally (by design).
+        }
+
+        assertThat(seen).containsExactly("n1", "n2").inOrder()
+    }
+
+    @Test
+    fun `hidden notification types are exactly the request family`() {
+        for (t in listOf(
+            "request_created", "request_pending", "request_approved", "request_declined",
+            "request_available", "request_failed", "request_season_available", "request.anything",
+        )) {
+            assertThat(tv.onscreen.android.data.model.isHiddenNotificationType(t)).isTrue()
+        }
+        for (t in listOf(
+            "progress.updated", "playback.transfer", "playback.stop", "new_content",
+            "scan_complete", "system", "issue_reported", "issue_resolved", "requested",
+        )) {
+            assertThat(tv.onscreen.android.data.model.isHiddenNotificationType(t)).isFalse()
+        }
+    }
+
+    @Test
     fun `the SSE client disables the read timeout`() {
         // An event stream is idle by design (one ': keepalive' at connect,
         // then nothing until an event). Inheriting the shared client's 60 s

@@ -7,6 +7,7 @@ import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.Marker
 import tv.onscreen.android.data.model.ProgressRequest
 import tv.onscreen.android.data.model.SearchResult
+import tv.onscreen.android.data.model.UpNext
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -44,4 +45,16 @@ open class ItemRepository @Inject constructor(
 
     open suspend fun search(query: String, limit: Int = 30, libraryId: String? = null): List<SearchResult> =
         api.search(query, limit, libraryId).data
+
+    // ── Manual watch state (v2.5) ────────────────────────────────────────────
+
+    /** Mark played (true) / unplayed (false). A show or season marks every
+     *  episode under it. Either way the server drops the resume point.
+     *  Throws HttpException (429 when rate-limited) on failure. */
+    open suspend fun setWatched(itemId: String, watched: Boolean) {
+        if (watched) api.markWatched(itemId) else api.markUnwatched(itemId)
+    }
+
+    /** Which episode Play on a show / season starts. */
+    open suspend fun getUpNext(itemId: String): UpNext = api.getUpNext(itemId).data
 }

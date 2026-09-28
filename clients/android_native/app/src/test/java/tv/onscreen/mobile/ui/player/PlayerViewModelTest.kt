@@ -157,6 +157,7 @@ class PlayerViewModelTest {
     private fun emptyNotifications(): NotificationsRepository {
         val n = mockk<NotificationsRepository>()
         coEvery { n.subscribeProgressUpdates() } returns emptyFlow()
+        coEvery { n.subscribePlaybackStops() } returns emptyFlow()
         return n
     }
 
@@ -220,6 +221,21 @@ class PlayerViewModelTest {
         }
 
     @Test
+    fun `fromStart ignores the resume point`() = runTest(dispatcher) {
+        // Album / artist Play hands over track 1 "from the start": a partial
+        // play left a resume point on it, but the album starts at 0:00.
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile(), viewOffsetMs = 18_000L)
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit())
+        vm.prepare("movie-1", fromStart = true)
+        advanceUntilIdle()
+
+        assertThat((vm.state.value.source as PlaybackSource.DirectPlay).startMs).isEqualTo(0L)
+    }
+
+    @Test
     fun `direct play falls back to asset token when stream token is absent`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
@@ -277,6 +293,61 @@ class PlayerViewModelTest {
         assertThat(src.playlistUrl).isEqualTo("http://srv/transcode/sess-1.m3u8")
         assertThat(src.offsetMs).isEqualTo(30_000L)
         assertThat(vm.hlsOffsetMs).isEqualTo(30_000L)
+    }
+
+    private fun alacTrack() = ItemDetail(
+        id = "track-7",
+        library_id = "lib-m",
+        title = "Track 7",
+        type = "track",
+        parent_id = "album-1",
+        index = 7,
+        files = listOf(
+            ItemFile(id = "f7", stream_url = "/media/files/f7.m4a", container = "m4a", audio_codec = "alac"),
+        ),
+    )
+
+    private fun remuxingTranscodeRepo() = mockk<TranscodeRepository>().also { repo ->
+        coEvery { repo.decide(any(), any()) } returns "directStream"
+        coEvery {
+            repo.start(any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "sess-a", playlist_url = "/transcode/sess-a.m3u8", token = "tok")
+    }
+
+    @Test
+    fun `a track the background service already plays starts no server transcode`() = runTest(dispatcher) {
+        // The now-playing screen followed the service's queue onto a track
+        // the server would remux: the screen only binds to the service (which
+        // plays the file directly), so no ffmpeg session may be started.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("track-7") } returns alacTrack()
+        coEvery { itemRepo.getChildren(any()) } returns emptyList()
+        val transcodeRepo = remuxingTranscodeRepo()
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit())
+        vm.backgroundItemId = { "track-7" }
+        vm.prepare("track-7")
+        advanceUntilIdle()
+
+        val src = vm.state.value.source as PlaybackSource.DirectPlay
+        assertThat(src.url).isEqualTo("http://srv/media/files/f7.m4a")
+        coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `the same track not in the background service still gets its remux`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("track-7") } returns alacTrack()
+        coEvery { itemRepo.getChildren(any()) } returns emptyList()
+        val transcodeRepo = remuxingTranscodeRepo()
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit())
+        vm.backgroundItemId = { "some-other-track" }
+        vm.prepare("track-7")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+        coVerify(exactly = 1) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any()) }
     }
 
     @Test

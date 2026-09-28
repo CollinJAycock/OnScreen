@@ -12,10 +12,10 @@ import tv.onscreen.android.data.prefs.ServerPrefs
  * at DI time before the user configures a server.
  *
  * Only requests still aimed at the placeholder host are rewritten.
- * The same OkHttp client is Coil's HTTP backend, and the Discover row
- * loads absolute TMDB CDN poster URLs — rewriting those would mis-route
- * them to the media server (404 → placeholder tile on every external
- * poster). Anything with a real host passes through untouched.
+ * The same OkHttp client is Coil's HTTP backend, and it loads absolute
+ * third-party image URLs (M3U channel logos, external artwork) —
+ * rewriting those would mis-route them to the media server (404 →
+ * placeholder tile). Anything with a real host passes through untouched.
  */
 class BaseUrlInterceptor(private val prefs: ServerPrefs) : Interceptor {
 

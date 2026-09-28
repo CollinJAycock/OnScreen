@@ -25,9 +25,11 @@ class GridScrollMemory {
 
     /** Call once the (possibly recreated) view+adapter are set up. Arms a restore
      *  only when we actually have a remembered position (i.e. a return, not a
-     *  first open). */
-    fun onViewRecreated() {
-        restorePending = savedPosition > 0
+     *  first open) — or when [returning] says so: a caller that restores by
+     *  identity (see the resolving [restoreIfPending]) must re-find position 0
+     *  too, since rows can appear above it while the user is away. */
+    fun onViewRecreated(returning: Boolean = false) {
+        restorePending = returning || savedPosition > 0
     }
 
     /** Record the current selection so a later view recreation can return to it.
@@ -44,9 +46,22 @@ class GridScrollMemory {
      *  within range, otherwise just disarming so a shrunk list can't lock out
      *  record() forever. Empty interim emissions are skipped so a deep position can
      *  wait for the page it lives on to load. */
-    fun restoreIfPending(adapterSize: Int, apply: (Int) -> Unit) {
+    fun restoreIfPending(adapterSize: Int, apply: (Int) -> Unit) =
+        restoreIfPending(adapterSize, resolve = { null }, apply = apply)
+
+    /** [restoreIfPending], but [resolve] first re-finds the remembered entry in
+     *  the repopulated adapter by identity (e.g. a row's header name), or
+     *  returns null. A resolved in-range position is applied even when it is 0
+     *  or the remembered index has fallen out of range — the case where entries
+     *  above it disappeared; only an unresolved entry falls back to the index
+     *  (and its in-range rule). */
+    fun restoreIfPending(adapterSize: Int, resolve: () -> Int?, apply: (Int) -> Unit) {
         if (!restorePending || adapterSize == 0) return
         restorePending = false
-        if (savedPosition in 1 until adapterSize) apply(savedPosition)
+        val resolved = resolve()?.takeIf { it in 0 until adapterSize }
+        when {
+            resolved != null -> apply(resolved)
+            savedPosition in 1 until adapterSize -> apply(savedPosition)
+        }
     }
 }

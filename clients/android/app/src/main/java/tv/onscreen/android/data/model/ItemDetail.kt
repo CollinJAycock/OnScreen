@@ -22,4 +22,8 @@ data class ItemDetail(
     val updated_at: Long = 0,
     val is_favorite: Boolean = false,
     val files: List<ItemFile> = emptyList(),
+    /** v2.5. Caller's state for a playable video — "watched" | "in_progress"
+     *  | "unwatched" (manual marks included). Omitted for other types and by
+     *  older servers; shows and seasons use GET /items/{id}/up-next instead. */
+    val watch_state: String? = null,
 )

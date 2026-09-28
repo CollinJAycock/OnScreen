@@ -18,8 +18,8 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
  * client's TokenAuthenticatorTest.
  *
  * The shared OkHttpClient is also Coil's image backend and fetches
- * server-supplied absolute third-party URLs (`DiscoverItem.poster_url`, copied
- * verbatim from TMDB with no host allow-listing server-side). Two things have
+ * server-supplied absolute third-party URLs (any external image URL a
+ * response carries, with no host allow-listing server-side). Two things have
  * to hold:
  *
  *  1. [AuthInterceptor] must withhold the Bearer from any origin that is not

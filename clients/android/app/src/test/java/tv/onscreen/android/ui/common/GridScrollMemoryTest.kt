@@ -88,6 +88,62 @@ class GridScrollMemoryTest {
         assertThat(sink2.applied).isEqualTo(12)
     }
 
+    // ── Resolve by identity (Home rows, by header name) ─────────────────────
+
+    @Test
+    fun resolvedByName_winsEvenWhenTheSavedIndexFellOutOfRange() {
+        val m = GridScrollMemory()
+        val sink = Sink()
+        // Left from the last row (index 5 of 6); a row above it has since gone.
+        m.record(5)
+        m.onViewRecreated(returning = true)
+        m.restoreIfPending(5, resolve = { 4 }, apply = sink.apply)
+        assertThat(sink.applied).isEqualTo(4)
+    }
+
+    @Test
+    fun resolvedByName_beatsAShiftedIndex() {
+        val m = GridScrollMemory()
+        val sink = Sink()
+        m.record(3)
+        m.onViewRecreated(returning = true)
+        // A row appeared above: the same row is now at 4.
+        m.restoreIfPending(10, resolve = { 4 }, apply = sink.apply)
+        assertThat(sink.applied).isEqualTo(4)
+    }
+
+    @Test
+    fun leftFromRowZero_isRefoundWhenARowAppearsAboveIt() {
+        val m = GridScrollMemory()
+        val sink = Sink()
+        m.record(0)
+        // A plain onViewRecreated() stays disarmed for position 0 (first-open
+        // semantics)...
+        m.onViewRecreated()
+        m.restoreIfPending(10, resolve = { 1 }, apply = sink.apply)
+        assertThat(sink.applied).isNull()
+        // ...a return that restores by identity arms anyway.
+        m.onViewRecreated(returning = true)
+        m.restoreIfPending(10, resolve = { 1 }, apply = sink.apply)
+        assertThat(sink.applied).isEqualTo(1)
+    }
+
+    @Test
+    fun unresolved_fallsBackToTheIndex() {
+        val m = GridScrollMemory()
+        val sink = Sink()
+        m.record(3)
+        m.onViewRecreated(returning = true)
+        // The row itself is gone (null), or the resolver answered out of range.
+        m.restoreIfPending(10, resolve = { null }, apply = sink.apply)
+        assertThat(sink.applied).isEqualTo(3)
+
+        val sink2 = Sink()
+        m.onViewRecreated(returning = true)
+        m.restoreIfPending(10, resolve = { 42 }, apply = sink2.apply)
+        assertThat(sink2.applied).isEqualTo(3)
+    }
+
     @Test
     fun shrunkList_disarmsInsteadOfLockingOutRecord() {
         val m = GridScrollMemory()

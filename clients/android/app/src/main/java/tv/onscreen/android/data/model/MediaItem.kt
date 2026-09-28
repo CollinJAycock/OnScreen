@@ -22,4 +22,17 @@ data class MediaItem(
      *  null for items where it's meaningless (audio tracks etc.).
      *  RFC3339 string. Older server builds omit it. */
     val originally_available_at: String? = null,
+    /** v2.5 per-user watch fields on the library listing. All optional —
+     *  older servers (and non-video types) omit them, and the card then
+     *  renders no watch indicator.
+     *
+     *  [watch_state]: "watched" | "in_progress" | "unwatched" on playable
+     *  videos (movie, episode, music video, home video). */
+    val watch_state: String? = null,
+    /** Resume point for an in-progress video. */
+    val view_offset_ms: Long? = null,
+    /** Shows / seasons: episodes within the caller's rating ceiling, and how
+     *  many of them are not yet watched. */
+    val leaf_count: Long? = null,
+    val unwatched_count: Long? = null,
 )

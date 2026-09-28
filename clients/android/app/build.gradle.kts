@@ -89,8 +89,14 @@ android {
         // versionName 1.2.1 went with 19 (18 never shipped, so there was no
         // user-visible difference between them); 1.2.2 marks the behaviour
         // change in 20.
-        versionCode = 20
-        versionName = "1.2.2"
+        //
+        // 21 / 1.3.0: the v2.5 watch-state catch-up (Next Up / Plan to Watch,
+        // mark watched, up-next play button, library watch filter), report a
+        // problem, admin-stop handling, and removal of the dead request code.
+        // 20 was built for the API-36 re-upload and may or may not have been
+        // uploaded — a new code either way.
+        versionCode = 21
+        versionName = "1.3.0"
     }
 
     // Per-store flavor split. Both stores ship the same app and code; they

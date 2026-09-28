@@ -56,8 +56,13 @@ android {
         // ship, with the Android 16 edge-to-edge / landscape fixes. 1004 may
         // or may not have been uploaded, so skip it rather than risk a
         // rejection — skipping a code is free, reusing a spent one is not.
-        versionCode = 1005
-        versionName = "0.1.4"
+        //
+        // 1006 / 0.2.0: the v2.5 watch-state catch-up, report a problem,
+        // admin-stop handling, ReplayGain + gapless album queues, and removal
+        // of the Search › Discover request tab. 1005 was built for the API-36
+        // re-upload and may or may not have been uploaded.
+        versionCode = 1006
+        versionName = "0.2.0"
     }
 
     signingConfigs {

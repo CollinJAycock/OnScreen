@@ -243,6 +243,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             ItemDetailScreen(
                 itemId = entry.arguments!!.getString("id")!!,
                 onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
+                onPlayFromStart = { id -> nav.navigateDebounced(Routes.player(id, fromStart = true)) },
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onOpenBook = { id -> nav.navigateDebounced(Routes.book(id)) },
                 // Redirect destinations for photo / book_author /
@@ -315,10 +316,17 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
         }
         composable(
             Routes.PLAYER,
-            arguments = listOf(navArgument("id") { type = NavType.StringType }),
+            arguments = listOf(
+                navArgument("id") { type = NavType.StringType },
+                navArgument("fromStart") {
+                    type = NavType.BoolType
+                    defaultValue = false
+                },
+            ),
         ) { entry ->
             PlayerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
+                fromStart = entry.arguments!!.getBoolean("fromStart"),
                 onClose = { nav.popBackStack() },
                 onNext = { nextId ->
                     // Replace current player route with the next

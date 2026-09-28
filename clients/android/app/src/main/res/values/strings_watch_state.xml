@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Watch-state UI (v2.5): Next Up / Plan to Watch home rows, Continue
+     Watching removal, show/season Up Next play button, watched marks, library
+     card badges and the library Watch filter. Kept in its own file so these
+     strings don't collide with edits to strings.xml. -->
+<resources>
+    <!-- Home rows -->
+    <string name="hub_next_up">Next Up</string>
+    <string name="hub_plan_to_watch">Plan to Watch</string>
+
+    <!-- Continue Watching card long-press -->
+    <string name="cw_remove">Remove from Continue Watching</string>
+    <string name="cw_remove_failed">Couldn\'t remove from Continue Watching</string>
+
+    <!-- Shared failure copy for the rate-limited mark/dismiss writes (429) -->
+    <string name="watch_rate_limited">Too many changes at once. Try again in a minute.</string>
+
+    <!-- Card overlays (spoken labels; the visuals are a check, a count and a bar) -->
+    <string name="watch_badge_watched">Watched</string>
+    <plurals name="watch_badge_unwatched">
+        <item quantity="one">%d unwatched episode</item>
+        <item quantity="other">%d unwatched episodes</item>
+    </plurals>
+    <string name="watch_badge_progress">In progress, %d%% watched</string>
+
+    <!-- Show / season primary button, from GET /items/{id}/up-next -->
+    <string name="up_next_resume">Resume %1$s</string>
+    <string name="up_next_resume_plain">Resume</string>
+    <string name="up_next_play">Play %1$s</string>
+    <string name="up_next_watch_again">Watch again</string>
+
+    <!-- Watched marks -->
+    <string name="mark_watched">Mark watched</string>
+    <string name="mark_unwatched">Mark unwatched</string>
+    <string name="mark_all_watched">Mark all watched</string>
+    <string name="mark_all_unwatched">Mark all unwatched</string>
+    <string name="mark_all_menu">Mark all…</string>
+    <string name="marked_watched">Marked as watched</string>
+    <string name="marked_unwatched">Marked as unwatched</string>
+    <string name="marked_all_watched">Marked all as watched</string>
+    <string name="marked_all_unwatched">Marked all as unwatched</string>
+    <string name="mark_failed">Couldn\'t update watched state</string>
+    <string name="confirm_mark_show_unwatched_title">Mark all unwatched?</string>
+    <string name="confirm_mark_show_unwatched">Mark every episode of \"%1$s\" as unwatched? This clears your watched marks and resume points for the whole show.</string>
+    <string name="episode_mark_watched">Mark as watched</string>
+    <string name="episode_mark_unwatched">Mark as unwatched</string>
+
+    <!-- Library Watch filter (Sort / Filter orb) -->
+    <string name="filter_by_watch">Filter by watch state…</string>
+    <string name="watch_filter_title">Show</string>
+    <string name="watch_filter_all">All items</string>
+    <string name="watch_filter_unwatched">Unwatched</string>
+    <string name="watch_filter_in_progress">In progress</string>
+    <string name="watch_filter_watched">Watched</string>
+
+    <!-- Library "Surprise me" (GET /libraries/{id}/random) -->
+    <string name="surprise_me">Surprise me</string>
+    <string name="surprise_nothing">Nothing matches the current filters</string>
+    <string name="surprise_failed">Couldn\'t pick a title</string>
+</resources>

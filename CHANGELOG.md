@@ -40,8 +40,10 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   demotion on NOT_SUPPORTED-class errors so overclaimed panels self-correct
   on the next attempt.
 
-The additions below are server + web client. The Android, Tizen, webOS and
-Roku apps are unchanged apart from benefiting from additive server fixes.
+The additions below are server + web client unless marked otherwise; the
+Android apps' share is listed under "Android apps" at the end of this
+section. Tizen, webOS and Roku are unchanged apart from benefiting from
+additive server fixes.
 
 Requests:
 
@@ -139,6 +141,31 @@ Playback and library:
   returned; delivery goes through the SSRF guard (see
   [docs/security.md](docs/security.md)).
 
+Android apps (TV + phone). The request features above are web-only by
+design — neither Android app has any request functionality, and the phone
+app's Search › Discover tab (which could request titles) was removed:
+
+- **Next Up and Plan to Watch** home rows; **remove from Continue
+  Watching** (long-press, or ⋮ on the phone).
+- **Show/season Play button** driven by up-next ("Resume S3 · E4", "Play
+  S3 · E5", "Watch again"), opening on the right season.
+- **Mark watched / unwatched** for movies, episodes, seasons and whole
+  shows (confirmation before unwatching a show).
+- **Library grids**: watched / unwatched-count / progress badges, a Watch
+  filter, and Surprise me.
+- **Report a problem** from item pages.
+- **Admin Stop** is honoured immediately, with the admin's message: the
+  playback.stop event plus the server's 403 PLAYBACK_STOPPED. On the phone
+  this covers background music too.
+- **Phone music**: ReplayGain (Off / Track / Album + preamp,
+  clipping-safe, same math as the web player; off by default), applied at
+  the exact sample where each track starts. Albums play as one gapless
+  queue. Album and artist pages gained a working Play button: album from
+  track 1; artist from its earliest album, then the rest in order.
+- **Phone item pages** say "Resume from 20:25" for something part-watched
+  and "Watch again" once it's finished.
+- `request_*` notifications are never surfaced.
+
 ### Changed
 
 - **webOS requests up to 2160** on transcode start (was hardcoded 1080 —
@@ -184,6 +211,13 @@ Playback and library:
   `/api/v1/items/{id}/trickplay/…`, which didn't exist. The server now
   serves that path with the same auth, library access and rating ceiling as
   `/trickplay/{id}/{file}`.
+- **Track order for "N/M"-tagged FLAC/Ogg/Opus** — Vorbis `TRACKNUMBER` /
+  `DISCNUMBER` values like `02/12` parsed as 0, leaving albums unordered.
+  They're parsed now, and a tagged file with no usable number takes it
+  from its `NN - Title` filename. It applies to newly scanned tracks;
+  tracks already in a library keep their stored order until re-imported.
+- **Web home tiles wider than their posters** when a title or Next Up
+  subtitle was long.
 
 ## [v2.4.0] — 2026-08-05
 

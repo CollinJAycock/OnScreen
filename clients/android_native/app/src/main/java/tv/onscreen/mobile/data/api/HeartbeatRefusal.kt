@@ -2,17 +2,19 @@ package tv.onscreen.mobile.data.api
 
 import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
+import tv.onscreen.mobile.data.model.PlaybackStop
 
 /**
  * Why the server refused a 'playing' progress heartbeat.
  *
  * The progress route answers 403 exactly when the server no longer lets this
  * user watch the item: the parental watch limit (PARENTAL_LIMIT — daily cap
- * reached, allowed-hours window closed) or checkLibraryAccess (library grant
- * revoked, content-rating ceiling lowered mid-session). EVERY such 403 must
- * stop playback — foreground (PlayerViewModel) and background
- * (PlaybackService) alike — or a stream on an already-issued token, or an
- * offline-fallback copy, keeps going. Only 'playing' is gated server-side; a
+ * reached, allowed-hours window closed), an admin stop from Now Playing
+ * (PLAYBACK_STOPPED — refused for ~2 minutes, see PlaybackStopEvent) or
+ * checkLibraryAccess (library grant revoked, content-rating ceiling lowered
+ * mid-session). EVERY such 403 must stop playback — foreground
+ * (PlayerViewModel) and background (PlaybackService) alike — or a stream on an
+ * already-issued token, or an offline-fallback copy, keeps going. Only 'playing' is gated server-side; a
  * refused pause/stop report is not a refusal of playback.
  *
  * Single source of the decision for every heartbeat on this client. Kept in
@@ -23,6 +25,12 @@ sealed class HeartbeatRefusal {
      *  (`daily_limit_reached`, `outside_allowed_hours`, …), or null. */
     data class WatchLimit(val reason: String?) : HeartbeatRefusal()
 
+    /** PLAYBACK_STOPPED — an admin stopped this stream from Now Playing and
+     *  the server refuses it for the stop window. [message] is the sentence
+     *  to show ("Playback was stopped by the server admin: …"). Same shape as
+     *  the TV client's refusal. */
+    data class PlaybackStopped(val message: String) : HeartbeatRefusal()
+
     /** Any other 403 — the item left this profile's reach mid-session. */
     data object ContentRevoked : HeartbeatRefusal()
 
@@ -32,7 +40,11 @@ sealed class HeartbeatRefusal {
         fun of(state: String, e: Throwable): HeartbeatRefusal? {
             if (state != "playing" || e !is HttpException || e.code() != 403) return null
             val err = e.apiError()
-            return if (err?.code == "PARENTAL_LIMIT") WatchLimit(err.message) else ContentRevoked
+            return when (err?.code) {
+                "PARENTAL_LIMIT" -> WatchLimit(err.message)
+                PlaybackStop.ERROR_CODE -> PlaybackStopped(PlaybackStop.textFromServer(err.message))
+                else -> ContentRevoked
+            }
         }
 
         /** Send one 'playing' heartbeat via [send]. Returns the refusal when the

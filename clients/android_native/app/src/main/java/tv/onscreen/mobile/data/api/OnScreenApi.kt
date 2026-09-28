@@ -120,7 +120,20 @@ interface OnScreenApi {
         @Query("sort") sort: String? = null,
         @Query("sort_dir") sortDir: String? = null,
         @Query("genre") genre: String? = null,
+        // v2.5: unwatched | in_progress | watched (null = all). Older
+        // servers ignore the unknown param and return everything.
+        @Query("watch") watch: String? = null,
     ): ApiListResponse<MediaItem>
+
+    /** "Surprise me": one random item the caller can see, under the same
+     *  filters as the listing. 404 when nothing matches, 501 when the
+     *  server's watch store isn't wired. */
+    @GET("api/v1/libraries/{id}/random")
+    suspend fun getRandomLibraryItem(
+        @Path("id") libraryId: String,
+        @Query("genre") genre: String? = null,
+        @Query("watch") watch: String? = null,
+    ): ApiResponse<RandomLibraryItem>
 
     // ── Items ───────────────────────────────────────────────────────────────
 
@@ -186,6 +199,44 @@ interface OnScreenApi {
     @DELETE("api/v1/items/{id}/watch-status")
     suspend fun clearWatchStatus(@Path("id") id: String)
 
+    // ── Manual watch state (v2.5) ────────────────────────────────────────────
+    // Marks + dismiss answer 204 (no body). A show / season mark expands to
+    // every episode under it server-side; other non-video types answer 422.
+    // The three writes share a tight per-user rate limit (→ 429).
+
+    @POST("api/v1/items/{id}/watched")
+    suspend fun markWatched(@Path("id") id: String)
+
+    @DELETE("api/v1/items/{id}/watched")
+    suspend fun markUnwatched(@Path("id") id: String)
+
+    /** Hide from every Continue Watching row (and Next Up) until the user
+     *  next records activity on it. 404 when there was nothing to hide. */
+    @POST("api/v1/items/{id}/dismiss-continue-watching")
+    suspend fun dismissContinueWatching(@Path("id") id: String)
+
+    /** Which episode Play on a show / season starts (other types: 422). */
+    @GET("api/v1/items/{id}/up-next")
+    suspend fun getUpNext(@Path("id") id: String): ApiResponse<UpNext>
+
+    // ── Report a problem (v2.5) ──────────────────────────────────────────────
+    // internal/api/v1/issues.go. Both answer 404 for an item the caller
+    // can't see (library ACL + rating ceiling).
+
+    /** The caller's own reports on the item, newest first. */
+    @GET("api/v1/items/{id}/issues")
+    suspend fun listMyIssues(@Path("id") id: String): ApiResponse<List<MediaIssue>>
+
+    /** 201 with the report. 409 ALREADY_REPORTED for a second open report of
+     *  the same kind; 429 TOO_MANY_OPEN_ISSUES past the per-user cap, or
+     *  RATE_LIMITED from the route limiter; 422 VALIDATION for a bad kind /
+     *  note / file_id. */
+    @POST("api/v1/items/{id}/issues")
+    suspend fun reportIssue(
+        @Path("id") id: String,
+        @Body body: CreateIssueRequest,
+    ): ApiResponse<MediaIssue>
+
     // ── Online subtitles (OpenSubtitles proxy) ──────────────────────────────
 
     @GET("api/v1/items/{id}/subtitles/search")
@@ -229,19 +280,6 @@ interface OnScreenApi {
         @Query("limit") limit: Int = 30,
         @Query("library_id") libraryId: String? = null,
     ): ApiResponse<List<SearchResult>>
-
-    // ── Discover (TMDB-backed) + Requests ───────────────────────────────────
-
-    @GET("api/v1/discover/search")
-    suspend fun discoverSearch(
-        @Query("q") query: String,
-        @Query("limit") limit: Int = 12,
-    ): ApiResponse<List<DiscoverItem>>
-
-    @POST("api/v1/requests")
-    suspend fun createRequest(
-        @Body body: CreateRequestBody,
-    ): ApiResponse<MediaRequest>
 
     // ── Playlists (incl. smart) ─────────────────────────────────────────────
 

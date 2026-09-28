@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.detail
 
+import android.app.AlertDialog
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
@@ -9,6 +10,7 @@ import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
@@ -26,6 +28,11 @@ import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.Navigator
+import tv.onscreen.android.ui.common.WatchStateUi
+import tv.onscreen.android.ui.common.dismissOnViewDestroyed
+import tv.onscreen.android.ui.common.focusableOnTv
+import tv.onscreen.android.ui.common.ReportProblem
+import tv.onscreen.android.ui.common.ReportProblemDialog
 import tv.onscreen.android.ui.playback.PlaybackFragment
 import javax.inject.Inject
 
@@ -33,6 +40,7 @@ import javax.inject.Inject
 class DetailFragment : Fragment() {
 
     @Inject lateinit var prefs: ServerPrefs
+    @Inject lateinit var watchNext: tv.onscreen.android.playback.WatchNextManager
 
     private lateinit var viewModel: DetailViewModel
     private var serverUrl: String = ""
@@ -53,6 +61,10 @@ class DetailFragment : Fragment() {
      *  refetch on return can race the just-sent progress write, so this
      *  override guarantees the label reflects what the user just watched. */
     private var resumeOverrideMs: Long? = null
+
+    /** Up-next episode to scroll the episode list to on the first bind of a
+     *  show / season (the season tab holding it is opened too). */
+    private var initialScrollEpisodeId: String? = null
 
     companion object {
         private const val ARG_ITEM_ID = "item_id"
@@ -154,6 +166,48 @@ class DetailFragment : Fragment() {
                     detailBound = true
                 }
                 bindFavorite(view, state.isFavorite)
+                bindWatchState(view, state)
+            }
+        }
+
+        // One-shot results of the watched marks.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.events.collect { event ->
+                when (event) {
+                    is DetailEvent.Marked -> {
+                        if (!event.all) {
+                            // A mark clears the resume point server-side, so
+                            // the position the player handed back is stale:
+                            // Resume becomes Play.
+                            resumeOverrideMs = null
+                            viewModel.uiState.value.item?.let { item ->
+                                // ...and the launcher's Continue Watching row
+                                // (Google TV Watch Next) would keep offering
+                                // a resume that no longer exists. Off the main
+                                // thread: provider query + delete over binder.
+                                lifecycleScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { watchNext.remove(item.id) }
+                                }
+                                configurePlayButtons(
+                                    item,
+                                    view.findViewById(R.id.btn_play),
+                                    view.findViewById(R.id.btn_play_from_start),
+                                    focusPlay = false,
+                                )
+                            }
+                        }
+                        toast(
+                            when {
+                                event.all && event.watched -> R.string.marked_all_watched
+                                event.all -> R.string.marked_all_unwatched
+                                event.watched -> R.string.marked_watched
+                                else -> R.string.marked_unwatched
+                            },
+                        )
+                    }
+                    is DetailEvent.MarkFailed ->
+                        toast(if (event.rateLimited) R.string.watch_rate_limited else R.string.mark_failed)
+                }
             }
         }
     }
@@ -207,6 +261,18 @@ class DetailFragment : Fragment() {
         // playback died with "No playable file".
         configureEpisodes(root, item, seasons)
         configurePlayButtons(item, btnPlay, btnFromStart)
+        bindReportProblem(root, item)
+    }
+
+    /** "Report a problem" on a movie / episode / show — ReportProblemDialog
+     *  files the report against the item (and its first file, when it has
+     *  one) and shows the caller's earlier reports. */
+    private fun bindReportProblem(root: View, item: ItemDetail) {
+        val btn = root.findViewById<Button>(R.id.btn_report_problem) ?: return
+        btn.visibility = if (ReportProblem.isReportable(item.type)) View.VISIBLE else View.GONE
+        btn.setOnClickListener {
+            ReportProblemDialog.show(childFragmentManager, item.id, item.files.firstOrNull()?.id, item.title)
+        }
     }
 
     private fun configurePlayButtons(item: ItemDetail, btnPlay: Button, btnFromStart: Button, focusPlay: Boolean = true) {
@@ -219,14 +285,42 @@ class DetailFragment : Fragment() {
         // ordering note in bindDetail.
         val isMultiFileAudiobook = item.type == "audiobook" &&
             seasonMap.values.any { it.isNotEmpty() }
+        // Shows / seasons: the server says what Play starts (resume / next /
+        // first / rewatch). Null when the up-next call failed or the server
+        // predates it — then the generic container pick below applies.
+        val upNext = if (WatchStateUi.isWatchContainer(item.type)) viewModel.uiState.value.upNext else null
         when {
+            upNext != null -> {
+                val action = WatchStateUi.upNextAction(upNext)
+                btnFromStart.visibility = View.GONE
+                if (action == null) {
+                    // mode "none": no episodes, so no play action at all.
+                    btnPlay.visibility = View.GONE
+                } else {
+                    btnPlay.visibility = View.VISIBLE
+                    btnPlay.text = when (action.kind) {
+                        WatchStateUi.UpNextAction.Kind.Resume ->
+                            if (action.code.isNotEmpty()) getString(R.string.up_next_resume, action.code)
+                            else getString(R.string.up_next_resume_plain)
+                        WatchStateUi.UpNextAction.Kind.Play ->
+                            if (action.code.isNotEmpty()) getString(R.string.up_next_play, action.code)
+                            else getString(R.string.play)
+                        WatchStateUi.UpNextAction.Kind.WatchAgain -> getString(R.string.up_next_watch_again)
+                    }
+                    btnPlay.contentDescription = upNext.episode?.title?.takeIf { it.isNotBlank() }
+                        ?.let { "${btnPlay.text}, $it" }
+                    btnPlay.setOnClickListener { playItem(action.episodeId, action.startMs) }
+                }
+            }
             item.type in setOf("show", "season", "album", "podcast") || isMultiFileAudiobook -> {
                 // Container: Play picks an in-progress / first-unwatched
                 // child (episode for show, track for album, episode for
                 // podcast, chapter for audiobook). The container itself
                 // has no `files` so playItem(item.id) would error with
                 // "No playable file."
+                btnPlay.visibility = View.VISIBLE
                 btnPlay.text = getString(R.string.play)
+                btnPlay.contentDescription = null
                 btnPlay.setOnClickListener {
                     val target = inProgressEpisode() ?: firstUnwatchedEpisode() ?: firstEpisode()
                     if (target != null) {
@@ -366,15 +460,30 @@ class DetailFragment : Fragment() {
             // instead of being mis-played as media. Tracks / episodes
             // / podcast episodes still hit PlaybackFragment via
             // Navigator's else branch.
-            episodeAdapter = EpisodeAdapter(serverUrl, item.poster_path) { child ->
+            // Show / season episode rows get a long-press watched toggle.
+            val onLongClick: ((ChildItem) -> Unit)? = if (WatchStateUi.isWatchContainer(item.type)) {
+                { child -> if (child.type == "episode") showEpisodeMenu(child) }
+            } else {
+                null
+            }
+            episodeAdapter = EpisodeAdapter(serverUrl, item.poster_path, onLongClick) { child ->
                 Navigator.open(parentFragmentManager, child.id, child.type, child.view_offset_ms)
             }
             list.layoutManager = LinearLayoutManager(requireContext(), LinearLayoutManager.HORIZONTAL, false)
+            // Rebind a changed row (watched toggle, progress refresh) in its
+            // own view holder: a change animation swaps in a second holder,
+            // which flickers the row and can drop D-pad focus mid-toggle.
+            (list.itemAnimator as? androidx.recyclerview.widget.SimpleItemAnimator)?.supportsChangeAnimations = false
             list.adapter = episodeAdapter
         }
 
         if (currentSeasonId == null) {
-            currentSeasonId = seasons.keys.firstOrNull()?.id
+            // Open on the season holding the up-next episode (show pages), so
+            // the episode Play is about to start is on screen; else the first.
+            val upNextEpisode = viewModel.uiState.value.upNext?.episode
+            val upNextSeason = upNextEpisode?.let { ep -> seasons.keys.firstOrNull { it.id == ep.season_id } }
+            currentSeasonId = upNextSeason?.id ?: seasons.keys.firstOrNull()?.id
+            initialScrollEpisodeId = upNextEpisode?.id
         }
 
         tabsContainer.removeAllViews()
@@ -403,7 +512,9 @@ class DetailFragment : Fragment() {
                     for (ci in 0 until tabsContainer.childCount) {
                         tabsContainer.getChildAt(ci).isSelected = (ci == i)
                     }
-                    episodeAdapter?.submit(seasons[season] ?: emptyList())
+                    // Read the live map, not this bind's snapshot: watched
+                    // marks and returns from playback refresh the lists.
+                    episodeAdapter?.submit(activeEpisodes())
                 }
             }
             val lp = LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT)
@@ -413,6 +524,134 @@ class DetailFragment : Fragment() {
 
         val activeSeason = seasons.entries.firstOrNull { it.key.id == currentSeasonId } ?: seasons.entries.first()
         episodeAdapter?.submit(activeSeason.value)
+
+        // First bind of a show / season: bring the up-next episode (and its
+        // season tab) into view instead of leaving the list at episode 1.
+        initialScrollEpisodeId?.let { epId ->
+            initialScrollEpisodeId = null
+            val pos = activeSeason.value.indexOfFirst { it.id == epId }
+            if (pos > 0) list.scrollToPosition(pos)
+            val tabIndex = seasons.keys.indexOfFirst { it.id == activeSeason.key.id }
+            if (tabIndex > 0) {
+                tabsScroll.post {
+                    tabsContainer.getChildAt(tabIndex)?.let { tabsScroll.scrollTo(it.left, 0) }
+                }
+            }
+        }
+    }
+
+    /** Episodes of the selected season tab, from the live [seasonMap]. */
+    private fun activeEpisodes(): List<ChildItem> =
+        (seasonMap.entries.firstOrNull { it.key.id == currentSeasonId } ?: seasonMap.entries.firstOrNull())
+            ?.value ?: emptyList()
+
+    /**
+     * Re-applied on every state emission after the first bind: watched marks,
+     * Up Next and returns from playback all change it. Refreshes the episode
+     * list in place (DiffUtil keeps D-pad focus), the Play button label and
+     * the Mark watched button.
+     */
+    private fun bindWatchState(root: View, state: DetailUiState) {
+        val item = state.item ?: return
+        if (!detailBound) return
+        if (state.seasons.isNotEmpty() && state.seasons != seasonMap) {
+            seasonMap = state.seasons
+            episodeAdapter?.submit(activeEpisodes())
+        }
+        configurePlayButtons(
+            item,
+            root.findViewById(R.id.btn_play),
+            root.findViewById(R.id.btn_play_from_start),
+            focusPlay = false,
+        )
+        val btn = root.findViewById<Button>(R.id.btn_mark_watched) ?: return
+        when {
+            WatchStateUi.isMarkableLeaf(item.type) -> {
+                btn.visibility = View.VISIBLE
+                btn.text = getString(if (state.watched) R.string.mark_unwatched else R.string.mark_watched)
+                btn.setOnClickListener { viewModel.toggleWatched() }
+            }
+            WatchStateUi.isWatchContainer(item.type) -> {
+                val opts = WatchStateUi.markAllOptions(state.upNext)
+                when {
+                    opts.watched && opts.unwatched -> {
+                        btn.visibility = View.VISIBLE
+                        btn.text = getString(R.string.mark_all_menu)
+                        btn.setOnClickListener { showMarkAllMenu(item) }
+                    }
+                    opts.watched -> {
+                        btn.visibility = View.VISIBLE
+                        btn.text = getString(R.string.mark_all_watched)
+                        btn.setOnClickListener { viewModel.markAll(true) }
+                    }
+                    opts.unwatched -> {
+                        btn.visibility = View.VISIBLE
+                        btn.text = getString(R.string.mark_all_unwatched)
+                        btn.setOnClickListener { confirmMarkAllUnwatched(item) }
+                    }
+                    else -> btn.visibility = View.GONE
+                }
+            }
+            else -> btn.visibility = View.GONE
+        }
+        // Not isEnabled=false: disabling the focused button can drop D-pad
+        // focus on some TV builds. The ViewModel ignores a second mark while
+        // one is in flight; the dim is just feedback.
+        btn.alpha = if (state.markBusy) 0.5f else 1f
+    }
+
+    /** Show / season "Mark all…" when both directions make sense. */
+    private fun showMarkAllMenu(item: ItemDetail) {
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(item.title)
+            .setItems(arrayOf(getString(R.string.mark_all_watched), getString(R.string.mark_all_unwatched))) { d, idx ->
+                d.dismiss()
+                if (!isAdded) return@setItems
+                if (idx == 0) viewModel.markAll(true) else confirmMarkAllUnwatched(item)
+            }
+            .create()
+            .dismissOnViewDestroyed(this)
+            .show()
+    }
+
+    /** Unwatching a whole SHOW wipes every watched mark and resume point in
+     *  it — confirm first. A season is small enough to just do. */
+    private fun confirmMarkAllUnwatched(item: ItemDetail) {
+        if (item.type != "show") {
+            viewModel.markAll(false)
+            return
+        }
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(R.string.confirm_mark_show_unwatched_title)
+            .setMessage(getString(R.string.confirm_mark_show_unwatched, item.title))
+            .setPositiveButton(R.string.mark_all_unwatched) { d, _ ->
+                d.dismiss()
+                if (isAdded) viewModel.markAll(false)
+            }
+            .setNegativeButton(R.string.cancel) { d, _ -> d.dismiss() }
+            .create()
+            .focusableOnTv()
+            .dismissOnViewDestroyed(this)
+            .show()
+    }
+
+    /** Long-press menu on an episode row: its watched toggle. */
+    private fun showEpisodeMenu(episode: ChildItem) {
+        if (!isAdded) return
+        val label = getString(if (episode.watched) R.string.episode_mark_unwatched else R.string.episode_mark_watched)
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(episode.title)
+            .setItems(arrayOf(label)) { d, _ ->
+                d.dismiss()
+                if (isAdded) viewModel.toggleEpisodeWatched(episode)
+            }
+            .create()
+            .dismissOnViewDestroyed(this)
+            .show()
+    }
+
+    private fun toast(res: Int) {
+        if (isAdded) Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
     }
 
     private fun playItem(itemId: String, startMs: Long) {

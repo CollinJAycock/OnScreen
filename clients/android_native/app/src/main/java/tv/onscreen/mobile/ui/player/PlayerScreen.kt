@@ -53,6 +53,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -111,9 +113,11 @@ fun PlayerScreen(
     itemId: String,
     onClose: () -> Unit,
     onNext: (String) -> Unit,
+    /** Start at 0:00 instead of the item's resume point. */
+    fromStart: Boolean = false,
     vm: PlayerViewModel = hiltViewModel(),
 ) {
-    LaunchedEffect(itemId) { vm.prepare(itemId) }
+    LaunchedEffect(itemId) { vm.prepare(itemId, fromStart) }
     val ui by vm.state.collectAsStateWithLifecycle()
     BackHandler(onBack = onClose)
 
@@ -164,7 +168,14 @@ fun PlayerScreen(
         contentAlignment = Alignment.Center,
     ) {
         when {
-            ui.error != null -> Text(ui.error!!, color = Color.White)
+            // Padded + centred: the admin-stop sentence ("Playback was
+            // stopped by the server admin: …") runs to several lines.
+            ui.error != null -> Text(
+                ui.error!!,
+                color = Color.White,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                modifier = Modifier.padding(24.dp),
+            )
             ui.loading || ui.source == null -> CircularProgressIndicator()
             // Wait until the user has acknowledged cellular (or it
             // wasn't applicable). Without this gate, ExoPlayer fires
@@ -237,7 +248,18 @@ private fun PlayerHost(
     // trade is that it stops when the screen closes instead of playing in
     // the background. Before this gate, audio+Hls built NO player at all:
     // an eternal spinner with an orphaned server ffmpeg session behind it.
-    val serviceAudio = isAudioOnly && source is PlaybackSource.DirectPlay
+    // Also the service when it is ALREADY playing this item: the screen
+    // followed the background queue onto it (see the transition follower
+    // below). The queue plays the file directly, so even if this item's own
+    // decision came back as a transcode, no second, screen-owned player may
+    // start alongside it (and PlayerViewModel.prepare no longer starts that
+    // transcode — it hands back the direct source for an item the service
+    // has current).
+    // The leaf actually playing: a container route (album → first / resumed
+    // track) resolves to it in the VM. The service keys its queue on it.
+    val playingId = ui.item?.id ?: itemId
+    val alreadyInService = remember(playingId, source) { PlaybackService.currentItemId == playingId }
+    val serviceAudio = isAudioOnly && (source is PlaybackSource.DirectPlay || alreadyInService)
 
     // Direct-play audio (music / audiobook / podcast) plays through the
     // background-capable PlaybackService via a MediaController, so it
@@ -247,7 +269,7 @@ private fun PlayerHost(
     val audioController = rememberAudioController(
         enabled = serviceAudio,
         source = source,
-        itemId = itemId,
+        itemId = playingId,
         item = ui.item,
     )
     val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
@@ -487,9 +509,10 @@ private fun PlayerHost(
         if (serviceAudio) {
             // Service-owned audio auto-advances inside PlaybackService (it
             // owns the queue + chaining); the screen doesn't drive
-            // end-of-track. Screen-owned audio (HLS) falls through to the
-            // listener below — its "track" branch chains via onNext, which
-            // re-decides the next item and correctly tears down this one.
+            // end-of-track — it follows the queue (below). Screen-owned audio
+            // (HLS) falls through to the listener here — its "track" branch
+            // chains via onNext, which re-decides the next item and correctly
+            // tears down this one.
             onDispose { }
         } else {
             val listener = object : Player.Listener {
@@ -506,6 +529,41 @@ private fun PlayerHost(
             }
             player.addListener(listener)
             onDispose { player.removeListener(listener) }
+        }
+    }
+
+    if (serviceAudio) {
+        // The screen FOLLOWS the service's queue: when it moves to another
+        // track (gapless hand-off, next / previous here or on the lock
+        // screen), re-open the player on that track so title, lyrics and
+        // badges match what's audible. The follow is flagged
+        // (AudioQueueFollow) so the new screen binds to the queue as-is
+        // rather than treating it as a "play this" request. Also runs once on
+        // attach: a screen that composed after the service had already moved
+        // on (a quick double-skip) catches up.
+        DisposableEffect(player, playingId) {
+            fun follow(id: String?) {
+                if (!id.isNullOrEmpty() && id != playingId) {
+                    AudioQueueFollow.expect(id)
+                    onNext(id)
+                }
+            }
+            follow(player.currentMediaItem?.mediaId)
+            val listener = object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    follow(mediaItem?.mediaId)
+                }
+            }
+            player.addListener(listener)
+            onDispose { player.removeListener(listener) }
+        }
+        // Background audio an admin stopped (Now Playing → Stop): the service
+        // halts itself and drops the queue; show the admin's message here,
+        // the same way a stopped video does.
+        LaunchedEffect(Unit) {
+            tv.onscreen.mobile.playback.BackgroundAudioEvents.adminStops.collect { stop ->
+                vm.onStreamRefusedByAdminStop(stop.message)
+            }
         }
     }
 
@@ -609,6 +667,14 @@ private fun PlayerHost(
         playbackError = player.playerError
         val listener = object : Player.Listener {
             override fun onPlayerError(error: PlaybackException) {
+                // An admin stop refuses this stream's media requests with
+                // 403 PLAYBACK_STOPPED: end playback with the admin's
+                // message instead of the generic error overlay.
+                val stopped = playbackStoppedMessage(error)
+                if (stopped != null) {
+                    vm.onStreamRefusedByAdminStop(stopped)
+                    return
+                }
                 playbackError = error
             }
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -754,6 +820,9 @@ private fun PlayerHost(
         // frame and dead transport controls for the rest of playback.
         update = { view ->
             if (view.player !== player) view.player = player
+            // Background music plays a real queue (the album), so offer the
+            // controller's shuffle toggle there; video has no queue.
+            view.setShowShuffleButton(serviceAudio)
             // Edge-to-edge is mandatory at targetSdk 35+ (Android 16 removed
             // the opt-out). The video stays full-bleed, but Media3's
             // controller has no inset handling: under 3-button navigation the
@@ -871,6 +940,13 @@ private fun PlayerHost(
             .padding(16.dp),
         horizontalArrangement = Arrangement.End,
     ) {
+        // The ReplayGain level the background player is applying to this
+        // track (Settings → Playback). Hidden when it isn't acting on it.
+        if (serviceAudio) {
+            val rgDb by tv.onscreen.mobile.playback.BackgroundAudioEvents.replayGainDb
+                .collectAsStateWithLifecycle()
+            rgDb?.let { ReplayGainReadout(it) }
+        }
         if (ui.audioStreams.size > 1) {
             IconButton(onClick = { showAudioPicker = true }) {
                 Icon(Icons.Default.Audiotrack, contentDescription = "Audio", tint = Color.White)
@@ -1583,6 +1659,32 @@ private fun SkipMarkerOverlay(
     }
 }
 
+/** Small "RG −6.2 dB" tag in the player toolbar: the ReplayGain level being
+ *  applied to the playing track. Display-only. */
+@Composable
+private fun ReplayGainReadout(db: Double) {
+    val text = String.format(java.util.Locale.US, "%+.1f dB", db).replace('-', '−')
+    Box(
+        modifier = Modifier
+            .height(48.dp)
+            .padding(horizontal = 4.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        Text(
+            text = "RG $text",
+            color = Color.White,
+            style = MaterialTheme.typography.labelMedium,
+            modifier = Modifier
+                .background(color = Color(0x66000000), shape = RoundedCornerShape(12.dp))
+                .padding(horizontal = 8.dp, vertical = 4.dp)
+                .semantics {
+                    contentDescription = "ReplayGain " +
+                        String.format(java.util.Locale.US, "%.1f", db) + " decibels applied"
+                },
+        )
+    }
+}
+
 /**
  * Connect a [MediaController] to [PlaybackService] for audio and hand it
  * the current item, so music plays in the background — surviving this
@@ -1595,6 +1697,13 @@ private fun SkipMarkerOverlay(
  * for the item already playing in the service binds without restarting.
  * Album art comes from the service player's extracted metadata, so no
  * artworkUri is set here.
+ *
+ * The service builds the album queue around the one track handed over
+ * (gapless — see PlaybackService / MusicQueue). A track that is already IN
+ * that queue is jumped to rather than replacing the queue; a screen that
+ * merely followed the queue onto its track ([AudioQueueFollow]) binds as-is.
+ * The file's ReplayGain tags ride along in the extras so the service's gain
+ * stage has them from the first sample.
  */
 @Composable
 private fun rememberAudioController(
@@ -1605,10 +1714,11 @@ private fun rememberAudioController(
 ): MediaController? {
     val context = LocalContext.current
     return produceState<MediaController?>(initialValue = null, enabled, source, itemId) {
-        if (!enabled || source !is PlaybackSource.DirectPlay) {
+        if (!enabled) {
             value = null
             return@produceState
         }
+        val following = AudioQueueFollow.consume(itemId)
         val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
         val future = MediaController.Builder(context, token).buildAsync()
         val controller: MediaController? = try {
@@ -1618,6 +1728,9 @@ private fun rememberAudioController(
                     ContextCompat.getMainExecutor(context),
                 )
             }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            MediaController.releaseFuture(future)
+            throw e
         } catch (_: Exception) {
             null
         }
@@ -1628,29 +1741,69 @@ private fun rememberAudioController(
 
         // Don't restart the track that's already playing in the service
         // when the user re-opens the now-playing screen.
-        if (controller.currentMediaItem?.mediaId != itemId) {
-            val extras = Bundle().apply {
-                item?.type?.let { putString(PlaybackService.EXTRA_TYPE, it) }
-                item?.parent_id?.let { putString(PlaybackService.EXTRA_PARENT_ID, it) }
-                item?.index?.let { putInt(PlaybackService.EXTRA_INDEX, it) }
+        if (controller.currentMediaItem?.mediaId != itemId && !following) {
+            val startMs = (source as? PlaybackSource.DirectPlay)?.startMs ?: 0L
+            val queuedAt = (0 until controller.mediaItemCount)
+                .firstOrNull { controller.getMediaItemAt(it).mediaId == itemId }
+            if (queuedAt != null) {
+                // Already queued (another track of the playing album): jump,
+                // keeping the queue — and its gapless hand-offs — intact.
+                controller.seekTo(queuedAt, startMs)
+                if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
+                controller.playWhenReady = true
+            } else if (source is PlaybackSource.DirectPlay) {
+                val extras = Bundle().apply {
+                    item?.type?.let { putString(PlaybackService.EXTRA_TYPE, it) }
+                    item?.parent_id?.let { putString(PlaybackService.EXTRA_PARENT_ID, it) }
+                    item?.index?.let { putInt(PlaybackService.EXTRA_INDEX, it) }
+                    tv.onscreen.mobile.playback.ReplayGainExtras.write(
+                        this,
+                        tv.onscreen.mobile.playback.ReplayGain.fromFile(item?.files?.firstOrNull()),
+                    )
+                }
+                val mediaItem = MediaItem.Builder()
+                    .setUri(Uri.parse(source.url))
+                    .setMediaId(itemId)
+                    .setMediaMetadata(
+                        MediaMetadata.Builder()
+                            .setTitle(item?.title)
+                            .apply { item?.index?.let { setTrackNumber(it) } }
+                            .setExtras(extras)
+                            .build(),
+                    )
+                    .build()
+                controller.setMediaItem(mediaItem, source.startMs)
+                controller.prepare()
+                controller.playWhenReady = true
             }
-            val mediaItem = MediaItem.Builder()
-                .setUri(Uri.parse(source.url))
-                .setMediaId(itemId)
-                .setMediaMetadata(
-                    MediaMetadata.Builder()
-                        .setTitle(item?.title)
-                        .setExtras(extras)
-                        .build(),
-                )
-                .build()
-            controller.setMediaItem(mediaItem, source.startMs)
-            controller.prepare()
-            controller.playWhenReady = true
         }
         value = controller
         awaitDispose { controller.release() }
     }.value
+}
+
+/**
+ * Marks a now-playing screen that was opened to FOLLOW the background queue
+ * (the service moved to track Y, so the screen re-opens on Y) — as opposed to
+ * the user asking to play Y. A follower binds to the queue as it is; without
+ * the mark, a screen that composed after a quick second skip would "play" its
+ * now-stale track and yank the queue back. Expires quickly so an abandoned
+ * mark can't swallow a later real request.
+ */
+private object AudioQueueFollow {
+    private const val TTL_MS = 10_000L
+    @Volatile private var pending: Pair<String, Long>? = null
+
+    fun expect(itemId: String) {
+        pending = itemId to android.os.SystemClock.elapsedRealtime()
+    }
+
+    fun consume(itemId: String): Boolean {
+        val p = pending ?: return false
+        if (p.first != itemId) return false
+        pending = null
+        return android.os.SystemClock.elapsedRealtime() - p.second < TTL_MS
+    }
 }
 
 /** Drop the host activity into PiP at a 16:9 aspect ratio. The

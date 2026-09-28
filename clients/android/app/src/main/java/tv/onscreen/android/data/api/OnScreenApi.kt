@@ -55,8 +55,8 @@ interface OnScreenApi {
      *  needed. Returns the v2.2.0 contract; future v2.x adds fields but
      *  doesn't remove them, and Moshi's loose decoding picks up new
      *  flags without a client release. TVs use this to gate UI for
-     *  optional features (live_tv, dvr, requests) that the operator may
-     *  not have wired. */
+     *  optional features (live_tv, dvr) that the operator may not have
+     *  wired. */
     @GET("api/v1/system/capabilities")
     suspend fun getCapabilities(): ApiResponse<Capabilities>
 
@@ -81,7 +81,20 @@ interface OnScreenApi {
         @Query("sort") sort: String? = null,
         @Query("sort_dir") sortDir: String? = null,
         @Query("genre") genre: String? = null,
+        // v2.5: unwatched | in_progress | watched (null = all). Older servers
+        // ignore the unknown param and return the unfiltered listing.
+        @Query("watch") watch: String? = null,
     ): ApiListResponse<MediaItem>
+
+    /** v2.5 "Surprise me": one random item the caller can see, under the same
+     *  filters as the listing (sort ignored). 404 when nothing matches, 501
+     *  when the server has no watch-state store wired. */
+    @GET("api/v1/libraries/{id}/random")
+    suspend fun getRandomLibraryItem(
+        @Path("id") libraryId: String,
+        @Query("genre") genre: String? = null,
+        @Query("watch") watch: String? = null,
+    ): ApiResponse<RandomLibraryItem>
 
     // ── Items ───────────────────────────────────────────────────────────────
 
@@ -126,8 +139,45 @@ interface OnScreenApi {
     @DELETE("api/v1/items/{id}/watch-status")
     suspend fun clearWatchStatus(@Path("id") id: String): Response<Unit>
 
+    // ── Manual watch state (v2.5) ───────────────────────────────────────────
+    // Played / unplayed marks (a show or season expands to its episodes),
+    // hide-from-Continue-Watching, and which episode Play on a show / season
+    // starts. The three writes answer 204 and share a ~60/min per-user rate
+    // limit (429); a non-video type is 422. Unit return: Retrofit throws
+    // HttpException on any non-2xx, so callers can branch on code().
+
+    @POST("api/v1/items/{id}/watched")
+    suspend fun markWatched(@Path("id") id: String)
+
+    @DELETE("api/v1/items/{id}/watched")
+    suspend fun markUnwatched(@Path("id") id: String)
+
+    @POST("api/v1/items/{id}/dismiss-continue-watching")
+    suspend fun dismissContinueWatching(@Path("id") id: String)
+
+    /** Show or season only (other types: 422). */
+    @GET("api/v1/items/{id}/up-next")
+    suspend fun getUpNext(@Path("id") id: String): ApiResponse<UpNext>
+
     @GET("api/v1/items/{id}/trickplay")
     suspend fun getTrickplayStatus(@Path("id") id: String): ApiResponse<TrickplayStatus>
+
+    // ── Report a problem (v2.5) ─────────────────────────────────────────────
+    // Any user can flag an item they can see; admins work the reports on the
+    // web's Library health page. POST answers 201 with the report, 409
+    // ALREADY_REPORTED (an open report of that kind exists), 429
+    // TOO_MANY_OPEN_ISSUES (per-user open cap) or RATE_LIMITED, 422 on a bad
+    // kind / note / file_id, 404 when the item is out of reach.
+
+    /** The caller's own reports on the item, newest first. */
+    @GET("api/v1/items/{id}/issues")
+    suspend fun getMyIssues(@Path("id") itemId: String): ApiResponse<List<MediaIssue>>
+
+    @POST("api/v1/items/{id}/issues")
+    suspend fun reportIssue(
+        @Path("id") itemId: String,
+        @Body body: CreateIssueBody,
+    ): ApiResponse<MediaIssue>
 
     // ── Transcode ───────────────────────────────────────────────────────────
 
@@ -157,19 +207,6 @@ interface OnScreenApi {
         @Query("limit") limit: Int = 30,
         @Query("library_id") libraryId: String? = null,
     ): ApiResponse<List<SearchResult>>
-
-    // ── Discover (TMDB-backed) + Requests ───────────────────────────────────
-
-    @GET("api/v1/discover/search")
-    suspend fun discoverSearch(
-        @Query("q") query: String,
-        @Query("limit") limit: Int = 12,
-    ): ApiResponse<List<DiscoverItem>>
-
-    @POST("api/v1/requests")
-    suspend fun createRequest(
-        @Body body: CreateRequestBody,
-    ): ApiResponse<MediaRequest>
 
     // ── Favorites ───────────────────────────────────────────────────────────
 

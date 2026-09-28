@@ -23,6 +23,9 @@ class EpisodeAdapter(
     // shows whose episodes were never given per-episode stills. Beats a blank
     // tile; mirrors Plex/Jellyfin. Null when the parent itself has no art.
     private val fallbackArtPath: String? = null,
+    /** Secondary action on a long-press of OK (e.g. the episode's watched
+     *  toggle). Null = rows have only their click action. */
+    private val onLongClick: ((ChildItem) -> Unit)? = null,
     private val onClick: (ChildItem) -> Unit,
 ) : RecyclerView.Adapter<EpisodeAdapter.VH>() {
 
@@ -58,7 +61,7 @@ class EpisodeAdapter(
 
     override fun onBindViewHolder(holder: VH, position: Int) {
         val ep = items[position]
-        holder.bind(ep, serverUrl, fallbackArtPath, onClick)
+        holder.bind(ep, serverUrl, fallbackArtPath, onClick, onLongClick)
     }
 
     class VH(view: View) : RecyclerView.ViewHolder(view) {
@@ -69,7 +72,13 @@ class EpisodeAdapter(
         private val watchedBadge: FrameLayout = view.findViewById(R.id.ep_watched_badge)
         private val progress: ProgressBar = view.findViewById(R.id.ep_progress)
 
-        fun bind(ep: ChildItem, serverUrl: String, fallbackArtPath: String?, onClick: (ChildItem) -> Unit) {
+        fun bind(
+            ep: ChildItem,
+            serverUrl: String,
+            fallbackArtPath: String?,
+            onClick: (ChildItem) -> Unit,
+            onLongClick: ((ChildItem) -> Unit)? = null,
+        ) {
             val ctx = itemView.context
             index.text = ep.index?.let { n ->
                 // Label by the child's own type — a music album's children are
@@ -126,6 +135,21 @@ class EpisodeAdapter(
             }
 
             itemView.setOnClickListener { onClick(ep) }
+            if (onLongClick != null) {
+                itemView.setOnLongClickListener { onLongClick(ep); true }
+            } else {
+                itemView.setOnLongClickListener(null)
+                itemView.isLongClickable = false
+            }
+
+            // Spoken summary for TalkBack: the visual watched / progress
+            // treatment has no text of its own.
+            itemView.contentDescription = listOfNotNull(
+                index.text?.toString()?.takeIf { it.isNotBlank() },
+                ep.title,
+                if (ep.watched) ctx.getString(R.string.watch_badge_watched) else null,
+                if (shouldShowProgress) ctx.getString(R.string.watch_badge_progress, progress.progress) else null,
+            ).joinToString(", ")
         }
 
         private fun fmtDuration(ms: Long): String {

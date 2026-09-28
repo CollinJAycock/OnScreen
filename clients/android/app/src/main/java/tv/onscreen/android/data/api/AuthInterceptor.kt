@@ -61,11 +61,11 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         val path = request.url.encodedPath
 
         // Scope auth to our own server. The shared OkHttp/Coil stack
-        // also fetches external images (TMDB poster CDN for the
-        // "Request more" search row), and TMDB rejects requests that
-        // carry an unknown bearer with 401 — Coil swallows that and
-        // shows the placeholder. Match by host: anything that isn't
-        // the configured server passes through unmodified.
+        // also fetches external images (M3U channel logos, external
+        // artwork), and a third-party host must never see the user's
+        // bearer — many also reject an unknown bearer with 401, which
+        // Coil swallows into a placeholder. Match by origin: anything
+        // that isn't the configured server passes through unmodified.
         val serverHost = cachedServerHost
         if (serverHost != null &&
             (!request.url.host.equals(serverHost, ignoreCase = true) ||

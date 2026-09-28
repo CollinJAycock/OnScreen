@@ -19,6 +19,10 @@ data class ItemDetail(
     val parent_id: String? = null,
     val index: Int? = null,
     val view_offset_ms: Long = 0,
+    /** The caller's state for a playable video — "watched" / "in_progress"
+     *  / "unwatched" (manual marks included). Absent for other types and on
+     *  pre-v2.5 servers; shows / seasons roll up via up-next instead. */
+    val watch_state: String? = null,
     val updated_at: Long = 0,
     val is_favorite: Boolean = false,
     /** Book-only: 'ltr', 'rtl' (manga), or 'ttb' (webtoon). Populated by

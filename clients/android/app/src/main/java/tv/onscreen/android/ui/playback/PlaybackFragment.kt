@@ -39,6 +39,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import tv.onscreen.android.R
+import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.Chapter
 import tv.onscreen.android.data.model.ChildItem
@@ -64,6 +65,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     @Inject lateinit var trickplayRepo: TrickplayRepository
     @Inject lateinit var onlineSubtitleRepo: OnlineSubtitleRepository
     @Inject lateinit var watchNext: tv.onscreen.android.playback.WatchNextManager
+    @Inject lateinit var clientName: tv.onscreen.android.data.device.ClientName
 
     private lateinit var viewModel: PlaybackViewModel
     private var player: ExoPlayer? = null
@@ -139,6 +141,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     /** Cross-device sync subscriber. Cancelled in onDestroyView. */
     private var syncJob: Job? = null
+
+    /** Admin "stop this stream" (playback.stop SSE) subscriber. Cancelled in
+     *  onDestroyView. */
+    private var adminStopJob: Job? = null
 
     /** Trickplay-thumbnail load. Single job because installation is
      *  one-shot per session. */
@@ -313,10 +319,22 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
             initPlayer()
             viewModel.prepare(itemId, startMs, serverUrl)
+            startAdminStopWatch(itemId)
 
             viewModel.uiState.collectLatest { state ->
+                // Stopped by the server (admin stop / refused heartbeat): a
+                // later emission — a seek re-issue or audio switch that was in
+                // flight — must not start playback behind the stop dialog or
+                // re-install the heartbeat.
+                if (playbackRefused) return@collectLatest
                 if (state.error != null) {
-                    showErrorDialog(state.error)
+                    // An admin stop refused a (re)started session: tear down
+                    // like a refused heartbeat, not a plain error dialog.
+                    if (PlaybackStop.isSentinel(state.error)) {
+                        stopForRefusedPlayback(state.error)
+                    } else {
+                        showErrorDialog(state.error)
+                    }
                     return@collectLatest
                 }
                 val source = state.source ?: return@collectLatest
@@ -801,6 +819,42 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
     }
 
+    /**
+     * Obey the admin "stop this stream" SSE event. The event reaches every
+     * one of the user's players, so act only when it targets this one (same
+     * item, and this session / client name when the event names one — see
+     * PlaybackStop.targets). A transcode stop has no server-side refusal
+     * window, so this is its only clean signal; for direct play / remux the
+     * 403 PLAYBACK_STOPPED on the next heartbeat is the backstop.
+     */
+    private fun startAdminStopWatch(itemId: String) {
+        adminStopJob?.cancel()
+        adminStopJob = viewLifecycleOwner.lifecycleScope.launch {
+            while (isActive) {
+                try {
+                    notificationsRepo.subscribePlaybackStops().collect { evt ->
+                        if (playbackRefused || player == null) return@collect
+                        val mine = PlaybackStop.targets(
+                            evt,
+                            playingItemId = itemId,
+                            sessionId = viewModel.activeSessionId,
+                            clientName = clientName.value,
+                        )
+                        if (!mine) return@collect
+                        stopForRefusedPlayback(
+                            PlaybackStop.sentinel(PlaybackStop.text(evt.message)),
+                        )
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Stream dropped; reconnect after a short delay.
+                }
+                delay(5_000)
+            }
+        }
+    }
+
     private fun initPlayer() {
         // Re-entry handoff: if the user backed out of this same item
         // while music was playing, the previous fragment instance
@@ -1008,6 +1062,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
 
         override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+            // Already stopped by the server (admin stop / refused heartbeat):
+            // the stream dying afterwards is expected, and the stop dialog is
+            // the real explanation — don't stack a raw error on top of it or
+            // start a fallback transcode.
+            if (playbackRefused) return
             // A direct-play source that ExoPlayer can't decode/demux (an
             // HEVC profile the device rejects, a malformed container, etc.)
             // is recoverable: re-issue it as a full server transcode and
@@ -1041,6 +1100,26 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 "\n${PlaybackHelper.sanitizeUriForDisplay(cause.dataSpec.uri)}"
             } else ""
             val msg = "Playback error ${error.errorCodeName}: ${error.message}$urlPart"
+            // A stopped remux/transcode dies as a playlist/segment 403/404 —
+            // usually before the playback.stop event, or instead of it when
+            // the SSE stream was down. The player pausing has already paused
+            // the heartbeat, so its 403 PLAYBACK_STOPPED backstop would never
+            // fire: send one 'playing' beat now and, if the server refuses
+            // it, show the stop (or other refusal) message, not a raw error.
+            val tracker = progressTracker
+            if (currentSource is PlaybackSource.Hls && tracker != null &&
+                PlaybackHelper.isStoppedStreamStatus(error)
+            ) {
+                viewLifecycleOwner.lifecycleScope.launch {
+                    val refusal = tracker.probeRefusal()
+                    when {
+                        refusal != null -> stopForRefusedPlayback(refusal)
+                        // The SSE stop may have landed during the probe.
+                        !playbackRefused -> showErrorDialog(msg)
+                    }
+                }
+                return
+            }
             showErrorDialog(msg)
         }
     }
@@ -1913,6 +1992,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val (title, body) = when {
             message == "content_restricted" ->
                 getString(R.string.content_restricted) to ""
+            // Admin stop — "playback_stopped:<sentence>" from the playback.stop
+            // SSE event, a 403 PLAYBACK_STOPPED heartbeat or a refused
+            // session start. The sentence is shown verbatim.
+            PlaybackStop.isSentinel(message) ->
+                getString(R.string.playback_stopped_title) to PlaybackStop.sentenceOf(message)
             // Mid-session heartbeat 403 that is not the watch limit — library
             // access revoked or rating ceiling lowered (ProgressTracker).
             message == ProgressTracker.CONTENT_REVOKED ->
@@ -2047,6 +2131,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         upNextJob = null
         syncJob?.cancel()
         syncJob = null
+        adminStopJob?.cancel()
+        adminStopJob = null
         skipMarkerJob?.cancel()
         skipMarkerJob = null
         skipMarkerOverlay = null
@@ -2127,12 +2213,24 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  position, so onStop's terminal 'stopped' report still saves the resume
      *  point (the server only gates 'playing'). */
     private fun stopForRefusedPlayback(sentinel: String) {
+        // One stop, one dialog: an admin stop can arrive twice (the SSE event
+        // AND the next heartbeat's 403 PLAYBACK_STOPPED).
+        if (playbackRefused) return
         playbackRefused = true
+        // The server may have killed the stream before its explanation got
+        // here (a stopped transcode's segments 404 first), leaving a raw
+        // "Playback error" up — the refusal message replaces it.
+        openDialogs.toList().forEach { runCatching { it.dismiss() } }
+        // A stop inside the credits window left the Up Next card frozen at
+        // "UP NEXT · 1s" (with its Play Now) behind the refusal dialog.
+        dismissUpNext(permanent = true)
         player?.run {
             pause()
             stop()
         }
-        viewModel.stopActiveTranscode()
+        // Also makes the ViewModel drop (and retire) any session re-issue
+        // still in flight.
+        viewModel.stopForRefusal()
         showErrorDialog(sentinel, leaveOnCancel = true)
     }
 

@@ -28,26 +28,38 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
             // Cross-container fall-through. Same shape for tracks
             // and episodes; only the container type and sort order
             // differ.
-            if (type != "track" && type != "episode") return null
-            val parent = itemRepo.getItem(parentId)
-            val grandparentId = parent.parent_id ?: return null
-            val containerType = if (type == "track") "album" else "season"
-            val rawSiblings = itemRepo.getChildren(grandparentId)
-                .filter { it.type == containerType }
-            val siblings = if (type == "track") {
-                rawSiblings.sortedWith(
-                    compareBy({ it.year ?: Int.MAX_VALUE }, { it.index ?: Int.MAX_VALUE }),
-                )
-            } else {
-                rawSiblings.sortedBy { it.index ?: Int.MAX_VALUE }
-            }
-            val currentIdx = siblings.indexOfFirst { it.id == parentId }
-            if (currentIdx < 0) return null
-            val nextContainer = siblings.getOrNull(currentIdx + 1) ?: return null
+            val nextContainer = nextContainer(parentId, type) ?: return null
             itemRepo.getChildren(nextContainer.id)
                 .filter { it.type == type && it.index != null }
                 .sortedBy { it.index }
                 .firstOrNull()
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** The container after [containerId] under the same grandparent — the
+     *  artist's next album (by year, then index) for a track, the show's next
+     *  season for an episode. Null for other types, at the end, or on any
+     *  lookup failure. Also used by PlaybackService to append the next album
+     *  to a music queue before the current one runs out (gapless across
+     *  albums). */
+    suspend fun nextContainer(containerId: String, leafType: String): ChildItem? {
+        if (leafType != "track" && leafType != "episode") return null
+        return try {
+            val parent = itemRepo.getItem(containerId)
+            val grandparentId = parent.parent_id ?: return null
+            val containerType = if (leafType == "track") "album" else "season"
+            val rawSiblings = itemRepo.getChildren(grandparentId)
+                .filter { it.type == containerType }
+            val siblings = if (leafType == "track") {
+                rawSiblings.sortedWith(MusicQueue.ALBUM_ORDER)
+            } else {
+                rawSiblings.sortedBy { it.index ?: Int.MAX_VALUE }
+            }
+            val currentIdx = siblings.indexOfFirst { it.id == containerId }
+            if (currentIdx < 0) return null
+            siblings.getOrNull(currentIdx + 1)
         } catch (_: Exception) {
             null
         }

@@ -19,6 +19,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -31,9 +35,14 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import tv.onscreen.mobile.playback.ReplayGain
+import tv.onscreen.mobile.playback.ReplayGainMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -48,6 +57,8 @@ fun SettingsScreen(
     val warnOnCellularStream by vm.warnOnCellularStream.collectAsStateWithLifecycle(initialValue = true)
     val username by vm.username.collectAsStateWithLifecycle(initialValue = null)
     val serverUrl by vm.serverUrl.collectAsStateWithLifecycle(initialValue = null)
+    val replayGainMode by vm.replayGainMode.collectAsStateWithLifecycle(initialValue = ReplayGainMode.OFF)
+    val replayGainPreampDb by vm.replayGainPreampDb.collectAsStateWithLifecycle(initialValue = 0.0)
 
     var showSignOutConfirm by remember { mutableStateOf(false) }
     var showDisconnectConfirm by remember { mutableStateOf(false) }
@@ -85,6 +96,19 @@ fun SettingsScreen(
                 description = "Confirm before starting video playback on a metered connection. Music and direct-play audio are unaffected.",
                 checked = warnOnCellularStream,
                 onChange = vm::setWarnOnCellularStream,
+            )
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider()
+            Spacer(Modifier.height(16.dp))
+
+            SectionHeader("Playback")
+
+            ReplayGainSettings(
+                mode = replayGainMode,
+                preampDb = replayGainPreampDb,
+                onModeChange = vm::setReplayGainMode,
+                onPreampChange = vm::setReplayGainPreampDb,
             )
 
             Spacer(Modifier.height(16.dp))
@@ -268,3 +292,107 @@ private fun ActionRow(
     }
 }
 
+/**
+ * ReplayGain for music: Off / Track / Album + a preamp. Mirrors the web
+ * player's setting (web/src/lib/replaygain.ts): album falls back to track
+ * tags on files without album gain; untagged files always play untouched;
+ * the gain is capped by the file's tagged peak so it never clips.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReplayGainSettings(
+    mode: ReplayGainMode,
+    preampDb: Double,
+    onModeChange: (ReplayGainMode) -> Unit,
+    onPreampChange: (Double) -> Unit,
+) {
+    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+        Text("ReplayGain", style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            "Even out loudness between music tracks using their ReplayGain tags. Album keeps an " +
+                "album\u2019s own dynamics and falls back to track gain for singles. Untagged files " +
+                "play unchanged, and the gain never pushes a track into clipping.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        val options = listOf(
+            ReplayGainMode.OFF to "Off",
+            ReplayGainMode.TRACK to "Track",
+            ReplayGainMode.ALBUM to "Album",
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { i, (value, label) ->
+                SegmentedButton(
+                    selected = mode == value,
+                    onClick = { onModeChange(value) },
+                    shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
+                    modifier = Modifier.semantics { contentDescription = "ReplayGain $label" },
+                ) { Text(label) }
+            }
+        }
+
+        // Preamp: -6..+6 dB in 0.5 dB steps. Dragging updates the label only;
+        // the setting is written once on release (one DataStore write, not
+        // one per frame). Disabled while ReplayGain is off: it has no effect.
+        val enabled = mode != ReplayGainMode.OFF
+        var dragging by remember { mutableStateOf<Float?>(null) }
+        val shown = dragging?.toDouble() ?: preampDb
+        val label = formatPreamp(shown)
+        Spacer(Modifier.height(12.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "Preamp",
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (enabled) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        val min = ReplayGain.UI_PREAMP_MIN_DB.toFloat()
+        val max = ReplayGain.UI_PREAMP_MAX_DB.toFloat()
+        val intervals = ((ReplayGain.UI_PREAMP_MAX_DB - ReplayGain.UI_PREAMP_MIN_DB) /
+            ReplayGain.UI_PREAMP_STEP_DB).toInt()
+        Slider(
+            value = shown.toFloat().coerceIn(min, max),
+            onValueChange = { dragging = it },
+            onValueChangeFinished = {
+                dragging?.let { onPreampChange(ReplayGain.snapUiPreamp(it.toDouble())) }
+                dragging = null
+            },
+            valueRange = min..max,
+            // `steps` counts the stops BETWEEN the ends: 24 half-dB intervals.
+            steps = intervals - 1,
+            enabled = enabled,
+            modifier = Modifier.semantics {
+                contentDescription = "ReplayGain preamp"
+                stateDescription = label
+            },
+        )
+        Text(
+            "Added to every tagged track\u2019s gain. A boost stops where the track would clip.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** Preamp label: "+1.5 dB", "0 dB", or a true minus sign for cuts
+ *  (U+2212, "\u22123 dB"). Snapped to the 0.5 dB grid. */
+internal fun formatPreamp(db: Double): String {
+    val v = ReplayGain.snapUiPreamp(db)
+    if (v == 0.0) return "0 dB"
+    val sign = if (v > 0) "+" else "\u2212"
+    val abs = kotlin.math.abs(v)
+    val num = if (abs % 1.0 == 0.0) abs.toInt().toString() else abs.toString()
+    return "$sign$num dB"
+}

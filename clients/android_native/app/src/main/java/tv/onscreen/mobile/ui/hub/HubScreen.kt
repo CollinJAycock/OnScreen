@@ -1,6 +1,8 @@
 package tv.onscreen.mobile.ui.hub
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,13 +14,16 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.QueueMusic
@@ -32,30 +37,43 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import coil.compose.AsyncImage
+import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.HubItem
 import tv.onscreen.mobile.data.model.HubRowPref
 import tv.onscreen.mobile.data.model.Library
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.watch.canDismissContinueWatching
+import tv.onscreen.mobile.ui.watch.nextUpSubtitle
+import tv.onscreen.mobile.ui.watch.progressFraction
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -72,8 +90,25 @@ fun HubScreen(
     vm: HubViewModel = hiltViewModel(),
 ) {
     val ui by vm.state.collectAsStateWithLifecycle()
+    val snackbar = remember { SnackbarHostState() }
+
+    // Coming back to home (from a detail page or the player): quietly
+    // re-pull so Continue Watching / Next Up reflect what was just watched
+    // or marked. The first ON_RESUME is a no-op — init's load is running.
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { vm.refreshQuietly() }
+
+    // Show from a composition-scoped coroutine, not inside the effect:
+    // consuming the message changes this effect's key, which cancels it —
+    // and a showSnackbar running in it — on the very next frame.
+    val snackScope = rememberCoroutineScope()
+    LaunchedEffect(ui.message) {
+        val msg = ui.message ?: return@LaunchedEffect
+        vm.consumeMessage()
+        snackScope.launch { snackbar.showSnackbar(msg) }
+    }
 
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = {
             // Search + Settings stay inline; everything else folds into
             // a 3-dot overflow. Eight icons in the action row left no
@@ -151,6 +186,7 @@ fun HubScreen(
                     serverUrl = ui.serverUrl,
                     onOpenItem = onOpenItem,
                     onOpenLibrary = onOpenLibrary,
+                    onDismissContinue = vm::dismissContinueWatching,
                 )
             }
         }
@@ -163,6 +199,7 @@ private fun HubBody(
     serverUrl: String,
     onOpenItem: (String) -> Unit,
     onOpenLibrary: (String) -> Unit,
+    onDismissContinue: (HubItem) -> Unit,
 ) {
     val hub = ui.hub ?: return
     // Resolve the three Continue Watching buckets. Newer servers
@@ -177,13 +214,17 @@ private fun HubBody(
 
     // Candidate rows in DEFAULT order, each keyed so the user's saved hub layout
     // (configured on the web home, shared per-account via prefs) can reorder + hide
-    // them. The web-shared keys are continue_*, trending, library:<uuid> and
-    // libraries; recently_added (global) is phone-only and the web never emits its
-    // key, so it falls through to its default position.
+    // them. The web-shared keys are continue_*, next_up, plan_to_watch, trending,
+    // library:<uuid> and libraries; recently_added (global) is phone-only and the
+    // web never emits its key, so it falls through to its default position.
+    // next_up / plan_to_watch sit where the web's default layout has them (after
+    // the TV and the last continue row respectively); empty rows are hidden.
     val sections = buildList {
-        if (tv.isNotEmpty()) add(HubSection("continue_tv") { PosterRow("Continue Watching TV Shows", tv, serverUrl, onOpenItem) })
-        if (movies.isNotEmpty()) add(HubSection("continue_movies") { PosterRow("Continue Watching Movies", movies, serverUrl, onOpenItem) })
-        if (other.isNotEmpty()) add(HubSection("continue_other") { PosterRow("Continue Watching", other, serverUrl, onOpenItem) })
+        if (tv.isNotEmpty()) add(HubSection("continue_tv") { ContinueRow("Continue Watching TV Shows", tv, serverUrl, onOpenItem, onDismissContinue) })
+        if (hub.next_up.isNotEmpty()) add(HubSection("next_up") { NextUpRow(hub.next_up, serverUrl, onOpenItem) })
+        if (movies.isNotEmpty()) add(HubSection("continue_movies") { ContinueRow("Continue Watching Movies", movies, serverUrl, onOpenItem, onDismissContinue) })
+        if (other.isNotEmpty()) add(HubSection("continue_other") { ContinueRow("Continue Watching", other, serverUrl, onOpenItem, onDismissContinue) })
+        if (hub.plan_to_watch.isNotEmpty()) add(HubSection("plan_to_watch") { PosterRow("Plan to Watch", hub.plan_to_watch, serverUrl, onOpenItem) })
         if (hub.recently_added.isNotEmpty()) add(HubSection("recently_added") { PosterRow("Recently added", hub.recently_added, serverUrl, onOpenItem) })
         if (hub.trending.isNotEmpty()) add(HubSection("trending") { PosterRow("Trending", hub.trending, serverUrl, onOpenItem) })
         hub.recently_added_by_library.forEach { row ->
@@ -225,6 +266,15 @@ private fun orderByLayout(sections: List<HubSection>, layout: List<HubRowPref>):
 }
 
 @Composable
+private fun RowTitle(title: String) {
+    Text(
+        title,
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+    )
+}
+
+@Composable
 private fun PosterRow(
     title: String,
     items: List<HubItem>,
@@ -232,52 +282,199 @@ private fun PosterRow(
     onOpenItem: (String) -> Unit,
 ) {
     Column {
-        Text(
-            title,
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-        )
+        RowTitle(title)
         LazyRow(
+            state = rememberRowStateFollowingHead(items),
             contentPadding = PaddingValues(horizontal = 16.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             items(items, key = { it.id }) { item ->
-                PosterCard(item = item, serverUrl = serverUrl, onClick = { onOpenItem(item.id) })
+                // Episode tiles in the recently-added strips carry their
+                // show's name: show on top, episode below (as on the web).
+                PosterCard(
+                    item = item,
+                    serverUrl = serverUrl,
+                    onClick = { onOpenItem(item.id) },
+                    title = item.show_title ?: item.title,
+                    subtitle = if (item.show_title != null) item.title else null,
+                )
             }
         }
     }
 }
 
+/** A Continue Watching row: resume bar on each poster, and a remove
+ *  action behind long-press or the poster's ⋮ button. Removal is
+ *  optimistic in the ViewModel (restored + snackbar on failure). */
 @Composable
-private fun PosterCard(item: HubItem, serverUrl: String, onClick: () -> Unit) {
+private fun ContinueRow(
+    title: String,
+    items: List<HubItem>,
+    serverUrl: String,
+    onOpenItem: (String) -> Unit,
+    onDismiss: (HubItem) -> Unit,
+) {
+    Column {
+        RowTitle(title)
+        LazyRow(
+            state = rememberRowStateFollowingHead(items),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(items, key = { it.id }) { item ->
+                PosterCard(
+                    item = item,
+                    serverUrl = serverUrl,
+                    onClick = { onOpenItem(item.id) },
+                    progress = progressFraction(item.view_offset_ms, item.duration_ms),
+                    onRemove = if (canDismissContinueWatching(item.type)) {
+                        { onDismiss(item) }
+                    } else {
+                        null
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** Next Up: one episode tile per show in flight — show title on top,
+ *  "S2 · E5 — Episode title" below. The tile IS the episode, so a tap
+ *  opens its detail page (Play resumes / starts it from there), the same
+ *  as a Continue Watching tile. */
+@Composable
+private fun NextUpRow(
+    items: List<HubItem>,
+    serverUrl: String,
+    onOpenItem: (String) -> Unit,
+) {
+    Column {
+        RowTitle("Next Up")
+        LazyRow(
+            state = rememberRowStateFollowingHead(items),
+            contentPadding = PaddingValues(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            items(items, key = { it.id }) { item ->
+                PosterCard(
+                    item = item,
+                    serverUrl = serverUrl,
+                    onClick = { onOpenItem(item.id) },
+                    title = item.show_title ?: item.title,
+                    subtitle = nextUpSubtitle(item),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun PosterCard(
+    item: HubItem,
+    serverUrl: String,
+    onClick: () -> Unit,
+    title: String = item.title,
+    subtitle: String? = null,
+    /** 0..1 resume bar along the poster's bottom edge; 0 = none. */
+    progress: Float = 0f,
+    /** Non-null → the card offers "Remove from Continue Watching". */
+    onRemove: (() -> Unit)? = null,
+) {
     val art = item.poster_path ?: item.thumb_path
+    var menuOpen by remember { mutableStateOf(false) }
     Column(
         modifier = Modifier
             .width(140.dp)
-            .clickable(onClick = onClick),
+            .combinedClickable(
+                onClick = onClick,
+                onLongClickLabel = if (onRemove != null) "More options" else null,
+                onLongClick = if (onRemove != null) {
+                    { menuOpen = true }
+                } else {
+                    null
+                },
+            ),
     ) {
-        Surface(
-            shape = RoundedCornerShape(8.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant,
-            modifier = Modifier
-                .fillMaxWidth()
-                .aspectRatio(2f / 3f),
-        ) {
-            if (art != null && serverUrl.isNotEmpty()) {
-                AsyncImage(
-                    model = artworkUrl(serverUrl, art, width = 400),
-                    contentDescription = item.title,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
-                )
+        Box {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(2f / 3f),
+            ) {
+                Box {
+                    if (art != null && serverUrl.isNotEmpty()) {
+                        AsyncImage(
+                            model = artworkUrl(serverUrl, art, width = 400),
+                            contentDescription = title,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize(),
+                        )
+                    }
+                    if (progress > 0f) {
+                        LinearProgressIndicator(
+                            progress = { progress },
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .fillMaxWidth()
+                                .height(4.dp),
+                        )
+                    }
+                }
+            }
+            if (onRemove != null) {
+                // ⋮ on the poster corner: the discoverable, accessible twin
+                // of long-press. The menu anchors here for both.
+                Box(modifier = Modifier.align(Alignment.TopEnd)) {
+                    IconButton(onClick = { menuOpen = true }) {
+                        Surface(
+                            shape = CircleShape,
+                            color = Color.Black.copy(alpha = 0.55f),
+                            contentColor = Color.White,
+                        ) {
+                            Icon(
+                                Icons.Default.MoreVert,
+                                contentDescription = "More options for $title",
+                                modifier = Modifier
+                                    .padding(4.dp)
+                                    .size(18.dp),
+                            )
+                        }
+                    }
+                    DropdownMenu(
+                        expanded = menuOpen,
+                        onDismissRequest = { menuOpen = false },
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Remove from Continue Watching") },
+                            leadingIcon = { Icon(Icons.Default.Close, contentDescription = null) },
+                            onClick = {
+                                menuOpen = false
+                                onRemove()
+                            },
+                        )
+                    }
+                }
             }
         }
         Spacer(Modifier.height(6.dp))
         Text(
-            item.title,
+            title,
             style = MaterialTheme.typography.bodyMedium,
-            maxLines = 2,
+            maxLines = if (subtitle != null) 1 else 2,
+            overflow = TextOverflow.Ellipsis,
         )
+        if (subtitle != null) {
+            Text(
+                subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
     }
 }
 

@@ -58,10 +58,10 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         val path = request.url.encodedPath
 
         // Scope auth to our own server. The shared OkHttp/Coil stack
-        // also fetches external images (TMDB poster CDN for the
-        // "Request more" search row), and TMDB rejects requests that
-        // carry an unknown bearer with 401 — Coil swallows that and
-        // shows the placeholder.
+        // also fetches any absolute external image URL a server response
+        // carries, and a third-party host must never see our bearer (a
+        // CDN that rejects an unknown bearer with 401 also breaks the
+        // image — Coil swallows that and shows the placeholder).
         //
         // Match host AND port, matching the TV client. Host alone was not
         // enough for two reasons. On a home LAN the media server shares a host

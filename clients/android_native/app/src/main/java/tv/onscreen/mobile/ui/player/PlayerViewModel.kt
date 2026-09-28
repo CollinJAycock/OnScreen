@@ -15,6 +15,7 @@ import tv.onscreen.mobile.data.api.apiError
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
+import tv.onscreen.mobile.data.model.PlaybackStop
 import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.prefs.ServerPrefs
@@ -28,7 +29,9 @@ import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 import tv.onscreen.mobile.data.repository.TrickplayRepository
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
+import androidx.media3.common.util.UnstableApi
 import tv.onscreen.mobile.playback.LocalProgressTracker
+import tv.onscreen.mobile.playback.PlaybackService
 import tv.onscreen.mobile.playback.StreamTokenVault
 import tv.onscreen.mobile.trickplay.TrickplayVtt
 import javax.inject.Inject
@@ -375,6 +378,11 @@ class PlayerViewModel @Inject constructor(
 
     private var transcodeSessionId: String? = null
 
+    /** Id of the item the background PlaybackService has current, or null.
+     *  A seam so tests can stand in for the service. */
+    @OptIn(UnstableApi::class)
+    internal var backgroundItemId: () -> String? = { PlaybackService.currentItemId }
+
     /** Live playback mode reported with progress beacons — feeds the
      *  analytics direct-vs-transcode split. Updated on source selection and
      *  on every (re)started transcode session, so mid-watch switches
@@ -416,7 +424,9 @@ class PlayerViewModel @Inject constructor(
         val serverUrl: String,
     )
 
-    fun prepare(itemId: String) {
+    /** [fromStart]: ignore the item's resume point — album / artist Play
+     *  starts track 1 at 0:00 even if a partial play left one. */
+    fun prepare(itemId: String, fromStart: Boolean = false) {
         viewModelScope.launch {
             try {
                 // Container items (show / season / album / artist /
@@ -486,7 +496,7 @@ class PlayerViewModel @Inject constructor(
                     )
                     resolved
                 }
-                val startMs = item.view_offset_ms
+                val startMs = if (fromStart) 0L else item.view_offset_ms
 
                 // Offline-first: if the user has a completed download
                 // for this file, play the local copy. Skips even the
@@ -526,6 +536,13 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
 
+                // The background service already has this item current — the
+                // now-playing screen followed its queue onto the track, or was
+                // re-opened on it. The screen only binds to the service, which
+                // plays the file directly, so a server remux/transcode started
+                // here would be an ffmpeg session nobody ever reads.
+                val playingInService = backgroundItemId() == itemId
+
                 val source = when {
                     localFile != null -> {
                         hlsOffsetMs = 0
@@ -533,7 +550,7 @@ class PlayerViewModel @Inject constructor(
                         activeDecision = "directPlay"
                         PlaybackSource.DirectPlay("file://${localFile.absolutePath}", startMs)
                     }
-                    mode is PlaybackMode.DirectPlay -> {
+                    mode is PlaybackMode.DirectPlay || playingInService -> {
                         hlsOffsetMs = 0
                         lastTranscodeRequest = null
                         activeDecision = "directPlay"
@@ -591,13 +608,19 @@ class PlayerViewModel @Inject constructor(
                 }
 
                 subscribeRemoteProgress(itemId)
+                subscribeAdminStops(itemId)
             } catch (e: Exception) {
                 val msg = if (e is HttpException && e.code() == 403) {
-                    // 403 covers two gates: the content-rating ceiling and the
-                    // parental watch limit. Parse the code so each shows right.
+                    // 403 covers three gates: the content-rating ceiling, the
+                    // parental watch limit, and an admin stop (a restart inside
+                    // the stop window — transcode start answers PLAYBACK_STOPPED).
+                    // Parse the code so each shows right.
                     val err = e.apiError()
-                    if (err?.code == "PARENTAL_LIMIT") parentalBlockMessage(err.message)
-                    else "content_restricted"
+                    when (err?.code) {
+                        "PARENTAL_LIMIT" -> parentalBlockMessage(err.message)
+                        PlaybackStop.ERROR_CODE -> PlaybackStop.textFromServer(err.message)
+                        else -> "content_restricted"
+                    }
                 } else e.message
                 _state.value = PlayerUiState(loading = false, error = msg)
             }
@@ -804,6 +827,14 @@ class PlayerViewModel @Inject constructor(
                     transcodeRepo.stopDetached(prevSession, prevToken)
                 }
             } catch (e: Exception) {
+                // An admin stop refuses a replacement session for the stop
+                // window; that's the end of playback, not a failed switch.
+                val stopped = (e as? HttpException)?.takeIf { it.code() == 403 }?.apiError()
+                    ?.takeIf { it.code == PlaybackStop.ERROR_CODE }
+                if (stopped != null) {
+                    stopForAdmin(PlaybackStop.textFromServer(stopped.message))
+                    return@launch
+                }
                 android.util.Log.w("PlayerViewModel", "audio stream switch failed", e)
             }
         }
@@ -857,6 +888,8 @@ class PlayerViewModel @Inject constructor(
                     null -> Unit
                     is HeartbeatRefusal.WatchLimit ->
                         _state.value = _state.value.copy(error = parentalBlockMessage(refusal.reason))
+                    is HeartbeatRefusal.PlaybackStopped ->
+                        stopForAdmin(refusal.message)
                     HeartbeatRefusal.ContentRevoked ->
                         _state.value = _state.value.copy(error = "content_restricted")
                 }
@@ -950,11 +983,59 @@ class PlayerViewModel @Inject constructor(
                     _remoteResumeMs.value = ev.position_ms
                 }
             } catch (_: Exception) {
-                // SSE drop — leave the player running on its own
-                // state. A reconnect tier could be added later but
-                // would need a backoff to avoid hammering the server.
+                // NotificationsRepository re-dials SSE drops itself (5 s
+                // backoff); anything reaching here leaves the player
+                // running on its own state.
             }
         }
+    }
+
+    // ── Admin stop (Now Playing → Stop) ───────────────────────────────
+
+    private var stopEventsJob: kotlinx.coroutines.Job? = null
+
+    /** Obey the admin "stop this stream" SSE event for [itemId]. The channel
+     *  is per-user, so every stop for any of the user's players arrives here;
+     *  [tv.onscreen.mobile.data.model.PlaybackStopEvent.targets] picks ours —
+     *  same item, and our transcode/remux session when the event names one.
+     *  This client reports no client name in its heartbeats, so a stop aimed
+     *  at another device by name never matches. The server also refuses the
+     *  stopped stream for ~2 minutes (403 PLAYBACK_STOPPED on the 'playing'
+     *  heartbeat — see [reportProgress]), so a missed event still stops us. */
+    private fun subscribeAdminStops(itemId: String) {
+        stopEventsJob?.cancel()
+        stopEventsJob = viewModelScope.launch {
+            try {
+                notifications.subscribePlaybackStops().collect { ev ->
+                    if (ev.targets(itemId, transcodeSessionId, clientName = null)) {
+                        stopForAdmin(ev.displayText)
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // Stream failure — the heartbeat refusal is the backstop.
+            }
+        }
+    }
+
+    /** The screen-owned player hit a media request the server refused with
+     *  403 PLAYBACK_STOPPED (see [playbackStoppedMessage]) — stop the same way
+     *  the event and the heartbeat do. */
+    fun onStreamRefusedByAdminStop(message: String) {
+        stopForAdmin(message)
+    }
+
+    /** End playback because an admin stopped it, showing [text]. Setting
+     *  [PlayerUiState.error] tears the player host down (which also sends the
+     *  terminal 'stopped' report, like the web player saves progress before it
+     *  stops); any server session is dropped too. First stop wins — the event
+     *  and the heartbeat 403 usually both arrive. */
+    private fun stopForAdmin(text: String) {
+        if (_state.value.error != null) return
+        stopEventsJob?.cancel()
+        stopActiveTranscode()
+        _state.value = _state.value.copy(error = text)
     }
 
     fun stopActiveTranscode() {
@@ -999,6 +1080,7 @@ class PlayerViewModel @Inject constructor(
     override fun onCleared() {
         super.onCleared()
         sseJob?.cancel()
+        stopEventsJob?.cancel()
         recycleSpriteCache()
         stopActiveTranscode()
     }

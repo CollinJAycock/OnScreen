@@ -11,9 +11,12 @@ import kotlinx.coroutines.flow.mapNotNull
 import kotlinx.coroutines.flow.retry
 import kotlinx.coroutines.flow.shareIn
 import tv.onscreen.android.data.api.NotificationsStream
+import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.model.NotificationItem
+import tv.onscreen.android.data.model.PlaybackStopData
 import tv.onscreen.android.data.model.PlaybackTransferData
 import tv.onscreen.android.data.model.ProgressUpdateData
+import tv.onscreen.android.data.model.asPlaybackStop
 import tv.onscreen.android.data.model.asPlaybackTransfer
 import tv.onscreen.android.data.model.asProgressUpdate
 import javax.inject.Inject
@@ -31,6 +34,10 @@ import javax.inject.Singleton
  * v2.2 added [subscribePlaybackTransfers] for the cross-device "play on
  * Living Room TV" flow. The TV launches the player when an event
  * targets its `client_name`.
+ *
+ * [subscribePlaybackStops] carries the admin "stop this stream" event the
+ * player obeys. Media-request notifications never reach this class — the
+ * stream drops them (see isHiddenNotificationType).
  */
 @Singleton
 open class NotificationsRepository @Inject constructor(
@@ -97,6 +104,14 @@ open class NotificationsRepository @Inject constructor(
     open fun subscribePlaybackTransfers(): Flow<PlaybackTransferData> =
         events.mapNotNull { ev ->
             if (ev.type == PLAYBACK_TRANSFER_TYPE) ev.asPlaybackTransfer() else null
+        }
+
+    /** Admin "stop this stream" (`playback.stop`). Like transfers, the event
+     *  reaches every one of the user's players; the caller MUST check
+     *  [PlaybackStop.targets] against what it is playing before acting. */
+    open fun subscribePlaybackStops(): Flow<PlaybackStopData> =
+        events.mapNotNull { ev ->
+            if (ev.type == PlaybackStop.EVENT_TYPE) ev.asPlaybackStop() else null
         }
 
     companion object {

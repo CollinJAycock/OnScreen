@@ -9,7 +9,7 @@ import android.app.AlertDialog
  * setSingleChoiceItems) and no focusable setView content — opens with nothing
  * focused on a TV. With no touchscreen the D-pad can't reach the button bar, so
  * the dialog is dead: only Back dismisses it. Users report this as "the Log out
- * / Resume / Request button does nothing."
+ * / Resume button does nothing."
  *
  * Call between create() and show() on any button-only dialog:
  * ```

@@ -62,6 +62,43 @@ fun NotificationItem.asPlaybackTransfer(): PlaybackTransferData? {
     )
 }
 
+/** `playback.stop` (admin "stop this stream"). Null when the payload has no
+ *  item id — an untargetable event is ignored rather than stopping every
+ *  player. Blank optional strings read as absent, like the web parser. */
+fun NotificationItem.asPlaybackStop(): PlaybackStopData? {
+    val d = data ?: return null
+    val itemId = (d["item_id"] as? String)?.takeIf { it.isNotEmpty() } ?: return null
+    fun str(key: String): String? = (d[key] as? String)?.takeIf { it.isNotEmpty() }
+    return PlaybackStopData(
+        item_id = itemId,
+        session_id = str("session_id"),
+        client_name = str("client_name"),
+        decision = str("decision"),
+        message = str("message"),
+    )
+}
+
+/**
+ * Notification types this app must never surface or act on: media requests
+ * (`request_created`, `request_pending`, `request_approved`, …) are not a
+ * feature of the Android apps. Dropped at the SSE parse layer
+ * ([tv.onscreen.android.data.api.NotificationsStream]) so no subscriber —
+ * present or future (toast, row, badge) — can ever see one.
+ */
+fun isHiddenNotificationType(type: String): Boolean =
+    type.startsWith("request_") || type.startsWith("request.")
+
+/** Payload of a `playback.stop` SSE event — mirrors the server's
+ *  PlaybackStopPayload (internal/api/v1/playback_stop.go). [message] is the
+ *  admin's optional note (at most 200 chars, single line). */
+data class PlaybackStopData(
+    val item_id: String,
+    val session_id: String? = null,
+    val client_name: String? = null,
+    val decision: String? = null,
+    val message: String? = null,
+)
+
 /** Payload of a `progress.updated` SSE event. Mirrors the server-side
  *  struct in internal/api/v1/items.go's Progress handler. */
 data class ProgressUpdateData(

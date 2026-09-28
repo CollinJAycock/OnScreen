@@ -15,4 +15,13 @@ data class MediaItem(
     val poster_path: String? = null,
     val created_at: String,
     val updated_at: String,
+    // The caller's watch state (v2.5; all absent on older servers or when
+    // the server's watch store isn't wired). Videos (movie / episode /
+    // music & home video): watch_state + view_offset_ms (only with a
+    // resume point). Shows / seasons: leaf_count = episodes within the
+    // rating ceiling, unwatched_count = how many of those aren't watched.
+    val watch_state: String? = null,
+    val view_offset_ms: Long? = null,
+    val leaf_count: Long? = null,
+    val unwatched_count: Long? = null,
 )

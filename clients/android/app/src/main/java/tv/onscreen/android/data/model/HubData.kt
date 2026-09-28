@@ -25,6 +25,15 @@ data class HubData(
     val recently_added: List<HubItem> = emptyList(),
     val recently_added_by_library: List<HubLibraryRow> = emptyList(),
     val trending: List<HubItem> = emptyList(),
+    // v2.5 per-user watch rows. Older servers omit both keys; the defaults
+    // keep them parsing (and the rows simply don't render).
+    //
+    // [next_up]: per show the caller is part-way through, the next unwatched
+    // episode. Tiles ARE episodes (id/title/type=episode) carrying
+    // show_id / show_title / season_number / episode_number.
+    val next_up: List<HubItem> = emptyList(),
+    // [plan_to_watch]: items the caller set to Plan to Watch, newest first.
+    val plan_to_watch: List<HubItem> = emptyList(),
 )
 
 @JsonClass(generateAdapter = true)
@@ -39,6 +48,15 @@ data class HubItem(
     val view_offset_ms: Long? = null,
     val duration_ms: Long? = null,
     val updated_at: Long = 0,
+    /** Parent show's name. Set on Next Up episode tiles and on episode rows of
+     *  the recently-added strips; omitted everywhere else. */
+    val show_title: String? = null,
+    /** Next Up episode tiles: the show the episode belongs to and its
+     *  position within it (the server sends 0 when the scanner recorded no
+     *  number). */
+    val show_id: String? = null,
+    val season_number: Int? = null,
+    val episode_number: Int? = null,
 )
 
 /** "Recently added to <library>" strip — library info denormalized so

@@ -3,6 +3,7 @@ package tv.onscreen.android.data.repository
 import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.MediaItem
+import tv.onscreen.android.data.model.RandomLibraryItem
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -34,8 +35,19 @@ class LibraryRepository @Inject constructor(
         sort: String? = null,
         sortDir: String? = null,
         genre: String? = null,
+        /** v2.5 `?watch=` filter: unwatched | in_progress | watched; null = all. */
+        watch: String? = null,
     ): Pair<List<MediaItem>, Int> {
-        val resp = api.getLibraryItems(libraryId, limit, offset, sort, sortDir, genre)
+        val resp = api.getLibraryItems(libraryId, limit, offset, sort, sortDir, genre, watch)
         return resp.data to resp.meta.total
     }
+
+    /** "Surprise me": a random item under the current genre / watch filters,
+     *  or null when nothing matches (404). Other failures throw. */
+    suspend fun pickRandom(libraryId: String, genre: String? = null, watch: String? = null): RandomLibraryItem? =
+        try {
+            api.getRandomLibraryItem(libraryId, genre, watch).data
+        } catch (e: retrofit2.HttpException) {
+            if (e.code() == 404) null else throw e
+        }
 }

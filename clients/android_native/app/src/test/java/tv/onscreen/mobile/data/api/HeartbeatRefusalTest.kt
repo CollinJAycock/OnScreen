@@ -72,6 +72,26 @@ class HeartbeatRefusalTest {
     }
 
     @Test
+    fun `PLAYBACK_STOPPED 403 on playing is an admin stop carrying the server sentence`() {
+        val body = """{"error":{"code":"PLAYBACK_STOPPED","message":"Playback was stopped by the server admin: maintenance"}}"""
+        assertThat(HeartbeatRefusal.of("playing", http(403, body)))
+            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin: maintenance"))
+    }
+
+    @Test
+    fun `PLAYBACK_STOPPED without a message falls back to the generic sentence`() {
+        val body = """{"error":{"code":"PLAYBACK_STOPPED","message":""}}"""
+        assertThat(HeartbeatRefusal.of("playing", http(403, body)))
+            .isEqualTo(HeartbeatRefusal.PlaybackStopped("Playback was stopped by the server admin."))
+    }
+
+    @Test
+    fun `PLAYBACK_STOPPED on a paused report is not a refusal`() {
+        val body = """{"error":{"code":"PLAYBACK_STOPPED","message":"x"}}"""
+        assertThat(HeartbeatRefusal.of("paused", http(403, body))).isNull()
+    }
+
+    @Test
     fun `heartbeat lets cancellation propagate`() {
         assertThrows(CancellationException::class.java) {
             kotlinx.coroutines.runBlocking {

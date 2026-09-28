@@ -142,6 +142,21 @@
     <string name="watch_limit_daily">You’ve reached today’s watch-time limit for this account. Check back tomorrow.</string>
     <string name="watch_limit_outside_hours">Playback is outside the allowed hours for this account. Try again during the permitted times.</string>
     <string name="watch_limit_generic">Playback is blocked by a parental watch limit on this account.</string>
+    <!-- Admin "stop this stream": dialog title; the body is the server's sentence. -->
+    <string name="playback_stopped_title">Playback stopped</string>
+
+    <!-- Report a problem (detail screen action + ReportProblemDialog) -->
+    <string name="report_problem">Report a problem</string>
+    <string name="report_problem_whats_wrong">What\'s wrong?</string>
+    <string name="report_problem_checking">Checking your earlier reports…</string>
+    <string name="report_problem_already_reported">%1$s — already reported</string>
+    <string name="report_problem_note_label">Add a note for the admin (optional)</string>
+    <string name="report_problem_note_hint">What happened? (optional)</string>
+    <string name="report_problem_send">Send report</string>
+    <string name="report_problem_sending">Sending…</string>
+    <string name="report_problem_back">Back</string>
+    <string name="report_problem_sent">Thanks — an admin has been notified and will take a look.</string>
+    <string name="report_problem_close">Close</string>
     <string name="resume_watching">Resume?</string>
     <string name="resume_from">Resume from %s</string>
     <string name="start_over">Start over</string>
