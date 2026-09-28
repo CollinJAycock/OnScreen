@@ -654,9 +654,16 @@
   .hub-card-wrap {
     --card-w: clamp(120px, 10vw, 220px);
     flex: 0 0 var(--card-w);
+    /* A flex item's minimum width defaults to its content's min-content
+       width unless it clips overflow — and a nowrap title's min-content is
+       the whole line. Without these the wrapper grew to fit long titles
+       ("From Overshadowed to Overpowered: …") instead of ellipsizing, so
+       tiles came out wider than their posters. */
+    min-width: 0;
+    width: var(--card-w);
     position: relative;
   }
-  .hub-card-wrap > .hub-card { display: block; }
+  .hub-card-wrap > .hub-card { display: block; width: 100%; }
   .hub-card-remove {
     position: absolute;
     top: 0.35rem;

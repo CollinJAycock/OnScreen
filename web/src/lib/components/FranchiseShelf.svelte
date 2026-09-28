@@ -78,7 +78,9 @@
   .see-all { font-size: 0.75rem; color: var(--accent-text, var(--accent)); text-decoration: none; }
   .see-all:hover { text-decoration: underline; }
   .row { display: flex; gap: 0.85rem; overflow-x: auto; padding-bottom: 0.4rem; }
-  .part { flex: 0 0 120px; text-decoration: none; color: inherit; }
+  /* min-width: 0 — otherwise the flex item's minimum width is its nowrap
+     title's full length and a long title widens the slot past the poster. */
+  .part { flex: 0 0 120px; min-width: 0; text-decoration: none; color: inherit; }
   .poster {
     position: relative; aspect-ratio: 2/3; border-radius: 6px; overflow: hidden;
     background: rgba(255,255,255,0.03); border: 1px solid var(--border);
