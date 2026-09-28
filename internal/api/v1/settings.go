@@ -40,6 +40,10 @@ type SettingsServiceIface interface {
 	SetTranscodeConfig(ctx context.Context, cfg settings.TranscodeConfig) error
 	OpenSubtitles(ctx context.Context) settings.OpenSubtitlesConfig
 	SetOpenSubtitles(ctx context.Context, cfg settings.OpenSubtitlesConfig) error
+	LastFM(ctx context.Context) settings.LastFMConfig
+	SetLastFM(ctx context.Context, cfg settings.LastFMConfig) error
+	Trakt(ctx context.Context) settings.TraktConfig
+	SetTrakt(ctx context.Context, cfg settings.TraktConfig) error
 	OIDC(ctx context.Context) settings.OIDCConfig
 	SetOIDC(ctx context.Context, cfg settings.OIDCConfig) error
 	LDAP(ctx context.Context) settings.LDAPConfig
@@ -578,6 +582,8 @@ type settingsResponse struct {
 	WebDownloadsEnabled bool                    `json:"web_downloads_enabled"`
 	PinSwitchEnabled    bool                    `json:"pin_switch_enabled"`
 	OpenSubtitles       openSubtitlesSettingDTO `json:"opensubtitles"`
+	LastFM              lastFMSettingDTO        `json:"lastfm"`
+	Trakt               traktSettingDTO         `json:"trakt"`
 	OIDC                oidcSettingDTO          `json:"oidc"`
 	LDAP                ldapSettingDTO          `json:"ldap"`
 	SAML                samlSettingDTO          `json:"saml"`
@@ -803,6 +809,29 @@ func toOpenSubtitlesDTO(cfg settings.OpenSubtitlesConfig) openSubtitlesSettingDT
 	}
 }
 
+// lastFMSettingDTO is the Last.fm API account users' scrobbling runs under.
+// The API key is an identifier (it's in every user's approval link) and is
+// shown; the shared secret is masked.
+type lastFMSettingDTO struct {
+	APIKey       string `json:"api_key"`
+	SharedSecret string `json:"shared_secret"` // "****" if set, "" if empty
+}
+
+func toLastFMDTO(cfg settings.LastFMConfig) lastFMSettingDTO {
+	return lastFMSettingDTO{APIKey: cfg.APIKey, SharedSecret: maskAPIKey(cfg.SharedSecret)}
+}
+
+// traktSettingDTO is the Trakt application users' scrobbling runs under. As
+// with OIDC, the client id is shown and the secret masked.
+type traktSettingDTO struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"` // "****" if set, "" if empty
+}
+
+func toTraktDTO(cfg settings.TraktConfig) traktSettingDTO {
+	return traktSettingDTO{ClientID: cfg.ClientID, ClientSecret: maskAPIKey(cfg.ClientSecret)}
+}
+
 // endpointMovesStoredSecret reports whether a settings PATCH would point an
 // integration at a different endpoint while keeping its stored secret — i.e.
 // the endpoint changes, a secret is stored, and the request neither supplies a
@@ -953,6 +982,8 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		WebDownloadsEnabled: h.svc.WebDownloadsEnabled(ctx),
 		PinSwitchEnabled:    h.svc.PinSwitchEnabled(ctx),
 		OpenSubtitles:       toOpenSubtitlesDTO(h.svc.OpenSubtitles(ctx)),
+		LastFM:              toLastFMDTO(h.svc.LastFM(ctx)),
+		Trakt:               toTraktDTO(h.svc.Trakt(ctx)),
 		OIDC:                toOIDCDTO(h.svc.OIDC(ctx)),
 		LDAP:                toLDAPDTO(h.svc.LDAP(ctx)),
 		SAML:                toSAMLDTO(h.svc.SAML(ctx)),
@@ -980,6 +1011,14 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 			Languages *string `json:"languages"`
 			Enabled   *bool   `json:"enabled"`
 		} `json:"opensubtitles"`
+		LastFM *struct {
+			APIKey       *string `json:"api_key"`
+			SharedSecret *string `json:"shared_secret"`
+		} `json:"lastfm"`
+		Trakt *struct {
+			ClientID     *string `json:"client_id"`
+			ClientSecret *string `json:"client_secret"`
+		} `json:"trakt"`
 		OIDC *struct {
 			Enabled       *bool   `json:"enabled"`
 			DisplayName   *string `json:"display_name"`
@@ -1196,6 +1235,35 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if err := h.svc.SetOpenSubtitles(ctx, cur); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "opensubtitles", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.LastFM != nil {
+		// Read-modify-write; the round-tripped mask means "keep the secret".
+		cur := h.svc.LastFM(ctx)
+		if body.LastFM.APIKey != nil {
+			cur.APIKey = strings.TrimSpace(*body.LastFM.APIKey)
+		}
+		if body.LastFM.SharedSecret != nil && *body.LastFM.SharedSecret != maskedSecret {
+			cur.SharedSecret = strings.TrimSpace(*body.LastFM.SharedSecret)
+		}
+		if err := h.svc.SetLastFM(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "lastfm", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.Trakt != nil {
+		cur := h.svc.Trakt(ctx)
+		if body.Trakt.ClientID != nil {
+			cur.ClientID = strings.TrimSpace(*body.Trakt.ClientID)
+		}
+		if body.Trakt.ClientSecret != nil && *body.Trakt.ClientSecret != maskedSecret {
+			cur.ClientSecret = strings.TrimSpace(*body.Trakt.ClientSecret)
+		}
+		if err := h.svc.SetTrakt(ctx, cur); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "trakt", "err", err)
 			respond.InternalError(w, r)
 			return
 		}
@@ -1432,6 +1500,12 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.OpenSubtitles != nil {
 			detail["opensubtitles"] = "changed"
+		}
+		if body.LastFM != nil {
+			detail["lastfm"] = "changed"
+		}
+		if body.Trakt != nil {
+			detail["trakt"] = "changed"
 		}
 		if body.OIDC != nil {
 			detail["oidc"] = "changed"

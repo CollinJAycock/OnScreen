@@ -58,6 +58,13 @@ the transcode surface; when adding new specific failure modes (codec rejection,
 encoder unavailable, supersede chain), introduce a new stable code rather than
 reusing a generic one.
 
+## Scrobbling
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `SCROBBLE_NOT_CONFIGURED` | 409 | Last.fm / Trakt link attempted, but the admin hasn't entered that service's API credentials. |
+| `SCROBBLE_UPSTREAM` | 502 | Last.fm / Trakt couldn't be reached, or answered unexpectedly, during a link. |
+
 ## Contract guarantees
 
 1. **Codes are stable.** Once shipped, a code never changes meaning. Renames

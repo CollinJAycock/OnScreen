@@ -80,12 +80,14 @@ type InsertWatchEventRow struct {
 	OccurredAt time.Time
 }
 
-// ScrobbleHook is invoked asynchronously after a terminal 'stop' event, so an
-// external scrobbler (ListenBrainz / Last.fm) can export the listen. It gets
-// the final position + duration so the dispatcher can apply the "played
-// enough" listen threshold; it must not block — Record fires it in its own
-// goroutine and ignores the result. nil disables it.
-type ScrobbleHook func(ctx context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, occurredAt time.Time)
+// ScrobbleHook is invoked asynchronously after each play, resume, pause and
+// stop event (event is the event type), so an external scrobbler can export
+// it: "now playing" on a play, progress on a pause, the completed play on a
+// stop. It gets the position + duration so the dispatcher can apply its own
+// thresholds. It must not block — Record fires it in its own goroutine and
+// ignores the result — and it must be cheap on "play": clients send one with
+// every progress heartbeat. nil disables it.
+type ScrobbleHook func(ctx context.Context, event string, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, occurredAt time.Time)
 
 // Service implements watch event business logic.
 //
@@ -114,7 +116,7 @@ func (s *Service) WithMetrics(m *observability.Metrics) *Service {
 }
 
 // WithScrobbleHook attaches the external-scrobble dispatcher, called async on
-// completed-play ('scrobble') events. nil is a no-op.
+// play / resume / pause / stop events. nil is a no-op.
 func (s *Service) WithScrobbleHook(fn ScrobbleHook) *Service {
 	s.scrobble = fn
 	return s
@@ -144,21 +146,30 @@ func (s *Service) Record(ctx context.Context, p RecordParams) error {
 		s.metrics.WatchEventsTotal.WithLabelValues(p.EventType).Inc()
 	}
 
-	// Fire-and-forget external scrobble on the terminal 'stop' event — the
-	// universal completion signal every first-party client emits (the web/
-	// native players don't produce a distinct 'scrobble' event). The
-	// dispatcher applies the listen threshold (played enough) and gates on a
-	// linked account + music track, so handing it every 'stop' is fine.
-	if p.EventType == "stop" && s.scrobble != nil {
+	// Fire-and-forget external scrobble. 'stop' is the universal completion
+	// signal every first-party client emits (the web/native players don't
+	// produce a distinct 'scrobble' event); play / resume / pause drive "now
+	// playing" and resume points. The dispatcher throttles the per-heartbeat
+	// plays, applies the listen threshold and gates on a linked account, so
+	// handing it every such event is fine.
+	if s.scrobble != nil && scrobbledEvent(p.EventType) {
 		at := p.OccurredAt
 		if at.IsZero() {
 			at = time.Now().UTC()
 		}
 		observability.SafeGo(s.logger, "watchevent.scrobble", func() {
-			s.scrobble(context.Background(), p.UserID, p.MediaID, p.PositionMS, p.DurationMS, at)
+			s.scrobble(context.Background(), p.EventType, p.UserID, p.MediaID, p.PositionMS, p.DurationMS, at)
 		})
 	}
 	return nil
+}
+
+func scrobbledEvent(eventType string) bool {
+	switch eventType {
+	case "play", "resume", "pause", "stop":
+		return true
+	}
+	return false
 }
 
 // GetState returns the current watch state for a user+media pair.

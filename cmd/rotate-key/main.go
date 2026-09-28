@@ -41,6 +41,7 @@ import (
 	"github.com/onscreen/onscreen/internal/arrcrypt"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/notifyagents"
+	"github.com/onscreen/onscreen/internal/scrobble"
 )
 
 // encPrefix must match internal/domain/settings.encPrefix — the sentinel that
@@ -106,6 +107,9 @@ func main() {
 		{"webhook_endpoints.secret", rotateWebhookSecrets},
 		{"users.totp_secret", rotateTOTPSecrets},
 		{"user_scrobble.listenbrainz_token", rotateScrobbleTokens},
+		{"user_scrobble.lastfm_session_key", rotateScrobbleCredential(scrobble.ColumnLastFMSessionKey)},
+		{"user_scrobble.trakt_access_token", rotateScrobbleCredential(scrobble.ColumnTraktAccessToken)},
+		{"user_scrobble.trakt_refresh_token", rotateScrobbleCredential(scrobble.ColumnTraktRefreshToken)},
 		{"arr_services.api_key", rotateArrAPIKeys},
 		{"notification_agents.secret", rotateNotificationAgentSecrets},
 	}
@@ -116,7 +120,7 @@ func main() {
 		if err != nil {
 			fatal("%s: %v", j.name, err)
 		}
-		fmt.Printf("  %-28s rotated=%-4d skipped=%d\n", j.name, rot, skip)
+		fmt.Printf("  %-34s rotated=%-4d skipped=%d\n", j.name, rot, skip)
 		totalRot += rot
 		totalSkip += skip
 	}
@@ -246,6 +250,66 @@ func rotateScrobbleTokens(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.E
 	return rotateRawColumn(ctx, tx, oldEnc, newEnc,
 		`SELECT user_id::text, listenbrainz_token FROM user_scrobble WHERE listenbrainz_token IS NOT NULL AND listenbrainz_token <> ''`,
 		`UPDATE user_scrobble SET listenbrainz_token = $1 WHERE user_id = $2::uuid`)
+}
+
+// reSealScrobbleCredential re-seals one Last.fm / Trakt credential. Unlike
+// the ListenBrainz token these are bound to their column and user
+// (scrobble.CredentialContext). ok=false leaves the row alone: it didn't open
+// with the old key (wrong key, or sealed for another slot).
+func reSealScrobbleCredential(oldEnc, newEnc *auth.Encryptor, column string, userID uuid.UUID, stored string) (out string, ok bool) {
+	plain, err := oldEnc.DecryptContext(stored, scrobble.CredentialContext(column, userID))
+	if err != nil {
+		return "", false
+	}
+	sealed, err := newEnc.EncryptContext(plain, scrobble.CredentialContext(column, userID))
+	if err != nil {
+		return "", false
+	}
+	return sealed, true
+}
+
+// rotateScrobbleCredential re-seals one bound user_scrobble column. column is
+// one of scrobble.BoundColumns, never input, so it is safe to splice into SQL.
+func rotateScrobbleCredential(column string) func(context.Context, pgx.Tx, *auth.Encryptor, *auth.Encryptor) (int, int, error) {
+	return func(ctx context.Context, tx pgx.Tx, oldEnc, newEnc *auth.Encryptor) (int, int, error) {
+		type row struct {
+			userID uuid.UUID
+			secret string
+		}
+		var rows []row
+		q, err := tx.Query(ctx, fmt.Sprintf(
+			`SELECT user_id, %[1]s FROM user_scrobble WHERE %[1]s IS NOT NULL AND %[1]s <> ''`, column))
+		if err != nil {
+			return 0, 0, fmt.Errorf("select: %w", err)
+		}
+		for q.Next() {
+			var r row
+			if err := q.Scan(&r.userID, &r.secret); err != nil {
+				q.Close()
+				return 0, 0, fmt.Errorf("scan: %w", err)
+			}
+			rows = append(rows, r)
+		}
+		q.Close()
+		if err := q.Err(); err != nil {
+			return 0, 0, fmt.Errorf("iterate: %w", err)
+		}
+
+		var rotated, skipped int
+		for _, r := range rows {
+			sealed, ok := reSealScrobbleCredential(oldEnc, newEnc, column, r.userID, r.secret)
+			if !ok {
+				skipped++
+				continue
+			}
+			if _, err := tx.Exec(ctx, fmt.Sprintf(
+				`UPDATE user_scrobble SET %s = $1 WHERE user_id = $2`, column), sealed, r.userID); err != nil {
+				return rotated, skipped, fmt.Errorf("update %s: %w", r.userID, err)
+			}
+			rotated++
+		}
+		return rotated, skipped, nil
+	}
 }
 
 // rotateArrAPIKeys re-seals arr_services.api_key. Unlike the raw columns this

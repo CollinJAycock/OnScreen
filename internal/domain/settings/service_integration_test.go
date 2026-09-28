@@ -239,6 +239,26 @@ func TestService_AllConfigsRoundTrip(t *testing.T) {
 		}
 	})
 
+	t.Run("LastFM", func(t *testing.T) {
+		want := LastFMConfig{APIKey: "lfm-key", SharedSecret: "lfm-secret"}
+		if err := svc.SetLastFM(ctx, want); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		if got := svc.LastFM(ctx); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
+	t.Run("Trakt", func(t *testing.T) {
+		want := TraktConfig{ClientID: "trakt-id", ClientSecret: "trakt-secret"}
+		if err := svc.SetTrakt(ctx, want); err != nil {
+			t.Fatalf("Set: %v", err)
+		}
+		if got := svc.Trakt(ctx); got != want {
+			t.Errorf("got %+v, want %+v", got, want)
+		}
+	})
+
 	t.Run("OIDC", func(t *testing.T) {
 		want := OIDCConfig{
 			Enabled: true, DisplayName: "Authentik",
@@ -433,6 +453,12 @@ func TestService_GetUnsetReturnsZeroValues(t *testing.T) {
 	}
 	if got := svc.OIDC(ctx); got != (OIDCConfig{}) {
 		t.Errorf("OIDC unset: got %+v", got)
+	}
+	if got := svc.LastFM(ctx); got != (LastFMConfig{}) {
+		t.Errorf("LastFM unset: got %+v", got)
+	}
+	if got := svc.Trakt(ctx); got != (TraktConfig{}) {
+		t.Errorf("Trakt unset: got %+v", got)
 	}
 	if got := svc.SAML(ctx); got != (SAMLConfig{}) {
 		t.Errorf("SAML unset: got %+v", got)

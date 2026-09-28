@@ -10,6 +10,11 @@ tokens **and** it's the AES-256-GCM key for the secrets OnScreen stores at rest:
 - **webhook signing secrets** (`webhook_endpoints.secret`);
 - per-user **TOTP secrets** (`users.totp_secret`);
 - per-user **ListenBrainz scrobble tokens** (`user_scrobble.listenbrainz_token`);
+- per-user **Last.fm and Trakt scrobble credentials**
+  (`user_scrobble.lastfm_session_key`, `trakt_access_token`,
+  `trakt_refresh_token`), each bound to its column and user, so a ciphertext
+  moved to another row fails to decrypt. The operator's Last.fm / Trakt API
+  credentials live in `server_settings` with the other secrets;
 - per-service **Radarr / Sonarr API keys** (`arr_services.api_key`, stored with
   an `arrenc1:` prefix and bound to the row id, so a ciphertext moved between
   service rows fails to decrypt rather than silently working).

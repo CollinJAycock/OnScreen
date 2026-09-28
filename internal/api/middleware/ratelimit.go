@@ -76,6 +76,11 @@ var (
 	// the OS client's own 1 req/s limiter — a noisy user can stall
 	// the queue for everyone else if uncapped at the API layer.
 	SubtitlesLimit = RateLimitConfig{Limit: 30, Window: time.Minute}
+	// ScrobbleLinkLimit caps the Last.fm / Trakt account-link calls per
+	// session. Each one reaches the service under the operator's API
+	// credentials; the link page polls "complete" every few seconds while the
+	// user approves, which this sits comfortably above.
+	ScrobbleLinkLimit = RateLimitConfig{Limit: 30, Window: time.Minute}
 	// ArrWebhookLimit bounds the unauthenticated-until-key-checked *arr
 	// notification webhook per source IP. Sized well above a real import burst
 	// (a season pack fires one event per episode) while turning online guessing

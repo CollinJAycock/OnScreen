@@ -8,6 +8,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/notifyagents"
+	"github.com/onscreen/onscreen/internal/scrobble"
 )
 
 func mustEnc(t *testing.T, key string) *auth.Encryptor {
@@ -141,5 +142,39 @@ func TestReEncryptAgentSecret(t *testing.T) {
 	}
 	if _, ok := reEncryptAgentSecret(nw, old, id, stored); ok {
 		t.Error("a wrong old key must be skipped")
+	}
+}
+
+// Last.fm / Trakt credentials are bound to their column and user: each bound
+// column rotates under the same (column, user), and a ciphertext moved to
+// another user or another column is skipped, never rewritten.
+func TestReSealScrobbleCredential(t *testing.T) {
+	old := mustEnc(t, strings.Repeat("a", 32))
+	nw := mustEnc(t, strings.Repeat("b", 32))
+	user, other := uuid.New(), uuid.New()
+
+	for _, col := range scrobble.BoundColumns {
+		stored, err := old.EncryptContext("sk-"+col, scrobble.CredentialContext(col, user))
+		if err != nil {
+			t.Fatalf("encrypt: %v", err)
+		}
+		out, ok := reSealScrobbleCredential(old, nw, col, user, stored)
+		if !ok {
+			t.Fatalf("%s: expected the credential to rotate", col)
+		}
+		if got, err := nw.DecryptContext(out, scrobble.CredentialContext(col, user)); err != nil || got != "sk-"+col {
+			t.Fatalf("%s: new key should open it for the same slot: %q, %v", col, got, err)
+		}
+		if _, ok := reSealScrobbleCredential(old, nw, col, other, stored); ok {
+			t.Errorf("%s: a credential sealed for another user must be skipped", col)
+		}
+		if _, ok := reSealScrobbleCredential(nw, old, col, user, stored); ok {
+			t.Errorf("%s: a wrong old key must be skipped", col)
+		}
+	}
+	// The access token opened as a refresh token is another slot.
+	stored, _ := old.EncryptContext("tok", scrobble.CredentialContext(scrobble.ColumnTraktAccessToken, user))
+	if _, ok := reSealScrobbleCredential(old, nw, scrobble.ColumnTraktRefreshToken, user, stored); ok {
+		t.Error("a credential moved to another column must be skipped")
 	}
 }

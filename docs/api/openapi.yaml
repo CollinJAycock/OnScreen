@@ -80,6 +80,8 @@ tags:
     description: User profile, PIN management, managed profiles, admin user management.
   - name: Settings
     description: Server-wide settings (admin only).
+  - name: Scrobbling
+    description: Per-user ListenBrainz / Last.fm / Trakt links. Plays are exported server-side, so one link covers every client.
   - name: Webhooks
     description: |
       Outbound webhooks (admin only).
@@ -2438,6 +2440,174 @@ paths:
       responses:
         '204': { description: Saved. }
 
+  /api/v1/users/me/scrobble:
+    get:
+      summary: Caller's scrobble links
+      description: |
+        What the caller has linked for external scrobbling. No credential is
+        ever returned. `*_available` says whether the admin has entered that
+        service's API credentials (Settings), i.e. whether the caller can link
+        it at all. The Last.fm / Trakt fields are v2.5 (absent before).
+
+        Plays are exported server-side from watch events, so a link made on
+        any client covers plays on every client: ListenBrainz and Last.fm get
+        music (a listen counts past half the track or 4 minutes, and the
+        playing track shows as "now playing"); Trakt gets movies and episodes
+        (start / pause / stop; Trakt records a stop at 80%+ as watched).
+      tags: [Scrobbling]
+      responses:
+        '200':
+          description: Link status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      listenbrainz_linked: { type: boolean }
+                      listenbrainz_enabled: { type: boolean }
+                      lastfm_available: { type: boolean }
+                      lastfm_linked: { type: boolean }
+                      lastfm_username: { type: string }
+                      trakt_available: { type: boolean }
+                      trakt_linked: { type: boolean }
+                      trakt_username: { type: string }
+
+  /api/v1/users/me/scrobble/listenbrainz:
+    put:
+      summary: Link or unlink ListenBrainz
+      description: Stores the caller's ListenBrainz user token (encrypted). An empty token unlinks.
+      tags: [Scrobbling]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string }
+                enabled: { type: boolean }
+      responses:
+        '204': { description: Saved. }
+
+  /api/v1/users/me/scrobble/lastfm/link:
+    post:
+      summary: Start linking Last.fm
+      description: |
+        Starts Last.fm's token handshake. The client shows `auth_url` for the
+        user to approve OnScreen on last.fm, then polls
+        `.../lastfm/link/complete` with `pending` (every few seconds). No
+        callback URL is involved, so this works for a server that isn't
+        reachable from the internet. `pending` is opaque: sealed by the
+        server and bound to the caller. Rate-limited per session with the
+        other link calls.
+      tags: [Scrobbling]
+      responses:
+        '200':
+          description: Approval URL and pending handle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      auth_url: { type: string }
+                      pending: { type: string }
+        '409': { description: 'SCROBBLE_NOT_CONFIGURED: no Last.fm API account on this server.' }
+        '502': { description: 'SCROBBLE_UPSTREAM: Last.fm could not be reached.' }
+
+  /api/v1/users/me/scrobble/lastfm/link/complete:
+    post:
+      summary: Finish linking Last.fm (poll)
+      tags: [Scrobbling]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScrobbleLinkComplete' }
+      responses:
+        '200':
+          description: '`pending` until approved, then `linked` (with username); `expired` means start over.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ScrobbleLinkResult' }
+        '400': { description: Missing or invalid pending handle. }
+        '409': { description: 'SCROBBLE_NOT_CONFIGURED' }
+        '502': { description: 'SCROBBLE_UPSTREAM' }
+
+  /api/v1/users/me/scrobble/lastfm:
+    delete:
+      summary: Unlink Last.fm
+      description: Forgets the caller's Last.fm session. Last.fm has no revoke call; the user can also remove OnScreen from their Last.fm settings.
+      tags: [Scrobbling]
+      responses:
+        '204': { description: Unlinked. }
+
+  /api/v1/users/me/scrobble/trakt/link:
+    post:
+      summary: Start linking Trakt
+      description: |
+        Starts Trakt's device-code flow. The user enters `user_code` at
+        `verification_url` on any device; the client polls
+        `.../trakt/link/complete` with `pending` every `interval` seconds for
+        up to `expires_in` seconds.
+      tags: [Scrobbling]
+      responses:
+        '200':
+          description: Device code and pending handle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      user_code: { type: string }
+                      verification_url: { type: string }
+                      expires_in: { type: integer }
+                      interval: { type: integer }
+                      pending: { type: string }
+        '409': { description: 'SCROBBLE_NOT_CONFIGURED: no Trakt app on this server.' }
+        '502': { description: 'SCROBBLE_UPSTREAM: Trakt could not be reached.' }
+
+  /api/v1/users/me/scrobble/trakt/link/complete:
+    post:
+      summary: Finish linking Trakt (poll)
+      tags: [Scrobbling]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScrobbleLinkComplete' }
+      responses:
+        '200':
+          description: '`pending` / `slow_down` (poll less often) until settled: `linked`, `expired` or `denied`.'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ScrobbleLinkResult' }
+        '400': { description: Missing or invalid pending handle. }
+        '409': { description: 'SCROBBLE_NOT_CONFIGURED' }
+        '502': { description: 'SCROBBLE_UPSTREAM' }
+
+  /api/v1/users/me/scrobble/trakt:
+    delete:
+      summary: Unlink Trakt
+      description: Revokes the caller's token with Trakt (best-effort) and forgets it.
+      tags: [Scrobbling]
+      responses:
+        '204': { description: Unlinked. }
+
   /api/v1/users/switchable:
     get:
       summary: List local users the caller can switch into via PIN
@@ -2781,7 +2951,8 @@ paths:
       description: |
         Returns every server-wide setting in one envelope. Secret-bearing
         fields (tmdb_api_key, opensubtitles password, OIDC client_secret,
-        SAML SP private key, SMTP password) are masked as `****` when set
+        SAML SP private key, SMTP password, Last.fm shared_secret, Trakt
+        client_secret) are masked as `****` when set
         and empty when unset; the patcher below echoes back masked values
         unchanged so partial updates don't clobber stored secrets.
 
@@ -2793,6 +2964,10 @@ paths:
             watch-page Download button. Default false. Mirrors to
             `features.web_downloads` in `/system/capabilities`.
           - `opensubtitles` (api_key, username, password, languages, enabled)
+          - `lastfm` *(v2.5)* (api_key, shared_secret — masked) — the Last.fm
+            API account users' Last.fm scrobbling runs under
+          - `trakt` *(v2.5)* (client_id, client_secret — masked) — the Trakt
+            app users' Trakt scrobbling runs under
           - `oidc`, `ldap`, `saml`, `smtp`, `otel`, `general` (sub-objects)
       tags: [Settings]
       responses:
@@ -4523,6 +4698,16 @@ components:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   schemas:
+    ScrobbleLinkComplete:
+      type: object
+      required: [pending]
+      properties:
+        pending: { type: string, description: The opaque handle from the matching link call. }
+    ScrobbleLinkResult:
+      type: object
+      properties:
+        status: { type: string, enum: [pending, slow_down, linked, expired, denied] }
+        username: { type: string, description: Set once linked. }
     # ── Envelopes ──────────────────────────────────────────────────────────
     ErrorEnvelope:
       type: object

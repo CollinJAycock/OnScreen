@@ -43,6 +43,8 @@ const keyStorageConfig = "storage_config"
 const keySystemConfig = "system_config"
 const keyTLSConfig = "tls_config"
 const keyRequestsConfig = "requests_config"
+const keyLastFMConfig = "lastfm_config"
+const keyTraktConfig = "trakt_config"
 
 // IntroDetectionMode controls whether the worker auto-detects intro and
 // credits markers on each scan.
@@ -116,6 +118,8 @@ var secretKeys = map[string]struct{}{
 	keySMTPConfig:          {}, // contains password
 	keyStorageConfig:       {}, // contains object-storage secret key
 	keyTLSConfig:           {}, // contains the TLS private key PEM
+	keyLastFMConfig:        {}, // contains the Last.fm shared secret
+	keyTraktConfig:         {}, // contains the Trakt client secret
 }
 
 func (s *Service) isSecretKey(key string) bool {
@@ -469,6 +473,67 @@ func (s *Service) SetOpenSubtitles(ctx context.Context, cfg OpenSubtitlesConfig)
 		return err
 	}
 	return s.set(ctx, keyOpenSubtitlesConfig, string(b))
+}
+
+// LastFMConfig is the operator's Last.fm API account, which users' Last.fm
+// scrobbling runs under. Both values come from last.fm/api/account/create.
+// Swapping the account invalidates every user's existing link: Last.fm
+// sessions belong to the API key that created them.
+type LastFMConfig struct {
+	APIKey       string `json:"api_key"`
+	SharedSecret string `json:"shared_secret"`
+}
+
+// LastFM returns the stored Last.fm API account, or the zero value.
+func (s *Service) LastFM(ctx context.Context) LastFMConfig {
+	var cfg LastFMConfig
+	s.getJSON(ctx, keyLastFMConfig, &cfg)
+	return cfg
+}
+
+// SetLastFM persists the Last.fm API account as JSON.
+func (s *Service) SetLastFM(ctx context.Context, cfg LastFMConfig) error {
+	return s.setJSON(ctx, keyLastFMConfig, cfg)
+}
+
+// TraktConfig is the operator's Trakt API application, which users' Trakt
+// scrobbling runs under (trakt.tv/oauth/applications). As with Last.fm,
+// swapping the application invalidates every user's link.
+type TraktConfig struct {
+	ClientID     string `json:"client_id"`
+	ClientSecret string `json:"client_secret"`
+}
+
+// Trakt returns the stored Trakt application, or the zero value.
+func (s *Service) Trakt(ctx context.Context) TraktConfig {
+	var cfg TraktConfig
+	s.getJSON(ctx, keyTraktConfig, &cfg)
+	return cfg
+}
+
+// SetTrakt persists the Trakt application as JSON.
+func (s *Service) SetTrakt(ctx context.Context, cfg TraktConfig) error {
+	return s.setJSON(ctx, keyTraktConfig, cfg)
+}
+
+// getJSON decodes a JSON-valued setting into out, leaving it untouched when
+// the setting is absent or unreadable (logged).
+func (s *Service) getJSON(ctx context.Context, key string, out any) {
+	raw := s.get(ctx, key)
+	if raw == "" {
+		return
+	}
+	if err := json.Unmarshal([]byte(raw), out); err != nil {
+		s.logger.ErrorContext(ctx, "parse setting", "key", key, "err", err)
+	}
+}
+
+func (s *Service) setJSON(ctx context.Context, key string, v any) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	return s.set(ctx, key, string(b))
 }
 
 // OIDCConfig holds the configuration for a single generic OIDC identity

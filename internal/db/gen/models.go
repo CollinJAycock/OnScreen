@@ -632,6 +632,12 @@ type UserScrobble struct {
 	ListenbrainzEnabled bool               `json:"listenbrainz_enabled"`
 	CreatedAt           pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt           pgtype.Timestamptz `json:"updated_at"`
+	LastfmSessionKey    *string            `json:"lastfm_session_key"`
+	LastfmUsername      *string            `json:"lastfm_username"`
+	TraktAccessToken    *string            `json:"trakt_access_token"`
+	TraktRefreshToken   *string            `json:"trakt_refresh_token"`
+	TraktExpiresAt      pgtype.Timestamptz `json:"trakt_expires_at"`
+	TraktUsername       *string            `json:"trakt_username"`
 }
 
 type UserWatchLimit struct {

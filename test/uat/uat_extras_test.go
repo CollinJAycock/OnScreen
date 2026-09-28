@@ -260,6 +260,18 @@ func (s *stubSettingsService) OpenSubtitles(_ context.Context) settings.OpenSubt
 func (s *stubSettingsService) SetOpenSubtitles(_ context.Context, _ settings.OpenSubtitlesConfig) error {
 	return nil
 }
+func (s *stubSettingsService) LastFM(_ context.Context) settings.LastFMConfig {
+	return settings.LastFMConfig{}
+}
+func (s *stubSettingsService) SetLastFM(_ context.Context, _ settings.LastFMConfig) error {
+	return nil
+}
+func (s *stubSettingsService) Trakt(_ context.Context) settings.TraktConfig {
+	return settings.TraktConfig{}
+}
+func (s *stubSettingsService) SetTrakt(_ context.Context, _ settings.TraktConfig) error {
+	return nil
+}
 func (s *stubSettingsService) OIDC(_ context.Context) settings.OIDCConfig {
 	return settings.OIDCConfig{}
 }

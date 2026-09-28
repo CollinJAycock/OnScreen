@@ -126,6 +126,18 @@ func (m *mockSettingsService) SetWorkerFleet(_ context.Context, cfg settings.Wor
 func (m *mockSettingsService) OpenSubtitles(_ context.Context) settings.OpenSubtitlesConfig {
 	return settings.OpenSubtitlesConfig{}
 }
+func (m *mockSettingsService) LastFM(_ context.Context) settings.LastFMConfig {
+	return settings.LastFMConfig{}
+}
+func (m *mockSettingsService) SetLastFM(_ context.Context, _ settings.LastFMConfig) error {
+	return nil
+}
+func (m *mockSettingsService) Trakt(_ context.Context) settings.TraktConfig {
+	return settings.TraktConfig{}
+}
+func (m *mockSettingsService) SetTrakt(_ context.Context, _ settings.TraktConfig) error {
+	return nil
+}
 func (m *mockSettingsService) SetOpenSubtitles(_ context.Context, _ settings.OpenSubtitlesConfig) error {
 	return nil
 }

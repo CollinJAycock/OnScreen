@@ -140,6 +140,26 @@ Playback and library:
   button and last-delivery status. Secrets are encrypted at rest and never
   returned; delivery goes through the SSRF guard (see
   [docs/security.md](docs/security.md)).
+- **Last.fm and Trakt scrobbling** — alongside ListenBrainz, per user and
+  opt-in. Link under Settings → Scrobbling. It's done once on the web, and
+  plays from every client count, because the server exports them from watch
+  events.
+  - **Last.fm**: finished tracks (past half the track, or 4 minutes) are
+    scrobbled, and the playing track shows as scrobbling now.
+  - **Trakt**: movies and episodes are sent as start / pause / stop, matched
+    by TMDB / TVDB / IMDb id with a title and year fallback. Trakt records a
+    play that reaches 80% as watched and keeps a paused one's progress.
+  - **ListenBrainz** now also shows the playing track (playing_now).
+  - **Admin setup**: enter a Last.fm API account and a Trakt app under
+    Settings → Scrobbling apps; secrets are masked like the other keys.
+    Users link by approving OnScreen on Last.fm, or by entering a Trakt code
+    on any device. No callback URL is needed, so a server that isn't
+    reachable from the internet works.
+  - **Credentials**: encrypted at rest, bound to their user, and re-sealed
+    by `rotate-key`. An expiring Trakt token is refreshed in place, and one
+    revoked on trakt.tv unlinks itself. Migration 00031.
+  - **API**: `/api/v1/users/me/scrobble/{lastfm,trakt}/link[/complete]`, and
+    `DELETE` on each to unlink.
 
 Android apps (TV + phone). The request features above are web-only by
 design — neither Android app has any request functionality, and the phone

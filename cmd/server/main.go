@@ -625,12 +625,14 @@ func run() error {
 		return roots
 	}
 
-	// External scrobbling (ListenBrainz) — per-user, opt-in. The dispatcher is
-	// fed completed-play events by the watch-event service below and submits
-	// listens through the SSRF-guarded public client.
+	// External scrobbling (ListenBrainz, Last.fm, Trakt) — per-user, opt-in.
+	// The dispatcher is fed play / pause / stop events by the watch-event
+	// service below and submits through the SSRF-guarded public client. The
+	// Last.fm / Trakt API credentials are the operator's, from Settings.
 	scrobbleStore := scrobble.NewStore(rwPool, encryptor)
-	scrobbleSvc := scrobble.NewService(scrobbleStore, scrobbleStore, safehttp.Default(), logger)
-	scrobbleHandler := v1.NewScrobbleHandler(scrobbleStore)
+	scrobbleSvc := scrobble.NewService(scrobbleStore, scrobbleStore, scrobbleAppsAdapter{svc: settingsSvc},
+		encryptor, safehttp.Default(), logger)
+	scrobbleHandler := v1.NewScrobbleHandler(scrobbleSvc, logger)
 
 	// Parental watch limits — per-user daily cap + allowed-hours, enforced at
 	// the progress + transcode-start chokepoints and surfaced to clients via
@@ -643,7 +645,7 @@ func run() error {
 	roWQ := &watchEventAdapter{q: gen.New(roPool)}
 	watchSvc := watchevent.NewService(rwWQ, roWQ, logger).
 		WithMetrics(metrics).
-		WithScrobbleHook(scrobbleSvc.OnScrobble)
+		WithScrobbleHook(scrobbleSvc.OnPlayback)
 
 	// Watching-status mirror — Plan to Watch / Watching / Completed /
 	// On Hold / Dropped. Generic per-(user, item) feature shipped to

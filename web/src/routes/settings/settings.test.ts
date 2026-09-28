@@ -82,6 +82,29 @@ describe('Settings page', () => {
     expect(arg.arr_path_mappings).toEqual({});
   });
 
+  it('round-trips the scrobbling apps, keeping masked secrets', async () => {
+    mockSettingsGet.mockResolvedValue({
+      tmdb_api_key: '', tvdb_api_key: '', arr_api_key: '', arr_webhook_url: '', arr_path_mappings: {},
+      lastfm: { api_key: 'lfm-key', shared_secret: '****' },
+      trakt: { client_id: '', client_secret: '' },
+    });
+    mockSettingsUpdate.mockResolvedValue(undefined);
+    render(Page);
+
+    const key = (await screen.findByLabelText(/Last.fm API key/i)) as HTMLInputElement;
+    await waitFor(() => expect(key.value).toBe('lfm-key'));
+    expect((screen.getByLabelText(/Last.fm shared secret/i) as HTMLInputElement).value).toBe('****');
+
+    await fireEvent.input(screen.getByLabelText(/Trakt client ID/i), { target: { value: '  trakt-id ' } });
+    await fireEvent.submit(key.closest('form')!);
+
+    await waitFor(() => expect(mockSettingsUpdate).toHaveBeenCalled());
+    const arg = mockSettingsUpdate.mock.calls[0][0];
+    // The mask goes back as-is: the server keeps the stored secret.
+    expect(arg.lastfm).toEqual({ api_key: 'lfm-key', shared_secret: '****' });
+    expect(arg.trakt).toEqual({ client_id: 'trakt-id', client_secret: '' });
+  });
+
   it('does not render email test section when SMTP disabled', async () => {
     render(Page);
     await waitFor(() => {

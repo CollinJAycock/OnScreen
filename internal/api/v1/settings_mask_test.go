@@ -32,6 +32,8 @@ type maskSpySettings struct {
 	oidcSecret      string
 	ldapBindPw      string
 	smtpPw          string
+	lastfm          *settings.LastFMConfig
+	trakt           *settings.TraktConfig
 }
 
 func (m *maskSpySettings) TMDBAPIKey(context.Context) string { return "real-tmdb" }
@@ -68,6 +70,21 @@ func (m *maskSpySettings) SMTP(context.Context) settings.SMTPConfig {
 }
 func (m *maskSpySettings) SetSMTP(_ context.Context, c settings.SMTPConfig) error {
 	m.smtpPw = c.Password
+	return nil
+}
+
+func (m *maskSpySettings) LastFM(context.Context) settings.LastFMConfig {
+	return settings.LastFMConfig{APIKey: "real-lfm-key", SharedSecret: "real-lfm-secret"}
+}
+func (m *maskSpySettings) SetLastFM(_ context.Context, c settings.LastFMConfig) error {
+	m.lastfm = &c
+	return nil
+}
+func (m *maskSpySettings) Trakt(context.Context) settings.TraktConfig {
+	return settings.TraktConfig{ClientID: "real-trakt-id", ClientSecret: "real-trakt-secret"}
+}
+func (m *maskSpySettings) SetTrakt(_ context.Context, c settings.TraktConfig) error {
+	m.trakt = &c
 	return nil
 }
 
@@ -120,5 +137,41 @@ func TestSettingsPatch_EmptyStringStillClears(t *testing.T) {
 	patchSettings(t, h, `{"tmdb_api_key":""}`)
 	if spy.tmdb != "" {
 		t.Errorf("empty string must clear the key, got %q", spy.tmdb)
+	}
+}
+
+// The scrobble apps' secrets follow the same rule: the round-tripped mask
+// keeps the stored secret, while the (unmasked) identifiers still update.
+func TestSettingsPatch_ScrobbleAppSecretsSurviveTheMask(t *testing.T) {
+	spy := &maskSpySettings{}
+	h := NewSettingsHandler(spy, slog.Default())
+
+	patchSettings(t, h, `{"lastfm":{"api_key":" new-lfm-key ","shared_secret":"****"},`+
+		`"trakt":{"client_id":"new-trakt-id","client_secret":"****"}}`)
+
+	if spy.lastfm == nil || spy.lastfm.SharedSecret != "real-lfm-secret" || spy.lastfm.APIKey != "new-lfm-key" {
+		t.Errorf("last.fm: %+v", spy.lastfm)
+	}
+	if spy.trakt == nil || spy.trakt.ClientSecret != "real-trakt-secret" || spy.trakt.ClientID != "new-trakt-id" {
+		t.Errorf("trakt: %+v", spy.trakt)
+	}
+
+	patchSettings(t, h, `{"lastfm":{"shared_secret":"new-secret"},"trakt":{"client_secret":""}}`)
+	if spy.lastfm.SharedSecret != "new-secret" || spy.lastfm.APIKey != "real-lfm-key" {
+		t.Errorf("a real secret must write, leaving the key: %+v", spy.lastfm)
+	}
+	if spy.trakt.ClientSecret != "" {
+		t.Errorf("an empty secret must clear: %+v", spy.trakt)
+	}
+}
+
+func TestScrobbleAppDTOs_MaskOnlyTheSecrets(t *testing.T) {
+	lfm := toLastFMDTO(settings.LastFMConfig{APIKey: "key", SharedSecret: "secret"})
+	trakt := toTraktDTO(settings.TraktConfig{ClientID: "id", ClientSecret: "secret"})
+	if lfm.APIKey != "key" || lfm.SharedSecret != maskedSecret || trakt.ClientID != "id" || trakt.ClientSecret != maskedSecret {
+		t.Errorf("dtos: %+v %+v", lfm, trakt)
+	}
+	if toLastFMDTO(settings.LastFMConfig{}).SharedSecret != "" {
+		t.Error("an unset secret must read as empty, not the mask")
 	}
 }

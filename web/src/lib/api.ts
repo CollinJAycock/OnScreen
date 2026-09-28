@@ -973,18 +973,59 @@ export interface WatchLimitPolicy {
   allowed_end_minute: number | null;
 }
 
-/** Per-user external-scrobble status. The token itself is never returned by
- *  the server — only whether one is linked and whether export is on. */
+/** Per-user external-scrobble status. Credentials are never returned by the
+ *  server — only what's linked. *_available says whether the admin has set
+ *  the service up at all; the Last.fm / Trakt fields are absent from servers
+ *  that predate them. */
 export interface ScrobbleStatus {
   listenbrainz_linked: boolean;
   listenbrainz_enabled: boolean;
+  lastfm_available?: boolean;
+  lastfm_linked?: boolean;
+  lastfm_username?: string;
+  trakt_available?: boolean;
+  trakt_linked?: boolean;
+  trakt_username?: string;
+}
+
+/** Where a Last.fm / Trakt link stands after a complete call. */
+export type ScrobbleLinkStatus = 'pending' | 'slow_down' | 'linked' | 'expired' | 'denied';
+
+export interface ScrobbleLinkResult {
+  status: ScrobbleLinkStatus;
+  username?: string;
+}
+
+/** Last.fm link: the user approves OnScreen at auth_url, then the page polls
+ *  complete with the sealed pending handle. */
+export interface LastFMLinkStart {
+  auth_url: string;
+  pending: string;
+}
+
+/** Trakt link (device code): the user enters user_code at verification_url,
+ *  and the page polls complete every interval seconds for expires_in. */
+export interface TraktLinkStart {
+  user_code: string;
+  verification_url: string;
+  expires_in: number;
+  interval: number;
+  pending: string;
 }
 
 export const scrobbleApi = {
   status: () => api.get<ScrobbleStatus>('/users/me/scrobble'),
   /** Link or update the ListenBrainz token. An empty token unlinks. */
   setListenBrainz: (token: string, enabled: boolean) =>
-    api.put<void>('/users/me/scrobble/listenbrainz', { token, enabled })
+    api.put<void>('/users/me/scrobble/listenbrainz', { token, enabled }),
+  startLastFM: () => api.post<LastFMLinkStart>('/users/me/scrobble/lastfm/link', {}),
+  completeLastFM: (pending: string) =>
+    api.post<ScrobbleLinkResult>('/users/me/scrobble/lastfm/link/complete', { pending }),
+  unlinkLastFM: () => api.delete('/users/me/scrobble/lastfm'),
+  startTrakt: () => api.post<TraktLinkStart>('/users/me/scrobble/trakt/link', {}),
+  completeTrakt: (pending: string) =>
+    api.post<ScrobbleLinkResult>('/users/me/scrobble/trakt/link/complete', { pending }),
+  unlinkTrakt: () => api.delete('/users/me/scrobble/trakt')
 };
 
 export interface UserLibraryAccess {
@@ -1318,6 +1359,8 @@ export interface ServerSettings {
   transcode_encoders: string;
   web_downloads_enabled: boolean;
   opensubtitles: OpenSubtitlesSettings;
+  lastfm: LastFMAppSettings;
+  trakt: TraktAppSettings;
   oidc: OIDCSettings;
   ldap: LDAPSettings;
   saml: SAMLSettings;
@@ -1325,6 +1368,21 @@ export interface ServerSettings {
   otel: OTelSettings;
   general: GeneralSettings;
   requests: RequestSettings;
+}
+
+/** The Last.fm API account users' Last.fm scrobbling runs under. The key is
+ *  shown; the secret comes back as "****" when set, and sending "****" back
+ *  keeps it. */
+export interface LastFMAppSettings {
+  api_key: string;
+  shared_secret: string;
+}
+
+/** The Trakt API application users' Trakt scrobbling runs under. Same
+ *  masking as LastFMAppSettings. */
+export interface TraktAppSettings {
+  client_id: string;
+  client_secret: string;
 }
 
 export interface OpenSubtitlesUpdate {

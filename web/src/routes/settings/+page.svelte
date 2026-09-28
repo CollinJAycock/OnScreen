@@ -23,6 +23,14 @@
   let osLanguages = '';
   let osEnabled = false;
 
+  // Scrobbling apps — the operator's Last.fm API account and Trakt app that
+  // users' links run under. The secrets arrive as "****" when set and go back
+  // unchanged, which the server reads as "keep".
+  let lastfmApiKey = '';
+  let lastfmSecret = '';
+  let traktClientId = '';
+  let traktSecret = '';
+
   // General server config (BaseURL, LogLevel, CORS) — restart-required.
   let genBaseURL = '';
   let genLogLevel = 'info';
@@ -68,6 +76,10 @@
         osLanguages = os.languages ?? '';
         osEnabled = !!os.enabled;
       }
+      lastfmApiKey = s.lastfm?.api_key ?? '';
+      lastfmSecret = s.lastfm?.shared_secret ?? '';
+      traktClientId = s.trakt?.client_id ?? '';
+      traktSecret = s.trakt?.client_secret ?? '';
       const gen = s.general;
       if (gen) {
         genBaseURL = gen.base_url ?? '';
@@ -137,6 +149,8 @@
           languages: osLanguages.trim(),
           enabled: osEnabled,
         },
+        lastfm: { api_key: lastfmApiKey.trim(), shared_secret: lastfmSecret.trim() },
+        trakt: { client_id: traktClientId.trim(), client_secret: traktSecret.trim() },
         general: {
           base_url: genBaseURL.trim(),
           log_level: genLogLevel,
@@ -470,6 +484,66 @@
           />
           <div class="hint">
             Comma-separated ISO-639-1 codes used as the default search filter. Leave blank to let viewers pick per-search.
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <div class="sec-label">Scrobbling apps</div>
+        <div class="hint" style="margin-top: -0.5rem;">
+          Users link their own Last.fm and Trakt accounts under Settings › Scrobbling, and those links run
+          under the credentials here. Replacing an app later breaks existing links: each user connects again.
+        </div>
+        <div class="field">
+          <label for="lfm-key">Last.fm API key</label>
+          <input
+            id="lfm-key"
+            type="text"
+            bind:value={lastfmApiKey}
+            placeholder="Last.fm API key"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="field">
+          <label for="lfm-secret">Last.fm shared secret</label>
+          <input
+            id="lfm-secret"
+            type="password"
+            bind:value={lastfmSecret}
+            placeholder="Last.fm shared secret"
+            autocomplete="new-password"
+          />
+          <div class="hint">
+            Create an API account at
+            <a href="https://www.last.fm/api/account/create" target="_blank" rel="noopener">last.fm/api/account/create</a>.
+            No callback URL is needed.
+          </div>
+        </div>
+        <div class="field">
+          <label for="trakt-id">Trakt client ID</label>
+          <input
+            id="trakt-id"
+            type="text"
+            bind:value={traktClientId}
+            placeholder="Trakt client ID"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </div>
+        <div class="field">
+          <label for="trakt-secret">Trakt client secret</label>
+          <input
+            id="trakt-secret"
+            type="password"
+            bind:value={traktSecret}
+            placeholder="Trakt client secret"
+            autocomplete="new-password"
+          />
+          <div class="hint">
+            Create an app at
+            <a href="https://trakt.tv/oauth/applications/new" target="_blank" rel="noopener">trakt.tv/oauth/applications</a>
+            with the redirect URI <code>urn:ietf:wg:oauth:2.0:oob</code> (users link with a code, not a redirect).
           </div>
         </div>
       </section>

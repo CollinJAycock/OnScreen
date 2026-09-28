@@ -83,7 +83,7 @@ type Handlers struct {
 	Notifications   *v1.NotificationHandler
 	Playback        *v1.PlaybackHandler
 	Favorites       *v1.FavoritesHandler
-	Scrobble        *v1.ScrobbleHandler   // per-user ListenBrainz link
+	Scrobble        *v1.ScrobbleHandler   // per-user ListenBrainz / Last.fm / Trakt links
 	WatchLimit      *v1.WatchLimitHandler // per-user parental watch limits
 	Maintenance     *v1.MaintenanceHandler
 	Backup          *v1.BackupHandler
@@ -693,10 +693,22 @@ func NewRouter(h *Handlers) http.Handler {
 					Post("/auth/pin-switch", h.User.PINSwitch)
 			}
 
-			// External scrobbling — per-user ListenBrainz account link.
+			// External scrobbling — per-user ListenBrainz / Last.fm / Trakt
+			// account links. The Last.fm and Trakt link calls reach the
+			// service under the operator's API credentials, so they get their
+			// own bucket.
 			if h.Scrobble != nil {
 				r.Get("/users/me/scrobble", h.Scrobble.GetStatus)
 				r.Put("/users/me/scrobble/listenbrainz", h.Scrobble.SetListenBrainz)
+				r.Delete("/users/me/scrobble/lastfm", h.Scrobble.UnlinkLastFM)
+				r.Delete("/users/me/scrobble/trakt", h.Scrobble.UnlinkTrakt)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RateLimit(h.RateLimiter, middleware.ScrobbleLinkLimit, middleware.SessionKey("scrobblelink")))
+					r.Post("/users/me/scrobble/lastfm/link", h.Scrobble.StartLastFMLink)
+					r.Post("/users/me/scrobble/lastfm/link/complete", h.Scrobble.CompleteLastFMLink)
+					r.Post("/users/me/scrobble/trakt/link", h.Scrobble.StartTraktLink)
+					r.Post("/users/me/scrobble/trakt/link/complete", h.Scrobble.CompleteTraktLink)
+				})
 			}
 
 			// Parental watch limits — the caller's own policy + today's

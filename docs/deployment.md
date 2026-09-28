@@ -579,6 +579,8 @@ at the v2.2.0 cut — the table below matches `internal/db/migrations/`):
 | `00027_franchise_collections.sql` | TMDB franchise collections |
 | `00028_request_seasons.sql` | Season-level TV requests |
 | `00029_notification_agents.sql` | Notification agents (Discord / Telegram / ntfy / Gotify / email) |
+| `00030_track_disc_number.sql` | A track's disc number; album tracks keyed and ordered by (disc, track) |
+| `00031_scrobble_lastfm_trakt.sql` | Per-user Last.fm and Trakt scrobbling credentials |
 
 `00023` backfills `watch_progress` from the `watch_events` history still
 inside the retention window; on a large install it takes longer than the

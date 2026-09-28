@@ -114,6 +114,7 @@ func TestRecord_InsertError_Propagates(t *testing.T) {
 
 // scrobbleCall captures one invocation of the async scrobble hook.
 type scrobbleCall struct {
+	event           string
 	userID, mediaID uuid.UUID
 	positionMS      int64
 	durationMS      *int64
@@ -126,8 +127,8 @@ type scrobbleCall struct {
 func TestRecord_StopFiresScrobbleHook(t *testing.T) {
 	svc, _ := newTestService(t)
 	calls := make(chan scrobbleCall, 1)
-	svc.WithScrobbleHook(func(_ context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, at time.Time) {
-		calls <- scrobbleCall{userID, mediaID, positionMS, durationMS, at}
+	svc.WithScrobbleHook(func(_ context.Context, event string, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, at time.Time) {
+		calls <- scrobbleCall{event, userID, mediaID, positionMS, durationMS, at}
 	})
 
 	userID, mediaID := uuid.New(), uuid.New()
@@ -143,6 +144,9 @@ func TestRecord_StopFiresScrobbleHook(t *testing.T) {
 
 	select {
 	case c := <-calls:
+		if c.event != "stop" {
+			t.Errorf("event: got %q, want stop", c.event)
+		}
 		if c.userID != userID || c.mediaID != mediaID {
 			t.Errorf("ids: got user=%s media=%s, want user=%s media=%s", c.userID, c.mediaID, userID, mediaID)
 		}
@@ -160,15 +164,19 @@ func TestRecord_StopFiresScrobbleHook(t *testing.T) {
 	}
 }
 
-// Only 'stop' triggers the hook. In particular the legacy 'scrobble' event
-// must NOT double-dispatch a listen now that the trigger moved to 'stop'.
-func TestRecord_NonStopDoesNotFireScrobbleHook(t *testing.T) {
-	for _, et := range []string{"play", "pause", "resume", "seek", "scrobble"} {
+// Play, resume and pause reach the hook too (now playing, resume points),
+// each with its own type. Seek doesn't, and the legacy 'scrobble' event must
+// NOT double-dispatch a listen now that the completion trigger is 'stop'.
+func TestRecord_ScrobbleHookEvents(t *testing.T) {
+	for et, want := range map[string]bool{
+		"play": true, "resume": true, "pause": true, "stop": true,
+		"seek": false, "scrobble": false,
+	} {
 		t.Run(et, func(t *testing.T) {
 			svc, _ := newTestService(t)
-			fired := make(chan struct{}, 1)
-			svc.WithScrobbleHook(func(context.Context, uuid.UUID, uuid.UUID, int64, *int64, time.Time) {
-				fired <- struct{}{}
+			fired := make(chan string, 1)
+			svc.WithScrobbleHook(func(_ context.Context, event string, _, _ uuid.UUID, _ int64, _ *int64, _ time.Time) {
+				fired <- event
 			})
 
 			if err := svc.Record(context.Background(), RecordParams{
@@ -179,10 +187,16 @@ func TestRecord_NonStopDoesNotFireScrobbleHook(t *testing.T) {
 			}
 
 			select {
-			case <-fired:
-				t.Errorf("scrobble hook must not fire for %q event", et)
-			case <-time.After(50 * time.Millisecond):
-				// expected: no dispatch
+			case got := <-fired:
+				if !want {
+					t.Errorf("scrobble hook must not fire for %q event", et)
+				} else if got != et {
+					t.Errorf("event: got %q, want %q", got, et)
+				}
+			case <-time.After(200 * time.Millisecond):
+				if want {
+					t.Errorf("scrobble hook was not called for %q event", et)
+				}
 			}
 		})
 	}
@@ -193,8 +207,8 @@ func TestRecord_NonStopDoesNotFireScrobbleHook(t *testing.T) {
 func TestRecord_StopHookDefaultsTimestamp(t *testing.T) {
 	svc, _ := newTestService(t)
 	calls := make(chan scrobbleCall, 1)
-	svc.WithScrobbleHook(func(_ context.Context, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, at time.Time) {
-		calls <- scrobbleCall{userID, mediaID, positionMS, durationMS, at}
+	svc.WithScrobbleHook(func(_ context.Context, event string, userID, mediaID uuid.UUID, positionMS int64, durationMS *int64, at time.Time) {
+		calls <- scrobbleCall{event, userID, mediaID, positionMS, durationMS, at}
 	})
 
 	before := time.Now().UTC()
