@@ -111,6 +111,12 @@ func ReadMusicTagsStore(ctx context.Context, store mediastore.Store, filePath st
 			}
 		}
 	}
+	// A tagged file with no usable track number still carries one in its
+	// conventional filename ("02 - Title.flac"); without it the track has no
+	// position in its album.
+	if tags.Track == 0 {
+		tags.Track = parseMusicPath(filePath).Track
+	}
 	// AlbumArtist defaults to Artist when the tag is missing — avoids a hole
 	// in the artist/album hierarchy while still letting compilations override
 	// it. This matches Picard's behaviour when writing back tags.
@@ -146,6 +152,15 @@ func readEmbeddedTags(ctx context.Context, store mediastore.Store, filePath stri
 
 	trackNum, trackTotal := m.Track()
 	discNum, discTotal := m.Disc()
+	// dhowden/tag reads Vorbis TRACKNUMBER / DISCNUMBER (FLAC, Ogg, Opus)
+	// with a bare Atoi, so the common "N/M" form ("02/12", "1/2") comes back
+	// as 0 and the album loses its order. Re-parse the raw value in that case.
+	if trackNum == 0 {
+		trackNum, trackTotal = xOfN(stringifyRaw(rawLookup(m.Raw(), "tracknumber")), trackTotal)
+	}
+	if discNum == 0 {
+		discNum, discTotal = xOfN(stringifyRaw(rawLookup(m.Raw(), "discnumber")), discTotal)
+	}
 
 	mt := &MusicTags{
 		Artist:      cleanTag(m.Artist()),
@@ -467,4 +482,24 @@ func parseMusicPath(filePath string) *MusicTags {
 	mt.AlbumArtist = mt.Artist
 
 	return mt
+}
+
+// xOfN parses a "N" or "N/M" number tag. total is kept when the value has no
+// "/M" part (a separate TRACKTOTAL / DISCTOTAL tag already supplied it).
+func xOfN(v string, total int) (int, int) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return 0, total
+	}
+	num, rest, hasTotal := strings.Cut(v, "/")
+	n, err := strconv.Atoi(strings.TrimSpace(num))
+	if err != nil || n < 0 {
+		return 0, total
+	}
+	if hasTotal {
+		if t, err := strconv.Atoi(strings.TrimSpace(rest)); err == nil && t > 0 {
+			total = t
+		}
+	}
+	return n, total
 }
