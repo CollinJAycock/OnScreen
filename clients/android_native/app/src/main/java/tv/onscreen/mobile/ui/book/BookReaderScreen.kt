@@ -13,6 +13,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.VerticalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -274,9 +275,11 @@ fun BookReaderScreen(
         // Back button overlay. Always visible — books don't have an
         // immersive-chrome story like the photo viewer yet; the user
         // needs a discoverable way out.
+        // safeDrawingPadding: the app is edge-to-edge, so a bare 8dp inset
+        // overlapped Back with the status-bar clock.
         IconButton(
             onClick = onBack,
-            modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+            modifier = Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(8.dp),
         ) {
             Icon(
                 Icons.AutoMirrored.Filled.ArrowBack,
@@ -294,6 +297,7 @@ fun BookReaderScreen(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .safeDrawingPadding()
                     .padding(16.dp),
             )
         }
@@ -385,7 +389,12 @@ private fun EpubReader(ui: BookReaderUi) {
         // paint. The Box wrapper in BookReaderScreen still paints
         // black underneath so CBZ/CBR pillars look right; EPUB just
         // covers it.
-        modifier = Modifier.fillMaxSize().background(Color.White),
+        //
+        // safeDrawingPadding keeps the page out from under the system bars
+        // (edge-to-edge is mandatory at targetSdk 35+). The host HTML doesn't
+        // use env(safe-area-inset-*), so full-bleed put the first lines under
+        // the status bar, whose light icons vanished against the white page.
+        modifier = Modifier.fillMaxSize().safeDrawingPadding().background(Color.White),
         factory = { ctx ->
             // Enables `chrome://inspect` connections from a desktop
             // Chrome when the phone is USB-attached. Cheaper than

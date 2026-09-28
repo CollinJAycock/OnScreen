@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- WAKE_LOCK lets ExoPlayer hold a CPU wake lock during playback
@@ -69,8 +70,41 @@
         android:name="amazon.hardware.fire_tv"
         android:required="false" />
 
+    <!-- enableOnBackInvokedCallback="false": keep LEGACY back dispatch.
+
+         From targetSdk 36 on an Android 16+ device the attribute defaults to
+         TRUE, and then the platform stops dispatching KEYCODE_BACK to the view
+         tree and to Activity.dispatchKeyEvent altogether — ViewRootImpl hands
+         the press straight to the top OnBackInvokedCallback (in practice the
+         FragmentManager's back-stack pop, or finishing the task). Nothing about
+         that is touch- or gesture-specific, so a TV remote's BACK key goes the
+         same way on an Android TV / Google TV 16 box.
+
+         The player's BACK handling still lives on that key path, and it is not
+         ours to migrate — it is inside Leanback 1.0.0 (confirmed in the
+         bytecode, both View-level key listeners on KEYCODE_BACK):
+           - PlaybackSupportFragment consumes BACK to HIDE the transport
+             controls while they are showing; only the next press exits;
+           - the transport row's seek bar consumes BACK to CANCEL a scrub.
+         Under the new dispatch both become "BACK pops the player" in the
+         middle of the interaction. The app-owned player overlays (Skip
+         intro/credits, Up Next) are handled by an OnBackPressedCallback in
+         PlaybackFragment, so they are correct under either dispatch; this
+         opt-out is the safety net for the library-owned paths. (The photo
+         viewer's activity-level BACK branch lands on the same result either
+         way: without it the FragmentManager pops the same entry, and the
+         slideshow is view-scoped.)
+
+         Still honoured on Android 16, and a no-op below Android 13 (API 33),
+         where legacy dispatch is the only behaviour anyway. Revisit (drop the
+         opt-out) once Leanback's player handles BACK through
+         OnBackPressedDispatcher or the platform stops honouring it.
+         tools:targetApi="33" only silences lint's UnusedAttribute for that
+         below-33 no-op. -->
     <application
         android:name=".OnScreenApp"
+        android:enableOnBackInvokedCallback="false"
+        tools:targetApi="33"
         android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"

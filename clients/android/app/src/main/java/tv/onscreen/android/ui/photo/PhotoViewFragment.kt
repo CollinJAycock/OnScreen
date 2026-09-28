@@ -263,6 +263,12 @@ class PhotoViewFragment : Fragment(), KeyEventHandler {
     override fun onActivityKeyEvent(event: KeyEvent): Boolean {
         Log.d(TAG, "key code=${event.keyCode} siblings=${siblingIds.size} index=$currentIndex")
         return when (event.keyCode) {
+            // BACK only arrives here under legacy back dispatch, which the
+            // manifest keeps (enableOnBackInvokedCallback="false"). Under the
+            // Android 16 / targetSdk 36 default it never reaches
+            // dispatchKeyEvent; the FragmentManager then pops this same
+            // back-stack entry itself and the slideshow, being view-scoped,
+            // dies with the view — so the result is identical either way.
             KeyEvent.KEYCODE_BACK,
             KeyEvent.KEYCODE_ESCAPE -> {
                 stopSlideshow()

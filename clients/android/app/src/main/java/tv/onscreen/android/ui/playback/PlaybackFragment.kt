@@ -12,6 +12,8 @@ import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.TextView
+import androidx.activity.OnBackPressedCallback
+import androidx.core.view.isVisible
 import androidx.leanback.app.VideoSupportFragment
 import androidx.leanback.app.VideoSupportFragmentGlueHost
 import androidx.leanback.media.PlaybackTransportControlGlue
@@ -203,6 +205,28 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  start_ms because it's stable across the marker list. */
     private val dismissedMarkers = mutableSetOf<Long>()
 
+    /**
+     * BACK while the Skip (intro/credits) or Up Next card is showing dismisses
+     * the card instead of leaving playback.
+     *
+     * This used to be a View.OnKeyListener on the cards' buttons watching for
+     * KEYCODE_BACK. That only works under LEGACY back dispatch: from targetSdk
+     * 36 on Android 16 the platform stops delivering KEYCODE_BACK to views and
+     * hands the press to OnBackInvokedDispatcher instead, so the listener would
+     * never fire and BACK would pop the player out from under the card. An
+     * OnBackPressedCallback is reached under both dispatches (legacy BACK lands
+     * in ComponentActivity.onBackPressed, which forwards to the same
+     * dispatcher), so it no longer matters whether the manifest's
+     * enableOnBackInvokedCallback opt-out is honoured.
+     *
+     * Enabled only while a card is visible ([syncOverlayBackCallback]), so the
+     * rest of the time BACK falls through to the FragmentManager's pop as
+     * before. Created per view in onViewCreated and registered against
+     * viewLifecycleOwner, so it is unregistered with the view and a recreated
+     * view never inherits a stale enabled state.
+     */
+    private var overlayBackCallback: OnBackPressedCallback? = null
+
     companion object {
         private const val ARG_ITEM_ID = "item_id"
         private const val ARG_START_MS = "start_ms"
@@ -240,6 +264,27 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         viewModel = ViewModelProvider(this)[PlaybackViewModel::class.java]
+
+        overlayBackCallback = object : OnBackPressedCallback(false) {
+            override fun handleOnBackPressed() {
+                val skip = skipMarkerOverlay?.takeIf { it.isVisible }
+                val upNext = upNextOverlay?.takeIf { it.isVisible }
+                when {
+                    // Both can be up near the end of an episode (credits marker
+                    // + Up Next). The focused card is the one the user is on —
+                    // the per-button listeners this replaces had that scoping.
+                    upNext != null && (skip == null || upNext.hasFocus()) ->
+                        dismissUpNext(permanent = true)
+                    skip != null -> {
+                        shownSkipMarkerStartMs?.let { dismissedMarkers.add(it) }
+                        hideSkipMarker(userAction = true)
+                    }
+                }
+                syncOverlayBackCallback()
+            }
+        }.also {
+            requireActivity().onBackPressedDispatcher.addCallback(viewLifecycleOwner, it)
+        }
 
         // Explicit hardware-media-key handler so Google's TV app
         // quality requirement TV-PP (toggle play/pause on
@@ -568,17 +613,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 rightMargin = 60
             }
             btn.layoutParams = lp
-            btn.setOnKeyListener { _, keyCode, event ->
-                if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                    // BACK dismisses the skip prompt for this window rather than
-                    // exiting playback (the button was focused, so BACK would
-                    // otherwise fall through to Leanback and pop the player).
-                    shownSkipMarkerStartMs?.let { dismissedMarkers.add(it) }
-                    hideSkipMarker(userAction = true); true
-                } else {
-                    false
-                }
-            }
+            // BACK dismisses the skip prompt for this window rather than
+            // exiting playback — handled by overlayBackCallback, not a key
+            // listener here (see its doc for why).
             rootContainer.addView(btn)
             skipMarkerOverlay = btn
             btn
@@ -594,6 +631,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         overlay.visibility = View.VISIBLE
         overlay.requestFocus()
         shownSkipMarkerStartMs = marker.start_ms
+        syncOverlayBackCallback()
     }
 
     /**
@@ -607,7 +645,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         shownSkipMarkerStartMs = null
         val hadFocus = skipMarkerOverlay?.hasFocus() == true
         skipMarkerOverlay?.visibility = View.GONE
+        syncOverlayBackCallback()
         if (hadFocus) restoreFocusFromOverlay(showBar = userAction)
+    }
+
+    /** Arm [overlayBackCallback] exactly while a Skip / Up Next card is on
+     *  screen. Called from every place either card changes visibility. */
+    private fun syncOverlayBackCallback() {
+        overlayBackCallback?.isEnabled =
+            skipMarkerOverlay?.isVisible == true || upNextOverlay?.isVisible == true
     }
 
     /**
@@ -1783,17 +1829,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         playBtn.setOnClickListener { goToNextEpisode(next) }
         cancelBtn.setOnClickListener { dismissUpNext(permanent = true) }
 
-        // BACK on the overlay = Cancel, NOT "exit playback". Without this, BACK
-        // while a button is focused falls through to Leanback and pops the player.
-        val backToCancel = View.OnKeyListener { _, keyCode, event ->
-            if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) {
-                dismissUpNext(permanent = true); true
-            } else {
-                false
-            }
-        }
-        playBtn.setOnKeyListener(backToCancel)
-        cancelBtn.setOnKeyListener(backToCancel)
+        // BACK on the overlay = Cancel, NOT "exit playback". Handled by
+        // overlayBackCallback (armed here) rather than a KEYCODE_BACK key
+        // listener on the buttons, which Android 16's back dispatch bypasses.
+        syncOverlayBackCallback()
 
         // Never stack countdowns: a second showUpNextOverlay (e.g. EOS firing
         // while the lead-in countdown is already running) would otherwise leave
@@ -1820,6 +1859,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         countdownJob?.cancel()
         val hadFocus = upNextOverlay?.hasFocus() == true
         upNextOverlay?.visibility = View.GONE
+        syncOverlayBackCallback()
         if (permanent) {
             upNextDeclined = true
             upNextJob?.cancel()

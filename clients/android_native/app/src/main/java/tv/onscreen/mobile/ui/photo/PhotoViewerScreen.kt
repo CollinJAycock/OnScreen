@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -188,10 +189,13 @@ fun PhotoViewerScreen(
             )
         }
 
+        // Chrome sits inside the safe area: the app is edge-to-edge, so a
+        // bare 8dp inset overlapped Back with the status-bar clock. The photo
+        // itself stays full-bleed.
         if (chromeVisible) {
             IconButton(
                 onClick = onBack,
-                modifier = Modifier.align(Alignment.TopStart).padding(8.dp),
+                modifier = Modifier.align(Alignment.TopStart).safeDrawingPadding().padding(8.dp),
             ) {
                 Icon(
                     Icons.AutoMirrored.Filled.ArrowBack,
@@ -207,7 +211,7 @@ fun PhotoViewerScreen(
         if (currentId != null && chromeVisible) {
             IconButton(
                 onClick = { showExif = true },
-                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp),
+                modifier = Modifier.align(Alignment.TopEnd).safeDrawingPadding().padding(8.dp),
             ) {
                 Icon(
                     Icons.Default.Info,
@@ -274,6 +278,7 @@ private fun PhotoPager(
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .safeDrawingPadding()
                     .padding(16.dp),
             )
         }

@@ -20,7 +20,10 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -63,6 +66,8 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -677,6 +682,12 @@ private fun PlayerHost(
         }
     }
 
+    // Safe area for the player chrome (system bars + display cutout); the
+    // video surface itself deliberately ignores it.
+    val safeInsets = WindowInsets.safeDrawing
+    val density = LocalDensity.current
+    val layoutDirection = LocalLayoutDirection.current
+
     AndroidView(
         modifier = Modifier
             .fillMaxSize()
@@ -743,6 +754,21 @@ private fun PlayerHost(
         // frame and dead transport controls for the rest of playback.
         update = { view ->
             if (view.player !== player) view.player = player
+            // Edge-to-edge is mandatory at targetSdk 35+ (Android 16 removed
+            // the opt-out). The video stays full-bleed, but Media3's
+            // controller has no inset handling: under 3-button navigation the
+            // nav bar sat on the duration label and swallowed taps on the
+            // settings gear (portrait) or the seek bar's end + gear
+            // (landscape, bar on the side). Pad only the controller into the
+            // safe area. The inset reads are snapshot-observed, so this block
+            // re-runs on rotation / nav-mode changes.
+            view.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_controller)
+                ?.setPadding(
+                    safeInsets.getLeft(density, layoutDirection),
+                    safeInsets.getTop(density),
+                    safeInsets.getRight(density, layoutDirection),
+                    safeInsets.getBottom(density),
+                )
         },
     )
 
@@ -755,6 +781,8 @@ private fun PlayerHost(
         Box(
             modifier = Modifier
                 .fillMaxSize()
+                // Tracks the seek bar, which now sits inside the safe area.
+                .safeDrawingPadding()
                 .padding(bottom = 96.dp),
             contentAlignment = Alignment.BottomCenter,
         ) {
@@ -814,7 +842,10 @@ private fun PlayerHost(
     // outer PlayerScreen Box's contentAlignment = Center vertically
     // centers the Row, which sits right on top of Media3's centered
     // play / rewind / fast-forward chevrons and steals their taps.
-    if (!inPip && controlsVisible) Box(modifier = Modifier.fillMaxSize()) {
+    // safeDrawingPadding: the app is edge-to-edge, so a bare 16dp inset left
+    // Back's touch target overlapping the status bar and the trailing icons
+    // under a side-mounted 3-button nav bar in landscape.
+    if (!inPip && controlsVisible) Box(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
       // Back / close — pinned top-left. Otherwise the only way out of the
       // player is the system back gesture, which a tablet/TV in immersive
       // fullscreen can hide entirely, leaving the viewer stuck. Auto-hides
@@ -1191,6 +1222,8 @@ private fun UpNextOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // Edge-to-edge: keep the card clear of a side nav bar.
+            .safeDrawingPadding()
             .padding(32.dp),
         contentAlignment = Alignment.TopEnd,
     ) {
@@ -1511,6 +1544,8 @@ private fun SkipMarkerOverlay(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            // Edge-to-edge: keep Skip clear of the nav bar (bottom or side).
+            .safeDrawingPadding()
             .padding(32.dp),
         contentAlignment = Alignment.BottomEnd,
     ) {

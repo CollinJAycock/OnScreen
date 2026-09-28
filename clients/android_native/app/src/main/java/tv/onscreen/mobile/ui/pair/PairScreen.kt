@@ -1,5 +1,7 @@
 package tv.onscreen.mobile.ui.pair
 
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -84,6 +86,13 @@ fun PairScreen(
             // text fields stay visible while typing (the app is edge-to-edge).
             .systemBarsPadding()
             .imePadding()
+            // Scrollable because the sign-in form is taller than a landscape
+            // phone (and Android 16 ignores orientation locks on tablets and
+            // foldables anyway). Without it the centred column overflowed:
+            // "Sign in with password" was clipped off-screen, and with the IME
+            // up the focused field itself was hidden. The fillMaxSize min
+            // height still reaches the Column, so short states stay centred.
+            .verticalScroll(rememberScrollState())
             .padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,

@@ -22,10 +22,22 @@ android {
     namespace = "tv.onscreen.android"
     // compileSdk + targetSdk track Play Console's target-API floor
     // (API 36 / Android 16 as of Aug 2026 — updates are blocked below
-    // it from Aug 30, 2026). TV surface check for 36: no predictive-back
-    // gesture on TV (hardware KEYCODE_BACK still flows through
-    // dispatchKeyEvent), Leanback fragment stacks unchanged, and the
-    // mediaPlayback foreground-service type was already declared.
+    // it from Aug 30, 2026). TV surface check for 36:
+    //
+    // - BACK: targeting 36 turns on the OnBackInvokedDispatcher model by
+    //   default on Android 16 devices, and that is NOT gesture- or phone-only:
+    //   the platform stops dispatching KEYCODE_BACK to views and to
+    //   Activity.dispatchKeyEvent entirely, remote BACK key included, so an
+    //   Android TV 16 box would bypass every key-listener BACK handler. (An
+    //   earlier note here said hardware BACK still flowed through
+    //   dispatchKeyEvent on TV — that was wrong.) Handled two ways: the
+    //   player's own Skip / Up Next overlays moved to an OnBackPressedCallback
+    //   (PlaybackFragment.overlayBackCallback), and the manifest opts out with
+    //   android:enableOnBackInvokedCallback="false" to keep Leanback 1.0.0's
+    //   internal key-listener BACK handling (hide transport controls, cancel a
+    //   scrub) working — see the comment on <application>.
+    // - Leanback fragment stacks unchanged, and the mediaPlayback
+    //   foreground-service type was already declared.
     compileSdk = 36
 
     defaultConfig {
@@ -53,6 +65,14 @@ android {
         // first paint regardless.
         minSdk = 24
         targetSdk = 36
+        // 20 (v1.2.2): the Android 16 back-dispatch fix — the
+        // enableOnBackInvokedCallback opt-out and the Skip / Up Next
+        // OnBackPressedCallback (see the targetSdk note above). Built to
+        // replace the API-35 bundles Play flagged against the API 36 floor.
+        // 19 may or may not have been uploaded since it was cut; 20 is used
+        // either way, because skipping a code is free and reusing a spent
+        // one is a rejected upload (below).
+        //
         // 19: everything after 17 (v1.2.0) — the client security audit, the
         // pairing-origin fix, the Play device-targeting fix (leanback
         // required), and the minSdk 21 -> 24 floor above. The floor change
@@ -66,10 +86,11 @@ android {
         // increase — skipping one is free, while guessing wrong about
         // whether it was already spent costs a rejected upload.
         //
-        // versionName stays 1.2.1: 18 never shipped, so there is no
-        // user-visible difference between it and this build.
-        versionCode = 19
-        versionName = "1.2.1"
+        // versionName 1.2.1 went with 19 (18 never shipped, so there was no
+        // user-visible difference between them); 1.2.2 marks the behaviour
+        // change in 20.
+        versionCode = 20
+        versionName = "1.2.2"
     }
 
     // Per-store flavor split. Both stores ship the same app and code; they

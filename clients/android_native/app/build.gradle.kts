@@ -51,8 +51,13 @@ android {
         // security fixes and the API-36 retarget, so it cannot be reused —
         // codes burn on upload, not on release. 1002 went the same way on the
         // Jun 10 upload, which never reached an active track either.
-        versionCode = 1004
-        versionName = "0.1.3"
+        // 1005: Play flagged the API-35 bundles (1001-1003) against the
+        // targetSdk 36 requirement; this is the first API-36 phone build to
+        // ship, with the Android 16 edge-to-edge / landscape fixes. 1004 may
+        // or may not have been uploaded, so skip it rather than risk a
+        // rejection — skipping a code is free, reusing a spent one is not.
+        versionCode = 1005
+        versionName = "0.1.4"
     }
 
     signingConfigs {
