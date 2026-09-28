@@ -236,6 +236,26 @@ describe('Hub layout customization', () => {
     expect(rows.map((r: { key: string }) => r.key)).toContain('trending');
     expect(rows.map((r: { key: string }) => r.key)).toContain('library:lib-movies');
   });
+
+  // A music library's Recently Added row is albums, so its header opens the
+  // albums index newest first; other libraries keep their plain sorted link.
+  it('links a music library row to its albums, newest first', async () => {
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      recently_added_by_library: [
+        { library_id: 'lib-movies', library_name: 'Movies', library_type: 'movie',
+          items: [{ id: 'm1', title: 'Inception', updated_at: '2026-01-01' }] },
+        { library_id: 'lib-music', library_name: 'Music', library_type: 'music',
+          items: [{ id: 'al1', title: 'Revolver', type: 'album', updated_at: '2026-01-01' }] },
+      ],
+    });
+    render(Page);
+    const music = await screen.findByRole('link', { name: 'Recently Added to Music' });
+    expect(music.getAttribute('href')).toBe('/libraries/lib-music?view=albums&sort=created_at&sort_dir=desc');
+    expect(screen.getByRole('link', { name: 'Recently Added to Movies' }).getAttribute('href'))
+      .toBe('/libraries/lib-movies?sort=created_at&sort_dir=desc');
+  });
 });
 
 describe('Libraries section in hub layout', () => {

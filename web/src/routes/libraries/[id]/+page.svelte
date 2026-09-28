@@ -20,6 +20,14 @@
     applyWatchedMark,
     isNotFound,
   } from '$lib/watchState';
+  import {
+    MUSIC_SORTS,
+    defaultSortAsc,
+    sortOffered,
+    musicViewFromURL,
+    musicBrowseURL,
+    type MusicView,
+  } from '$lib/musicBrowse';
 
   let playlistPickerItemId = '';
   let showPlaylistPicker = false;
@@ -109,11 +117,18 @@
   // Caller's watch state (?watch=unwatched|in_progress|watched); '' = all.
   let watchFilter: WatchFilter | '' = '';
 
+  // Music libraries browse either their artists (the top-level rows) or
+  // every album in the library (?view=albums). See $lib/musicBrowse.
+  let musicView: MusicView = 'artists';
+
   // Hydrate filters from URL on first load (?genre=Drama, ?year_min=, ?year_max=)
   // so deep-links from the genre/year browse pages preselect the correct filter.
   // Also reads ?sort= and ?sort_dir= so the home page's "Recently Added"
   // shelf can land here on /libraries/{id}?sort=created_at&sort_dir=desc and
   // have the right pill pre-selected — no extra click to flip the sort.
+  // Also re-run when the URL changes under a mounted page (another library,
+  // or Back/Forward between two music views), so it resets what the URL
+  // leaves out.
   function readFiltersFromURL() {
     const sp = $page.url.searchParams;
     selectedGenre = sp.get('genre') ?? '';
@@ -121,21 +136,102 @@
     yearMax = sp.get('year_max') ?? '';
     watchFilter = parseWatchFilter(sp.get('watch'));
     libTab = tabFromURL($page.url);
+    musicView = musicViewFromURL($page.url);
 
     const s = sp.get('sort');
-    if (s === 'title' || s === 'year' || s === 'rating' || s === 'created_at' || s === 'taken_at') {
+    if (s === 'title' || s === 'year' || s === 'rating' || s === 'created_at' || s === 'taken_at' || s === 'artist') {
       sortField = s;
       // Preserve sort_dir from the URL when present; otherwise pick a
       // sensible default per field (newest-first for time-based sorts,
-      // ascending for title).
+      // ascending for names).
       const dir = sp.get('sort_dir');
       if (dir === 'asc') sortAsc = true;
       else if (dir === 'desc') sortAsc = false;
-      else sortAsc = s === 'title';
+      else sortAsc = defaultSortAsc(s);
       // Mark as user-driven so loadLibrary's photo/home-video default
       // doesn't stomp on the URL-supplied sort.
       sortDefaulted = true;
+    } else {
+      sortField = 'title';
+      sortAsc = true;
+      sortDefaulted = false;
     }
+  }
+
+  // The query string the grid currently reflects. A navigation that changes
+  // $page.url without remounting the page (Back/Forward between two music
+  // views, or a link to this same library) must be followed; our own
+  // writeMusicURL navigations are recorded here first so they aren't.
+  let appliedSearch = '';
+
+  // id and prevId are passed so this runs after `id` is derived and after
+  // the id block below: a different library is that block's job.
+  $: if (mounted) followURL($page.url, id, prevId);
+
+  function followURL(url: URL, currentId: string, loadedId: string) {
+    if (currentId !== loadedId || url.search === appliedSearch) return;
+    appliedSearch = url.search;
+    const viewBefore = musicView;
+    readFiltersFromURL();
+    applyLibraryDefaultSort();
+    if (musicView !== viewBefore) {
+      genres = [];
+      loadGenres();
+    }
+    applyFilters();
+  }
+
+  // Music libraries keep their browse state (view, sort, genre, years) in
+  // the URL through a real navigation rather than a shallow replaceState:
+  // SvelteKit hands a shallow entry its original $page.url back on Back,
+  // which would lose the view on the way back from an album. Switching
+  // views adds a history entry; sort and filter changes replace the
+  // current one.
+  function writeMusicURL(push = false) {
+    if (library?.type !== 'music') return;
+    const url = musicBrowseURL($page.url, {
+      view: musicView,
+      sort: sortField,
+      sortAsc,
+      genre: selectedGenre,
+      yearMin,
+      yearMax,
+    });
+    appliedSearch = url.search;
+    goto(url, { replaceState: !push, noScroll: true, keepFocus: true });
+  }
+
+  $: albumsView = isMusicLibrary && musicView === 'albums';
+
+  // Artists ↔ Albums. Genres and years exist only on albums, so the facets
+  // are reloaded and the genre / year filters cleared; the sort is kept when
+  // the other view offers it.
+  function setMusicView(next: MusicView) {
+    if (next === musicView) return;
+    musicView = next;
+    selectedGenre = '';
+    yearMin = '';
+    yearMax = '';
+    if (!sortOffered(next, sortField)) {
+      sortField = 'title';
+      sortAsc = true;
+    }
+    writeMusicURL(true);
+    genres = [];
+    loadGenres();
+    applyFilters();
+  }
+
+  function clearYears() {
+    yearMin = '';
+    yearMax = '';
+    writeMusicURL();
+    applyFilters();
+  }
+
+  function clearFilters() {
+    selectedGenre = '';
+    clearYears();
   }
 
   let mounted = false;
@@ -210,13 +306,20 @@
     return resolveItemHref(item.type, item.id);
   }
 
-  // Client-side text filter on already-loaded items
+  // Client-side text filter on already-loaded items. Albums also match on
+  // their artist.
   $: filtered = query
-    ? allItems.filter(i => i.title.toLowerCase().includes(query.toLowerCase()))
+    ? allItems.filter(i => i.title.toLowerCase().includes(query.toLowerCase())
+        || !!i.parent_title?.toLowerCase().includes(query.toLowerCase()))
     : allItems;
+
+  const PHOTO_SORTS: ReadonlyArray<readonly [SortField, string]> =
+    [['taken_at', 'Taken'], ['created_at', 'Added'], ['title', 'Title']];
+  $: sortOptions = isPhotoLibrary ? PHOTO_SORTS : MUSIC_SORTS[albumsView ? 'albums' : 'artists'];
 
   function filterParams(): ListItemsParams {
     const p: ListItemsParams = { sort: sortField, sort_dir: sortAsc ? 'asc' : 'desc' };
+    if (library?.type === 'music' && musicView === 'albums') p.type = 'album';
     if (selectedGenre) p.genre = selectedGenre;
     if (yearMin) p.year_min = parseInt(yearMin);
     if (yearMax) p.year_max = parseInt(yearMax);
@@ -318,6 +421,7 @@
     if (!raw) { goto('/login'); return; }
     try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     prevId = id;
+    appliedSearch = $page.url.search;
     readFiltersFromURL();
     // Await library first so we can pick the right default sort before listing.
     await loadLibrary();
@@ -329,6 +433,7 @@
 
   $: if (mounted && id && id !== prevId) {
     prevId = id;
+    appliedSearch = $page.url.search;
     allItems = [];
     musicVideos = [];
     eventCollections = [];
@@ -340,11 +445,10 @@
     error = '';
     library = null;
     genres = [];
-    selectedGenre = '';
-    watchFilter = parseWatchFilter($page.url.searchParams.get('watch'));
-    libTab = tabFromURL($page.url);
+    // Filters, sort, watch filter, tab and music view all come from the
+    // new library's URL — nothing carries over from the previous one.
+    readFiltersFromURL();
     surpriseMsg = '';
-    sortDefaulted = false;
     loadLibrary().then(() => {
       loadItems();
       loadGenres();
@@ -356,22 +460,34 @@
   async function loadLibrary() {
     try {
       library = await libraryApi.get(id);
-      // Photo + home-video libraries sort by date taken by default —
-      // alphabetic title is hostile when items are date-stamped events
-      // ("2024-04-15 - Hike" wouldn't sort by recency without this).
-      // User can still override via the sort menu.
-      if ((library?.type === 'photo' || library?.type === 'home_video') && !sortDefaulted) {
-        sortField = 'taken_at';
-        sortAsc = false;
-        sortDefaulted = true;
-      }
+      applyLibraryDefaultSort();
     }
     catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
     finally { loadingLib = false; }
   }
 
+  // Photo + home-video libraries sort by date taken by default —
+  // alphabetic title is hostile when items are date-stamped events
+  // ("2024-04-15 - Hike" wouldn't sort by recency without this).
+  // User can still override via the sort menu.
+  function applyLibraryDefaultSort() {
+    if ((library?.type === 'photo' || library?.type === 'home_video') && !sortDefaulted) {
+      sortField = 'taken_at';
+      sortAsc = false;
+      sortDefaulted = true;
+    }
+  }
+
+  // A music library's albums view filters by the albums' own genres; the
+  // artists it lists otherwise carry none.
   async function loadGenres() {
-    try { genres = await mediaApi.genres(id); }
+    const capturedId = id;
+    const capturedView = musicView;
+    const type = library?.type === 'music' && musicView === 'albums' ? 'album' : undefined;
+    try {
+      const g = await mediaApi.genres(capturedId, type);
+      if (id === capturedId && musicView === capturedView) genres = g;
+    }
     catch { /* non-critical */ }
   }
 
@@ -405,17 +521,24 @@
     } catch { /* non-critical — shelf just won't render */ }
   }
 
+  // Each listing request is numbered; a response that a newer request
+  // superseded (a view, sort or filter change mid-flight) is dropped, so
+  // artists never land in the albums grid or vice versa.
+  let listSeq = 0;
+
   async function loadItems(append = false) {
+    const seq = ++listSeq;
     loadingItems = true;
     try {
       const limit = append ? BATCH : PAGE;
       const r = await mediaApi.listItems(id, limit, append ? offset : 0, filterParams());
+      if (seq !== listSeq) return;
       allItems = append ? [...allItems, ...r.items] : r.items;
       total = r.total;
       offset = append ? offset + r.items.length : r.items.length;
       hasMore = offset < total;
-    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
-    finally { loadingItems = false; }
+    } catch (e: unknown) { if (seq === listSeq) error = e instanceof Error ? e.message : 'Failed'; }
+    finally { if (seq === listSeq) loadingItems = false; }
   }
 
   async function scan() {
@@ -471,7 +594,16 @@
 
   function toggleSort(f: SortField) {
     if (sortField === f) sortAsc = !sortAsc;
-    else { sortField = f; sortAsc = f === 'title'; }
+    else { sortField = f; sortAsc = defaultSortAsc(f); }
+    writeMusicURL();
+    applyFilters();
+  }
+
+  // Read from the event rather than a bind:value, so the listing never
+  // races the binding for which one sees the change first.
+  function setGenre(next: string) {
+    selectedGenre = next;
+    writeMusicURL();
     applyFilters();
   }
 
@@ -548,6 +680,15 @@
     </div>
   {/if}
 
+  {#if isMusicLibrary}
+    <div class="lib-tabs" role="tablist" aria-label="Browse music by">
+      <button type="button" role="tab" aria-selected={musicView === 'artists'} class:on={musicView === 'artists'}
+              on:click={() => setMusicView('artists')}>Artists</button>
+      <button type="button" role="tab" aria-selected={musicView === 'albums'} class:on={musicView === 'albums'}
+              on:click={() => setMusicView('albums')}>Albums</button>
+    </div>
+  {/if}
+
   {#if hasCollectionsTab && libTab === 'collections'}
     <CollectionsTab libraryId={id} />
   {:else}
@@ -562,20 +703,29 @@
     </div>
 
     <div class="sort-row">
-      {#each (isPhotoLibrary ? [['taken_at','Taken'],['created_at','Added'],['title','Title']] : [['title','Title'],['year','Year'],['rating','Rating'],['created_at','Added']]) as [f, l]}
-        <button class="sort-pill" class:on={sortField === f} on:click={() => toggleSort(f as SortField)}>
+      {#each sortOptions as [f, l]}
+        <button class="sort-pill" class:on={sortField === f} on:click={() => toggleSort(f)}>
           {l}{sortField === f ? (sortAsc ? ' ↑' : ' ↓') : ''}
         </button>
       {/each}
     </div>
 
     {#if genres.length > 0}
-      <select class="filter-select" bind:value={selectedGenre} on:change={applyFilters}>
+      <select class="filter-select" aria-label="Filter by genre" value={selectedGenre}
+              on:change={(e) => setGenre(e.currentTarget.value)}>
         <option value="">All Genres</option>
         {#each genres as g}
           <option value={g.name}>{g.name} ({g.count})</option>
         {/each}
       </select>
+    {/if}
+
+    {#if yearMin || yearMax}
+      <!-- A year filter arrives from Browse years; show it so it can be cleared. -->
+      <span class="filter-chip">
+        {yearMin === yearMax ? yearMin : `${yearMin || '…'}–${yearMax || '…'}`}
+        <button type="button" aria-label="Clear year filter" on:click={clearYears}>×</button>
+      </span>
     {/if}
 
     {#if watchable}
@@ -609,7 +759,7 @@
     </div>
 
     <div class="count">
-      {#if query}{filtered.length} / {allItems.length}{:else}{total} items{/if}
+      {#if query}{filtered.length} / {allItems.length}{:else if albumsView}{total} {total === 1 ? 'album' : 'albums'}{:else}{total} items{/if}
     </div>
   </div>
   <p class="surprise-msg" role="status" aria-live="polite">{surpriseMsg}</p>
@@ -619,6 +769,11 @@
     <div class="empty">
       <p class="empty-t">Nothing {WATCH_FILTER_OPTIONS.find((o) => o.value === watchFilter)?.label.toLowerCase()} here</p>
       <button class="clear-link" on:click={() => setWatchFilter('')}>Show all items</button>
+    </div>
+  {:else if allItems.length === 0 && !loadingItems && albumsView && (selectedGenre || yearMin || yearMax)}
+    <div class="empty">
+      <p class="empty-t">No albums match these filters</p>
+      <button class="clear-link" on:click={clearFilters}>Show all albums</button>
     </div>
   {:else if allItems.length === 0 && !loadingItems}
     <div class="empty">
@@ -633,7 +788,7 @@
       <button class="clear-link" on:click={() => query = ''}>Clear filter</button>
     </div>
   {:else}
-    {#if isMusicLibrary && musicVideos.length > 0}
+    {#if isMusicLibrary && !albumsView && musicVideos.length > 0}
       <section class="mv-shelf">
         <h2 class="mv-shelf-title">Music videos</h2>
         <div class="mv-row">
@@ -719,6 +874,54 @@
           {/each}
         </div>
       {/each}
+    {:else if albumsView}
+      <!-- Albums index: every album in the library as a square cover with
+           its title, then its artist and year. The artist is a link of its
+           own, beside the card link rather than nested in it. -->
+      <div class="grid album-grid">
+        {#each filtered as item (item.id)}
+          <div class="item-cell">
+            <a class="item" href={itemHref(item)}>
+              <div class="poster">
+                {#if item.poster_path}
+                  <img src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)}
+                       srcset="{assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=450`)} 450w"
+                       sizes="(max-width: 768px) 100px, 180px"
+                       alt={item.title} loading="lazy" />
+                {:else}
+                  <div class="poster-blank"><span>♪</span></div>
+                  <button
+                    class="refresh-art"
+                    class:spinning={enrichingIds.has(item.id)}
+                    title="Refresh artwork"
+                    on:click={(e) => enrichItem(e, item.id)}
+                  >⟳</button>
+                {/if}
+              </div>
+              <div class="item-foot">
+                <div class="item-title">{item.title}</div>
+              </div>
+            </a>
+            <div class="album-meta">
+              {#if item.parent_title && item.parent_id}
+                <a class="album-artist" href="/artists/{item.parent_id}">{item.parent_title}</a>
+              {:else if item.parent_title}
+                <span class="album-artist">{item.parent_title}</span>
+              {/if}
+              {#if item.parent_title && item.year}<span aria-hidden="true">·</span>{/if}
+              {#if item.year}<span class="album-year">{item.year}</span>{/if}
+            </div>
+          </div>
+        {/each}
+
+        {#if loadingItems}
+          {#each {length: 8} as _}
+            <div class="item skeleton-item">
+              <div class="poster skeleton-poster"></div>
+            </div>
+          {/each}
+        {/if}
+      </div>
     {:else}
     <div class="grid" class:photo-grid={isPhotoLibrary} class:music-grid={isMusicLibrary || isAudiobookLibrary}>
       {#each filtered as item (item.id)}
@@ -1072,6 +1275,43 @@
   .music-grid .item-foot {
     text-align: center;
   }
+
+  /* Albums index: square covers, artist · year under the title. */
+  .album-grid {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 1.25rem 1rem;
+  }
+  .album-grid .poster,
+  .album-grid .skeleton-poster {
+    aspect-ratio: 1 / 1;
+    border-radius: 6px;
+  }
+  .album-meta {
+    display: flex; align-items: baseline; gap: 0.3rem; min-width: 0;
+    padding: 0.1rem 0.1rem 0;
+    font-size: 0.68rem; color: var(--text-muted);
+  }
+  .album-artist {
+    min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    color: var(--text-muted); text-decoration: none;
+  }
+  a.album-artist:hover { color: var(--text-secondary); text-decoration: underline; }
+  .album-year { flex-shrink: 0; }
+
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.25rem 0.35rem 0.25rem 0.6rem;
+    background: rgba(124,106,247,0.1);
+    border: 1px solid rgba(124,106,247,0.3);
+    border-radius: 20px;
+    font-size: 0.72rem; color: var(--accent-text);
+    white-space: nowrap;
+  }
+  .filter-chip button {
+    background: none; border: none; padding: 0 0.2rem; line-height: 1;
+    font-size: 0.9rem; color: inherit; cursor: pointer;
+  }
+  .filter-chip button:hover { color: var(--text-primary); }
 
   .poster {
     aspect-ratio: 2/3;

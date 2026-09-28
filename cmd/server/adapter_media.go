@@ -957,6 +957,22 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		}
 		return convertFilteredRows(rows, genFilteredTakenAtAscRowToItem), nil
 
+	case "artist_asc":
+		pp := gen.ListMediaItemsByParentTitleParams(p)
+		rows, err := a.q.ListMediaItemsByParentTitle(ctx, pp)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredParentTitleRowToItem), nil
+
+	case "artist_desc":
+		pdp := gen.ListMediaItemsByParentTitleDescParams(p)
+		rows, err := a.q.ListMediaItemsByParentTitleDesc(ctx, pdp)
+		if err != nil {
+			return nil, err
+		}
+		return convertFilteredRows(rows, genFilteredParentTitleDescRowToItem), nil
+
 	default:
 		rows, err := a.q.ListMediaItemsByTitle(ctx, p)
 		if err != nil {
@@ -1054,6 +1070,22 @@ func genFilteredTakenAtRowToItem(r gen.ListMediaItemsByTakenAtRow) media.Item {
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
 }
 func genFilteredTakenAtAscRowToItem(r gen.ListMediaItemsByTakenAtAscRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredParentTitleRowToItem(r gen.ListMediaItemsByParentTitleRow) media.Item {
+	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+func genFilteredParentTitleDescRowToItem(r gen.ListMediaItemsByParentTitleDescRow) media.Item {
 	return itemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
 		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
 		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,

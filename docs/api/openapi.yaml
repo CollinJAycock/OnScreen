@@ -619,8 +619,24 @@ paths:
       - { in: query, name: year_min, schema: { type: integer } }
       - { in: query, name: year_max, schema: { type: integer } }
       - { in: query, name: rating_min, schema: { type: number, format: float } }
-      - { in: query, name: sort, schema: { type: string, enum: [title, year, rating, created_at, updated_at] } }
-      - { in: query, name: order, schema: { type: string, enum: [asc, desc] } }
+      - in: query
+        name: sort
+        schema: { type: string, enum: [title, year, rating, created_at, taken_at, artist] }
+        description: |
+          `artist` orders by the parent item's title — the artist, for
+          albums and music videos listed via `type` — then oldest first
+          within each artist.
+      - in: query
+        name: sort_dir
+        schema: { type: string, enum: [asc, desc] }
+        description: Defaults to `desc` for year, rating, created_at and taken_at; `asc` otherwise.
+      - in: query
+        name: type
+        schema: { type: string }
+        description: |
+          List another level of the library's hierarchy instead of its
+          top-level items, validated per library type (400 otherwise) —
+          e.g. `album` for every album in a music library, across artists.
       - $ref: '#/components/parameters/WatchFilter'
     get:
       summary: List items in a library
@@ -630,6 +646,8 @@ paths:
         home video), `leaf_count` / `unwatched_count` on shows and seasons
         (episodes within the caller's content-rating ceiling). `watch=`
         filters in SQL, so paging, sort and `meta.total` stay consistent.
+        Rows below the top level (listed via `type`) also carry
+        `parent_id` / `parent_title` — an album's artist.
       tags: [Libraries]
       responses:
         '200':
@@ -675,7 +693,15 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/libraries/{id}/genres:
-    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - in: query
+        name: type
+        schema: { type: string }
+        description: |
+          Item type to count, validated as on /items (400 otherwise).
+          Defaults to the library's top-level type. A music library's
+          genres are on its albums (`type=album`); its artists carry none.
     get:
       summary: List distinct genres in a library
       tags: [Libraries]
@@ -690,9 +716,15 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/GenreCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /api/v1/libraries/{id}/years:
-    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - in: query
+        name: type
+        schema: { type: string }
+        description: Item type to count, as on /genres (`type=album` for a music library).
     get:
       summary: List distinct years in a library
       tags: [Libraries]
@@ -707,6 +739,7 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/YearCount' }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /api/v1/libraries/{id}/scan:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -4791,7 +4824,7 @@ components:
     GenreCount:
       type: object
       properties:
-        genre: { type: string }
+        name:  { type: string }
         count: { type: integer, format: int64 }
     YearCount:
       type: object
@@ -4812,6 +4845,13 @@ components:
         poster_path:  { type: string, nullable: true }
         thumb_path:   { type: string, nullable: true }
         content_rating: { type: string, nullable: true }
+        parent_id:
+          type: string
+          format: uuid
+          description: Library listing only, rows below the top level (via `type`). The parent item — an album's artist.
+        parent_title:
+          type: string
+          description: Library listing only, alongside `parent_id`. The parent's title — an album's artist name.
         watch_state:
           type: string
           enum: [watched, in_progress, unwatched]

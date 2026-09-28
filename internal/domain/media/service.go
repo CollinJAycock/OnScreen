@@ -201,7 +201,7 @@ type FilterParams struct {
 	YearMax       *int
 	RatingMin     *float64
 	MaxRatingRank *int   // content_rating_rank() ceiling for parental filtering
-	Sort          string // title, year, rating, created_at
+	Sort          string // title, year, rating, created_at, taken_at, artist (the parent's title)
 	SortAsc       bool
 	// Watch narrows to the caller's watch bucket — "unwatched",
 	// "in_progress" or "watched" (see media_watch_bucket, migration 00023);

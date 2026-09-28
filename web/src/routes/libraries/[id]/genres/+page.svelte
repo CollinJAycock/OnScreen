@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, type Library, type GenreCount } from '$lib/api';
+  import { facetItemType, libraryGridHref } from '$lib/musicBrowse';
 
   let library: Library | null = null;
   let genres: GenreCount[] = [];
@@ -10,11 +11,15 @@
   let error = '';
 
   $: id = $page.params.id!;
+  // A music library's genres are on its albums (from the files' tags); a
+  // genre opens that genre's albums.
+  $: isMusic = library?.type === 'music';
 
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     try {
-      [library, genres] = await Promise.all([libraryApi.get(id), mediaApi.genres(id)]);
+      library = await libraryApi.get(id);
+      genres = await mediaApi.genres(id, facetItemType(library.type));
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed';
     } finally {
@@ -23,7 +28,7 @@
   });
 
   function pickGenre(g: GenreCount) {
-    goto(`/libraries/${id}?genre=${encodeURIComponent(g.name)}`);
+    goto(libraryGridHref(id, library?.type, { genre: g.name }));
   }
 </script>
 
@@ -31,7 +36,7 @@
   <header>
     <a class="back" href="/libraries/{id}">← {library?.name ?? 'Library'}</a>
     <h1>Browse by Genre</h1>
-    {#if !loading}<span class="subtle">{genres.length} genres</span>{/if}
+    {#if !loading}<span class="subtle">{genres.length} genres{isMusic ? ' · counted in albums' : ''}</span>{/if}
   </header>
 
   {#if loading}
@@ -39,7 +44,11 @@
   {:else if error}
     <p class="err">{error}</p>
   {:else if genres.length === 0}
-    <p class="empty">No genres yet. Run a scan with metadata enrichment enabled.</p>
+    {#if isMusic}
+      <p class="empty">No album genres yet. They come from the genre tags in your music files.</p>
+    {:else}
+      <p class="empty">No genres yet. Run a scan with metadata enrichment enabled.</p>
+    {/if}
   {:else}
     <div class="grid">
       {#each genres as g}

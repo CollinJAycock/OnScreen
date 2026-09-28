@@ -686,7 +686,8 @@ func run() error {
 		WithMedia(mediaSvc).
 		WithDetector(libEnqueuer.introDetector).
 		WithAudit(auditLogger).
-		WithWatchState(gen.New(roPool))
+		WithWatchState(gen.New(roPool)).
+		WithParentTitles(gen.New(roPool))
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 

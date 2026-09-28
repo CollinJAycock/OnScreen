@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, type Library, type YearCount } from '$lib/api';
+  import { facetItemType, libraryGridHref } from '$lib/musicBrowse';
 
   let library: Library | null = null;
   let years: YearCount[] = [];
@@ -10,6 +11,9 @@
   let error = '';
 
   $: id = $page.params.id!;
+  // A music library's years are its albums' release years; a year opens
+  // that year's albums.
+  $: isMusic = library?.type === 'music';
 
   // Group years into decades for easier scanning. Decade key is the floor of
   // the year to ten (1990s → 1990). Years within a decade keep their natural
@@ -27,7 +31,8 @@
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     try {
-      [library, years] = await Promise.all([libraryApi.get(id), mediaApi.years(id)]);
+      library = await libraryApi.get(id);
+      years = await mediaApi.years(id, facetItemType(library.type));
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed';
     } finally {
@@ -36,11 +41,11 @@
   });
 
   function pickYear(y: YearCount) {
-    goto(`/libraries/${id}?year_min=${y.year}&year_max=${y.year}`);
+    goto(libraryGridHref(id, library?.type, { year_min: y.year, year_max: y.year }));
   }
 
   function pickDecade(d: number) {
-    goto(`/libraries/${id}?year_min=${d}&year_max=${d + 9}`);
+    goto(libraryGridHref(id, library?.type, { year_min: d, year_max: d + 9 }));
   }
 </script>
 
@@ -56,13 +61,17 @@
   {:else if error}
     <p class="err">{error}</p>
   {:else if years.length === 0}
-    <p class="empty">No release years on file. Run a scan with metadata enrichment enabled.</p>
+    {#if isMusic}
+      <p class="empty">No album years yet. They come from the date tags in your music files.</p>
+    {:else}
+      <p class="empty">No release years on file. Run a scan with metadata enrichment enabled.</p>
+    {/if}
   {:else}
     {#each decades as [d, ys]}
       <section>
         <div class="decade-head">
           <button class="decade-btn" on:click={() => pickDecade(d)}>{d}s</button>
-          <span class="subtle">{ys.reduce((s, y) => s + y.count, 0).toLocaleString()} items</span>
+          <span class="subtle">{ys.reduce((s, y) => s + y.count, 0).toLocaleString()} {isMusic ? 'albums' : 'items'}</span>
         </div>
         <div class="grid">
           {#each ys as y}

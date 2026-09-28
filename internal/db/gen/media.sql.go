@@ -2433,6 +2433,40 @@ func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUI
 	return items, nil
 }
 
+const listMediaItemTitles = `-- name: ListMediaItemTitles :many
+SELECT id, title
+FROM media_items
+WHERE id = ANY($1::uuid[])
+  AND deleted_at IS NULL
+`
+
+type ListMediaItemTitlesRow struct {
+	ID    uuid.UUID `json:"id"`
+	Title string    `json:"title"`
+}
+
+// Titles for a batch of item ids, in one round trip. The library listing
+// uses it to label child rows with their parent — an album with its artist.
+func (q *Queries) ListMediaItemTitles(ctx context.Context, ids []uuid.UUID) ([]ListMediaItemTitlesRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemTitles, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemTitlesRow{}
+	for rows.Next() {
+		var i ListMediaItemTitlesRow
+		if err := rows.Scan(&i.ID, &i.Title); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMediaItems = `-- name: ListMediaItems :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -2751,6 +2785,266 @@ func (q *Queries) ListMediaItemsByDateAddedAsc(ctx context.Context, arg ListMedi
 	items := []ListMediaItemsByDateAddedAscRow{}
 	for rows.Next() {
 		var i ListMediaItemsByDateAddedAscRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMediaItemsByParentTitle = `-- name: ListMediaItemsByParentTitle :many
+SELECT m.id, m.library_id, m.type, m.title, m.sort_title, m.original_title, m.year,
+       m.summary, m.tagline, m.rating, m.audience_rating, m.content_rating, m.duration_ms,
+       m.genres, m.tags, m.tmdb_id, m.tvdb_id, m.imdb_id, m.musicbrainz_id,
+       m.parent_id, m.index, m.poster_path, m.fanart_path, m.thumb_path,
+       m.originally_available_at, m.created_at, m.updated_at, m.deleted_at
+FROM media_items m
+LEFT JOIN media_items p ON p.id = m.parent_id
+WHERE m.library_id = $1
+  AND m.type = $2
+  AND m.deleted_at IS NULL
+  AND ($5::text IS NULL OR $5 = ANY(m.genres))
+  AND ($6::int IS NULL OR m.year >= $6)
+  AND ($7::int IS NULL OR m.year <= $7)
+  AND ($8::numeric IS NULL OR m.rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(m.content_rating) <= $9)
+  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, m.id, m.type, $9::int) = $10::text)
+ORDER BY p.sort_title ASC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
+LIMIT $3 OFFSET $4
+`
+
+type ListMediaItemsByParentTitleParams struct {
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
+	Watch         *string        `json:"watch"`
+	WatchUserID   uuid.UUID      `json:"watch_user_id"`
+}
+
+type ListMediaItemsByParentTitleRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// sort=artist: orders by the parent's sort title — the artist, for albums
+// and music videos — then oldest-first within each parent, so an artist's
+// discography reads in release order. p.id keeps two same-named artists
+// from interleaving. Same filters as ListMediaItemsByTitle; every column is
+// qualified because of the self-join.
+func (q *Queries) ListMediaItemsByParentTitle(ctx context.Context, arg ListMediaItemsByParentTitleParams) ([]ListMediaItemsByParentTitleRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemsByParentTitle,
+		arg.LibraryID,
+		arg.Type,
+		arg.Limit,
+		arg.Offset,
+		arg.Genre,
+		arg.YearMin,
+		arg.YearMax,
+		arg.RatingMin,
+		arg.MaxRatingRank,
+		arg.Watch,
+		arg.WatchUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemsByParentTitleRow{}
+	for rows.Next() {
+		var i ListMediaItemsByParentTitleRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.SortTitle,
+			&i.OriginalTitle,
+			&i.Year,
+			&i.Summary,
+			&i.Tagline,
+			&i.Rating,
+			&i.AudienceRating,
+			&i.ContentRating,
+			&i.DurationMs,
+			&i.Genres,
+			&i.Tags,
+			&i.TmdbID,
+			&i.TvdbID,
+			&i.ImdbID,
+			&i.MusicbrainzID,
+			&i.ParentID,
+			&i.Index,
+			&i.PosterPath,
+			&i.FanartPath,
+			&i.ThumbPath,
+			&i.OriginallyAvailableAt,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listMediaItemsByParentTitleDesc = `-- name: ListMediaItemsByParentTitleDesc :many
+SELECT m.id, m.library_id, m.type, m.title, m.sort_title, m.original_title, m.year,
+       m.summary, m.tagline, m.rating, m.audience_rating, m.content_rating, m.duration_ms,
+       m.genres, m.tags, m.tmdb_id, m.tvdb_id, m.imdb_id, m.musicbrainz_id,
+       m.parent_id, m.index, m.poster_path, m.fanart_path, m.thumb_path,
+       m.originally_available_at, m.created_at, m.updated_at, m.deleted_at
+FROM media_items m
+LEFT JOIN media_items p ON p.id = m.parent_id
+WHERE m.library_id = $1
+  AND m.type = $2
+  AND m.deleted_at IS NULL
+  AND ($5::text IS NULL OR $5 = ANY(m.genres))
+  AND ($6::int IS NULL OR m.year >= $6)
+  AND ($7::int IS NULL OR m.year <= $7)
+  AND ($8::numeric IS NULL OR m.rating >= $8)
+  AND ($9::int IS NULL OR content_rating_rank(m.content_rating) <= $9)
+  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, m.id, m.type, $9::int) = $10::text)
+ORDER BY p.sort_title DESC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
+LIMIT $3 OFFSET $4
+`
+
+type ListMediaItemsByParentTitleDescParams struct {
+	LibraryID     uuid.UUID      `json:"library_id"`
+	Type          string         `json:"type"`
+	Limit         int32          `json:"limit"`
+	Offset        int32          `json:"offset"`
+	Genre         *string        `json:"genre"`
+	YearMin       *int32         `json:"year_min"`
+	YearMax       *int32         `json:"year_max"`
+	RatingMin     pgtype.Numeric `json:"rating_min"`
+	MaxRatingRank *int32         `json:"max_rating_rank"`
+	Watch         *string        `json:"watch"`
+	WatchUserID   uuid.UUID      `json:"watch_user_id"`
+}
+
+type ListMediaItemsByParentTitleDescRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	MusicbrainzID         pgtype.UUID        `json:"musicbrainz_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+}
+
+// Parents Z→A; within a parent the order stays oldest-first, as above.
+func (q *Queries) ListMediaItemsByParentTitleDesc(ctx context.Context, arg ListMediaItemsByParentTitleDescParams) ([]ListMediaItemsByParentTitleDescRow, error) {
+	rows, err := q.db.Query(ctx, listMediaItemsByParentTitleDesc,
+		arg.LibraryID,
+		arg.Type,
+		arg.Limit,
+		arg.Offset,
+		arg.Genre,
+		arg.YearMin,
+		arg.YearMax,
+		arg.RatingMin,
+		arg.MaxRatingRank,
+		arg.Watch,
+		arg.WatchUserID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListMediaItemsByParentTitleDescRow{}
+	for rows.Next() {
+		var i ListMediaItemsByParentTitleDescRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.LibraryID,

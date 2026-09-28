@@ -128,6 +128,13 @@ type MediaItemResponse struct {
 	TakenAt   *time.Time `json:"taken_at,omitempty"`
 	CreatedAt time.Time  `json:"created_at"`
 	UpdatedAt int64      `json:"updated_at"`
+	// ParentID / ParentTitle are set on child rows listed via `?type=` — an
+	// album carries its artist, so an albums index can say whose record it
+	// is without a request per card. Omitted on top-level rows, which is
+	// every row of a default listing. ParentTitle needs WithParentTitles
+	// (see attachParentTitles). Additive in v2.5.
+	ParentID    *string `json:"parent_id,omitempty"`
+	ParentTitle *string `json:"parent_title,omitempty"`
 	// The caller's watch state (see attachWatchState). WatchState and
 	// ViewOffsetMS are set on playable video leaves (movie, episode, music
 	// video, home video); ViewOffsetMS only when there is a resume point.
@@ -164,8 +171,9 @@ type LibraryHandler struct {
 	media    MediaItemLister // optional; enables GET /libraries/:id/items
 	detector IntroDetectorRunner
 	logger   *slog.Logger
-	audit    *audit.Logger  // optional; nil disables admin-action audit logging
-	watchDB  LibraryWatchDB // optional; per-item watch fields + GET /libraries/:id/random (WithWatchState)
+	audit    *audit.Logger   // optional; nil disables admin-action audit logging
+	watchDB  LibraryWatchDB  // optional; per-item watch fields + GET /libraries/:id/random (WithWatchState)
+	parentDB LibraryParentDB // optional; parent_title on child rows of the listing (WithParentTitles)
 }
 
 // NewLibraryHandler creates a LibraryHandler.
@@ -612,6 +620,10 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 	} else if fp.Sort == "rating" || fp.Sort == "created_at" || fp.Sort == "year" || fp.Sort == "taken_at" {
 		fp.SortAsc = false // default desc for rating/date/year/taken
 	}
+	// sort=artist orders by the parent item's title (the artist, for
+	// albums and music videos listed via ?type=), ascending by default.
+	// On a top-level listing every parent is NULL and it degrades to
+	// year then title.
 
 	// Inject content rating ceiling from auth claims.
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
@@ -681,12 +693,18 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:     item.CreatedAt,
 			UpdatedAt:     item.UpdatedAt.UnixMilli(),
 		}
+		if item.ParentID != nil {
+			s := item.ParentID.String()
+			out[i].ParentID = &s
+		}
 	}
 	h.attachWatchState(r.Context(), claims.UserID, fp.MaxRatingRank, items, out)
+	h.attachParentTitles(r.Context(), items, out)
 	respond.List(w, r, out, total, "")
 }
 
-// Genres handles GET /api/v1/libraries/:id/genres.
+// Genres handles GET /api/v1/libraries/:id/genres. Counts the root item type
+// unless `?type=` names another level (see facetItemType).
 func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 	if h.media == nil {
 		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
@@ -721,8 +739,13 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
+	itemType, ok := facetItemType(lib.Type, r.URL.Query().Get("type"))
+	if !ok {
+		respond.BadRequest(w, r, "type "+r.URL.Query().Get("type")+" is not valid for "+lib.Type+" library")
+		return
+	}
 	// Apply the caller's ceiling to the facet counts — see the query comment.
-	rows, err := h.media.ListGenresWithCounts(r.Context(), id, rootItemType(lib.Type),
+	rows, err := h.media.ListGenresWithCounts(r.Context(), id, itemType,
 		callerRatingRank(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list genres", "library_id", id, "err", err)
@@ -801,7 +824,7 @@ type YearCountResponse struct {
 	Count int64 `json:"count"`
 }
 
-// Years handles GET /api/v1/libraries/:id/years.
+// Years handles GET /api/v1/libraries/:id/years. `?type=` as on Genres.
 func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
 	if h.media == nil {
 		respond.Error(w, r, http.StatusNotImplemented, "NOT_IMPLEMENTED", "media listing not available")
@@ -836,7 +859,12 @@ func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	rows, err := h.media.ListYearsWithCounts(r.Context(), id, rootItemType(lib.Type),
+	itemType, ok := facetItemType(lib.Type, r.URL.Query().Get("type"))
+	if !ok {
+		respond.BadRequest(w, r, "type "+r.URL.Query().Get("type")+" is not valid for "+lib.Type+" library")
+		return
+	}
+	rows, err := h.media.ListYearsWithCounts(r.Context(), id, itemType,
 		callerRatingRank(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list years", "library_id", id, "err", err)
@@ -926,6 +954,21 @@ func validItemTypeForLibrary(libraryType, itemType string) bool {
 		return itemType == "dvr"
 	}
 	return false
+}
+
+// facetItemType resolves which item type a genre / year facet counts: the
+// library's root type by default, or a `?type=` from the same per-library
+// allow-list as the listing. Music needs it — genres and years live on album
+// rows (read from the files' tags), while the root artist rows carry neither.
+// ok is false for a type outside the allow-list.
+func facetItemType(libraryType, requested string) (itemType string, ok bool) {
+	if requested == "" {
+		return rootItemType(libraryType), true
+	}
+	if !validItemTypeForLibrary(libraryType, requested) {
+		return "", false
+	}
+	return requested, true
 }
 
 // callerRatingRank returns the caller's content-rating ceiling as a rank, or

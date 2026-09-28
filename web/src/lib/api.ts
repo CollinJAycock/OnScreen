@@ -1107,6 +1107,10 @@ export interface MediaItem {
   taken_at?: string;
   created_at: string;
   updated_at: string;
+  // Child rows listed via `type` (an album on the albums index) carry their
+  // parent — the album's artist. Absent on top-level rows.
+  parent_id?: string;
+  parent_title?: string;
   // The caller's watch state (movies, episodes, videos). Absent = unwatched.
   watch_state?: 'watched' | 'in_progress' | 'unwatched';
   view_offset_ms?: number;
@@ -1115,7 +1119,8 @@ export interface MediaItem {
   unwatched_count?: number;
 }
 
-export type SortField = 'title' | 'year' | 'rating' | 'created_at' | 'taken_at';
+// 'artist' orders by the parent's title — the artist, for albums.
+export type SortField = 'title' | 'year' | 'rating' | 'created_at' | 'taken_at' | 'artist';
 
 export interface PhotoEXIF {
   taken_at?: string;
@@ -1495,10 +1500,13 @@ export const mediaApi = {
     if (params?.watch) qs.set('watch', params.watch);
     return api.get<{ id: string; type: string }>(`/libraries/${libraryId}/random?${qs.toString()}`);
   },
-  genres: (libraryId: string) =>
-    api.get<GenreCount[]>(`/libraries/${libraryId}/genres`),
-  years: (libraryId: string) =>
-    api.get<YearCount[]>(`/libraries/${libraryId}/years`),
+  // Genre / year facets count the library's top-level type unless `type`
+  // names another level — a music library's genres and years are on its
+  // albums ('album'), not its artists.
+  genres: (libraryId: string, type?: string) =>
+    api.get<GenreCount[]>(`/libraries/${libraryId}/genres${type ? `?type=${encodeURIComponent(type)}` : ''}`),
+  years: (libraryId: string, type?: string) =>
+    api.get<YearCount[]>(`/libraries/${libraryId}/years${type ? `?type=${encodeURIComponent(type)}` : ''}`),
   // eventCollections returns the auto-created event_folder collections
   // for a home_video library — one per non-root subfolder under the
   // library's scan paths. Empty for any other library type.

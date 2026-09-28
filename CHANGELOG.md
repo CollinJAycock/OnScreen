@@ -117,6 +117,19 @@ Playback and library:
   under Audio in the user menu). When media is served cross-origin (an
   object-storage media store redirects streams to presigned URLs) the gain
   stage is skipped and playback continues at unity gain.
+- **Music browse** — a music library's page switches between its Artists
+  (the grid as before) and an **Albums** index: every album in the library
+  as a cover with its artist (linked) and year, sortable by title, artist,
+  year or date added, filterable by genre and year. The view, sort and
+  filters live in the URL, so Back from an album, reloads and deep links
+  keep them. Genres and years are read from the albums (the files' tags;
+  artists carry none), so Browse genres / Browse years on a music library
+  now list them and open that genre's or year's albums, and a music
+  library's Recently Added header on the home page opens its albums
+  newest first. API, all additive: `sort=artist` on
+  `GET /api/v1/libraries/{id}/items`, `parent_id` / `parent_title` on rows
+  listed below the top level (an album's artist), and `?type=` on
+  `GET /api/v1/libraries/{id}/genres` and `/years`.
 - **TMDB franchise collections** — a movie's TMDB collection becomes a
   server-owned collection once the server holds two or more of its films
   (at enrichment, plus a nightly `franchise_collections` task for movies
