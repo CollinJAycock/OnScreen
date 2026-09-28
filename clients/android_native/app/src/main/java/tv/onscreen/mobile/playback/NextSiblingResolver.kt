@@ -19,10 +19,7 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
         if (parentId == null || currentIndex == null) return null
         return try {
             val children = itemRepo.getChildren(parentId)
-            val next = children
-                .filter { it.type == type && it.index != null }
-                .sortedBy { it.index }
-                .firstOrNull { (it.index ?: -1) == currentIndex + 1 }
+            val next = nextInContainer(children, currentItemId, type, currentIndex)
             if (next != null) return next
 
             // Cross-container fall-through. Same shape for tracks
@@ -31,7 +28,7 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
             val nextContainer = nextContainer(parentId, type) ?: return null
             itemRepo.getChildren(nextContainer.id)
                 .filter { it.type == type && it.index != null }
-                .sortedBy { it.index }
+                .sortedWith(ChildItem.PLAY_ORDER)
                 .firstOrNull()
         } catch (_: Exception) {
             null
@@ -62,6 +59,40 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
             siblings.getOrNull(currentIdx + 1)
         } catch (_: Exception) {
             null
+        }
+    }
+
+    companion object {
+        /** The [type] row of [children] that follows [currentItemId]: the
+         *  nearest one after it in (disc, index) order. Also the player
+         *  screen's Up Next pick (PlayerViewModel.loadNextSibling).
+         *
+         *  Next-GREATER, not exactly currentIndex + 1. A library missing one
+         *  file (episode 4 of 10 absent, a track ripped out of an album)
+         *  leaves a numbering gap; an exact-successor match finds nothing
+         *  there and falls through to the cross-container branch, which jumps
+         *  to the next season / album entirely. Taking the next greater
+         *  position steps over the gap and keeps playing in place.
+         *
+         *  The disc matters because a multi-disc album restarts its numbering
+         *  on each disc: by index alone, disc 2 track 5 is followed by disc 1
+         *  track 6, and the last track of disc 1 by nothing on disc 2. The
+         *  current row's disc comes from [children] (the item endpoint doesn't
+         *  carry one); without one it is disc 1, as every episode is. */
+        fun nextInContainer(
+            children: List<ChildItem>,
+            currentItemId: String,
+            type: String,
+            currentIndex: Int,
+        ): ChildItem? {
+            val disc = children.firstOrNull { it.id == currentItemId }?.disc_number ?: 1
+            return children
+                .filter { it.type == type && it.index != null }
+                .sortedWith(ChildItem.PLAY_ORDER)
+                .firstOrNull {
+                    val d = it.disc_number ?: 1
+                    d > disc || (d == disc && (it.index ?: Int.MIN_VALUE) > currentIndex)
+                }
         }
     }
 }

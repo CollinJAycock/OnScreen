@@ -131,6 +131,9 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  /** A track's disc within its album (index is its number on that disc).
+   *  Absent reads as disc 1: single-disc albums, non-tracks, older servers. */
+  disc_number?: number;
 }
 
 export interface SearchResult {

@@ -406,9 +406,10 @@ class DetailFragment : Fragment() {
         return episodes.firstOrNull()
     }
 
+    /** Also an album's tracks (disc, then number), for its Play button. */
     private fun allEpisodesInOrder(): List<ChildItem> {
         val seasons = seasonMap.entries.sortedBy { it.key.index ?: Int.MAX_VALUE }
-        return seasons.flatMap { (_, eps) -> eps.sortedBy { it.index ?: Int.MAX_VALUE } }
+        return seasons.flatMap { (_, eps) -> eps.sortedWith(ChildItem.PLAY_ORDER) }
     }
 
     private fun inProgressEpisode(): ChildItem? =

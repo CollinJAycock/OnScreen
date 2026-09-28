@@ -395,7 +395,7 @@ class DetailViewModel @Inject constructor(
                 albums.firstNotNullOfOrNull { album ->
                     itemRepo.getChildren(album.id)
                         .filter { it.type == "track" && it.index != null }
-                        .minByOrNull { it.index ?: Int.MAX_VALUE }
+                        .minWithOrNull(ChildItem.PLAY_ORDER)
                 }
             }.getOrNull()
             onResolved(firstTrack?.id)

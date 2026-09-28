@@ -24,8 +24,8 @@ class NextSiblingResolverTest {
     private fun ep(id: String, index: Int) =
         ChildItem(id = id, title = id, type = "episode", index = index)
 
-    private fun track(id: String, index: Int) =
-        ChildItem(id = id, title = id, type = "track", index = index)
+    private fun track(id: String, index: Int, disc: Int? = null) =
+        ChildItem(id = id, title = id, type = "track", index = index, disc_number = disc)
 
     private fun repo() = mockk<ItemRepository>()
 
@@ -80,7 +80,69 @@ class NextSiblingResolverTest {
         assertThat(next?.id).isEqualTo("t3")
     }
 
+    // ── Multi-disc albums ───────────────────────────────────────────────────
+    // Each disc numbers its tracks from 1, so by index alone the discs
+    // interleave (disc 2 track 1 sorts next to disc 1 track 1).
+
+    @Test
+    fun `the last track of disc 1 continues on disc 2`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("album-1") } returns listOf(
+            track("d1t1", 1, disc = 1), track("d1t2", 2, disc = 1),
+            track("d2t1", 1, disc = 2), track("d2t2", 2, disc = 2),
+        )
+
+        val next = NextSiblingResolver(repo).resolve("d1t2", "track", "album-1", 2)
+
+        assertThat(next?.id).isEqualTo("d2t1")
+    }
+
+    @Test
+    fun `a disc 2 track advances on disc 2, not back to disc 1`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("album-1") } returns listOf(
+            track("d1t1", 1, disc = 1), track("d1t2", 2, disc = 1), track("d1t3", 3, disc = 1),
+            track("d2t1", 1, disc = 2), track("d2t2", 2, disc = 2),
+        )
+
+        val next = NextSiblingResolver(repo).resolve("d2t1", "track", "album-1", 1)
+
+        assertThat(next?.id).isEqualTo("d2t2")
+    }
+
+    @Test
+    fun `a track with no disc number is on disc 1`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("album-1") } returns
+            listOf(track("d2t1", 1, disc = 2), track("t2", 2), track("t1", 1))
+
+        val next = NextSiblingResolver(repo).resolve("t2", "track", "album-1", 2)
+
+        assertThat(next?.id).isEqualTo("d2t1")
+    }
+
     // ── Cross-container fall-through ────────────────────────────────────────
+
+    @Test
+    fun `the next album starts at disc 1 track 1`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("album-a") } returns listOf(track("a1", 1))
+        coEvery { repo.getItem("album-a") } returns ItemDetail(
+            id = "album-a", library_id = "lib", title = "A", type = "album", parent_id = "artist-1",
+        )
+        coEvery { repo.getChildren("artist-1") } returns listOf(
+            ChildItem(id = "album-a", title = "A", type = "album", year = 2001),
+            ChildItem(id = "album-b", title = "B", type = "album", year = 2003),
+        )
+        // Deliberately listed disc 2 first.
+        coEvery { repo.getChildren("album-b") } returns listOf(
+            track("b-d2t1", 1, disc = 2), track("b-d1t1", 1, disc = 1), track("b-d1t2", 2, disc = 1),
+        )
+
+        val next = NextSiblingResolver(repo).resolve("a1", "track", "album-a", 1)
+
+        assertThat(next?.id).isEqualTo("b-d1t1")
+    }
 
     @Test
     fun `falls through to the next season when the current one is exhausted`() = runTest {

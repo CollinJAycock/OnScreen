@@ -50,7 +50,8 @@ object MusicQueue {
     /**
      * Split an album listing around [anchorId]: the tracks before it and the
      * tracks after it. Keeps the server's order (/items/{id}/children sorts
-     * by index — the album page's order) and only [type] rows; null when the
+     * by disc, then track number — the album page's order, and
+     * [ChildItem.PLAY_ORDER]) and only [type] rows; null when the
      * anchor isn't in the listing (moved / deleted meanwhile), so the caller
      * leaves the single-item queue alone.
      */

@@ -417,16 +417,8 @@ sub onChildrenTaskState()
     if m.childrenTask.state <> "done" then return
     kids = m.childrenTask.result
     if kids = invalid or m.item = invalid then return
-    if m.item.index = invalid then return
-    targetIdx = m.item.index + 1
-    for each k in kids
-        ' k <> invalid guards a malformed children row; k.index is
-        ' checked before the comparison for the same reason.
-        if k <> invalid and k.type = m.item.type and k.index <> invalid and k.index = targetIdx
-            m.nextSibling = k
-            return
-        end if
-    end for
+    nxt = nextSiblingOf(m.item, kids)
+    if nxt <> invalid then m.nextSibling = nxt
 end sub
 
 sub maybeShowUpNext(posMs as Integer)

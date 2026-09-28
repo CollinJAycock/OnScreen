@@ -210,4 +210,26 @@ class DetailViewModelTest {
         val children = seasons.values.first()
         assertThat(children.map { it.id }).containsExactly("b1", "b2").inOrder()
     }
+
+    @Test
+    fun `artist Play All starts on disc 1 track 1 of the first album`() = runTest(dispatcher) {
+        // Every disc has a track 1, so the lowest index alone can't tell
+        // disc 1's opener from disc 2's.
+        val itemRepo = mockk<ItemRepository>()
+        coEvery { itemRepo.getChildren("artist-1") } returns listOf(
+            ChildItem(id = "alb-late", title = "Late", type = "album", year = 2010),
+            ChildItem(id = "alb-early", title = "Early", type = "album", year = 1999),
+        )
+        coEvery { itemRepo.getChildren("alb-early") } returns listOf(
+            ChildItem(id = "d2t1", title = "D2T1", type = "track", index = 1, disc_number = 2),
+            ChildItem(id = "d1t2", title = "D1T2", type = "track", index = 2, disc_number = 1),
+            ChildItem(id = "d1t1", title = "D1T1", type = "track", index = 1, disc_number = 1),
+        )
+
+        var started: String? = null
+        DetailViewModel(itemRepo, mockk()).resolvePlayAllStart("artist-1") { started = it }
+        advanceUntilIdle()
+
+        assertThat(started).isEqualTo("d1t1")
+    }
 }

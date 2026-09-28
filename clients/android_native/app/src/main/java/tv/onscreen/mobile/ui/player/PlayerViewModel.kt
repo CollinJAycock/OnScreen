@@ -31,6 +31,7 @@ import tv.onscreen.mobile.data.repository.TrickplayRepository
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
 import androidx.media3.common.util.UnstableApi
 import tv.onscreen.mobile.playback.LocalProgressTracker
+import tv.onscreen.mobile.playback.NextSiblingResolver
 import tv.onscreen.mobile.playback.PlaybackService
 import tv.onscreen.mobile.playback.StreamTokenVault
 import tv.onscreen.mobile.trickplay.TrickplayVtt
@@ -604,7 +605,7 @@ class PlayerViewModel @Inject constructor(
                 // (episodes) or chain silently (music tracks).
                 if (item.parent_id != null && item.index != null &&
                     (item.type == "episode" || item.type == "track")) {
-                    loadNextSibling(item.parent_id, item.index, item.type)
+                    loadNextSibling(item.id, item.parent_id, item.index, item.type)
                 }
 
                 subscribeRemoteProgress(itemId)
@@ -712,7 +713,7 @@ class PlayerViewModel @Inject constructor(
             return null
         }
         if (children.isEmpty()) return null
-        val sorted = children.sortedBy { it.index ?: Int.MAX_VALUE }
+        val sorted = children.sortedWith(ChildItem.PLAY_ORDER)
 
         // show / anime / artist nest one level deeper. Flatten by
         // pulling each container child's own children in order so the
@@ -726,7 +727,7 @@ class PlayerViewModel @Inject constructor(
                     } catch (_: Exception) {
                         emptyList()
                     }
-                    flat.addAll(grandKids.sortedBy { it.index ?: Int.MAX_VALUE })
+                    flat.addAll(grandKids.sortedWith(ChildItem.PLAY_ORDER))
                 } else {
                     flat.add(c)
                 }
@@ -746,13 +747,10 @@ class PlayerViewModel @Inject constructor(
         return leaves.first().id
     }
 
-    private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
+    private suspend fun loadNextSibling(itemId: String, parentId: String, currentIndex: Int, type: String) {
         try {
             val children = itemRepo.getChildren(parentId)
-            val next = children
-                .filter { it.type == type && it.index != null }
-                .sortedBy { it.index }
-                .firstOrNull { (it.index ?: -1) == currentIndex + 1 }
+            val next = NextSiblingResolver.nextInContainer(children, itemId, type, currentIndex)
             _state.value = _state.value.copy(nextSibling = next)
         } catch (_: Exception) {
             // Best-effort.

@@ -58,6 +58,11 @@ const suites = [
     sources: ['source/playback/Trickplay.brs'],
     test: 'tests/Trickplay_test.brs',
   },
+  {
+    name: 'Siblings',
+    sources: ['source/playback/Siblings.brs'],
+    test: 'tests/Siblings_test.brs',
+  },
 ];
 
 let totalPass = 0;

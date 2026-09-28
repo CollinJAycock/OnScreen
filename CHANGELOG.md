@@ -226,6 +226,14 @@ app's Search › Discover tab (which could request titles) was removed:
   per disc); albums list in disc-then-track order and the children API
   returns `disc_number`. An album already folded this way separates when
   the affected files are next re-imported.
+- **Native clients played multi-disc albums out of order.** Android TV,
+  the phone app, Tizen, webOS and Roku ordered and advanced tracks by
+  number alone, so the discs interleaved: disc 2 track 5 went on to disc 1
+  track 6, and the end of disc 1 skipped disc 2 or stopped. They now read
+  `disc_number` and use disc-then-track order for auto-advance,
+  Previous / Next, an album's Play and an artist's Play All. The phone's
+  next-item pick also steps over a missing number instead of leaving the
+  season or album, as the TV app's already did.
 - **Web home tiles wider than their posters** when a title or Next Up
   subtitle was long.
 

@@ -36,6 +36,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Decide.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Siblings.brs" />
 
     <children>
         <Video id="video"

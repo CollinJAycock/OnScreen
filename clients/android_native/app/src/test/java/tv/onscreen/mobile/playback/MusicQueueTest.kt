@@ -13,7 +13,8 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 
 class MusicQueueTest {
 
-    private fun track(id: String, index: Int? = null) = ChildItem(id = id, title = "t-$id", type = "track", index = index)
+    private fun track(id: String, index: Int? = null, disc: Int? = null) =
+        ChildItem(id = id, title = "t-$id", type = "track", index = index, disc_number = disc)
     private fun album(id: String, year: Int? = null, index: Int? = null) =
         ChildItem(id = id, title = "a-$id", type = "album", year = year, index = index)
 
@@ -68,15 +69,17 @@ class MusicQueueTest {
 
     @Test
     fun `keeps the server order and skips other child types and duplicates`() {
-        // Server sorts by index; a multi-disc album interleaves equal indexes —
-        // the queue keeps exactly the order the album page shows.
+        // Server sorts by disc, then track (an unnumbered track last on its
+        // disc) — the queue keeps exactly the order the album page shows, so
+        // disc 2 plays after all of disc 1.
         val listing = listOf(
-            track("d1t1", 1), track("d2t1", 1), ChildItem(id = "bk", title = "booklet", type = "photo"),
-            track("d1t2", 2), track("d1t2", 2), track("untracked", null),
+            track("d1t1", 1, disc = 1), ChildItem(id = "bk", title = "booklet", type = "photo"),
+            track("d1t2", 2, disc = 1), track("d1t2", 2, disc = 1), track("untracked", null),
+            track("d2t1", 1, disc = 2), track("d2t2", 2, disc = 2),
         )
         val plan = MusicQueue.planAround("d2t1", "track", listing)!!
-        assertThat(plan.before.map { it.id }).containsExactly("d1t1")
-        assertThat(plan.after.map { it.id }).containsExactly("d1t2", "untracked").inOrder()
+        assertThat(plan.before.map { it.id }).containsExactly("d1t1", "d1t2", "untracked").inOrder()
+        assertThat(plan.after.map { it.id }).containsExactly("d2t2")
     }
 
     @Test

@@ -20,6 +20,7 @@
   import { avplay } from '$lib/player/avplay';
   import { ProgressReporter } from '$lib/player/progress-reporter';
   import { parseVtt, findCue, type TrickplayCue } from '$lib/player/trickplay';
+  import { findSiblings } from '$lib/player/siblings';
   import type { OnlineSubtitle } from '$lib/api';
   import { pickPreferredSubtitle } from '$lib/subtitleSelect';
 
@@ -748,17 +749,12 @@
     }
     try {
       const kids = await endpoints.items.children(item.parent_id);
-      const sorted = kids
-        .filter((k) => k.type === item!.type && k.index != null)
-        .sort((a, b) => (a.index ?? 0) - (b.index ?? 0));
-      const myIdx = item.index ?? -1;
-      nextSibling = sorted.find((k) => (k.index ?? -1) === myIdx + 1) ?? null;
-      prevSibling = sorted.find((k) => (k.index ?? -1) === myIdx - 1) ?? null;
-      // Queue position — 1-indexed slot within the same-type siblings.
-      const myI = sorted.findIndex((k) => k.id === item!.id);
-      if (myI >= 0) {
-        queuePosition = myI + 1;
-        queueTotal = sorted.length;
+      const s = findSiblings(kids, item);
+      nextSibling = s.next;
+      prevSibling = s.prev;
+      if (s.position > 0) {
+        queuePosition = s.position;
+        queueTotal = s.total;
       }
     } catch {
       // Best-effort.
