@@ -27,10 +27,12 @@ import (
 type mockPhotoAlbumDB struct {
 	listMine    []gen.ListMyPhotoAlbumsRow
 	listMineErr error
-	listMineArg pgtype.UUID
+	listMineArg gen.ListMyPhotoAlbumsParams
 
 	listItems    []gen.ListPhotoAlbumItemsRow
 	lastListRank *int32
+	lastListLibs []uuid.UUID
+	lastCountArg gen.CountPhotoAlbumItemsParams
 	listItemsErr error
 
 	getResult gen.Collection
@@ -57,16 +59,18 @@ type mockPhotoAlbumDB struct {
 	getMediaItemErr error
 }
 
-func (m *mockPhotoAlbumDB) ListMyPhotoAlbums(_ context.Context, userID pgtype.UUID) ([]gen.ListMyPhotoAlbumsRow, error) {
-	m.listMineArg = userID
+func (m *mockPhotoAlbumDB) ListMyPhotoAlbums(_ context.Context, arg gen.ListMyPhotoAlbumsParams) ([]gen.ListMyPhotoAlbumsRow, error) {
+	m.listMineArg = arg
 	return m.listMine, m.listMineErr
 }
 func (m *mockPhotoAlbumDB) ListPhotoAlbumItems(_ context.Context, arg gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error) {
 	m.lastListRank = arg.MaxRatingRank
+	m.lastListLibs = arg.LibraryIds
 	return m.listItems, m.listItemsErr
 }
 
-func (m *mockPhotoAlbumDB) CountPhotoAlbumItems(_ context.Context, _ gen.CountPhotoAlbumItemsParams) (int64, error) {
+func (m *mockPhotoAlbumDB) CountPhotoAlbumItems(_ context.Context, arg gen.CountPhotoAlbumItemsParams) (int64, error) {
+	m.lastCountArg = arg
 	return int64(len(m.listItems)), nil
 }
 func (m *mockPhotoAlbumDB) GetCollection(_ context.Context, _ uuid.UUID) (gen.Collection, error) {
@@ -171,7 +175,7 @@ func TestPhotoAlbums_List_ReturnsAlbums(t *testing.T) {
 		t.Errorf("first album: %+v", resp.Data[0])
 	}
 	// Verify the user filter was passed through.
-	if !m.listMineArg.Valid || uuid.UUID(m.listMineArg.Bytes) != uid {
+	if !m.listMineArg.UserID.Valid || uuid.UUID(m.listMineArg.UserID.Bytes) != uid {
 		t.Errorf("user filter not passed through; got %v", m.listMineArg)
 	}
 }
@@ -565,38 +569,63 @@ func TestPhotoAlbums_Items_PassesRatingCeiling(t *testing.T) {
 	}
 }
 
+// Library access filters in the query (with the page and the total), not
+// after the page is cut, which left pages short and total counting photos
+// the caller couldn't open.
 func TestPhotoAlbums_Items_FilteredByLibraryAccess(t *testing.T) {
 	uid := uuid.New()
 	albumID := uuid.New()
 	allowedLib := uuid.New()
-	deniedLib := uuid.New()
-	m := &mockPhotoAlbumDB{
-		getResult: ownedAlbum(uid, albumID),
-		listItems: []gen.ListPhotoAlbumItemsRow{
-			{ID: uuid.New(), LibraryID: allowedLib, Title: "visible"},
-			{ID: uuid.New(), LibraryID: deniedLib, Title: "filtered"},
-		},
-	}
-	allowed := map[uuid.UUID]struct{}{allowedLib: {}}
+	m := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
 	hh := NewPhotoAlbumHandler(m, slog.Default()).
-		WithLibraryAccess(&mockAlbumLibraryAccess{allowed: allowed})
+		WithLibraryAccess(&mockAlbumLibraryAccess{allowed: map[uuid.UUID]struct{}{allowedLib: {}}})
 
 	req := withUser(httptest.NewRequest("GET", "/", nil), uid)
 	req = withChiParam(req, "id", albumID.String())
 	rec := httptest.NewRecorder()
 	hh.Items(rec, req)
 
-	var resp struct {
-		Data []photoAlbumItemResponse `json:"data"`
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, body=%s", rec.Code, rec.Body.String())
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode: %v", err)
+	if len(m.lastListLibs) != 1 || m.lastListLibs[0] != allowedLib {
+		t.Errorf("listing libraries = %v, want only the allowed one", m.lastListLibs)
 	}
-	if len(resp.Data) != 1 {
-		t.Fatalf("expected 1 visible item after ACL filter; got %d", len(resp.Data))
+	if len(m.lastCountArg.LibraryIds) != 1 || m.lastCountArg.LibraryIds[0] != allowedLib {
+		t.Errorf("total libraries = %v, want only the allowed one", m.lastCountArg.LibraryIds)
 	}
-	if resp.Data[0].LibraryID != allowedLib.String() {
-		t.Errorf("wrong item survived filter: %+v", resp.Data[0])
+
+	// No checker wired: every library (NULL in the query).
+	m2 := &mockPhotoAlbumDB{getResult: ownedAlbum(uid, albumID)}
+	NewPhotoAlbumHandler(m2, slog.Default()).Items(httptest.NewRecorder(), req)
+	if m2.lastListLibs != nil {
+		t.Errorf("unrestricted listing libraries = %v, want nil", m2.lastListLibs)
+	}
+}
+
+// The album list's counts and covers apply the same ceiling and library
+// access as the album page, so a restricted profile doesn't get a photo it
+// can no longer open as a cover.
+func TestPhotoAlbums_List_CountsAndCoversSeeWhatThePageShows(t *testing.T) {
+	uid := uuid.New()
+	allowedLib := uuid.New()
+	m := &mockPhotoAlbumDB{}
+	hh := NewPhotoAlbumHandler(m, slog.Default()).
+		WithLibraryAccess(&mockAlbumLibraryAccess{allowed: map[uuid.UUID]struct{}{allowedLib: {}}})
+	req := httptest.NewRequest("GET", "/", nil)
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uid, MaxContentRating: "PG"}))
+	rec := httptest.NewRecorder()
+	hh.List(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, body=%s", rec.Code, rec.Body.String())
+	}
+	arg := m.listMineArg
+	if arg.MaxRatingRank == nil || int(*arg.MaxRatingRank) != *contentrating.MaxRatingRank("PG") {
+		t.Errorf("ceiling = %v, want the PG rank", arg.MaxRatingRank)
+	}
+	if len(arg.LibraryIds) != 1 || arg.LibraryIds[0] != allowedLib {
+		t.Errorf("libraries = %v, want only the allowed one", arg.LibraryIds)
 	}
 }
 

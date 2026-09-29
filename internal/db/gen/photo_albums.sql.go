@@ -19,15 +19,18 @@ JOIN media_items mi ON mi.id = ci.media_item_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL AND mi.type = 'photo'
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND ($3::uuid[] IS NULL
+       OR mi.library_id = ANY($3::uuid[]))
 `
 
 type CountPhotoAlbumItemsParams struct {
-	CollectionID  uuid.UUID `json:"collection_id"`
-	MaxRatingRank *int32    `json:"max_rating_rank"`
+	CollectionID  uuid.UUID   `json:"collection_id"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
 }
 
 func (q *Queries) CountPhotoAlbumItems(ctx context.Context, arg CountPhotoAlbumItemsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countPhotoAlbumItems, arg.CollectionID, arg.MaxRatingRank)
+	row := q.db.QueryRow(ctx, countPhotoAlbumItems, arg.CollectionID, arg.MaxRatingRank, arg.LibraryIds)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -37,7 +40,18 @@ const listMyPhotoAlbums = `-- name: ListMyPhotoAlbums :many
 SELECT
     c.id, c.user_id, c.name, c.description, c.type, c.poster_path,
     c.created_at, c.updated_at,
-    COALESCE((SELECT COUNT(*) FROM collection_items ci WHERE ci.collection_id = c.id), 0)::bigint AS item_count,
+    (
+        SELECT COUNT(*)
+        FROM collection_items ci
+        JOIN media_items mi ON mi.id = ci.media_item_id
+        WHERE ci.collection_id = c.id
+          AND mi.deleted_at IS NULL
+          AND mi.type = 'photo'
+          AND ($1::int IS NULL
+               OR content_rating_rank(mi.content_rating) <= $1::int)
+          AND ($2::uuid[] IS NULL
+               OR mi.library_id = ANY($2::uuid[]))
+    )::bigint AS item_count,
     (
         SELECT mi.poster_path
         FROM collection_items ci
@@ -46,13 +60,23 @@ SELECT
         WHERE ci.collection_id = c.id
           AND mi.deleted_at IS NULL
           AND mi.type = 'photo'
+          AND ($1::int IS NULL
+               OR content_rating_rank(mi.content_rating) <= $1::int)
+          AND ($2::uuid[] IS NULL
+               OR mi.library_id = ANY($2::uuid[]))
         ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC
         LIMIT 1
     ) AS cover_path
 FROM collections c
-WHERE c.user_id = $1 AND c.type = 'photo_album'
+WHERE c.user_id = $3 AND c.type = 'photo_album'
 ORDER BY c.updated_at DESC, c.name
 `
+
+type ListMyPhotoAlbumsParams struct {
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	UserID        pgtype.UUID `json:"user_id"`
+}
 
 type ListMyPhotoAlbumsRow struct {
 	ID          uuid.UUID          `json:"id"`
@@ -70,8 +94,14 @@ type ListMyPhotoAlbumsRow struct {
 // Owned albums plus their item count and the most-recently-taken photo as a
 // cover candidate. Cover falls back to created_at when EXIF taken_at is
 // missing so albums of scanned-from-disk photos still get a tile.
-func (q *Queries) ListMyPhotoAlbums(ctx context.Context, userID pgtype.UUID) ([]ListMyPhotoAlbumsRow, error) {
-	rows, err := q.db.Query(ctx, listMyPhotoAlbums, userID)
+//
+// The count and the cover see only what the album page shows: live photos
+// within the caller's rating ceiling, in libraries they can open
+// (library_ids NULL = all). Otherwise a profile whose ceiling was lowered, or
+// whose library access was revoked, after filling an album still got those
+// photos as its cover.
+func (q *Queries) ListMyPhotoAlbums(ctx context.Context, arg ListMyPhotoAlbumsParams) ([]ListMyPhotoAlbumsRow, error) {
+	rows, err := q.db.Query(ctx, listMyPhotoAlbums, arg.MaxRatingRank, arg.LibraryIds, arg.UserID)
 	if err != nil {
 		return nil, err
 	}
@@ -119,15 +149,20 @@ WHERE ci.collection_id = $1
   -- ceiling was lowered after it filled the album.
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  -- Libraries the caller can open (NULL = all), filtered here rather than
+  -- after the page is cut, so a page isn't short and total agrees with it.
+  AND ($3::uuid[] IS NULL
+       OR mi.library_id = ANY($3::uuid[]))
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id
-LIMIT NULLIF($4::int, 0) OFFSET $3::int
+LIMIT NULLIF($5::int, 0) OFFSET $4::int
 `
 
 type ListPhotoAlbumItemsParams struct {
-	CollectionID  uuid.UUID `json:"collection_id"`
-	MaxRatingRank *int32    `json:"max_rating_rank"`
-	Off           int32     `json:"off"`
-	Lim           int32     `json:"lim"`
+	CollectionID  uuid.UUID   `json:"collection_id"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	Off           int32       `json:"off"`
+	Lim           int32       `json:"lim"`
 }
 
 type ListPhotoAlbumItemsRow struct {
@@ -156,6 +191,7 @@ func (q *Queries) ListPhotoAlbumItems(ctx context.Context, arg ListPhotoAlbumIte
 	rows, err := q.db.Query(ctx, listPhotoAlbumItems,
 		arg.CollectionID,
 		arg.MaxRatingRank,
+		arg.LibraryIds,
 		arg.Off,
 		arg.Lim,
 	)

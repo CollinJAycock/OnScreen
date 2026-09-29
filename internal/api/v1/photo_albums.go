@@ -24,7 +24,7 @@ import (
 // collection queries — only the list / item-list queries are
 // photo-album-specific (they join photo_metadata for taken_at + dimensions).
 type PhotoAlbumDB interface {
-	ListMyPhotoAlbums(ctx context.Context, userID pgtype.UUID) ([]gen.ListMyPhotoAlbumsRow, error)
+	ListMyPhotoAlbums(ctx context.Context, arg gen.ListMyPhotoAlbumsParams) ([]gen.ListMyPhotoAlbumsRow, error)
 	ListPhotoAlbumItems(ctx context.Context, arg gen.ListPhotoAlbumItemsParams) ([]gen.ListPhotoAlbumItemsRow, error)
 	CountPhotoAlbumItems(ctx context.Context, arg gen.CountPhotoAlbumItemsParams) (int64, error)
 	GetCollection(ctx context.Context, id uuid.UUID) (gen.Collection, error)
@@ -120,8 +120,18 @@ func (h *PhotoAlbumHandler) List(w http.ResponseWriter, r *http.Request) {
 		respond.Unauthorized(w, r)
 		return
 	}
-	userPG := pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true}
-	rows, err := h.db.ListMyPhotoAlbums(r.Context(), userPG)
+	// Counts and covers see only what each album's page shows.
+	libs, err := h.allowedLibraries(r)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "photo albums: allowed libraries", "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	rows, err := h.db.ListMyPhotoAlbums(r.Context(), gen.ListMyPhotoAlbumsParams{
+		UserID:        pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true},
+		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		LibraryIds:    libs,
+	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo albums", "err", err)
 		respond.InternalError(w, r)
@@ -230,35 +240,32 @@ func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 	}
 	// Paginated with a generous default cap so a huge album doesn't materialize
 	// entirely per open; clients can page with ?limit/?offset. The caller's
-	// content-rating ceiling filters on read, as every other photo listing does.
+	// content-rating ceiling and library access filter on read, in the query,
+	// so pages come back full and total agrees with them.
 	var maxRank *int32
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		maxRank = maxRatingRankFromClaims(claims.MaxContentRating)
+	}
+	libs, err := h.allowedLibraries(r)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "photo album: allowed libraries", "err", err)
+		respond.InternalError(w, r)
+		return
 	}
 	rows, err := h.db.ListPhotoAlbumItems(r.Context(), gen.ListPhotoAlbumItemsParams{
 		CollectionID:  id,
 		Lim:           respond.ParseLimit(r, photoAlbumPageDefault, photoAlbumPageDefault),
 		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
 		MaxRatingRank: maxRank,
+		LibraryIds:    libs,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo album items", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
 	}
-	allowed, err := h.allowedLibraries(r)
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "photo album: allowed libraries", "err", err)
-		respond.InternalError(w, r)
-		return
-	}
 	out := make([]photoAlbumItemResponse, 0, len(rows))
 	for _, row := range rows {
-		if allowed != nil {
-			if _, ok := allowed[row.LibraryID]; !ok {
-				continue
-			}
-		}
 		var takenAt *time.Time
 		if row.TakenAt.Valid {
 			t := row.TakenAt.Time
@@ -278,7 +285,7 @@ func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 			AddedAt:     row.AddedAt.Time,
 		})
 	}
-	total, _ := h.db.CountPhotoAlbumItems(r.Context(), gen.CountPhotoAlbumItemsParams{CollectionID: id, MaxRatingRank: maxRank})
+	total, _ := h.db.CountPhotoAlbumItems(r.Context(), gen.CountPhotoAlbumItemsParams{CollectionID: id, MaxRatingRank: maxRank, LibraryIds: libs})
 	respond.List(w, r, out, total, "")
 }
 
@@ -394,7 +401,10 @@ func (h *PhotoAlbumHandler) loadOwned(w http.ResponseWriter, r *http.Request, pa
 	return id, col, true
 }
 
-func (h *PhotoAlbumHandler) allowedLibraries(r *http.Request) (map[uuid.UUID]struct{}, error) {
+// allowedLibraries lists the libraries the caller can open, as the album
+// queries take them: nil means every library (no checker wired, or an
+// unrestricted caller).
+func (h *PhotoAlbumHandler) allowedLibraries(r *http.Request) ([]uuid.UUID, error) {
 	if h.access == nil {
 		return nil, nil
 	}
@@ -402,5 +412,13 @@ func (h *PhotoAlbumHandler) allowedLibraries(r *http.Request) (map[uuid.UUID]str
 	if claims == nil {
 		return nil, nil
 	}
-	return h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+	allowed, err := h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+	if err != nil || allowed == nil {
+		return nil, err
+	}
+	ids := make([]uuid.UUID, 0, len(allowed))
+	for id := range allowed {
+		ids = append(ids, id)
+	}
+	return ids, nil
 }

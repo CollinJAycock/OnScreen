@@ -550,11 +550,13 @@ func (h *CollectionHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	if !itemAddAllowed(w, r, h.access, h.logger, mi) {
 		return
 	}
+	// ON CONFLICT DO NOTHING ... RETURNING: an item already in the
+	// collection comes back as no row, and adding it again is a no-op.
 	_, err = h.db.AddCollectionItem(r.Context(), gen.AddCollectionItemParams{
 		CollectionID: id,
 		MediaItemID:  itemID,
 	})
-	if err != nil {
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		h.logger.ErrorContext(r.Context(), "add collection item", "err", err)
 		respond.InternalError(w, r)
 		return

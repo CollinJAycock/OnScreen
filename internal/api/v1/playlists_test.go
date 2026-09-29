@@ -424,6 +424,32 @@ func TestPlaylists_AddItem_PassesBothIDs(t *testing.T) {
 	}
 }
 
+// AddCollectionItem is ON CONFLICT DO NOTHING ... RETURNING, so re-adding an
+// item already in the playlist yields pgx.ErrNoRows: a no-op (204), while
+// any other insert failure still 500s.
+func TestPlaylists_AddItem_AlreadyInPlaylistIsNoOp(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"duplicate", pgx.ErrNoRows, http.StatusNoContent},
+		{"db failure", errors.New("connection reset"), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			uid := uuid.New()
+			col := ownedPlaylist(uid)
+			db := &mockPlaylistDB{getResult: col, addItemErr: tc.err}
+			req := plReq(http.MethodPost, `{"media_item_id":"`+uuid.NewString()+`"}`, uid, col.ID.String(), "")
+			rec := httptest.NewRecorder()
+			newPlaylistHandler(db).AddItem(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("got %d, want %d; body=%s", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestPlaylists_AddItem_RejectsForeignOwner(t *testing.T) {
 	db := &mockPlaylistDB{getResult: ownedPlaylist(uuid.New())}
 	h := newPlaylistHandler(db)

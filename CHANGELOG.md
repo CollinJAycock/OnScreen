@@ -213,7 +213,8 @@ Playback and library:
   selecting several in a photo library (Select), and remove them on the
   album's page or from the viewer. Albums stay owner-only. Adding a photo
   that is already in the album is now a no-op (`204`) instead of a `500`
-  from `POST /api/v1/photo-albums/{id}/items`.
+  from `POST /api/v1/photo-albums/{id}/items`; so is adding an item a
+  collection or playlist already holds.
 
 Android apps (TV + phone). The request features above are web-only by
 design — neither Android app has any request functionality, and the phone
@@ -288,6 +289,13 @@ app's Search › Discover tab (which could request titles) was removed:
 
 ### Fixed
 
+- **Photo album covers showed photos the viewer could no longer open.**
+  The album list's cover and photo count ignored deleted photos, the
+  rating ceiling and library access, so a profile whose ceiling was
+  lowered (or whose library access was revoked) after filling an album
+  still got those photos as its cover. They now count what the album page
+  shows. The album page also filters library access in the query, so a
+  page is no longer short and `total` agrees with it.
 - **Request notifications were never delivered.** Since requests shipped,
   every `request_*` notification failed the `notifications.type` CHECK
   constraint (it allowed three types) and the failure was only logged, so

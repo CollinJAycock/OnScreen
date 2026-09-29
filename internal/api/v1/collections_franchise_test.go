@@ -28,6 +28,7 @@ type frCollectionDB struct {
 	cols    map[uuid.UUID]gen.Collection
 	listed  []gen.Collection
 	mutated bool
+	addErr  error
 }
 
 func (f *frCollectionDB) ListCollections(context.Context, pgtype.UUID) ([]gen.Collection, error) {
@@ -60,7 +61,7 @@ func (f *frCollectionDB) CountCollectionItems(context.Context, gen.CountCollecti
 }
 func (f *frCollectionDB) AddCollectionItem(context.Context, gen.AddCollectionItemParams) (gen.CollectionItem, error) {
 	f.mutated = true
-	return gen.CollectionItem{}, nil
+	return gen.CollectionItem{}, f.addErr
 }
 func (f *frCollectionDB) GetMediaItem(context.Context, uuid.UUID) (gen.GetMediaItemRow, error) {
 	return gen.GetMediaItemRow{}, nil

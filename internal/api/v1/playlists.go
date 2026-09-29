@@ -485,10 +485,12 @@ func (h *PlaylistHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	if !itemAddAllowed(w, r, h.access, h.logger, mi) {
 		return
 	}
+	// ON CONFLICT DO NOTHING ... RETURNING: an item already in the playlist
+	// comes back as no row, and adding it again is a no-op.
 	if _, err := h.db.AddCollectionItem(r.Context(), gen.AddCollectionItemParams{
 		CollectionID: id,
 		MediaItemID:  itemID,
-	}); err != nil {
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		h.logger.ErrorContext(r.Context(), "add playlist item", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
