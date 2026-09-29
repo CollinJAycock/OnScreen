@@ -251,4 +251,31 @@ class PlaybackHelperTest {
         assertThat(PlaybackHelper.modeFor("something new", file(container = "avi", video = "mpeg2", audio = "mp2")))
             .isEqualTo(PlaybackHelper.decide(file(container = "avi", video = "mpeg2", audio = "mp2")))
     }
+
+    @Test
+    fun `only hardware decoders count for AV1`() {
+        // Android 10+: the platform's own verdict.
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.MTK.VIDEO.DECODER.AV1", true)).isTrue()
+        assertThat(PlaybackHelper.isHardwareCodec("c2.android.av1.decoder", false)).isFalse()
+        // Before: known software decoders by name.
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.Nvidia.h265.decode", null)).isTrue()
+        assertThat(PlaybackHelper.isHardwareCodec("c2.amlogic.av1.decoder", null)).isTrue()
+        assertThat(PlaybackHelper.isHardwareCodec("c2.android.av1.decoder", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.google.h264.decoder", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.ffmpeg.av1.decoder", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.SEC.avc.sw.dec", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("libgav1", null)).isFalse()
+        // Secure-only decoders play DRM streams alone.
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.MTK.VIDEO.DECODER.AV1.secure", true)).isFalse()
+    }
+
+    @Test
+    fun `DTS is claimed for a decoder or an output that takes it`() {
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false)).doesNotContain("dts")
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = true, dtsOutput = false)).contains("dts")
+        // A Fire TV or Shield (no DTS decoder) on a DTS receiver.
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = true)).contains("dts")
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false))
+            .containsAtLeast("aac", "ac3", "eac3", "flac")
+    }
 }

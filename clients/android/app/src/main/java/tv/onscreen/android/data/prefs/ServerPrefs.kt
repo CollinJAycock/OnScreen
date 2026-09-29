@@ -38,6 +38,10 @@ class ServerPrefs(private val context: Context) {
         private val KEY_FILTER_SHOW = booleanPreferencesKey("search_filter_show")
         private val KEY_FILTER_EPISODE = booleanPreferencesKey("search_filter_episode")
         private val KEY_FILTER_TRACK = booleanPreferencesKey("search_filter_track")
+        // Switch the display to the video's frame rate (FrameRateSwitcher).
+        // On by default; a TV or receiver that takes long to resync after a
+        // mode change is the reason to turn it off.
+        private val KEY_MATCH_FRAME_RATE = booleanPreferencesKey("match_frame_rate")
 
         /**
          * Pick a scheme for a bare-host URL the user typed into the server
@@ -167,6 +171,13 @@ class ServerPrefs(private val context: Context) {
             episode = it[KEY_FILTER_EPISODE] ?: false,
             track = it[KEY_FILTER_TRACK] ?: false,
         )
+    }
+
+    /** Whether playback switches the display to the video's frame rate. */
+    val matchFrameRate: Flow<Boolean> = context.dataStore.data.map { it[KEY_MATCH_FRAME_RATE] ?: true }
+
+    suspend fun setMatchFrameRate(enabled: Boolean) {
+        context.dataStore.edit { it[KEY_MATCH_FRAME_RATE] = enabled }
     }
 
     suspend fun setSearchFilters(filters: SearchFilters) {

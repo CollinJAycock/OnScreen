@@ -5254,6 +5254,7 @@ components:
         resolution_h:      { type: integer, nullable: true }
         bitrate:           { type: integer, format: int64, nullable: true }
         hdr_type:          { type: string, nullable: true }
+        frame_rate:        { type: number, format: double, nullable: true, description: 'Video frames per second as probed (e.g. 23.976, 25, 59.94). TV clients match the display refresh rate to it.' }
         duration_ms:       { type: integer, format: int64, nullable: true }
         faststart:         { type: boolean }
         bit_depth:             { type: integer, nullable: true, description: 'Audio bit depth (e.g. 16, 24). Music files only.' }

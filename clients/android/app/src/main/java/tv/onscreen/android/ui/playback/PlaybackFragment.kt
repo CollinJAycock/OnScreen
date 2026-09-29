@@ -168,6 +168,17 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  "handed off, may come back" state from a fresh foreground player. */
     private var parkedToService: Boolean = false
 
+    /** The Settings switch for display frame-rate matching, read at start. */
+    private var matchFrameRateEnabled: Boolean = true
+
+    /** The display has been matched to this video's frame rate (or there was
+     *  nothing to match): once per player screen, since a re-issued session
+     *  or a fallback transcode is the same video. */
+    private var frameRateMatched: Boolean = false
+
+    /** Playback is held while the display switches modes (see matchFrameRate). */
+    private var heldForFrameRate: Boolean = false
+
     /** Set when the player reaches STATE_ENDED so we don't publish a
      *  near-duration position back to the detail screen as a resume
      *  point (a finished item should offer Play, not Resume) and so the
@@ -334,6 +345,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first() ?: ""
+            matchFrameRateEnabled = prefs.matchFrameRate.first()
 
             initPlayer()
             viewModel.prepare(itemId, startMs, serverUrl, bookSpeed, resumedSession)
@@ -410,6 +422,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     sourceChanged && player == null -> Unit
                     sourceChanged -> {
                         playSource(source)
+                        // The server's probed frame rate, known before the
+                        // player loads a byte: the display can switch before
+                        // the first frame. Players learn it from the stream
+                        // later (onTracksChanged), if at all for HLS.
+                        if (AudioItemTypes.isAudio(state.item?.type)) {
+                            // A movie's display mode is no use to music.
+                            frameRates()?.releaseNow()
+                        } else {
+                            matchFrameRate(state.item?.files?.firstOrNull()?.frame_rate?.toFloat())
+                        }
                         // An explicit in-session choice (picked from the
                         // subtitle dialog) outranks the saved preference: a
                         // source re-emit here is usually an audio-track
@@ -1098,12 +1120,32 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             ensureSubtitleView()?.setCues(cueGroup.cues)
         }
 
+        override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
+            // Started by anything during a display switch (the on-screen Play
+            // included): the hold is over, and its end mustn't restart a
+            // pause that follows.
+            if (playWhenReady) heldForFrameRate = false
+        }
+
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
             // Re-resolve the user's explicit subtitle choice against the NEW
             // track groups: selection overrides bind to concrete TrackGroup
             // instances, so after an audio-switch re-issues the session (or
             // any re-prepare) the old override silently stops matching.
             applySubtitleChoice()
+            // No frame rate from the server (an older one): the stream's.
+            if (!frameRateMatched && !isAudioItem()) {
+                val fps = selectedVideoFrameRate(tracks)
+                if (fps != null) {
+                    matchFrameRate(fps)
+                } else if (tracks.groups.any { it.type == C.TRACK_TYPE_VIDEO && it.isSelected }) {
+                    // Nobody knows this video's rate (a server stream carries
+                    // none): the last video's mode is no better than the
+                    // default, so don't let it switch back mid-playback.
+                    frameRateMatched = true
+                    frameRates()?.releaseNow()
+                }
+            }
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1221,6 +1263,68 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             showErrorDialog(msg)
         }
     }
+
+    /** The selected video track's frame rate, or null when unknown. */
+    private fun selectedVideoFrameRate(tracks: androidx.media3.common.Tracks): Float? {
+        for (group in tracks.groups) {
+            if (group.type != C.TRACK_TYPE_VIDEO) continue
+            for (i in 0 until group.length) {
+                if (!group.isTrackSelected(i)) continue
+                val fps = group.getTrackFormat(i).frameRate
+                if (fps > 0f) return fps
+            }
+        }
+        return null
+    }
+
+    /**
+     * Switch the display to a refresh rate that shows video at [fps] evenly
+     * (see FrameRateSwitcher), once per player screen. When the switch
+     * blanks the TV, playback that hasn't started yet holds until the display
+     * is back: the first seconds (and their sound, through a receiver) went
+     * missing in the resync. Playback already under way just carries on.
+     */
+    private fun matchFrameRate(fps: Float?) {
+        if (frameRateMatched || fps == null || fps <= 0f) return
+        val exo = player ?: return
+        val switcher = frameRates() ?: return
+        frameRateMatched = true
+        if (!matchFrameRateEnabled) {
+            switcher.releaseNow()
+            return
+        }
+        // Android 12+: the surface's own frame-rate vote decides, and Media3's
+        // seamless-only vote on the same surface would replace it.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+            exo.videoChangeFrameRateStrategy = C.VIDEO_CHANGE_FRAME_RATE_STRATEGY_OFF
+        }
+        val holdable = !exo.isPlaying && exo.playWhenReady
+        val waits = switcher.match(fps, surfaceView?.holder) {
+            // Not if anything else started or paused it meanwhile: the user
+            // (keys, on-screen controls), or a system panel over the player
+            // (onPause). Each ends the hold.
+            if (!heldForFrameRate) return@match
+            heldForFrameRate = false
+            if (player === exo && !playbackRefused) exo.playWhenReady = true
+        }
+        if (waits && holdable) {
+            heldForFrameRate = true
+            exo.playWhenReady = false
+        }
+    }
+
+    /** The player screen is done with the display: back to its default mode,
+     *  after a moment when moving on to the next episode (which may keep it;
+     *  FrameRateSwitcher.release). */
+    private fun releaseFrameRate() {
+        heldForFrameRate = false
+        if (!frameRateMatched) return
+        frameRateMatched = false
+        frameRates()?.release(nextComing = navigatedToNext)
+    }
+
+    private fun frameRates(): FrameRateSwitcher? =
+        (activity as? tv.onscreen.android.ui.MainActivity)?.frameRates
 
     private fun playSource(source: PlaybackSource) {
         val exo = player ?: return
@@ -1412,6 +1516,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  hardware-media-key handler installed in onViewCreated. */
     private fun togglePlayPause() {
         val exo = player ?: return
+        heldForFrameRate = false
         if (exo.isPlaying) exo.pause() else exo.play()
     }
 
@@ -1436,9 +1541,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // that's their contract on every TV platform.
         when (event.keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayPause(); return true }
-            KeyEvent.KEYCODE_MEDIA_PLAY -> { player?.play(); return true }
-            KeyEvent.KEYCODE_MEDIA_PAUSE -> { player?.pause(); return true }
-            KeyEvent.KEYCODE_MEDIA_STOP -> { player?.pause(); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { heldForFrameRate = false; player?.play(); return true }
+            KeyEvent.KEYCODE_MEDIA_PAUSE -> { heldForFrameRate = false; player?.pause(); return true }
+            KeyEvent.KEYCODE_MEDIA_STOP -> { heldForFrameRate = false; player?.pause(); return true }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekRelative(SKIP_FORWARD_MS); return true }
             KeyEvent.KEYCODE_MEDIA_REWIND -> { seekRelative(-SKIP_BACK_MS); return true }
             // Track skip for music, chapter skip for a multi-file book (the
@@ -2199,6 +2304,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // foreground MediaSessionService so music doesn't cut out. Only
         // video pauses here (and is fully torn down in onStop).
         if (!isAudioItem()) {
+            // A panel over the player pauses it, and the display switch
+            // finishing mustn't start it again behind the panel.
+            heldForFrameRate = false
             player?.pause()
             progressTracker?.onPause()
         }
@@ -2220,6 +2328,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             progressTracker?.onStop()
             player?.run { stop(); release() }
             player = null
+            releaseFrameRate()
             // release() invalidates the listener list, but null the
             // field too so we don't keep the captured callback alive
             // until onDestroyView runs.
@@ -2282,6 +2391,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         watchNextJob = null
         progressTracker?.stop()
         progressTracker = null
+        releaseFrameRate()
 
         // Recycle the trickplay sprite-sheet bitmaps (~30 MB for a feature film)
         // now, rather than waiting for GC to reclaim them once the fragment graph

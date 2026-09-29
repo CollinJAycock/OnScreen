@@ -99,6 +99,13 @@ class MainActivity : FragmentActivity() {
      *  when the reset went on: [showPlayback] cancels it. */
     private var homeResetJob: Job? = null
 
+    /** Display refresh-rate switching for video playback. Held here, not by
+     *  the player screen: the window's display mode outlives any one player
+     *  (see FrameRateSwitcher). */
+    val frameRates: tv.onscreen.android.ui.playback.FrameRateSwitcher by lazy {
+        tv.onscreen.android.ui.playback.FrameRateSwitcher(this)
+    }
+
     /** Fire TV sticks don't reliably deliver onPause/onStop on an HDMI
      *  display-off — the activity can sit "resumed" on a dark panel with the
      *  old screen still live (a playback surface whose player is dead or

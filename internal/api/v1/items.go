@@ -505,6 +505,7 @@ type ItemFileResponse struct {
 	ResolutionH         *int     `json:"resolution_h,omitempty"`
 	Bitrate             *int64   `json:"bitrate,omitempty"`
 	HDRType             *string  `json:"hdr_type,omitempty"`
+	FrameRate           *float64 `json:"frame_rate,omitempty"` // as probed; TV clients match the display's refresh rate to it
 	DurationMS          *int64   `json:"duration_ms,omitempty"`
 	Faststart           bool     `json:"faststart"`
 	BitDepth            *int     `json:"bit_depth,omitempty"`
@@ -851,6 +852,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			ResolutionH:         f.ResolutionH,
 			Bitrate:             f.Bitrate,
 			HDRType:             f.HDRType,
+			FrameRate:           f.FrameRate,
 			DurationMS:          f.DurationMS,
 			Faststart:           h.faststart(r.Context(), f.FilePath),
 			BitDepth:            f.BitDepth,

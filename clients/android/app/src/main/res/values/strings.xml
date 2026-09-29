@@ -124,6 +124,11 @@
     <string name="max_rating_admin_managed">This limit is managed by the server administrator and can\'t be changed from this device.</string>
     <string name="account">Account</string>
     <string name="scrobbling">Scrobbling</string>
+    <string name="playback_settings">Playback</string>
+    <string name="match_frame_rate">Match frame rate</string>
+    <string name="match_frame_rate_hint">Switches the TV to the video\'s frame rate while it plays, so films don\'t judder. The screen goes dark for a moment as it switches. Nvidia Shield and Fire TV also need their own match frame rate setting on. On Android 12 and later, the TV\'s Match content frame rate setting decides.</string>
+    <string name="setting_on">On</string>
+    <string name="setting_off">Off</string>
     <string name="change_server">Change server</string>
     <string name="log_out">Log out</string>
     <string name="saved">Saved</string>

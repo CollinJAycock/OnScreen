@@ -21,6 +21,10 @@ data class ItemFile(
     val resolution_h: Int? = null,
     val bitrate: Long? = null,
     val hdr_type: String? = null,
+    /** Video frames per second as the server probed it (23.976, 25...):
+     *  the display is switched to suit it before playback starts. Null from
+     *  servers before it was sent, and for audio. */
+    val frame_rate: Double? = null,
     val duration_ms: Long? = null,
     val faststart: Boolean = false,
     val audio_streams: List<AudioStream> = emptyList(),

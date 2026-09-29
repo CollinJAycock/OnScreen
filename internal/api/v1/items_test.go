@@ -175,6 +175,42 @@ func TestItemGet_Success(t *testing.T) {
 	}
 }
 
+// TV clients switch the display to the video's frame rate before playback
+// starts, so the file's probed rate has to reach them with the item.
+func TestItemGet_FileFrameRate(t *testing.T) {
+	id := uuid.New()
+	fps := 23.976
+	ms := &mockItemMedia{
+		item: &media.Item{ID: id, Title: "Film", Type: "movie"},
+		files: []media.File{
+			{ID: uuid.New(), Status: "active", FilePath: "/film.mkv", FrameRate: &fps},
+		},
+	}
+	h := newItemHandler(ms)
+
+	rec := httptest.NewRecorder()
+	req := withChiParam(httptest.NewRequest("GET", "/api/v1/items/"+id.String(), nil), "id", id.String())
+	h.Get(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	var resp struct {
+		Data struct {
+			Files []map[string]any `json:"files"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(resp.Data.Files) != 1 {
+		t.Fatalf("files: got %d, want 1", len(resp.Data.Files))
+	}
+	if got := resp.Data.Files[0]["frame_rate"]; got != 23.976 {
+		t.Errorf("frame_rate: got %v, want 23.976", got)
+	}
+}
+
 func TestItemGet_NotFound(t *testing.T) {
 	ms := &mockItemMedia{itemErr: media.ErrNotFound}
 	h := newItemHandler(ms)

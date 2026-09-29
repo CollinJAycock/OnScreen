@@ -329,8 +329,37 @@ Roku channel (no request features, as on Android):
     home header buttons and a detail page's episode row couldn't be
     reached with the D-pad.
 
+- **Android TV: frame rate matching.** Video now plays at a display refresh
+  rate that shows it evenly: 24 fps film at 24 Hz (23.976 at 23.976 Hz),
+  25p at 50 Hz, 30p at 60 Hz, instead of the 3:2 judder of 24 fps at 60 Hz.
+  On Android 11 and older (Nvidia Shield, Fire TV, most TV sets) the app
+  requests the mode and holds playback until the TV shows a picture again,
+  and the TV goes back to its usual mode when the player closes; moving on
+  to the next episode keeps the mode a few seconds longer, so it doesn't
+  blank the screen twice. Shield and Fire TV apply the request only with
+  their own "match frame rate" setting on (playback then starts after a
+  moment). On Android 12 and later the TV's Match content frame rate setting
+  decides. A new Settings switch, Playback > Match frame rate (on by
+  default), turns it off.
+- **`frame_rate` on item files.** `GET /api/v1/items/{id}` now includes each
+  file's probed frame rate, so a TV client can switch the display before the
+  player has loaded the stream.
+
 ### Changed
 
+- **Android TV claims AV1 only with a hardware decoder.** Android 10 and
+  later ship a software AV1 decoder on every device, and counting it made
+  boxes without AV1 hardware (the Tegra X1 Nvidia Shields among them) get
+  AV1 sources and transcodes decoded on the CPU, where 4K stutters. They now
+  get H.264 or HEVC. The software decoder no longer makes an 8-bit-only box
+  claim 10-bit and HDR either.
+- **Android TV sends DTS to a receiver that takes it.** DTS was claimed only
+  when the device has a DTS decoder, which Fire TV sticks and Nvidia Shields
+  don't, so their DTS audio was converted even with a DTS receiver or
+  soundbar attached. It is now also claimed when the HDMI output takes DTS as
+  a bitstream at the channel count the app claims (8, so a 7.1 DTS-HD film
+  can't play silently on an output limited to fewer), and the claim follows
+  the output as it changes (a receiver switched off).
 - **webOS requests up to 2160** on transcode start (was hardcoded 1080 —
   which also forced the server to downscale-transcode every 4K source
   instead of direct-playing it).

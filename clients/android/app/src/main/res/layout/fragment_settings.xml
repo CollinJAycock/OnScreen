@@ -106,6 +106,48 @@
             android:focusable="true"
             android:gravity="start|center_vertical" />
 
+        <!-- Playback section -->
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="48dp"
+            android:text="@string/playback_settings"
+            android:textColor="@color/text_primary"
+            android:textSize="20sp"
+            android:textStyle="bold" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="20dp"
+            android:text="@string/match_frame_rate"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <Button
+            android:id="@+id/btn_match_frame_rate"
+            style="?android:attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="48dp"
+            android:minWidth="240dp"
+            android:layout_marginTop="8dp"
+            android:paddingHorizontal="20dp"
+            android:background="@drawable/btn_secondary"
+            android:textColor="@color/text_primary"
+            android:textSize="14sp"
+            android:textAllCaps="false"
+            android:focusable="true"
+            android:gravity="start|center_vertical" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:maxWidth="640dp"
+            android:text="@string/match_frame_rate_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
         <!-- Scrobbling section -->
         <TextView
             android:layout_width="wrap_content"

@@ -104,6 +104,39 @@ object PlaybackHelper {
     private fun hasDecoderFor(mime: String): Boolean =
         decoderInfos.any { info -> info.supportedTypes.any { it.equals(mime, ignoreCase = true) } }
 
+    /** [hasDecoderFor], counting only hardware decoders ([isHardwareCodec]). */
+    private fun hasHardwareDecoderFor(mime: String): Boolean =
+        decoderInfos.any { info ->
+            isHardware(info) && info.supportedTypes.any { it.equals(mime, ignoreCase = true) }
+        }
+
+    private fun isHardware(info: android.media.MediaCodecInfo): Boolean = isHardwareCodec(
+        info.name,
+        if (android.os.Build.VERSION.SDK_INT >= 29) info.isHardwareAccelerated else null,
+    )
+
+    /**
+     * Whether the decoder [name] runs on dedicated hardware. Android 10+
+     * says so itself ([hardwareAccelerated]); before that, the software
+     * decoders are known by name: Android's own (OMX.google., c2.android.,
+     * c2.google.), FFmpeg's, Samsung's ".sw." ones, and anything outside the
+     * OMX. / c2. namespaces (Media3's rule). Secure-only decoders don't count
+     * either: they only play DRM streams.
+     */
+    internal fun isHardwareCodec(name: String, hardwareAccelerated: Boolean?): Boolean {
+        val n = name.lowercase()
+        if (n.endsWith(".secure")) return false
+        if (hardwareAccelerated != null) return hardwareAccelerated
+        return !(
+            n.startsWith("omx.google.") ||
+                n.startsWith("c2.android.") ||
+                n.startsWith("c2.google.") ||
+                n.startsWith("omx.ffmpeg.") ||
+                (n.startsWith("omx.sec.") && n.contains(".sw.")) ||
+                (!n.startsWith("omx.") && !n.startsWith("c2."))
+            )
+    }
+
     /** Whether any video decoder reports a 10-bit (Main10 / HDR10) profile. Gates
      *  the 10-bit + HDR claims so we don't request output the decoder/panel can't
      *  render (garbled or green frames, or a hard decoder error). */
@@ -123,6 +156,11 @@ object PlaybackHelper {
         return decoderInfos.any { info ->
             info.supportedTypes.any { type ->
                 val want = tenBitProfiles[type.lowercase()] ?: return@any false
+                // AV1 counts only in hardware, as for the av1 claim itself:
+                // Android 10+ ships a software AV1 decoder with Main10
+                // profiles on every box, which made even an 8-bit-only one
+                // claim 10-bit and HDR.
+                if (type.equals("video/av01", ignoreCase = true) && !isHardware(info)) return@any false
                 try {
                     info.getCapabilitiesForType(type).profileLevels.any { it.profile in want }
                 } catch (e: Exception) {
@@ -135,31 +173,23 @@ object PlaybackHelper {
     /** Whether the device can decode HEVC (probed from the platform codec list). */
     fun supportsHevc(): Boolean = hasDecoderFor("video/hevc")
 
-    /** Whether the device likely supports AV1 hardware decode. v2.1.
+    /** Whether the device has an AV1 HARDWARE decoder. v2.1.
      *
      * When true and the source file is AV1, the server prefers the
      * AV1 fMP4 remux path (av01 tag, .m4s segments, #EXT-X-MAP) over
      * an H.264 NVENC/QSV/AMF re-encode — same bytes off disk to the
-     * client, no GPU encode work on the server.
+     * client, no GPU encode work on the server — and may pick AV1 as a
+     * transcode output.
      *
      * AV1 hardware decode landed broadly on Android TV devices from
-     * 2022 onward (Fire TV Cube 3rd gen, Chromecast 4K, Shield 2024,
+     * 2022 onward (Fire TV Stick 4K Max, Chromecast with Google TV 4K,
      * any TV with MediaTek MT9602 / Realtek RTD2843 / Amlogic S905X4
-     * or newer SoC). On older boxes ExoPlayer can still software-
-     * decode AV1 but the CPU cost makes 4K stutter — better to let
-     * the server H.264-transcode in those cases.
-     *
-     * Conservative default: true. ExoPlayer's MediaCodec selection
-     * will fall back to software decode if hardware is missing, and
-     * the AV1 software decoder ships with libgav1; 1080p AV1 plays
-     * fine on basically every Android TV box. The corner case is 4K
-     * AV1 on a 2018-era Fire TV — uncommon enough that we'd rather
-     * default-on and let users opt out via settings if it ever
-     * matters than default-off and lose the remux fast-path.
-     *
-     * Now probed from the platform codec list rather than hardcoded, so a box
-     * with no AV1 decoder no longer advertises it and gets H.264 transcode. */
-    fun supportsAv1(): Boolean = hasDecoderFor("video/av01")
+     * or newer SoC). Older boxes (the Tegra X1 Nvidia Shields among
+     * them) have none, and Android 10+ ships a software AV1 decoder on
+     * every device: counting it made those boxes claim AV1 and decode
+     * it on the CPU, where 4K stutters. Only hardware counts, so they get
+     * an H.264 / HEVC transcode instead. */
+    fun supportsAv1(): Boolean = hasHardwareDecoderFor("video/av01")
 
     /**
      * Total duration of the ITEM in content time — the only time base a
@@ -234,16 +264,77 @@ object PlaybackHelper {
      * is 8 (the AAC transcode fallback still caps at 5.1 server-side). See
      * docs/capability-profiles.md for the grammar.
      */
-    /** The capabilities header, built once.
+    /** The capabilities header, cached.
      *
-     *  AuthInterceptor attaches this to EVERY authenticated request, and the
-     *  value is device-static — the decoder inventory behind it cannot change
-     *  while the process is alive. Rebuilding it per request meant several list
-     *  allocations plus a codec-profile scan on every API call. The underlying
-     *  MediaCodecList probe was already cached; the assembly was not. */
-    private val capabilitiesHeader: String by lazy { buildClientCapabilitiesHeader() }
+     *  AuthInterceptor attaches this to EVERY authenticated request.
+     *  Rebuilding it per request meant several list allocations plus a
+     *  codec-profile scan on every API call. The decoder inventory behind it
+     *  can't change while the process is alive; the audio output can (a
+     *  receiver switched on or off), so the cache is per DTS output state
+     *  ([onAudioOutputChanged]). */
+    private class CachedHeader(val dtsOutput: Boolean, val value: String)
 
-    fun clientCapabilitiesHeader(): String = capabilitiesHeader
+    @Volatile private var capabilitiesHeader: CachedHeader? = null
+
+    fun clientCapabilitiesHeader(): String {
+        // One read of the output state: a change landing mid-build then gets
+        // a header of its own on the next request instead of being
+        // overwritten by one built for the old state.
+        val dts = dtsOutput
+        capabilitiesHeader?.let { if (it.dtsOutput == dts) return it.value }
+        val header = buildClientCapabilitiesHeader(dts)
+        capabilitiesHeader = CachedHeader(dts, header)
+        // What this device tells the server it plays: the first thing to
+        // check when the server's decision surprises.
+        if (tv.onscreen.android.BuildConfig.DEBUG) android.util.Log.i("PlaybackHelper", "capabilities: $header")
+        return header
+    }
+
+    /** Whether the audio output takes DTS as a bitstream: an HDMI receiver,
+     *  soundbar or TV that decodes DTS itself. Set by [onAudioOutputChanged]. */
+    @Volatile private var dtsOutput: Boolean = false
+
+    /**
+     * The audio output changed (a receiver switched on or off, the TV's
+     * surround setting, a different HDMI sink): what it takes as a bitstream
+     * decides the DTS claim, so the header is rebuilt when that changes.
+     * Registered at app start (OnScreenApp) through Media3's
+     * AudioCapabilitiesReceiver, which reads the HDMI sink the same way the
+     * player's audio sink does.
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun onAudioOutputChanged(output: androidx.media3.exoplayer.audio.AudioCapabilities) {
+        // The player's own passthrough check, not just "DTS is in the
+        // output's list": it also checks the channel count, and a sink that
+        // takes DTS but fewer channels than a film has refuses it. With no
+        // DTS decoder to fall back on, that film played silently (no audio
+        // track selected, no error). 8 channels: what the header claims.
+        val dts = output.isPassthroughPlaybackSupported(
+            androidx.media3.common.Format.Builder()
+                .setSampleMimeType(androidx.media3.common.MimeTypes.AUDIO_DTS)
+                .setChannelCount(8)
+                .setSampleRate(48_000)
+                .build(),
+            androidx.media3.common.AudioAttributes.DEFAULT,
+        )
+        if (dts == dtsOutput) return
+        android.util.Log.i("PlaybackHelper", "audio output ${if (dts) "takes" else "doesn't take"} 8-channel DTS as a bitstream")
+        dtsOutput = dts
+    }
+
+    /**
+     * The audio codecs to claim. DTS plays one of two ways: decoded here (a
+     * DTS decoder in the codec list), or passed through as a bitstream to an
+     * output that decodes it, which Media3 prefers whenever the output takes
+     * it. Most Android TV boxes (Fire TV sticks, Nvidia Shields) have no DTS
+     * decoder at all, so claiming DTS only for a decoder made the server
+     * convert DTS for them even with a DTS receiver attached.
+     */
+    internal fun audioDecoders(dtsDecoder: Boolean, dtsOutput: Boolean): List<String> {
+        val audio = mutableListOf("aac", "mp3", "opus", "flac", "vorbis", "ac3", "eac3")
+        if (dtsDecoder || dtsOutput) audio.add("dts")
+        return audio
+    }
 
     // Real panel resolution, initialised from OnScreenApp.onCreate (before
     // any request can build the header). Defaults keep the old 4K claim for
@@ -274,14 +365,14 @@ object PlaybackHelper {
      *  the panel has. */
     fun displayHeightCap(): Int = displayHeight
 
-    private fun buildClientCapabilitiesHeader(): String {
+    private fun buildClientCapabilitiesHeader(dtsOutput: Boolean): String {
         val video = mutableListOf("h264", "vp9")
         if (supportsHevc()) video.add("h265")
         if (supportsAv1()) video.add("av1")
         // DTS is probed too — claiming it unconditionally made the server pick a
-        // DTS passthrough/output a DTS-less box couldn't decode.
-        val audio = mutableListOf("aac", "mp3", "opus", "flac", "vorbis", "ac3", "eac3")
-        if (hasDecoderFor("audio/vnd.dts")) audio.add("dts")
+        // DTS passthrough/output a box that can neither decode nor pass it on
+        // couldn't play. See audioDecoders.
+        val audio = audioDecoders(hasDecoderFor("audio/vnd.dts"), dtsOutput)
         val tenBit = supports10Bit()
         return listOf(
             "videoDecoder=" + video.joinToString(":"),

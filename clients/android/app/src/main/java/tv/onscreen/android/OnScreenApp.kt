@@ -53,12 +53,22 @@ class OnScreenApp : Application(), ImageLoaderFactory {
         kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
     )
 
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     override fun onCreate() {
         super.onCreate()
         disableStrictRevocationChecking()
         // Before any request: the capabilities header is built lazily on the
         // first API call and bakes in the panel resolution read here.
         tv.onscreen.android.ui.playback.PlaybackHelper.initDisplayCaps(this)
+        // What the audio output takes as a bitstream (DTS to a receiver), now
+        // and whenever it changes: part of the capabilities header too. The
+        // receiver stays registered (and so alive) for the life of the process.
+        androidx.media3.exoplayer.audio.AudioCapabilitiesReceiver(
+            this,
+            { output -> tv.onscreen.android.ui.playback.PlaybackHelper.onAudioOutputChanged(output) },
+            androidx.media3.common.AudioAttributes.DEFAULT,
+            null,
+        ).let { tv.onscreen.android.ui.playback.PlaybackHelper.onAudioOutputChanged(it.register()) }
         signOutTeardown.start()
         tv.onscreen.android.playback.AudioHandoff.sessionEnder = transcodeRepo::stopDetached
         tv.onscreen.android.playback.AudioHandoff.releaseReporter = { meta, positionMs, durationMs ->

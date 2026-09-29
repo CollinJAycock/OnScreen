@@ -85,6 +85,7 @@ class SettingsFragment : Fragment() {
         val status = view.findViewById<TextView>(R.id.settings_status)
         val scrobbleStatus = view.findViewById<TextView>(R.id.scrobble_status)
         val scrobbleBtn = view.findViewById<Button>(R.id.btn_scrobble)
+        val frameRateBtn = view.findViewById<Button>(R.id.btn_match_frame_rate)
 
         viewLifecycleOwner.lifecycleScope.launch {
             val username = prefs.username.first()
@@ -152,6 +153,20 @@ class SettingsFragment : Fragment() {
                 .focusableOnTv()
                 .dismissOnViewDestroyed(this)
                 .show()
+        }
+
+        // A device setting (the TV, not the account): kept in this box's
+        // DataStore, read by the player when it starts.
+        var matchFrameRate = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            prefs.matchFrameRate.collectLatest { on ->
+                matchFrameRate = on
+                frameRateBtn.text = getString(if (on) R.string.setting_on else R.string.setting_off)
+            }
+        }
+        frameRateBtn.setOnClickListener {
+            val next = !matchFrameRate
+            viewLifecycleOwner.lifecycleScope.launch { prefs.setMatchFrameRate(next) }
         }
 
         scrobbleBtn.setOnClickListener {
