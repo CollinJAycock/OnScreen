@@ -42,6 +42,19 @@
     type ReplayGainInfo,
   } from '$lib/replaygain';
   import { MediaGainRouter, webAudioSupported } from '$lib/webAudioGain';
+  import { createSleepTimer, formatRemaining, type SleepTimerMode } from '$lib/stores/sleepTimer';
+  import { bookmarkAdded } from '$lib/stores/bookmarks';
+  import {
+    RATE_PRESETS,
+    chapterAt,
+    clampRate,
+    formatPosition,
+    formatRate,
+    listeningUnavailable,
+    nextChapterBoundary,
+    nextChapterStart,
+    prevChapterStart,
+  } from '$lib/audiobook';
 
   // Two audio elements rotated for gapless playback. `audioElA` and
   // `audioElB` swap roles every track: when one is "active" (playing
@@ -98,6 +111,9 @@
   // below can branch on it without repeated lookups.
   function nativeActive(): boolean {
     if (!useNativeEngine || !isTauri() || !track) return false;
+    // Audiobooks stay on <audio>: listening speed needs the browser's
+    // pitch-preserving time-stretch, which the engine doesn't have.
+    if (track.audiobook) return false;
     // If the engine rejected this exact URL, treat it as inactive so
     // the <audio> fallback below takes over. Browsers handle the long
     // tail of weird WAV/AIFF/codec variants that symphonia refuses.
@@ -280,11 +296,191 @@
   $: rgCurrentSel = selectReplayGain(rgCurrentTags, rgMode);
   $: rgAppliedDb = 20 * Math.log10(replayGainLinear(rgCurrentTags, rgMode, rgPreampDb));
 
+  // ── Audiobook listening: speed, bookmarks, sleep timer ─────────────
+  // Speed is per book, saved on the server (GET/PUT
+  // /items/{id}/playback-rate), and offered only for audiobooks — music
+  // always plays at 1×. A book's chapters share its speed, so it's fetched
+  // once per book, not per chapter. applyRate() sets it on BOTH elements,
+  // as defaultPlaybackRate too: the preload element then starts the next
+  // chapter at speed on a gapless swap, and a fresh src= load (which resets
+  // playbackRate to the default) keeps it.
+  let rate = 1;
+  let rateBook = '';      // the book `rate` is for; '' when not an audiobook
+  let rateLoad = 0;       // bumped per book so a late answer for the last one is dropped
+  let rateChosen = false; // the listener picked a speed before the saved one arrived
+  // False when the server has no listening routes (an older server) or
+  // won't show this book: the bookmark control hides, speed stays local.
+  let listeningApi = true;
+
+  function syncBook(t: AudioTrack | null) {
+    const book = t?.audiobook?.bookId ?? '';
+    if (book === rateBook) return;
+    rateBook = book;
+    rate = 1;
+    rateChosen = false;
+    listeningApi = true;
+    const load = ++rateLoad;
+    if (!t || !book) return;
+    itemApi.getPlaybackRate(t.id).then(
+      (r) => { if (load === rateLoad && !rateChosen) rate = clampRate(r.rate); },
+      (e) => { if (load === rateLoad && listeningUnavailable(e)) listeningApi = false; },
+    );
+  }
+
+  // Applies at once. The save is fire-and-forget: a failed PUT doesn't
+  // undo what the listener hears.
+  function chooseRate(r: number) {
+    rate = clampRate(r);
+    rateChosen = true;
+    openMenu = '';
+    if (track?.audiobook) void itemApi.setPlaybackRate(track.id, rate).catch(() => {});
+  }
+
+  // One listening popover open at a time; a click outside closes it.
+  let openMenu: '' | 'speed' | 'bookmark' | 'sleep' = '';
+  let speedWrapEl: HTMLDivElement | null = null;
+  let bookmarkWrapEl: HTMLDivElement | null = null;
+  let sleepWrapEl: HTMLDivElement | null = null;
+
+  function toggleMenu(m: 'speed' | 'sleep') {
+    openMenu = openMenu === m ? '' : m;
+  }
+
+  function onMenuWindowClick(e: MouseEvent) {
+    const wrap = openMenu === 'speed' ? speedWrapEl
+      : openMenu === 'bookmark' ? bookmarkWrapEl
+      : openMenu === 'sleep' ? sleepWrapEl
+      : null;
+    if (wrap && !wrap.contains(e.target as Node)) openMenu = '';
+  }
+
+  // Add bookmark. The position is taken when the prompt opens, so typing
+  // a note while the book plays on still marks the moment you meant. The
+  // new bookmark goes on the playable item (this chapter, or the
+  // single-file book) and is announced to an open audiobook page.
+  let bookmarkMS = 0;
+  let bookmarkNote = '';
+  let bookmarkSaving = false;
+
+  function openBookmark() {
+    if (openMenu === 'bookmark') {
+      openMenu = '';
+      return;
+    }
+    bookmarkMS = positionMS;
+    bookmarkNote = '';
+    openMenu = 'bookmark';
+  }
+
+  async function saveBookmark() {
+    const t = track;
+    if (!t?.audiobook || bookmarkSaving) return;
+    bookmarkSaving = true;
+    try {
+      const b = await itemApi.addBookmark(t.id, Math.max(0, Math.round(bookmarkMS)), bookmarkNote.trim());
+      bookmarkAdded.set({ bookId: t.audiobook.bookId, bookmark: b });
+      if (openMenu === 'bookmark') openMenu = '';
+      toast.success(`Bookmark added at ${formatPosition(b.position_ms)}`);
+    } catch (e) {
+      toast.error(listeningUnavailable(e)
+        ? "Bookmarks aren't available for this book"
+        : e instanceof Error ? e.message : 'Could not add the bookmark');
+    } finally {
+      bookmarkSaving = false;
+    }
+  }
+
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
+  }
+
+  // Sleep timer, for music too — the player's own, not the watch page's.
+  // "End of chapter" pauses at sleepAtMS, the next embedded chapter
+  // boundary in a single-file book (re-taken after a seek or a track
+  // change), or, when that's null, at the end of the current track: a
+  // chapter file, or a song ("End of track").
+  const sleep = createSleepTimer();
+  let sleepAtMS: number | null = null;
+  const SLEEP_OPTIONS: { mode: SleepTimerMode; label: string }[] = [
+    { mode: '15m', label: '15 minutes' },
+    { mode: '30m', label: '30 minutes' },
+    { mode: '45m', label: '45 minutes' },
+    { mode: '60m', label: '1 hour' },
+  ];
+
+  $: sleepUnit = track?.audiobook ? 'chapter' : 'track';
+
+  function pickSleep(mode: SleepTimerMode) {
+    openMenu = '';
+    if (mode === 'off') {
+      sleep.cancel();
+      sleepAtMS = null;
+      return;
+    }
+    sleep.start(mode, onSleepFire);
+    sleepAtMS = mode === 'chapter' ? nextChapterBoundary(track?.audiobook?.chapters, positionMS) : null;
+    const opt = SLEEP_OPTIONS.find((o) => o.mode === mode);
+    toast.success(opt ? `Sleep timer set for ${opt.label}` : `Sleep timer set — will pause at the end of this ${sleepUnit}`);
+  }
+
+  // A duration timer ran out: pause, keep the player open.
+  function onSleepFire() {
+    sleepAtMS = null;
+    if (!track) return;
+    if (audioElA && audioElB && !activeEl().paused) activeEl().pause();
+    audio.pause();
+    toast.success('Sleep timer ended — playback paused');
+  }
+
+  // End of chapter inside a single-file book: pause on the boundary and
+  // park there, so Play starts the next chapter from its first word.
+  function sleepAtChapterEnd(at: number) {
+    sleep.cancel();
+    sleepAtMS = null;
+    const el = activeEl();
+    el.pause();
+    el.currentTime = at / 1000;
+    positionMS = at;
+    audio.setPosition(at);
+    audio.pause();
+    toast.success('Sleep timer ended — paused at the end of the chapter');
+  }
+
+  // A track ended on its own. With "end of chapter" armed the queue still
+  // moves on — so Play continues with the next chapter rather than
+  // replaying this one — but paused.
+  function advanceAfterEnd() {
+    if ($sleep.mode === 'chapter') {
+      const unit = sleepUnit;
+      sleep.cancel();
+      sleepAtMS = null;
+      audio.nextPaused();
+      toast.success(`Sleep timer ended — paused at the end of the ${unit}`);
+      return;
+    }
+    audio.next();
+  }
+
+  // What the sleep button shows while armed: the countdown, or for "end of
+  // chapter" the listening time left to the boundary at the current speed
+  // (null while the end isn't known yet).
+  function sleepLeft(mode: SleepTimerMode, remaining: number, at: number | null, pos: number, dur: number, r: number): number | null {
+    if (mode !== 'chapter') return remaining;
+    const end = at ?? (dur > 0 ? dur : null);
+    return end === null ? null : Math.max(0, (end - pos) / r);
+  }
+  $: sleepLeftMS = sleepLeft($sleep.mode, $sleep.remainingMs, sleepAtMS, positionMS, durationMS, rate);
+
+  // A single-file book's current chapter, named in the player.
+  $: currentChapter = chapterAt(track?.audiobook?.chapters, positionMS);
+
   // Scrobble cadence — report `playing` every 10s so Continue Watching reflects
   // current position without flooding the API. Pause/stop are reported immediately.
   let lastReportedMS = 0;
   let lastReportedID = '';
 
+  // The store's seekSeq this player has acted on (see seekTo).
+  let appliedSeekSeq = 0;
   const unsubA = audio.subscribe((s) => {
     const wasPlaying = playing;
     playing = s.playing;
@@ -293,6 +489,13 @@
     // Edge: paused — report a discrete pause event for the active track.
     if (wasPlaying && !s.playing && track) {
       void report('paused');
+    }
+    // audio.seek() or Previous restarting the track: move the element.
+    // (A cleared store starts the count again, which is not a seek.)
+    if (s.seekSeq !== appliedSeekSeq) {
+      const requested = s.seekSeq > appliedSeekSeq;
+      appliedSeekSeq = s.seekSeq;
+      if (requested && track) seekTo(s.positionMS);
     }
   });
   let prevTrack: AudioTrack | null = null;
@@ -358,6 +561,15 @@
     if (trackChanged) {
       lastReportedMS = 0;
       lastReportedID = '';
+      syncBook(t);
+      // The timer follows the player: closing it cancels the timer, and a
+      // new track re-takes where "end of chapter" is.
+      if (!t) {
+        sleep.cancel();
+        sleepAtMS = null;
+      } else if ($sleep.mode === 'chapter') {
+        sleepAtMS = nextChapterBoundary(t.audiobook?.chapters, get(audio).positionMS);
+      }
     }
   });
   const unsubN = nextTrack.subscribe((n) => {
@@ -455,10 +667,10 @@
           if (track) audio.togglePlay();
           break;
         case 'next':
-          audio.next();
+          skipNext();
           break;
         case 'previous':
-          audio.prev();
+          skipPrev();
           break;
         case 'stop':
           audio.clear();
@@ -471,6 +683,7 @@
 
   onDestroy(() => {
     unsubA(); unsubT(); unsubN(); unsubE(); unsubRg(); unsubStop();
+    sleep.cancel();
     if (rgRouter) {
       window.removeEventListener('pointerdown', onRgGesture, true);
       window.removeEventListener('keydown', onRgGesture, true);
@@ -525,7 +738,7 @@
             void itemApi.progress(track.id, d, d, 'stopped').catch(() => {});
           }
           stopNativePolling();
-          audio.next();
+          advanceAfterEnd();
         }
       } catch {
         // IPC failure — most likely the engine is between tracks.
@@ -595,6 +808,15 @@
       void stopAudio();
       void nowPlayingClear();
     }
+  }
+
+  // The engine was playing but this track goes through <audio> (an
+  // audiobook — see nativeActive — or the engine was switched off): stop
+  // it so the two don't play at once.
+  $: if (track && !nativeActive() && nativeLoadedUrl !== '') {
+    nativeLoadedUrl = '';
+    stopNativePolling();
+    if (isTauri()) void stopAudio();
   }
 
   // Pause/resume sync for native playback. The <audio> block below
@@ -773,6 +995,19 @@
     applyLevels(activeIsA, volume, muted, rgMode, rgPreampDb, track, rgCache, rgGraphVersion);
   }
 
+  // Listening speed on both elements (see the audiobook section above).
+  // Re-runs on every source change and gapless swap. preservesPitch keeps a
+  // narrator at their own pitch at 1.5×.
+  function applyRate(r: number, _aIsActive: boolean, _src: string, _preload: string) {
+    for (const el of [audioElA, audioElB]) {
+      el.defaultPlaybackRate = r;
+      el.playbackRate = r;
+      el.preservesPitch = true;
+    }
+  }
+
+  $: if (audioElA && audioElB) applyRate(rate, activeIsA, loadedSrc, preloadSrc);
+
   // Mirror playing flag to the element. Browser autoplay policies may reject;
   // catch and pause the store so the UI matches reality. Skipped when
   // native engine is active — its own pause/resume sync block above
@@ -813,6 +1048,10 @@
     if (!el) return;
     positionMS = Math.round(el.currentTime * 1000);
     audio.setPosition(positionMS);
+    if (sleepAtMS !== null && $sleep.mode === 'chapter' && positionMS >= sleepAtMS) {
+      sleepAtChapterEnd(sleepAtMS);
+      return;
+    }
     // Periodic playing-state scrobble so resume position survives reload.
     if (playing && track && (track.id !== lastReportedID || Math.abs(positionMS - lastReportedMS) >= 10000)) {
       void report('playing');
@@ -825,6 +1064,10 @@
     if (Number.isFinite(el.duration) && el.duration > 0) {
       durationMS = Math.round(el.duration * 1000);
     }
+    // A load resets playbackRate to defaultPlaybackRate, which applyRate
+    // keeps equal to the book's speed; re-assert it in case an engine
+    // didn't.
+    if (el.playbackRate !== rate) el.playbackRate = rate;
     // Apply any deferred resume seek now that metadata is in. The
     // load reactive block sets el.currentTime optimistically, but
     // browsers can clamp pre-metadata seeks to 0; re-applying here
@@ -849,7 +1092,7 @@
       endedTrackID = track.id;
       void itemApi.progress(track.id, d, d, 'stopped').catch(() => {});
     }
-    audio.next();
+    advanceAfterEnd();
   }
 
   async function onAudioError() {
@@ -879,7 +1122,17 @@
     positionMS = scrubMS;
   }
   function commitScrub() {
-    if (nativeActive() && track && Number.isFinite(scrubMS)) {
+    if (Number.isFinite(scrubMS)) seekTo(scrubMS);
+    scrubbing = false;
+  }
+
+  // Moves playback within the current track: the seek bar, chapter skips
+  // in a single-file book, and audio.seek() (a bookmark in the playing
+  // chapter, Previous restarting a track) all land here.
+  function seekTo(ms: number) {
+    if (!track || !Number.isFinite(ms)) return;
+    const target = Math.max(0, Math.round(ms));
+    if (nativeActive()) {
       // Native engine path. Optimistic store update so the seek bar
       // snaps to the dropped position immediately rather than
       // rubber-banding back to the old position for a frame.
@@ -891,31 +1144,42 @@
       // after the seek settles — at that point the new pipeline is
       // already producing samples so the next tick gets a clean
       // playing=true reading.
-      const target = scrubMS;
       audio.setPosition(target);
       positionMS = target;
       stopNativePolling();
       audioSeek(target, getBearerToken(), null)
         .catch((err) => console.warn('native engine seek failed:', err))
         .finally(() => startNativePolling());
-      void report(playing ? 'playing' : 'paused');
     } else {
       const el = activeEl();
-      if (el && Number.isFinite(scrubMS)) {
-        el.currentTime = scrubMS / 1000;
-        audio.setPosition(scrubMS);
-        if (track) void report(playing ? 'playing' : 'paused');
-      }
+      if (!el) return;
+      el.currentTime = target / 1000;
+      positionMS = target;
+      audio.setPosition(target);
     }
-    scrubbing = false;
+    if ($sleep.mode === 'chapter') sleepAtMS = nextChapterBoundary(track.audiobook?.chapters, target);
+    void report(playing ? 'playing' : 'paused');
   }
 
+  // Previous / Next. In a single-file book with chapters they move between
+  // its chapters (Previous restarts the current one first, as with a
+  // track); from the last chapter Next moves on in the queue. Otherwise
+  // they walk the queue.
+  function skipPrev() {
+    const at = prevChapterStart(track?.audiobook?.chapters, positionMS);
+    if (at !== null) seekTo(at);
+    else audio.prev();
+  }
+
+  function skipNext() {
+    const at = nextChapterStart(track?.audiobook?.chapters, positionMS);
+    if (at !== null) seekTo(at);
+    else audio.next();
+  }
+
+  // m:ss, or h:mm:ss for a long single-file audiobook.
   function fmt(ms: number): string {
-    if (!Number.isFinite(ms) || ms < 0) ms = 0;
-    const s = Math.floor(ms / 1000);
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${String(sec).padStart(2, '0')}`;
+    return formatPosition(ms);
   }
 
   function toggleMute() {
@@ -931,7 +1195,10 @@
   }
 </script>
 
-<svelte:window on:click={onRgWindowClick} on:keydown={onRgKeydown} />
+<svelte:window
+  on:click={(e) => { onRgWindowClick(e); onMenuWindowClick(e); }}
+  on:keydown={(e) => { onRgKeydown(e); if (openMenu && e.key === 'Escape') openMenu = ''; }}
+/>
 
 <!-- Two audio elements rotated for gapless transitions. The "active"
      one (whichever activeIsA points at) carries the timeupdate /
@@ -974,15 +1241,19 @@
       <div class="meta">
         <div class="title">{track.title}</div>
         <div class="sub">
+          {#if currentChapter}
+            {currentChapter.title}{#if track.artist || track.album} · {/if}
+          {/if}
+          <!-- An audiobook's "artist" is its author and "album" its book. -->
           {#if track.artist}
             {#if track.artistId}
-              <a href="/artists/{track.artistId}">{track.artist}</a>
+              <a href={track.audiobook ? `/authors/${track.artistId}` : `/artists/${track.artistId}`}>{track.artist}</a>
             {:else}{track.artist}{/if}
           {/if}
           {#if track.artist && track.album} · {/if}
           {#if track.album}
             {#if track.albumId}
-              <a href="/albums/{track.albumId}">{track.album}</a>
+              <a href={track.audiobook ? `/audiobooks/${track.albumId}` : `/albums/${track.albumId}`}>{track.album}</a>
             {:else}{track.album}{/if}
           {/if}
         </div>
@@ -998,7 +1269,7 @@
             <path d="M13 5.466V4.5a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384l-2.36 1.966A.25.25 0 0 1 13 8.434V7.5c-1.473 0-2.42 1.05-3.084 2.05L9.36 9.7l.39-.6.234-.413c.65-1.124 1.652-2.221 3.016-2.221zM13 10.466V11.5a.25.25 0 0 0 .41.192l2.36-1.966a.25.25 0 0 0 0-.384l-2.36-1.966A.25.25 0 0 0 13 7.566v.934c-1.473 0-2.42-1.05-3.084-2.05l-.234-.413a14.6 14.6 0 0 1-.39-.6l-.391.625C8.231 6.954 7.225 7.5 5.5 7.5H5a.5.5 0 0 0 0 1h.5c1.725 0 2.731.546 3.401 1.438.144.193.273.39.391.575l.39.6.234.413C10.58 11.95 11.527 13 13 13z"/>
           </svg>
         </button>
-        <button class="t-btn" on:click={() => audio.prev()} title="Previous" aria-label="Previous">
+        <button class="t-btn" on:click={skipPrev} title="Previous" aria-label="Previous">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
             <path d="M.5 3.5A.5.5 0 0 1 1 4v3.248l6.267-3.636c.52-.302 1.233.043 1.233.696v2.94l6.267-3.636c.52-.302 1.233.043 1.233.696v7.384c0 .653-.713.998-1.233.696L8.5 8.752v2.94c0 .653-.713.998-1.233.696L1 8.752V12a.5.5 0 0 1-1 0V4a.5.5 0 0 1 .5-.5z"/>
           </svg>
@@ -1015,7 +1286,7 @@
             </svg>
           {/if}
         </button>
-        <button class="t-btn" on:click={() => audio.next()} title="Next" aria-label="Next">
+        <button class="t-btn" on:click={skipNext} title="Next" aria-label="Next">
           <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor">
             <path d="M15.5 3.5A.5.5 0 0 0 15 4v3.248L8.733 3.612C8.213 3.31 7.5 3.655 7.5 4.308v2.94L1.233 3.612C.713 3.31 0 3.655 0 4.308v7.384c0 .653.713.998 1.233.696L7.5 8.752v2.94c0 .653.713.998 1.233.696L15 8.752V12a.5.5 0 0 0 1 0V4a.5.5 0 0 0-.5-.5z"/>
           </svg>
@@ -1054,6 +1325,117 @@
     </div>
 
     <div class="right">
+      {#if track.audiobook}
+        <!-- Listening speed, saved per book. -->
+        <div class="ctl-wrap" bind:this={speedWrapEl}>
+          <button
+            class="ctl-btn rate-btn"
+            class:on={rate !== 1}
+            on:click={() => toggleMenu('speed')}
+            title="Playback speed"
+            aria-label="Playback speed {formatRate(rate)}"
+            aria-haspopup="dialog"
+            aria-expanded={openMenu === 'speed'}
+          >{formatRate(rate)}</button>
+          {#if openMenu === 'speed'}
+            <div class="ctl-menu" role="dialog" aria-label="Playback speed">
+              <div class="ctl-head">Playback speed</div>
+              <div class="ctl-grid" role="radiogroup" aria-label="Playback speed">
+                {#each RATE_PRESETS as r (r)}
+                  <button
+                    class="ctl-opt"
+                    class:active={rate === r}
+                    role="radio"
+                    aria-checked={rate === r}
+                    on:click={() => chooseRate(r)}
+                  >{formatRate(r)}</button>
+                {/each}
+              </div>
+            </div>
+          {/if}
+        </div>
+        {#if listeningApi}
+          <div class="ctl-wrap" bind:this={bookmarkWrapEl}>
+            <button
+              class="ctl-btn"
+              class:on={openMenu === 'bookmark'}
+              on:click={openBookmark}
+              title="Add bookmark"
+              aria-label="Add bookmark"
+              aria-haspopup="dialog"
+              aria-expanded={openMenu === 'bookmark'}
+            >
+              <svg viewBox="0 0 16 16" width="14" height="14" fill="currentColor"><path d="M2 2a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v13.5a.5.5 0 0 1-.777.416L8 13.101l-5.223 2.815A.5.5 0 0 1 2 15.5V2zm2-1a1 1 0 0 0-1 1v12.566l4.723-2.482a.5.5 0 0 1 .554 0L13 14.566V2a1 1 0 0 0-1-1H4z"/><path d="M8 4a.5.5 0 0 1 .5.5V6H10a.5.5 0 0 1 0 1H8.5v1.5a.5.5 0 0 1-1 0V7H6a.5.5 0 0 1 0-1h1.5V4.5A.5.5 0 0 1 8 4z"/></svg>
+            </button>
+            {#if openMenu === 'bookmark'}
+              <form class="ctl-menu" aria-label="Add bookmark" on:submit|preventDefault={saveBookmark}>
+                <div class="ctl-head">Bookmark at {formatPosition(bookmarkMS)}</div>
+                <input
+                  class="ctl-input"
+                  type="text"
+                  maxlength="500"
+                  placeholder="Note (optional)"
+                  aria-label="Bookmark note"
+                  bind:value={bookmarkNote}
+                  use:focusOnMount
+                />
+                <div class="ctl-actions">
+                  <button type="button" class="ctl-cancel" on:click={() => (openMenu = '')}>Cancel</button>
+                  <button type="submit" class="ctl-save" disabled={bookmarkSaving}>Save</button>
+                </div>
+              </form>
+            {/if}
+          </div>
+        {/if}
+      {/if}
+      <div class="ctl-wrap" bind:this={sleepWrapEl}>
+        <button
+          class="ctl-btn"
+          class:on={$sleep.mode !== 'off'}
+          on:click={() => toggleMenu('sleep')}
+          title={$sleep.mode === 'off' ? 'Sleep timer'
+            : $sleep.mode === 'chapter' ? `Sleep timer: end of ${sleepUnit}`
+            : `Sleep timer: ${formatRemaining($sleep.remainingMs)} left`}
+          aria-label="Sleep timer"
+          aria-haspopup="dialog"
+          aria-expanded={openMenu === 'sleep'}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+          {#if $sleep.mode !== 'off' && sleepLeftMS !== null}
+            <span class="ctl-left">{formatRemaining(sleepLeftMS)}</span>
+          {/if}
+        </button>
+        {#if openMenu === 'sleep'}
+          <div class="ctl-menu" role="dialog" aria-label="Sleep timer">
+            <div class="ctl-head">Sleep timer</div>
+            <div class="ctl-list" role="radiogroup" aria-label="Sleep timer">
+              <button
+                class="ctl-opt"
+                class:active={$sleep.mode === 'off'}
+                role="radio"
+                aria-checked={$sleep.mode === 'off'}
+                on:click={() => pickSleep('off')}
+              >Off</button>
+              {#each SLEEP_OPTIONS as o (o.mode)}
+                <button
+                  class="ctl-opt"
+                  class:active={$sleep.mode === o.mode}
+                  role="radio"
+                  aria-checked={$sleep.mode === o.mode}
+                  on:click={() => pickSleep(o.mode)}
+                >{o.label}</button>
+              {/each}
+              <button
+                class="ctl-opt"
+                class:active={$sleep.mode === 'chapter'}
+                role="radio"
+                aria-checked={$sleep.mode === 'chapter'}
+                on:click={() => pickSleep('chapter')}
+              >End of {sleepUnit}</button>
+            </div>
+          </div>
+        {/if}
+      </div>
       {#if rgRouter}
         <!-- Browser ReplayGain. Desktop builds configure the native
              engine's ReplayGain on /native/audio instead. -->
@@ -1228,21 +1610,55 @@
   .rg-btn:hover { color: var(--text-primary); }
   .rg-btn.on { color: var(--accent); border-color: var(--accent); }
   .rg-btn-mode { margin-left: 0.2rem; }
-  .rg-menu {
+  .rg-menu, .ctl-menu {
     position: absolute; bottom: calc(100% + 10px); right: 0; z-index: 60;
     width: 240px; padding: 0.75rem;
     background: var(--bg-elevated, var(--bg-secondary)); border: 1px solid var(--border);
     border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.35);
     display: flex; flex-direction: column; gap: 0.6rem;
   }
-  .rg-head { font-size: 0.78rem; font-weight: 600; color: var(--text-primary); }
+  .ctl-menu { width: 220px; }
+  .rg-head, .ctl-head { font-size: 0.78rem; font-weight: 600; color: var(--text-primary); }
   .rg-modes { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.3rem; }
-  .rg-mode {
+  .rg-mode, .ctl-opt {
     background: none; border: 1px solid var(--border); border-radius: 5px; cursor: pointer;
     color: var(--text-secondary); font-size: 0.72rem; padding: 0.3rem 0;
   }
-  .rg-mode:hover { border-color: var(--accent); }
-  .rg-mode.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  .rg-mode:hover, .ctl-opt:hover { border-color: var(--accent); }
+  .rg-mode.active, .ctl-opt.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+  /* Listening controls: speed, bookmark, sleep timer. */
+  .ctl-wrap { position: relative; display: inline-flex; }
+  .ctl-btn {
+    background: none; border: 0; cursor: pointer; color: var(--text-muted);
+    padding: 0.3rem; border-radius: 4px;
+    display: inline-flex; align-items: center; gap: 0.25rem;
+  }
+  .ctl-btn:hover { color: var(--text-primary); }
+  .ctl-btn.on { color: var(--accent); }
+  .rate-btn {
+    border: 1px solid var(--border-strong); padding: 0.1rem 0.35rem;
+    font-size: 0.68rem; font-weight: 700; line-height: 1.4; font-variant-numeric: tabular-nums;
+  }
+  .rate-btn.on { border-color: var(--accent); }
+  .ctl-left { font-size: 0.68rem; font-variant-numeric: tabular-nums; }
+  .ctl-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.3rem; }
+  .ctl-list { display: flex; flex-direction: column; gap: 0.3rem; }
+  .ctl-list .ctl-opt { text-align: left; padding: 0.35rem 0.6rem; }
+  .ctl-input {
+    width: 100%; box-sizing: border-box; padding: 0.4rem 0.5rem; font-size: 0.78rem;
+    background: var(--input-bg, var(--bg-primary)); color: var(--text-primary);
+    border: 1px solid var(--border-strong); border-radius: 5px;
+  }
+  .ctl-input:focus { outline: none; border-color: var(--accent); }
+  .ctl-actions { display: flex; justify-content: flex-end; gap: 0.4rem; }
+  .ctl-cancel, .ctl-save {
+    border-radius: 5px; cursor: pointer; font-size: 0.72rem; padding: 0.3rem 0.7rem;
+  }
+  .ctl-cancel { background: none; border: 1px solid var(--border); color: var(--text-secondary); }
+  .ctl-cancel:hover { color: var(--text-primary); }
+  .ctl-save { background: var(--accent); border: 0; color: white; font-weight: 600; }
+  .ctl-save:disabled { opacity: 0.6; cursor: default; }
   .rg-preamp { display: flex; align-items: center; gap: 0.5rem; font-size: 0.7rem; color: var(--text-muted); }
   .rg-preamp input { flex: 1; min-width: 0; }
   .rg-db { min-width: 3.6rem; text-align: right; font-variant-numeric: tabular-nums; }
@@ -1272,7 +1688,7 @@
       gap: 0.5rem;
     }
     .left { grid-area: left; gap: 0.5rem; }
-    .right { grid-area: right; }
+    .right { grid-area: right; gap: 0.25rem; }
     .center { grid-area: center; gap: 0.2rem; }
     .art { width: 40px; height: 40px; }
     .vol { display: none; }

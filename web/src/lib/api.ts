@@ -1590,6 +1590,28 @@ export interface WatchStatus {
   updated_at: string;
 }
 
+// Per-user audiobook listening speed. source says where it came from:
+// 'book' (set on this book), 'recent' (the user's latest speed on another
+// book) or 'default' (1.0, nothing set yet).
+export interface PlaybackRate {
+  rate: number;
+  source: 'book' | 'recent' | 'default';
+}
+
+// A bookmark in an audiobook. item_id is the playable item the position is
+// in: the book itself for a single-file book, else a chapter, which
+// item_title / item_index name (item_index is omitted for a single-file
+// book's own bookmarks).
+export interface Bookmark {
+  id: string;
+  item_id: string;
+  item_title: string;
+  item_index?: number;
+  position_ms: number;
+  note: string;
+  created_at: string;
+}
+
 export interface EventCollection {
   id: string;
   name: string;
@@ -2126,6 +2148,24 @@ export const itemApi = {
     api.put<WatchStatus>(`/items/${id}/watch-status`, { status }),
   clearWatchStatus: (id: string) =>
     api.delete(`/items/${id}/watch-status`),
+
+  // Audiobook listening speed (0.5-3.0) and bookmarks, per user. {id} is
+  // the book or one of its chapters (it resolves to the book); a new
+  // bookmark goes on the playable item — the single-file book, or the
+  // chapter being played. The list covers the whole book, in listening
+  // order. Non-audiobooks are 422; a server without these routes is 404.
+  getPlaybackRate: (id: string) =>
+    api.get<PlaybackRate>(`/items/${id}/playback-rate`),
+  setPlaybackRate: (id: string, rate: number) =>
+    api.put<void>(`/items/${id}/playback-rate`, { rate }),
+  listBookmarks: (id: string) =>
+    api.get<Bookmark[]>(`/items/${id}/bookmarks`),
+  addBookmark: (id: string, positionMs: number, note = '') =>
+    api.post<Bookmark>(`/items/${id}/bookmarks`, { position_ms: positionMs, note }),
+  updateBookmark: (bookmarkId: string, note: string) =>
+    api.patch<void>(`/bookmarks/${bookmarkId}`, { note }),
+  deleteBookmark: (bookmarkId: string) =>
+    api.delete(`/bookmarks/${bookmarkId}`),
 
   // Played / unplayed without playing. On a show or season the server
   // applies it to every episode underneath that the caller can see.

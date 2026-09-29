@@ -173,6 +173,24 @@ Playback and library:
     revoked on trakt.tv unlinks itself. Migration 00031.
   - **API**: `/api/v1/users/me/scrobble/{lastfm,trakt}/link[/complete]`, and
     `DELETE` on each to unlink.
+- **Audiobook listening controls** — in the web audio player while a book
+  plays:
+  - **Speed** from 0.75× to 3×, pitch kept, saved per book and shared by
+    its chapters; a book you haven't set starts at your latest speed. Music
+    stays at 1×.
+  - **Add bookmark** at the current position, with an optional note. The
+    book's page lists its bookmarks (chapter, time, note): click one to
+    play from there, edit its note or delete it.
+  - **Sleep timer** — 15 / 30 / 45 / 60 minutes or end of chapter, then
+    pause with the player left open, counting down meanwhile. Music gets it
+    too ("end of track").
+  - **Single-file books** (one file with embedded chapters, e.g. `.m4b`)
+    now play in the audio player instead of the video player: the book
+    page lists their chapters, Previous / Next move between chapters, and
+    Resume starts the chapter you were in.
+  - **API**: `GET`/`PUT /api/v1/items/{id}/playback-rate`,
+    `GET`/`POST /api/v1/items/{id}/bookmarks`, `PATCH`/`DELETE
+    /api/v1/bookmarks/{id}` (1000 bookmarks per book). Migration 00032.
 
 Android apps (TV + phone). The request features above are web-only by
 design — neither Android app has any request functionality, and the phone
