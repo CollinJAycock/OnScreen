@@ -80,6 +80,8 @@ tags:
     description: User profile, PIN management, managed profiles, admin user management.
   - name: Settings
     description: Server-wide settings (admin only).
+  - name: Audiobooks
+    description: Per-user listening speed and bookmarks for audiobooks.
   - name: Scrobbling
     description: Per-user ListenBrainz / Last.fm / Trakt links. Plays are exported server-side, so one link covers every client.
   - name: Webhooks
@@ -1179,6 +1181,118 @@ paths:
       tags: [Items]
       responses:
         '204': { description: Cleared. }
+
+  /api/v1/items/{id}/playback-rate:
+    get:
+      summary: Listening speed for an audiobook
+      description: |
+        The speed the caller plays this book at. `{id}` is an `audiobook` or
+        one of its `audiobook_chapter` items (it resolves to the book).
+        `source` is `book` (set on this book), `recent` (the caller's latest
+        speed on another book, what a new book starts at) or `default` (1.0).
+        v2.5.
+      tags: [Audiobooks]
+      responses:
+        '200':
+          description: The speed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      rate: { type: number, minimum: 0.5, maximum: 3.0 }
+                      source: { type: string, enum: [book, recent, default] }
+        '404': { description: Not found, or hidden from the caller (library access / rating ceiling). }
+        '422': { description: 'VALIDATION: not an audiobook.' }
+    put:
+      summary: Save the listening speed for an audiobook
+      tags: [Audiobooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rate]
+              properties:
+                rate: { type: number, minimum: 0.5, maximum: 3.0 }
+      responses:
+        '204': { description: Saved (on the book, for a chapter id). }
+        '400': { description: Missing or out-of-range rate. }
+
+  /api/v1/items/{id}/bookmarks:
+    get:
+      summary: The caller's bookmarks in an audiobook
+      description: |
+        Every bookmark the caller has in the book (`{id}` is the book or one of
+        its chapters), in listening order: by chapter, then position.
+        `item_id` is the playable item the position is in (the book itself
+        for a single-file book). v2.5.
+      tags: [Audiobooks]
+      responses:
+        '200':
+          description: Bookmarks.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/AudiobookBookmark' }
+        '404': { description: Not found, or hidden from the caller. }
+        '422': { description: 'VALIDATION: not an audiobook.' }
+    post:
+      summary: Add a bookmark
+      description: '`{id}` is the playable item: a single-file audiobook, or the chapter being played.'
+      tags: [Audiobooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [position_ms]
+              properties:
+                position_ms: { type: integer, minimum: 0 }
+                note: { type: string, maxLength: 500 }
+      responses:
+        '201':
+          description: The new bookmark.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AudiobookBookmark' }
+        '400': { description: Negative position or a note over 500 characters. }
+        '409': { description: 'BOOKMARK_LIMIT: 1000 bookmarks in this book already.' }
+
+  /api/v1/bookmarks/{id}:
+    patch:
+      summary: Edit a bookmark's note
+      tags: [Audiobooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [note]
+              properties:
+                note: { type: string, maxLength: 500, description: '"" clears it.' }
+      responses:
+        '204': { description: Saved. }
+        '404': { description: No such bookmark of the caller's. }
+    delete:
+      summary: Delete a bookmark
+      tags: [Audiobooks]
+      responses:
+        '204': { description: Deleted. }
+        '404': { description: No such bookmark of the caller's. }
 
   /api/v1/items/{id}/watched:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -4731,6 +4845,16 @@ components:
           schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   schemas:
+    AudiobookBookmark:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        item_id: { type: string, format: uuid, description: The playable item the position is in. }
+        item_title: { type: string }
+        item_index: { type: integer, description: 'Chapter number; absent for a single-file book.' }
+        position_ms: { type: integer }
+        note: { type: string }
+        created_at: { type: string, format: date-time }
     ScrobbleLinkComplete:
       type: object
       required: [pending]

@@ -581,6 +581,7 @@ at the v2.2.0 cut — the table below matches `internal/db/migrations/`):
 | `00029_notification_agents.sql` | Notification agents (Discord / Telegram / ntfy / Gotify / email) |
 | `00030_track_disc_number.sql` | A track's disc number; album tracks keyed and ordered by (disc, track) |
 | `00031_scrobble_lastfm_trakt.sql` | Per-user Last.fm and Trakt scrobbling credentials |
+| `00032_audiobook_listening.sql` | Per-user audiobook listening speed and bookmarks |
 
 `00023` backfills `watch_progress` from the `watch_events` history still
 inside the retention window; on a large install it takes longer than the

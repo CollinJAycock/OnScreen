@@ -66,6 +66,12 @@ reusing a generic one.
 | `SCROBBLE_APP_REJECTED` | 502 | Last.fm / Trakt turned down the server's API credentials (wrong key or secret, unknown client); an admin fixes them in Settings. |
 | `SCROBBLE_UPSTREAM` | 502 | Last.fm / Trakt couldn't be reached, or answered unexpectedly, during a link. |
 
+## Audiobooks
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `BOOKMARK_LIMIT` | 409 | The caller already has 1000 bookmarks in this book. |
+
 ## Contract guarantees
 
 1. **Codes are stable.** Once shipped, a code never changes meaning. Renames
