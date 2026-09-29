@@ -292,4 +292,12 @@ class PlaybackHelperTest {
         // A platform that can't say keeps the old claim.
         assertThat(PlaybackHelper.displayShowsHdr10(null)).isTrue()
     }
+
+    @Test
+    fun `no HDR capabilities is unknown before Android 16, forced SDR from it`() {
+        assertThat(PlaybackHelper.screenHdrTypes(null, sdk = 30)).isNull()
+        assertThat(PlaybackHelper.screenHdrTypes(null, sdk = 36)).isEmpty()
+        assertThat(PlaybackHelper.displayShowsHdr10(PlaybackHelper.screenHdrTypes(null, sdk = 36))).isFalse()
+        assertThat(PlaybackHelper.screenHdrTypes(intArrayOf(2), sdk = 36)!!.toList()).containsExactly(2)
+    }
 }

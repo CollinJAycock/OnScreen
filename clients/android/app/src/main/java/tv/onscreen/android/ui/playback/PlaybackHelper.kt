@@ -415,11 +415,14 @@ object PlaybackHelper {
                 mode.physicalWidth to mode.physicalHeight
             }
             @Suppress("DEPRECATION")
-            val hdrTypes = try {
-                display.hdrCapabilities?.supportedHdrTypes
-            } catch (_: Exception) {
-                null
-            }
+            val hdrTypes = screenHdrTypes(
+                reported = try {
+                    display.hdrCapabilities?.supportedHdrTypes
+                } catch (_: Exception) {
+                    null
+                },
+                sdk = android.os.Build.VERSION.SDK_INT,
+            )
             val hdr = displayShowsHdr10(hdrTypes)
             val before = output
             updateOutput { if (w > 0 && h > 0) it.copy(width = w, height = h, hdr = hdr) else it.copy(hdr = hdr) }
@@ -436,12 +439,21 @@ object PlaybackHelper {
     }
 
     /**
-     * Whether a screen reporting [hdrTypes] (Display.HdrCapabilities) shows
-     * HDR10, the server's one HDR claim (it covers HDR10, HDR10+ and HLG
-     * sources). An empty list is a screen that shows none: HDR sent to it
-     * came out washed out, grey and dim, where the server would have
-     * tone-mapped it to SDR. Null, a platform that can't say, keeps the
-     * claim the decoder allows, as before.
+     * The screen's HDR types from what Display.getHdrCapabilities() [reported].
+     * No capabilities at all means "can't say" before Android 16, and keeps
+     * the old claim (null). From Android 16 (API 36) it means the user forced
+     * SDR (DisplayInfo.isForceSdr): no HDR types.
+     */
+    internal fun screenHdrTypes(reported: IntArray?, sdk: Int): IntArray? =
+        reported ?: if (sdk >= 36) IntArray(0) else null
+
+    /**
+     * Whether a screen reporting [hdrTypes] ([screenHdrTypes]) shows HDR10,
+     * the server's one HDR claim (it covers HDR10, HDR10+ and HLG sources).
+     * An empty list is a screen that shows none: HDR sent to it came out
+     * washed out, grey and dim, where the server would have tone-mapped it
+     * to SDR. Null, a platform that can't say, keeps the claim the decoder
+     * allows, as before.
      */
     internal fun displayShowsHdr10(hdrTypes: IntArray?): Boolean =
         hdrTypes == null || hdrTypes.any { it == HDR_TYPE_HDR10 || it == HDR_TYPE_HDR10_PLUS }
