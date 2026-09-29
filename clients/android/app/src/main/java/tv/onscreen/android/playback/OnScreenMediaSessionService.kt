@@ -27,6 +27,7 @@ import tv.onscreen.android.data.repository.AudiobookRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.ui.playback.PlaybackHelper
+import tv.onscreen.android.ui.playback.PlaybackMode
 import javax.inject.Inject
 
 /**
@@ -99,6 +100,11 @@ class OnScreenMediaSessionService : MediaSessionService() {
     /** The book the player's speed belongs to (null: not a book, so 1×).
      *  A chain to another chapter of it leaves the speed alone. */
     private var speedBookId: String? = null
+    /** The server session the player streams from (a transcoded or remuxed
+     *  track), or null on direct play. Parked with the player; this service
+     *  ends it when it lets the player go (release, or a chain to another
+     *  item). See [StreamSession]. */
+    private var activeStreamSession: StreamSession? = null
     /** Coroutine ticking PUT /items/{id}/progress every 10 s while
      *  the service-owned player is playing. */
     private var progressJob: Job? = null
@@ -188,6 +194,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
             activeIndex = meta.index
             activeHlsOffsetMs = meta.hlsOffsetMs
             activeItemDurationMs = meta.itemDurationMs
+            activeStreamSession = meta.session
             // The fragment put the player at this book's speed.
             speedBookId = AudiobookSpeed.bookIdOf(meta.itemType, meta.itemId, meta.parentId)
         }
@@ -236,6 +243,9 @@ class OnScreenMediaSessionService : MediaSessionService() {
         activeIndex = null
         activeHlsOffsetMs = 0L
         speedBookId = null
+        // Not ended here: a player replaced by a new park had its session
+        // ended by AudioHandoff.park, and detach() hands the player back.
+        activeStreamSession = null
     }
 
     /** Tick PUT /items/{id}/progress every 10 s while the
@@ -351,36 +361,74 @@ class OnScreenMediaSessionService : MediaSessionService() {
     }
 
     /** Switch the service-owned player to a different item id.
-     *  Re-resolves the file URL via the item endpoint and the same
-     *  per-file stream-token machinery the fragment uses, then
-     *  swaps the MediaSource. */
+     *  Re-resolves the file via the item endpoint, asks the server how
+     *  to play it (as the fragment's prepare() does), and swaps the
+     *  MediaSource: a direct-play URL with the same per-file stream-token
+     *  machinery the fragment uses, or a new server session for a track
+     *  this device can't decode. */
     private suspend fun chainTo(itemId: String) {
         val player = session?.player as? ExoPlayer ?: return
+        val fromItemId = activeItemId
         val item = try { itemRepo.getItem(itemId) } catch (_: Exception) { return }
         val file = item.files.firstOrNull() ?: return
         val server = prefs.getServerUrl()?.trimEnd('/').orEmpty()
         if (server.isEmpty()) return
-        // Prefer the per-file stream token; fall back to the purpose=asset
-        // token (NOT the access token, which the server rejects in a URL).
-        val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
-        if (token.isEmpty()) return
 
-        // Audio direct-play URL — the service-side auto-advance is
-        // audio-only (tracks, books, chapter files), and those are
-        // uniformly direct-playable (no transcode negotiation). The
-        // fragment's PlaybackHelper would short-circuit to DirectPlay for
-        // the same input.
-        // CLEAN url on the MediaItem — this player is wrapped in our
-        // MediaSession, whose legacy bridge republishes the item uri to other
-        // apps. The credential goes in the vault; the player's resolving data
-        // source (built in PlaybackFragment.buildExoPlayer) re-attaches it.
-        val url = StreamTokenVault.register("$server${file.stream_url}", token)
+        // A track this device can't decode (DSD, ALAC on some panels) comes
+        // back as a remux or transcode. Chaining always direct-played, so
+        // after a transcoded track the next one failed in the background.
+        val mode = PlaybackHelper.modeFor(transcodeRepo.decide(itemId, file.id), file) ?: return
+        var url: String? = null
+        var next: StreamSession? = null
+        if (mode is PlaybackMode.DirectPlay) {
+            // Prefer the per-file stream token; fall back to the purpose=asset
+            // token (NOT the access token, which the server rejects in a URL).
+            val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
+            if (token.isEmpty()) return
+            // CLEAN url on the MediaItem — this player is wrapped in our
+            // MediaSession, whose legacy bridge republishes the item uri to other
+            // apps. The credential goes in the vault; the player's resolving data
+            // source (built in PlaybackFragment.buildExoPlayer) re-attaches it.
+            url = StreamTokenVault.register("$server${file.stream_url}", token)
+        } else {
+            val started = try {
+                transcodeRepo.start(
+                    itemId = itemId,
+                    height = (mode as? PlaybackMode.Transcode)?.height ?: 0,
+                    positionMs = 0L,
+                    fileId = file.id,
+                    videoCopy = mode is PlaybackMode.Remux,
+                    supportsHevc = PlaybackHelper.supportsHevc(),
+                    supportsAv1 = PlaybackHelper.supportsAv1(),
+                )
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // A 403 is the server refusing playback (admin stop, watch
+                // limit, access revoked), exactly as on a heartbeat. Anything
+                // else just ends the chain here.
+                HeartbeatRefusal.of("playing", e)?.let { haltForRefusal(player, fromItemId ?: itemId, it) }
+                return
+            }
+            next = StreamSession.opened(started, server, 0L)
+        }
+        // Still ours, and still at the end of the item this chains from? A
+        // session start can take a while, and a play from the system media
+        // controls meanwhile restarted that item.
+        if (session?.player !== player || activeItemId != fromItemId || player.playbackState != Player.STATE_ENDED) {
+            next?.let { transcodeRepo.stopDetached(it) }
+            return
+        }
+
+        // The player leaves the old session for good: end it.
+        activeStreamSession?.let { transcodeRepo.stopDetached(it) }
+        activeStreamSession = next
 
         activeItemId = itemId
         activeItemType = item.type
         activeParentId = item.parent_id
         activeIndex = item.index
-        activeHlsOffsetMs = 0L
+        activeHlsOffsetMs = next?.offsetMs ?: 0L
         activeItemDurationMs = item.duration_ms
 
         // Keep the handoff slot's metadata current so a fragment that
@@ -393,12 +441,17 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 itemType = item.type,
                 parentId = item.parent_id,
                 index = item.index,
-                hlsOffsetMs = 0L,
+                hlsOffsetMs = activeHlsOffsetMs,
                 itemDurationMs = item.duration_ms,
+                session = next,
             ),
         )
 
-        player.setMediaItem(MediaItem.fromUri(Uri.parse(url)))
+        if (next != null) {
+            player.setMediaSource(TranscodeHls.mediaSource(next.playlistUrl))
+        } else {
+            player.setMediaItem(MediaItem.fromUri(Uri.parse(checkNotNull(url))))
+        }
         player.prepare()
         player.playWhenReady = true
         applyListeningSpeed(player, item.id, item.type, item.parent_id)
@@ -449,14 +502,19 @@ class OnScreenMediaSessionService : MediaSessionService() {
             // service genuinely owns it (track ended, user dismissed
             // notification, etc.) and we release as before.
             if (AudioHandoff.peek() !== sessPlayer) {
+                // Its server session went back with it (the handoff
+                // metadata), or was ended by whoever released it.
                 autoAdvanceListener?.let { sessPlayer.removeListener(it) }
                 autoAdvanceListener = null
                 sess.release()
             } else {
                 sessPlayer.release()
                 sess.release()
+                // Released here, so nothing reads its session any more.
+                activeStreamSession?.let { transcodeRepo.stopDetached(it) }
             }
         }
+        activeStreamSession = null
         session = null
         AudioHandoff.clear()
         super.onDestroy()

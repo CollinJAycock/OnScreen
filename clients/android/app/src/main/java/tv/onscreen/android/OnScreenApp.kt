@@ -39,6 +39,10 @@ class OnScreenApp : Application(), ImageLoaderFactory {
      *  caches). Process-level so it runs even with no activity alive. */
     @Inject lateinit var signOutTeardown: tv.onscreen.android.playback.SignOutTeardown
 
+    /** Ends the server session of a background player released by
+     *  AudioHandoff (see AudioHandoff.sessionEnder). */
+    @Inject lateinit var transcodeRepo: tv.onscreen.android.data.repository.TranscodeRepository
+
     override fun onCreate() {
         super.onCreate()
         disableStrictRevocationChecking()
@@ -46,6 +50,7 @@ class OnScreenApp : Application(), ImageLoaderFactory {
         // first API call and bakes in the panel resolution read here.
         tv.onscreen.android.ui.playback.PlaybackHelper.initDisplayCaps(this)
         signOutTeardown.start()
+        tv.onscreen.android.playback.AudioHandoff.sessionEnder = transcodeRepo::stopDetached
     }
 
     override fun newImageLoader(): ImageLoader =

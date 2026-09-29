@@ -4,6 +4,11 @@ import tv.onscreen.android.data.api.OnScreenApi
 import tv.onscreen.android.data.model.PlaybackDecisionRequest
 import tv.onscreen.android.data.model.TranscodeRequest
 import tv.onscreen.android.data.model.TranscodeSession
+import tv.onscreen.android.playback.StreamSession
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -55,4 +60,13 @@ class TranscodeRepository @Inject constructor(
             // Best-effort cleanup.
         }
     }
+
+    /** [stop] for a session whose player is gone, fired and forgotten on a
+     *  scope that outlives the caller: a service being destroyed, a player
+     *  evicted from the handoff slot. */
+    fun stopDetached(session: StreamSession) {
+        detached.launch { stop(session.id, session.token) }
+    }
+
+    private val detached = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 }

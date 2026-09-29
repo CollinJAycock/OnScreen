@@ -359,6 +359,16 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **Android TV: background audio from a server transcode stopped.** A
+  track, book or chapter the TV can't decode itself (DSD, some ALAC) plays
+  from a server session. Pressing BACK or HOME hands the player to the
+  background service, but the player screen still ended that session as it
+  closed, so the audio stopped seconds later. The session now moves with
+  the player and ends when the player is released. Reopening the item no
+  longer starts a second session behind the one already playing. When a
+  track ends in the background, the next one now follows the server's
+  play decision, so a transcoded album keeps playing past the first track
+  instead of the next track failing.
 - **Photo album covers showed photos the viewer could no longer open.**
   The album list's cover and photo count ignored deleted photos, the
   rating ceiling and library access, so a profile whose ceiling was

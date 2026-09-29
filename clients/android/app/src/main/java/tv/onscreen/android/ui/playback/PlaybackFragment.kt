@@ -158,6 +158,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  re-take, so we don't restart playback when the user comes
      *  back to a track that's already playing in the service. */
     private var playerWasReused: Boolean = false
+    /** The server session a player taken back from the background service
+     *  is still reading, for prepare() to adopt (see initPlayer). */
+    private var resumedSession: tv.onscreen.android.playback.StreamSession? = null
 
     /** True once we've parked the audio player in the MediaSessionService
      *  from onStop (app backgrounded / HOME). onStart reclaims it;
@@ -333,7 +336,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             serverUrl = prefs.serverUrl.first() ?: ""
 
             initPlayer()
-            viewModel.prepare(itemId, startMs, serverUrl, bookSpeed)
+            viewModel.prepare(itemId, startMs, serverUrl, bookSpeed, resumedSession)
             startAdminStopWatch(itemId)
 
             viewModel.uiState.collectLatest { state ->
@@ -909,6 +912,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // killing music the user is actively listening to, then reporting
             // position 0 over its resume point.
             parkedMeta?.itemType?.let { currentItemType = it }
+            // A transcoded / remuxed track: the player is still reading the
+            // server session it was parked with, which prepare() adopts
+            // rather than starting a second one.
+            resumedSession = parkedMeta?.session
             // Reused-parked-player flag suppresses the next
             // setMediaSource/prepare on the first state emission so
             // the song doesn't restart from 0:00 when the user
@@ -1170,13 +1177,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 exo.playWhenReady = true
             }
             is PlaybackSource.Hls -> {
-                val (httpFactory, errorPolicy) = transcodeHttpFactory()
                 // playlistUrl is clean (see StreamTokenVault); the resolver puts
                 // the playlist's `?token=` back on the wire. Segment/variant
                 // URIs carry their own server-embedded token and pass through.
-                val factory = tv.onscreen.android.playback.StreamTokenVault.resolverFactory(httpFactory)
+                // Timeouts and warm-up retries: see TranscodeHls.
+                val factory = tv.onscreen.android.playback.StreamTokenVault.resolverFactory(
+                    tv.onscreen.android.playback.TranscodeHls.httpFactory(),
+                )
                 val hlsSource = HlsMediaSource.Factory(factory)
-                    .setLoadErrorHandlingPolicy(errorPolicy)
+                    .setLoadErrorHandlingPolicy(tv.onscreen.android.playback.TranscodeHls.errorPolicy())
                     .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
                 // Side-load the subtitle tracks. A server HLS session carries
                 // NO text streams (it maps only video + one audio; subtitles
@@ -1259,28 +1268,6 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 .setSelectionFlags(if (s.forced) C.SELECTION_FLAG_FORCED else 0)
                 .build()
         }
-
-    /// Default DefaultHttpDataSource timeouts are 8 s connect / 8 s
-    /// read. The first segment waits for the ffmpeg transcoder to
-    /// spin up server-side, which on remote / Cloudflare-Tunnel
-    /// deployments routinely takes 10–20 s. Bump both, allow cross-
-    /// protocol redirects (Tunnel's HTTP→HTTPS handling), and send
-    /// an identifiable UA so requests look like a real client to any
-    /// WAF rules in front of the server. Used by the HLS branch above.
-    private fun transcodeHttpFactory(): Pair<DefaultHttpDataSource.Factory, androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy> {
-        val factory = DefaultHttpDataSource.Factory()
-            .setConnectTimeoutMs(30_000)
-            .setReadTimeoutMs(60_000)
-            .setAllowCrossProtocolRedirects(true)
-            .setUserAgent("OnScreen-Android/1.0 (ExoPlayer)")
-            .setDefaultRequestProperties(mapOf())
-        // Retry HTTP / IO failures up to 6 times with the default
-        // exponential backoff (1 s, 2 s, 4 s, 8 s, 8 s, 8 s ≈ 30 s total).
-        // Catches the case where the manifest/playlist isn't ready on
-        // the first poll because the transcoder is still warming up.
-        val errorPolicy = androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(6)
-        return factory to errorPolicy
-    }
 
     private fun refreshSecondaryActions() {
         // Gate each secondary button on whether the data behind it is
@@ -2219,6 +2206,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // Already handed to the service in onStop (in-app nav after
             // backgrounding, or teardown while parked) — the service
             // owns the player now. Don't release it; just drop our refs.
+            // Its server session went with it (handOffSession), so this
+            // only ends one the view model still owns: none, normally.
             player = null
             playerListener = null
             viewModel.stopActiveTranscode()
@@ -2248,6 +2237,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // release path doesn't need to (release() invalidates the
         // listener list) but null it for GC hygiene either way.
         playerListener = null
+        // A parked player took its server session along; this ends the
+        // session only when the player was released above.
         viewModel.stopActiveTranscode()
     }
 
@@ -2334,7 +2325,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun reclaimAudioPlayerFromService() {
         parkedToService = false
         val launchId = arguments?.getString(ARG_ITEM_ID) ?: return
-        val parkedId = tv.onscreen.android.playback.AudioHandoff.peekMetadata()?.itemId
+        val parkedMeta = tv.onscreen.android.playback.AudioHandoff.peekMetadata()
+        val parkedId = parkedMeta?.itemId
 
         // Background auto-advance: the parked track no longer matches the
         // one this fragment launched with. Rebinding the mismatched
@@ -2372,6 +2364,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 ),
             )
         } catch (_: Exception) { }
+        // The server session came back with the player (handed over in
+        // handOffAudioPlayerToService): this view model owns it again.
+        parkedMeta?.session?.let { viewModel.adoptSession(it) }
         player = reclaimed
         val listener = createPlayerListener()
         reclaimed.addListener(listener)
@@ -2406,6 +2401,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
         val ctx = activity?.applicationContext ?: return false
         val item = viewModel.uiState.value.item
+        // A transcoded / remuxed track streams from a server session. It
+        // goes with the player: ending it when this fragment goes away
+        // stopped the parked audio seconds after BACK or HOME.
+        val stream = viewModel.handOffSession()
         return try {
             // Capture the metadata the service needs for progress
             // reports + auto-advance — pulling it from the item
@@ -2421,6 +2420,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // same way we do — a resumed HLS player only knows its
                 // REMAINING time. See AudioHandoff.Metadata.itemDurationMs.
                 itemDurationMs = item?.duration_ms,
+                session = stream,
             )
             // Detach the fragment-owned listener BEFORE parking. Once the
             // service owns the player, our `onPlaybackStateChanged` /
@@ -2446,6 +2446,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             true
         } catch (_: Exception) {
             tv.onscreen.android.playback.AudioHandoff.clear()
+            // Not handed over after all: the session stays ours to end.
+            stream?.let { viewModel.adoptSession(it) }
             false
         }
     }

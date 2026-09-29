@@ -37,15 +37,35 @@ object AudioHandoff {
          *  e.g. 3 h against a 5 h-remaining duration — crossing the
          *  server's watched threshold hours early. Null when unknown. */
         val itemDurationMs: Long? = null,
+        /** The server session the parked player streams from (a transcoded
+         *  or remuxed track), or null on direct play. It travels with the
+         *  player: see [StreamSession]. */
+        val session: StreamSession? = null,
     )
 
     private var parked: ExoPlayer? = null
     private var parkedMeta: Metadata? = null
 
-    /** Park a player for pickup by the MediaSessionService. */
+    /** Ends the server session of a player released here. OnScreenApp sets
+     *  it at startup to the transcode repository's detached stop, which
+     *  outlives whoever let the player go. Unset (tests, or before startup),
+     *  nothing is sent and the server reaps the session when it idles out. */
+    @Volatile
+    var sessionEnder: ((StreamSession) -> Unit)? = null
+
+    private fun end(session: StreamSession?) {
+        session?.let { s -> sessionEnder?.invoke(s) }
+    }
+
+    /** Park a player for pickup by the MediaSessionService. A different
+     *  player still parked is released, and its server session ended. */
     @Synchronized
     fun park(player: ExoPlayer, meta: Metadata) {
-        parked?.takeIf { it !== player }?.release()
+        val evicted = parked?.takeIf { it !== player }
+        if (evicted != null) {
+            evicted.release()
+            end(parkedMeta?.session)
+        }
         parked = player
         parkedMeta = meta
     }
@@ -110,6 +130,11 @@ object AudioHandoff {
                 player.release()
             }
         }
+        // Released here, so its session ends here: the service's onDestroy
+        // finds the slot empty and takes the player to be someone else's.
+        // After an involuntary sign-out the stop is refused (it needs the
+        // user's credentials) and the server's idle timeout reaps it.
+        end(peekMetadata()?.session)
         clear()
         runCatching {
             context.stopService(

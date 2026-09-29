@@ -23,6 +23,7 @@ import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.StreamSession
 import tv.onscreen.android.playback.StreamTokenVault
 import javax.inject.Inject
 
@@ -189,7 +190,16 @@ class PlaybackViewModel @Inject constructor(
      * speed, so the chapter starts at it rather than at 1× until a lookup
      * lands. Ignored unless [itemId] is a chapter of that same book.
      */
-    fun prepare(itemId: String, startMs: Long, serverUrl: String, carriedSpeed: BookSpeed? = null) {
+    /** [resumed]: the server session a player reclaimed from the background
+     *  service is still reading (initPlayer took it back with its handoff
+     *  metadata). It is adopted instead of a new session being started. */
+    fun prepare(
+        itemId: String,
+        startMs: Long,
+        serverUrl: String,
+        carriedSpeed: BookSpeed? = null,
+        resumed: StreamSession? = null,
+    ) {
         viewModelScope.launch {
             try {
                 val item = itemRepo.getItem(itemId)
@@ -221,15 +231,9 @@ class PlaybackViewModel @Inject constructor(
                 // unreachable. ExoPlayer range-requests, so no faststart refinement.
                 val verdict = transcodeRepo.decide(itemId, file.id)
                 val mode = run {
-                    val resolved = when (verdict) {
-                        "directPlay" -> PlaybackMode.DirectPlay
-                        "directStream" -> PlaybackMode.Remux
-                        "transcode" -> PlaybackMode.Transcode(
-                            if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080
-                        )
-                        // "unsupported" (Dolby Vision) handled below; null → local fallback.
-                        else -> PlaybackHelper.decide(file)
-                    }
+                    // "unsupported" (Dolby Vision) is handled below; no
+                    // verdict falls back to the local decision.
+                    val resolved = PlaybackHelper.modeFor(verdict, file) ?: PlaybackHelper.decide(file)
                     android.util.Log.i(
                         "PlaybackViewModel",
                         "playback decision: server=$verdict -> $resolved (${file.video_codec}/${file.audio_codec})",
@@ -250,7 +254,19 @@ class PlaybackViewModel @Inject constructor(
                 // Default off; armed only on the direct-play branch below.
                 directPlayContext = null
 
-                val source = when (mode) {
+                val source = if (resumed != null) {
+                    // Re-entry onto a player reclaimed from the background
+                    // service, still reading [resumed]. A new session here
+                    // would never be read, and once live it retired the one
+                    // the player IS reading, stopping the track. Adopt it.
+                    adoptSession(resumed)
+                    lastTranscodeRequest = when (mode) {
+                        is PlaybackMode.Remux -> TranscodeRequest(itemId, file.id, 0, true, serverUrl)
+                        is PlaybackMode.Transcode -> TranscodeRequest(itemId, file.id, mode.height, false, serverUrl)
+                        is PlaybackMode.DirectPlay -> null
+                    }
+                    PlaybackSource.Hls(playlistUrl = resumed.playlistUrl, offsetMs = resumed.offsetMs)
+                } else when (mode) {
                     is PlaybackMode.DirectPlay -> {
                         hlsOffsetMs = 0
                         // Arm the transcode fallback: if ExoPlayer can't
@@ -496,11 +512,13 @@ class PlaybackViewModel @Inject constructor(
         // back to a keyframe — visible to the user as "I scrubbed to
         // 0:00 but the video is at 1:58". Falls back to posMs when the
         // server didn't return the field (omitempty / older builds).
-        val openOffsetMs = if (session.start_offset_sec > 0.0) {
-            (session.start_offset_sec * 1000.0).toLong()
-        } else {
-            posMs
-        }
+        //
+        // It also strips the playlist's `?token=` into the vault so the
+        // MediaItem (which a parked audio player exposes through the
+        // MediaSession) stays clean. Child segment/variant URIs keep their
+        // server-embedded token, so only this top-level URL needs
+        // re-attaching. See StreamTokenVault.
+        val stream = StreamSession.opened(session, serverUrl, posMs)
         // Initial in-stream seek to skip the silent-video gap at seg 0
         // head. Non-zero only after a mid-stream seek with AC3 → AAC
         // re-encode; the player jumps this far in on first start so
@@ -509,7 +527,7 @@ class PlaybackViewModel @Inject constructor(
         // encoder warms up. Same omitempty fallback.
         val seg0SkipMs = (session.seg0_audio_gap_sec * 1000.0).toLong()
 
-        hlsOffsetMs = openOffsetMs
+        hlsOffsetMs = stream.offsetMs
         lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl, audioStreamIndex)
 
         // New session is live — now retire the one it replaces.
@@ -517,14 +535,9 @@ class PlaybackViewModel @Inject constructor(
             viewModelScope.launch { transcodeRepo.stop(priorSessionId, priorToken) }
         }
 
-        // Strip the playlist's `?token=` into the vault so the MediaItem (which
-        // a parked audio player exposes through the MediaSession) stays clean.
-        // Child segment/variant URIs keep their server-embedded token, so only
-        // this top-level URL needs re-attaching. See StreamTokenVault.
-        val (cleanPlaylist, playlistToken) = StreamTokenVault.split("$serverUrl${session.playlist_url}")
         return PlaybackSource.Hls(
-            playlistUrl = StreamTokenVault.register(cleanPlaylist, playlistToken),
-            offsetMs = openOffsetMs,
+            playlistUrl = stream.playlistUrl,
+            offsetMs = stream.offsetMs,
             initialSeekMs = seg0SkipMs,
         )
     }
@@ -746,6 +759,33 @@ class PlaybackViewModel @Inject constructor(
      *
      * [scope] is retained so tests can inject a scope they control.
      */
+    /**
+     * Hand the live server session over with the player (to the background
+     * service, through AudioHandoff). This view model stops owning it, so its
+     * teardown no longer ends the stream the parked player is still reading.
+     * Null on direct play. The caller gives it back with [adoptSession] if
+     * the handoff falls through, and a fragment that reclaims the player
+     * adopts it again from the handoff metadata.
+     */
+    fun handOffSession(): StreamSession? {
+        val sid = transcodeSessionId ?: return null
+        val tok = transcodeToken ?: return null
+        val hls = _uiState.value.source as? PlaybackSource.Hls ?: return null
+        transcodeSessionId = null
+        transcodeToken = null
+        return StreamSession(id = sid, token = tok, offsetMs = hlsOffsetMs, playlistUrl = hls.playlistUrl)
+    }
+
+    /** Own [session], the one the player this view model drives is reading
+     *  (taken back from the background service). A different session still
+     *  owned here is ended first. */
+    fun adoptSession(session: StreamSession) {
+        if (transcodeSessionId != null && transcodeSessionId != session.id) stopActiveTranscode()
+        transcodeSessionId = session.id
+        transcodeToken = session.token
+        hlsOffsetMs = session.offsetMs
+    }
+
     fun stopActiveTranscode(scope: kotlinx.coroutines.CoroutineScope = appScope) {
         val sid = transcodeSessionId ?: return
         val tok = transcodeToken ?: return

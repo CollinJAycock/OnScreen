@@ -223,4 +223,32 @@ class PlaybackHelperTest {
         assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(java.io.IOException("reset")))).isFalse()
         assertThat(PlaybackHelper.isStoppedStreamStatus(playerError(null))).isFalse()
     }
+
+    // ── modeFor: the server's decision, as prepare() and the background
+    //    service's chain both read it ─────────────────────────────────────────
+
+    @Test
+    fun `the server's verdict picks the mode`() {
+        assertThat(PlaybackHelper.modeFor("directPlay", file())).isEqualTo(PlaybackMode.DirectPlay)
+        assertThat(PlaybackHelper.modeFor("directStream", file())).isEqualTo(PlaybackMode.Remux)
+        assertThat(PlaybackHelper.modeFor("transcode", file(height = 1080))).isEqualTo(PlaybackMode.Transcode(1080))
+        assertThat(PlaybackHelper.modeFor("transcode", file(height = 2160))).isEqualTo(PlaybackMode.Transcode(2160))
+    }
+
+    @Test
+    fun `a track the server transcodes is not direct played`() {
+        // The local fallback direct-plays every audio-only file; only the
+        // server knows this device can't decode it.
+        val dsd = file(container = "dsf", video = null, audio = "dsd_lsbf", height = null)
+        assertThat(PlaybackHelper.modeFor(null, dsd)).isEqualTo(PlaybackMode.DirectPlay)
+        assertThat(PlaybackHelper.modeFor("transcode", dsd)).isEqualTo(PlaybackMode.Transcode(1080))
+    }
+
+    @Test
+    fun `unsupported plays nowhere, and no verdict falls back to the local decision`() {
+        assertThat(PlaybackHelper.modeFor("unsupported", file())).isNull()
+        assertThat(PlaybackHelper.modeFor(null, file())).isEqualTo(PlaybackHelper.decide(file()))
+        assertThat(PlaybackHelper.modeFor("something new", file(container = "avi", video = "mpeg2", audio = "mp2")))
+            .isEqualTo(PlaybackHelper.decide(file(container = "avi", video = "mpeg2", audio = "mp2")))
+    }
 }

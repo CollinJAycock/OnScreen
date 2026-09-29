@@ -29,6 +29,7 @@ import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.StreamSession
 import tv.onscreen.android.playback.StreamTokenVault
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -1154,4 +1155,94 @@ class PlaybackViewModelTest {
         runTest(dispatcher) {
             lateReissueAfterStop { it.switchAudioStream(audioStreamOrdinal = 1, currentPositionMs = 5_000L) }
         }
+
+    // ── Background audio: the server session travels with the player ────────
+
+    private fun transcodedPrepared(transcodeRepo: TranscodeRepository, itemRepo: ItemRepository) {
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(
+            session_id = "sess-9",
+            playlist_url = "/transcode/sess-9.m3u8?token=tok-9",
+            token = "tok-9",
+        )
+    }
+
+    @Test
+    fun `a session handed off with a parked player is no longer ended here`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        transcodedPrepared(transcodeRepo, itemRepo)
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        val handed = vm.handOffSession()
+        assertThat(handed).isEqualTo(
+            StreamSession(id = "sess-9", token = "tok-9", offsetMs = 0L, playlistUrl = "http://srv/transcode/sess-9.m3u8"),
+        )
+        // The fragment's teardown (and onCleared's safety net) must leave the
+        // stream the background service is playing alone.
+        vm.stopActiveTranscode(this)
+        advanceUntilIdle()
+        coVerify(exactly = 0) { transcodeRepo.stop(any(), any()) }
+
+        // Reclaimed after HOME: owned, and so ended, here again.
+        vm.adoptSession(handed!!)
+        vm.stopActiveTranscode(this)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
+    }
+
+    @Test
+    fun `a direct play has no session to hand off`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.handOffSession()).isNull()
+    }
+
+    @Test
+    fun `re-entry adopts the parked player's session instead of starting another`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        transcodedPrepared(transcodeRepo, itemRepo)
+        val parked = StreamSession(id = "sess-p", token = "tok-p", offsetMs = 42_000L, playlistUrl = "http://srv/p.m3u8")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", 0L, "http://srv", resumed = parked)
+        advanceUntilIdle()
+
+        // A second session would never be read, and once live it retired the
+        // one the reclaimed player is reading.
+        coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+        val hls = vm.uiState.value.source as PlaybackSource.Hls
+        assertThat(hls.playlistUrl).isEqualTo("http://srv/p.m3u8")
+        assertThat(hls.offsetMs).isEqualTo(42_000L)
+        assertThat(vm.hlsOffsetMs).isEqualTo(42_000L)
+        assertThat(vm.activeSessionId).isEqualTo("sess-p")
+
+        vm.stopActiveTranscode(this)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { transcodeRepo.stop("sess-p", "tok-p") }
+    }
+
+    @Test
+    fun `adopting a session ends a different one still owned`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        transcodedPrepared(transcodeRepo, itemRepo)
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        vm.adoptSession(StreamSession(id = "sess-p", token = "tok-p", offsetMs = 0L, playlistUrl = "http://srv/p.m3u8"))
+        // stopActiveTranscode's default scope is the IO-backed appScope.
+        coVerify(timeout = 2_000, exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
+        assertThat(vm.activeSessionId).isEqualTo("sess-p")
+    }
 }

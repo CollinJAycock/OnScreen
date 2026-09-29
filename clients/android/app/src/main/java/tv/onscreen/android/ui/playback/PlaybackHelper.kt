@@ -44,6 +44,19 @@ object PlaybackHelper {
         "h264", "hevc", "h265", "vp9", "av1",
     )
 
+    /** The play mode for the server's decision [verdict] ("directPlay",
+     *  "directStream", "transcode"), falling back to the local [decide] when
+     *  the server gave none. Null for "unsupported" (Dolby Vision), which
+     *  plays nowhere. Shared by PlaybackViewModel.prepare and the background
+     *  service's chain to the next track. */
+    fun modeFor(verdict: String?, file: ItemFile): PlaybackMode? = when (verdict) {
+        "directPlay" -> PlaybackMode.DirectPlay
+        "directStream" -> PlaybackMode.Remux
+        "transcode" -> PlaybackMode.Transcode(if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080)
+        "unsupported" -> null
+        else -> decide(file)
+    }
+
     fun decide(file: ItemFile): PlaybackMode {
         val video = file.video_codec?.lowercase()
         val audio = file.audio_codec?.lowercase()
