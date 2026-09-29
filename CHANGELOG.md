@@ -391,6 +391,23 @@ Roku channel (no request features, as on Android):
     just as it is handed over still chains to the next one.
   - Fire TV: the app no longer tries to publish Watch Next rows without the
     permission (the Fire TV build leaves it out on purpose).
+  - After HOME, the player screen kept following the background player: it
+    seeked it whenever the service's own progress report came back from the
+    server as a cross-device sync event. A paused track re-buffered, and at
+    the end of a server-streamed track the seek hit the closed stream, so
+    the music stopped instead of moving on to the next track. The screen now
+    lets go of the player until it takes it back.
+  - An admin stop reaches audio playing in the background after BACK or
+    HOME: the background service now watches for it. Before, a paused track
+    or a server-transcoded one carried on after the stop.
+  - A Watch Next link opened while the app was in the background landed on
+    Home instead of the player: on Fire TV (Android 11) the link arrives
+    after the app has started its return-to-Home, which then replaced the
+    player.
+  - The now-playing session's summary (what Fire TV and Google TV read)
+    shows the artist and album under the title, not just the title.
+  - The paused and stopped reports sent as a video closes reach the server
+    in order; a pause landing second put the video back in Now Playing.
 - **An audiobook's "00 - Prologue" played last.** A chapter file whose name
   starts with 0 was left unnumbered, and unnumbered chapters sort after
   numbered ones. A leading 0 now counts as the place before chapter 1.

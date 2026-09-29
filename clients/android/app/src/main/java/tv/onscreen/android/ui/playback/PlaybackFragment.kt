@@ -436,12 +436,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
                 applyListeningSpeed(state.listeningRate)
                 refreshSecondaryActions()
-                startUpNextWatcher()
-                startCrossDeviceSync(itemId)
-                startSkipMarkerWatcher()
+                // Parked in the background service, the player is the
+                // service's: onStart restarts these when it takes it back.
+                if (!parkedToService) startPlayerWatchers(itemId)
                 installTrickplaySeekProvider(itemId)
                 bindAudioBackdrop(state.item)
-                startWatchNextWatcher()
             }
         }
     }
@@ -556,6 +555,63 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
     }
 
+    /** (Re)start the loops that follow and drive [player]: Up Next, the
+     *  cross-device position sync, the skip-marker prompt and Watch Next. */
+    private fun startPlayerWatchers(itemId: String) {
+        startUpNextWatcher()
+        startCrossDeviceSync(itemId)
+        startSkipMarkerWatcher()
+        startWatchNextWatcher()
+    }
+
+    /**
+     * Stop the loops that drive [player], and the admin-stop watch, for as
+     * long as the background service owns the player. The service watches
+     * for admin stops itself from then on.
+     *
+     * They run on the view's scope, which outlives onStop, so they kept
+     * running after HOME. The cross-device sync seeked the service's player
+     * whenever the service's own progress report came back from the server
+     * as a sync event: a paused track re-buffered, and at the end of a
+     * track the seek hit a stream the server had already closed, failing
+     * the player instead of moving on to the next track.
+     *
+     * Watch Next keeps running: it only reads a position, from the parked
+     * player while that still plays this item ([positionSource]), so the
+     * launcher's Continue Watching tile keeps up with background listening.
+     */
+    private fun stopPlayerWatchers() {
+        upNextJob?.cancel()
+        upNextJob = null
+        syncJob?.cancel()
+        syncJob = null
+        adminStopJob?.cancel()
+        adminStopJob = null
+        skipMarkerJob?.cancel()
+        skipMarkerJob = null
+    }
+
+    /** The player parked in the background service, while it still plays
+     *  this screen's item (the service may have moved on to the next track,
+     *  or let the player go). Main thread, like the player itself. */
+    private fun parkedPlayerOfThisItem(): ExoPlayer? {
+        if (!parkedToService) return null
+        val meta = tv.onscreen.android.playback.AudioHandoff.peekMetadata() ?: return null
+        if (meta.itemId != arguments?.getString(ARG_ITEM_ID)) return null
+        return tv.onscreen.android.playback.AudioHandoff.peek()
+    }
+
+    /** The player to read this item's position from, with the offset of
+     *  the session it reads: this screen's own, or the parked one
+     *  ([parkedPlayerOfThisItem]). Read only: the service drives a parked
+     *  player. */
+    private fun positionSource(): Pair<ExoPlayer, Long>? {
+        player?.let { return it to viewModel.hlsOffsetMs }
+        val parked = parkedPlayerOfThisItem() ?: return null
+        val offsetMs = tv.onscreen.android.playback.AudioHandoff.peekMetadata()?.hlsOffsetMs ?: return null
+        return parked to offsetMs
+    }
+
     /**
      * Watch the player's content position and surface a "SKIP INTRO" /
      * "SKIP CREDITS" button when it falls inside a marker window.
@@ -587,15 +643,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         watchNextJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 val item = currentItem
-                val exo = player
-                if (item != null && exo != null) {
-                    val pos = exo.currentPosition + viewModel.hlsOffsetMs
+                val source = positionSource()
+                if (item != null && source != null) {
+                    val (exo, offsetMs) = source
+                    val pos = exo.currentPosition + offsetMs
                     // Content-time duration — see contentDurationMs(). Using
                     // the player's session-relative duration here made pos/dur
                     // cross the manager's 0.9 "finished" threshold almost
                     // immediately on any resumed HLS session, so the launcher's
                     // Continue Watching row was deleted mid-movie.
-                    val dur = contentDurationMs()
+                    val dur = contentDurationMs(exo, offsetMs)
                     if (dur > 0L && pos > 0L) {
                         // Off the main thread: publishContinueWatching does a
                         // full ContentResolver query plus an insert/update —
@@ -827,6 +884,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                             return@collect
                         }
                         val playerPos = evt.position_ms - viewModel.hlsOffsetMs
+                        // Already there: a report of this device's own
+                        // coming back (the background service's too, which
+                        // the tracker above knows nothing of), or another
+                        // device at the same spot. A seek would only
+                        // re-buffer.
+                        if (abs(playerPos - exo.currentPosition) < 2000L) return@collect
                         val dur = exo.duration
                         if (playerPos < 0 || (dur > 0 && dur != Long.MAX_VALUE && playerPos > dur)) {
                             // Sync position is outside the currently-loaded
@@ -1493,7 +1556,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      * returns, a book keeps whatever the player is at.
      */
     private fun applyListeningSpeed(rate: Float?) {
-        val exo = player ?: return
+        // A book's saved speed can arrive after HOME handed the player over:
+        // it still belongs on that player, or the book plays on at 1x.
+        val exo = player ?: parkedPlayerOfThisItem() ?: return
         val current = exo.playbackParameters.speed
         val target = when {
             !AudiobookSpeed.hasSpeed(currentItemType) -> AudiobookSpeed.NORMAL
@@ -2106,10 +2171,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     /** Content-time duration for progress reports + completion ratios. The
      *  arithmetic lives in [PlaybackHelper.contentDurationMs] so it is unit
      *  testable; this just feeds it the live player/item state. */
-    private fun contentDurationMs(): Long = PlaybackHelper.contentDurationMs(
+    private fun contentDurationMs(): Long = contentDurationMs(player, viewModel.hlsOffsetMs)
+
+    /** [contentDurationMs] for [exo] reading a session that starts at
+     *  [hlsOffsetMs]: a parked player, whose session left the view model. */
+    private fun contentDurationMs(exo: ExoPlayer?, hlsOffsetMs: Long): Long = PlaybackHelper.contentDurationMs(
         itemDurationMs = currentItem?.duration_ms ?: currentItem?.files?.firstOrNull()?.duration_ms,
-        playerDurationMs = player?.duration ?: 0L,
-        hlsOffsetMs = viewModel.hlsOffsetMs,
+        playerDurationMs = exo?.duration ?: 0L,
+        hlsOffsetMs = hlsOffsetMs,
     )
 
     override fun onStart() {
@@ -2176,6 +2245,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // fragment-side ticker without emitting a spurious "stopped"
             // (the track is still playing).
             progressTracker?.stop()
+            // It drives the player too, until onStart takes it back
+            // (reclaimAudioPlayerFromService): nothing here may seek it
+            // meanwhile. The service can also release it (end of the queue,
+            // a long pause), and a reference kept here reached a dead
+            // player. What still needs it looks it up while it plays this
+            // item (parkedPlayerOfThisItem).
+            stopPlayerWatchers()
+            player = null
         }
     }
 
@@ -2392,6 +2469,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         reclaimed.addListener(listener)
         playerListener = listener
         installProgressTracker(launchId)
+        // Stopped at the handoff (onStop).
+        startPlayerWatchers(launchId)
+        startAdminStopWatch(launchId)
         // Same player, same speed — including one changed from the system
         // media controls while it played in the background.
         showSpeed(reclaimed.playbackParameters.speed)

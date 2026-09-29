@@ -6,10 +6,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -37,6 +39,8 @@ class ProgressTrackerTest {
     private class FakeRepo : ItemRepository(FakeApi, ClientName(null)) {
         val calls = mutableListOf<Call>()
         var throwNext: Throwable? = null
+        /** How long the server takes to answer each state, in ms. */
+        var slow: Map<String, Long> = emptyMap()
 
         data class Call(val itemId: String, val offsetMs: Long, val durationMs: Long, val state: String)
 
@@ -47,6 +51,7 @@ class ProgressTrackerTest {
             state: String,
         ) {
             throwNext?.let { throw it }
+            slow[state]?.let { delay(it) }
             calls += Call(itemId, offsetMs, durationMs, state)
         }
     }
@@ -530,6 +535,20 @@ class ProgressTrackerTest {
         tracker.onStop()
         tracker.onStop()
         runCurrent()
+
+        assertThat(repo.calls.map { it.state }).containsExactly("paused", "stopped").inOrder()
+    }
+
+    @Test
+    fun `a slow pause report still lands before the stop after it`() = runTest(StandardTestDispatcher()) {
+        val repo = FakeRepo().apply { slow = mapOf("paused" to 500L) }
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+
+        // BACK out of a video: onPause, then onStop a few ms later.
+        tracker.onPause()
+        tracker.onStop()
+        advanceUntilIdle()
 
         assertThat(repo.calls.map { it.state }).containsExactly("paused", "stopped").inOrder()
     }

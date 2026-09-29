@@ -35,9 +35,12 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.api.HeartbeatRefusal
+import tv.onscreen.android.data.api.PlaybackStop
+import tv.onscreen.android.data.device.ClientName
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.AudiobookRepository
 import tv.onscreen.android.data.repository.ItemRepository
+import tv.onscreen.android.data.repository.NotificationsRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.ui.playback.PlaybackHelper
 import tv.onscreen.android.ui.playback.PlaybackMode
@@ -83,6 +86,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
     @Inject lateinit var transcodeRepo: TranscodeRepository
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var audiobooks: AudiobookRepository
+    @Inject lateinit var notifications: NotificationsRepository
+    @Inject lateinit var clientName: ClientName
 
     private var session: MediaSession? = null
     /** The ExoPlayer this service drives. The session wraps it in a
@@ -139,6 +144,9 @@ class OnScreenMediaSessionService : MediaSessionService() {
     /** Releases the player once it has been paused for
      *  [BackgroundPause.HOLD_MS]. */
     private var pauseReleaseJob: Job? = null
+    /** Obeys an admin "stop this stream" aimed at the player here (see
+     *  [watchAdminStops]). */
+    private var adminStopJob: Job? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -339,6 +347,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
 
         installListener(player)
         startProgressReporter(player)
+        watchAdminStops()
         val pendingError = player.playerError
         when {
             // Failed in the moment between the park and this attach.
@@ -380,6 +389,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
         progressJob = null
         pauseReleaseJob?.cancel()
         pauseReleaseJob = null
+        adminStopJob?.cancel()
+        adminStopJob = null
         playerListener?.let { listener -> activePlayer?.removeListener(listener) }
         playerListener = null
         // Unregister from the service (paired with addSession in attach)
@@ -399,6 +410,41 @@ class OnScreenMediaSessionService : MediaSessionService() {
         speedBookId = null
         activeStreamSession = null
         pausedAtMs = null
+    }
+
+    /**
+     * Obey the admin "stop this stream" SSE event for the item playing here,
+     * as the player screen does while it has the player (see
+     * PlaybackFragment.startAdminStopWatch, which stops when the player is
+     * handed over). The heartbeat's 403 is no backstop for a paused player,
+     * which sends none, or for a server transcode, which has no refusal
+     * window: without this, both carried on after the stop.
+     */
+    private fun watchAdminStops() {
+        adminStopJob?.cancel()
+        adminStopJob = scope.launch {
+            while (isActive) {
+                try {
+                    notifications.subscribePlaybackStops().collect { evt ->
+                        val player = activePlayer ?: return@collect
+                        val itemId = activeItemId ?: return@collect
+                        val mine = PlaybackStop.targets(
+                            evt,
+                            playingItemId = itemId,
+                            sessionId = activeStreamSession?.id,
+                            clientName = clientName.value,
+                        )
+                        if (!mine) return@collect
+                        haltForRefusal(player, itemId, HeartbeatRefusal.PlaybackStopped(PlaybackStop.text(evt.message)))
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    // Stream dropped; reconnect after a short delay.
+                }
+                delay(5_000)
+            }
+        }
     }
 
     /** PUT /items/{id}/progress now, then every 10 s while the
@@ -462,7 +508,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         if (dur <= 0) return
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(dur)
         if (pos <= 0) return
-        detachedScope.launch {
+        reports.launch {
             runCatching { itemRepo.updateProgress(itemId, pos, dur, state) }
         }
     }
@@ -550,7 +596,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
             // On the detached scope: at the end of the queue the service
             // stops right away, and its own scope's cancellation would take
             // this, the item's only completion report, with it.
-            detachedScope.launch {
+            reports.launch {
                 runCatching { itemRepo.updateProgress(itemId, dur, dur, "stopped") }
             }
         }
@@ -777,6 +823,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
         progressJob = null
         pauseReleaseJob?.cancel()
         pauseReleaseJob = null
+        adminStopJob?.cancel()
+        adminStopJob = null
         val sess = session
         val player = activePlayer
         // Unregister from the service (paired with addSession) before
@@ -812,8 +860,10 @@ class OnScreenMediaSessionService : MediaSessionService() {
         const val STRAY_CHANNEL_ID = "playback_service"
         const val STRAY_NOTIFICATION_ID = 0x0A5E
 
-        /** Outlives the service: the final 'stopped' report is sent as it
-         *  is destroyed, when its own scope is already cancelled. */
-        val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        /** The pause / stop reports. Outlives the service: the final
+         *  'stopped' report is sent as it is destroyed, when its own scope is
+         *  already cancelled. One lane for every instance, so a 'paused'
+         *  never lands after the 'stopped' that follows it. */
+        val reports = ReportLane(CoroutineScope(SupervisorJob() + Dispatchers.IO))
     }
 }

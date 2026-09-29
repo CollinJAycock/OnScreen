@@ -14,8 +14,10 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
@@ -82,11 +84,20 @@ class MainActivity : FragmentActivity() {
     private var pendingHomeReset = false
 
     /** A Watch Next deep link that arrived while fragment state was saved
-     *  (itemId to positionMs). onNewIntent runs before onStart for a stopped
-     *  activity, so the warm path — a tile clicked while the app is
-     *  backgrounded, i.e. the normal one — can't commit a transaction yet.
-     *  Consumed by onStart. */
+     *  (itemId to positionMs), for onStart to deliver. A guard only:
+     *  FragmentActivity clears the saved-state flag as a new intent comes in,
+     *  so a link from a tile clicked while the app is backgrounded commits
+     *  at once from onNewIntent, on whichever side of onStart that lands.
+     *  Before onStart, [showPlayback] clearing [pendingHomeReset] keeps it;
+     *  after onStart (API 30 Fire TV), cancelling [homeResetJob] does. */
     private var pendingDeepLink: Pair<String, Long>? = null
+
+    /** The Home reset in flight ([resetToHome]). It reads the auth prefs
+     *  before it commits, so for a moment it is suspended with Home still to
+     *  come. A player committed in that moment (a Watch Next link delivered
+     *  after onStart, a transfer from another device) was replaced by Home
+     *  when the reset went on: [showPlayback] cancels it. */
+    private var homeResetJob: Job? = null
 
     /** Fire TV sticks don't reliably deliver onPause/onStop on an HDMI
      *  display-off — the activity can sit "resumed" on a dark panel with the
@@ -217,19 +228,12 @@ class MainActivity : FragmentActivity() {
 
     override fun onStart() {
         super.onStart()
-        // A deep link that arrived while state was saved (onNewIntent fires
-        // before onStart on the warm path) wins over the home reset — the
-        // tile IS the user's chosen destination.
+        // A deep link stashed by handleWatchNextDeepLink's saved-state guard
+        // (not expected: a new intent clears that flag) wins over the home
+        // reset — the tile IS the user's chosen destination.
         pendingDeepLink?.let { (itemId, position) ->
             pendingDeepLink = null
-            pendingHomeReset = false
-            supportFragmentManager.popBackStack(
-                null,
-                androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
-            )
-            supportFragmentManager.beginTransaction()
-                .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, position))
-                .commitAllowingStateLoss()
+            showPlayback(itemId, position)
             return
         }
         if (pendingHomeReset) {
@@ -269,7 +273,8 @@ class MainActivity : FragmentActivity() {
      * the track from Home reclaims the same player seamlessly via AudioHandoff.
      */
     private fun resetToHome() {
-        lifecycleScope.launch {
+        homeResetJob?.cancel()
+        homeResetJob = lifecycleScope.launch {
             if (supportFragmentManager.isStateSaved) {
                 pendingHomeReset = true
                 return@launch
@@ -279,12 +284,35 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
+     * Swap in playback of [itemId] from [positionMs] as the only screen (the
+     * back stack is dropped, so BACK from it leaves the app): the screen the
+     * user just asked for (a Watch Next tile, "play on this TV" from another
+     * device). A Home reset that is pending or already on its way must not
+     * replace it.
+     */
+    private fun showPlayback(itemId: String, positionMs: Long) {
+        pendingHomeReset = false
+        homeResetJob?.cancel()
+        homeResetJob = null
+        supportFragmentManager.popBackStack(
+            null,
+            androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
+        )
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, positionMs))
+            .commitAllowingStateLoss()
+    }
+
+    /**
      * Commit the root fragment matching current auth state. Caller must have
      * already checked [androidx.fragment.app.FragmentManager.isStateSaved].
      */
     private suspend fun routeToRoot(popBackStack: Boolean = false) {
         val serverConfigured = prefs.hasServer.first()
         val signedIn = prefs.isLoggedIn.first()
+        // Cancelled while those reads were suspended ([showPlayback]):
+        // another screen was chosen meanwhile, so no route at all.
+        currentCoroutineContext().ensureActive()
 
         val target: androidx.fragment.app.Fragment = when {
             serverConfigured.not() -> ServerSetupFragment()
@@ -364,8 +392,8 @@ class MainActivity : FragmentActivity() {
      * also yank the Bedroom TV into playing the same item.
      *
      * The fragment swap reuses the same path the Watch Next deep
-     * link uses (popBackStack + replace) so back-press from playback
-     * lands on Home rather than walking up a stale stack.
+     * link uses ([showPlayback]), so back-press from playback leaves the
+     * app rather than walking up a stale stack.
      */
     private suspend fun listenForPlaybackTransfers() {
         // Reconnect loop with timeout-tolerance. The underlying SSE
@@ -382,16 +410,7 @@ class MainActivity : FragmentActivity() {
                 notifications.subscribePlaybackTransfers().collect { ev ->
                     if (ev.target_client_name != clientName.value) return@collect
                     if (supportFragmentManager.isStateSaved) return@collect
-                    supportFragmentManager.popBackStack(
-                        null,
-                        androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
-                    )
-                    supportFragmentManager.beginTransaction()
-                        .replace(
-                            R.id.main_container,
-                            PlaybackFragment.newInstance(ev.item_id, ev.position_ms),
-                        )
-                        .commitAllowingStateLoss()
+                    showPlayback(ev.item_id, ev.position_ms)
                 }
             } catch (_: Exception) {
                 // Stream dropped (timeout, server restart, network blip);
@@ -457,27 +476,21 @@ class MainActivity : FragmentActivity() {
         incoming.data = null
         setIntent(incoming)
         if (supportFragmentManager.isStateSaved) {
-            // onNewIntent is delivered BEFORE onStart for a stopped activity,
-            // so state is still saved here on the warm path — the exact path a
-            // Watch Next tile takes while the app sits in the background. We
-            // already consumed the URI above (it must fire once), so dropping
-            // the request now loses the user's chosen title AND leaves
-            // pendingHomeReset set, landing them on Home instead. Stash it and
-            // let onStart deliver it.
+            // Not expected: super.onNewIntent clears the saved-state flag
+            // (FragmentActivity's new-intent listener), and onCreate runs
+            // before any save. But a commit now would throw, and the URI is
+            // already consumed above (it must fire once), so stash it for
+            // onStart rather than drop the user's chosen title.
             pendingDeepLink = itemId to position
             return true
         }
         // A deep-link launch IS the user's chosen destination — don't let
-        // a pending home reset (set when the app left the foreground)
-        // clobber the playback screen we're about to show.
-        pendingHomeReset = false
-        supportFragmentManager.popBackStack(
-            null,
-            androidx.fragment.app.FragmentManager.POP_BACK_STACK_INCLUSIVE,
-        )
-        supportFragmentManager.beginTransaction()
-            .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, position))
-            .commitAllowingStateLoss()
+        // a home reset clobber the playback screen we're about to show:
+        // pending (set when the app left the foreground, for a link
+        // delivered before onStart), or already started by an onStart that
+        // ran first (API 30 delivers onNewIntent after onStart, and then
+        // landed every backgrounded tile click on Home).
+        showPlayback(itemId, position)
         return true
     }
 

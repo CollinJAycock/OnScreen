@@ -21,14 +21,27 @@ data class NowPlaying(
 ) {
 
     /** [base] (what the player read from the stream, e.g. embedded
-     *  artwork) with this item's names on top. */
+     *  artwork) with this item's names on top.
+     *
+     *  The artist and album also go in as the subtitle and description.
+     *  Media3 copies the title into the legacy session metadata as its
+     *  display title, and the legacy description (what Fire TV's and
+     *  Google TV's now-playing UI read) then takes its three lines from the
+     *  display title, subtitle and description only, never the artist and
+     *  album: with just the title, it read "title, null, null". */
     fun toMediaMetadata(base: MediaMetadata = MediaMetadata.EMPTY): MediaMetadata =
         base.buildUpon()
             .setTitle(title)
             .setDisplayTitle(title)
             .apply {
-                artist?.let { setArtist(it) }
-                album?.let { setAlbumTitle(it) }
+                artist?.let {
+                    setArtist(it)
+                    setSubtitle(it)
+                }
+                album?.let {
+                    setAlbumTitle(it)
+                    setDescription(it)
+                }
             }
             .build()
 

@@ -55,6 +55,9 @@ class NowPlayingTest {
         assertThat(md.displayTitle.toString()).isEqualTo("Title")
         assertThat(md.artist.toString()).isEqualTo("Artist")
         assertThat(md.albumTitle.toString()).isEqualTo("Album")
+        // The legacy description's second and third lines.
+        assertThat(md.subtitle.toString()).isEqualTo("Artist")
+        assertThat(md.description.toString()).isEqualTo("Album")
         assertThat(md.trackNumber).isEqualTo(3)
         // No artist of our own: the stream's stays.
         assertThat(NowPlaying("Title").toMediaMetadata(base).artist.toString()).isEqualTo("tag artist")

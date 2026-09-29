@@ -4,6 +4,7 @@ import kotlinx.coroutines.*
 import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.repository.ItemRepository
+import tv.onscreen.android.playback.ReportLane
 
 /**
  * Periodically reports playback progress to the server.
@@ -23,6 +24,10 @@ class ProgressTracker(
         CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
     private var job: Job? = null
+    /** The pause / stop reports, sent in order: a teardown fires a 'paused'
+     *  and a 'stopped' a few milliseconds apart, and a 'paused' landing
+     *  second put the item back in the server's Now Playing. */
+    private val terminalReports = ReportLane(terminalScope)
     private var itemId: String? = null
     private var hlsOffsetMs: Long = 0
     /** The last pause / stop report sent, as (state, content position).
@@ -82,17 +87,17 @@ class ProgressTracker(
         // not inside the (background) terminal coroutine.
         val snap = snapshot() ?: return
         if (repeatsLastTerminal("paused", snap)) return
-        // Launch on the survivable scope: onPause often coincides with view
+        // Sent on the survivable scope: onPause often coincides with view
         // teardown, and the final position must persist even though the view
         // scope is being cancelled.
-        terminalScope.launch { report("paused", snap) }
+        terminalReports.launch { report("paused", snap) }
     }
 
     fun onStop() {
         job?.cancel()
         val snap = snapshot() ?: return
         if (repeatsLastTerminal("stopped", snap)) return
-        terminalScope.launch { report("stopped", snap) }
+        terminalReports.launch { report("stopped", snap) }
     }
 
     /** Whether [state] at [snap]'s position was the last terminal report
