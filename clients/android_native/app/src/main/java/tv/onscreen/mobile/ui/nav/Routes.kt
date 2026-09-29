@@ -7,8 +7,9 @@ object Routes {
     const val ITEM = "item/{id}"
     const val SEARCH = "search"
     /** [player]; `fromStart` = ignore the item's resume point (album / artist
-     *  Play starts track 1 at 0:00). */
-    const val PLAYER = "player/{id}?fromStart={fromStart}"
+     *  Play starts track 1 at 0:00); `startMs` = start exactly there (an
+     *  audiobook bookmark; -1 = not given). */
+    const val PLAYER = "player/{id}?fromStart={fromStart}&startMs={startMs}"
     /** Book / comic reader. CBZ/CBR pages render via Coil; EPUB renders
      *  in a WebView with bundled epub.js. */
     const val BOOK = "book/{id}"
@@ -33,8 +34,11 @@ object Routes {
 
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"
-    fun player(id: String, fromStart: Boolean = false) =
-        if (fromStart) "player/$id?fromStart=true" else "player/$id"
+    fun player(id: String, fromStart: Boolean = false, startMs: Long? = null) = when {
+        startMs != null -> "player/$id?startMs=${startMs.coerceAtLeast(0L)}"
+        fromStart -> "player/$id?fromStart=true"
+        else -> "player/$id"
+    }
     fun book(id: String) = "book/$id"
     fun collection(id: String) = "collection/$id"
     fun photo(id: String) = "photo/$id"

@@ -50,6 +50,7 @@ import tv.onscreen.android.data.repository.NotificationsRepository
 import android.widget.Toast
 import tv.onscreen.android.data.repository.OnlineSubtitleRepository
 import tv.onscreen.android.data.repository.TrickplayRepository
+import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.ui.KeyEventHandler
 import tv.onscreen.android.ui.detail.DetailFragment
 import javax.inject.Inject
@@ -137,7 +138,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private var fastForwardAction: PlaybackControlsRow.FastForwardAction? = null
     private var chapters: List<Chapter> = emptyList()
     private var currentItemType: String = ""
-    private var playbackSpeed: Float = 1.0f
+    /** The speed the player is at, as the picker shows it. Audiobooks only:
+     *  anything else is held at 1× (see applyListeningSpeed). */
+    private var playbackSpeed: Float = AudiobookSpeed.NORMAL
 
     /** Cross-device sync subscriber. Cancelled in onDestroyView. */
     private var syncJob: Job? = null
@@ -247,7 +250,6 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         private const val ACTION_SUBTITLE_ID = 101L
         private const val ACTION_CHAPTERS_ID = 102L
         private const val ACTION_SPEED_ID = 103L
-        private val SPEED_OPTIONS = floatArrayOf(0.75f, 1.0f, 1.25f, 1.5f, 1.75f, 2.0f)
         // Skip-back / skip-forward step in milliseconds. 10 s back is
         // the conventional "I missed that line" jump; 30 s forward
         // matches the audiobook / podcast convention and most TV
@@ -408,6 +410,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 currentItemType = state.item?.type.orEmpty()
                 currentItem = state.item
 
+                applyListeningSpeed(state.listeningRate)
                 refreshSecondaryActions()
                 startUpNextWatcher()
                 startCrossDeviceSync(itemId)
@@ -955,7 +958,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 audioAction = Action(ACTION_AUDIO_ID, getString(R.string.audio), null, icon(R.drawable.ic_audio_track))
                 subtitleAction = Action(ACTION_SUBTITLE_ID, getString(R.string.subtitles), null, icon(R.drawable.ic_subtitles))
                 chaptersAction = Action(ACTION_CHAPTERS_ID, getString(R.string.chapters), null, icon(R.drawable.ic_chapters))
-                speedAction = Action(ACTION_SPEED_ID, getString(R.string.speed_label, "1.0"), null, icon(R.drawable.ic_speed))
+                speedAction = Action(
+                    ACTION_SPEED_ID,
+                    getString(R.string.speed_label, AudiobookSpeed.label(playbackSpeed)),
+                    null,
+                    icon(R.drawable.ic_speed),
+                )
                 adapter.add(audioAction)
                 adapter.add(subtitleAction)
                 adapter.add(chaptersAction)
@@ -1276,8 +1284,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         //   those are useful surfaces a user expects to reach from
         //   playback regardless of what the file ships with.
         // - Chapters: ≥ 2 (single chapter == the whole movie, useless).
-        // - Speed: audiobooks only (a 2× movie is rarely what users
-        //   want, and music must stay at 1× to preserve pitch).
+        // - Speed: audiobooks and their chapter files only (a 2× movie is
+        //   rarely what users want, and music stays at 1×).
         //
         // After mutating the adapter, ask the host to re-bind the
         // controls row — Leanback's ControlBarPresenter is usually
@@ -1297,7 +1305,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         if (audioStreams.isNotEmpty()) secondary.add(aa)
         secondary.add(sa) // always — picker has "Off" + "Find more online…" entries
         if (chapters.size >= 2) secondary.add(ca)
-        if (currentItemType == "audiobook") secondary.add(sp)
+        if (AudiobookSpeed.hasSpeed(currentItemType)) secondary.add(sp)
 
         // Force a row re-bind so a stale ControlBarPresenter view
         // doesn't keep showing the pre-refresh button set.
@@ -1446,22 +1454,52 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun showSpeedPicker() {
-        val labels = SPEED_OPTIONS.map { "%.2fx".format(it) }.toTypedArray()
+        val labels = AudiobookSpeed.PRESETS.map { AudiobookSpeed.label(it) }.toTypedArray()
         // Check the current speed so the user can see what's active (was a plain
-        // setItems list with no indication of the current selection).
-        val checked = SPEED_OPTIONS.indexOfFirst { it == playbackSpeed }.coerceAtLeast(0)
+        // setItems list with no indication of the current selection). -1 (none
+        // checked) when the book is at a speed set elsewhere between presets.
+        val checked = AudiobookSpeed.presetIndex(playbackSpeed)
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.speed)
             .setSingleChoiceItems(labels, checked) { d, idx ->
-                val chosen = SPEED_OPTIONS[idx]
-                playbackSpeed = chosen
-                val params = androidx.media3.common.PlaybackParameters(chosen)
-                player?.playbackParameters = params
-                speedAction?.label1 = getString(R.string.speed_label, "%.2f".format(chosen))
+                val chosen = AudiobookSpeed.PRESETS[idx]
+                // Straight onto the live player — pitch is kept (Media3's
+                // PlaybackParameters(speed) leaves pitch at 1). The same
+                // instance goes to the background service on HOME / BACK, so
+                // the speed goes with it. Then saved for the book.
+                player?.setPlaybackSpeed(chosen)
+                showSpeed(chosen)
+                viewModel.setListeningRate(chosen)
                 d.dismiss()
             }
             .show()
             .trackOpen()
+    }
+
+    /**
+     * Put the player at the right speed for the item on screen: an audiobook
+     * (or a chapter of one) at the book's saved speed once the ViewModel has
+     * it, anything else at 1×. The player can be one reclaimed from the
+     * background service, so it may already be at a book's speed — which is
+     * right for that book and wrong for anything else. Until the lookup
+     * returns, a book keeps whatever the player is at.
+     */
+    private fun applyListeningSpeed(rate: Float?) {
+        val exo = player ?: return
+        val current = exo.playbackParameters.speed
+        val target = when {
+            !AudiobookSpeed.hasSpeed(currentItemType) -> AudiobookSpeed.NORMAL
+            rate != null -> rate
+            else -> current
+        }
+        if (!AudiobookSpeed.same(current, target)) exo.setPlaybackSpeed(target)
+        showSpeed(target)
+    }
+
+    /** Reflect [speed] in the picker's checkmark and the action's label. */
+    private fun showSpeed(speed: Float) {
+        playbackSpeed = speed
+        speedAction?.label1 = getString(R.string.speed_label, AudiobookSpeed.label(speed))
     }
 
     private fun showChapterPicker() {
@@ -2311,6 +2349,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         reclaimed.addListener(listener)
         playerListener = listener
         installProgressTracker(launchId)
+        // Same player, same speed — including one changed from the system
+        // media controls while it played in the background.
+        showSpeed(reclaimed.playbackParameters.speed)
     }
 
     /** When the user backs out of the player while music is still

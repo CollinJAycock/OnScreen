@@ -21,6 +21,7 @@ import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.prefs.SubtitlePrefs
 import tv.onscreen.mobile.data.prefs.SubtitleStyle
+import tv.onscreen.mobile.data.repository.AudiobookRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.model.OnlineSubtitle
 import tv.onscreen.mobile.data.repository.NotificationsRepository
@@ -30,9 +31,14 @@ import tv.onscreen.mobile.data.repository.TranscodeRepository
 import tv.onscreen.mobile.data.repository.TrickplayRepository
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
 import androidx.media3.common.util.UnstableApi
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
+import tv.onscreen.mobile.playback.AudiobookSpeed
 import tv.onscreen.mobile.playback.LocalProgressTracker
 import tv.onscreen.mobile.playback.NextSiblingResolver
 import tv.onscreen.mobile.playback.PlaybackService
+import tv.onscreen.mobile.playback.StopAfterItem
 import tv.onscreen.mobile.playback.StreamTokenVault
 import tv.onscreen.mobile.trickplay.TrickplayVtt
 import javax.inject.Inject
@@ -80,7 +86,33 @@ data class PlayerUiState(
     /** Currently-displayed scrub-preview bitmap. Set while the user is
      *  dragging the seekbar; cleared on scrub-end. */
     val scrubPreview: tv.onscreen.mobile.ui.player.ScrubPreview? = null,
+    /** Audiobooks: the book's listening speed once known (null for anything
+     *  else, and until the lookup returns). The screen applies it to a
+     *  screen-owned player; PlaybackService applies it to its own. */
+    val listeningRate: Float? = null,
+    /** Audiobooks: whether the server takes bookmarks (false until the
+     *  speed lookup says so, and on a server that predates them). */
+    val bookmarksSupported: Boolean = false,
     val error: String? = null,
+)
+
+/** Outcome of "Add bookmark", for the screen's confirmation toast. */
+sealed class BookmarkNotice {
+    data class Added(val positionMs: Long) : BookmarkNotice()
+    /** 409 BOOKMARK_LIMIT: the book already has the most allowed. */
+    data object LimitReached : BookmarkNotice()
+    /** 404: the server predates bookmarks (the action is hidden after). */
+    data object Unsupported : BookmarkNotice()
+    data object Failed : BookmarkNotice()
+}
+
+/** What the sleep timer needs from the player the screen has bound: where
+ *  it is in CONTENT time (chapter marks are content-absolute), how fast it
+ *  is playing, and how to pause it. */
+class SleepTimerHooks(
+    val positionMs: () -> Long,
+    val speed: () -> Float,
+    val pause: () -> Unit,
 )
 
 /** Snapshot the player overlay reads to render the thumbnail above
@@ -105,6 +137,7 @@ class PlayerViewModel @Inject constructor(
     private val onlineSubtitles: OnlineSubtitleRepository,
     private val trickplayRepo: TrickplayRepository,
     private val watchLimitRepo: WatchLimitRepository,
+    private val audiobooks: AudiobookRepository,
 ) : ViewModel() {
 
     /** Whether to gate video playback behind a "you're on cellular,
@@ -280,56 +313,70 @@ class PlayerViewModel @Inject constructor(
 
     private var sleepTimerJob: kotlinx.coroutines.Job? = null
 
+    /** Monotonic clock for handing a countdown to the next screen
+     *  ([handOffSleepTimer]). A seam for tests. */
+    internal var elapsedRealtime: () -> Long = { android.os.SystemClock.elapsedRealtime() }
+
     /** Start a wall-clock countdown sleep timer. Replaces any running
-     *  timer. Off cancels. EndOfTrack switches to the content-aware
-     *  mode (no countdown — UI shows "End of track" label and we
-     *  arm a one-shot when the player emits Player.STATE_ENDED). */
+     *  timer. Off cancels. EndOfTrack / EndOfChapter switch to the
+     *  content-aware modes (no countdown — the UI shows the label and we
+     *  pause when the player emits Player.STATE_ENDED, or for EndOfChapter
+     *  at the next embedded chapter mark, whichever comes first). */
     fun setSleepTimer(mode: SleepTimer) {
         sleepTimerJob?.cancel()
         sleepTimerJob = null
         _sleepTimerFired.value = false
+        disarmStopAfterItem()
         when (mode) {
             SleepTimer.Off -> {
                 _sleepTimer.value = null
             }
-            SleepTimer.EndOfTrack -> {
-                // No countdown; just stash the mode so the player's
-                // onPlaybackStateChanged listener can fire pause when
-                // it sees STATE_ENDED.
+            SleepTimer.EndOfTrack, SleepTimer.EndOfChapter -> {
+                // No countdown; stash the mode so the player's
+                // onPlaybackStateChanged listener can fire pause when it
+                // sees STATE_ENDED — and tell the background service to
+                // end there rather than chain on (see StopAfterItem).
                 _sleepTimer.value = SleepTimerState(mode = mode, remainingMs = 0)
+                _state.value.item?.id?.let(::armStopAfterItem)
+                if (mode == SleepTimer.EndOfChapter) startChapterWatch()
             }
-            is SleepTimer.Minutes -> {
-                val total = SleepTimerMath.initialMs(mode)
-                _sleepTimer.value = SleepTimerState(mode = mode, remainingMs = total)
-                sleepTimerJob = viewModelScope.launch {
-                    var remaining = total
-                    while (remaining > 0) {
-                        delay(1_000)
-                        remaining -= 1_000
-                        _sleepTimer.value = _sleepTimer.value?.copy(remainingMs = remaining)
-                    }
-                    firePause()
-                }
+            is SleepTimer.Minutes -> startCountdown(mode, SleepTimerMath.initialMs(mode))
+        }
+    }
+
+    private fun startCountdown(mode: SleepTimer.Minutes, remainingMs: Long) {
+        _sleepTimer.value = SleepTimerState(mode = mode, remainingMs = remainingMs)
+        sleepTimerJob = viewModelScope.launch {
+            var remaining = remainingMs
+            while (remaining > 0) {
+                delay(1_000)
+                remaining -= 1_000
+                _sleepTimer.value = _sleepTimer.value?.copy(remainingMs = remaining)
             }
+            firePause()
         }
     }
 
     /** Called by the screen's playback-state listener when the player
-     *  emits STATE_ENDED. If the active timer is EndOfTrack, fire
-     *  pause; otherwise no-op (a track ending under a Minutes timer
-     *  doesn't pause early — auto-advance handles next-track). */
+     *  emits STATE_ENDED. If the active timer waits for the item to end
+     *  (EndOfTrack, or EndOfChapter — a multi-file book's chapter IS the
+     *  item), fire pause; otherwise no-op (a track ending under a Minutes
+     *  timer doesn't pause early — auto-advance handles next-track). */
     fun onPlayerEnded() {
-        if (_sleepTimer.value?.mode == SleepTimer.EndOfTrack) {
+        if (SleepTimerMath.endsWithItem(_sleepTimer.value?.mode)) {
             firePause()
         }
     }
+
+    /** Whether the running timer stops at the end of the current item. */
+    fun sleepsAtItemEnd(): Boolean = SleepTimerMath.endsWithItem(_sleepTimer.value?.mode)
 
     /** Acknowledge the fired signal so it can edge-trigger again. */
     fun consumeSleepTimerFired() {
         _sleepTimerFired.value = false
     }
 
-    /** Pause action registered by the screen while a player is bound.
+    /** The player the screen has bound, while one is.
      *
      *  The fired edge used to be delivered ONLY through a state flow the
      *  screen collected with collectAsStateWithLifecycle — which stops
@@ -337,18 +384,108 @@ class PlayerViewModel @Inject constructor(
      *  down, raised the edge, and nothing ever consumed it: playback ran on.
      *  That is the timer's whole purpose (fall asleep to a show), so the
      *  primary path was the broken one. Invoking a registered action from
-     *  the VM's own coroutine works regardless of UI lifecycle state. */
-    private var pauseAction: (() -> Unit)? = null
+     *  the VM's own coroutine works regardless of UI lifecycle state — and
+     *  the end-of-chapter watch reads the position the same way. */
+    private var sleepHooks: SleepTimerHooks? = null
 
-    fun setPauseAction(action: (() -> Unit)?) {
-        pauseAction = action
+    fun setSleepTimerHooks(hooks: SleepTimerHooks?) {
+        sleepHooks = hooks
+        // An end-of-chapter timer set (or handed over) before a player was
+        // bound starts watching now.
+        if (hooks != null && _sleepTimer.value?.mode == SleepTimer.EndOfChapter &&
+            sleepTimerJob?.isActive != true
+        ) {
+            startChapterWatch()
+        }
+    }
+
+    /** Where the end-of-chapter timer stops, in content time; null = at the
+     *  end of the item (STATE_ENDED). */
+    private var chapterStopMs: Long? = null
+
+    /**
+     * End of chapter in a single-file book: watch the position and pause at
+     * the next embedded chapter mark ([SleepTimerMath.chapterEndMs]). Wakes
+     * just in time for the mark (the wait scales with the speed), at most a
+     * second apart so a seek is caught. A file without chapter marks — and
+     * every multi-file chapter — has nothing to watch: [onPlayerEnded] stops
+     * it at the item's end.
+     */
+    private fun startChapterWatch() {
+        val chapters = _state.value.item?.files?.firstOrNull()?.chapters.orEmpty()
+        val hooks = sleepHooks ?: return
+        if (chapters.isEmpty()) return
+        sleepTimerJob?.cancel()
+        chapterStopMs = SleepTimerMath.chapterEndMs(chapters, hooks.positionMs())
+        sleepTimerJob = viewModelScope.launch {
+            while (isActive && _sleepTimer.value?.mode == SleepTimer.EndOfChapter) {
+                val bound = sleepHooks ?: break
+                val pos = bound.positionMs()
+                val target = chapterStopMs
+                if (target != null && pos >= target) {
+                    firePause()
+                    break
+                }
+                delay(SleepTimerMath.nextCheckDelayMs(target, pos, bound.speed()))
+            }
+        }
+    }
+
+    /** The listener seeked (chapter picker, scrubbing, skip buttons): an
+     *  end-of-chapter timer now means the end of the chapter landed in. */
+    fun onSleepTimerSeek(positionMs: Long) {
+        if (_sleepTimer.value?.mode != SleepTimer.EndOfChapter) return
+        val chapters = _state.value.item?.files?.firstOrNull()?.chapters.orEmpty()
+        if (chapters.isNotEmpty()) chapterStopMs = SleepTimerMath.chapterEndMs(chapters, positionMs)
+    }
+
+    /**
+     * The screen is about to follow the background queue onto [nextItemId]
+     * (a chapter chained, a lock-screen skip): hand the running timer to the
+     * screen that opens for it. Without this the timer died with this
+     * ViewModel at every chapter of a multi-file book.
+     */
+    fun handOffSleepTimer(nextItemId: String) {
+        val st = _sleepTimer.value ?: return
+        SleepTimerCarry.put(nextItemId, st.mode, st.remainingMs, elapsedRealtime())
+    }
+
+    /** Take over a timer the previous screen handed to [itemId]. */
+    private fun adoptSleepTimer(itemId: String) {
+        val st = SleepTimerCarry.take(itemId, elapsedRealtime()) ?: return
+        sleepTimerJob?.cancel()
+        _sleepTimerFired.value = false
+        when (val mode = st.mode) {
+            is SleepTimer.Minutes -> if (st.remainingMs > 0) startCountdown(mode, st.remainingMs) else firePause()
+            SleepTimer.EndOfTrack, SleepTimer.EndOfChapter -> {
+                _sleepTimer.value = st
+                armStopAfterItem(itemId)
+                // The chapter watch starts once the item (its chapter marks)
+                // has loaded — see prepare().
+            }
+            SleepTimer.Off -> Unit
+        }
+    }
+
+    /** Item the service was asked to stop after (see [StopAfterItem]). */
+    private var stopArmedFor: String? = null
+
+    private fun armStopAfterItem(itemId: String) {
+        stopArmedFor = itemId
+        StopAfterItem.arm(itemId)
+    }
+
+    private fun disarmStopAfterItem() {
+        stopArmedFor?.let(StopAfterItem::disarm)
+        stopArmedFor = null
     }
 
     /** Fire the pause directly AND raise the edge for an attached screen. */
     private fun firePause() {
         _sleepTimerFired.value = true
         _sleepTimer.value = null
-        pauseAction?.invoke()
+        disarmStopAfterItem()
+        sleepHooks?.pause?.invoke()
     }
 
     /** Server origin used to build absolute URLs that Cast receivers
@@ -426,8 +563,14 @@ class PlayerViewModel @Inject constructor(
     )
 
     /** [fromStart]: ignore the item's resume point — album / artist Play
-     *  starts track 1 at 0:00 even if a partial play left one. */
-    fun prepare(itemId: String, fromStart: Boolean = false) {
+     *  starts track 1 at 0:00 even if a partial play left one.
+     *  [startAtMs]: start exactly there instead (an audiobook bookmark);
+     *  only for a playable item, not a container Play resolves to a leaf. */
+    fun prepare(itemId: String, fromStart: Boolean = false, startAtMs: Long? = null) {
+        // A timer the previous screen handed over when it followed the
+        // background queue here (see handOffSleepTimer).
+        adoptSleepTimer(itemId)
+        val requestedId = itemId
         viewModelScope.launch {
             try {
                 // Container items (show / season / album / artist /
@@ -497,7 +640,8 @@ class PlayerViewModel @Inject constructor(
                     )
                     resolved
                 }
-                val startMs = if (fromStart) 0L else item.view_offset_ms
+                val explicitStart = startAtMs?.takeIf { it >= 0 && resolvedId == requestedId }
+                val startMs = explicitStart ?: if (fromStart) 0L else item.view_offset_ms
 
                 // Offline-first: if the user has a completed download
                 // for this file, play the local copy. Skips even the
@@ -580,6 +724,13 @@ class PlayerViewModel @Inject constructor(
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
                     forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
                 )
+
+                // Audiobooks: the book's listening speed (and whether the
+                // server takes bookmarks). An end-of-chapter timer handed
+                // over from the previous screen can watch the chapter marks
+                // now that they're loaded.
+                loadListeningSpeed(item)
+                if (_sleepTimer.value?.mode == SleepTimer.EndOfChapter) startChapterWatch()
 
                 // Trickplay cues — best-effort. If the server hasn't
                 // generated thumbnails yet (status != "done"), the
@@ -691,7 +842,66 @@ class PlayerViewModel @Inject constructor(
             item = syntheticItem,
         )
         _state.value = state
+        // Offline, so the lookup fails — but a speed picked earlier in this
+        // session is still known locally.
+        loadListeningSpeed(syntheticItem)
         return state
+    }
+
+    // ── Audiobooks: listening speed + bookmarks ───────────────────────
+
+    /** Look up the speed of the book [item] belongs to. Nothing for
+     *  anything that isn't an audiobook — it plays at 1×. */
+    private fun loadListeningSpeed(item: ItemDetail) {
+        val bookId = AudiobookSpeed.bookIdOf(item.type, item.id, item.parent_id) ?: return
+        viewModelScope.launch {
+            val speed = audiobooks.listeningSpeed(item.id, bookId)
+            if (_state.value.item?.id != item.id) return@launch
+            _state.value = _state.value.copy(
+                listeningRate = speed.rate ?: AudiobookSpeed.NORMAL,
+                bookmarksSupported = speed.serverSupport,
+            )
+        }
+    }
+
+    /** The listener picked a speed. The screen has already applied it to
+     *  the player; this records it and saves it for the book (fire-and-
+     *  forget — a failed save still leaves it in effect on this device). */
+    fun setListeningRate(rate: Float) {
+        val item = _state.value.item ?: return
+        val bookId = AudiobookSpeed.bookIdOf(item.type, item.id, item.parent_id) ?: return
+        val clamped = AudiobookSpeed.clamp(rate)
+        _state.value = _state.value.copy(listeningRate = clamped)
+        audiobooks.saveRate(item.id, bookId, clamped)
+    }
+
+    private val _bookmarkNotices = Channel<BookmarkNotice>(Channel.BUFFERED)
+
+    /** One notice per "Add bookmark", for a toast. */
+    val bookmarkNotices: Flow<BookmarkNotice> = _bookmarkNotices.receiveAsFlow()
+
+    /** Bookmark [positionMs] (content time) in the item being played — the
+     *  book for a single-file book, the chapter for a multi-file one. */
+    fun addBookmark(positionMs: Long, note: String) {
+        val item = _state.value.item ?: return
+        if (!AudiobookSpeed.hasSpeed(item.type)) return
+        viewModelScope.launch {
+            val notice = try {
+                BookmarkNotice.Added(audiobooks.addBookmark(item.id, positionMs, note).position_ms)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                when ((e as? HttpException)?.code()) {
+                    409 -> BookmarkNotice.LimitReached
+                    404 -> {
+                        _state.value = _state.value.copy(bookmarksSupported = false)
+                        BookmarkNotice.Unsupported
+                    }
+                    else -> BookmarkNotice.Failed
+                }
+            }
+            _bookmarkNotices.trySend(notice)
+        }
     }
 
     private fun isContainerType(type: String?): Boolean = type in setOf(
@@ -1077,6 +1287,10 @@ class PlayerViewModel @Inject constructor(
 
     override fun onCleared() {
         super.onCleared()
+        // The timer dies with this screen; so does its "stop after this
+        // item" request (only if still ours — a screen that followed the
+        // queue may have armed its own).
+        disarmStopAfterItem()
         sseJob?.cancel()
         stopEventsJob?.cancel()
         recycleSpriteCache()

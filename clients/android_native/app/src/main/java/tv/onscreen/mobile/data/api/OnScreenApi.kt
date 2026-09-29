@@ -237,6 +237,45 @@ interface OnScreenApi {
         @Body body: CreateIssueRequest,
     ): ApiResponse<MediaIssue>
 
+    // ── Audiobooks: listening speed + bookmarks (v2.5) ───────────────────────
+    // internal/api/v1/audiobook.go. {id} on the item routes may be a book or
+    // one of its chapters; 422 for anything else, 404 for an item the caller
+    // can't see — and on a server that predates the routes.
+
+    @GET("api/v1/items/{id}/playback-rate")
+    suspend fun getPlaybackRate(@Path("id") id: String): ApiResponse<PlaybackRate>
+
+    /** 204 No Content. */
+    @PUT("api/v1/items/{id}/playback-rate")
+    suspend fun setPlaybackRate(
+        @Path("id") id: String,
+        @Body body: PlaybackRateRequest,
+    )
+
+    /** Every bookmark the caller has in the book, in listening order. */
+    @GET("api/v1/items/{id}/bookmarks")
+    suspend fun listBookmarks(@Path("id") id: String): ApiResponse<List<Bookmark>>
+
+    /** {id} is the PLAYABLE item (a single-file book or the chapter being
+     *  played). 201 with the bookmark; 409 BOOKMARK_LIMIT past 1000 in one
+     *  book; 400 for a note over 500 characters. */
+    @POST("api/v1/items/{id}/bookmarks")
+    suspend fun createBookmark(
+        @Path("id") id: String,
+        @Body body: CreateBookmarkRequest,
+    ): ApiResponse<Bookmark>
+
+    /** 204 No Content. */
+    @PATCH("api/v1/bookmarks/{id}")
+    suspend fun updateBookmark(
+        @Path("id") id: String,
+        @Body body: BookmarkNoteRequest,
+    )
+
+    /** 204 No Content. */
+    @DELETE("api/v1/bookmarks/{id}")
+    suspend fun deleteBookmark(@Path("id") id: String)
+
     // ── Online subtitles (OpenSubtitles proxy) ──────────────────────────────
 
     @GET("api/v1/items/{id}/subtitles/search")

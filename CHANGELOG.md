@@ -215,6 +215,20 @@ app's Search › Discover tab (which could request titles) was removed:
   track 1; artist from its earliest album, then the rest in order.
 - **Phone item pages** say "Resume from 20:25" for something part-watched
   and "Watch again" once it's finished.
+- **Audiobook listening speed** (0.75×–3×, pitch kept), saved per book on
+  the server, so a book resumes at its speed on either app. It carries across
+  chapters and into background playback. Music always plays at 1×.
+  - **Phone**: a speed control in the player; an **Add bookmark** action
+    with an optional note; and a **Bookmarks** list on the book's page. Tap
+    a bookmark to play from it, or edit its note or delete it.
+  - **Phone sleep timer**: gains **End of chapter**. It stops at the next
+    chapter mark in a single-file book, or when the chapter file ends in a
+    multi-file book.
+  - **Phone multi-file books**: chapters play on from one to the next, and
+    the book page has a working Play button.
+  - **TV**: the speed control, for books and chapter files.
+  - On a server without these routes, speed still works on the device and
+    bookmarks stay hidden.
 - `request_*` notifications are never surfaced.
 
 ### Changed

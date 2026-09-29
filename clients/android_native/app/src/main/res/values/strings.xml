@@ -3,4 +3,41 @@
     <string name="app_name">OnScreen</string>
     <string name="downloads_channel_name">Downloads</string>
     <string name="downloading_title">Downloading %s</string>
+
+    <!-- Shared actions -->
+    <string name="cancel">Cancel</string>
+    <string name="close">Close</string>
+    <string name="save">Save</string>
+    <string name="delete">Delete</string>
+    <string name="retry">Retry</string>
+
+    <!-- Audiobooks: listening speed (player) -->
+    <string name="player_speed_title">Playback speed</string>
+    <string name="player_speed_button">Playback speed, %1$s</string>
+
+    <!-- Audiobooks: sleep timer -->
+    <string name="sleep_end_of_chapter">End of chapter</string>
+
+    <!-- Audiobooks: bookmarks (player) -->
+    <string name="bookmark_add">Add bookmark</string>
+    <string name="bookmark_add_at">At %1$s</string>
+    <string name="bookmark_add_confirm">Add</string>
+    <string name="bookmark_note_label">Note (optional)</string>
+    <string name="bookmark_note_count">%1$d / %2$d</string>
+    <string name="bookmark_added">Bookmark added at %1$s</string>
+    <string name="bookmark_limit">This book already has the most bookmarks allowed.</string>
+    <string name="bookmark_unsupported">This server doesn\'t support bookmarks yet.</string>
+    <string name="bookmark_add_failed">Couldn\'t add the bookmark. Try again.</string>
+
+    <!-- Audiobooks: bookmarks (item page) -->
+    <string name="bookmarks_title">Bookmarks</string>
+    <string name="bookmarks_empty">No bookmarks yet. Add one from the player while you listen.</string>
+    <string name="bookmarks_load_failed">Couldn\'t load your bookmarks.</string>
+    <string name="bookmark_chapter_n">Chapter %1$d</string>
+    <string name="bookmark_edit_note">Edit note</string>
+    <string name="bookmark_delete">Delete bookmark</string>
+    <string name="bookmark_delete_title">Delete bookmark?</string>
+    <string name="bookmark_delete_body">The bookmark at %1$s is removed on all your devices.</string>
+    <string name="bookmark_update_failed">Couldn\'t save the note.</string>
+    <string name="bookmark_delete_failed">Couldn\'t delete the bookmark.</string>
 </resources>

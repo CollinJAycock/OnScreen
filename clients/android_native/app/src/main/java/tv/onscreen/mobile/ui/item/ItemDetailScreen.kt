@@ -414,6 +414,9 @@ fun ItemDetailScreen(
     onPlay: (String) -> Unit,
     /** Play ignoring the resume point (album / artist → first track). */
     onPlayFromStart: (String) -> Unit = onPlay,
+    /** Play an item from a given position (an audiobook bookmark: the
+     *  book or chapter it's in, and where). */
+    onPlayAt: (String, Long) -> Unit,
     onOpenItem: (String) -> Unit,
     onOpenPhoto: (String) -> Unit,
     onOpenAuthor: (String) -> Unit,
@@ -422,9 +425,19 @@ fun ItemDetailScreen(
     onBack: () -> Unit,
     vm: ItemDetailViewModel = hiltViewModel(),
     watchVm: ItemWatchViewModel = hiltViewModel(),
+    bookmarksVm: AudiobookBookmarksViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.load(itemId) }
     val ui by vm.state.collectAsStateWithLifecycle()
+
+    // Audiobook bookmarks bind to each finished load — incl. the reload on
+    // return from the player, which is how one just added there shows up.
+    // Keyed on loading rather than the detail itself so a favourite toggle
+    // (a detail copy) doesn't re-fetch them.
+    val bookmarksUi by bookmarksVm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(ui.detail?.id, ui.loading) {
+        if (!ui.loading) ui.detail?.let(bookmarksVm::bind)
+    }
 
     // Watch state (watched toggle / up-next / episode marks) binds to each
     // detail load — incl. the reload on return from the player, which is
@@ -445,6 +458,11 @@ fun ItemDetailScreen(
         val msg = watchUi.message ?: return@LaunchedEffect
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
         watchVm.consumeMessage()
+    }
+    LaunchedEffect(bookmarksVm) {
+        bookmarksVm.messages.collect { res ->
+            android.widget.Toast.makeText(context, res, android.widget.Toast.LENGTH_SHORT).show()
+        }
     }
 
     // Type-based redirects: photos open straight into the full-screen
@@ -573,7 +591,10 @@ fun ItemDetailScreen(
                                     // instead.
                                     val hasFile = d.files.isNotEmpty()
                                     val musicStart = ui.playStartId
-                                    if (isBook || hasFile) {
+                                    if (isBook || hasFile || isMultiFileBook(d, ui.children)) {
+                                        // (A multi-file audiobook has no file
+                                        // of its own; the player resolves it
+                                        // to the chapter to resume.)
                                         // The player starts at the resume
                                         // point (PlayerViewModel.prepare reads
                                         // view_offset_ms), so say so. The
@@ -626,7 +647,9 @@ fun ItemDetailScreen(
                                 // track lookup came back empty.)
                                 val musicPending = MusicQueue.startsFromContainer(d.type) &&
                                     (ui.playStartId != null || !ui.playStartResolved)
-                                if (d.files.isEmpty() && d.type != "book" && !isWatchContainerType(d.type) && !musicPending) {
+                                if (d.files.isEmpty() && d.type != "book" && !isWatchContainerType(d.type) &&
+                                    !musicPending && !isMultiFileBook(d, ui.children)
+                                ) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
                                         "No playable files for this item.",
@@ -669,6 +692,19 @@ fun ItemDetailScreen(
                                 }
                             }
                         }
+
+                        // Audiobook bookmarks — above the chapter list,
+                        // which can run to hundreds of rows. Tapping one
+                        // plays the book (or the chapter file it's in)
+                        // from its position.
+                        bookmarkSection(
+                            ui = bookmarksUi,
+                            chapterOrder = chapterOrderOf(ui.children),
+                            onPlay = { b -> onPlayAt(b.item_id, b.position_ms) },
+                            onEditNote = { b, note -> bookmarksVm.updateNote(b.id, note) },
+                            onDelete = { b -> bookmarksVm.delete(b.id) },
+                            onRetry = bookmarksVm::retry,
+                        )
 
                         // Audiobook chapters: m4b / mp3 / flac books
                         // surface their embedded chapter table.
@@ -766,6 +802,12 @@ private fun AudioBadgeRow(labels: List<String>) {
         }
     }
 }
+
+/** A multi-file audiobook: no file of its own, chapters as children. */
+private fun isMultiFileBook(
+    d: ItemDetail,
+    children: List<tv.onscreen.mobile.data.model.ChildItem>,
+): Boolean = d.type == "audiobook" && d.files.isEmpty() && children.any { it.type == "audiobook_chapter" }
 
 private fun childrenSectionTitle(parentType: String): String = when (parentType) {
     "show", "anime" -> "Seasons"

@@ -23,6 +23,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.data.repository.AudiobookRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.ui.playback.PlaybackHelper
@@ -52,6 +53,11 @@ import javax.inject.Inject
  * Video playback intentionally skips this path — the surface-view
  * rendering doesn't translate to a service notification, so video
  * is released when the activity stops rather than handed off here.
+ *
+ * Audiobook listening speed needs no hand-off of its own: the parked
+ * player is the fragment's instance, and ExoPlayer keeps its
+ * PlaybackParameters. Only a chain to another item re-decides it
+ * ([applyListeningSpeed]).
  */
 @UnstableApi
 @AndroidEntryPoint
@@ -60,6 +66,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
     @Inject lateinit var itemRepo: ItemRepository
     @Inject lateinit var transcodeRepo: TranscodeRepository
     @Inject lateinit var prefs: ServerPrefs
+    @Inject lateinit var audiobooks: AudiobookRepository
 
     private var session: MediaSession? = null
     /** Service-scoped coroutine scope. Cancelled in onDestroy so the
@@ -379,6 +386,29 @@ class OnScreenMediaSessionService : MediaSessionService() {
         player.setMediaItem(MediaItem.fromUri(Uri.parse(url)))
         player.prepare()
         player.playWhenReady = true
+        applyListeningSpeed(player, item.id, item.type, item.parent_id)
+    }
+
+    /**
+     * Speed for the item just chained to. The player carries its speed
+     * across items (it's the fragment's player, handed over at HOME / BACK,
+     * sped up there or not), which is right within a book but not across
+     * them: the next book in a series gets its own saved speed, and anything
+     * that isn't an audiobook plays at 1×.
+     */
+    private fun applyListeningSpeed(player: ExoPlayer, itemId: String, type: String, parentId: String?) {
+        val bookId = AudiobookSpeed.bookIdOf(type, itemId, parentId)
+        if (bookId == null) {
+            if (!AudiobookSpeed.same(player.playbackParameters.speed, AudiobookSpeed.NORMAL)) {
+                player.setPlaybackSpeed(AudiobookSpeed.NORMAL)
+            }
+            return
+        }
+        scope.launch {
+            val rate = audiobooks.rate(itemId, bookId) ?: return@launch
+            // Still on that book, and still ours?
+            if (activeItemId == itemId && session?.player === player) player.setPlaybackSpeed(rate)
+        }
     }
 
     override fun onDestroy() {

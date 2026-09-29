@@ -39,6 +39,7 @@ import kotlinx.coroutines.withTimeout
 import tv.onscreen.mobile.data.api.HeartbeatRefusal
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
+import tv.onscreen.mobile.data.repository.AudiobookRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.NotificationsRepository
 import tv.onscreen.mobile.ui.player.playbackStoppedMessage
@@ -82,6 +83,13 @@ import javax.inject.Inject
  * ReplayGain: a [ReplayGainAudioProcessor] in the audio sink, fed each
  * track's tags at the exact buffer where the output moves to it
  * ([ReplayGainAudioRenderer]); mode + preamp come from [PlaybackPrefs].
+ *
+ * Audiobooks: listening speed follows the item ([applyListeningSpeed]) — a
+ * book, or a chapter of one, plays at the book's saved speed and anything
+ * else at 1×. A multi-file book chains chapter to chapter on STATE_ENDED
+ * ([maybeAutoAdvance]); the speed rides along because ExoPlayer keeps its
+ * PlaybackParameters across items. The sleep timer's "end of chapter" arms
+ * [StopAfterItem] so the chain doesn't start the next chapter.
  */
 @UnstableApi
 @AndroidEntryPoint
@@ -91,6 +99,7 @@ class PlaybackService : MediaSessionService() {
     @Inject lateinit var prefs: ServerPrefs
     @Inject lateinit var playbackPrefs: PlaybackPrefs
     @Inject lateinit var notifications: NotificationsRepository
+    @Inject lateinit var audiobooks: AudiobookRepository
 
     private var session: MediaSession? = null
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
@@ -98,6 +107,11 @@ class PlaybackService : MediaSessionService() {
     private var expandJob: Job? = null
     private var extendJob: Job? = null
     private var stopEventsJob: Job? = null
+    private var speedJob: Job? = null
+
+    // The book the player's current speed belongs to (null: not a book, so
+    // 1×). Moving to another chapter of the same book leaves the speed alone.
+    private var speedBookId: String? = null
 
     // Guards against double-publishing the terminal 'stopped' for one
     // item (STATE_ENDED can be followed by teardown). Reset when a new
@@ -280,6 +294,8 @@ class PlaybackService : MediaSessionService() {
         progressJob?.cancel()
         expandJob?.cancel()
         extendJob?.cancel()
+        speedJob?.cancel()
+        speedBookId = null
         // The previous account's resolved stream urls / tags must not serve
         // the next one.
         resolvedUrls.clear()
@@ -390,6 +406,7 @@ class PlaybackService : MediaSessionService() {
             if (mediaItem != null) adminStops.reset()
             currentItemId = mediaItem?.mediaId
             updateStopSubscription(player)
+            applyListeningSpeed(player, mediaItem)
             // Reached the last queued track by playing / skipping into it:
             // queue what comes next now, so that boundary is gapless too.
             if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO ||
@@ -564,9 +581,12 @@ class PlaybackService : MediaSessionService() {
     }
 
     /** The queue ran out. Music: queue what follows (see [maybeExtendQueue]).
-     *  Audiobooks keep the old book → next-book chaining. */
+     *  Audiobooks keep the old book → next-book chaining, and a multi-file
+     *  book's chapters chain to each other. Unless the sleep timer asked to
+     *  stop at the end of this item: then it stays ended. */
     private fun advanceAfterEnd(player: Player) {
         val item = player.currentMediaItem ?: return
+        if (StopAfterItem.consume(item.mediaId)) return
         val type = item.mediaMetadata.extras?.getString(EXTRA_TYPE)
         if (MusicQueue.expandsQueue(type)) {
             maybeExtendQueue(player)
@@ -683,6 +703,10 @@ class PlaybackService : MediaSessionService() {
         val item = player.currentMediaItem ?: return
         val md = item.mediaMetadata
         val type = md.extras?.getString(EXTRA_TYPE)
+        if (type == AudiobookSpeed.CHAPTER) {
+            chainToNextChapter(player, item)
+            return
+        }
         if (type != "track" && type != "audiobook") return
         val itemId = item.mediaId.ifEmpty { return }
         val parentId = md.extras?.getString(EXTRA_PARENT_ID)
@@ -690,6 +714,71 @@ class PlaybackService : MediaSessionService() {
         scope.launch {
             val next = NextSiblingResolver(itemRepo).resolve(itemId, type, parentId, index) ?: return@launch
             chainTo(next.id)
+        }
+    }
+
+    /** A chapter of a multi-file book ended: play the book's next chapter
+     *  file ([AudiobookChapters] — by the listing, since chapters usually
+     *  carry no index). The last chapter just ends. */
+    private fun chainToNextChapter(player: Player, item: MediaItem) {
+        val itemId = item.mediaId.ifEmpty { return }
+        val bookId = item.mediaMetadata.extras?.getString(EXTRA_PARENT_ID) ?: return
+        scope.launch {
+            val next = try {
+                AudiobookChapters.nextAfter(itemRepo.getChildren(bookId), itemId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            } ?: return@launch
+            // Still sitting at the end of that chapter? The listener may have
+            // picked something else while the listing loaded.
+            if (player.currentMediaItem?.mediaId != itemId || player.playbackState != Player.STATE_ENDED) {
+                return@launch
+            }
+            chainTo(next.id)
+        }
+    }
+
+    // ── Listening speed ───────────────────────────────────────────────────
+
+    /**
+     * Put the player at the right speed for [item]: an audiobook (or a
+     * chapter of one) at its book's saved speed, everything else at 1× —
+     * this one player plays music too, and a book's 1.5× must not leak into
+     * an album. Runs on every item change, whoever caused it: the screen
+     * handing over a book, the queue moving on, a chapter or book chaining
+     * here with no screen open.
+     *
+     * Another chapter of the book already playing changes nothing: ExoPlayer
+     * keeps its PlaybackParameters across items, so the speed carries over —
+     * including one the listener changed mid-book, which the screen applies
+     * straight to this player through its MediaController. A new book fetches
+     * its speed (AudiobookRepository prefers a pick whose PUT hasn't landed).
+     */
+    private fun applyListeningSpeed(player: Player, item: MediaItem?) {
+        if (item == null) return
+        val extras = item.mediaMetadata.extras
+        val bookId = AudiobookSpeed.bookIdOf(
+            extras?.getString(EXTRA_TYPE),
+            item.mediaId,
+            extras?.getString(EXTRA_PARENT_ID),
+        )
+        if (bookId == null) {
+            speedJob?.cancel()
+            speedBookId = null
+            if (!AudiobookSpeed.same(player.playbackParameters.speed, AudiobookSpeed.NORMAL)) {
+                player.setPlaybackSpeed(AudiobookSpeed.NORMAL)
+            }
+            return
+        }
+        if (bookId == speedBookId) return
+        speedBookId = bookId
+        speedJob?.cancel()
+        val itemId = item.mediaId
+        speedJob = scope.launch {
+            val rate = audiobooks.listeningSpeed(itemId, bookId).rate ?: return@launch
+            if (speedBookId == bookId) player.setPlaybackSpeed(rate)
         }
     }
 

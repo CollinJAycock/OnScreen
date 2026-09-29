@@ -31,10 +31,12 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Audiotrack
 import androidx.compose.material.icons.filled.Bedtime
-import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.BookmarkAdd
 import androidx.compose.material.icons.filled.Lyrics
+import androidx.compose.material.icons.filled.Speed
 import androidx.compose.material.icons.filled.FormatSize
 import androidx.compose.material.icons.filled.PictureInPicture
 import androidx.compose.material.icons.filled.Search
@@ -56,6 +58,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -70,12 +73,14 @@ import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultHttpDataSource
@@ -102,10 +107,13 @@ import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.suspendCancellableCoroutine
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.playback.ActiveVideoTracker
+import tv.onscreen.mobile.playback.AudiobookSpeed
 import tv.onscreen.mobile.playback.PlaybackService
 import tv.onscreen.mobile.ui.LocalInPipMode
+import tv.onscreen.mobile.ui.item.BookmarkFormat
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -115,9 +123,12 @@ fun PlayerScreen(
     onNext: (String) -> Unit,
     /** Start at 0:00 instead of the item's resume point. */
     fromStart: Boolean = false,
+    /** Start exactly here instead (an audiobook bookmark), even when the
+     *  item is already the one playing in the background. */
+    startMs: Long? = null,
     vm: PlayerViewModel = hiltViewModel(),
 ) {
-    LaunchedEffect(itemId) { vm.prepare(itemId, fromStart) }
+    LaunchedEffect(itemId) { vm.prepare(itemId, fromStart, startMs) }
     val ui by vm.state.collectAsStateWithLifecycle()
     BackHandler(onBack = onClose)
 
@@ -187,6 +198,7 @@ fun PlayerScreen(
                 vm = vm,
                 onClose = onClose,
                 onNext = onNext,
+                explicitStart = startMs != null,
             )
         }
     }
@@ -217,6 +229,7 @@ private fun PlayerHost(
     vm: PlayerViewModel,
     onClose: () -> Unit,
     onNext: (String) -> Unit,
+    explicitStart: Boolean,
 ) {
     val context = LocalContext.current
     val source = ui.source!!
@@ -229,10 +242,13 @@ private fun PlayerHost(
     // PiP, to pick the audio-vs-video layout, and to choose the player
     // backend. The offline-play synthetic ItemFile carries no codec
     // metadata, so a pure null-codec check would misclassify every
-    // offline video as audio.
+    // offline video as audio. A multi-file book's chapter is audio too,
+    // even when its file carries a picture stream (an "illustrated"
+    // edition's slideshow) — so it plays in the background service like
+    // the book, and chains to the next chapter there.
     val codec = ui.item?.files?.firstOrNull()?.video_codec
     val isAudioOnly = when (itemType) {
-        "track", "audiobook", "podcast" -> true
+        "track", "audiobook", "audiobook_chapter", "podcast" -> true
         "movie", "episode", "video", "photo" -> false
         null -> codec.isNullOrEmpty()
         else -> codec.isNullOrEmpty()
@@ -271,6 +287,7 @@ private fun PlayerHost(
         source = source,
         itemId = playingId,
         item = ui.item,
+        explicitStart = explicitStart,
     )
     val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
         if (serviceAudio) {
@@ -544,6 +561,9 @@ private fun PlayerHost(
         DisposableEffect(player, playingId) {
             fun follow(id: String?) {
                 if (!id.isNullOrEmpty() && id != playingId) {
+                    // A running sleep timer goes along to the next screen —
+                    // it lives in this one's ViewModel, which is about to go.
+                    vm.handOffSleepTimer(id)
                     AudioQueueFollow.expect(id)
                     onNext(id)
                 }
@@ -551,6 +571,12 @@ private fun PlayerHost(
             follow(player.currentMediaItem?.mediaId)
             val listener = object : Player.Listener {
                 override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    // Played off the end of the item into the next one — a
+                    // gapless queue never reports STATE_ENDED in between, so
+                    // this is where an end-of-item timer is due.
+                    if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_AUTO && vm.sleepsAtItemEnd()) {
+                        vm.onPlayerEnded()
+                    }
                     follow(mediaItem?.mediaId)
                 }
             }
@@ -653,6 +679,47 @@ private fun PlayerHost(
     var showSleepTimer by remember { mutableStateOf(false) }
     var showLyrics by remember { mutableStateOf(false) }
     var showChapters by remember { mutableStateOf(false) }
+    var showSpeed by remember { mutableStateOf(false) }
+    // Position (content time) the Add-bookmark dialog was opened at; null
+    // while it's closed. Captured on tap — the moment the listener wants —
+    // not when they finish typing a note.
+    var bookmarkAtMs by remember { mutableStateOf<Long?>(null) }
+
+    // Audiobooks: listening speed. The label reads the live value off the
+    // player (a MediaController mirrors the service player), so it shows
+    // what's audible whoever set it — this screen, the saved speed the
+    // service applied, or the lock screen.
+    val bookSpeed = AudiobookSpeed.hasSpeed(itemType)
+    var playerSpeed by remember(player) { mutableFloatStateOf(player.playbackParameters.speed) }
+    DisposableEffect(player) {
+        val listener = object : Player.Listener {
+            override fun onPlaybackParametersChanged(playbackParameters: PlaybackParameters) {
+                playerSpeed = playbackParameters.speed
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
+    // A screen-owned player (a book the server transcodes) gets the book's
+    // speed here once it's known; PlaybackService applies it to its own.
+    LaunchedEffect(player, serviceAudio, bookSpeed, ui.listeningRate) {
+        if (serviceAudio || !bookSpeed) return@LaunchedEffect
+        ui.listeningRate?.let { player.setPlaybackSpeed(it) }
+    }
+    LaunchedEffect(vm) {
+        vm.bookmarkNotices.collect { notice ->
+            val msg = when (notice) {
+                is BookmarkNotice.Added -> context.getString(
+                    R.string.bookmark_added,
+                    ChapterNav.formatStart(notice.positionMs),
+                )
+                BookmarkNotice.LimitReached -> context.getString(R.string.bookmark_limit)
+                BookmarkNotice.Unsupported -> context.getString(R.string.bookmark_unsupported)
+                BookmarkNotice.Failed -> context.getString(R.string.bookmark_add_failed)
+            }
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
 
     // Runtime playback error + buffering state. PlayerViewModel only
     // surfaces prepare-time errors (PlayerUiState.error); a mid-stream
@@ -703,10 +770,17 @@ private fun PlayerHost(
     // Also hand the VM a direct pause action: the flow below is collected
     // with lifecycle awareness, so with the screen off (the timer's whole
     // point) nothing consumes the edge and playback runs on. The VM calls
-    // this from its own coroutine, independent of UI lifecycle.
+    // this from its own coroutine, independent of UI lifecycle. The same
+    // hooks give the end-of-chapter watch the content position and speed.
     DisposableEffect(player) {
-        vm.setPauseAction { player.pause() }
-        onDispose { vm.setPauseAction(null) }
+        vm.setSleepTimerHooks(
+            SleepTimerHooks(
+                positionMs = { player.currentPosition + vm.hlsOffsetMs },
+                speed = { player.playbackParameters.speed },
+                pause = { player.pause() },
+            ),
+        )
+        onDispose { vm.setSleepTimerHooks(null) }
     }
     LaunchedEffect(sleepTimerFired) {
         if (sleepTimerFired) {
@@ -714,13 +788,24 @@ private fun PlayerHost(
             vm.consumeSleepTimerFired()
         }
     }
-    // EndOfTrack mode: subscribe to player state and forward STATE_ENDED
-    // to the VM so it can raise the fired edge. Listener removed on
+    // EndOfTrack / EndOfChapter: subscribe to player state and forward
+    // STATE_ENDED to the VM so it can raise the fired edge; seeks re-aim an
+    // end-of-chapter timer at the chapter landed in. Listener removed on
     // composition leave so we don't double-attach.
     DisposableEffect(player) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
                 if (playbackState == Player.STATE_ENDED) vm.onPlayerEnded()
+            }
+
+            override fun onPositionDiscontinuity(
+                oldPosition: Player.PositionInfo,
+                newPosition: Player.PositionInfo,
+                reason: Int,
+            ) {
+                if (reason == Player.DISCONTINUITY_REASON_SEEK) {
+                    vm.onSleepTimerSeek(newPosition.positionMs + vm.hlsOffsetMs)
+                }
             }
         }
         player.addListener(listener)
@@ -1070,10 +1155,36 @@ private fun PlayerHost(
         if (chapters.isNotEmpty()) {
             IconButton(onClick = { showChapters = true }) {
                 Icon(
-                    Icons.Default.Bookmarks,
+                    // A list, not the bookmark glyph it used to be: books
+                    // have real bookmarks now (Add bookmark, below).
+                    Icons.AutoMirrored.Filled.List,
                     contentDescription = "Chapters",
                     tint = Color.White,
                 )
+            }
+        }
+
+        // Audiobooks: listening speed (the current one as the label) and
+        // Add bookmark — the latter only on a server that takes bookmarks.
+        if (bookSpeed) {
+            val speedLabel = AudiobookSpeed.label(playerSpeed)
+            val speedDescription = stringResource(R.string.player_speed_button, speedLabel)
+            TextButton(
+                onClick = { showSpeed = true },
+                modifier = Modifier.semantics { contentDescription = speedDescription },
+            ) {
+                Icon(Icons.Default.Speed, contentDescription = null, tint = Color.White)
+                Spacer(Modifier.width(4.dp))
+                Text(speedLabel, color = Color.White, style = MaterialTheme.typography.labelLarge)
+            }
+            if (ui.bookmarksSupported) {
+                IconButton(onClick = { bookmarkAtMs = player.currentPosition + vm.hlsOffsetMs }) {
+                    Icon(
+                        Icons.Default.BookmarkAdd,
+                        contentDescription = stringResource(R.string.bookmark_add),
+                        tint = Color.White,
+                    )
+                }
             }
         }
 
@@ -1179,12 +1290,41 @@ private fun PlayerHost(
     if (showSleepTimer && !inPip) {
         SleepTimerDialog(
             active = sleepTimer,
+            chapterMode = bookSpeed,
             onPick = { mode ->
                 vm.setSleepTimer(mode)
                 showSleepTimer = false
             },
             onDismiss = { showSleepTimer = false },
         )
+    }
+
+    if (showSpeed && !inPip) {
+        SpeedDialog(
+            current = playerSpeed,
+            onPick = { rate ->
+                // Straight onto the live player (for service audio, the
+                // controller forwards it to the service's player — and the
+                // next chapter keeps it), then saved for the book.
+                player.setPlaybackSpeed(rate)
+                vm.setListeningRate(rate)
+                showSpeed = false
+            },
+            onDismiss = { showSpeed = false },
+        )
+    }
+
+    bookmarkAtMs?.let { atMs ->
+        if (!inPip) {
+            AddBookmarkDialog(
+                positionMs = atMs,
+                onAdd = { note ->
+                    vm.addBookmark(atMs, note)
+                    bookmarkAtMs = null
+                },
+                onDismiss = { bookmarkAtMs = null },
+            )
+        }
     }
 
     if (showSubtitleStyle && !inPip) {
@@ -1704,6 +1844,9 @@ private fun ReplayGainReadout(db: Double) {
  * merely followed the queue onto its track ([AudioQueueFollow]) binds as-is.
  * The file's ReplayGain tags ride along in the extras so the service's gain
  * stage has them from the first sample.
+ *
+ * [explicitStart]: the screen was opened at a specific position (an
+ * audiobook bookmark), so even the item already playing jumps there.
  */
 @Composable
 private fun rememberAudioController(
@@ -1711,6 +1854,7 @@ private fun rememberAudioController(
     source: PlaybackSource,
     itemId: String,
     item: ItemDetail?,
+    explicitStart: Boolean,
 ): MediaController? {
     val context = LocalContext.current
     return produceState<MediaController?>(initialValue = null, enabled, source, itemId) {
@@ -1776,6 +1920,12 @@ private fun rememberAudioController(
                 controller.prepare()
                 controller.playWhenReady = true
             }
+        } else if (explicitStart && !following) {
+            // A bookmark in the item that's already playing: jump there
+            // instead of carrying on from where it is.
+            controller.seekTo((source as? PlaybackSource.DirectPlay)?.startMs ?: 0L)
+            if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
+            controller.playWhenReady = true
         }
         value = controller
         awaitDispose { controller.release() }
@@ -2106,17 +2256,95 @@ private fun LyricsOverlay(
 }
 
 /**
+ * Listening-speed picker for audiobooks: the [AudiobookSpeed.PRESETS], the
+ * one the player is at marked. Whole rows are tappable, like the audio
+ * picker's.
+ */
+@Composable
+private fun SpeedDialog(
+    current: Float,
+    onPick: (Float) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
+        title = { Text(stringResource(R.string.player_speed_title)) },
+        text = {
+            Column {
+                AudiobookSpeed.PRESETS.forEach { rate ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = { onPick(rate) })
+                            .padding(vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        RadioButton(selected = AudiobookSpeed.same(rate, current), onClick = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text(AudiobookSpeed.label(rate))
+                    }
+                }
+            }
+        },
+    )
+}
+
+/**
+ * "Add bookmark": the position it was opened at, plus an optional note
+ * (the server's 500-character limit enforced as you type).
+ */
+@Composable
+private fun AddBookmarkDialog(
+    positionMs: Long,
+    onAdd: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var note by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.bookmark_add)) },
+        text = {
+            Column {
+                Text(
+                    stringResource(R.string.bookmark_add_at, ChapterNav.formatStart(positionMs)),
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Spacer(Modifier.height(12.dp))
+                androidx.compose.material3.OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = BookmarkFormat.limitNote(it) },
+                    label = { Text(stringResource(R.string.bookmark_note_label)) },
+                    supportingText = {
+                        Text(stringResource(R.string.bookmark_note_count, BookmarkFormat.noteLength(note), BookmarkFormat.NOTE_MAX))
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = { onAdd(note) }) { Text(stringResource(R.string.bookmark_add_confirm)) }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
+        },
+    )
+}
+
+/**
  * Sleep-timer picker. Quick-pick chips for the common minute durations
- * plus an "End of track" chip and an "Off" cancel. Active selection
- * is highlighted with the primary colour. Dismiss without picking
- * leaves the timer unchanged.
+ * plus an "End of track" chip (for a book, [chapterMode]: "End of
+ * chapter") and an "Off" cancel. Active selection is highlighted with the
+ * primary colour. Dismiss without picking leaves the timer unchanged.
  */
 @Composable
 private fun SleepTimerDialog(
     active: SleepTimerState?,
+    chapterMode: Boolean,
     onPick: (SleepTimer) -> Unit,
     onDismiss: () -> Unit,
 ) {
+    val endOfChapter = stringResource(R.string.sleep_end_of_chapter)
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
@@ -2128,6 +2356,7 @@ private fun SleepTimerDialog(
                         text = "Active: " + when (active.mode) {
                             is SleepTimer.Minutes -> SleepTimerMath.formatRemaining(active.remainingMs)
                             SleepTimer.EndOfTrack -> "End of track"
+                            SleepTimer.EndOfChapter -> endOfChapter
                             SleepTimer.Off -> "Off"
                         },
                         style = MaterialTheme.typography.labelLarge,
@@ -2151,10 +2380,13 @@ private fun SleepTimerDialog(
                     }
                 }
                 Row {
-                    val isEot = active?.mode == SleepTimer.EndOfTrack
-                    TextButton(onClick = { onPick(SleepTimer.EndOfTrack) }) {
+                    // A book stops at the end of the chapter being heard
+                    // (its embedded mark, or the chapter file's end).
+                    val endMode = if (chapterMode) SleepTimer.EndOfChapter else SleepTimer.EndOfTrack
+                    val isEot = active?.mode == endMode
+                    TextButton(onClick = { onPick(endMode) }) {
                         Text(
-                            "End of track",
+                            if (chapterMode) endOfChapter else "End of track",
                             color = if (isEot) MaterialTheme.colorScheme.primary
                                 else MaterialTheme.colorScheme.onSurfaceVariant,
                         )
