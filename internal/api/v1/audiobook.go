@@ -218,8 +218,15 @@ func (h *AudiobookHandler) ListBookmarks(w http.ResponseWriter, r *http.Request)
 	}
 	out := make([]BookmarkJSON, 0, len(rows))
 	for _, b := range rows {
+		// item_index is a chapter number. In a single-file book the item is
+		// the book, whose own index is its place in a series: leave it out,
+		// as CreateBookmark does.
+		index := b.ItemIndex
+		if b.ItemID == bookID {
+			index = nil
+		}
 		out = append(out, BookmarkJSON{
-			ID: b.ID.String(), ItemID: b.ItemID.String(), ItemTitle: b.ItemTitle, ItemIndex: b.ItemIndex,
+			ID: b.ID.String(), ItemID: b.ItemID.String(), ItemTitle: b.ItemTitle, ItemIndex: index,
 			PositionMS: b.PositionMs, Note: b.Note, CreatedAt: b.CreatedAt.Time,
 		})
 	}

@@ -140,6 +140,15 @@ func TestAudiobook_Integration(t *testing.T) {
 		t.Errorf("listening order (alice's only): %v", order)
 	}
 
+	// A single-file book's bookmarks carry no chapter number, even though
+	// the book has an index (its place in a series).
+	add(alice, single, 7000, "")
+	var singles []BookmarkJSON
+	data(do(alice, h.ListBookmarks, http.MethodGet, single.String(), ""), &singles)
+	if len(singles) != 1 || singles[0].ItemIndex != nil || singles[0].ItemID != single.String() {
+		t.Errorf("single-file bookmarks: %+v", singles)
+	}
+
 	// Bob can neither edit nor delete Alice's bookmark.
 	first := list[0].ID
 	if rec := do(bob, h.UpdateBookmark, http.MethodPatch, first, `{"note":"mine now"}`); rec.Code != http.StatusNotFound {
@@ -169,7 +178,7 @@ func TestAudiobook_Integration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var left int
-	_ = pool.QueryRow(ctx, `SELECT count(*) FROM audiobook_bookmarks WHERE user_id = $1`, alice).Scan(&left)
+	_ = pool.QueryRow(ctx, `SELECT count(*) FROM audiobook_bookmarks WHERE user_id = $1 AND book_id = $2`, alice, book).Scan(&left)
 	if left != 2 {
 		t.Errorf("after the chapter is deleted: %d bookmarks, want 2", left)
 	}
