@@ -57,7 +57,8 @@ class FrameRateSwitcher(private val activity: Activity) {
         pendingRestore = null
         val display = currentDisplay() ?: return false
         val current = display.mode.toSpec()
-        val target = FrameRateMatch.pick(fps, current, display.supportedModes.map { it.toSpec() })
+        val modes = display.supportedModes.map { it.toSpec() }
+        val target = FrameRateMatch.pick(fps, current, modes)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             holder?.let { declareFrameRate(it, fps) }
@@ -77,7 +78,10 @@ class FrameRateSwitcher(private val activity: Activity) {
                 // No mode suits it (48 or 120 fps with no such mode, a rate
                 // out of range): a mode the last video asked for is no
                 // better than the default.
-                Log.i(TAG, "$fps fps: no display mode suits it")
+                // With the modes this app is offered: a platform may offer
+                // apps fewer than the display has.
+                val sameSize = modes.filter { it.width == current.width && it.height == current.height }
+                Log.i(TAG, "$fps fps: no display mode suits it (offered at ${current.width}x${current.height}: ${sameSize.joinToString { "${it.id}@${it.refreshHz}" }})")
                 if (requestedModeId != 0) restore()
             }
             return false

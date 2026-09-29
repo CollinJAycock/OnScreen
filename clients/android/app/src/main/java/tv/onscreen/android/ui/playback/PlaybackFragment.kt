@@ -1142,6 +1142,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     // Nobody knows this video's rate (a server stream carries
                     // none): the last video's mode is no better than the
                     // default, so don't let it switch back mid-playback.
+                    android.util.Log.i("PlaybackFragment", "frame rate unknown (not from the server, not in the stream): display left as it is")
                     frameRateMatched = true
                     frameRates()?.releaseNow()
                 }

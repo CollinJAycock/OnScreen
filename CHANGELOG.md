@@ -353,6 +353,18 @@ Roku channel (no request features, as on Android):
   AV1 sources and transcodes decoded on the CPU, where 4K stutters. They now
   get H.264 or HEVC. The software decoder no longer makes an 8-bit-only box
   claim 10-bit and HDR either.
+- **Android TV claims HDR only for a screen that shows it.** HDR was claimed
+  whenever the decoder handles 10-bit HDR, so an HDR film sent to an SDR TV
+  (or through a box on one) played washed out. The app now also asks the
+  screen (its HDR10 support), and the server tone-maps HDR to SDR for one
+  that has none: verified with a 4K HDR film on a 1080p SDR Hisense set.
+  The claim follows the screen as it changes (a box moved to another TV).
+- **Android TV claims the panel's real resolution.** Many TVs draw their
+  menus smaller than the panel and report that as the display size (a 1080p
+  Hisense Google TV runs its UI at 1280x720), so the app told the server
+  720p and every 1080p file was transcoded down to 720p there. It now reads
+  the video output size TVs publish (vendor.display-size), and that file
+  direct-plays at 1080p.
 - **Android TV sends DTS to a receiver that takes it.** DTS was claimed only
   when the device has a DTS decoder, which Fire TV sticks and Nvidia Shields
   don't, so their DTS audio was converted even with a DTS receiver or

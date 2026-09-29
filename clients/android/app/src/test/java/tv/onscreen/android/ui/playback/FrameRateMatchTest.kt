@@ -111,4 +111,25 @@ class FrameRateMatchTest {
         assertThat(FrameRateMatch.fit(24f, 23.976f, 0.0015)).isEqualTo(1)
         assertThat(FrameRateMatch.fit(10f, 24f, 0.0015)).isNull()
     }
+
+    @Test
+    fun `the Fire TV Stick 4K Max's own mode list`() {
+        // As its Display reports them (dumpsys display, 2026-09-29), UI at 4K 59.94.
+        val stick = listOf(
+            DisplayModeSpec(1, 1920, 1080, 60.000004f), DisplayModeSpec(2, 1920, 1080, 59.94f),
+            DisplayModeSpec(3, 3840, 2160, 59.94f), DisplayModeSpec(4, 1280, 720, 59.94f),
+            DisplayModeSpec(5, 3840, 2160, 50.0f), DisplayModeSpec(6, 3840, 2160, 60.000004f),
+            DisplayModeSpec(7, 3840, 2160, 30.000002f), DisplayModeSpec(8, 3840, 2160, 29.97f),
+            DisplayModeSpec(9, 3840, 2160, 25.0f), DisplayModeSpec(10, 3840, 2160, 24.000002f),
+            DisplayModeSpec(11, 3840, 2160, 23.976f), DisplayModeSpec(12, 1920, 1080, 50.0f),
+            DisplayModeSpec(13, 1920, 1080, 29.97f), DisplayModeSpec(14, 1920, 1080, 23.976f),
+            DisplayModeSpec(15, 1920, 1080, 24.000002f), DisplayModeSpec(16, 1920, 1080, 25.0f),
+        )
+        val ui = stick.first { it.id == 3 }
+        assertThat(FrameRateMatch.pick(24f, ui, stick)?.id).isEqualTo(10)
+        assertThat(FrameRateMatch.pick(23.976f, ui, stick)?.id).isEqualTo(11)
+        assertThat(FrameRateMatch.pick(50f, ui, stick)?.id).isEqualTo(5)
+        assertThat(FrameRateMatch.pick(25f, ui, stick)?.id).isEqualTo(5)
+        assertThat(FrameRateMatch.pick(29.97f, ui, stick)).isNull() // 59.94 already even
+    }
 }

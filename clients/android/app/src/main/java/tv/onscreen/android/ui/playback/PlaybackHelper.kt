@@ -264,35 +264,63 @@ object PlaybackHelper {
      * is 8 (the AAC transcode fallback still caps at 5.1 server-side). See
      * docs/capability-profiles.md for the grammar.
      */
+    /**
+     * What the screen and audio output take, as far as the header goes. All of
+     * it can change while the app runs (a receiver switched off, the stick
+     * moved to another TV), unlike the decoder inventory.
+     *
+     * The defaults are the claims from before any of this was read: the old
+     * 4K claim for the unlikely path where [initDisplayCaps] never ran (a
+     * 1080p Fire TV stick used to claim maxHeight=2160 unconditionally, the
+     * server then direct-played 4K files the panel couldn't show and the
+     * stick couldn't smoothly decode), HDR as the decoder allows, no DTS.
+     */
+    private data class Output(
+        /** The audio output takes 8-channel DTS as a bitstream ([onAudioOutputChanged]). */
+        val dts: Boolean = false,
+        val width: Int = 3840,
+        val height: Int = 2160,
+        /** The screen shows HDR10 ([displayShowsHdr10]). */
+        val hdr: Boolean = true,
+    )
+
+    @Volatile private var output = Output()
+    private val outputLock = Any()
+
+    private fun updateOutput(change: (Output) -> Output) {
+        synchronized(outputLock) { output = change(output) }
+    }
+
     /** The capabilities header, cached.
      *
      *  AuthInterceptor attaches this to EVERY authenticated request.
      *  Rebuilding it per request meant several list allocations plus a
      *  codec-profile scan on every API call. The decoder inventory behind it
-     *  can't change while the process is alive; the audio output can (a
-     *  receiver switched on or off), so the cache is per DTS output state
-     *  ([onAudioOutputChanged]). */
-    private class CachedHeader(val dtsOutput: Boolean, val value: String)
+     *  can't change while the process is alive; the [Output] can, so the
+     *  cache is per output state. */
+    private class CachedHeader(val output: Output, val value: String)
 
     @Volatile private var capabilitiesHeader: CachedHeader? = null
+    private val headerLock = Any()
 
     fun clientCapabilitiesHeader(): String {
         // One read of the output state: a change landing mid-build then gets
         // a header of its own on the next request instead of being
         // overwritten by one built for the old state.
-        val dts = dtsOutput
-        capabilitiesHeader?.let { if (it.dtsOutput == dts) return it.value }
-        val header = buildClientCapabilitiesHeader(dts)
-        capabilitiesHeader = CachedHeader(dts, header)
-        // What this device tells the server it plays: the first thing to
-        // check when the server's decision surprises.
-        if (tv.onscreen.android.BuildConfig.DEBUG) android.util.Log.i("PlaybackHelper", "capabilities: $header")
-        return header
+        val out = output
+        capabilitiesHeader?.let { if (it.output == out) return it.value }
+        // One build at a time: the app's first screen fires several requests
+        // at once, and each built its own (five at every start).
+        synchronized(headerLock) {
+            capabilitiesHeader?.let { if (it.output == out) return it.value }
+            val header = buildClientCapabilitiesHeader(out)
+            capabilitiesHeader = CachedHeader(out, header)
+            // What this device tells the server it plays: the first thing to
+            // check when the server's decision surprises.
+            if (tv.onscreen.android.BuildConfig.DEBUG) android.util.Log.i("PlaybackHelper", "capabilities: $header")
+            return header
+        }
     }
-
-    /** Whether the audio output takes DTS as a bitstream: an HDMI receiver,
-     *  soundbar or TV that decodes DTS itself. Set by [onAudioOutputChanged]. */
-    @Volatile private var dtsOutput: Boolean = false
 
     /**
      * The audio output changed (a receiver switched on or off, the TV's
@@ -303,13 +331,13 @@ object PlaybackHelper {
      * player's audio sink does.
      */
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    fun onAudioOutputChanged(output: androidx.media3.exoplayer.audio.AudioCapabilities) {
+    fun onAudioOutputChanged(audio: androidx.media3.exoplayer.audio.AudioCapabilities) {
         // The player's own passthrough check, not just "DTS is in the
         // output's list": it also checks the channel count, and a sink that
         // takes DTS but fewer channels than a film has refuses it. With no
         // DTS decoder to fall back on, that film played silently (no audio
         // track selected, no error). 8 channels: what the header claims.
-        val dts = output.isPassthroughPlaybackSupported(
+        val dts = audio.isPassthroughPlaybackSupported(
             androidx.media3.common.Format.Builder()
                 .setSampleMimeType(androidx.media3.common.MimeTypes.AUDIO_DTS)
                 .setChannelCount(8)
@@ -317,9 +345,9 @@ object PlaybackHelper {
                 .build(),
             androidx.media3.common.AudioAttributes.DEFAULT,
         )
-        if (dts == dtsOutput) return
+        if (dts == output.dts) return
         android.util.Log.i("PlaybackHelper", "audio output ${if (dts) "takes" else "doesn't take"} 8-channel DTS as a bitstream")
-        dtsOutput = dts
+        updateOutput { it.copy(dts = dts) }
     }
 
     /**
@@ -336,43 +364,105 @@ object PlaybackHelper {
         return audio
     }
 
-    // Real panel resolution, initialised from OnScreenApp.onCreate (before
-    // any request can build the header). Defaults keep the old 4K claim for
-    // the unlikely path where init never ran. A 1080p Fire TV stick used to
-    // claim maxHeight=2160 unconditionally — the server then happily
-    // direct-played 4K files the panel can't show and the stick can't
-    // smoothly decode, and the one-shot direct-play fallback re-requested
-    // the SOURCE height, dead-ending instead of getting 1080p.
-    @Volatile private var displayWidth: Int = 3840
-    @Volatile private var displayHeight: Int = 2160
-
+    /**
+     * Read the screen now (at app start, before any request builds the
+     * header) and again whenever it changes: an HDMI box moved to another TV,
+     * the TV's HDR setting, a resolution change. Main thread.
+     */
     fun initDisplayCaps(context: android.content.Context) {
+        val app = context.applicationContext
+        readDisplay(app)
+        val dm = app.getSystemService(android.hardware.display.DisplayManager::class.java) ?: return
+        dm.registerDisplayListener(
+            object : android.hardware.display.DisplayManager.DisplayListener {
+                override fun onDisplayChanged(displayId: Int) {
+                    if (displayId == android.view.Display.DEFAULT_DISPLAY) readDisplay(app)
+                }
+                override fun onDisplayAdded(displayId: Int) = Unit
+                override fun onDisplayRemoved(displayId: Int) = Unit
+            },
+            android.os.Handler(android.os.Looper.getMainLooper()),
+        )
+    }
+
+    /**
+     * The panel size, from the larger of the display mode and Media3's view of
+     * the video output. Many TVs draw their menus smaller than the panel (a
+     * 1080p Hisense Google TV runs its UI at 1280x720) and report that as the
+     * display mode, while video goes out at the panel's size: its real size
+     * is in vendor.display-size / sys.display-size, which Media3's
+     * getCurrentDisplayModeSize reads on TVs. Claiming the UI size made the
+     * server transcode every 1080p file down to 720p there.
+     *
+     * And whether the screen shows HDR ([displayShowsHdr10]).
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun readDisplay(context: android.content.Context) {
         try {
             val wm = context.getSystemService(android.content.Context.WINDOW_SERVICE)
                 as? android.view.WindowManager ?: return
             @Suppress("DEPRECATION")
-            val mode = wm.defaultDisplay?.mode ?: return
-            if (mode.physicalWidth > 0 && mode.physicalHeight > 0) {
-                displayWidth = mode.physicalWidth
-                displayHeight = mode.physicalHeight
+            val display = wm.defaultDisplay ?: return
+            val mode = display.mode
+            val videoOut = try {
+                androidx.media3.common.util.Util.getCurrentDisplayModeSize(context)
+            } catch (_: Exception) {
+                null
+            }
+            val (w, h) = if (videoOut != null && videoOut.x.toLong() * videoOut.y > mode.physicalWidth.toLong() * mode.physicalHeight) {
+                videoOut.x to videoOut.y
+            } else {
+                mode.physicalWidth to mode.physicalHeight
+            }
+            @Suppress("DEPRECATION")
+            val hdrTypes = try {
+                display.hdrCapabilities?.supportedHdrTypes
+            } catch (_: Exception) {
+                null
+            }
+            val hdr = displayShowsHdr10(hdrTypes)
+            val before = output
+            updateOutput { if (w > 0 && h > 0) it.copy(width = w, height = h, hdr = hdr) else it.copy(hdr = hdr) }
+            if (output != before) {
+                android.util.Log.i(
+                    "PlaybackHelper",
+                    "screen: ${output.width}x${output.height}, HDR types ${hdrTypes?.joinToString() ?: "unknown"}: " +
+                        if (hdr) "shows HDR10" else "SDR only (HDR sources are tone-mapped by the server)",
+                )
             }
         } catch (_: Exception) {
-            // Keep the defaults — over-claiming is the old behaviour.
+            // Keep what we had — over-claiming is the old behaviour.
         }
     }
 
+    /**
+     * Whether a screen reporting [hdrTypes] (Display.HdrCapabilities) shows
+     * HDR10, the server's one HDR claim (it covers HDR10, HDR10+ and HLG
+     * sources). An empty list is a screen that shows none: HDR sent to it
+     * came out washed out, grey and dim, where the server would have
+     * tone-mapped it to SDR. Null, a platform that can't say, keeps the
+     * claim the decoder allows, as before.
+     */
+    internal fun displayShowsHdr10(hdrTypes: IntArray?): Boolean =
+        hdrTypes == null || hdrTypes.any { it == HDR_TYPE_HDR10 || it == HDR_TYPE_HDR10_PLUS }
+
+    /** Display.HdrCapabilities.HDR_TYPE_HDR10 / HDR_TYPE_HDR10_PLUS (API 29
+     *  for the latter; the values are what matter on older ones). */
+    private const val HDR_TYPE_HDR10 = 2
+    private const val HDR_TYPE_HDR10_PLUS = 4
+
     /** Height ceiling for transcode requests: never ask for more rows than
      *  the panel has. */
-    fun displayHeightCap(): Int = displayHeight
+    fun displayHeightCap(): Int = output.height
 
-    private fun buildClientCapabilitiesHeader(dtsOutput: Boolean): String {
+    private fun buildClientCapabilitiesHeader(out: Output): String {
         val video = mutableListOf("h264", "vp9")
         if (supportsHevc()) video.add("h265")
         if (supportsAv1()) video.add("av1")
         // DTS is probed too — claiming it unconditionally made the server pick a
         // DTS passthrough/output a box that can neither decode nor pass it on
         // couldn't play. See audioDecoders.
-        val audio = audioDecoders(hasDecoderFor("audio/vnd.dts"), dtsOutput)
+        val audio = audioDecoders(hasDecoderFor("audio/vnd.dts"), out.dts)
         val tenBit = supports10Bit()
         return listOf(
             "videoDecoder=" + video.joinToString(":"),
@@ -384,12 +474,15 @@ object PlaybackHelper {
             // container would otherwise fall to a (broken) audio-only transcode.
             // ExoPlayer plays all of these natively, so claim them for passthrough.
             "protocols=mp4:mkv:webm:mov:ts:flac:mp3:ogg:wav:aac:aiff:m4a",
-            "maxWidth=$displayWidth",
-            "maxHeight=$displayHeight",
+            "maxWidth=${out.width}",
+            "maxHeight=${out.height}",
             "maxAudioChannels=8",
-            // 10-bit/HDR only when a decoder actually reports a Main10/HDR profile.
+            // 10-bit only when a decoder actually reports a Main10/HDR profile;
+            // HDR only when the screen shows it too. A 10-bit SDR file still
+            // plays on an SDR screen, but HDR sent to one came out washed
+            // out: the server tone-maps it instead when this says 0.
             "maxbitdepth=" + if (tenBit) "10" else "8",
-            "hdr=" + if (tenBit) "1" else "0",
+            "hdr=" + if (tenBit && out.hdr) "1" else "0",
         ).joinToString(",")
     }
 }

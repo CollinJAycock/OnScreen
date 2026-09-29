@@ -278,4 +278,18 @@ class PlaybackHelperTest {
         assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false))
             .containsAtLeast("aac", "ac3", "eac3", "flac")
     }
+
+    @Test
+    fun `HDR is claimed only for a screen that shows HDR10`() {
+        // Display.HdrCapabilities types: 1 Dolby Vision, 2 HDR10, 3 HLG, 4 HDR10+.
+        assertThat(PlaybackHelper.displayShowsHdr10(intArrayOf(2, 3))).isTrue()
+        assertThat(PlaybackHelper.displayShowsHdr10(intArrayOf(4))).isTrue()
+        // An SDR screen (a 1080p TV panel) reports none.
+        assertThat(PlaybackHelper.displayShowsHdr10(intArrayOf())).isFalse()
+        // HLG or Dolby Vision alone isn't HDR10.
+        assertThat(PlaybackHelper.displayShowsHdr10(intArrayOf(3))).isFalse()
+        assertThat(PlaybackHelper.displayShowsHdr10(intArrayOf(1))).isFalse()
+        // A platform that can't say keeps the old claim.
+        assertThat(PlaybackHelper.displayShowsHdr10(null)).isTrue()
+    }
 }
