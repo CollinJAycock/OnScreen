@@ -28,6 +28,7 @@ import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
+import tv.onscreen.android.playback.BookSpeed
 import tv.onscreen.android.playback.StreamTokenVault
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -235,6 +236,98 @@ class PlaybackViewModelTest {
 
         assertThat(vm.uiState.value.listeningRate).isEqualTo(3.0f)
         io.mockk.verify { books.saveRate("ch-2", "book-1", 3.0f) }
+    }
+
+    // ── Multi-file audiobooks: chapter to chapter ───────────────────────────
+
+    private fun chapterDetail(id: String, index: Int?) = ItemDetail(
+        id = id, library_id = "lib", title = id, type = "audiobook_chapter",
+        parent_id = "book-1", index = index, files = listOf(audioFile()),
+    )
+
+    /** book-1's listing: two numbered chapters, then one the scanner couldn't
+     *  number (the server lists those last). */
+    private fun bookChildren() = listOf(
+        ChildItem(id = "ch-1", title = "One", type = "audiobook_chapter", index = 1),
+        ChildItem(id = "ch-2", title = "Two", type = "audiobook_chapter", index = 2),
+        ChildItem(id = "ch-x", title = "Epilogue", type = "audiobook_chapter"),
+    )
+
+    @Test
+    fun `a chapter started from the book page resumes there, with the next chapter lined up`() =
+        runTest(dispatcher) {
+            val itemRepo = itemRepo()
+            coEvery { itemRepo.getItem("ch-1") } returns chapterDetail("ch-1", 1)
+            coEvery { itemRepo.getChildren("book-1") } returns bookChildren()
+
+            val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+            vm.prepare("ch-1", startMs = 125_000L, serverUrl = "http://srv")
+            advanceUntilIdle()
+
+            val state = vm.uiState.value
+            assertThat((state.source as PlaybackSource.DirectPlay).startMs).isEqualTo(125_000L)
+            assertThat(state.nextEpisode?.id).isEqualTo("ch-2")
+        }
+
+    @Test
+    fun `an unnumbered chapter follows the numbered ones`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("ch-2") } returns chapterDetail("ch-2", 2)
+        coEvery { itemRepo.getItem("ch-x") } returns chapterDetail("ch-x", null)
+        coEvery { itemRepo.getChildren("book-1") } returns bookChildren()
+
+        val second = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        second.prepare("ch-2", 0L, "http://srv")
+        val last = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        last.prepare("ch-x", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(second.uiState.value.nextEpisode?.id).isEqualTo("ch-x")
+        // The book's last chapter: the book ends, no next book.
+        assertThat(last.uiState.value.nextEpisode).isNull()
+    }
+
+    @Test
+    fun `a chained chapter keeps the speed it was handed, with no lookup`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("ch-2") } returns chapterDetail("ch-2", 2)
+        coEvery { itemRepo.getChildren("book-1") } returns bookChildren()
+        val books = audiobooks()
+        // What a lookup would say — must not be asked.
+        coEvery { books.rate(any(), any()) } returns 1.0f
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), books)
+        vm.prepare("ch-2", 0L, "http://srv", carriedSpeed = BookSpeed("book-1", 1.75f))
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        // In the same emission as the source, so the fresh player starts at it.
+        assertThat(state.source).isNotNull()
+        assertThat(state.listeningRate).isEqualTo(1.75f)
+        coVerify(exactly = 0) { books.rate(any(), any()) }
+    }
+
+    @Test
+    fun `a speed handed over for another book is ignored`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("ch-2") } returns chapterDetail("ch-2", 2)
+        coEvery { itemRepo.getChildren("book-1") } returns bookChildren()
+        coEvery { itemRepo.getItem("track-1") } returns ItemDetail(
+            id = "track-1", library_id = "lib", title = "Song", type = "track", files = listOf(audioFile()),
+        )
+        val books = audiobooks()
+        coEvery { books.rate("ch-2", "book-1") } returns 1.25f
+
+        val chapter = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), books)
+        chapter.prepare("ch-2", 0L, "http://srv", carriedSpeed = BookSpeed("book-9", 2.5f))
+        val track = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), books)
+        track.prepare("track-1", 0L, "http://srv", carriedSpeed = BookSpeed("book-1", 2.5f))
+        advanceUntilIdle()
+
+        // Its own book's speed, looked up.
+        assertThat(chapter.uiState.value.listeningRate).isEqualTo(1.25f)
+        // Music never takes a book's speed.
+        assertThat(track.uiState.value.listeningRate).isNull()
     }
 
     @Test

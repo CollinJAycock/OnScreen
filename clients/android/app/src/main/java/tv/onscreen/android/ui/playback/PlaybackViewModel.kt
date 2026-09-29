@@ -22,6 +22,7 @@ import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
 import tv.onscreen.android.playback.AudiobookSpeed
+import tv.onscreen.android.playback.BookSpeed
 import tv.onscreen.android.playback.StreamTokenVault
 import javax.inject.Inject
 
@@ -180,7 +181,15 @@ class PlaybackViewModel @Inject constructor(
         val serverUrl: String,
     )
 
-    fun prepare(itemId: String, startMs: Long, serverUrl: String) {
+    /**
+     * Load [itemId] and emit the source to play from [startMs].
+     *
+     * [carriedSpeed]: the speed the previous chapter played at, when the
+     * fragment chains from one chapter of a book to the next. It's the book's
+     * speed, so the chapter starts at it rather than at 1× until a lookup
+     * lands. Ignored unless [itemId] is a chapter of that same book.
+     */
+    fun prepare(itemId: String, startMs: Long, serverUrl: String, carriedSpeed: BookSpeed? = null) {
         viewModelScope.launch {
             try {
                 val item = itemRepo.getItem(itemId)
@@ -287,6 +296,12 @@ class PlaybackViewModel @Inject constructor(
                 // other types, so we can call unconditionally.
                 val markers = itemRepo.getMarkers(itemId)
 
+                // Chained from the book's previous chapter: its speed, in the
+                // first emission, so the fresh player never plays at 1×.
+                val carriedRate = carriedSpeed
+                    ?.takeIf { it.bookId == AudiobookSpeed.bookIdOf(item.type, item.id, item.parent_id) }
+                    ?.let { AudiobookSpeed.clamp(it.rate) }
+
                 _uiState.value = PlaybackUiState(
                     source = source,
                     item = item,
@@ -297,20 +312,25 @@ class PlaybackViewModel @Inject constructor(
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
                     forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
+                    listeningRate = carriedRate,
                 )
 
-                // Audiobooks: the book's saved listening speed.
-                loadListeningSpeed(item)
+                // Audiobooks: the book's saved listening speed — unless it
+                // came along from the previous chapter.
+                if (carriedRate == null) loadListeningSpeed(item)
 
                 // Auto-advance support: episodes within a season,
-                // tracks within an album. Both use the same parent +
-                // index relationship; PlaybackFragment uses the
-                // type to decide whether to surface an Up Next
-                // overlay (episodes) or just chain silently (tracks).
-                if (item.parent_id != null && item.index != null) {
+                // tracks within an album, chapter files within a book.
+                // PlaybackFragment uses the type to decide whether to
+                // surface an Up Next overlay (episodes) or just chain
+                // silently (tracks, chapters — see AudioItemTypes).
+                if (item.parent_id != null) {
                     when (item.type) {
-                        "episode" -> loadNextSibling(item.parent_id, item.index, "episode")
-                        "track" -> loadNextSibling(item.parent_id, item.index, "track")
+                        "episode", "track" ->
+                            if (item.index != null) loadNextSibling(item.parent_id, item.index, item.type)
+                        // By the book's listing, not the index: a chapter the
+                        // scanner couldn't number still has a next one.
+                        AudiobookSpeed.CHAPTER -> loadNextSibling(item.parent_id, item.index, item.type)
                     }
                 }
             } catch (e: Exception) {
@@ -368,7 +388,7 @@ class PlaybackViewModel @Inject constructor(
         audiobooks.saveRate(item.id, bookId, clamped)
     }
 
-    private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
+    private suspend fun loadNextSibling(parentId: String, currentIndex: Int?, type: String) {
         // Same resolver the MediaSessionService uses on its own
         // STATE_ENDED — keeps the in-fragment Up Next overlay and
         // the service-side autoplay aligned on what comes next, no

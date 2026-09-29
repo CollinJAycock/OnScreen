@@ -4,13 +4,14 @@ import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.repository.ItemRepository
 
 /** Stateless lookup helper that finds the next item to play after a
- *  given track or episode.
+ *  given track, episode or audiobook chapter.
  *
  *  Pulls in two scopes: in-container next sibling (S04E12 → S04E13,
- *  album track 5 → track 6) and cross-container fall-through
- *  (S04E12 last → S05E01, last track of album A → first track of
- *  album B). Movies and standalone audio return null — auto-advance
- *  isn't a thing for them.
+ *  album track 5 → track 6, a book's chapter 3 → chapter 4) and
+ *  cross-container fall-through (S04E12 last → S05E01, last track of
+ *  album A → first track of album B). A book's last chapter has no
+ *  fall-through: a book never runs on into the next one. Movies and
+ *  standalone audio return null — auto-advance isn't a thing for them.
  *
  *  Lives outside the ViewModel so the MediaSessionService can call
  *  it from a Player.Listener when the service-owned ExoPlayer hits
@@ -22,7 +23,8 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
     /** Resolve the item that should follow [currentItemId] given its
      *  type, parent, and 1-based index. Returns null when there's no
      *  next item in the catalog (last episode of last season, last
-     *  track of last album, anything that isn't a track or episode).
+     *  track of last album, last chapter of a book, anything that isn't
+     *  a track, episode, chapter or numbered book in a series).
      */
     suspend fun resolve(
         currentItemId: String,
@@ -30,7 +32,11 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
         parentId: String?,
         currentIndex: Int?,
     ): ChildItem? {
-        if (parentId == null || currentIndex == null) return null
+        if (parentId == null) return null
+        // A chapter needs no index: an unnumbered one still has a place in
+        // its book's listing.
+        if (type == AudiobookSpeed.CHAPTER) return nextChapter(currentItemId, parentId)
+        if (currentIndex == null) return null
         return try {
             val children = itemRepo.getChildren(parentId)
             val next = nextInContainer(children, currentItemId, type, currentIndex)
@@ -63,6 +69,15 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
             null
         }
     }
+
+    /** The chapter of [bookId] after [chapterId], by the book's listing
+     *  ([AudiobookChapters]). Null after the last one. */
+    private suspend fun nextChapter(chapterId: String, bookId: String): ChildItem? =
+        try {
+            AudiobookChapters.nextAfter(itemRepo.getChildren(bookId), chapterId)
+        } catch (_: Exception) {
+            null
+        }
 
     companion object {
         /** The [type] row of [children] that follows [currentItemId]: the

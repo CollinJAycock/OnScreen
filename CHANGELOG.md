@@ -227,6 +227,10 @@ app's Search › Discover tab (which could request titles) was removed:
   - **Phone multi-file books**: chapters play on from one to the next, and
     the book page has a working Play button.
   - **TV**: the speed control, for books and chapter files.
+  - **TV multi-file books**: chapter files play as audio, so they keep
+    playing on HOME / BACK like a single-file book, and play on from one
+    chapter to the next in the book's order, on screen or in the
+    background, at the book's speed. The last chapter ends the book.
   - On a server without these routes, speed still works on the device and
     bookmarks stay hidden.
 - `request_*` notifications are never surfaced.

@@ -64,4 +64,35 @@ class AudiobookSpeedTest {
         assertThat(AudiobookSpeed.bookIdOf("audiobook_chapter", "c3", null)).isNull()
         assertThat(AudiobookSpeed.bookIdOf("track", "t1", "album-1")).isNull()
     }
+
+    @Test
+    fun `a player keeps its speed from one chapter of a book to the next`() {
+        // The background service's chapter chain: same book, so no lookup.
+        assertThat(AudiobookSpeed.keepsSpeed("book-1", "book-1")).isTrue()
+        // Into the next book of a series: that book's own speed.
+        assertThat(AudiobookSpeed.keepsSpeed("book-1", "book-2")).isFalse()
+        // Out of books (or into one from music): re-decided.
+        assertThat(AudiobookSpeed.keepsSpeed("book-1", null)).isFalse()
+        assertThat(AudiobookSpeed.keepsSpeed(null, "book-1")).isFalse()
+        assertThat(AudiobookSpeed.keepsSpeed(null, null)).isFalse()
+    }
+
+    @Test
+    fun `a chapter-to-chapter chain carries the book's speed`() {
+        assertThat(AudiobookSpeed.carried("audiobook_chapter", "book-1", "audiobook_chapter", 1.75f))
+            .isEqualTo(BookSpeed("book-1", 1.75f))
+        // Clamped to what the server would store.
+        assertThat(AudiobookSpeed.carried("audiobook_chapter", "book-1", "audiobook_chapter", 9f))
+            .isEqualTo(BookSpeed("book-1", 3.0f))
+    }
+
+    @Test
+    fun `nothing else carries a speed`() {
+        // Tracks play at 1×; a single-file book's next book has its own speed.
+        assertThat(AudiobookSpeed.carried("track", null, "track", 1.5f)).isNull()
+        assertThat(AudiobookSpeed.carried("audiobook", "book-1", "audiobook", 1.5f)).isNull()
+        assertThat(AudiobookSpeed.carried("audiobook_chapter", "book-1", "track", 1.5f)).isNull()
+        // An orphan chapter has no book to carry it for.
+        assertThat(AudiobookSpeed.carried("audiobook_chapter", null, "audiobook_chapter", 1.5f)).isNull()
+    }
 }
