@@ -4,15 +4,26 @@
     FavoritesScene) sets `itemId` on the node before mount, then
     calls navigateToWithItem("DetailScene", id) to attach. On init
     we fire two parallel tasks (item metadata + children list) and
-    render a hero + an action button + a horizontal child list.
+    render a hero + action buttons + a horizontal child list.
 
     Layout follows the modern Android detail page:
       - full-bleed fanart (alpha-blended via a dimmer rectangle so
         the foreground content reads against any image)
       - title + meta line (year · rating · duration · genres)
       - summary
-      - Play button (focused on mount)
-      - children row: episodes / tracks / chapters / albums
+      - action buttons, left / right between them (Play focused on
+        mount):
+          Play       "Resume 12m" on a part-watched leaf; on a show or
+                     season it comes from GET /items/{id}/up-next:
+                     "Resume S3 · E4" / "Play S3 · E5" / "Watch again"
+          Mark       "Mark watched" / "Mark unwatched" (movies,
+                     episodes); "Mark all…" on shows and seasons
+                     (confirmation before unwatching a whole show)
+          Report     "Report a problem" (movies, episodes, shows)
+      - children row, down from the buttons: seasons / episodes /
+        tracks / chapters / albums, with watched checks and resume
+        bars. * on an episode or season card opens its options (mark
+        watched / unwatched, report a problem).
 
     Episode-style children include the index ("1. Pilot") so the
     user knows order at a glance; album / podcast children use the
@@ -27,6 +38,10 @@
     <script type="text/brightscript" uri="DetailScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/ReportProblem.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
 
     <children>
         <Group translation="[0,0]" width="1920" height="1080">
@@ -44,8 +59,8 @@
                     loadingBitmapOpacity="0" />
             <Rectangle width="1920" height="1080" color="0x07070dcc" />
 
-            <!-- Bottom-aligned content column. -->
-            <Group translation="[80, 320]">
+            <!-- Content column. -->
+            <Group translation="[80, 260]">
                 <Label id="title"
                        text=""
                        font="font:LargeBoldSystemFont"
@@ -61,35 +76,66 @@
                        wrap="true"
                        maxLines="4"
                        color="0xeeeef8ff" />
+            </Group>
 
+            <!-- Action buttons. Fixed widths so DetailScene.brs can lay
+                 the visible ones out left to right (hidden ones leave
+                 no gap). -->
+            <Group id="actions" translation="[80, 580]">
                 <Button id="playBtn"
                         text="Play"
-                        translation="[0, 320]"
                         showFocusFootprint="true"
-                        minWidth="200"
+                        minWidth="400"
+                        maxWidth="400"
                         focusBitmapBlendColor="0x7c6af7ff" />
+                <Button id="markBtn"
+                        text=""
+                        showFocusFootprint="true"
+                        minWidth="360"
+                        maxWidth="360"
+                        focusBitmapBlendColor="0x7c6af7ff"
+                        visible="false" />
+                <Button id="reportBtn"
+                        text="Report a problem"
+                        showFocusFootprint="true"
+                        minWidth="360"
+                        maxWidth="360"
+                        focusBitmapBlendColor="0x7c6af7ff"
+                        visible="false" />
             </Group>
 
             <!-- Children carousel (episodes / tracks / chapters).
                  Hidden until the children-fetch task lands and
-                 returns at least one item. -->
+                 returns at least one item. Item size is set per parent
+                 type in renderChildren (landscape for episodes). -->
             <Label id="childrenHeader"
                    text=""
-                   translation="[80, 720]"
+                   translation="[80, 690]"
                    font="font:MediumBoldSystemFont"
                    color="0xffffffff"
                    visible="false" />
             <RowList id="children"
-                     translation="[80, 770]"
+                     translation="[80, 740]"
                      itemComponentName="PosterCard"
-                     itemSize="[1760, 280]"
+                     itemSize="[1760, 300]"
                      rowItemSize="[[200, 260]]"
                      rowItemSpacing="[[16, 0]]"
                      showRowLabel="[false]"
-                     rowHeights="[280]"
+                     rowHeights="[300]"
                      focusBitmapBlendColor="0xffffffff"
                      drawFocusFeedback="true"
                      visible="false" />
+
+            <!-- Shown while an episode / season card with options has
+                 focus. -->
+            <Label id="optionsHint"
+                   text="* Options"
+                   translation="[1600, 1030]"
+                   width="240"
+                   horizAlign="right"
+                   font="font:SmallSystemFont"
+                   color="0x9a9aaaff"
+                   visible="false" />
 
             <Label id="loading"
                    text="Loading…"

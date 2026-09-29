@@ -79,14 +79,15 @@ end sub
 ' Poll once. Persists tokens + returns "done" when the user has
 ' redeemed the PIN; "pending" / "expired" / "failed" otherwise.
 function pollOnce(deviceToken as String) as String
-    transfer = Client_BuildTransfer(ApiPairPoll(), false)
-    if transfer = invalid then return "failed"
-    transfer.AddHeader("Authorization", "Bearer " + deviceToken)
-    body = transfer.PostFromString("")
-    code = transfer.GetFailureReason()
-    httpStatus = transfer.GetResponseCode()
+    ' GET, as the server routes it (GET /api/v1/auth/pair/poll) — this used
+    ' to POST, which the router refuses, and read the body from
+    ' PostFromString, which returns the status code instead. The device
+    ' token rides in Authorization; auth=false keeps any stale user bearer
+    ' off the request.
+    res = Client_SendOnce("GET", ApiPairPoll(), invalid, { Authorization: "Bearer " + deviceToken }, false)
+    httpStatus = res.code
     if httpStatus = 200
-        envelope = ParseJson(body)
+        envelope = ParseJson(res.raw)
         if envelope = invalid then return "failed"
         pair = envelope.data
         if pair = invalid then return "failed"

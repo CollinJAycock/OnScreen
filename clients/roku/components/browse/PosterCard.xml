@@ -8,6 +8,20 @@
     point it at HDPosterUrl from the ContentNode and Roku fetches +
     decodes off the UI thread.
 
+    Size: RowList sets `width` / `height` to the row's rowItemSize, so
+    the poster fills whatever slot the scene asked for (240x360 on the
+    browse grids, landscape on a season's episode row) instead of
+    overdrawing a smaller slot. Title (and the optional subtitle) sit
+    under the poster, as before.
+
+    Watch state (v2.5), read from optional ContentNode fields the scenes
+    add (see components/common/CardFields.brs):
+      watchBadge      "watched" → check mark, "unwatched" → count,
+                      "progress" → bar along the poster's bottom edge
+      unwatchedCount  the number on the count badge
+      progressPct     1–100, the bar's fill
+      cardSubtitle    second line ("S2 · E5 — Title" on Next Up tiles)
+
     Focus feedback (the highlighted ring around the card) is
     rendered by the parent RowList; we just provide the visual.
 -->
@@ -15,6 +29,8 @@
 
     <interface>
         <field id="itemContent" type="node" onChange="onItemContentChange" />
+        <field id="width" type="float" value="240" onChange="onSizeChange" />
+        <field id="height" type="float" value="360" onChange="onSizeChange" />
     </interface>
 
     <script type="text/brightscript" uri="PosterCard.brs" />
@@ -23,7 +39,7 @@
         <!-- loadWidth/loadHeight bound the bitmap decode to the
              on-screen size; without them Roku decodes the artwork at
              native resolution, which OOMs low-RAM models on a full
-             grid of cards. -->
+             grid of cards. Kept in step with the slot in onSizeChange. -->
         <Poster id="poster"
                 width="240"
                 height="360"
@@ -31,6 +47,51 @@
                 loadHeight="360"
                 loadDisplayMode="scaleToFill"
                 failedBitmapUri="" />
+
+        <!-- In-progress bar: dark track + accent fill on the poster's
+             bottom edge. -->
+        <Rectangle id="progressTrack"
+                   width="240"
+                   height="8"
+                   translation="[0, 352]"
+                   color="0x000000b0"
+                   visible="false" />
+        <Rectangle id="progressFill"
+                   width="0"
+                   height="8"
+                   translation="[0, 352]"
+                   color="0x7c6af7ff"
+                   visible="false" />
+
+        <!-- Watched: an accent square with a check drawn from two
+             rotated bars (no glyph needed — Roku's system font has no
+             reliable check mark). Rotation is counter-clockwise in
+             radians about scaleRotateCenter. -->
+        <Group id="watchedBadge" translation="[196, 8]" visible="false">
+            <Rectangle width="36" height="36" color="0x7c6af7ff" />
+            <Rectangle width="11" height="4"
+                       translation="[8, 17]"
+                       scaleRotateCenter="[0, 2]"
+                       rotation="-0.785"
+                       color="0xffffffff" />
+            <Rectangle width="18" height="4"
+                       translation="[14, 25]"
+                       scaleRotateCenter="[0, 2]"
+                       rotation="0.9"
+                       color="0xffffffff" />
+        </Group>
+
+        <!-- Unwatched-episode count (shows / seasons in a library). -->
+        <Group id="countBadge" translation="[180, 8]" visible="false">
+            <Rectangle id="countBg" width="52" height="36" color="0x7c6af7ff" />
+            <Label id="countLabel"
+                   width="52"
+                   height="36"
+                   horizAlign="center"
+                   vertAlign="center"
+                   font="font:SmallestBoldSystemFont"
+                   color="0xffffffff" />
+        </Group>
 
         <Label id="title"
                translation="[0, 365]"
@@ -40,6 +101,16 @@
                wrap="false"
                truncationLineCount="1"
                color="0xffffffff" />
+
+        <Label id="subtitle"
+               translation="[0, 397]"
+               width="240"
+               height="28"
+               horizAlign="center"
+               wrap="false"
+               font="font:SmallestSystemFont"
+               color="0xa0a0b0ff"
+               visible="false" />
     </children>
 
 </component>

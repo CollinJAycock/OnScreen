@@ -2,8 +2,9 @@
 <!--
     Top-level browse scene. Fires a Task node on mount to fetch
     /api/v1/hub, then populates a RowList with one row per hub
-    section (Continue Watching / Recently Added / Trending /
-    Because You Watched).
+    section (Continue Watching TV / Movies / Other, Next Up, Plan to
+    Watch, Trending, Recently Added). The * (options) key on a
+    Continue Watching card offers "Remove from Continue Watching".
 
     RowList is SceneGraph's two-dimensional focus container —
     handles D-pad navigation between rows + within rows natively,
@@ -16,6 +17,10 @@
     <script type="text/brightscript" uri="HomeScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/HubRows.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
 
     <children>
         <Group translation="[0,0]" width="1920" height="1080">
@@ -64,6 +69,16 @@
                    text="Loading..."
                    translation="[80, 540]"
                    color="0xa0a0a0ff" />
+
+            <!-- Shown while a Continue Watching card has focus. -->
+            <Label id="optionsHint"
+                   text="* Options"
+                   translation="[1600, 1030]"
+                   width="240"
+                   horizAlign="right"
+                   font="font:SmallSystemFont"
+                   color="0x9a9aaaff"
+                   visible="false" />
         </Group>
 
         <!-- Off-screen task that fetches the hub on its own

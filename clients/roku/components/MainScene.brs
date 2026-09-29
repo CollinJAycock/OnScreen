@@ -17,6 +17,7 @@
 
 sub init()
     m.content = m.top.findNode("content")
+    m.detached = m.top.findNode("detached")
     m.currentChild = invalid
     ' Back-stack of { name, itemId } frames. The bottom frame is the
     ' root (channel-exit) screen; everything above it pops on Back.
@@ -87,6 +88,28 @@ sub mountScene(name as String, itemId as String)
     m.currentChild = child
     m.content.appendChild(child)
     child.setFocus(true)
+end sub
+
+' Fire-and-forget API call that must outlive the scene asking for it —
+' the player's final progress report and its transcode-session DELETE go
+' out right before the player unmounts. req is { method, path, body?,
+' auth? }. The ApiCallTask is parented here (MainScene lives as long as
+' the channel) and dropped once it finishes; nobody reads the result.
+sub runDetachedCall(req as Object)
+    if req = invalid or req.path = invalid or req.path = "" then return
+    t = createObject("roSGNode", "ApiCallTask")
+    if req.method <> invalid then t.method = req.method
+    t.path = req.path
+    if req.body <> invalid then t.body = req.body
+    if req.auth <> invalid then t.auth = req.auth
+    t.observeField("state", "onDetachedCallState")
+    m.detached.appendChild(t)
+    t.control = "RUN"
+end sub
+
+sub onDetachedCallState(evt as Object)
+    t = evt.getRoSGNode()
+    if t.state = "done" or t.state = "stop" then m.detached.removeChild(t)
 end sub
 
 ' Back handling for the whole channel. Child scenes (Group-based) sit

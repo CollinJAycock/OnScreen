@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    One-shot API request on a Task thread, for calls whose status code
+    and error envelope matter (mark watched, remove from Continue
+    Watching, up-next, report a problem, progress beacons, the admin-stop
+    probe). The render thread must never touch roUrlTransfer, so scenes
+    create one of these per request:
+
+        t = createObject("roSGNode", "ApiCallTask")
+        t.method = "POST"
+        t.path = ApiItemWatched(id)
+        t.context = { action: "mark", watched: true }
+        t.observeField("state", "onSomethingDone")
+        t.control = "RUN"
+
+    and read `result` when state flips to "done":
+        { code, ok, data, errorCode, errorMessage } (ApiResult_From)
+    `context` rides along untouched so one observer can serve several
+    kinds of call. Hold a reference until it completes.
+-->
+<component name="ApiCallTask" extends="Task">
+
+    <interface>
+        <!-- GET, POST, PUT or DELETE. -->
+        <field id="method" type="string" value="GET" />
+        <!-- Path joined to the configured server URL (an asset path
+             carrying ?token= works with auth=false). -->
+        <field id="path" type="string" />
+        <!-- JSON body for POST / PUT; empty sends "{}". -->
+        <field id="body" type="assocArray" />
+        <!-- Extra request headers (e.g. Range for the stream probe). -->
+        <field id="headers" type="assocArray" />
+        <!-- Attach the stored bearer (and refresh once on 401). -->
+        <field id="auth" type="boolean" value="true" />
+        <field id="context" type="assocArray" />
+        <field id="result" type="assocArray" />
+    </interface>
+
+    <script type="text/brightscript" uri="ApiCallTask.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/ApiResult.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+
+</component>

@@ -16,6 +16,12 @@
         <!-- Set by source/main.brs from launch args; routes past
              the setup flow when the user came in via deep link. -->
         <field id="deepLinkContentId" type="string" />
+
+        <!-- Called by the child scenes via callFunc, which only reaches
+             functions declared here. -->
+        <function name="navigateTo" />
+        <function name="navigateToWithItem" />
+        <function name="runDetachedCall" />
     </interface>
 
     <script type="text/brightscript" uri="MainScene.brs" />
@@ -29,6 +35,10 @@
                translation="[0,0]"
                width="1920"
                height="1080" />
+
+        <!-- Parent for runDetachedCall's ApiCallTasks, so a request a
+             scene fires on its way out isn't torn down with it. -->
+        <Group id="detached" visible="false" />
     </children>
 
 </component>
