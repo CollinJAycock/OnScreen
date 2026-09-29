@@ -180,10 +180,11 @@ func (m *mockQuerier) UpdateMediaItemLyrics(_ context.Context, _ uuid.UUID, _, _
 	return nil
 }
 
-// FillTrackPosition mirrors the SQL: fill-only, tracks only, reports a change.
+// FillTrackPosition mirrors the SQL: fill-only, tracks and audiobook
+// chapters only, reports a change.
 func (m *mockQuerier) FillTrackPosition(_ context.Context, id uuid.UUID, index, disc *int) (bool, error) {
 	it, ok := m.items[id]
-	if !ok || it.Type != "track" {
+	if !ok || (it.Type != "track" && it.Type != "audiobook_chapter") {
 		return false, nil
 	}
 	changed := false

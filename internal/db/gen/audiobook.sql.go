@@ -109,7 +109,7 @@ FROM audiobook_bookmarks b
 JOIN media_items i ON i.id = b.item_id AND i.deleted_at IS NULL
 WHERE b.user_id = $1 AND b.book_id = $2
 ORDER BY CASE WHEN b.item_id = b.book_id THEN NULL ELSE i.index END NULLS FIRST,
-         b.position_ms, b.created_at, b.id
+         i.sort_title, b.position_ms, b.created_at, b.id
 `
 
 type ListAudiobookBookmarksParams struct {

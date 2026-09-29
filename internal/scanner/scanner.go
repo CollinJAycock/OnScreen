@@ -171,11 +171,12 @@ type Scanner struct {
 	metrics *observability.Metrics
 	grace   func() time.Duration // optional; nil → defaultMissingFileGrace
 
-	// unnumberedTracks holds the IDs of unchanged music files whose tags
-	// were re-read for a track number and couldn't supply one (see
-	// healUnchangedTrack), so later scans in this process don't re-read
-	// them. A file that changes takes the slow path instead, which reads
-	// its tags anyway. Keyed by media_files.id; values are unused.
+	// unnumberedTracks holds the IDs of unchanged music files, and
+	// audiobook chapter files, that couldn't be given a number (see
+	// healUnchangedTrack / healUnchangedChapter), so later scans in this
+	// process don't re-read them. A file that changes takes the slow path
+	// instead, which reads its tags anyway. Keyed by media_files.id; values
+	// are unused.
 	unnumberedTracks sync.Map
 }
 
@@ -1286,6 +1287,11 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryType, path st
 	// row just gains its position — so the file stays skipped.
 	if libraryType == "music" {
 		s.healUnchangedTrack(ctx, item, existing, path)
+	}
+	// Likewise a multi-file audiobook chapter imported before chapters were
+	// numbered.
+	if libraryType == "audiobook" {
+		s.healUnchangedChapter(ctx, item, existing, path)
 	}
 	if s.shouldEnrich(ctx, item, false) {
 		return item, existing, true

@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -75,9 +76,14 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 	// author can override the folder guess for the no-folder case
 	// (loose .m4b at the library root, where there's no author dir).
 	var tagTitle, tagAuthor string
+	var tagTrack int
 	if f, err := os.Open(path); err == nil {
 		if m, err := readTagFrom(f); err == nil {
 			tagTitle = strings.TrimSpace(m.Title())
+			tagTrack, _ = m.Track()
+			if tagTrack == 0 { // Vorbis "N/M" (see ReadMusicTags)
+				tagTrack, _ = xOfN(stringifyRaw(rawLookup(m.Raw(), "tracknumber")), 0)
+			}
 			if a := strings.TrimSpace(m.AlbumArtist()); a != "" {
 				tagAuthor = a
 			} else if a := strings.TrimSpace(m.Artist()); a != "" {
@@ -158,13 +164,87 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 		chapterTitle = strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	}
 
-	return s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
+	// Matched by title, as before; the number is filled in afterwards as
+	// ordering data only. Matching on it would let a bad number (every file
+	// tagged track 1) fold one chapter's file into another's row.
+	chapter, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "audiobook_chapter",
 		Title:     chapterTitle,
 		SortTitle: sortTitle(chapterTitle),
 		ParentID:  &book.ID,
 	})
+	if err != nil {
+		return nil, err
+	}
+	if chapter.Index == nil {
+		if n := chapterNumber(path, tagTrack); n > 0 {
+			s.numberChapter(ctx, chapter, n, path)
+		}
+	}
+	return chapter, nil
+}
+
+// chapterLeadingNumberRE matches the number a chapter file's name starts
+// with: "01 Title", "001 - Title", "7.Title". Three digits at most, so a
+// name that starts with a year ("1984 - Part 1") isn't read as chapter 1984.
+var chapterLeadingNumberRE = regexp.MustCompile(`^\s*(\d{1,3})(?:[\s._-]|$)`)
+
+// chapterNumber is a multi-file audiobook chapter's place in its book: the
+// file name's leading number, else the file's track tag, else 0. The name
+// comes first because audiobook track tags are unreliable (a rip tagging
+// every file track 1 is common), while chapter files are nearly always
+// numbered by name so they sort.
+func chapterNumber(path string, tagTrack int) int {
+	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	if m := chapterLeadingNumberRE.FindStringSubmatch(base); m != nil {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+			return n
+		}
+	}
+	if tagTrack > 0 {
+		return tagTrack
+	}
+	return 0
+}
+
+// numberChapter fills a chapter's missing number: its listening order in
+// the book. A number another chapter of the book already holds (two files
+// named or tagged alike) is refused by the one-per-position index; the
+// chapter then stays unnumbered and sorts after the numbered ones, by
+// title. Reports whether the number was stored.
+func (s *Scanner) numberChapter(ctx context.Context, chapter *media.Item, n int, path string) bool {
+	idx := n
+	if _, err := s.media.FillTrackPosition(ctx, chapter.ID, &idx, nil); err != nil {
+		s.logger.InfoContext(ctx, "audiobook chapter left unnumbered; another chapter holds its number",
+			"path", path, "chapter_id", chapter.ID, "number", n, "err", err)
+		return false
+	}
+	chapter.Index = &idx
+	return true
+}
+
+// healUnchangedChapter numbers a chapter imported before chapters were
+// numbered, without leaving the fast skip: from the name when it starts
+// with a number, else from the file's tags, read once. A file with no
+// number anywhere (or one another chapter holds) is remembered so it isn't
+// re-read on every scan.
+func (s *Scanner) healUnchangedChapter(ctx context.Context, item *media.Item, file *media.File, path string) {
+	if item == nil || item.Type != "audiobook_chapter" || item.Index != nil {
+		return
+	}
+	if _, seen := s.unnumberedTracks.Load(file.ID); seen {
+		return
+	}
+	n := chapterNumber(path, 0)
+	if n == 0 {
+		if tags, err := ReadMusicTagsStore(ctx, s.mediaStore(), path); err == nil {
+			n = tags.Track
+		}
+	}
+	if n <= 0 || !s.numberChapter(ctx, item, n, path) {
+		s.unnumberedTracks.Store(file.ID, struct{}{})
+	}
 }
 
 // extractAudiobookArt writes the audiobook's cover to {book.id}-poster.jpg

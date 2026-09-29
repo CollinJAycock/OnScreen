@@ -164,7 +164,7 @@ func (m *mockMediaService) FillTrackPosition(_ context.Context, id uuid.UUID, in
 		}
 	}
 	it, ok := m.items[id]
-	if !ok || it.Type != "track" {
+	if !ok || (it.Type != "track" && it.Type != "audiobook_chapter") {
 		return false, nil
 	}
 	changed := false

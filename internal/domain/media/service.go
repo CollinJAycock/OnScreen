@@ -257,8 +257,9 @@ type Querier interface {
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
 	UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
-	// FillTrackPosition sets a track's index / disc_number where they are
-	// NULL, leaving stored values alone. Reports whether the row changed.
+	// FillTrackPosition sets a track's index / disc_number, or a multi-file
+	// audiobook chapter's index, where they are NULL, leaving stored values
+	// alone. Reports whether the row changed.
 	FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error)
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
@@ -1421,9 +1422,10 @@ func TrackDisc(disc *int) int {
 }
 
 // FillTrackPosition sets a track's track number and/or disc number where
-// they are unset. Fill-only: nil arguments and values already stored are
-// left alone, so a heal never rewrites a number the track already has.
-// Reports whether anything was written.
+// they are unset, or an audiobook chapter's number (chapters have no disc).
+// Fill-only: nil arguments and values already stored are left alone, so a
+// heal never rewrites a number the item already has. Reports whether
+// anything was written.
 func (s *Service) FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error) {
 	if index == nil && disc == nil {
 		return false, nil

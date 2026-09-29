@@ -520,7 +520,7 @@ SET index       = COALESCE(index, $1::int),
     disc_number = COALESCE(disc_number, $2::int),
     updated_at  = NOW()
 WHERE id = $3
-  AND type = 'track'
+  AND type IN ('track', 'audiobook_chapter')
   AND deleted_at IS NULL
   AND ((index IS NULL AND $1::int IS NOT NULL)
        OR (disc_number IS NULL AND $2::int IS NOT NULL))
@@ -532,8 +532,9 @@ type FillTrackPositionParams struct {
 	ID         uuid.UUID `json:"id"`
 }
 
-// Fills a track's missing track number and/or disc number. Fill-only: a
-// value already stored is never overwritten, so this heals tracks the
+// Fills a track's missing track number and/or disc number, or a multi-file
+// audiobook chapter's missing number (chapters have no disc). Fill-only: a
+// value already stored is never overwritten, so this heals rows the
 // scanner once imported without a number without second-guessing numbers
 // it already has. Touches nothing (updated_at included) when there is
 // nothing to fill; returns the number of rows changed (0 or 1).
@@ -2338,7 +2339,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE parent_id = $1 AND deleted_at IS NULL
-ORDER BY COALESCE(disc_number, 1), index
+ORDER BY COALESCE(disc_number, 1), index, sort_title, id
 LIMIT 1000
 `
 
@@ -2379,7 +2380,8 @@ type ListMediaItemChildrenRow struct {
 
 // Ordered by (disc, track): a track with no disc number sorts as disc 1, and
 // every non-track child has none, so seasons and episodes order by index
-// alone exactly as before.
+// alone exactly as before. Children without a number (or sharing one) fall
+// back to title order rather than whatever order the rows sit in.
 func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUID) ([]ListMediaItemChildrenRow, error) {
 	rows, err := q.db.Query(ctx, listMediaItemChildren, parentID)
 	if err != nil {

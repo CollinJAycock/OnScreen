@@ -38,6 +38,7 @@ const (
 // it.
 type AudiobookStore interface {
 	GetMediaItem(ctx context.Context, id uuid.UUID) (gen.GetMediaItemRow, error)
+	ListMediaFilesForItem(ctx context.Context, mediaItemID uuid.UUID) ([]gen.MediaFile, error)
 	GetAudiobookRate(ctx context.Context, arg gen.GetAudiobookRateParams) (float32, error)
 	GetLatestAudiobookRate(ctx context.Context, userID uuid.UUID) (float32, error)
 	SetAudiobookRate(ctx context.Context, arg gen.SetAudiobookRateParams) error
@@ -234,7 +235,8 @@ func (h *AudiobookHandler) ListBookmarks(w http.ResponseWriter, r *http.Request)
 }
 
 // CreateBookmark handles POST /api/v1/items/{id}/bookmarks, where {id} is the
-// playable item (a single-file book or a chapter). Body:
+// playable item (a single-file book or a chapter; a multi-file book has no
+// file of its own and is refused with 422). Body:
 // {"position_ms": 123000, "note": "optional"}. 409 BOOKMARK_LIMIT past 1000
 // in one book.
 func (h *AudiobookHandler) CreateBookmark(w http.ResponseWriter, r *http.Request) {
@@ -262,6 +264,18 @@ func (h *AudiobookHandler) CreateBookmark(w http.ResponseWriter, r *http.Request
 	item, bookID, ok := h.resolveBook(w, r)
 	if !ok {
 		return
+	}
+	if item.Type == "audiobook" {
+		files, err := h.store.ListMediaFilesForItem(r.Context(), item.ID)
+		if err != nil {
+			h.logger.ErrorContext(r.Context(), "create bookmark: book files", "item_id", item.ID, "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		if len(files) == 0 {
+			respond.ValidationError(w, r, "this book's audio is in its chapters; bookmark a chapter")
+			return
+		}
 	}
 	row, err := h.store.CreateAudiobookBookmark(r.Context(), gen.CreateAudiobookBookmarkParams{
 		UserID: claims.UserID, BookID: bookID, ItemID: item.ID,

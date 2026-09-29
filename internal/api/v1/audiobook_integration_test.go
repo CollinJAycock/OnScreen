@@ -64,6 +64,14 @@ func TestAudiobook_Integration(t *testing.T) {
 	ch1 := item("audiobook_chapter", "Chapter 1", book, 1)
 	ch2 := item("audiobook_chapter", "Chapter 2", book, 2)
 	single := item("audiobook", "Short Book", uuid.Nil, 3) // a series index, not a chapter
+	// The playable items carry the audio; the multi-file book itself has none.
+	for _, id := range []uuid.UUID{ch1, ch2, single} {
+		if _, err := q.CreateMediaFile(ctx, gen.CreateMediaFileParams{
+			MediaItemID: id, FilePath: "/tmp/books/" + id.String() + ".mp3", FileSize: 1,
+		}); err != nil {
+			t.Fatalf("create file: %v", err)
+		}
+	}
 
 	do := func(as uuid.UUID, fn http.HandlerFunc, method, id, body string) *httptest.ResponseRecorder {
 		var r *http.Request
@@ -130,6 +138,9 @@ func TestAudiobook_Integration(t *testing.T) {
 		}
 	}
 	add(bob, ch1, 42, "bob's")
+	if rec := add(alice, book, 0, ""); rec.Code != http.StatusUnprocessableEntity {
+		t.Errorf("bookmark on the multi-file book itself: %d, want 422", rec.Code)
+	}
 	var list []BookmarkJSON
 	data(do(alice, h.ListBookmarks, http.MethodGet, book.String(), ""), &list)
 	var order []string
@@ -197,5 +208,26 @@ func TestAudiobook_Integration(t *testing.T) {
 	data(do(alice, h.ListBookmarks, http.MethodGet, book.String(), ""), &list)
 	if len(list) != 1 {
 		t.Errorf("after delete: %d", len(list))
+	}
+
+	// Chapter numbers (filled in by the scanner) go through the same
+	// fill-only update as track numbers; one number per book.
+	other := item("audiobook", "Other Book", uuid.Nil, 0)
+	cA := item("audiobook_chapter", "B chapter", other, 0)
+	cB := item("audiobook_chapter", "A chapter", other, 0)
+	kids, err := q.ListMediaItemChildren(ctx, pgtype.UUID{Bytes: other, Valid: true})
+	if err != nil || len(kids) != 2 || kids[0].ID != cB {
+		t.Errorf("unnumbered chapters must fall back to title order: %v", err)
+	}
+	five := int32(5)
+	if n, err := q.FillTrackPosition(ctx, gen.FillTrackPositionParams{ID: cA, TrackIndex: &five}); err != nil || n != 1 {
+		t.Errorf("number a chapter: %d, %v", n, err)
+	}
+	if _, err := q.FillTrackPosition(ctx, gen.FillTrackPositionParams{ID: cB, TrackIndex: &five}); err == nil {
+		t.Error("two chapters of one book may not share a number")
+	}
+	kids, _ = q.ListMediaItemChildren(ctx, pgtype.UUID{Bytes: other, Valid: true})
+	if len(kids) != 2 || kids[0].ID != cA {
+		t.Error("the numbered chapter must sort first")
 	}
 }

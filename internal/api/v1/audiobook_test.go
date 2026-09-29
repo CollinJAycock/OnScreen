@@ -24,6 +24,7 @@ import (
 // fakeAudiobookStore is an in-memory AudiobookStore.
 type fakeAudiobookStore struct {
 	items map[uuid.UUID]gen.GetMediaItemRow
+	files map[uuid.UUID]int // files per item
 
 	rates      map[uuid.UUID]float32 // by book
 	latest     *float32
@@ -43,6 +44,10 @@ func (f *fakeAudiobookStore) GetMediaItem(_ context.Context, id uuid.UUID) (gen.
 		return gen.GetMediaItemRow{}, pgx.ErrNoRows
 	}
 	return it, nil
+}
+
+func (f *fakeAudiobookStore) ListMediaFilesForItem(_ context.Context, id uuid.UUID) ([]gen.MediaFile, error) {
+	return make([]gen.MediaFile, f.files[id]), nil
 }
 
 func (f *fakeAudiobookStore) GetAudiobookRate(_ context.Context, arg gen.GetAudiobookRateParams) (float32, error) {
@@ -106,6 +111,9 @@ func newAudiobookFixture() *audiobookFixture {
 	pg := "PG"
 	f.store = &fakeAudiobookStore{
 		rates: map[uuid.UUID]float32{},
+		// The chapter and the single-file book carry the audio; the
+		// multi-file book itself has none.
+		files: map[uuid.UUID]int{f.chapter: 1, f.single: 1},
 		items: map[uuid.UUID]gen.GetMediaItemRow{
 			f.book:    {ID: f.book, LibraryID: lib, Type: "audiobook", Title: "The Book", ContentRating: &pg},
 			f.chapter: {ID: f.chapter, LibraryID: lib, Type: "audiobook_chapter", Title: "Chapter 7", Index: &seven, ContentRating: &pg, ParentID: pgtype.UUID{Bytes: f.book, Valid: true}},
@@ -249,6 +257,12 @@ func TestBookmarks_CreateInAChapter(t *testing.T) {
 		t.Errorf("response %+v", b)
 	}
 
+	// A multi-file book has no audio of its own: bookmark a chapter.
+	f.store.created = nil
+	if rec := f.call(h.CreateBookmark, http.MethodPost, f.book.String(), `{"position_ms":0}`, ""); rec.Code != http.StatusUnprocessableEntity || f.store.created != nil {
+		t.Errorf("multi-file book itself: got %d (stored %v), want 422", rec.Code, f.store.created)
+	}
+
 	// In a single-file book the item is the book and has no chapter index.
 	rec = f.call(h.CreateBookmark, http.MethodPost, f.single.String(), `{"position_ms":0}`, "")
 	b = BookmarkJSON{}
@@ -272,17 +286,17 @@ func TestBookmarks_CreateRejects(t *testing.T) {
 		}
 	}
 	// 500 characters (not bytes) is fine.
-	if rec := f.call(h.CreateBookmark, http.MethodPost, f.book.String(), `{"position_ms":1,"note":"`+strings.Repeat("é", 500)+`"}`, ""); rec.Code != http.StatusCreated {
+	if rec := f.call(h.CreateBookmark, http.MethodPost, f.single.String(), `{"position_ms":1,"note":"`+strings.Repeat("é", 500)+`"}`, ""); rec.Code != http.StatusCreated {
 		t.Errorf("500-character note: got %d", rec.Code)
 	}
 
 	f.store.createErr = pgx.ErrNoRows // the cap
-	rec := f.call(h.CreateBookmark, http.MethodPost, f.book.String(), `{"position_ms":1}`, "")
+	rec := f.call(h.CreateBookmark, http.MethodPost, f.single.String(), `{"position_ms":1}`, "")
 	if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), "BOOKMARK_LIMIT") {
 		t.Errorf("at the cap: %d %s", rec.Code, rec.Body.String())
 	}
 	f.store.createErr = errors.New("db down")
-	if rec := f.call(h.CreateBookmark, http.MethodPost, f.book.String(), `{"position_ms":1}`, ""); rec.Code != http.StatusInternalServerError {
+	if rec := f.call(h.CreateBookmark, http.MethodPost, f.single.String(), `{"position_ms":1}`, ""); rec.Code != http.StatusInternalServerError {
 		t.Errorf("store failure: got %d", rec.Code)
 	}
 }
