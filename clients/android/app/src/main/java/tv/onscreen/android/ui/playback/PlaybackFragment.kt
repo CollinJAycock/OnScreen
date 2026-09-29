@@ -50,7 +50,9 @@ import tv.onscreen.android.data.repository.NotificationsRepository
 import android.widget.Toast
 import tv.onscreen.android.data.repository.OnlineSubtitleRepository
 import tv.onscreen.android.data.repository.TrickplayRepository
+import tv.onscreen.android.playback.AudioItemTypes
 import tv.onscreen.android.playback.AudiobookSpeed
+import tv.onscreen.android.playback.BookSpeed
 import tv.onscreen.android.ui.KeyEventHandler
 import tv.onscreen.android.ui.detail.DetailFragment
 import javax.inject.Inject
@@ -239,6 +241,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     companion object {
         private const val ARG_ITEM_ID = "item_id"
         private const val ARG_START_MS = "start_ms"
+        private const val ARG_SPEED_BOOK_ID = "speed_book_id"
+        private const val ARG_SPEED_RATE = "speed_rate"
         private const val UPDATE_PERIOD_MS = 1000
 
         /** Fraction of view height to keep clear beneath subtitle cues.
@@ -259,11 +263,17 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         private const val UP_NEXT_COUNTDOWN_SEC = 10
         private const val UP_NEXT_LEAD_SEC = 25
 
-        fun newInstance(itemId: String, startMs: Long = 0): PlaybackFragment {
+        /** [bookSpeed]: set when chaining from one chapter of a book to the
+         *  next — the speed the book was playing at (see goToNextEpisode). */
+        fun newInstance(itemId: String, startMs: Long = 0, bookSpeed: BookSpeed? = null): PlaybackFragment {
             return PlaybackFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_ITEM_ID, itemId)
                     putLong(ARG_START_MS, startMs)
+                    if (bookSpeed != null) {
+                        putString(ARG_SPEED_BOOK_ID, bookSpeed.bookId)
+                        putFloat(ARG_SPEED_RATE, bookSpeed.rate)
+                    }
                 }
             }
         }
@@ -315,12 +325,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
         val startMs = arguments?.getLong(ARG_START_MS, 0) ?: 0
+        val bookSpeed = arguments?.let { args ->
+            args.getString(ARG_SPEED_BOOK_ID)?.let { BookSpeed(it, args.getFloat(ARG_SPEED_RATE, AudiobookSpeed.NORMAL)) }
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first() ?: ""
 
             initPlayer()
-            viewModel.prepare(itemId, startMs, serverUrl)
+            viewModel.prepare(itemId, startMs, serverUrl, bookSpeed)
             startAdminStopWatch(itemId)
 
             viewModel.uiState.collectLatest { state ->
@@ -446,9 +459,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  top of it. Controls draw above both. */
     private fun bindAudioBackdrop(item: tv.onscreen.android.data.model.ItemDetail?) {
         val root = view as? android.view.ViewGroup ?: return
-        val isAudio = currentItemType == "track" || currentItemType == "audiobook"
         val existing = root.findViewWithTag<android.view.View>("audio_backdrop")
-        if (!isAudio || item == null) {
+        if (!isAudioItem() || item == null) {
             if (existing != null) root.removeView(existing)
             return
         }
@@ -1055,12 +1067,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 watchNextJob?.cancel()
                 val next = nextEpisode
                 when {
+                    // Includes a book's last chapter: the book ends there.
                     next == null -> parentFragmentManager.popBackStack()
-                    // Music: chain to next track silently. The Up
-                    // Next overlay (with title + countdown) makes
-                    // sense between episodes — between tracks
-                    // it's just chrome the user doesn't want.
-                    currentItemType == "track" -> goToNextEpisode(next)
+                    // Audio: chain to the next track, or the book's next
+                    // chapter, silently. The Up Next overlay (with title +
+                    // countdown) makes sense between episodes — between
+                    // tracks or chapters it's just chrome the user doesn't
+                    // want.
+                    isAudioItem() -> goToNextEpisode(next)
                     // The user already declined. Leave playback rather than
                     // re-offering — this is the whole point of Cancel.
                     upNextDeclined -> parentFragmentManager.popBackStack()
@@ -1371,9 +1385,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             KeyEvent.KEYCODE_MEDIA_STOP -> { player?.pause(); return true }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekRelative(SKIP_FORWARD_MS); return true }
             KeyEvent.KEYCODE_MEDIA_REWIND -> { seekRelative(-SKIP_BACK_MS); return true }
-            // Track skip for music (the NEXT/PREV keys on most remotes). NEXT
-            // advances to the resolved next sibling; PREVIOUS restarts the
-            // current track (no previous-sibling resolver yet).
+            // Track skip for music, chapter skip for a multi-file book (the
+            // NEXT/PREV keys on most remotes). NEXT advances to the resolved
+            // next sibling; PREVIOUS restarts the current track (no
+            // previous-sibling resolver yet).
             KeyEvent.KEYCODE_MEDIA_NEXT -> { nextEpisode?.let { goToNextEpisode(it) }; return true }
             KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { player?.seekTo(0); return true }
         }
@@ -1881,12 +1896,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun startUpNextWatcher() {
         upNextJob?.cancel()
         if (nextEpisode == null) return
-        // Music tracks chain at EOS only — the lead-in overlay
-        // would clip the last ~25 s of the song, which is exactly
-        // where the outro / fade lives. Episodes still get the
-        // overlay (the credits roll covers the same window, so
-        // the early countdown isn't a content loss there).
-        if (currentItemType == "track") return
+        // Music tracks and book chapters chain at EOS only — the
+        // lead-in overlay would clip the last ~25 s of the song
+        // (where the outro / fade lives) or of the chapter. Episodes
+        // still get the overlay (the credits roll covers the same
+        // window, so the early countdown isn't a content loss there).
+        if (isAudioItem()) return
         upNextJob = viewLifecycleOwner.lifecycleScope.launch {
             while (isActive) {
                 delay(1000)
@@ -2010,6 +2025,19 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         upNextJob?.cancel()
         progressTracker?.onStop()
 
+        // The book's next chapter plays at the speed this one was at: the
+        // next fragment builds a fresh player, which would otherwise start at
+        // 1× until the book's speed is looked up again. nextEpisode is only
+        // ever a chapter of this chapter's own book (AudiobookChapters).
+        val bookSpeed = currentItem?.let { cur ->
+            AudiobookSpeed.carried(
+                fromType = cur.type,
+                fromBookId = AudiobookSpeed.bookIdOf(cur.type, cur.id, cur.parent_id),
+                toType = ep.type,
+                rate = player?.playbackParameters?.speed ?: playbackSpeed,
+            )
+        }
+
         // Pop this fragment's own back-stack entry before pushing the next
         // episode's, so the container keeps exactly one recorded owner.
         // Previously the advance replaced the fragment WITHOUT adding to the
@@ -2019,7 +2047,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // rather than leaving playback.
         fm.popBackStack()
         fm.beginTransaction()
-            .replace(R.id.main_container, newInstance(ep.id, 0))
+            .replace(R.id.main_container, newInstance(ep.id, 0, bookSpeed))
             .addToBackStack(null)
             .commit()
     }
@@ -2076,11 +2104,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             .show()
     }
 
-    /** True for audio content (music tracks + audiobooks) — the items
-     *  that keep playing across backgrounding via the
-     *  MediaSessionService handoff. Video is released on stop instead. */
-    private fun isAudioItem(): Boolean =
-        currentItemType == "track" || currentItemType == "audiobook"
+    /** True for audio content (music tracks, audiobooks and their chapter
+     *  files — see [AudioItemTypes]) — the items that keep playing across
+     *  backgrounding via the MediaSessionService handoff. Video is
+     *  released on stop instead. */
+    private fun isAudioItem(): Boolean = AudioItemTypes.isAudio(currentItemType)
 
     /** Content-time duration for progress reports + completion ratios. The
      *  arithmetic lives in [PlaybackHelper.contentDurationMs] so it is unit
@@ -2354,19 +2382,19 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         showSpeed(reclaimed.playbackParameters.speed)
     }
 
-    /** When the user backs out of the player while music is still
-     *  playing, transfer ownership of the ExoPlayer to the
-     *  MediaSessionService and let the service keep it alive under
-     *  the system foreground notification. Returns true when the
-     *  handoff happened (caller should NOT release the player).
+    /** When the user backs out of the player while audio (music, a
+     *  book, a chapter file of one) is still playing, transfer
+     *  ownership of the ExoPlayer to the MediaSessionService and let
+     *  the service keep it alive under the system foreground
+     *  notification. Returns true when the handoff happened (caller
+     *  should NOT release the player).
      *
      *  Skipped for video: the surface-view rendering doesn't
      *  translate to a service notification, and the video player
      *  has already been released in onStop. */
     private fun handOffAudioPlayerToService(): Boolean {
         val exo = player ?: return false
-        val isAudio = currentItemType == "track" || currentItemType == "audiobook"
-        if (!isAudio) return false
+        if (!isAudioItem()) return false
         // A finished player must never be parked: ExoPlayer keeps
         // playWhenReady == true at STATE_ENDED, so the playWhenReady gate
         // below cannot catch end-of-stream on its own.

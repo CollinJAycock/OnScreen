@@ -31,8 +31,10 @@ import javax.inject.Inject
 
 /**
  * Media3 session service. Hosts the audio player when the user
- * navigates away from the PlaybackFragment for music — without
- * this, backing out of the player kills the audio.
+ * navigates away from the PlaybackFragment for music or an audiobook
+ * (a book, or one of a multi-file book's chapters — see
+ * [AudioItemTypes]) — without this, backing out of the player kills
+ * the audio.
  *
  * Lifecycle:
  *  - PlaybackFragment hands its audio player to the service via
@@ -56,8 +58,9 @@ import javax.inject.Inject
  *
  * Audiobook listening speed needs no hand-off of its own: the parked
  * player is the fragment's instance, and ExoPlayer keeps its
- * PlaybackParameters. Only a chain to another item re-decides it
- * ([applyListeningSpeed]).
+ * PlaybackParameters. Only a chain to another book, or out of books,
+ * re-decides it ([applyListeningSpeed]); a chain to the book's next
+ * chapter keeps it.
  */
 @UnstableApi
 @AndroidEntryPoint
@@ -93,6 +96,9 @@ class OnScreenMediaSessionService : MediaSessionService() {
      *  REMAINING time — pairing it with an offset-corrected position marked
      *  items watched hours early. See PlaybackHelper.contentDurationMs. */
     private var activeItemDurationMs: Long? = null
+    /** The book the player's speed belongs to (null: not a book, so 1×).
+     *  A chain to another chapter of it leaves the speed alone. */
+    private var speedBookId: String? = null
     /** Coroutine ticking PUT /items/{id}/progress every 10 s while
      *  the service-owned player is playing. */
     private var progressJob: Job? = null
@@ -182,6 +188,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
             activeIndex = meta.index
             activeHlsOffsetMs = meta.hlsOffsetMs
             activeItemDurationMs = meta.itemDurationMs
+            // The fragment put the player at this book's speed.
+            speedBookId = AudiobookSpeed.bookIdOf(meta.itemType, meta.itemId, meta.parentId)
         }
 
         startProgressReporter(player)
@@ -227,6 +235,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         activeParentId = null
         activeIndex = null
         activeHlsOffsetMs = 0L
+        speedBookId = null
     }
 
     /** Tick PUT /items/{id}/progress every 10 s while the
@@ -290,19 +299,20 @@ class OnScreenMediaSessionService : MediaSessionService() {
         stopSelf()
     }
 
-    /** On STATE_ENDED for music tracks, walk to the next sibling
-     *  via NextSiblingResolver and start that item playing. Mirrors
-     *  the fragment-side auto-advance so navigating away mid-album
-     *  doesn't kill the chain. Episodes intentionally skip this
-     *  path on the service — the fragment side surfaces an Up Next
-     *  overlay for episodes (visual chrome we can't render in the
-     *  service notification), so silent-chain auto-advance for
-     *  episodes is fragment-only. */
+    /** On STATE_ENDED for audio, walk to the next sibling via
+     *  NextSiblingResolver and start that item playing: the album's
+     *  next track, the book's next chapter file, the series' next book.
+     *  Mirrors the fragment-side auto-advance so navigating away
+     *  mid-album or mid-book doesn't kill the chain. Episodes
+     *  intentionally skip this path on the service — the fragment side
+     *  surfaces an Up Next overlay for episodes (visual chrome we can't
+     *  render in the service notification), so silent-chain
+     *  auto-advance for episodes is fragment-only. */
     private fun installAutoAdvance(player: ExoPlayer) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
                 if (state != Player.STATE_ENDED) return
-                if (activeItemType != "track" && activeItemType != "audiobook") return
+                if (!AudioItemTypes.isAudio(activeItemType)) return
                 val itemId = activeItemId ?: return
                 val type = activeItemType ?: return
                 val parentId = activeParentId
@@ -328,6 +338,10 @@ class OnScreenMediaSessionService : MediaSessionService() {
                 val resolver = NextSiblingResolver(itemRepo)
                 scope.launch {
                     val next = resolver.resolve(itemId, type, parentId, index) ?: return@launch
+                    // Still sitting at the end of that item? A play from the
+                    // system media controls while the lookup ran restarted it;
+                    // chaining now would yank the listener away mid-replay.
+                    if (activeItemId != itemId || player.playbackState != Player.STATE_ENDED) return@launch
                     chainTo(next.id)
                 }
             }
@@ -352,9 +366,10 @@ class OnScreenMediaSessionService : MediaSessionService() {
         if (token.isEmpty()) return
 
         // Audio direct-play URL — the service-side auto-advance is
-        // music-only, and music files are uniformly direct-playable
-        // (no transcode negotiation). The fragment's PlaybackHelper
-        // would short-circuit to DirectPlay for the same input.
+        // audio-only (tracks, books, chapter files), and those are
+        // uniformly direct-playable (no transcode negotiation). The
+        // fragment's PlaybackHelper would short-circuit to DirectPlay for
+        // the same input.
         // CLEAN url on the MediaItem — this player is wrapped in our
         // MediaSession, whose legacy bridge republishes the item uri to other
         // apps. The credential goes in the vault; the player's resolving data
@@ -394,10 +409,15 @@ class OnScreenMediaSessionService : MediaSessionService() {
      * across items (it's the fragment's player, handed over at HOME / BACK,
      * sped up there or not), which is right within a book but not across
      * them: the next book in a series gets its own saved speed, and anything
-     * that isn't an audiobook plays at 1×.
+     * that isn't an audiobook plays at 1×. The book's next chapter file is
+     * the same book, so it keeps the speed as it is — no lookup that could
+     * only make it jump ([AudiobookSpeed.keepsSpeed]).
      */
     private fun applyListeningSpeed(player: ExoPlayer, itemId: String, type: String, parentId: String?) {
         val bookId = AudiobookSpeed.bookIdOf(type, itemId, parentId)
+        val sameBook = AudiobookSpeed.keepsSpeed(speedBookId, bookId)
+        speedBookId = bookId
+        if (sameBook) return
         if (bookId == null) {
             if (!AudiobookSpeed.same(player.playbackParameters.speed, AudiobookSpeed.NORMAL)) {
                 player.setPlaybackSpeed(AudiobookSpeed.NORMAL)

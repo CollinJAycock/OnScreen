@@ -2,6 +2,7 @@ package tv.onscreen.android.playback
 
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
+import io.mockk.coVerify
 import io.mockk.mockk
 import kotlinx.coroutines.test.runTest
 import org.junit.Test
@@ -177,6 +178,74 @@ class NextSiblingResolverTest {
         val next = NextSiblingResolver(repo).resolve("s2e1", "episode", "season-2", 1)
 
         assertThat(next).isNull()
+    }
+
+    // ── Multi-file audiobooks ───────────────────────────────────────────────
+    // What the fragment's Up Next and the service's background chain both
+    // play after a chapter file ends.
+
+    private fun chapter(id: String, index: Int? = null) =
+        ChildItem(id = id, title = id, type = "audiobook_chapter", index = index)
+
+    @Test
+    fun `a chapter is followed by the book's next chapter`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("book-1") } returns
+            listOf(chapter("c1", 1), chapter("c2", 2), chapter("c3", 3))
+
+        val next = NextSiblingResolver(repo).resolve("c2", "audiobook_chapter", "book-1", 2)
+
+        assertThat(next?.id).isEqualTo("c3")
+    }
+
+    @Test
+    fun `an unnumbered chapter still has a next one, by the book's listing`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("book-1") } returns
+            listOf(chapter("c1", 1), chapter("Epilogue"), chapter("Afterword"))
+
+        val resolver = NextSiblingResolver(repo)
+
+        assertThat(resolver.resolve("c1", "audiobook_chapter", "book-1", 1)?.id).isEqualTo("Epilogue")
+        // No index at all — the index guard doesn't apply to chapters.
+        assertThat(resolver.resolve("Epilogue", "audiobook_chapter", "book-1", null)?.id).isEqualTo("Afterword")
+    }
+
+    @Test
+    fun `the last chapter ends the book, never running on into the next one`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("book-1") } returns listOf(chapter("c1", 1), chapter("c2", 2))
+
+        val next = NextSiblingResolver(repo).resolve("c2", "audiobook_chapter", "book-1", 2)
+
+        assertThat(next).isNull()
+        // No cross-container walk: the series / author above the book is
+        // never consulted.
+        coVerify(exactly = 0) { repo.getItem(any()) }
+        coVerify(exactly = 1) { repo.getChildren(any()) }
+    }
+
+    @Test
+    fun `a single-file book still chains to the next book in its series`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("series-1") } returns listOf(
+            ChildItem(id = "book-1", title = "One", type = "audiobook", index = 1),
+            ChildItem(id = "book-2", title = "Two", type = "audiobook", index = 2),
+        )
+
+        val next = NextSiblingResolver(repo).resolve("book-1", "audiobook", "series-1", 1)
+
+        assertThat(next?.id).isEqualTo("book-2")
+    }
+
+    @Test
+    fun `a failed chapter listing resolves to null`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("book-1") } throws RuntimeException("offline")
+
+        assertThat(NextSiblingResolver(repo).resolve("c1", "audiobook_chapter", "book-1", 1)).isNull()
+        // An orphan chapter has no book to look in.
+        assertThat(NextSiblingResolver(repo).resolve("c1", "audiobook_chapter", null, 1)).isNull()
     }
 
     // ── Guards ──────────────────────────────────────────────────────────────
