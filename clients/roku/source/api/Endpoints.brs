@@ -90,7 +90,13 @@ end function
 ' hook, so without the per-file token a 90-minute movie used to die
 ' at the 1 h mark with HTTP 401.
 function AssetStream(serverUrl as String, fileId as String, token as String) as String
-    return serverUrl + "/media/stream/" + fileId + "?token=" + token
+    return serverUrl + AssetStreamPath(fileId, token)
+end function
+
+' The same stream URL without the origin — what the ApiCallTask probe
+' takes (it prepends the configured server itself).
+function AssetStreamPath(fileId as String, token as String) as String
+    return "/media/stream/" + fileId + "?token=" + token
 end function
 
 ' Pairing endpoints. PairCode mints a PIN + device_token for the
@@ -153,6 +159,36 @@ end function
 ' GET returns the row (or null), PUT { status } sets, DELETE clears.
 function ApiItemWatchStatus(itemId as String) as String
     return "/api/v1/items/" + itemId + "/watch-status"
+end function
+
+' ── Watch state (v2.5) ──────────────────────────────────────────────────
+' POST marks played, DELETE marks unplayed (204 either way). A season or
+' show marks every episode underneath within the caller's rating ceiling;
+' only videos, seasons and shows accept it (422 otherwise). Marks don't
+' count as plays.
+function ApiItemWatched(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/watched"
+end function
+
+' POST hides the item from every Continue Watching row until it's played
+' again (an episode dismisses its show's tile). 204, or 404 when it wasn't
+' on Continue Watching.
+function ApiItemDismissContinueWatching(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/dismiss-continue-watching"
+end function
+
+' GET on a show or season: { mode: resume|next|start|rewatch|none,
+' episode?: { id, title, season_id, season_number, episode_number,
+' view_offset_ms? } } — what the Play button starts.
+function ApiItemUpNext(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/up-next"
+end function
+
+' POST { kind, file_id? } reports a problem (201). 409 ALREADY_REPORTED for
+' a second open report of one kind; 429 TOO_MANY_OPEN_ISSUES past the
+' per-user cap.
+function ApiItemIssues(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/issues"
 end function
 
 ' ── Cross-device playback transfer (v2.2) ──────────────────────────────

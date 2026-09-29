@@ -21,6 +21,8 @@
     <script type="text/brightscript" uri="LibraryScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
 
     <children>
         <Group translation="[0,0]" width="1920" height="1080">

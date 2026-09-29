@@ -54,6 +54,7 @@ roku/
 ├── components/
 │   ├── MainScene.xml + .brs         # root scene; swaps Setup → Login → Home
 │   ├── setup/                       # first-run server URL + login
+│   ├── common/                      # ApiCallTask, menu dialog, card fields
 │   ├── browse/                      # hub rows + RowList item presenters
 │   └── playback/                    # Video-node-backed player scene
 ├── images/                          # channel art (icons, splash) — see images/README.md
@@ -87,11 +88,24 @@ npm run package
 ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
 ```
 
-**Local-only test coverage** (35 cases as of writing): `UrlEncodePath`,
-`AssetStream`/`AssetArtwork` URL contracts, `Json_Parse`/`UnwrapData`/
-`UnwrapList` envelope handling, `StringTrim` / `StringStripTrailingSlash`.
+**Local-only test coverage** (291 cases as of v2.5): `UrlEncodePath`,
+`AssetStream`/`AssetArtwork` and API path contracts, `Json_Parse`/
+`UnwrapData`/`UnwrapList` envelope handling, string utils, the playback
+decision, trickplay VTT parsing, next-sibling order, and the v2.5 watch
+logic — `ApiResult_From` (status + error envelope), admin-stop message
+parsing, up-next labels, card badges, home rows and "Report a problem".
 Anything that depends on `roUrlTransfer`, `roRegistrySection`, or
-SceneGraph nodes can only be exercised on real Roku hardware.
+SceneGraph nodes can only be exercised on real Roku hardware, so keep
+logic in `source/` and scenes thin.
+
+**HTTP threading:** `roUrlTransfer` only works off the render thread.
+Scenes should not call `Client_*` themselves: they run a fetch Task, a
+one-shot `ApiCallTask` (components/common — keeps the status code and
+error envelope), or, for a request fired on the way out of a scene,
+MainScene's `runDetachedCall`. LoginScene (sign-in, TOTP, sign-out) and
+ServerSetupScene (the connection probe) still call the client on the
+render thread and are due the same move. POST / PUT responses are read
+through `Client_RequestSync` — `PostFromString` discards the body.
 
 When the sideload succeeds the Roku launches the dev channel
 automatically. Subsequent reloads replace the running channel in
@@ -136,6 +150,14 @@ universal anyway.
 - **Playback** — PlayerScene wraps the firmware Video node;
   `ContentNode` is built from the item's stream URL with the bearer
   appended as `?token=` for the asset-route middleware.
+- **Watch state (v2.5)** — Next Up / Plan to Watch home rows, remove
+  from Continue Watching (✱ on a card), up-next Play on show / season
+  pages, mark watched / unwatched, watched / unwatched-count / progress
+  badges, Report a problem, and Admin Stop via the server's 403
+  PLAYBACK_STOPPED (no event stream on Roku). Not here: the library
+  Watch filter (no filter UI to hang it on), audiobook speed (no
+  playback-rate control on the Video / Audio node), Trakt / Last.fm
+  linking (done on the web).
 
 ## What's not done yet
 

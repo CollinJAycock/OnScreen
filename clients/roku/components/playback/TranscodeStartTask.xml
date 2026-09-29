@@ -29,10 +29,16 @@
         <field id="audioStreamIndex" type="integer" value="-1" />
         <field id="positionMs" type="integer" value="0" />
         <field id="result" type="assocArray" />
+        <!-- Set when the server refused the start because an admin
+             stopped this stream (403 PLAYBACK_STOPPED): the sentence to
+             show. "" otherwise. Written before `result`. -->
+        <field id="stopMessage" type="string" />
     </interface>
 
     <script type="text/brightscript" uri="TranscodeStartTask.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/ApiResult.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />

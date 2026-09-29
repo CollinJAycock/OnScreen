@@ -61,6 +61,9 @@ sub onTaskState()
         node.id = it.id
         node.addField("itemType", "string", false)
         node.itemType = it.type
+        ' Watched check, unwatched-episode count (shows) or resume bar,
+        ' from the listing's watch_state / leaf_count / unwatched_count.
+        CardFields_Apply(node, it, "")
         artPath = invalid
         if it.poster_path <> invalid then artPath = it.poster_path
         if artPath = invalid and it.thumb_path <> invalid then artPath = it.thumb_path

@@ -63,6 +63,36 @@ const suites = [
     sources: ['source/playback/Siblings.brs'],
     test: 'tests/Siblings_test.brs',
   },
+  {
+    name: 'Endpoints',
+    sources: ['source/api/Endpoints.brs'],
+    test: 'tests/Endpoints_test.brs',
+  },
+  {
+    name: 'ApiResult',
+    sources: ['source/util/Json.brs', 'source/api/ApiResult.brs'],
+    test: 'tests/ApiResult_test.brs',
+  },
+  {
+    name: 'PlaybackStop',
+    sources: ['source/util/Json.brs', 'source/api/ApiResult.brs', 'source/playback/PlaybackStop.brs'],
+    test: 'tests/PlaybackStop_test.brs',
+  },
+  {
+    name: 'WatchState',
+    sources: ['source/util/WatchState.brs'],
+    test: 'tests/WatchState_test.brs',
+  },
+  {
+    name: 'HubRows',
+    sources: ['source/util/HubRows.brs'],
+    test: 'tests/HubRows_test.brs',
+  },
+  {
+    name: 'ReportProblem',
+    sources: ['source/util/Json.brs', 'source/api/ApiResult.brs', 'source/util/ReportProblem.brs'],
+    test: 'tests/ReportProblem_test.brs',
+  },
 ];
 
 let totalPass = 0;

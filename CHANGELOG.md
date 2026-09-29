@@ -41,9 +41,9 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   on the next attempt.
 
 The additions below are server + web client unless marked otherwise; the
-Android apps' share is listed under "Android apps" at the end of this
-section. Tizen, webOS and Roku are unchanged apart from benefiting from
-additive server fixes.
+Android apps' and the Roku channel's shares are listed at the end of this
+section. Tizen and webOS are unchanged apart from benefiting from additive
+server fixes.
 
 Requests:
 
@@ -230,6 +230,43 @@ app's Search › Discover tab (which could request titles) was removed:
   - On a server without these routes, speed still works on the device and
     bookmarks stay hidden.
 - `request_*` notifications are never surfaced.
+
+Roku channel (no request features, as on Android):
+
+- **Roku catches up on watching** — as far as a remote allows:
+  - **Home**: Next Up and Plan to Watch rows after Continue Watching;
+    Continue Watching cards show a progress bar, and ✱ on one offers
+    **Remove from Continue Watching**.
+  - **Show and season pages**: Play is driven by up-next ("Resume S3 ·
+    E4", "Play S3 · E5", "Watch again") and the episode row opens on that
+    episode (a show's season row on its season). Seasons now open their
+    own page instead of dead-ending in the player.
+  - **Mark watched / unwatched** on movie, show and season pages ("Mark
+    all…" asks first before unwatching a whole show), and from ✱ on an
+    episode or season card.
+  - **Watched checks, unwatched-episode counts and progress bars** on
+    library grids and episode rows. No Watch filter yet: the library
+    screen has no filter or sort control to hang it on.
+  - **Report a problem** from movie, show and episode pages (kind only —
+    the note is skipped).
+  - **Admin Stop** ends playback with the admin's message. Roku has no
+    event stream, so it reads the server's 403 PLAYBACK_STOPPED: on the
+    next heartbeat, on a transcode start, or by probing the stream when a
+    direct play errors.
+  - Not on Roku: audiobook speed (neither the Video nor the Audio node has
+    a playback-rate control) and Trakt / Last.fm linking (done once on the
+    web; Roku plays count through the server).
+  - **Plumbing this needed, which was broken on hardware**: requests used
+    `roUrlTransfer.SetTimeout`, which doesn't exist (now a minimum
+    transfer rate plus a bounded wait); POST responses were read from
+    `PostFromString`, which returns the status code and discards the body
+    (token refresh, pairing and transcode start now read it);
+    pairing polled with POST a route the server serves as GET; the
+    pair-code 201 was treated as a failure; `callFunc` navigation targets
+    weren't declared on MainScene; the player sent its progress beacons
+    and session DELETE from the render thread (now Task nodes); and the
+    home header buttons and a detail page's episode row couldn't be
+    reached with the D-pad.
 
 ### Changed
 

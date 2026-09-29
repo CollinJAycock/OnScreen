@@ -32,11 +32,13 @@
 
     <script type="text/brightscript" uri="PlayerScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
-    <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
+    <!-- No Client.brs: this scene runs on the render thread, which has no
+         roUrlTransfer. Its requests go through ApiCallTask / the fetch
+         Tasks / MainScene.runDetachedCall. -->
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
-    <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Decide.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Siblings.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
 
     <children>
         <Video id="video"

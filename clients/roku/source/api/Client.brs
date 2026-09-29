@@ -49,12 +49,16 @@ function Client_BuildTransfer(path as String, auth as Boolean) as Object
     transfer.SetUrl(serverUrl + path)
     transfer.SetCertificatesFile("common:/certs/ca-bundle.crt")
     ' Bound every request so a black-holed / unreachable server can't
-    ' hang the calling thread indefinitely. The synchronous GetToString
-    ' / PostFromString paths block until this elapses; the async paths
-    ' surface a timeout roUrlEvent. 15 s is generous for the JSON API
-    ' calls that use this builder (transcode-start has its own longer
-    ' server-side budget but still returns its session JSON quickly).
-    transfer.SetTimeout(15000)
+    ' hang the calling thread indefinitely: a transfer that moves under
+    ' 1 byte/s for 15 s is aborted. roUrlTransfer has no SetTimeout (it
+    ' isn't in ifUrlTransfer / ifHttpAgent — calling it is a "member
+    ' function not found" crash on the first request); the minimum
+    ' transfer rate is the documented equivalent. Client_SendOnce also
+    ' caps its own wait (Client_RequestTimeoutMs). 15 s is generous for
+    ' the JSON API calls that use this builder (transcode-start has its
+    ' own longer server-side budget but still returns its session JSON
+    ' quickly).
+    transfer.SetMinimumTransferRate(1, 15)
     transfer.AddHeader("Accept", "application/json")
     transfer.AddHeader("Content-Type", "application/json")
     ' Declarative capability profile (docs/capability-profiles.md), mirroring the
@@ -118,22 +122,92 @@ function Client_GetSync(path as String, auth as Boolean) as Dynamic
 end function
 
 ' Synchronous POST with a JSON body. Same caveats as GetSync.
+'
+' Goes through Client_RequestSync: roUrlTransfer.PostFromString returns
+' the HTTP status as an Integer and discards the response body, so the
+' old "raw = PostFromString(...) → Json_Parse(raw)" read never had a body
+' to parse (and handed Json_Parse an Integer — a Type Mismatch). The async
+' POST + wait in Client_SendOnce is how a POST response is read. Any 2xx
+' counts: POST /auth/pair/code answers 201 Created.
 function Client_PostSync(path as String, body as Object, auth as Boolean) as Dynamic
-    transfer = Client_BuildTransfer(path, auth)
-    if transfer = invalid then return invalid
+    res = Client_RequestSync("POST", path, body, invalid, auth)
+    if res.code < 200 or res.code >= 300 then return invalid
+    return Json_UnwrapData(Json_Parse(res.raw))
+end function
 
-    raw = transfer.PostFromString(FormatJson(body))
-    code = transfer.GetResponseCode()
-    if code = HttpUnauthorized() and auth
-        if not Client_RefreshSync() then return invalid
-        ' Same single-replay rule as Client_GetSync.
-        transfer = Client_BuildTransfer(path, auth)
-        if transfer = invalid then return invalid
-        raw = transfer.PostFromString(FormatJson(body))
-        code = transfer.GetResponseCode()
+' Upper bound on one request in Client_SendOnce, on top of the transfer's
+' minimum-rate abort.
+function Client_RequestTimeoutMs() as Integer
+    return 20000
+end function
+
+' Synchronous request that keeps the status code and the response body,
+' error bodies included — for callers that must tell a 403
+' PLAYBACK_STOPPED or a 409 ALREADY_REPORTED from a network failure (the
+' GetSync / PostSync helpers collapse every failure to invalid).
+' Returns { code, raw }: code is the HTTP status, a negative curl code on a
+' network failure, or 0 when the request never completed (no server URL,
+' timed out); raw is the body ("" when none). Feed it to ApiResult_From.
+'
+' method is GET, POST, PUT or DELETE. body is sent as JSON for POST / PUT
+' (invalid → "{}"); ignored otherwise. headers (optional AA) are added on
+' top of Client_BuildTransfer's. Same 401 refresh + single replay as the
+' other *Sync helpers, and the same rule: Task threads only.
+function Client_RequestSync(method as String, path as String, body as Dynamic, headers as Dynamic, auth as Boolean) as Object
+    res = Client_SendOnce(method, path, body, headers, auth)
+    if res.code = HttpUnauthorized() and auth
+        if not Client_RefreshSync() then return res
+        ' Rebuilt inside SendOnce, so the replay carries the new bearer.
+        res = Client_SendOnce(method, path, body, headers, auth)
     end if
-    if code <> HttpOk() then return invalid
-    return Json_UnwrapData(Json_Parse(raw))
+    return res
+end function
+
+' One attempt, no refresh. Fired async on a private port and waited on,
+' because the synchronous PostFromString discards the response body; GET /
+' DELETE ride the same path so every method honours the same timeout.
+function Client_SendOnce(method as String, path as String, body as Dynamic, headers as Dynamic, auth as Boolean) as Object
+    failed = { code: 0, raw: "" }
+    transfer = Client_BuildTransfer(path, auth)
+    if transfer = invalid then return failed
+    ' Without this roUrlTransfer drops the body of any non-2xx response,
+    ' and with it the error envelope's code + message.
+    transfer.RetainBodyOnError(true)
+    if headers <> invalid and type(headers) = "roAssociativeArray"
+        for each name in headers
+            value = headers[name]
+            if value <> invalid then transfer.AddHeader(name, value)
+        end for
+    end if
+    port = CreateObject("roMessagePort")
+    transfer.SetMessagePort(port)
+    verb = UCase(method)
+    started = false
+    if verb = "POST" or verb = "PUT" or verb = "PATCH"
+        payload = "{}"
+        if body <> invalid then payload = FormatJson(body)
+        ' SetRequest turns the POST call into a PUT / PATCH.
+        if verb <> "POST" then transfer.SetRequest(verb)
+        started = transfer.AsyncPostFromString(payload)
+    else
+        if verb <> "GET" then transfer.SetRequest(verb)
+        started = transfer.AsyncGetToString()
+    end if
+    if not started then return failed
+    while true
+        msg = wait(Client_RequestTimeoutMs(), port)
+        if msg = invalid
+            transfer.AsyncCancel()
+            return failed
+        end if
+        ' GetInt() = 1 is "transfer complete" (2 would be "started").
+        if type(msg) = "roUrlEvent" and msg.GetInt() = 1
+            raw = msg.GetString()
+            if raw = invalid then raw = ""
+            return { code: msg.GetResponseCode(), raw: raw }
+        end if
+    end while
+    return failed
 end function
 
 ' Exchange the stored refresh token for a fresh token pair after a
@@ -154,10 +228,12 @@ function Client_RefreshSync() as Boolean
         return false
     end if
 
-    transfer = Client_BuildTransfer(ApiAuthRefresh(), false)
-    if transfer = invalid then return false
-    raw = transfer.PostFromString(FormatJson({ refresh_token: refresh }))
-    code = transfer.GetResponseCode()
+    ' Client_SendOnce, not PostFromString: the new token pair is in the
+    ' response body, which PostFromString discards. auth=false so the
+    ' expired bearer isn't sent alongside.
+    res = Client_SendOnce("POST", ApiAuthRefresh(), { refresh_token: refresh }, invalid, false)
+    raw = res.raw
+    code = res.code
 
     if code <> HttpOk()
         ' Concurrent-refresh race: several Tasks can hit their 401 at

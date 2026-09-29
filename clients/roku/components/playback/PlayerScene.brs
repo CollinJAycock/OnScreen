@@ -19,6 +19,21 @@
 ' Cleanup: when the scene is left (back, EOS, error), if a transcode
 ' session was started we DELETE it so the server doesn't leave the
 ' ffmpeg process running until its idle-timeout sweep.
+'
+' Every request here runs on a Task thread: progress beacons on
+' per-request ApiCallTasks, and the calls fired on the way out (the
+' final "stopped" beacon, the session DELETE) through MainScene's
+' runDetachedCall so they outlive this scene. The render thread never
+' touches roUrlTransfer.
+'
+' Admin Stop (v2.5): the channel has no event-stream subscription, so it
+' can't hear the playback.stop event. It learns from the server's
+' 403 PLAYBACK_STOPPED instead — on the next "playing" beacon (≤ 10 s),
+' on a transcode start / audio re-issue, or, when a direct-play Video
+' node errors, from a one-byte probe of the stream URL — then stops and
+' shows the admin's message (onAdminStop). A full transcode stopped by an
+' admin is only torn down server-side (no 403 window), so it ends like
+' any other playback error.
 
 sub init()
     m.video = m.top.findNode("video")
@@ -58,12 +73,22 @@ sub init()
     ' is kept live (as a deletable fallback) until the replacement
     ' session lands, then the old one is retired. See reissueAudioTrack.
     m.reissuing = false
-    ' Holds the roUrlTransfer for an in-flight session DELETE so it
-    ' isn't GC'd before the request completes (see deleteTranscodeSession).
-    m.deletePort = invalid
-    m.deleteTransfers = []
     m.item = invalid
     m.file = invalid
+
+    ' Admin stop. playbackMode is Playback_Decide's mode once playback
+    ' starts; directStreamPath is the /media/stream path the direct-play
+    ' probe re-requests. adminStopped latches once the stop message is up
+    ' so later errors / beacons don't pile on. probing guards the one
+    ' probe per error.
+    m.playbackMode = ""
+    m.directStreamPath = ""
+    m.adminStopped = false
+    m.probing = false
+    m.exitDialog = invalid
+    ' In-flight ApiCallTasks (progress beacons, the probe), held so they
+    ' aren't collected mid-request.
+    m.playerCalls = []
 
     ' Markers + Up Next state. Markers come from /items/{id}/markers
     ' on init; the active one is recomputed on every position tick.
@@ -90,12 +115,8 @@ sub init()
     ' Progress reporting (PUT /items/{id}/progress): throttled
     ' "playing" heartbeats off the position observer, plus discrete
     ' reports on pause and terminal events (EOS / back / Up Next).
-    ' Fire-and-forget via the held-transfer async pattern — see
-    ' reportProgress. The port + transfer refs live here so the GC
-    ' can't reap an in-flight request.
+    ' See reportProgress.
     m.PROGRESS_INTERVAL_MS = 10000
-    m.progressPort = invalid
-    m.progressTransfers = []
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.syncTask.observeField("state", "onSyncTaskState")
@@ -187,6 +208,7 @@ sub onItemTaskState()
         return
     end if
 
+    m.playbackMode = decision.mode
     if decision.mode = "direct"
         startDirectPlayback(serverUrl)
         return
@@ -228,7 +250,9 @@ sub startDirectPlayback(serverUrl as String)
 
     content = createObject("roSGNode", "ContentNode")
     content.title = m.item.title
-    content.url = AssetStream(serverUrl, m.file.id, streamToken)
+    ' Kept for the admin-stop probe (onVideoState "error").
+    m.directStreamPath = AssetStreamPath(m.file.id, streamToken)
+    content.url = serverUrl + m.directStreamPath
     content.streamFormat = guessStreamFormat(m.file.path)
     if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
@@ -241,6 +265,21 @@ end sub
 
 sub onTranscodeTaskState()
     if m.transcodeTask.state <> "done" then return
+    if m.adminStopped
+        ' A start (audio re-issue) that was in flight when the stop landed:
+        ' nothing will play it, so don't leave its ffmpeg running.
+        late = m.transcodeTask.result
+        if late <> invalid and late.session_id <> invalid then deleteTranscodeSession({ session_id: late.session_id, token: late.token })
+        return
+    end if
+    ' Refused because an admin stopped this stream (a restart inside the
+    ' stop window, or an audio re-issue after the stop): say so.
+    stopMsg = m.transcodeTask.stopMessage
+    if stopMsg <> invalid and stopMsg <> ""
+        m.reissuing = false
+        onAdminStop(stopMsg)
+        return
+    end if
     sess = m.transcodeTask.result
     if sess = invalid or sess.session_id = invalid
         ' Session start failed — bail rather than silently fall
@@ -288,6 +327,9 @@ end sub
 
 sub onVideoState()
     state = m.video.state
+    ' Stopped by an admin: the message is up and the player is on its
+    ' way out — the stop's own state changes mean nothing more.
+    if m.adminStopped then return
     if state = "paused"
         ' Discrete pause report — pushes the resume offset to the
         ' server immediately (a paused player is exactly when another
@@ -320,6 +362,16 @@ sub onVideoState()
         stopTranscodeSession()
         bailToHome()
     else if state = "error"
+        ' The Video node's error carries no HTTP status, so a direct play
+        ' the server refused after an admin stop looks like any broken
+        ' stream. Re-request one byte of the stream URL (same token) and
+        ' read the answer: 403 PLAYBACK_STOPPED → the admin's message;
+        ' anything else → the usual bail (onPlayerCallDone "probe").
+        if m.playbackMode = "direct" and m.directStreamPath <> "" and not m.probing
+            m.probing = true
+            startPlayerCall("GET", m.directStreamPath, invalid, { action: "probe" }, false, { Range: "bytes=0-0" })
+            return
+        end if
         stopTranscodeSession()
         bailToHome()
     end if
@@ -464,6 +516,7 @@ end sub
 ' seek (skip-marker undo, sync snap) re-anchors the throttle window
 ' instead of muting it.
 sub maybeReportProgress(posMs as Integer)
+    if m.adminStopped then return
     if m.video = invalid or m.video.state <> "playing" then return
     if m.lastReportedPositionMs >= 0 and Abs(posMs - m.lastReportedPositionMs) < m.PROGRESS_INTERVAL_MS then return
     reportProgress(posMs, "playing")
@@ -472,14 +525,15 @@ end sub
 ' PUT /items/{id}/progress with { view_offset_ms, duration_ms, state,
 ' client_name } — the same body the web client sends. state is
 ' "playing" (periodic heartbeat), "paused", or "stopped" (terminal:
-' EOS / back / Up Next accept).
+' EOS / back / Up Next accept / admin stop).
 '
-' Fire-and-forget via the held-transfer async pattern (see
-' deleteTranscodeSession): the render thread must never run the
-' synchronous client helpers, and we don't need the response body.
-' m.lastReportedPositionMs doubles as the self-loop guard the paused
-' sync fetch (onSyncTaskState) checks before snapping to a remote
-' offset.
+' "playing" / "paused" go out on an ApiCallTask this scene watches: a
+' 403 PLAYBACK_STOPPED on a "playing" beat is how an admin stop reaches
+' a player with no event stream (onPlayerCallDone). "stopped" is sent as
+' the player leaves, so it goes through MainScene's runDetachedCall and
+' survives the unmount. m.lastReportedPositionMs doubles as the
+' self-loop guard the paused sync fetch (onSyncTaskState) checks before
+' snapping to a remote offset.
 sub reportProgress(posMs as Integer, state as String)
     if m.item = invalid then return
     if m.top.itemId = invalid or m.top.itemId = "" then return
@@ -491,27 +545,88 @@ sub reportProgress(posMs as Integer, state as String)
     if m.video <> invalid and m.video.duration > 0 then durationMs = Int(m.video.duration * 1000)
     if durationMs = 0 and m.item.duration_ms <> invalid then durationMs = m.item.duration_ms
 
-    transfer = Client_BuildTransfer(ApiItemProgress(m.top.itemId), true)
-    if transfer = invalid then return
-    if m.progressPort = invalid then m.progressPort = CreateObject("roMessagePort")
-    transfer.SetMessagePort(m.progressPort)
-    transfer.SetRequest("PUT")
-    transfer.AsyncPostFromString(FormatJson({
+    body = {
         view_offset_ms: posMs
         duration_ms: durationMs
         state: state
         client_name: "Roku"
-    }))
-    ' Hold the reference so GC doesn't reap it mid-flight; cap the
-    ' backlog (reports are >= 10 s apart with a 15 s transfer timeout,
-    ' so anything beyond the last few completed long ago).
-    m.progressTransfers.push(transfer)
-    while m.progressTransfers.Count() > 4
-        m.progressTransfers.Shift()
-    end while
+    }
+    if state = "stopped"
+        getMainScene().callFunc("runDetachedCall", { method: "PUT", path: ApiItemProgress(m.top.itemId), body: body })
+    else
+        startPlayerCall("PUT", ApiItemProgress(m.top.itemId), body, { action: "progress", state: state }, true, invalid)
+    end if
 
     m.lastReportedPositionMs = posMs
     m.lastReportedState = state
+end sub
+
+' One-shot ApiCallTask owned by this scene; the result lands in
+' onPlayerCallDone.
+sub startPlayerCall(verb as String, path as String, body as Dynamic, ctx as Object, auth as Boolean, headers as Dynamic)
+    t = createObject("roSGNode", "ApiCallTask")
+    t.method = verb
+    t.path = path
+    if body <> invalid then t.body = body
+    if headers <> invalid then t.headers = headers
+    t.auth = auth
+    t.context = ctx
+    t.observeField("state", "onPlayerCallDone")
+    m.playerCalls.push(t)
+    ' Beacons are >= 10 s apart and each request is bounded, so more than
+    ' a few in flight means old ones hung; don't let the list grow.
+    while m.playerCalls.Count() > 6
+        m.playerCalls.Shift()
+    end while
+    t.control = "RUN"
+end sub
+
+sub onPlayerCallDone(evt as Object)
+    t = evt.getRoSGNode()
+    if t.state <> "done" then return
+    kept = []
+    for each p in m.playerCalls
+        if not p.isSameNode(t) then kept.push(p)
+    end for
+    m.playerCalls = kept
+
+    ctx = t.context
+    if ctx = invalid then return
+    stopMsg = PlaybackStop_FromResult(t.result)
+    if ctx.action = "progress"
+        if stopMsg <> "" then onAdminStop(stopMsg)
+    else if ctx.action = "probe"
+        m.probing = false
+        if m.adminStopped then return
+        if stopMsg <> ""
+            onAdminStop(stopMsg)
+        else
+            ' A real playback error — the pre-probe behaviour.
+            stopTranscodeSession()
+            bailToHome()
+        end if
+    end if
+end sub
+
+' ── Admin stop ─────────────────────────────────────────────────────
+
+' An admin stopped this stream from Now Playing. Stop the video, record
+' where the viewer got to (the server still accepts a "stopped" report
+' inside the stop window), tear down any session, and show the admin's
+' message; OK / Back leaves the player. Latched: the first signal wins.
+sub onAdminStop(message as String)
+    if m.adminStopped then return
+    m.adminStopped = true
+    m.syncTimer.control = "stop"
+    m.nextSibling = invalid
+    m.upNext.visible = false
+    m.skipMarker.visible = false
+    if m.trackPickerMode <> "" then closeTrackPicker()
+    posMs = Int(m.video.position * 1000)
+    if posMs > 0 then reportProgress(posMs, "stopped")
+    m.video.control = "stop"
+    stopTranscodeSession()
+    showExitDialog("Playback stopped", message)
 end sub
 
 ' ── Cross-device sync ──────────────────────────────────────────────
@@ -953,23 +1068,17 @@ sub stopTranscodeSession()
 end sub
 
 ' Fire-and-forget DELETE for a single { session_id, token } session.
-' Uses the codebase's persistent async pattern (see Client_StartAsync):
-' AsyncGetToString needs a message port AND the caller must hold the
-' transfer reference, or BrightScript GC frees the local immediately
-' and the request is silently dropped before it leaves the box. We
-' attach a persistent port and stash the transfer in m.deleteTransfers
-' so it survives long enough for the DELETE to actually go out — even
-' if the scene is being torn down right after.
+' Runs on an ApiCallTask parented to MainScene (runDetachedCall), so it
+' goes out even when this scene is being torn down right after — and off
+' the render thread, where roUrlTransfer isn't available. The session
+' token rides in the path, so no bearer.
 sub deleteTranscodeSession(sess as Object)
     if sess = invalid or sess.session_id = invalid then return
-    transfer = Client_BuildTransfer(ApiTranscodeStop(sess.session_id, sess.token), false)
-    if transfer = invalid then return
-    if m.deletePort = invalid then m.deletePort = CreateObject("roMessagePort")
-    transfer.SetMessagePort(m.deletePort)
-    transfer.SetRequest("DELETE")
-    transfer.AsyncGetToString()
-    ' Hold the reference so GC doesn't reap it mid-flight.
-    m.deleteTransfers.push(transfer)
+    getMainScene().callFunc("runDetachedCall", {
+        method: "DELETE"
+        path: ApiTranscodeStop(sess.session_id, sess.token)
+        auth: false
+    })
 end sub
 
 ' Best-effort stream-format guess from file extension. The Go
@@ -992,27 +1101,31 @@ sub bailToHome()
 end sub
 
 ' Show a one-button dialog (e.g. "Dolby Vision is not supported.") on the main
-' scene, then return to Home when the user dismisses it. This is the only
-' user-facing message path in the Roku client — every other failure bails
-' silently — so it's kept deliberately small and self-contained.
+' scene, then return to Home when the user dismisses it.
 sub showUnsupportedDialog(msg as String)
+    showExitDialog("Can't play this title", msg)
+end sub
+
+' One-button dialog that leaves the player when dismissed — the Dolby
+' Vision refusal and an admin stop. Every other failure bails silently.
+sub showExitDialog(title as String, msg as String)
     dlg = createObject("roSGNode", "Dialog")
-    dlg.title = "Can't play this title"
+    dlg.title = title
     dlg.message = msg
     dlg.buttons = ["OK"]
-    m.unsupportedDialog = dlg
+    m.exitDialog = dlg
     ' OK press fires buttonSelected; Back press fires wasClosed. Either way we
     ' tear down + go Home (the handler guards against a double bail).
-    dlg.observeField("buttonSelected", "onUnsupportedDialogClosed")
-    dlg.observeField("wasClosed", "onUnsupportedDialogClosed")
+    dlg.observeField("buttonSelected", "onExitDialogClosed")
+    dlg.observeField("wasClosed", "onExitDialogClosed")
     scene = getMainScene()
     if scene <> invalid then scene.dialog = dlg
 end sub
 
-sub onUnsupportedDialogClosed()
-    if m.unsupportedDialog = invalid then return
-    m.unsupportedDialog.close = true
-    m.unsupportedDialog = invalid
+sub onExitDialogClosed()
+    if m.exitDialog = invalid then return
+    m.exitDialog.close = true
+    m.exitDialog = invalid
     bailToHome()
 end sub
 
