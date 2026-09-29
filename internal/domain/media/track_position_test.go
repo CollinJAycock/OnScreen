@@ -2,6 +2,7 @@ package media
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -162,5 +163,24 @@ func TestMergeChildren_TrackCollisionKeysOnDisc(t *testing.T) {
 	}
 	if reparented != 1 {
 		t.Errorf("reparented = %d, want 1 (disc 2 track 1 moved over)", reparented)
+	}
+}
+
+// The repair restores the merged-away books, then marks each affected
+// author's files once; with nothing restored it marks nothing.
+func TestRepairMergedAudiobooks_MarksEachAuthorOnce(t *testing.T) {
+	svc, q := newService(t)
+	q.restoredAuthors = []string{"A", "B", "A"}
+	restored, reimport, err := svc.RepairMergedAudiobooks(context.Background(), uuid.New())
+	if err != nil || restored != 3 || reimport != 6 {
+		t.Fatalf("= %d, %d, %v; want 3 books, 6 files", restored, reimport, err)
+	}
+	if len(q.reimportAuthors) != 1 || strings.Join(q.reimportAuthors[0], ",") != "A,B" {
+		t.Errorf("re-import calls %v; want one, for A and B", q.reimportAuthors)
+	}
+
+	svc2, q2 := newService(t)
+	if restored, reimport, err := svc2.RepairMergedAudiobooks(context.Background(), uuid.New()); err != nil || restored != 0 || reimport != 0 || len(q2.reimportAuthors) != 0 {
+		t.Errorf("nothing to repair: %d, %d, %v, calls %v", restored, reimport, err, q2.reimportAuthors)
 	}
 }

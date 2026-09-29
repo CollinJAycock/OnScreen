@@ -28,6 +28,8 @@ type mockMediaService struct {
 
 	// Track calls to FindOrCreateHierarchyItem.
 	hierarchyCalls []media.CreateItemParams
+	// repairCalls counts RepairMergedAudiobooks calls.
+	repairCalls int
 	// hierarchyFind, when set, lets FindOrCreateHierarchyItem return an
 	// existing item (non-nil result) instead of always creating one.
 	hierarchyFind func(p media.CreateItemParams) *media.Item
@@ -243,6 +245,10 @@ func (m *mockMediaService) MergeCrossParentAudiobooks(_ context.Context, library
 }
 func (m *mockMediaService) PrunePhantomAudiobooks(_ context.Context, _ uuid.UUID) (int, error) {
 	return 0, nil
+}
+func (m *mockMediaService) RepairMergedAudiobooks(_ context.Context, _ uuid.UUID) (int, int64, error) {
+	m.repairCalls++
+	return 0, 0, nil
 }
 func (m *mockMediaService) PruneEmptyBookAuthors(_ context.Context, _ uuid.UUID) (int, error) {
 	return 0, nil

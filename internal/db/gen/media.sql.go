@@ -852,6 +852,37 @@ func (q *Queries) FindTopLevelItemsByTitleFlexible(ctx context.Context, arg Find
 	return items, nil
 }
 
+const forceReimportAudiobookFiles = `-- name: ForceReimportAudiobookFiles :execrows
+UPDATE media_files f
+SET scanned_at = 'epoch'
+FROM media_items i
+LEFT JOIN media_items p ON p.id = i.parent_id
+WHERE f.media_item_id = i.id
+  AND i.library_id = $1
+  AND i.deleted_at IS NULL
+  AND ((i.type = 'audiobook' AND i.original_title = ANY($2::text[]))
+    OR (i.type = 'audiobook_chapter' AND p.type = 'audiobook'
+        AND p.original_title = ANY($2::text[])))
+`
+
+type ForceReimportAudiobookFilesParams struct {
+	LibraryID uuid.UUID `json:"library_id"`
+	Authors   []string  `json:"authors"`
+}
+
+// Makes the next scan re-import, not fast-skip, every file of the live
+// audiobooks by these authors in one library, and of their chapters: the
+// books the old dedupe merged into, whose files may belong to a book
+// RestoreMergedAudiobooks just brought back. Clearing scanned_at defeats the
+// mtime fast skip; audiobook libraries never take the hash fast path.
+func (q *Queries) ForceReimportAudiobookFiles(ctx context.Context, arg ForceReimportAudiobookFilesParams) (int64, error) {
+	result, err := q.db.Exec(ctx, forceReimportAudiobookFiles, arg.LibraryID, arg.Authors)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const getArtworkContentRating = `-- name: GetArtworkContentRating :one
 SELECT COALESCE(content_rating, '')::text AS content_rating
 FROM media_items
@@ -5298,6 +5329,91 @@ func (q *Queries) RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) er
 	return err
 }
 
+const restoreMergedAudiobooks = `-- name: RestoreMergedAudiobooks :many
+WITH cutoff AS (
+    SELECT updated_at AS at FROM server_settings WHERE key = 'audiobook_merge_repair_cutoff'
+),
+victims AS (
+    SELECT b.id
+    FROM media_items b, cutoff
+    WHERE b.library_id = $1
+      AND b.type = 'audiobook'
+      AND b.deleted_at IS NOT NULL
+      AND b.deleted_at < cutoff.at
+      AND COALESCE(b.original_title, '') <> ''
+      AND NOT EXISTS (SELECT 1 FROM media_files f WHERE f.media_item_id = b.id)
+      AND NOT EXISTS (
+          SELECT 1 FROM media_items c
+          JOIN media_files f ON f.media_item_id = c.id
+          WHERE c.parent_id = b.id)
+      AND EXISTS (
+          SELECT 1 FROM media_items s
+          WHERE s.library_id = b.library_id
+            AND s.type = 'audiobook'
+            AND s.deleted_at IS NULL
+            AND s.original_title = b.original_title)
+      AND NOT EXISTS (
+          SELECT 1 FROM media_items s
+          WHERE s.library_id = b.library_id
+            AND s.type = 'audiobook'
+            AND s.deleted_at IS NULL
+            AND s.original_title = b.original_title
+            AND normalize_dedupe_title(s.title) = normalize_dedupe_title(b.title))
+),
+restored_chapters AS (
+    UPDATE media_items c
+    SET deleted_at = NULL, updated_at = NOW()
+    FROM victims v
+    WHERE c.parent_id = v.id AND c.type = 'audiobook_chapter' AND c.deleted_at IS NOT NULL
+    RETURNING c.id
+)
+UPDATE media_items b
+SET deleted_at = NULL, updated_at = NOW()
+FROM victims v
+WHERE b.id = v.id
+RETURNING b.id, COALESCE(b.original_title, '')::text AS author
+`
+
+type RestoreMergedAudiobooksRow struct {
+	ID     uuid.UUID `json:"id"`
+	Author string    `json:"author"`
+}
+
+// Undoes the old dedupe's author-name merges in one library (see migration
+// 00033): restores the audiobooks it soft-deleted as "duplicates" of another
+// book by the same author, with their soft-deleted chapters, and returns the
+// restored books' authors. A book qualifies when it
+//   - was soft-deleted before the repair cutoff (so the repair runs once, and
+//     a book deleted since, by a user or the phantom prune, is left alone),
+//   - has no file left on it or any chapter under it (the merge moved them
+//     all; a book a user deleted keeps its files), and
+//   - shares its author with a live audiobook in the library, and no live
+//     audiobook by that author has its title: a book merged into one of the
+//     same title was a real duplicate and stays merged; one whose title no
+//     longer exists anywhere was folded into a different book.
+//
+// The books' files are then re-imported (ForceReimportAudiobookFiles) so the
+// scan files each under its own book again.
+func (q *Queries) RestoreMergedAudiobooks(ctx context.Context, libraryID uuid.UUID) ([]RestoreMergedAudiobooksRow, error) {
+	rows, err := q.db.Query(ctx, restoreMergedAudiobooks, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RestoreMergedAudiobooksRow{}
+	for rows.Next() {
+		var i RestoreMergedAudiobooksRow
+		if err := rows.Scan(&i.ID, &i.Author); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const searchMediaItems = `-- name: SearchMediaItems :many
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -5577,7 +5693,7 @@ UPDATE media_items
 SET deleted_at = NOW(), updated_at = NOW()
 WHERE library_id = $1
   AND deleted_at IS NULL
-  AND type IN ('movie', 'episode', 'track', 'photo')
+  AND type IN ('movie', 'episode', 'track', 'photo', 'audiobook_chapter')
   AND NOT EXISTS (
       SELECT 1 FROM media_files
       WHERE media_files.media_item_id = media_items.id AND media_files.status = 'active'

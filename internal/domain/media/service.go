@@ -283,6 +283,12 @@ type Querier interface {
 	ListDuplicateChildItems(ctx context.Context, itemType string, parentID *uuid.UUID) ([]DuplicatePair, error)
 	ListLibraryAudiobookDuplicates(ctx context.Context, libraryID uuid.UUID) ([]DuplicatePair, error)
 	ListPhantomAudiobooks(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
+	// RestoreMergedAudiobooks restores books the old author-name dedupe
+	// merged away, returning each restored book's author.
+	RestoreMergedAudiobooks(ctx context.Context, libraryID uuid.UUID) ([]string, error)
+	// ForceReimportAudiobookFiles makes the next scan re-import the files of
+	// these authors' live audiobooks; returns how many files.
+	ForceReimportAudiobookFiles(ctx context.Context, libraryID uuid.UUID, authors []string) (int64, error)
 	ListEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
 	ListCollabArtistMerges(ctx context.Context, libraryID *uuid.UUID) ([]DuplicatePair, error)
 	ReparentMediaItem(ctx context.Context, id uuid.UUID, newParent *uuid.UUID) error
@@ -1692,6 +1698,39 @@ func (s *Service) MergeCrossParentAudiobooks(ctx context.Context, libraryID uuid
 		return res, err
 	}
 	return res, nil
+}
+
+// RepairMergedAudiobooks undoes the damage the old post-scan dedupe did in
+// one library. That dedupe compared audiobooks by original_title, which
+// holds the author, so it folded every book by one author into one survivor:
+// the others were soft-deleted and their files and chapters moved onto it.
+// This restores those books (and their chapters) and marks the affected
+// authors' files for re-import, so the scan that follows files each one
+// under its own book again; the rows left empty are cleaned up at the end of
+// that scan. Only books deleted before the repair cutoff count (migration
+// 00033), so this acts once per library. Returns the books restored and the
+// files marked. Must run before a full scan's file pass.
+func (s *Service) RepairMergedAudiobooks(ctx context.Context, libraryID uuid.UUID) (restored int, reimport int64, err error) {
+	authors, err := s.rw.RestoreMergedAudiobooks(ctx, libraryID)
+	if err != nil {
+		return 0, 0, fmt.Errorf("restore merged audiobooks: %w", err)
+	}
+	if len(authors) == 0 {
+		return 0, 0, nil
+	}
+	seen := make(map[string]struct{}, len(authors))
+	distinct := make([]string, 0, len(authors))
+	for _, a := range authors {
+		if _, dup := seen[a]; !dup {
+			seen[a] = struct{}{}
+			distinct = append(distinct, a)
+		}
+	}
+	n, err := s.rw.ForceReimportAudiobookFiles(ctx, libraryID, distinct)
+	if err != nil {
+		return len(authors), 0, fmt.Errorf("mark merged audiobook files for re-import: %w", err)
+	}
+	return len(authors), n, nil
 }
 
 // PrunePhantomAudiobooks soft-deletes audiobook rows in the library that

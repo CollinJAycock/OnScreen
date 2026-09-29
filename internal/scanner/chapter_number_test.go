@@ -3,6 +3,8 @@ package scanner
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -191,6 +193,46 @@ func TestProcessFile_UnchangedChapterGetsNumber(t *testing.T) {
 			}
 			if !samePos(chapter.Index, tc.want) {
 				t.Errorf("chapter index = %v, want %v", deref(chapter.Index), deref(tc.want))
+			}
+		})
+	}
+}
+
+// The merge repair runs before the file pass of a full audiobook scan only:
+// a directory scan wouldn't reach every file it marks for re-import, and
+// other library types never had audiobooks merged.
+func TestScan_RepairsMergedAudiobooksOnFullAudiobookScans(t *testing.T) {
+	prev := externalArtHTTPClient
+	externalArtHTTPClient = &http.Client{Transport: refusingTransport{}}
+	t.Cleanup(func() { externalArtHTTPClient = prev })
+
+	tests := []struct {
+		name    string
+		libType string
+		scoped  bool
+		want    int
+	}{
+		{"full audiobook scan", "audiobook", false, 1},
+		{"directory scan", "audiobook", true, 0},
+		{"music library", "music", false, 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			writeTaggedFLAC(t, filepath.Join(root, "Author", "Book", "01 One.flac"), "TITLE=One")
+			svc := newMockMediaService()
+			s := New(svc, nil, stubConc{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+			var err error
+			if tc.scoped {
+				_, err = s.ScanDirectory(context.Background(), uuid.New(), tc.libType, filepath.Join(root, "Author"), []string{root})
+			} else {
+				_, err = s.ScanLibrary(context.Background(), uuid.New(), tc.libType, []string{root})
+			}
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			if svc.repairCalls != tc.want {
+				t.Errorf("repair ran %d times, want %d", svc.repairCalls, tc.want)
 			}
 		})
 	}

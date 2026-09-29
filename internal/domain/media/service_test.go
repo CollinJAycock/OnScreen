@@ -15,10 +15,12 @@ import (
 // ── mock ──────────────────────────────────────────────────────────────────────
 
 type mockQuerier struct {
-	items      map[uuid.UUID]Item
-	files      map[uuid.UUID][]File // keyed by MediaItemID
-	fileByPath map[string]File
-	fileByHash map[string]File
+	restoredAuthors []string   // RestoreMergedAudiobooks' result
+	reimportAuthors [][]string // ForceReimportAudiobookFiles' calls
+	items           map[uuid.UUID]Item
+	files           map[uuid.UUID][]File // keyed by MediaItemID
+	fileByPath      map[string]File
+	fileByHash      map[string]File
 
 	searchResults        []Item
 	createItemErr        error
@@ -123,6 +125,13 @@ func (m *mockQuerier) ListEventCollectionsForLibrary(_ context.Context, _ uuid.U
 }
 func (m *mockQuerier) ListPhantomAudiobooks(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil
+}
+func (m *mockQuerier) RestoreMergedAudiobooks(_ context.Context, _ uuid.UUID) ([]string, error) {
+	return m.restoredAuthors, nil
+}
+func (m *mockQuerier) ForceReimportAudiobookFiles(_ context.Context, _ uuid.UUID, authors []string) (int64, error) {
+	m.reimportAuthors = append(m.reimportAuthors, authors)
+	return int64(3 * len(authors)), nil
 }
 func (m *mockQuerier) ListEmptyBookAuthors(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
 	return nil, nil

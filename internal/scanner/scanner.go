@@ -137,6 +137,7 @@ type MediaService interface {
 	MergeCollabArtists(ctx context.Context, libraryID *uuid.UUID) (media.DedupeResult, error)
 	MergeCrossParentAudiobooks(ctx context.Context, libraryID uuid.UUID) (media.DedupeResult, error)
 	PrunePhantomAudiobooks(ctx context.Context, libraryID uuid.UUID) (int, error)
+	RepairMergedAudiobooks(ctx context.Context, libraryID uuid.UUID) (int, int64, error)
 	PruneEmptyBookAuthors(ctx context.Context, libraryID uuid.UUID) (int, error)
 	UpsertEventCollection(ctx context.Context, libraryID uuid.UUID, name string) (uuid.UUID, error)
 	AddItemToCollection(ctx context.Context, collectionID, mediaItemID uuid.UUID) error
@@ -457,6 +458,20 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	if len(filePaths) == 0 {
 		result.Duration = time.Since(start)
 		return result, nil
+	}
+
+	// Before the file pass: put back any books the old author-name dedupe
+	// merged away and mark their authors' files for re-import, so this pass
+	// files each under its own book. Full scans only — a directory scan
+	// wouldn't reach every file it marks, and its cleanup would drop the
+	// restored books again.
+	if fullScan && libraryType == "audiobook" {
+		if restored, reimport, err := s.media.RepairMergedAudiobooks(ctx, libraryID); err != nil {
+			s.logger.WarnContext(ctx, "audiobook merge repair failed", "library_id", libraryID, "err", err)
+		} else if restored > 0 {
+			s.logger.InfoContext(ctx, "audiobook merge repair: restored books merged by the old dedupe",
+				"library_id", libraryID, "books", restored, "files_to_reimport", reimport)
+		}
 	}
 
 	// Process files concurrently using a semaphore (ADR-024).

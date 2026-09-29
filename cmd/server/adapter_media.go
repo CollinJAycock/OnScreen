@@ -316,6 +316,22 @@ func (a *mediaAdapter) ListDuplicateChildItems(ctx context.Context, itemType str
 	return out, nil
 }
 
+func (a *mediaAdapter) RestoreMergedAudiobooks(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
+	rows, err := a.q.RestoreMergedAudiobooks(ctx, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.Author
+	}
+	return out, nil
+}
+
+func (a *mediaAdapter) ForceReimportAudiobookFiles(ctx context.Context, libraryID uuid.UUID, authors []string) (int64, error) {
+	return a.q.ForceReimportAudiobookFiles(ctx, gen.ForceReimportAudiobookFilesParams{LibraryID: libraryID, Authors: authors})
+}
+
 func (a *mediaAdapter) ListLibraryAudiobookDuplicates(ctx context.Context, libraryID uuid.UUID) ([]media.DuplicatePair, error) {
 	rows, err := a.q.ListLibraryAudiobookDuplicates(ctx, libraryID)
 	if err != nil {

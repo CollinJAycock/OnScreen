@@ -296,8 +296,13 @@ app's Search › Discover tab (which could request titles) was removed:
   author, so every book by one author without distinct years counted as a
   duplicate of the others. The scan kept one, soft-deleted the rest, and
   moved their files onto it. Books are now compared by title, both under
-  one author and across authors; albums are unchanged. Books merged by
-  earlier scans stay merged until their files are re-imported.
+  one author and across authors; albums are unchanged. **Existing damage
+  is repaired automatically** by the first full scan of each audiobook
+  library after upgrading (migration 00033). That scan brings back each
+  book the old dedupe merged away, along with its chapters, and re-imports
+  that author's files so each one goes back under its own book. It runs
+  only on books merged before the upgrade, so books a user deleted, or real
+  same-title duplicates, stay as they are.
 - **Multi-file audiobooks had no chapter order.** The scanner never
   numbered a book's chapter files, so lists and queues took whatever order
   the rows sat in, which a later update could shuffle. A chapter now gets
