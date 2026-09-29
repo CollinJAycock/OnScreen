@@ -1,5 +1,7 @@
 package tv.onscreen.mobile.ui.player
 
+import tv.onscreen.mobile.data.model.Chapter
+
 /**
  * Sleep-timer modes the player offers from the bottom-sheet picker.
  *
@@ -9,6 +11,10 @@ package tv.onscreen.mobile.ui.player
  * - [EndOfTrack] is a content-aware mode: don't pause until the
  *   currently-playing track / episode finishes, then stop. Useful for
  *   "let me hear this album side then sleep".
+ * - [EndOfChapter] is the audiobook form of it: stop at the end of the
+ *   chapter being heard. A single-file book stops at its next embedded
+ *   chapter mark ([SleepTimerMath.chapterEndMs]); a multi-file book, whose
+ *   chapters are separate items, when the chapter item ends.
  *
  * Pure data — no Android imports. Tick logic + pause-trigger live in
  * the VM; this file just defines the modes + the deterministic
@@ -18,6 +24,7 @@ sealed class SleepTimer {
     data object Off : SleepTimer()
     data class Minutes(val total: Int) : SleepTimer()
     data object EndOfTrack : SleepTimer()
+    data object EndOfChapter : SleepTimer()
 }
 
 /**
@@ -33,6 +40,44 @@ data class SleepTimerState(
     val remainingMs: Long,
 )
 
+/**
+ * A running timer on its way from one now-playing screen to the next. When
+ * the background queue moves on (a multi-file book chaining to its next
+ * chapter, a skip from the lock screen), the screen re-opens on the new item
+ * with a fresh ViewModel — and the timer, which lived in the old one, was
+ * simply gone. The old screen [put]s it here for the item it is following
+ * to; the new one [take]s it. A countdown loses the time spent in between.
+ * Expires quickly, like the follow mark it travels with, so an abandoned
+ * hand-off can't arm a timer on some later, unrelated playback.
+ */
+object SleepTimerCarry {
+    private const val TTL_MS = 10_000L
+
+    private data class Carried(val itemId: String, val state: SleepTimerState, val atMs: Long)
+
+    @Volatile private var carried: Carried? = null
+
+    fun put(itemId: String, mode: SleepTimer, remainingMs: Long, nowMs: Long) {
+        carried = Carried(itemId, SleepTimerState(mode, remainingMs), nowMs)
+    }
+
+    /** The timer handed to [itemId] (a countdown with the time since the
+     *  hand-off taken off), or null. One-shot. */
+    @Synchronized
+    fun take(itemId: String, nowMs: Long): SleepTimerState? {
+        val c = carried ?: return null
+        if (c.itemId != itemId) return null
+        carried = null
+        val elapsed = (nowMs - c.atMs).coerceAtLeast(0L)
+        if (elapsed > TTL_MS) return null
+        return if (c.state.mode is SleepTimer.Minutes) {
+            c.state.copy(remainingMs = c.state.remainingMs - elapsed)
+        } else {
+            c.state
+        }
+    }
+}
+
 object SleepTimerMath {
 
     /** Five quick-pick options the player UI surfaces. Five is the
@@ -47,7 +92,51 @@ object SleepTimerMath {
     fun initialMs(mode: SleepTimer): Long = when (mode) {
         is SleepTimer.Minutes -> mode.total.toLong() * 60L * 1000L
         SleepTimer.EndOfTrack -> 0L
+        SleepTimer.EndOfChapter -> 0L
         SleepTimer.Off -> 0L
+    }
+
+    /** Whether [mode] waits for the playing item itself to end (the
+     *  STATE_ENDED path) — true for both content-aware modes, since a
+     *  multi-file book's chapter IS the item. */
+    fun endsWithItem(mode: SleepTimer?): Boolean =
+        mode == SleepTimer.EndOfTrack || mode == SleepTimer.EndOfChapter
+
+    /**
+     * Where "end of chapter" falls for a single-file book playing at
+     * [positionMs] (content time): the start of the next embedded chapter
+     * after it — or, in the last chapter, that chapter's end when it stops
+     * short of the file's. Null when there's no later chapter boundary: the
+     * chapter runs to the end of the item, and the timer stops there (a
+     * multi-file book's chapters always do; so does a file with no chapter
+     * marks).
+     *
+     * Strictly after [positionMs], so arming the timer a moment after a
+     * chapter starts (or right after jumping to one) waits for THAT
+     * chapter's end, not the one just crossed.
+     */
+    fun chapterEndMs(chapters: List<Chapter>, positionMs: Long): Long? {
+        if (chapters.isEmpty()) return null
+        val nextStart = chapters.asSequence()
+            .map { it.start_ms }
+            .filter { it > positionMs }
+            .minOrNull()
+        if (nextStart != null) return nextStart
+        // Past the last chapter's start: its own end, if it ends before the
+        // file does (the item's end would otherwise come first anyway).
+        val lastEnd = chapters.maxOf { it.end_ms }
+        return lastEnd.takeIf { it > positionMs }
+    }
+
+    /** How long to wait before looking again, heading for [targetMs] from
+     *  [positionMs] at [speed]: the wall-clock time left, capped to a second
+     *  (so a seek is noticed quickly) and floored so a stalled player isn't
+     *  polled in a tight loop. */
+    fun nextCheckDelayMs(targetMs: Long?, positionMs: Long, speed: Float): Long {
+        if (targetMs == null) return 1_000L
+        val safeSpeed = if (speed.isFinite() && speed > 0f) speed else 1f
+        val wallMs = ((targetMs - positionMs) / safeSpeed).toLong()
+        return wallMs.coerceIn(50L, 1_000L)
     }
 
     /** Given a remaining-ms value, format it as `MM:SS`. Negative

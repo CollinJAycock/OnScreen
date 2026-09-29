@@ -179,6 +179,22 @@ interface OnScreenApi {
         @Body body: CreateIssueBody,
     ): ApiResponse<MediaIssue>
 
+    // ── Audiobook listening speed (v2.5) ────────────────────────────────────
+    // internal/api/v1/audiobook.go. {id} is a book or one of its chapters
+    // (the speed is the book's); 422 for anything else, 404 for an item out
+    // of reach — and on a server that predates the route. The server also
+    // keeps audiobook bookmarks; the TV client doesn't surface those.
+
+    @GET("api/v1/items/{id}/playback-rate")
+    suspend fun getPlaybackRate(@Path("id") itemId: String): ApiResponse<PlaybackRate>
+
+    /** 204 No Content. Rate 0.5 – 3.0. */
+    @PUT("api/v1/items/{id}/playback-rate")
+    suspend fun setPlaybackRate(
+        @Path("id") itemId: String,
+        @Body body: PlaybackRateRequest,
+    )
+
     // ── Transcode ───────────────────────────────────────────────────────────
 
     @POST("api/v1/items/{id}/transcode")

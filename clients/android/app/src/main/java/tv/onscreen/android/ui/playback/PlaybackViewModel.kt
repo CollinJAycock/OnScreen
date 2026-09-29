@@ -16,10 +16,12 @@ import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.apiError
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.data.repository.AudiobookRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
+import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.StreamTokenVault
 import javax.inject.Inject
 
@@ -103,6 +105,10 @@ data class PlaybackUiState(
      *  if none exists, subtitles stay off. Mirrors the web client's
      *  forcedOnly arg to pickPreferredSubtitle. */
     val forcedSubtitlesOnly: Boolean = false,
+    /** Audiobooks: the book's listening speed once the lookup returns (null
+     *  for anything else, and until then). The fragment applies it to the
+     *  player; the player carries it into the background service. */
+    val listeningRate: Float? = null,
     val error: String? = null,
 )
 
@@ -113,6 +119,7 @@ class PlaybackViewModel @Inject constructor(
     private val preferencesRepo: PreferencesRepository,
     private val watchLimitRepo: WatchLimitRepository,
     private val serverPrefs: ServerPrefs,
+    private val audiobooks: AudiobookRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
@@ -292,6 +299,9 @@ class PlaybackViewModel @Inject constructor(
                     forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
                 )
 
+                // Audiobooks: the book's saved listening speed.
+                loadListeningSpeed(item)
+
                 // Auto-advance support: episodes within a season,
                 // tracks within an album. Both use the same parent +
                 // index relationship; PlaybackFragment uses the
@@ -334,6 +344,29 @@ class PlaybackViewModel @Inject constructor(
      *  swallow failures — except this one, which must end playback. */
     private fun adminStopSentinel(e: Exception): String? =
         playbackErrorMessage(e)?.takeIf { PlaybackStop.isSentinel(it) }
+
+    /** Look up the speed of the book [item] belongs to. Nothing for anything
+     *  that isn't an audiobook — it plays at 1×. A failed lookup (or a
+     *  server without the route) leaves the book at 1×, still adjustable. */
+    private fun loadListeningSpeed(item: ItemDetail) {
+        val bookId = AudiobookSpeed.bookIdOf(item.type, item.id, item.parent_id) ?: return
+        viewModelScope.launch {
+            val rate = audiobooks.rate(item.id, bookId) ?: AudiobookSpeed.NORMAL
+            if (_uiState.value.item?.id != item.id) return@launch
+            _uiState.value = _uiState.value.copy(listeningRate = rate)
+        }
+    }
+
+    /** The viewer picked a speed (the fragment has already applied it to the
+     *  player): record it, and save it for the book — fire-and-forget, so a
+     *  failed save still leaves it in effect on this device. */
+    fun setListeningRate(rate: Float) {
+        val item = _uiState.value.item ?: return
+        val bookId = AudiobookSpeed.bookIdOf(item.type, item.id, item.parent_id) ?: return
+        val clamped = AudiobookSpeed.clamp(rate)
+        _uiState.value = _uiState.value.copy(listeningRate = clamped)
+        audiobooks.saveRate(item.id, bookId, clamped)
+    }
 
     private suspend fun loadNextSibling(parentId: String, currentIndex: Int, type: String) {
         // Same resolver the MediaSessionService uses on its own

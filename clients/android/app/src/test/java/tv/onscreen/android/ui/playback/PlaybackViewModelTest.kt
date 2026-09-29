@@ -23,6 +23,7 @@ import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.model.TranscodeSession
 import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.model.WatchLimitData
+import tv.onscreen.android.data.repository.AudiobookRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
@@ -136,13 +137,113 @@ class PlaybackViewModelTest {
         files = listOf(file),
     )
 
+    /** Audiobook repo that knows no speed (the lookup for a book answers
+     *  null); the listening-speed tests below wire their own. */
+    private fun audiobooks(): AudiobookRepository {
+        val repo = mockk<AudiobookRepository>(relaxed = true)
+        coEvery { repo.rate(any(), any()) } returns null
+        return repo
+    }
+
+    private fun audioFile() = ItemFile(
+        id = "af",
+        stream_url = "/media/files/af.m4b",
+        container = "m4b",
+        audio_codec = "aac",
+    )
+
+    @Test
+    fun `an audiobook starts at its book's saved speed`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("book-1") } returns ItemDetail(
+            id = "book-1", library_id = "lib", title = "Book", type = "audiobook",
+            files = listOf(audioFile()),
+        )
+        val books = audiobooks()
+        coEvery { books.rate("book-1", "book-1") } returns 1.5f
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), books)
+        vm.prepare("book-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.listeningRate).isEqualTo(1.5f)
+    }
+
+    @Test
+    fun `a chapter file asks for its book's speed`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("ch-2") } returns ItemDetail(
+            id = "ch-2", library_id = "lib", title = "Two", type = "audiobook_chapter",
+            parent_id = "book-1", files = listOf(audioFile()),
+        )
+        val books = audiobooks()
+        coEvery { books.rate("ch-2", "book-1") } returns 2.0f
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), books)
+        vm.prepare("ch-2", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.listeningRate).isEqualTo(2.0f)
+    }
+
+    @Test
+    fun `an unknown speed plays a book at 1x`() = runTest(dispatcher) {
+        // Lookup failed, or a server without the route: still a book, so the
+        // speed control shows — at 1×.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("book-1") } returns ItemDetail(
+            id = "book-1", library_id = "lib", title = "Book", type = "audiobook",
+            files = listOf(audioFile()),
+        )
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("book-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.listeningRate).isEqualTo(1.0f)
+    }
+
+    @Test
+    fun `music and video never look up a speed`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        val books = audiobooks()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), books)
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+        vm.setListeningRate(2.0f)
+
+        assertThat(vm.uiState.value.listeningRate).isNull()
+        coVerify(exactly = 0) { books.rate(any(), any()) }
+        io.mockk.verify(exactly = 0) { books.saveRate(any(), any(), any()) }
+    }
+
+    @Test
+    fun `picking a speed saves it for the book, clamped`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("ch-2") } returns ItemDetail(
+            id = "ch-2", library_id = "lib", title = "Two", type = "audiobook_chapter",
+            parent_id = "book-1", files = listOf(audioFile()),
+        )
+        val books = audiobooks()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), books)
+        vm.prepare("ch-2", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+        vm.setListeningRate(9f)
+
+        assertThat(vm.uiState.value.listeningRate).isEqualTo(3.0f)
+        io.mockk.verify { books.saveRate("ch-2", "book-1", 3.0f) }
+    }
+
     @Test
     fun `direct play movie produces DirectPlay source with start position`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", startMs = 12_000L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -179,7 +280,7 @@ class PlaybackViewModelTest {
             playlist_url = "/transcode/sess-1.m3u8",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", startMs = 30_000L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -198,7 +299,7 @@ class PlaybackViewModelTest {
         coEvery { itemRepo.getItem("movie-1") } returns
             movieDetail(directPlayFile().copy(stream_token = "st-24h"))
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -221,7 +322,7 @@ class PlaybackViewModelTest {
         val sp = mockk<tv.onscreen.android.data.prefs.ServerPrefs>(relaxed = true)
         coEvery { sp.getAssetToken() } returns "as-24h"
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), sp)
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), sp, audiobooks())
         vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -251,7 +352,7 @@ class PlaybackViewModelTest {
             playlist_url = "/api/v1/transcode/sessions/sess-v/playlist.m3u8?token=sess-tok",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -267,7 +368,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile()).copy(files = emptyList())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
         advanceUntilIdle()
 
@@ -282,7 +383,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem(any()) } throws RuntimeException("api 500")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -300,7 +401,7 @@ class PlaybackViewModelTest {
             ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("ep-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -320,7 +421,7 @@ class PlaybackViewModelTest {
             ChildItem(id = "ep-3", title = "E3", type = "episode", index = 3),
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("ep-3", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -333,7 +434,7 @@ class PlaybackViewModelTest {
         val transcodeRepo = transcodeRepoMock()
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -348,7 +449,7 @@ class PlaybackViewModelTest {
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } throws RuntimeException("offline")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("ep-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -362,7 +463,7 @@ class PlaybackViewModelTest {
     fun `stopActiveTranscode is a no-op without an active session`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = transcodeRepoMock(relaxed = true)
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
 
         vm.stopActiveTranscode()
         advanceUntilIdle()
@@ -383,7 +484,7 @@ class PlaybackViewModelTest {
             token = "tok-9",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -413,7 +514,7 @@ class PlaybackViewModelTest {
             playlist_url = "/transcode/fallback.m3u8",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
         advanceUntilIdle()
         // Sanity: a browser-compatible file starts as direct play.
@@ -457,7 +558,7 @@ class PlaybackViewModelTest {
             playlist_url = "/p.m3u8",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -486,7 +587,7 @@ class PlaybackViewModelTest {
             playlist_url = "/transcode/sess-1.m3u8",
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
         // The initial transcode start (1 call). directPlayContext is null on
@@ -506,7 +607,7 @@ class PlaybackViewModelTest {
         coEvery { transcodeRepo.decide(any(), any()) } returns "unsupported"
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -542,7 +643,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -594,7 +695,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -623,7 +724,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(session_id = "s1", playlist_url = "/p.m3u8", token = "t1", start_offset_sec = 60.0)
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", startMs = 60_000L, serverUrl = "http://srv")
         advanceUntilIdle()
         assertThat(vm.hlsOffsetMs).isEqualTo(60_000L)
@@ -657,7 +758,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(session_id = "sess-live", playlist_url = "/p.m3u8", token = "tok-live")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
         val original = vm.uiState.value.source
@@ -685,7 +786,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(session_id = "sess-old", playlist_url = "/old.m3u8", token = "tok-old")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -725,7 +826,7 @@ class PlaybackViewModelTest {
         )
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -756,7 +857,7 @@ class PlaybackViewModelTest {
             ),
         )
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -780,7 +881,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(session_id = "sess-1", playlist_url = "/p.m3u8", token = "tok-1")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
         val sourceBefore = vm.uiState.value.source
@@ -815,7 +916,7 @@ class PlaybackViewModelTest {
         coEvery { itemRepo.getItem("movie-1") } returns
             movieDetail(directPlayFile().copy(hdr_type = "dolby_vision"))
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -844,7 +945,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } throws stopped403()
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
 
@@ -865,7 +966,7 @@ class PlaybackViewModelTest {
                 transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
             } returns TranscodeSession(session_id = "sess-live", playlist_url = "/p.m3u8", token = "tok-live")
 
-            val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+            val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
             vm.prepare("movie-1", 0L, "http://srv")
             advanceUntilIdle()
             assertThat(vm.activeSessionId).isEqualTo("sess-live")
@@ -913,7 +1014,7 @@ class PlaybackViewModelTest {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
         } returns TranscodeSession(session_id = "sess-live", playlist_url = "/live.m3u8", token = "tok-live")
 
-        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
         vm.prepare("movie-1", 0L, "http://srv")
         advanceUntilIdle()
         val original = vm.uiState.value.source

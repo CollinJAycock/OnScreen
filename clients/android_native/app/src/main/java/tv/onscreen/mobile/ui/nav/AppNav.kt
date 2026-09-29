@@ -244,6 +244,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 itemId = entry.arguments!!.getString("id")!!,
                 onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
                 onPlayFromStart = { id -> nav.navigateDebounced(Routes.player(id, fromStart = true)) },
+                onPlayAt = { id, ms -> nav.navigateDebounced(Routes.player(id, startMs = ms)) },
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onOpenBook = { id -> nav.navigateDebounced(Routes.book(id)) },
                 // Redirect destinations for photo / book_author /
@@ -322,11 +323,16 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                     type = NavType.BoolType
                     defaultValue = false
                 },
+                navArgument("startMs") {
+                    type = NavType.LongType
+                    defaultValue = -1L
+                },
             ),
         ) { entry ->
             PlayerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
                 fromStart = entry.arguments!!.getBoolean("fromStart"),
+                startMs = entry.arguments!!.getLong("startMs").takeIf { it >= 0 },
                 onClose = { nav.popBackStack() },
                 onNext = { nextId ->
                     // Replace current player route with the next
