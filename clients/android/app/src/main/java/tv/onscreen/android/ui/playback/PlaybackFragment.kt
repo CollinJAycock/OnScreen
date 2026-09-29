@@ -370,6 +370,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // entirely — the reclaimed-from-service player is already playing
                 // this exact source — but still re-installs the fragment-side
                 // progress tracker.
+                // An audio item plays with music attributes from its first
+                // frame, the ones the background service uses: set only there,
+                // they changed on the live player at BACK / HOME, rebuilding
+                // the audio output (a stall of up to a second or so). Same
+                // attributes again are a no-op.
+                if (AudioItemTypes.isAudio(state.item?.type)) {
+                    player?.setAudioAttributes(AudioItemTypes.MUSIC_ATTRIBUTES, /* handleAudioFocus= */ true)
+                }
                 val sourceChanged = source !== currentSource
                 currentSource = source
                 // A freshly-downloaded external subtitle updates
@@ -874,6 +882,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun initPlayer() {
+        // A fragment restored from the back stack (BACK from the item it had
+        // moved on to) plays its item again: it is neither moving on nor
+        // finished any more. Left set, these kept its audio from being handed
+        // to the background service on HOME / BACK.
+        navigatedToNext = false
+        playbackEnded = false
         // Re-entry handoff: if the user backed out of this same item
         // while music was playing, the previous fragment instance
         // parked the player in AudioHandoff and the
@@ -888,20 +902,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         if (parked == null && tv.onscreen.android.playback.AudioHandoff.peek() != null) {
             // Something is parked, but for a DIFFERENT item — the user
             // started new content while a track was playing in the service.
-            // Building a fresh player without stopping the service left two
-            // ExoPlayers decoding to the speakers at once: the new one never
-            // requests audio focus (Media3 only wires that up on the service
-            // side), so the old one is never told to duck or pause. Stopping
-            // the service releases the parked player via its onDestroy, which
-            // sees the handoff slot still pointing at it.
-            try {
-                requireContext().applicationContext.stopService(
-                    android.content.Intent(
-                        requireContext(),
-                        tv.onscreen.android.playback.OnScreenMediaSessionService::class.java,
-                    ),
-                )
-            } catch (_: Exception) { }
+            // Building a fresh player without stopping the old one left two
+            // ExoPlayers decoding to the speakers at once. Release the parked
+            // player here (final position reported, server session ended) and
+            // stop the service: the service may not have started yet (a park
+            // starts it a moment later), so stopping it alone isn't enough.
+            tv.onscreen.android.playback.AudioHandoff.stopAll(requireContext().applicationContext)
         }
         val exo = parked ?: buildExoPlayer()
         if (parked != null) {
@@ -2160,7 +2166,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // fragment is genuinely torn down. Skipped when the track just
         // ended — createPlayerListener's EOS chain owns that transition
         // and onDestroyView's existing path handles the parked player.
-        if (!parkedToService && !playbackEnded && handOffAudioPlayerToService()) {
+        // Not when moving on to the next item (MEDIA_NEXT, Play Now): that
+        // player is done — goToNextEpisode already reported it stopped — and
+        // parking it only for the next fragment to release it again sent a
+        // second 'stopped' for it.
+        if (!parkedToService && !playbackEnded && !navigatedToNext && handOffAudioPlayerToService()) {
             parkedToService = true
             // The service drives progress reporting from here; stop the
             // fragment-side ticker without emitting a spurious "stopped"
@@ -2228,7 +2238,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // of an album ended, the fragment popped, and the service
         // adopted a dead player — leaked instance, phantom "playing"
         // notification, endless heartbeat against a finished item.
-        val handedOff = !playbackEnded && handOffAudioPlayerToService()
+        val handedOff = !playbackEnded && !navigatedToNext && handOffAudioPlayerToService()
         if (!handedOff) {
             player?.release()
         }
@@ -2257,7 +2267,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // The server refused a 'playing' heartbeat (403): watch cap / allowed
         // hours, or the item left this profile's reach mid-session.
         tracker.onBlocked = { sentinel -> stopForRefusedPlayback(sentinel) }
-        tracker.start(itemId, viewModel.hlsOffsetMs)
+        // Bound to the item now; the 10 s heartbeat starts when the player
+        // actually plays (onIsPlayingChanged). Starting it here reported
+        // "playing" at position 0 while a session was still buffering its
+        // first segment, sometimes for playback that never began. A player
+        // taken back from the background service is already playing.
+        tracker.bind(itemId, viewModel.hlsOffsetMs)
+        if (player?.isPlaying == true) tracker.start(itemId, viewModel.hlsOffsetMs)
         progressTracker = tracker
     }
 
@@ -2352,8 +2368,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
         val reclaimed = tv.onscreen.android.playback.AudioHandoff.take(launchId) ?: run {
             // Nothing parked for this track — the service released the
-            // player (queue ended / notification dismissed). Nothing to
-            // rebind.
+            // player (queue ended, pause window passed, the system stopped
+            // it). Drop our reference to it too: this fragment still held
+            // the released player, and its teardown parked it again, so
+            // replaying the track took back a dead player and landed on Home.
+            playerListener = null
+            player = null
             return
         }
         try {
@@ -2419,8 +2439,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // The service reporter needs this to absolutise duration the
                 // same way we do — a resumed HLS player only knows its
                 // REMAINING time. See AudioHandoff.Metadata.itemDurationMs.
-                itemDurationMs = item?.duration_ms,
+                // Chapters and books carry their length on the file, as
+                // contentDurationMs() reads it.
+                itemDurationMs = item?.duration_ms ?: item?.files?.firstOrNull()?.duration_ms,
                 session = stream,
+                nowPlaying = viewModel.uiState.value.nowPlaying
+                    ?: item?.let { tv.onscreen.android.playback.NowPlaying.of(it) },
             )
             // Detach the fragment-owned listener BEFORE parking. Once the
             // service owns the player, our `onPlaybackStateChanged` /
@@ -2431,18 +2455,17 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // service-owned phase of playback.
             playerListener?.let { exo.removeListener(it) }
             playerListener = null
-            tv.onscreen.android.playback.AudioHandoff.park(exo, meta)
+            val gen = tv.onscreen.android.playback.AudioHandoff.park(exo, meta)
             // Started service so it survives the activity going away.
             // The service reads from AudioHandoff on its next attach()
             // and binds the parked player to a Media3 MediaSession,
             // which surfaces play/pause/skip on the system rail and
-            // keeps the foreground notification alive.
-            ctx.startService(
-                android.content.Intent(
-                    ctx,
-                    tv.onscreen.android.playback.OnScreenMediaSessionService::class.java,
-                ),
-            )
+            // keeps the foreground notification alive. Started a moment
+            // later, and only if nothing took the player back first: a
+            // fragment replaced by one for the same item reclaims it
+            // within milliseconds, and starting and stopping the service
+            // in that window crashed the app (see startServiceWhenSettled).
+            tv.onscreen.android.playback.AudioHandoff.startServiceWhenSettled(ctx, gen)
             true
         } catch (_: Exception) {
             tv.onscreen.android.playback.AudioHandoff.clear()

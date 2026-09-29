@@ -24,4 +24,16 @@ object AudioItemTypes {
         type == TRACK || type == AudiobookSpeed.AUDIOBOOK || type == AudiobookSpeed.CHAPTER
 
     const val TRACK = "track"
+
+    /** How an audio item's player declares its output, from its first
+     *  frame. The background service needs music attributes; set there
+     *  only, they changed on the live player at every BACK / HOME, which
+     *  rebuilt the audio output and briefly stalled playback. With the
+     *  fragment using the same attributes, the service's call is a no-op.
+     *  Video keeps the fragment's movie attributes. */
+    val MUSIC_ATTRIBUTES: androidx.media3.common.AudioAttributes =
+        androidx.media3.common.AudioAttributes.Builder()
+            .setUsage(androidx.media3.common.C.USAGE_MEDIA)
+            .setContentType(androidx.media3.common.C.AUDIO_CONTENT_TYPE_MUSIC)
+            .build()
 }

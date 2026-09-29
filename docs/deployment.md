@@ -583,6 +583,7 @@ at the v2.2.0 cut — the table below matches `internal/db/migrations/`):
 | `00031_scrobble_lastfm_trakt.sql` | Per-user Last.fm and Trakt scrobbling credentials |
 | `00032_audiobook_listening.sql` | Per-user audiobook listening speed and bookmarks |
 | `00033_audiobook_merge_repair.sql` | Cutoff for repairing audiobooks the old dedupe merged (the next full audiobook scan re-imports the affected authors' files) |
+| `00034_renumber_zero_led_chapters.sql` | Clears the chapter numbers of audiobooks with a zero-led chapter file ("00 - Prologue"), so the next scan renumbers them with the prologue first |
 
 `00023` backfills `watch_progress` from the `watch_events` history still
 inside the retention window; on a large install it takes longer than the

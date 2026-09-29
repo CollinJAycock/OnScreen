@@ -1,6 +1,13 @@
 package tv.onscreen.android.playback
 
+import android.content.Context
+import android.content.Intent
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
+import tv.onscreen.android.ui.playback.PlaybackHelper
 
 /**
  * Process-wide handoff slot for an ExoPlayer that's transitioning
@@ -9,14 +16,19 @@ import androidx.media3.exoplayer.ExoPlayer
  * Why a singleton rather than a proper bound-service binder: Media3's
  * MediaSessionService only exposes a SessionToken-based MediaController
  * connection, not the raw player. To hand a fragment-built player to
- * the service we need a side channel, and a tightly-scoped object
- * with three methods is cheaper than threading the ExoPlayer through
- * Hilt as a Singleton (which would force every PlaybackFragment to
- * share one player instance even when there's no audio in flight).
+ * the service we need a side channel, and a tightly-scoped object is
+ * cheaper than threading the ExoPlayer through Hilt as a Singleton
+ * (which would force every PlaybackFragment to share one player
+ * instance even when there's no audio in flight).
  *
  * The slot holds zero or one player. Parking a second player while
  * one is already parked releases the old one — the user who starts
  * a fresh track expects the previous one to stop, not pile up.
+ *
+ * Every park gets a new [generation]. The service records the one it
+ * attached, so it can tell its own player from the same player parked
+ * again since (taken back by a fragment and handed over anew), which a
+ * new start of the service will pick up instead.
  */
 object AudioHandoff {
 
@@ -41,10 +53,23 @@ object AudioHandoff {
          *  or remuxed track), or null on direct play. It travels with the
          *  player: see [StreamSession]. */
         val session: StreamSession? = null,
+        /** What the background media session names as playing. */
+        val nowPlaying: NowPlaying? = null,
     )
+
+    /** How long a park waits before starting the service. A fragment
+     *  replaced by another for the same item takes the player back within
+     *  a few hundred milliseconds; starting and stopping the service inside
+     *  that window crashed the app (see [startServiceWhenSettled]). */
+    const val SERVICE_START_DELAY_MS = 1_000L
+
+    private const val TAG = "AudioHandoff"
 
     private var parked: ExoPlayer? = null
     private var parkedMeta: Metadata? = null
+    private var generation = 0L
+
+    private val mainHandler by lazy { Handler(Looper.getMainLooper()) }
 
     /** Ends the server session of a player released here. OnScreenApp sets
      *  it at startup to the transcode repository's detached stop, which
@@ -53,22 +78,63 @@ object AudioHandoff {
     @Volatile
     var sessionEnder: ((StreamSession) -> Unit)? = null
 
+    /** Reports the final position of a player released here, as
+     *  (item, content position ms, content duration ms). OnScreenApp sets
+     *  it at startup to a detached 'stopped' progress report. Unset, the
+     *  last heartbeat (at most 10 s old) stands. */
+    @Volatile
+    var releaseReporter: ((Metadata, Long, Long) -> Unit)? = null
+
     private fun end(session: StreamSession?) {
         session?.let { s -> sessionEnder?.invoke(s) }
     }
 
-    /** Park a player for pickup by the MediaSessionService. A different
-     *  player still parked is released, and its server session ended. */
-    @Synchronized
-    fun park(player: ExoPlayer, meta: Metadata) {
-        val evicted = parked?.takeIf { it !== player }
-        if (evicted != null) {
-            evicted.release()
-            end(parkedMeta?.session)
+    /** Release a player leaving the slot for good: report where it got to,
+     *  release it, and end its server session. Main thread. */
+    private fun releaseOut(player: ExoPlayer, meta: Metadata?) {
+        if (meta != null) {
+            runCatching {
+                if (player.playbackState != Player.STATE_ENDED) {
+                    val pos = player.currentPosition + meta.hlsOffsetMs
+                    val dur = PlaybackHelper.contentDurationMs(meta.itemDurationMs, player.duration, meta.hlsOffsetMs)
+                    if (pos > 0L && dur > 0L) releaseReporter?.invoke(meta, pos.coerceAtMost(dur), dur)
+                }
+            }
         }
+        runCatching {
+            player.stop()
+            player.release()
+        }
+        end(meta?.session)
+    }
+
+    /** Park a player for pickup by the MediaSessionService and return this
+     *  park's generation. A different player still parked is released,
+     *  with its final position reported and its server session ended. */
+    @Synchronized
+    fun park(player: ExoPlayer, meta: Metadata): Long {
+        val evicted = parked?.takeIf { it !== player }
+        if (evicted != null) releaseOut(evicted, parkedMeta)
         parked = player
         parkedMeta = meta
+        generation++
+        return generation
     }
+
+    /** The generation of the latest park. */
+    @Synchronized
+    fun generation(): Long = generation
+
+    /** Whether the park that returned [gen] still holds the slot: nothing
+     *  took its player back and nothing was parked since. */
+    @Synchronized
+    fun isParked(gen: Long): Boolean = parked != null && generation == gen
+
+    /** Whether [player], attached from the park that returned [gen], still
+     *  belongs to whoever attached it: the slot holds that very park. False
+     *  once a fragment took the player back, or parked it again since. */
+    @Synchronized
+    fun owns(player: ExoPlayer, gen: Long): Boolean = parked === player && generation == gen
 
     /** Take the parked player out of the slot. Returns null if none
      *  is currently parked, or if [forItemId] doesn't match — the
@@ -115,31 +181,68 @@ object AudioHandoff {
         parkedMeta = null
     }
 
+    /**
+     * Start the background service for the park that returned [gen], a
+     * moment from now and only if that park still holds the slot.
+     *
+     * A fragment replaced by another for the same item (a deep link to the
+     * item on screen, a Watch Next tile) parks the player and has it taken
+     * back a few hundred milliseconds later. Starting the service there
+     * made Media3 schedule its move to the foreground; stopping the service
+     * before that ran left Media3 to restart it in "must go foreground"
+     * mode with nobody to do so, and Android killed the app ten seconds
+     * later. The player keeps playing through the delay without a service.
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun startServiceWhenSettled(context: Context, gen: Long) {
+        val app = context.applicationContext
+        mainHandler.postDelayed({
+            if (!isParked(gen)) return@postDelayed
+            try {
+                app.startService(Intent(app, OnScreenMediaSessionService::class.java))
+            } catch (e: Exception) {
+                // Android refused the start (background start limits): nothing
+                // can keep this player going in the background, so let it go
+                // rather than leave it playing with no session or heartbeat.
+                Log.w(TAG, "background service start refused; releasing the parked player", e)
+                releaseIfParked(gen)
+            }
+        }, SERVICE_START_DELAY_MS)
+    }
+
+    /** Release the player of the park that returned [gen], if it still
+     *  holds the slot. Main thread. */
+    @Synchronized
+    fun releaseIfParked(gen: Long) {
+        if (!isParked(gen)) return
+        val p = parked ?: return
+        releaseOut(p, parkedMeta)
+        parked = null
+        parkedMeta = null
+    }
+
     /** Stop and release any parked background audio and stop the session
      *  service. Used on every sign-out (voluntary and involuntary): a parked
      *  player otherwise keeps streaming on the signed-out user's already-issued
-     *  stream token, and its MediaSession keeps advertising their track.
-     *  Release the parked player first so the service's own teardown has
-     *  nothing left to hand back, then stop the service. Idempotent.
-     *  Must be called on the main thread (ExoPlayer is main-thread bound). */
+     *  stream token, and its MediaSession keeps advertising their track. Also
+     *  used when a new item starts while another is parked, whether or not
+     *  the service has started yet. Release the parked player first so the
+     *  service's own teardown has nothing left to hand back, then stop the
+     *  service. Idempotent. Must be called on the main thread (ExoPlayer is
+     *  main-thread bound). */
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
-    fun stopAll(context: android.content.Context) {
-        peek()?.let { player ->
-            runCatching {
-                player.stop()
-                player.release()
-            }
+    fun stopAll(context: Context) {
+        synchronized(this) {
+            // Released here, so its session ends here: the service's onDestroy
+            // finds the slot empty and takes the player to be someone else's.
+            // After an involuntary sign-out the stop is refused (it needs the
+            // user's credentials) and the server's idle timeout reaps it.
+            parked?.let { releaseOut(it, parkedMeta) }
+            parked = null
+            parkedMeta = null
         }
-        // Released here, so its session ends here: the service's onDestroy
-        // finds the slot empty and takes the player to be someone else's.
-        // After an involuntary sign-out the stop is refused (it needs the
-        // user's credentials) and the server's idle timeout reaps it.
-        end(peekMetadata()?.session)
-        clear()
         runCatching {
-            context.stopService(
-                android.content.Intent(context, OnScreenMediaSessionService::class.java),
-            )
+            context.stopService(Intent(context, OnScreenMediaSessionService::class.java))
         }
     }
 }

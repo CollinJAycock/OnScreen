@@ -6,6 +6,7 @@ import coil.ImageLoaderFactory
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import dagger.hilt.android.HiltAndroidApp
+import kotlinx.coroutines.launch
 import okhttp3.OkHttpClient
 import java.security.Security
 import javax.inject.Inject
@@ -43,6 +44,15 @@ class OnScreenApp : Application(), ImageLoaderFactory {
      *  AudioHandoff (see AudioHandoff.sessionEnder). */
     @Inject lateinit var transcodeRepo: tv.onscreen.android.data.repository.TranscodeRepository
 
+    /** Sends the final position of a background player released by
+     *  AudioHandoff (see AudioHandoff.releaseReporter). */
+    @Inject lateinit var itemRepo: tv.onscreen.android.data.repository.ItemRepository
+
+    /** Outlives whoever released the player, so its final report is sent. */
+    private val releaseReports = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
+    )
+
     override fun onCreate() {
         super.onCreate()
         disableStrictRevocationChecking()
@@ -51,6 +61,11 @@ class OnScreenApp : Application(), ImageLoaderFactory {
         tv.onscreen.android.ui.playback.PlaybackHelper.initDisplayCaps(this)
         signOutTeardown.start()
         tv.onscreen.android.playback.AudioHandoff.sessionEnder = transcodeRepo::stopDetached
+        tv.onscreen.android.playback.AudioHandoff.releaseReporter = { meta, positionMs, durationMs ->
+            releaseReports.launch {
+                runCatching { itemRepo.updateProgress(meta.itemId, positionMs, durationMs, "stopped") }
+            }
+        }
     }
 
     override fun newImageLoader(): ImageLoader =

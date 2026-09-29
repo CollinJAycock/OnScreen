@@ -23,6 +23,7 @@ import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.NowPlaying
 import tv.onscreen.android.playback.StreamSession
 import tv.onscreen.android.playback.StreamTokenVault
 import javax.inject.Inject
@@ -111,6 +112,10 @@ data class PlaybackUiState(
      *  for anything else, and until then). The fragment applies it to the
      *  player; the player carries it into the background service. */
     val listeningRate: Float? = null,
+    /** Audio: what the background media session names as playing (title,
+     *  artist, album), once its parents are looked up. The fragment hands it
+     *  over with the player. Null for video, and until then. */
+    val nowPlaying: NowPlaying? = null,
     val error: String? = null,
 )
 
@@ -334,6 +339,7 @@ class PlaybackViewModel @Inject constructor(
                 // Audiobooks: the book's saved listening speed — unless it
                 // came along from the previous chapter.
                 if (carriedRate == null) loadListeningSpeed(item)
+                loadNowPlaying(item)
 
                 // Auto-advance support: episodes within a season,
                 // tracks within an album, chapter files within a book.
@@ -384,6 +390,17 @@ class PlaybackViewModel @Inject constructor(
     /** Look up the speed of the book [item] belongs to. Nothing for anything
      *  that isn't an audiobook — it plays at 1×. A failed lookup (or a
      *  server without the route) leaves the book at 1×, still adjustable. */
+    /** Audio: look up the names the background session shows for [item].
+     *  Best effort and off the start path: playback doesn't wait for it. */
+    private fun loadNowPlaying(item: ItemDetail) {
+        if (!tv.onscreen.android.playback.AudioItemTypes.isAudio(item.type)) return
+        viewModelScope.launch {
+            val names = NowPlaying.resolve(itemRepo, item)
+            if (_uiState.value.item?.id != item.id) return@launch
+            _uiState.value = _uiState.value.copy(nowPlaying = names)
+        }
+    }
+
     private fun loadListeningSpeed(item: ItemDetail) {
         val bookId = AudiobookSpeed.bookIdOf(item.type, item.id, item.parent_id) ?: return
         viewModelScope.launch {

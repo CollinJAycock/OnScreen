@@ -8,6 +8,10 @@ data class ItemDetail(
     val library_id: String,
     val title: String,
     val type: String,
+    /** A track's or book's artist / author as tagged (the scanner keeps it
+     *  here). Names the background media session when the item's parents
+     *  can't be looked up. */
+    val original_title: String? = null,
     val year: Int? = null,
     val summary: String? = null,
     val rating: Double? = null,

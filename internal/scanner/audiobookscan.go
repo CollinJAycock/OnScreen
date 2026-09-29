@@ -178,7 +178,7 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 		return nil, err
 	}
 	if chapter.Index == nil {
-		if n := chapterNumber(path, tagTrack); n > 0 {
+		if n, ok := chapterNumber(path, tagTrack); ok {
 			s.numberChapter(ctx, chapter, n, path)
 		}
 	}
@@ -191,21 +191,27 @@ func (s *Scanner) processAudiobook(ctx context.Context, libraryID uuid.UUID, pat
 var chapterLeadingNumberRE = regexp.MustCompile(`^\s*(\d{1,3})(?:[\s._-]|$)`)
 
 // chapterNumber is a multi-file audiobook chapter's place in its book: the
-// file name's leading number, else the file's track tag, else 0. The name
-// comes first because audiobook track tags are unreliable (a rip tagging
-// every file track 1 is common), while chapter files are nearly always
-// numbered by name so they sort.
-func chapterNumber(path string, tagTrack int) int {
+// file name's leading number, else the file's track tag. ok is false when
+// neither gives one. The name comes first because audiobook track tags are
+// unreliable (a rip tagging every file track 1 is common), while chapter
+// files are nearly always numbered by name so they sort.
+//
+// A leading zero in the name is a place too: "00 - Prologue" and
+// "000 Opening Credits" are how a book says "before chapter 1". Left
+// unnumbered, such a file sorted after every numbered chapter, so the
+// prologue played last. A track tag of 0 is no number (tags use 0 for
+// "not set").
+func chapterNumber(path string, tagTrack int) (int, bool) {
 	base := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
 	if m := chapterLeadingNumberRE.FindStringSubmatch(base); m != nil {
-		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
-			return n
+		if n, err := strconv.Atoi(m[1]); err == nil {
+			return n, true
 		}
 	}
 	if tagTrack > 0 {
-		return tagTrack
+		return tagTrack, true
 	}
-	return 0
+	return 0, false
 }
 
 // numberChapter fills a chapter's missing number: its listening order in
@@ -236,13 +242,13 @@ func (s *Scanner) healUnchangedChapter(ctx context.Context, item *media.Item, fi
 	if _, seen := s.unnumberedTracks.Load(file.ID); seen {
 		return
 	}
-	n := chapterNumber(path, 0)
-	if n == 0 {
-		if tags, err := ReadMusicTagsStore(ctx, s.mediaStore(), path); err == nil {
-			n = tags.Track
+	n, ok := chapterNumber(path, 0)
+	if !ok {
+		if tags, err := ReadMusicTagsStore(ctx, s.mediaStore(), path); err == nil && tags.Track > 0 {
+			n, ok = tags.Track, true
 		}
 	}
-	if n <= 0 || !s.numberChapter(ctx, item, n, path) {
+	if !ok || !s.numberChapter(ctx, item, n, path) {
 		s.unnumberedTracks.Store(file.ID, struct{}{})
 	}
 }

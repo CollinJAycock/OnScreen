@@ -64,7 +64,14 @@ class WatchNextManager @Inject constructor(
      */
     private val watchNextAvailable: Boolean by lazy {
         try {
-            context.packageManager.resolveContentProvider(TvContractCompat.AUTHORITY, 0) != null
+            // The Fire TV build drops the EPG permissions on purpose (see
+            // src/firetv/AndroidManifest.xml: requesting them hides the app
+            // from most Fire TV devices in Amazon's store). Without
+            // WRITE_EPG_DATA every write is refused, so don't try one on
+            // each progress update and log the refusal every time.
+            androidx.core.content.ContextCompat.checkSelfPermission(context, WRITE_EPG_DATA) ==
+                android.content.pm.PackageManager.PERMISSION_GRANTED &&
+                context.packageManager.resolveContentProvider(TvContractCompat.AUTHORITY, 0) != null
         } catch (e: Exception) {
             false
         }
@@ -244,6 +251,7 @@ class WatchNextManager @Inject constructor(
 
     companion object {
         private const val TAG = "WatchNextManager"
+        private const val WRITE_EPG_DATA = "com.android.providers.tv.permission.WRITE_EPG_DATA"
         /** Past this fraction of duration we treat the title as
          *  finished and pull the row from the system Continue
          *  Watching list. Matches the server's `watch_state`

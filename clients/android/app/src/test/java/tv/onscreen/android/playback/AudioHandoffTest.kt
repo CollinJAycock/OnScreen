@@ -3,8 +3,10 @@ package tv.onscreen.android.playback
 import android.content.Context
 import com.google.common.truth.Truth.assertThat
 import io.mockk.mockk
+import io.mockk.every
 import io.mockk.verify
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.Player
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -36,6 +38,7 @@ class AudioHandoffTest {
     fun tearDown() {
         AudioHandoff.clear()
         AudioHandoff.sessionEnder = null
+        AudioHandoff.releaseReporter = null
     }
 
     @Test
@@ -92,5 +95,87 @@ class AudioHandoffTest {
         AudioHandoff.park(mockk(relaxed = true), meta("t2"))
 
         assertThat(ended).isEmpty()
+    }
+
+    @Test
+    fun `each park has its own generation, ended by a take or a new park`() {
+        val player = mockk<ExoPlayer>(relaxed = true)
+        val first = AudioHandoff.park(player, meta("t1"))
+        assertThat(AudioHandoff.isParked(first)).isTrue()
+
+        AudioHandoff.take("t1")
+        assertThat(AudioHandoff.isParked(first)).isFalse()
+
+        // The same player handed over again is a new park.
+        val second = AudioHandoff.park(player, meta("t1"))
+        assertThat(second).isGreaterThan(first)
+        assertThat(AudioHandoff.generation()).isEqualTo(second)
+        assertThat(AudioHandoff.isParked(first)).isFalse()
+        assertThat(AudioHandoff.isParked(second)).isTrue()
+    }
+
+    @Test
+    fun `a player released from the slot reports where it got to`() {
+        val reported = mutableListOf<Triple<String, Long, Long>>()
+        AudioHandoff.releaseReporter = { m, pos, dur -> reported += Triple(m.itemId, pos, dur) }
+        val first = mockk<ExoPlayer>(relaxed = true) {
+            every { currentPosition } returns 40_000L
+            every { duration } returns 300_000L
+            every { playbackState } returns Player.STATE_READY
+        }
+        AudioHandoff.park(first, meta("t1", session("s1")).copy(hlsOffsetMs = 60_000L, itemDurationMs = 360_000L))
+
+        AudioHandoff.park(mockk(relaxed = true), meta("t2"))
+
+        // Content time: 40 s into a session opened at 60 s.
+        assertThat(reported).containsExactly(Triple("t1", 100_000L, 360_000L))
+    }
+
+    @Test
+    fun `a finished player is not reported again`() {
+        val reported = mutableListOf<String>()
+        AudioHandoff.releaseReporter = { m, _, _ -> reported += m.itemId }
+        val done = mockk<ExoPlayer>(relaxed = true) {
+            every { currentPosition } returns 317_000L
+            every { duration } returns 317_000L
+            every { playbackState } returns Player.STATE_ENDED
+        }
+        AudioHandoff.park(done, meta("t1"))
+
+        AudioHandoff.stopAll(mockk<Context>(relaxed = true))
+
+        assertThat(reported).isEmpty()
+    }
+
+    @Test
+    fun `a player belongs to its attacher only while its park holds the slot`() {
+        val player = mockk<ExoPlayer>(relaxed = true)
+        val first = AudioHandoff.park(player, meta("t1"))
+        assertThat(AudioHandoff.owns(player, first)).isTrue()
+        assertThat(AudioHandoff.owns(mockk(relaxed = true), first)).isFalse()
+
+        // Taken back and parked again: the old attach no longer owns it.
+        AudioHandoff.take("t1")
+        assertThat(AudioHandoff.owns(player, first)).isFalse()
+        val second = AudioHandoff.park(player, meta("t1"))
+        assertThat(AudioHandoff.owns(player, first)).isFalse()
+        assertThat(AudioHandoff.owns(player, second)).isTrue()
+    }
+
+    @Test
+    fun `releaseIfParked lets go only of its own park`() {
+        val player = mockk<ExoPlayer>(relaxed = true)
+        val stale = AudioHandoff.park(player, meta("t1", session("s1")))
+        AudioHandoff.take("t1")
+        val current = AudioHandoff.park(player, meta("t1", session("s1")))
+
+        AudioHandoff.releaseIfParked(stale)
+        verify(exactly = 0) { player.release() }
+        assertThat(ended).isEmpty()
+
+        AudioHandoff.releaseIfParked(current)
+        verify(exactly = 1) { player.release() }
+        assertThat(ended).containsExactly(session("s1"))
+        assertThat(AudioHandoff.peek()).isNull()
     }
 }

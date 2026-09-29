@@ -501,4 +501,60 @@ class ProgressTrackerTest {
                 Dispatchers.resetMain()
             }
         }
+
+    @Test
+    fun `a bound tracker sends nothing until playback starts, but still reports a stop`() =
+        runTest(StandardTestDispatcher()) {
+            val repo = FakeRepo()
+            val tracker = newTracker(repo, this)
+
+            tracker.bind("item-1")
+            advanceTimeBy(30_001)
+            runCurrent()
+            assertThat(repo.calls).isEmpty()
+
+            tracker.onStop()
+            runCurrent()
+            assertThat(repo.calls.map { it.state to it.itemId }).containsExactly("stopped" to "item-1")
+        }
+
+    @Test
+    fun `a teardown's repeated reports go out once each`() = runTest(StandardTestDispatcher()) {
+        val repo = FakeRepo()
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+
+        // The player's own pause callback, the fragment's onPause, then onStop.
+        tracker.onPause()
+        tracker.onPause()
+        tracker.onStop()
+        tracker.onStop()
+        runCurrent()
+
+        assertThat(repo.calls.map { it.state }).containsExactly("paused", "stopped").inOrder()
+    }
+
+    @Test
+    fun `a pause after playing again is reported again`() = runTest(StandardTestDispatcher()) {
+        val repo = FakeRepo()
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        tracker.onPause()
+        tracker.start("item-1")
+        tracker.onPause()
+        runCurrent()
+
+        assertThat(repo.calls.filter { it.state == "paused" }).hasSize(2)
+    }
+
+    @Test
+    fun `a position past the listed length is reported at the length`() = runTest(StandardTestDispatcher()) {
+        val repo = FakeRepo()
+        val tracker = newTracker(repo, this).apply { positionProvider = { 61_500L } }
+        tracker.start("item-1")
+        tracker.onStop()
+        runCurrent()
+
+        assertThat(repo.calls.single().offsetMs).isEqualTo(60_000L)
+    }
 }

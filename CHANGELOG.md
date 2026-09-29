@@ -359,6 +359,44 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **Android TV background audio, from a hardware test run.** Found on a
+  Fire TV Stick while testing the session hand-off:
+  - Reopening an item while its own player was on screen (a deep link, a
+    Watch Next tile) could crash the app ten seconds later. The background
+    service was started and stopped within milliseconds, and Media3 then
+    restarted it in a mode that must reach the foreground. The service now
+    starts a moment after the hand-off, only if the player is still parked,
+    and a start with nothing to play promotes itself briefly and stops.
+  - After HOME, a player the background service had already released could
+    be parked again, so replaying the track landed on Home with nothing
+    playing. The screen now drops the released player, and the service only
+    releases a player that is still its own.
+  - After the last track or chapter ended, the service kept reporting it as
+    playing every 10 s. It now stops when nothing follows, and only reports
+    "playing" while audio is actually playing, not while a session is still
+    buffering its first segment.
+  - A paused background player was dropped by Android about a minute later,
+    so it could not be resumed from the remote. It now stays resumable for
+    10 minutes, and the pause is reported so the server's resume point is
+    exact.
+  - The now-playing session names the title, artist and album, and shows
+    positions in the track's own time for a resumed server session.
+  - Handing audio to the background no longer rebuilds the audio output (a
+    brief stall), and no longer leaves a gap in the heartbeats.
+  - A final position is sent when a parked player is replaced, a skip to
+    the next track no longer reports the old one stopped twice, and a
+    player's teardown no longer sends the same report two or three times.
+  - A background server stream that fails (an admin stop, a refused
+    session) is let go at once instead of lingering, and a track that ends
+    just as it is handed over still chains to the next one.
+  - Fire TV: the app no longer tries to publish Watch Next rows without the
+    permission (the Fire TV build leaves it out on purpose).
+- **An audiobook's "00 - Prologue" played last.** A chapter file whose name
+  starts with 0 was left unnumbered, and unnumbered chapters sort after
+  numbered ones. A leading 0 now counts as the place before chapter 1.
+  Books numbered under the old rule (where the prologue could take chapter
+  1's number and push chapter 1 to the end) are cleared by migration 00034
+  and renumbered on the next scan.
 - **Android TV: background audio from a server transcode stopped.** A
   track, book or chapter the TV can't decode itself (DSD, some ALAC) plays
   from a server session. Pressing BACK or HOME hands the player to the

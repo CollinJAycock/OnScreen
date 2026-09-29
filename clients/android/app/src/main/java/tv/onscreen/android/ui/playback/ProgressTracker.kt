@@ -25,6 +25,11 @@ class ProgressTracker(
     private var job: Job? = null
     private var itemId: String? = null
     private var hlsOffsetMs: Long = 0
+    /** The last pause / stop report sent, as (state, content position).
+     *  A teardown fires several at once (the player's own pause callback,
+     *  the fragment's onPause, then onStop), which sent the same final
+     *  position two or three times within milliseconds. */
+    private var lastTerminal: Pair<String, Long>? = null
 
     /** Position provider — returns the raw player position in ms. */
     var positionProvider: (() -> Long)? = null
@@ -45,9 +50,17 @@ class ProgressTracker(
      *     content-rating ceiling lowered while this was playing. */
     var onBlocked: ((sentinel: String) -> Unit)? = null
 
+    /** Point the tracker at [itemId] without starting the heartbeat, so
+     *  pause / stop reports have an item before playback first starts. */
+    fun bind(itemId: String, hlsOffsetMs: Long = 0) {
+        this.itemId = itemId
+        this.hlsOffsetMs = hlsOffsetMs
+    }
+
     fun start(itemId: String, hlsOffsetMs: Long = 0) {
         this.itemId = itemId
         this.hlsOffsetMs = hlsOffsetMs
+        lastTerminal = null
         job?.cancel()
         job = scope.launch {
             while (isActive) {
@@ -68,6 +81,7 @@ class ProgressTracker(
         // synchronously right after this call — so the read must happen here,
         // not inside the (background) terminal coroutine.
         val snap = snapshot() ?: return
+        if (repeatsLastTerminal("paused", snap)) return
         // Launch on the survivable scope: onPause often coincides with view
         // teardown, and the final position must persist even though the view
         // scope is being cancelled.
@@ -77,7 +91,18 @@ class ProgressTracker(
     fun onStop() {
         job?.cancel()
         val snap = snapshot() ?: return
+        if (repeatsLastTerminal("stopped", snap)) return
         terminalScope.launch { report("stopped", snap) }
+    }
+
+    /** Whether [state] at [snap]'s position was the last terminal report
+     *  (so it would only repeat it); otherwise records it as the last one.
+     *  Main thread, like the callers. */
+    private fun repeatsLastTerminal(state: String, snap: Pair<Long, Long>): Boolean {
+        val key = state to contentPosition(snap)
+        if (lastTerminal == key) return true
+        lastTerminal = key
+        return false
     }
 
     fun stop() {
@@ -102,10 +127,11 @@ class ProgressTracker(
      */
     suspend fun probeRefusal(): String? {
         val id = itemId ?: return null
-        val (rawPos, dur) = snapshot() ?: return null
+        val snap = snapshot() ?: return null
+        val dur = snap.second
         if (dur <= 0) return null
         val refusal = HeartbeatRefusal.heartbeat {
-            itemRepo.updateProgress(id, rawPos + hlsOffsetMs, dur, "playing")
+            itemRepo.updateProgress(id, contentPosition(snap), dur, "playing")
         } ?: return null
         stop()
         return blockSentinel(refusal)
@@ -132,12 +158,20 @@ class ProgressTracker(
         return rawPos to dur
     }
 
+    /** The content position of [snap], at most its duration: a VBR file
+     *  can play a few seconds past the length it listed. */
+    private fun contentPosition(snap: Pair<Long, Long>): Long {
+        val (rawPos, dur) = snap
+        val pos = rawPos + hlsOffsetMs
+        return if (dur > 0) pos.coerceAtMost(dur) else pos
+    }
+
     private suspend fun report(state: String, snapshot: Pair<Long, Long>) {
         val id = itemId ?: return
-        val (rawPos, dur) = snapshot
+        val dur = snapshot.second
         if (dur <= 0) return
 
-        val contentPos = rawPos + hlsOffsetMs
+        val contentPos = contentPosition(snapshot)
         try {
             itemRepo.updateProgress(id, contentPos, dur, state)
             lastReportedContentMs = contentPos

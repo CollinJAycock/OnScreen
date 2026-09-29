@@ -29,6 +29,7 @@ import tv.onscreen.android.data.repository.PreferencesRepository
 import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.NowPlaying
 import tv.onscreen.android.playback.StreamSession
 import tv.onscreen.android.playback.StreamTokenVault
 
@@ -1244,5 +1245,38 @@ class PlaybackViewModelTest {
         // stopActiveTranscode's default scope is the IO-backed appScope.
         coVerify(timeout = 2_000, exactly = 1) { transcodeRepo.stop("sess-9", "tok-9") }
         assertThat(vm.activeSessionId).isEqualTo("sess-p")
+    }
+
+    @Test
+    fun `an audio item's session names are looked up for the hand-off`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val flac = directPlayFile().copy(container = "flac", video_codec = null, audio_codec = "flac")
+        coEvery { itemRepo.getItem("track-1") } returns ItemDetail(
+            id = "track-1", library_id = "lib", title = "Song", type = "track",
+            parent_id = "album-1", index = 1, files = listOf(flac),
+        )
+        coEvery { itemRepo.getItem("album-1") } returns
+            ItemDetail(id = "album-1", library_id = "lib", title = "Album", type = "album", parent_id = "artist-1")
+        coEvery { itemRepo.getItem("artist-1") } returns
+            ItemDetail(id = "artist-1", library_id = "lib", title = "Artist", type = "artist")
+        coEvery { itemRepo.getChildren("album-1") } returns emptyList()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("track-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.nowPlaying)
+            .isEqualTo(NowPlaying("Song", artist = "Artist", album = "Album", mediaId = "track-1"))
+    }
+
+    @Test
+    fun `video looks up no session names`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.nowPlaying).isNull()
     }
 }

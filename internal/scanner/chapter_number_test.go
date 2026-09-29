@@ -21,24 +21,27 @@ func TestChapterNumber(t *testing.T) {
 		name     string
 		tagTrack int
 		want     int
+		wantOK   bool
 	}{
-		{"01 Chapter One.mp3", 0, 1},
-		{"001 - Prologue.m4a", 0, 1},
-		{"7.Seven.mp3", 0, 7},
-		{"12_Twelve.mp3", 0, 12},
-		{"05.mp3", 0, 5},
-		{"03 Three.mp3", 9, 3},      // the name wins over the tag
-		{"Chapter 05.mp3", 5, 5},    // no leading number: the tag
-		{"Chapter 05.mp3", 0, 0},    // neither
-		{"1984 - Part 1.mp3", 0, 0}, // a year, not a chapter
-		{"1984 - Part 1.mp3", 2, 2}, // ... so the tag decides
-		{"000 Credits.mp3", 0, 0},   // zero is no position
-		{"4Tracks Mix.mp3", 0, 0},   // a number glued to a word isn't one
-		{"  02 Spaced.mp3", 0, 2},
+		{"01 Chapter One.mp3", 0, 1, true},
+		{"001 - Prologue.m4a", 0, 1, true},
+		{"7.Seven.mp3", 0, 7, true},
+		{"12_Twelve.mp3", 0, 12, true},
+		{"05.mp3", 0, 5, true},
+		{"03 Three.mp3", 9, 3, true},       // the name wins over the tag
+		{"Chapter 05.mp3", 5, 5, true},     // no leading number: the tag
+		{"Chapter 05.mp3", 0, 0, false},    // neither
+		{"1984 - Part 1.mp3", 0, 0, false}, // a year, not a chapter
+		{"1984 - Part 1.mp3", 2, 2, true},  // ... so the tag decides
+		{"00-Prologue.mp3", 0, 0, true},    // before chapter 1, so it sorts first
+		{"000 Credits.mp3", 7, 0, true},    // the name's zero wins over a tag too
+		{"4Tracks Mix.mp3", 0, 0, false},   // a number glued to a word isn't one
+		{"  02 Spaced.mp3", 0, 2, true},
 	}
 	for _, tc := range tests {
-		if got := chapterNumber(filepath.Join("root", "Author", "Book", tc.name), tc.tagTrack); got != tc.want {
-			t.Errorf("chapterNumber(%q, %d) = %d, want %d", tc.name, tc.tagTrack, got, tc.want)
+		got, ok := chapterNumber(filepath.Join("root", "Author", "Book", tc.name), tc.tagTrack)
+		if got != tc.want || ok != tc.wantOK {
+			t.Errorf("chapterNumber(%q, %d) = %d, %v; want %d, %v", tc.name, tc.tagTrack, got, ok, tc.want, tc.wantOK)
 		}
 	}
 }
