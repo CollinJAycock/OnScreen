@@ -12,6 +12,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // WatchStateDB is the store behind the manual watch-state endpoints.
@@ -19,7 +20,7 @@ import (
 // read right after a mark sees it.
 type WatchStateDB interface {
 	GetMediaItem(ctx context.Context, id uuid.UUID) (gen.GetMediaItemRow, error)
-	MarkWatchStateForTarget(ctx context.Context, arg gen.MarkWatchStateForTargetParams) (int64, error)
+	MarkWatchStateForTarget(ctx context.Context, arg gen.MarkWatchStateForTargetParams) ([]uuid.UUID, error)
 	DismissContinueWatching(ctx context.Context, arg gen.DismissContinueWatchingParams) (int64, error)
 	ListUpNextEpisodes(ctx context.Context, arg gen.ListUpNextEpisodesParams) ([]gen.ListUpNextEpisodesRow, error)
 }
@@ -36,15 +37,28 @@ type WatchStateDB interface {
 // ceiling, 404 when either fails), and show/season expansion only ever
 // touches episodes within the ceiling.
 type WatchStateHandler struct {
-	db     WatchStateDB
-	access LibraryAccessChecker
-	logger *slog.Logger
+	db        WatchStateDB
+	access    LibraryAccessChecker
+	logger    *slog.Logger
+	onWatched WatchedHook
 }
+
+// WatchedHook hears which items a "mark watched" changed (the external
+// scrobble dispatcher, which adds them to the user's Trakt history). It is
+// called async, after the response, with a context that outlives the request.
+type WatchedHook func(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID)
 
 // NewWatchStateHandler constructs the handler. access may be nil in dev
 // setups (fails open, like every other handler's ACL hook).
 func NewWatchStateHandler(db WatchStateDB, access LibraryAccessChecker, logger *slog.Logger) *WatchStateHandler {
 	return &WatchStateHandler{db: db, access: access, logger: logger}
+}
+
+// WithWatchedHook attaches fn to every "mark watched" that changes
+// something. nil is a no-op.
+func (h *WatchStateHandler) WithWatchedHook(fn WatchedHook) *WatchStateHandler {
+	h.onWatched = fn
+	return h
 }
 
 // LibraryAccessWired reports whether the library-ACL checker is wired.
@@ -80,17 +94,24 @@ func (h *WatchStateHandler) mark(w http.ResponseWriter, r *http.Request, state s
 		return
 	}
 	claims := middleware.ClaimsFromContext(r.Context())
-	if _, err := h.db.MarkWatchStateForTarget(r.Context(), gen.MarkWatchStateForTargetParams{
+	marked, err := h.db.MarkWatchStateForTarget(r.Context(), gen.MarkWatchStateForTargetParams{
 		UserID:        claims.UserID,
 		State:         state,
 		TargetType:    item.Type,
 		TargetID:      item.ID,
 		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
-	}); err != nil {
+	})
+	if err != nil {
 		h.logger.ErrorContext(r.Context(), "mark watch state",
 			"user_id", claims.UserID, "item_id", item.ID, "state", state, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	if state == markWatched && len(marked) > 0 && h.onWatched != nil {
+		ctx, userID := context.WithoutCancel(r.Context()), claims.UserID
+		observability.SafeGo(h.logger, "watchstate.scrobble", func() {
+			h.onWatched(ctx, userID, marked)
+		})
 	}
 	respond.NoContent(w)
 }

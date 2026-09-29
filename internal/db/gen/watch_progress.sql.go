@@ -420,7 +420,7 @@ func (q *Queries) ListUpNextEpisodes(ctx context.Context, arg ListUpNextEpisodes
 	return items, nil
 }
 
-const markWatchStateForTarget = `-- name: MarkWatchStateForTarget :execrows
+const markWatchStateForTarget = `-- name: MarkWatchStateForTarget :many
 
 WITH targets AS (
     SELECT ea.episode_id AS media_id
@@ -444,6 +444,7 @@ ON CONFLICT (user_id, media_id) DO UPDATE
         marked_at  = EXCLUDED.marked_at
     WHERE watch_progress.mark_state IS DISTINCT FROM EXCLUDED.mark_state
        OR watch_progress.last_event_at > watch_progress.marked_at
+RETURNING watch_progress.media_id
 `
 
 type MarkWatchStateForTargetParams struct {
@@ -467,13 +468,16 @@ type MarkWatchStateForTargetParams struct {
 // write watch_events, so plays and analytics are untouched.
 //
 // Rows already carrying the requested mark with no watch activity since it
-// are left alone (and not counted): re-marking them would change nothing but
+// are left alone (and not returned): re-marking them would change nothing but
 // marked_at, and a repeated mark on a long show otherwise rewrote every
 // episode row on every call. A row with events newer than its mark is
 // re-marked even when the state matches, so "mark unwatched" still resets a
 // title the user finished (or started) after last marking it.
-func (q *Queries) MarkWatchStateForTarget(ctx context.Context, arg MarkWatchStateForTargetParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markWatchStateForTarget,
+//
+// Returns the media ids it marked, which is what a "watched" mark sends on
+// to the user's Trakt history: an item already marked is not sent twice.
+func (q *Queries) MarkWatchStateForTarget(ctx context.Context, arg MarkWatchStateForTargetParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, markWatchStateForTarget,
 		arg.UserID,
 		arg.State,
 		arg.TargetType,
@@ -481,9 +485,21 @@ func (q *Queries) MarkWatchStateForTarget(ctx context.Context, arg MarkWatchStat
 		arg.MaxRatingRank,
 	)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
-	return result.RowsAffected(), nil
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var media_id uuid.UUID
+		if err := rows.Scan(&media_id); err != nil {
+			return nil, err
+		}
+		items = append(items, media_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const pickRandomLibraryItem = `-- name: PickRandomLibraryItem :one

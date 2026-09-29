@@ -247,11 +247,57 @@ func (s *Store) Track(ctx context.Context, mediaID uuid.UUID) (Track, bool, erro
 	return t, true, nil
 }
 
-// Video implements VideoLookup — a movie, or an episode walked up to its
-// season (the season number) and show (the title and ids Trakt matches). An
-// episode without a season and show above it, or without numbers, can't be
-// named to Trakt and comes back ok=false.
+// videoQuery selects a movie, or an episode walked up to its season (the
+// season number) and show (the title and ids Trakt matches), for the ids in
+// $1.
+const videoQuery = `
+	SELECT
+	    v.type, v.title, v.year, v.tmdb_id, v.tvdb_id, v.imdb_id, v.duration_ms, v.index,
+	    season.index,
+	    show.title, show.year, show.tmdb_id, show.tvdb_id, show.imdb_id
+	FROM media_items v
+	LEFT JOIN media_items season
+	       ON season.id = v.parent_id AND season.type = 'season' AND season.deleted_at IS NULL
+	LEFT JOIN media_items show
+	       ON show.id = season.parent_id AND show.deleted_at IS NULL
+	WHERE v.id = ANY($1::uuid[]) AND v.type IN ('movie', 'episode') AND v.deleted_at IS NULL`
+
+// Video implements VideoLookup. An episode without a season and show above
+// it, or without numbers, can't be named to Trakt and comes back ok=false.
 func (s *Store) Video(ctx context.Context, mediaID uuid.UUID) (Video, bool, error) {
+	v, ok, err := scanVideo(s.db.QueryRow(ctx, videoQuery, []uuid.UUID{mediaID}))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Video{}, false, nil
+	}
+	return v, ok, err
+}
+
+// Videos implements VideoLookup.
+func (s *Store) Videos(ctx context.Context, mediaIDs []uuid.UUID) ([]Video, error) {
+	rows, err := s.db.Query(ctx, videoQuery, mediaIDs)
+	if err != nil {
+		return nil, fmt.Errorf("scrobble: video lookup: %w", err)
+	}
+	defer rows.Close()
+	var out []Video
+	for rows.Next() {
+		v, ok, err := scanVideo(rows)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, v)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("scrobble: video lookup: %w", err)
+	}
+	return out, nil
+}
+
+// scanVideo reads one videoQuery row. pgx.ErrNoRows is passed through
+// unwrapped for Video to tell apart.
+func scanVideo(row pgx.Row) (Video, bool, error) {
 	var (
 		typ, title                   string
 		year, tmdb, tvdb, index      *int32
@@ -261,22 +307,11 @@ func (s *Store) Video(ctx context.Context, mediaID uuid.UUID) (Video, bool, erro
 		showTitle, showIMDB          *string
 		showYear, showTMDB, showTVDB *int32
 	)
-	err := s.db.QueryRow(ctx, `
-		SELECT
-		    v.type, v.title, v.year, v.tmdb_id, v.tvdb_id, v.imdb_id, v.duration_ms, v.index,
-		    season.index,
-		    show.title, show.year, show.tmdb_id, show.tvdb_id, show.imdb_id
-		FROM media_items v
-		LEFT JOIN media_items season
-		       ON season.id = v.parent_id AND season.type = 'season' AND season.deleted_at IS NULL
-		LEFT JOIN media_items show
-		       ON show.id = season.parent_id AND show.deleted_at IS NULL
-		WHERE v.id = $1 AND v.type IN ('movie', 'episode') AND v.deleted_at IS NULL`,
-		mediaID).Scan(&typ, &title, &year, &tmdb, &tvdb, &imdb, &duration, &index,
+	err := row.Scan(&typ, &title, &year, &tmdb, &tvdb, &imdb, &duration, &index,
 		&seasonIndex, &showTitle, &showYear, &showTMDB, &showTVDB, &showIMDB)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return Video{}, false, nil
+			return Video{}, false, err
 		}
 		return Video{}, false, fmt.Errorf("scrobble: video lookup: %w", err)
 	}

@@ -72,6 +72,7 @@ type fakeMedia struct {
 	trackOK bool
 	video   Video
 	videoOK bool
+	videos  []Video // what Videos returns
 	err     error
 }
 
@@ -81,6 +82,10 @@ func (f fakeMedia) Track(context.Context, uuid.UUID) (Track, bool, error) {
 
 func (f fakeMedia) Video(context.Context, uuid.UUID) (Video, bool, error) {
 	return f.video, f.videoOK, f.err
+}
+
+func (f fakeMedia) Videos(context.Context, []uuid.UUID) ([]Video, error) {
+	return f.videos, f.err
 }
 
 type fakeApps struct {
@@ -180,6 +185,9 @@ func (s *services) ServeHTTP(w http.ResponseWriter, hr *http.Request) {
 		_, _ = io.WriteString(w, `{"access_token":"new-access","refresh_token":"new-refresh","expires_in":86400,"created_at":1700000000}`)
 	case "/users/settings":
 		_, _ = io.WriteString(w, `{"user":{"username":"trakt-user"}}`)
+	case "/sync/history":
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"added":{"movies":1,"episodes":3},"not_found":{}}`)
 	default:
 		if strings.HasPrefix(key, "/scrobble/") {
 			w.WriteHeader(http.StatusCreated)
@@ -792,5 +800,100 @@ func TestUnlinkTrakt_RevokesAndForgets(t *testing.T) {
 	}
 	if h.store.snapshot().Trakt.linked() {
 		t.Error("unlink must forget the grant")
+	}
+}
+
+func TestHistoryBody_GroupsEpisodesUnderTheirShow(t *testing.T) {
+	wire := func(season, number int) Video {
+		return Video{Episode: true, Title: "The Wire", Year: 2002, TMDBID: 1438, TVDBID: 79126, Season: season, Number: number}
+	}
+	videos := []Video{
+		wire(2, 1), wire(1, 2), {Title: "Heat", Year: 1995, TMDBID: 949, IMDBID: "tt0113277"}, wire(1, 1), wire(1, 2),
+		{Episode: true, Title: "Treme", Year: 2010, TVDBID: 1, Season: 0, Number: 1},
+	}
+	got, err := json.Marshal(historyBody(videos, time.Date(2026, 9, 28, 20, 0, 0, 0, time.FixedZone("x", -4*3600))))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const at = `"watched_at":"2026-09-29T00:00:00Z"`
+	want := `{"movies":[{"title":"Heat","year":1995,"ids":{"tmdb":949,"imdb":"tt0113277"},` + at + `}],` +
+		`"shows":[{"title":"The Wire","year":2002,"ids":{"tmdb":1438,"tvdb":79126},"seasons":[` +
+		`{"number":1,"episodes":[{"number":1,` + at + `},{"number":2,` + at + `}]},` +
+		`{"number":2,"episodes":[{"number":1,` + at + `}]}]},` +
+		`{"title":"Treme","year":2010,"ids":{"tvdb":1},"seasons":[{"number":0,"episodes":[{"number":1,` + at + `}]}]}]}`
+	if string(got) != want {
+		t.Errorf("history body\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func TestOnMarkedWatched_AddsToTraktHistory(t *testing.T) {
+	season := []Video{
+		{Episode: true, Title: "The Wire", Year: 2002, TMDBID: 1438, Season: 1, Number: 1},
+		{Episode: true, Title: "The Wire", Year: 2002, TMDBID: 1438, Season: 1, Number: 2},
+	}
+	h := newHarness(t, traktLinked, fakeMedia{videos: season}, bothApps)
+
+	h.svc.OnMarkedWatched(context.Background(), h.user, []uuid.UUID{uuid.New(), uuid.New()})
+
+	calls := h.srv.calls("/sync/history")
+	if len(calls) != 1 {
+		t.Fatalf("expected one history add, got %d", len(calls))
+	}
+	if got := calls[0].header.Get("Authorization"); got != "Bearer access" {
+		t.Errorf("authorization: %q", got)
+	}
+	shows, _ := calls[0].body["shows"].([]any)
+	if len(shows) != 1 || calls[0].body["movies"] != nil {
+		t.Fatalf("body: %+v", calls[0].body)
+	}
+	seasons, _ := shows[0].(map[string]any)["seasons"].([]any)
+	eps, _ := seasons[0].(map[string]any)["episodes"].([]any)
+	if len(seasons) != 1 || len(eps) != 2 || eps[0].(map[string]any)["watched_at"] != "2023-11-14T22:13:20Z" {
+		t.Errorf("seasons: %+v", seasons)
+	}
+}
+
+func TestOnMarkedWatched_SendsNothingWhenThereIsNothingToSend(t *testing.T) {
+	movie := []Video{{Title: "Heat", Year: 1995, TMDBID: 949}}
+	cases := map[string]struct {
+		st    Settings
+		media fakeMedia
+		apps  fakeApps
+		ids   []uuid.UUID
+	}{
+		"trakt not linked":       {Settings{}, fakeMedia{videos: movie}, bothApps, []uuid.UUID{uuid.New()}},
+		"trakt app removed":      {traktLinked, fakeMedia{videos: movie}, fakeApps{lastfm: testLastFM}, []uuid.UUID{uuid.New()}},
+		"no items marked":        {traktLinked, fakeMedia{videos: movie}, bothApps, nil},
+		"nothing Trakt can name": {traktLinked, fakeMedia{}, bothApps, []uuid.UUID{uuid.New()}},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t, c.st, c.media, c.apps)
+			h.svc.OnMarkedWatched(context.Background(), h.user, c.ids)
+			if n := len(h.srv.calls("/sync/history")); n != 0 {
+				t.Errorf("sent %d history adds; want none", n)
+			}
+		})
+	}
+}
+
+func TestOnMarkedWatched_RetriesOnceAfterA401(t *testing.T) {
+	h := newHarness(t, traktLinked, fakeMedia{videos: []Video{{Title: "Heat", Year: 1995}}}, bothApps)
+	var n int
+	h.srv.handle("/sync/history", func(w http.ResponseWriter, _ req) {
+		n++
+		if n == 1 {
+			w.WriteHeader(http.StatusUnauthorized)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = io.WriteString(w, `{"added":{"movies":1}}`)
+	})
+
+	h.svc.OnMarkedWatched(context.Background(), h.user, []uuid.UUID{uuid.New()})
+
+	calls := h.srv.calls("/sync/history")
+	if len(calls) != 2 || calls[1].header.Get("Authorization") != "Bearer new-access" {
+		t.Fatalf("expected a retry with the refreshed token: %d calls", len(calls))
 	}
 }

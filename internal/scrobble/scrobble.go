@@ -107,6 +107,9 @@ type TrackLookup interface {
 // neither (or an episode without a season and show above it).
 type VideoLookup interface {
 	Video(ctx context.Context, mediaID uuid.UUID) (v Video, ok bool, err error)
+	// Videos is Video for many ids at once, in no particular order; ids that
+	// are not a movie or a nameable episode are left out.
+	Videos(ctx context.Context, mediaIDs []uuid.UUID) ([]Video, error)
 }
 
 // MediaLookup is what the dispatcher needs to know about a played item.

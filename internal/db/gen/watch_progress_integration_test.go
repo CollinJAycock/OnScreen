@@ -51,13 +51,13 @@ func play(ctx context.Context, t *testing.T, q *gen.Queries, user, media uuid.UU
 
 func mark(ctx context.Context, t *testing.T, q *gen.Queries, user, target uuid.UUID, targetType, state string, maxRank *int32) int64 {
 	t.Helper()
-	n, err := q.MarkWatchStateForTarget(ctx, gen.MarkWatchStateForTargetParams{
+	marked, err := q.MarkWatchStateForTarget(ctx, gen.MarkWatchStateForTargetParams{
 		UserID: user, State: state, TargetType: targetType, TargetID: target, MaxRatingRank: maxRank,
 	})
 	if err != nil {
 		t.Fatalf("MarkWatchStateForTarget(%s %s): %v", targetType, state, err)
 	}
-	return n
+	return int64(len(marked))
 }
 
 func state(ctx context.Context, t *testing.T, q *gen.Queries, user, media uuid.UUID) gen.GetWatchStateRow {

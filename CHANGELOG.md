@@ -162,6 +162,10 @@ Playback and library:
   - **Trakt**: movies and episodes are sent as start / pause / stop, matched
     by TMDB / TVDB / IMDb id with a title and year fallback. Trakt records a
     play that reaches 80% as watched and keeps a paused one's progress.
+    Marking a movie, episode, season or show watched by hand adds what it
+    marked to the Trakt history as well (one request per mark; an item
+    already marked isn't sent again). Marking unwatched removes nothing
+    from Trakt, whose history also holds plays made elsewhere.
   - **ListenBrainz** now also shows the playing track (playing_now).
   - **Admin setup**: enter a Last.fm API account and a Trakt app under
     Settings → Scrobbling apps; secrets are masked like the other keys.

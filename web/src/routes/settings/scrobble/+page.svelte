@@ -347,7 +347,8 @@
           Movies and episodes you watch are scrobbled to your
           <a href="https://trakt.tv" target="_blank" rel="noopener noreferrer">Trakt</a>
           history: a play that reaches 80% counts as watched, and a paused one keeps
-          its progress there. While something plays, your profile shows it.
+          its progress there. While something plays, your profile shows it. Marking a
+          movie, episode, season or show watched adds it to your history too.
         </p>
       </div>
       {#if status?.trakt_linked}

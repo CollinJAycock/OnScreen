@@ -30,8 +30,8 @@ func (s *stubWatchStateDB) GetMediaItem(_ context.Context, id uuid.UUID) (gen.Ge
 	}
 	return it, nil
 }
-func (s *stubWatchStateDB) MarkWatchStateForTarget(context.Context, gen.MarkWatchStateForTargetParams) (int64, error) {
-	return 1, nil
+func (s *stubWatchStateDB) MarkWatchStateForTarget(_ context.Context, arg gen.MarkWatchStateForTargetParams) ([]uuid.UUID, error) {
+	return []uuid.UUID{arg.TargetID}, nil
 }
 func (s *stubWatchStateDB) DismissContinueWatching(context.Context, gen.DismissContinueWatchingParams) (int64, error) {
 	return 1, nil

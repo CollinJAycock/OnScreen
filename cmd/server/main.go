@@ -925,6 +925,10 @@ func run() error {
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
 
+	// A manual "mark watched" also goes to the user's Trakt history.
+	watchStateHandler := v1.NewWatchStateHandler(gen.New(rwPool), libSvc, logger).
+		WithWatchedHook(scrobbleSvc.OnMarkedWatched)
+
 	booksHandler := v1.NewBookHandler(mediaSvc, logger).
 		WithLibraryAccess(libSvc)
 
@@ -1453,7 +1457,7 @@ func run() error {
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
 		Audiobook:       v1.NewAudiobookHandler(gen.New(rwPool), libSvc, logger),
-		WatchState:      v1.NewWatchStateHandler(gen.New(rwPool), libSvc, logger),
+		WatchState:      watchStateHandler,
 		Photos:          photosHandler,
 		Books:           booksHandler,
 		Trickplay:       trickplayHandler,

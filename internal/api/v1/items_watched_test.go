@@ -25,6 +25,7 @@ type fakeWatchStateDB struct {
 	items map[uuid.UUID]gen.GetMediaItemRow
 
 	markCalls    []gen.MarkWatchStateForTargetParams
+	marked       []uuid.UUID // what a mark reports it changed
 	dismissCalls []gen.DismissContinueWatchingParams
 	dismissRows  int64
 	upNextCalls  []gen.ListUpNextEpisodesParams
@@ -39,9 +40,9 @@ func (f *fakeWatchStateDB) GetMediaItem(_ context.Context, id uuid.UUID) (gen.Ge
 	}
 	return it, nil
 }
-func (f *fakeWatchStateDB) MarkWatchStateForTarget(_ context.Context, arg gen.MarkWatchStateForTargetParams) (int64, error) {
+func (f *fakeWatchStateDB) MarkWatchStateForTarget(_ context.Context, arg gen.MarkWatchStateForTargetParams) ([]uuid.UUID, error) {
 	f.markCalls = append(f.markCalls, arg)
-	return 1, f.err
+	return f.marked, f.err
 }
 func (f *fakeWatchStateDB) DismissContinueWatching(_ context.Context, arg gen.DismissContinueWatchingParams) (int64, error) {
 	f.dismissCalls = append(f.dismissCalls, arg)
@@ -186,6 +187,56 @@ func TestWatchState_Mark_StoreErrorIs500(t *testing.T) {
 	h.MarkWatched(rec, watchStateRequest(http.MethodPost, id, &auth.Claims{UserID: uuid.New()}))
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status %d, want 500", rec.Code)
+	}
+}
+
+// A "watched" mark that changed something reports what it changed to the
+// hook (the Trakt history add); unwatched marks, marks that changed nothing
+// and failed marks don't.
+func TestWatchState_Mark_TellsTheWatchedHook(t *testing.T) {
+	type heard struct {
+		user uuid.UUID
+		ids  []uuid.UUID
+	}
+	episodes := []uuid.UUID{uuid.New(), uuid.New()}
+	for _, tc := range []struct {
+		name    string
+		unmark  bool
+		marked  []uuid.UUID
+		err     error
+		wantHit bool
+	}{
+		{name: "watched", marked: episodes, wantHit: true},
+		{name: "unwatched", unmark: true, marked: episodes},
+		{name: "nothing changed"},
+		{name: "store error", marked: episodes, err: errors.New("boom")},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db := &fakeWatchStateDB{marked: tc.marked, err: tc.err}
+			got := make(chan heard, 1)
+			h := NewWatchStateHandler(db, nil, slog.Default()).
+				WithWatchedHook(func(_ context.Context, user uuid.UUID, ids []uuid.UUID) { got <- heard{user, ids} })
+			user := uuid.New()
+			call := h.MarkWatched
+			if tc.unmark {
+				call = h.MarkUnwatched
+			}
+			call(httptest.NewRecorder(), watchStateRequest(http.MethodPost, db.add("season", "G", uuid.New()), &auth.Claims{UserID: user}))
+
+			select {
+			case hit := <-got:
+				if !tc.wantHit {
+					t.Fatalf("hook called with %+v; want no call", hit)
+				}
+				if hit.user != user || len(hit.ids) != len(episodes) || hit.ids[0] != episodes[0] {
+					t.Errorf("hook got %+v", hit)
+				}
+			case <-time.After(200 * time.Millisecond):
+				if tc.wantHit {
+					t.Fatal("hook not called")
+				}
+			}
+		})
 	}
 }
 

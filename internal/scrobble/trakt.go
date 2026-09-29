@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -290,6 +291,25 @@ func (s *Service) refreshTrakt(ctx context.Context, app TraktApp, userID uuid.UU
 	return next.AccessToken, nil
 }
 
+// traktPost sends an authenticated POST as the user, refreshing the grant
+// first when it is about to expire, and once more if Trakt answers 401 ahead
+// of the stored expiry. An error means nothing was sent (or the grant is
+// gone); every status is the caller's to interpret.
+func (s *Service) traktPost(ctx context.Context, app TraktApp, userID uuid.UUID, link TraktLink, path string, body, out any) (int, error) {
+	token, err := s.traktAccessToken(ctx, app, userID, link)
+	if err != nil {
+		return 0, fmt.Errorf("token: %w", err)
+	}
+	status, err := s.traktDo(ctx, app, http.MethodPost, path, token, body, out)
+	if err == nil && status == http.StatusUnauthorized {
+		if token, err = s.refreshTrakt(ctx, app, userID, TraktLink{AccessToken: token}); err != nil {
+			return 0, fmt.Errorf("token: %w", err)
+		}
+		status, err = s.traktDo(ctx, app, http.MethodPost, path, token, body, out)
+	}
+	return status, err
+}
+
 // traktIDs are the external ids Trakt matches on; zero values are omitted.
 type traktIDs struct {
 	TMDB int    `json:"tmdb,omitempty"`
@@ -357,18 +377,7 @@ func (s *Service) dispatchTrakt(ctx context.Context, kind playKind, userID uuid.
 	body := v.traktBody(progress)
 	path := traktScrobblePath[kind]
 
-	token, err := s.traktAccessToken(ctx, app, userID, link)
-	if err != nil {
-		s.warn(ctx, "scrobble: trakt token", "user_id", userID, "err", err)
-		return
-	}
-	status, err := s.traktDo(ctx, app, http.MethodPost, path, token, body, nil)
-	if err == nil && status == http.StatusUnauthorized {
-		// Expired or revoked ahead of the stored expiry: refresh once.
-		if token, err = s.refreshTrakt(ctx, app, userID, TraktLink{AccessToken: token}); err == nil {
-			status, err = s.traktDo(ctx, app, http.MethodPost, path, token, body, nil)
-		}
-	}
+	status, err := s.traktPost(ctx, app, userID, link, path, body, nil)
 	switch {
 	case err != nil:
 		s.warn(ctx, "scrobble: trakt "+path, "media_id", mediaID, "err", err)
@@ -378,5 +387,128 @@ func (s *Service) dispatchTrakt(ctx context.Context, kind playKind, userID uuid.
 		s.warn(ctx, "scrobble: trakt has no match", "media_id", mediaID, "title", v.Title, "year", v.Year)
 	case status < 200 || status >= 300:
 		s.warn(ctx, "scrobble: trakt "+path, "media_id", mediaID, "status", status)
+	}
+}
+
+// traktHistory is the body of /sync/history: movies, and shows narrowed to
+// the seasons and episodes being added.
+type traktHistory struct {
+	Movies []traktHistoryMovie `json:"movies,omitempty"`
+	Shows  []traktHistoryShow  `json:"shows,omitempty"`
+}
+
+type traktHistoryMovie struct {
+	traktMedia
+	WatchedAt string `json:"watched_at"`
+}
+
+type traktHistoryShow struct {
+	traktMedia
+	Seasons []traktHistorySeason `json:"seasons"`
+}
+
+type traktHistorySeason struct {
+	Number   int                   `json:"number"`
+	Episodes []traktHistoryEpisode `json:"episodes"`
+}
+
+type traktHistoryEpisode struct {
+	Number    int    `json:"number"`
+	WatchedAt string `json:"watched_at"`
+}
+
+// historyBody names every video to Trakt's history as watched at one moment.
+// An episode is sent under its show and season, as scrobbles are; a show's
+// episodes are grouped under a single show entry, in season and episode
+// order.
+func historyBody(videos []Video, at time.Time) traktHistory {
+	watchedAt := at.UTC().Format(time.RFC3339)
+	var body traktHistory
+	type seasonKey struct {
+		show   traktMedia
+		season int
+	}
+	showAt := map[traktMedia]int{}
+	episodes := map[seasonKey][]int{}
+	for _, v := range videos {
+		media := traktMedia{Title: v.Title, Year: v.Year, IDs: traktIDs{TMDB: v.TMDBID, IMDB: v.IMDBID}}
+		if !v.Episode {
+			body.Movies = append(body.Movies, traktHistoryMovie{traktMedia: media, WatchedAt: watchedAt})
+			continue
+		}
+		media.IDs.TVDB = v.TVDBID
+		if _, ok := showAt[media]; !ok {
+			showAt[media] = len(body.Shows)
+			body.Shows = append(body.Shows, traktHistoryShow{traktMedia: media})
+		}
+		key := seasonKey{media, v.Season}
+		episodes[key] = append(episodes[key], v.Number)
+	}
+	for key, numbers := range episodes {
+		slices.Sort(numbers)
+		season := traktHistorySeason{Number: key.season}
+		for _, n := range slices.Compact(numbers) {
+			season.Episodes = append(season.Episodes, traktHistoryEpisode{Number: n, WatchedAt: watchedAt})
+		}
+		show := &body.Shows[showAt[key.show]]
+		show.Seasons = append(show.Seasons, season)
+	}
+	for i := range body.Shows {
+		slices.SortFunc(body.Shows[i].Seasons, func(a, b traktHistorySeason) int { return a.Number - b.Number })
+	}
+	return body
+}
+
+// traktHistoryResult is the part of the /sync/history response worth
+// checking: how much Trakt matched.
+type traktHistoryResult struct {
+	Added struct {
+		Movies   int `json:"movies"`
+		Episodes int `json:"episodes"`
+	} `json:"added"`
+}
+
+// OnMarkedWatched adds videos the user marked watched by hand (not by
+// playing them) to their Trakt history, when Trakt is linked. mediaIDs are
+// what the mark changed: a movie, an episode, or every episode of a season
+// or show. Items that are neither a movie nor a nameable episode are
+// skipped. Marking unwatched sends nothing: Trakt's history is a record of
+// plays, and removing one from it would erase plays made elsewhere.
+func (s *Service) OnMarkedWatched(ctx context.Context, userID uuid.UUID, mediaIDs []uuid.UUID) {
+	if len(mediaIDs) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, dispatchTimeout)
+	defer cancel()
+
+	st, err := s.store.Get(ctx, userID)
+	if err != nil {
+		s.warn(ctx, "scrobble: load settings", "user_id", userID, "err", err)
+		return
+	}
+	if !st.Trakt.linked() {
+		return
+	}
+	app := s.apps.Trakt(ctx)
+	if !app.configured() {
+		return
+	}
+	videos, err := s.media.Videos(ctx, mediaIDs)
+	if err != nil {
+		s.warn(ctx, "scrobble: resolve videos", "user_id", userID, "err", err)
+		return
+	}
+	if len(videos) == 0 {
+		return
+	}
+	var res traktHistoryResult
+	status, err := s.traktPost(ctx, app, userID, st.Trakt, "/sync/history", historyBody(videos, s.now()), &res)
+	switch {
+	case err != nil:
+		s.warn(ctx, "scrobble: trakt /sync/history", "user_id", userID, "err", err)
+	case status < 200 || status >= 300:
+		s.warn(ctx, "scrobble: trakt /sync/history", "user_id", userID, "status", status)
+	case res.Added.Movies+res.Added.Episodes == 0:
+		s.warn(ctx, "scrobble: trakt has no match", "user_id", userID, "videos", len(videos), "title", videos[0].Title)
 	}
 }

@@ -3,7 +3,7 @@
 -- state from the user_watch_state view (migration 00023) — never from
 -- watch_events directly — so every surface agrees.
 
--- name: MarkWatchStateForTarget :execrows
+-- name: MarkWatchStateForTarget :many
 -- Sets the caller's manual played/unplayed mark on one item in a single
 -- statement. For a show or season the target expands to every live episode
 -- underneath (episode_ancestry) whose own content rating is within the
@@ -13,11 +13,14 @@
 -- write watch_events, so plays and analytics are untouched.
 --
 -- Rows already carrying the requested mark with no watch activity since it
--- are left alone (and not counted): re-marking them would change nothing but
+-- are left alone (and not returned): re-marking them would change nothing but
 -- marked_at, and a repeated mark on a long show otherwise rewrote every
 -- episode row on every call. A row with events newer than its mark is
 -- re-marked even when the state matches, so "mark unwatched" still resets a
 -- title the user finished (or started) after last marking it.
+--
+-- Returns the media ids it marked, which is what a "watched" mark sends on
+-- to the user's Trakt history: an item already marked is not sent twice.
 WITH targets AS (
     SELECT ea.episode_id AS media_id
     FROM episode_ancestry ea
@@ -39,7 +42,8 @@ ON CONFLICT (user_id, media_id) DO UPDATE
     SET mark_state = EXCLUDED.mark_state,
         marked_at  = EXCLUDED.marked_at
     WHERE watch_progress.mark_state IS DISTINCT FROM EXCLUDED.mark_state
-       OR watch_progress.last_event_at > watch_progress.marked_at;
+       OR watch_progress.last_event_at > watch_progress.marked_at
+RETURNING watch_progress.media_id;
 
 -- name: DismissContinueWatching :execrows
 -- Records a Continue Watching dismissal keyed the way ListContinueWatching

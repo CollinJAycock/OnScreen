@@ -198,4 +198,13 @@ func TestStore_MediaLookups(t *testing.T) {
 	if _, ok, err := s.Track(ctx, f.movie); ok || err != nil {
 		t.Errorf("a movie must not resolve as a track: ok=%v err=%v", ok, err)
 	}
+
+	// The batch form resolves the same rows and leaves out what can't be named.
+	all, err := s.Videos(ctx, []uuid.UUID{f.movie, f.episode, f.orphan, f.track, uuid.New()})
+	if err != nil {
+		t.Fatalf("videos: %v", err)
+	}
+	if len(all) != 2 || !((all[0] == mv && all[1] == want) || (all[0] == want && all[1] == mv)) {
+		t.Errorf("videos: %+v", all)
+	}
 }

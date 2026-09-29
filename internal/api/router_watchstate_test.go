@@ -26,9 +26,9 @@ type watchStateRouterDB struct{ marks int }
 func (d *watchStateRouterDB) GetMediaItem(_ context.Context, id uuid.UUID) (gen.GetMediaItemRow, error) {
 	return gen.GetMediaItemRow{ID: id, LibraryID: uuid.New(), Type: "show", Title: "Show"}, nil
 }
-func (d *watchStateRouterDB) MarkWatchStateForTarget(context.Context, gen.MarkWatchStateForTargetParams) (int64, error) {
+func (d *watchStateRouterDB) MarkWatchStateForTarget(_ context.Context, arg gen.MarkWatchStateForTargetParams) ([]uuid.UUID, error) {
 	d.marks++
-	return 1, nil
+	return []uuid.UUID{arg.TargetID}, nil
 }
 func (d *watchStateRouterDB) DismissContinueWatching(context.Context, gen.DismissContinueWatchingParams) (int64, error) {
 	return 1, nil
