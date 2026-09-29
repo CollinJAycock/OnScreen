@@ -31,6 +31,16 @@ type ArrService struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 }
 
+type AudiobookBookmark struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	BookID     uuid.UUID          `json:"book_id"`
+	ItemID     uuid.UUID          `json:"item_id"`
+	PositionMs int64              `json:"position_ms"`
+	Note       string             `json:"note"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+}
+
 type AuditLog struct {
 	ID        uuid.UUID          `json:"id"`
 	UserID    pgtype.UUID        `json:"user_id"`
@@ -610,6 +620,13 @@ type User struct {
 	CanRequest            bool               `json:"can_request"`
 	RequestQuotaMovies    *int32             `json:"request_quota_movies"`
 	RequestQuotaTv        *int32             `json:"request_quota_tv"`
+}
+
+type UserAudiobookRate struct {
+	UserID       uuid.UUID          `json:"user_id"`
+	BookID       uuid.UUID          `json:"book_id"`
+	PlaybackRate float32            `json:"playback_rate"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type UserFavorite struct {

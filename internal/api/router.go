@@ -61,6 +61,7 @@ type Handlers struct {
 	Items           *v1.ItemHandler
 	ItemsAdmin      *v1.ItemBulkAdminHandler // admin bulk re-enrich / cleanup
 	WatchStatus     *v1.WatchStatusHandler   // per-user Plan to Watch / Watching / etc.
+	Audiobook       *v1.AudiobookHandler     // per-user audiobook speed + bookmarks
 	WatchState      *v1.WatchStateHandler    // manual played/unplayed marks, CW dismiss, up-next
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
@@ -1180,6 +1181,15 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/watch-status", h.WatchStatus.Get)
 				r.Put("/items/{id}/watch-status", h.WatchStatus.Put)
 				r.Delete("/items/{id}/watch-status", h.WatchStatus.Delete)
+			}
+			// Audiobook listening speed (per book) and bookmarks.
+			if h.Audiobook != nil {
+				r.Get("/items/{id}/playback-rate", h.Audiobook.GetPlaybackRate)
+				r.Put("/items/{id}/playback-rate", h.Audiobook.SetPlaybackRate)
+				r.Get("/items/{id}/bookmarks", h.Audiobook.ListBookmarks)
+				r.Post("/items/{id}/bookmarks", h.Audiobook.CreateBookmark)
+				r.Patch("/bookmarks/{id}", h.Audiobook.UpdateBookmark)
+				r.Delete("/bookmarks/{id}", h.Audiobook.DeleteBookmark)
 			}
 
 			// Per-user manual watch state: mark played / unplayed (a show or

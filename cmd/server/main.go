@@ -1452,6 +1452,7 @@ func run() error {
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
+		Audiobook:       v1.NewAudiobookHandler(gen.New(rwPool), libSvc, logger),
 		WatchState:      v1.NewWatchStateHandler(gen.New(rwPool), libSvc, logger),
 		Photos:          photosHandler,
 		Books:           booksHandler,
