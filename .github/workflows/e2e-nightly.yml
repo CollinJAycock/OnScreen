@@ -1,0 +1,51 @@
+name: E2E (nightly)
+
+# The compose E2E suite (`make test-e2e`): builds the image, brings up
+# postgres + valkey + migrate + server + worker on a throwaway project, and
+# runs test/e2e against it over HTTP. Too slow for every PR, so it runs once
+# a day against main, and on demand from the Actions tab.
+on:
+  schedule:
+    - cron: "23 7 * * *" # 07:23 UTC, off the top of the hour
+  workflow_dispatch:
+
+# Only reads the repo; see ci.yml.
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-nightly
+  cancel-in-progress: true
+
+jobs:
+  e2e:
+    name: Compose E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: "1.26"
+          cache: true
+
+      # Builds the image (web + Go inside the Dockerfile), runs the suite and
+      # tears the stack down. A failing test prints the service logs first.
+      - name: Run the compose E2E suite
+        run: make test-e2e
+
+      # `up --wait` failing (a service that never gets healthy) stops make
+      # before the suite's own log dump, and leaves the stack up for this.
+      - name: Stack logs
+        if: failure()
+        env:
+          # docker-compose.yml refuses to parse without these; reading logs
+          # doesn't use them.
+          DB_PASS: unused
+          SECRET_KEY: unused
+        run: |
+          docker compose -p onscreen-e2e -f docker/docker-compose.yml ps -a || true
+          docker compose -p onscreen-e2e -f docker/docker-compose.yml logs --no-color --tail=300 || true

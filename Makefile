@@ -112,6 +112,10 @@ test-int:
 ##
 ## DB_PASS is ephemeral for the same reason: docker-compose.yml no longer has
 ## a default database password, so the throwaway stack gets a random one.
+##
+## A failing run prints the migrate / server / worker logs before the stack
+## goes, since `down -v` takes them with it. CI runs this nightly
+## (.github/workflows/e2e-nightly.yml).
 E2E_SECRET  := $(shell openssl rand -hex 32)
 E2E_DBPASS  := $(shell openssl rand -hex 16)
 E2E_PROJECT ?= onscreen-e2e
@@ -120,7 +124,9 @@ E2E_ENV     := PG_PORT=55432 VALKEY_PORT=56379 SERVER_PORT=7090 DEBUG_PORT=7091 
 test-e2e:
 	@$(E2E_ENV) $(E2E_COMPOSE) down -v >/dev/null 2>&1 || true
 	$(E2E_ENV) $(E2E_COMPOSE) up -d --build --wait
-	ONSCREEN_BASE_URL=http://localhost:7090 $(GO) test -tags e2e -count=1 -run E2E ./test/e2e/... ; ret=$$?; $(E2E_ENV) $(E2E_COMPOSE) down -v; exit $$ret
+	ONSCREEN_BASE_URL=http://localhost:7090 $(GO) test -tags e2e -count=1 -run E2E ./test/e2e/... ; ret=$$?; \
+	[ $$ret -eq 0 ] || $(E2E_ENV) $(E2E_COMPOSE) logs --no-color --tail=300 migrate server worker; \
+	$(E2E_ENV) $(E2E_COMPOSE) down -v; exit $$ret
 
 ## test-browser: run Playwright browser-driven specs from web/tests/e2e
 ## Requires a running OnScreen server reachable at $$BASE_URL (default
