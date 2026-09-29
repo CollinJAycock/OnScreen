@@ -724,6 +724,38 @@ func TestSecurityHeaders_CSPAllowsGoogleCastSDK(t *testing.T) {
 	}
 }
 
+func TestSecurityHeaders_CSPAllowsPhotoMapTiles(t *testing.T) {
+	// Regression guard: the web photo map (Leaflet) loads OpenStreetMap
+	// raster tiles as <img> elements from tile.openstreetmap.org. img-src
+	// allows them through its blanket https: today; if img-src is ever
+	// narrowed to a host list, the tile host must stay on it or the map
+	// renders markers on a blank grey background.
+	handler := SecurityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, httptest.NewRequest("GET", "/photos/map", nil))
+
+	var imgDirective string
+	for _, p := range splitCSP(rec.Header().Get("Content-Security-Policy")) {
+		if strings.HasPrefix(p, "img-src ") {
+			imgDirective = p
+		}
+	}
+	if imgDirective == "" {
+		t.Fatal("no img-src directive")
+	}
+	allowed := false
+	for _, src := range strings.Fields(imgDirective)[1:] {
+		if src == "https:" || src == "https://tile.openstreetmap.org" {
+			allowed = true
+		}
+	}
+	if !allowed {
+		t.Errorf("img-src must allow https://tile.openstreetmap.org (photo map tiles) — got %q", imgDirective)
+	}
+}
+
 // form-action is not covered by default-src, so without it injected markup (or
 // an on-origin file served as HTML) could post a credential form off-origin.
 // The SAML start route is the one exemption: its POST-binding page submits the

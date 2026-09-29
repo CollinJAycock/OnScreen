@@ -9,7 +9,9 @@
   import WatchBadge from '$lib/components/WatchBadge.svelte';
   import CardMenu from '$lib/components/CardMenu.svelte';
   import CollectionsTab from '$lib/components/CollectionsTab.svelte';
+  import AlbumPicker from '$lib/components/AlbumPicker.svelte';
   import { toast } from '$lib/stores/toast';
+  import { toggleSelected } from '$lib/photoAlbums';
   import {
     WATCH_FILTER_OPTIONS,
     parseWatchFilter,
@@ -31,6 +33,24 @@
 
   let playlistPickerItemId = '';
   let showPlaylistPicker = false;
+
+  // Photo libraries: Select mode, where a tile click toggles the photo in
+  // or out of the selection instead of opening it, and the selection goes
+  // to an album through the AlbumPicker.
+  let selectingPhotos = false;
+  let selectedPhotoIds = new Set<string>();
+  let albumPickerOpen = false;
+
+  function toggleSelectPhotos() {
+    selectingPhotos = !selectingPhotos;
+    selectedPhotoIds = new Set();
+  }
+
+  function onGridItemClick(e: MouseEvent, item: MediaItem) {
+    if (!selectingPhotos || !isPhotoLibrary) return;
+    e.preventDefault();
+    selectedPhotoIds = toggleSelected(selectedPhotoIds, item.id);
+  }
 
   // Per-tile metadata editor — admin-only, triggered by the ✎ overlay
   // button on home_video tiles (no external metadata source so the
@@ -449,6 +469,8 @@
     // new library's URL — nothing carries over from the previous one.
     readFiltersFromURL();
     surpriseMsg = '';
+    selectingPhotos = false;
+    selectedPhotoIds = new Set();
     loadLibrary().then(() => {
       loadItems();
       loadGenres();
@@ -753,7 +775,22 @@
       </button>
     {/if}
 
+    {#if isPhotoLibrary}
+      <button
+        type="button"
+        class="surprise-btn"
+        class:on={selectingPhotos}
+        aria-pressed={selectingPhotos}
+        on:click={toggleSelectPhotos}
+        title="Select photos to add to an album"
+      >{selectingPhotos ? 'Done' : 'Select'}</button>
+    {/if}
+
     <div class="browse-links">
+      {#if isPhotoLibrary}
+        <a href="/photos/map?library={id}">Map</a>
+        <a href="/photos/albums">Albums</a>
+      {/if}
       <a href="/libraries/{id}/genres">Browse genres</a>
       <a href="/libraries/{id}/years">Browse years</a>
     </div>
@@ -928,8 +965,17 @@
         {@const withMenu = watchable && canMarkWatched(item.type)}
         <!-- The cell holds the card link plus the ⋯ menu as a sibling (not
              nested in the link), so the menu is its own tab stop. -->
+        {@const photoSelected = selectingPhotos && selectedPhotoIds.has(item.id)}
         <div class="item-cell" class:has-menu={withMenu}>
-        <a class="item" class:circle-poster={isMusicLibrary || (isAudiobookLibrary && item.type === 'book_author')} href={itemHref(item)} tabindex="0">
+        <a
+          class="item"
+          class:circle-poster={isMusicLibrary || (isAudiobookLibrary && item.type === 'book_author')}
+          class:photo-selected={photoSelected}
+          href={itemHref(item)}
+          tabindex="0"
+          aria-label={selectingPhotos && isPhotoLibrary ? `${photoSelected ? 'Deselect' : 'Select'} ${item.title}` : undefined}
+          on:click={(e) => onGridItemClick(e, item)}
+        >
           <div class="poster">
             {#if item.poster_path}
               <img src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)}
@@ -975,7 +1021,10 @@
                 on:click={(e) => openPlaylistPicker(e, item.id)}
               >+</button>
             {/if}
-            {#if isAdmin && isPhotoLibrary}
+            {#if selectingPhotos && isPhotoLibrary}
+              <span class="select-check" aria-hidden="true">{photoSelected ? '✓' : ''}</span>
+            {/if}
+            {#if isAdmin && isPhotoLibrary && !selectingPhotos}
               <button
                 class="edit-meta-btn"
                 title="Edit title, summary, date"
@@ -1025,6 +1074,28 @@
   open={showPlaylistPicker}
   on:close={() => showPlaylistPicker = false}
 />
+
+{#if selectingPhotos && isPhotoLibrary}
+  <div class="select-bar" role="toolbar" aria-label="Selected photos">
+    <span class="sel-count" role="status">{selectedPhotoIds.size} selected</span>
+    <button
+      type="button"
+      class="btn-scan"
+      disabled={selectedPhotoIds.size === 0}
+      on:click={() => albumPickerOpen = true}
+    >Add to album…</button>
+    <button type="button" class="btn-refresh sel-done" on:click={toggleSelectPhotos}>Done</button>
+  </div>
+{/if}
+
+{#if isPhotoLibrary}
+  <AlbumPicker
+    open={albumPickerOpen}
+    mediaItemIds={[...selectedPhotoIds]}
+    onclose={() => albumPickerOpen = false}
+    ondone={() => { selectingPhotos = false; selectedPhotoIds = new Set(); }}
+  />
+{/if}
 
 {#if editingItem}
   <MetadataEditor
@@ -1226,6 +1297,30 @@
   .surprise-btn:disabled { opacity: 0.6; cursor: progress; }
   .surprise-msg { margin: -1rem 0 1.25rem; font-size: 0.78rem; color: var(--text-muted); }
   .surprise-msg:empty { margin: 0; }
+  /* Photo Select toggle, when on. */
+  .surprise-btn.on { background: var(--accent-bg); border-color: rgba(124,106,247,0.3); color: var(--accent-text); }
+
+  /* Photo Select mode: a check on each tile and a floating action bar. */
+  .item.photo-selected .poster { box-shadow: 0 0 0 3px var(--accent); }
+  .item.photo-selected .poster img { opacity: 0.8; }
+  .select-check {
+    position: absolute; top: 0.4rem; left: 0.4rem; z-index: 2;
+    width: 22px; height: 22px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid #fff; background: rgba(0,0,0,0.35);
+    color: #fff; font-size: 0.75rem; font-weight: 800;
+  }
+  .item.photo-selected .select-check { background: var(--accent); border-color: var(--accent); }
+  .select-bar {
+    position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%);
+    z-index: 950;
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.55rem 0.7rem 0.55rem 1rem;
+    background: var(--bg-elevated); border: 1px solid var(--border-strong);
+    border-radius: 12px; box-shadow: 0 12px 32px var(--shadow);
+  }
+  .sel-count { font-size: 0.8rem; color: var(--text-secondary); margin-right: 0.4rem; white-space: nowrap; }
+  .select-bar .sel-done { width: auto; padding: 0 0.8rem; font-size: 0.78rem; }
 
   /* Card + its ⋯ menu. The menu sits in the footer's right edge, outside
      the link, so the title gets room reserved for it. */
@@ -1567,6 +1662,8 @@
     .controls { gap: 0.65rem; }
     .search-box { flex: 1 1 100%; }
     .sort-row { flex-wrap: wrap; gap: 4px; }
+    /* Above the bottom tab bar. */
+    .select-bar { bottom: 72px; max-width: calc(100% - 1.5rem); }
 
     .grid {
       grid-template-columns: repeat(auto-fill, minmax(100px, 1fr));

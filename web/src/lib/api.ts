@@ -2045,6 +2045,91 @@ export const playlistApi = {
     api.put<void>(`/playlists/${playlistId}/items/order`, { item_ids: itemIds })
 };
 
+// ── Photos: map + albums ─────────────────────────────────────────────────────
+
+/** One geotagged photo from GET /photos/map. The server applies the
+ *  caller's library access and content-rating ceiling. */
+export interface PhotoMapPoint {
+  id: string;
+  library_id: string;
+  title: string;
+  poster_path?: string;
+  lat: number;
+  lon: number;
+  taken_at?: string;
+  created_at: string;
+}
+
+/** Optional bounding box + cap for GET /photos/map. Each edge is
+ *  independent; the server filters with a plain BETWEEN, so a box that
+ *  crosses the antimeridian must be sent as two queries. */
+export interface PhotoMapQuery {
+  min_lat?: number;
+  max_lat?: number;
+  min_lon?: number;
+  max_lon?: number;
+  limit?: number;
+}
+
+/** A photo album (a `photo_album` collection). Albums are owner-only:
+ *  the list holds the caller's own albums and nobody else's. item_count
+ *  and cover_path come from the list; create / update responses omit them. */
+export interface PhotoAlbum {
+  id: string;
+  name: string;
+  description?: string;
+  cover_path?: string;
+  item_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PhotoAlbumItem {
+  id: string;
+  library_id: string;
+  title: string;
+  poster_path?: string;
+  taken_at?: string;
+  camera_make?: string;
+  camera_model?: string;
+  width?: number;
+  height?: number;
+  orientation?: number;
+  added_at: string;
+}
+
+export const photoApi = {
+  /** Geotagged photos in a library. `total` is the library-wide count
+   *  (ignoring the box), so total > items.length means the answer was
+   *  truncated at the limit. */
+  map: (libraryId: string, q: PhotoMapQuery = {}) => {
+    const qs = new URLSearchParams({ library_id: libraryId });
+    for (const k of ['min_lat', 'max_lat', 'min_lon', 'max_lon', 'limit'] as const) {
+      const v = q[k];
+      if (v != null && Number.isFinite(v)) qs.set(k, String(v));
+    }
+    return api.requestList<PhotoMapPoint>(`/photos/map?${qs.toString()}`);
+  },
+};
+
+export const photoAlbumApi = {
+  list: () => api.get<PhotoAlbum[]>('/photo-albums'),
+  create: (name: string, description?: string) =>
+    api.post<PhotoAlbum>('/photo-albums', description ? { name, description } : { name }),
+  /** Rename. The server keeps the old name for a blank one. */
+  rename: (id: string, name: string) =>
+    api.patch<PhotoAlbum>(`/photo-albums/${encodeURIComponent(id)}`, { name }),
+  delete: (id: string) => api.delete(`/photo-albums/${encodeURIComponent(id)}`),
+  /** Newest-taken first. The server returns up to 5000 per request. */
+  items: (id: string) =>
+    api.requestList<PhotoAlbumItem>(`/photo-albums/${encodeURIComponent(id)}/items`),
+  /** Adding a photo that's already in the album is a no-op. */
+  addItem: (albumId: string, mediaItemId: string) =>
+    api.post<void>(`/photo-albums/${encodeURIComponent(albumId)}/items`, { media_item_id: mediaItemId }),
+  removeItem: (albumId: string, mediaItemId: string) =>
+    api.delete(`/photo-albums/${encodeURIComponent(albumId)}/items/${encodeURIComponent(mediaItemId)}`),
+};
+
 export interface ManagedProfile {
   id: string;
   username: string;

@@ -325,10 +325,14 @@ func (h *PhotoAlbumHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "only photo items can be added to a photo album")
 		return
 	}
+	// The insert is ON CONFLICT DO NOTHING ... RETURNING, so a photo that is
+	// already in the album comes back as no row. Adding it again is a no-op,
+	// not a failure: multi-select adds routinely include photos the album
+	// already holds, and used to get a 500 for each.
 	if _, err := h.db.AddCollectionItem(r.Context(), gen.AddCollectionItemParams{
 		CollectionID: id,
 		MediaItemID:  itemID,
-	}); err != nil {
+	}); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		h.logger.ErrorContext(r.Context(), "add photo album item", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return

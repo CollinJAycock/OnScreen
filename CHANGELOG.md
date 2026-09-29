@@ -195,6 +195,25 @@ Playback and library:
   - **API**: `GET`/`PUT /api/v1/items/{id}/playback-rate`,
     `GET`/`POST /api/v1/items/{id}/bookmarks`, `PATCH`/`DELETE
     /api/v1/bookmarks/{id}` (1000 bookmarks per book). Migration 00032.
+- **Photo map on the web** — a photo library's geotagged photos on an
+  OpenStreetMap map (Map on the library page), as clustered thumbnail
+  markers, from the existing `GET /api/v1/photos/map` (library access and
+  rating ceiling applied as before). Clicking a marker lists the photos
+  taken there; each opens the photo viewer, whose Previous / Next walk that
+  spot and whose close returns to the same map view. A library with more
+  than 25,000 geotagged photos reloads per view as you pan and zoom.
+  Leaflet is bundled and loads only with the map. The browser fetches the
+  tiles from tile.openstreetmap.org as images, which the CSP's `img-src`
+  already allows (no CSP change; a test now pins it), so that server sees
+  which areas are viewed.
+- **Photo albums on the web** — `/photos/albums` lists your albums with
+  their cover and photo count; create, rename and delete them there, and
+  open one to see its photos in the viewer (Previous / Next walk the
+  album). Add photos with "Add to album…" in the photo viewer or by
+  selecting several in a photo library (Select), and remove them on the
+  album's page or from the viewer. Albums stay owner-only. Adding a photo
+  that is already in the album is now a no-op (`204`) instead of a `500`
+  from `POST /api/v1/photo-albums/{id}/items`.
 
 Android apps (TV + phone). The request features above are web-only by
 design — neither Android app has any request functionality, and the phone
