@@ -55,6 +55,10 @@ func newNonce() string {
 //     hardening is far lower than script-src.
 //   - blob: appears on img-src / style-src / font-src so epub.js can
 //     render archive resources from Blob URLs in its rendition iframe.
+//   - img-src's https: also carries the web photo map's OpenStreetMap
+//     raster tiles (https://tile.openstreetmap.org). Leaflet loads tiles
+//     as <img> elements, never fetch/XHR, so connect-src needs no tile
+//     host. Narrowing img-src to a host list must keep that host.
 //   - static.cloudflareinsights.com / cloudflareinsights.com are
 //     allow-listed for Cloudflare's auto-injected Web Analytics beacon
 //     (loaded as an external <script src>, so the nonce switch doesn't

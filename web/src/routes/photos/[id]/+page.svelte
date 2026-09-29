@@ -2,8 +2,18 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, assetUrl, type ItemDetail, type MediaItem, type PhotoEXIF } from '$lib/api';
+  import { itemApi, mediaApi, photoAlbumApi, assetUrl, type ItemDetail, type PhotoEXIF } from '$lib/api';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
+  import AlbumPicker from '$lib/components/AlbumPicker.svelte';
+  import { toast } from '$lib/stores/toast';
+  import { loadMapSelection } from '$lib/photoMap';
+  import {
+    contextKey,
+    photoViewerHref,
+    viewerCloseHref,
+    viewerContextFromURL,
+    type PhotoViewerContext,
+  } from '$lib/photoViewerContext';
 
   let item: ItemDetail | null = null;
   let exif: PhotoEXIF | null = null;
@@ -12,9 +22,15 @@
   let isAdmin = false;
   let editMetadataOpen = false;
 
-  // Sibling photos in the same library, used for prev/next nav.
-  let siblings: MediaItem[] = [];
+  // Sibling photos for prev/next nav: the library's photos, or the album's /
+  // the map spot's when the viewer was opened from there (?album= / ?map=,
+  // see $lib/photoViewerContext). siblingsKey names the list loaded.
+  let siblings: { id: string }[] = [];
+  let siblingsKey = '';
   let siblingIdx = -1;
+
+  let albumPickerOpen = false;
+  let removing = false;
 
   let showInfo = false;
   let zoom = 1;
@@ -31,6 +47,7 @@
   let slideTimer: ReturnType<typeof setTimeout> | null = null;
 
   $: id = $page.params.id!;
+  $: ctx = viewerContextFromURL($page.url);
   $: prevPhoto = siblingIdx > 0 ? siblings[siblingIdx - 1] : null;
   $: nextPhoto = siblingIdx >= 0 && siblingIdx < siblings.length - 1 ? siblings[siblingIdx + 1] : null;
 
@@ -44,14 +61,16 @@
       item = await itemApi.get(currentId);
       // EXIF is optional — 404 just means no EXIF block on this image.
       itemApi.exif(currentId).then(e => { if (id === currentId) exif = e; }).catch(() => {});
-      // Load siblings whenever the current photo isn't already in the cached
-      // list (first visit, or jumped to a photo in a different library).
-      // Photo libraries default to taken_at desc, matching browse order.
-      if (item && !siblings.some(s => s.id === currentId)) {
-        try {
-          const r = await mediaApi.listItems(item.library_id, 500, 0, { sort: 'taken_at', sort_dir: 'desc' });
-          siblings = r.items;
-        } catch { /* nav fallback */ }
+      // Load siblings whenever the context changed or the current photo
+      // isn't already in the cached list (first visit, or jumped to a photo
+      // in a different library).
+      const key = item ? contextKey(ctx, item.library_id) : '';
+      if (item && (key !== siblingsKey || !siblings.some(s => s.id === currentId))) {
+        const next = await loadSiblings(ctx, item.library_id, currentId);
+        if (next) {
+          siblings = next;
+          siblingsKey = key;
+        }
       }
       siblingIdx = siblings.findIndex(s => s.id === currentId);
     } catch (e: unknown) {
@@ -61,19 +80,58 @@
     }
   }
 
-  function go(p: MediaItem | null) {
-    if (!p) return;
-    goto(`/photos/${p.id}`);
+  // null keeps the current list (a failed load shouldn't strand the nav).
+  async function loadSiblings(c: PhotoViewerContext, libraryId: string, currentId: string): Promise<{ id: string }[] | null> {
+    try {
+      if (c.kind === 'album') {
+        return (await photoAlbumApi.items(c.albumId)).items;
+      }
+      if (c.kind === 'map') {
+        // The photos listed at the map spot this one was opened from.
+        const sel = loadMapSelection();
+        if (sel && sel.libraryId === c.libraryId && sel.ids.includes(currentId)) {
+          return sel.ids.map(sid => ({ id: sid }));
+        }
+      }
+      // Photo libraries default to taken_at desc, matching browse order.
+      const r = await mediaApi.listItems(libraryId, 500, 0, { sort: 'taken_at', sort_dir: 'desc' });
+      return r.items;
+    } catch {
+      return null;
+    }
   }
 
-  // Always escape to the parent library — per-photo navigations push history
-  // entries, so history.back() would just step to the previous photo instead
-  // of leaving the viewer.
+  function go(p: { id: string } | null) {
+    if (!p) return;
+    goto(photoViewerHref(p.id, ctx));
+  }
+
+  // Always escape to where the viewer was opened from (the library, album or
+  // map) — per-photo navigations push history entries, so history.back()
+  // would just step to the previous photo instead of leaving the viewer.
   function close() {
-    if (item?.library_id) {
-      goto(`/libraries/${item.library_id}`);
-    } else {
-      goto('/');
+    goto(viewerCloseHref(ctx, item?.library_id));
+  }
+
+  // Album context only: take this photo out of the album, then move on to
+  // the next one (or back to the album when it was the last).
+  async function removeFromAlbum() {
+    if (ctx.kind !== 'album' || !item || removing) return;
+    const albumId = ctx.albumId;
+    const photoId = item.id;
+    removing = true;
+    try {
+      await photoAlbumApi.removeItem(albumId, photoId);
+      toast.success('Removed from the album');
+      const idx = siblings.findIndex(s => s.id === photoId);
+      const nextPhoto = idx >= 0 ? (siblings[idx + 1] ?? siblings[idx - 1] ?? null) : null;
+      siblings = siblings.filter(s => s.id !== photoId);
+      if (nextPhoto) go(nextPhoto);
+      else close();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error && e.message ? e.message : 'Could not remove the photo from the album');
+    } finally {
+      removing = false;
     }
   }
 
@@ -196,6 +254,13 @@
   }
 
   function onKey(e: KeyboardEvent) {
+    // Leave keys alone while a dialog is open or the user is typing (an album
+    // name, the metadata editor): "i", Space and Escape belong to the field.
+    // defaultPrevented covers the album dialog's own Escape when its window
+    // listener ran first and has already closed it.
+    if (albumPickerOpen || editMetadataOpen || e.defaultPrevented) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
     if (e.key === 'ArrowLeft') { e.preventDefault(); go(prevPhoto); }
     else if (e.key === 'ArrowRight') { e.preventDefault(); go(nextPhoto); }
     else if (e.key === 'Escape') {
@@ -270,6 +335,34 @@
       title="Slideshow (Space)"
     >{slideshow ? '⏸' : '▶'}</button>
     <button class="icon-btn" class:on={showInfo} on:click={() => showInfo = !showInfo} title="Info (i)">i</button>
+    <button
+      class="icon-btn"
+      on:click={() => albumPickerOpen = true}
+      disabled={!item}
+      title="Add to album…"
+      aria-label="Add to album"
+    >
+      <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+        <rect x="1.75" y="4.25" width="10" height="9.5" rx="1.5" />
+        <path d="M4.25 2.25h8.5a1.5 1.5 0 0 1 1.5 1.5v7.5" />
+        <path d="M6.75 6.75v4.5M4.5 9h4.5" />
+      </svg>
+    </button>
+    {#if ctx.kind === 'album'}
+      <button
+        class="icon-btn"
+        on:click={removeFromAlbum}
+        disabled={!item || removing}
+        title="Remove from this album"
+        aria-label="Remove from album"
+      >
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+          <rect x="1.75" y="4.25" width="10" height="9.5" rx="1.5" />
+          <path d="M4.25 2.25h8.5a1.5 1.5 0 0 1 1.5 1.5v7.5" />
+          <path d="M4.5 9h4.5" />
+        </svg>
+      </button>
+    {/if}
     {#if isAdmin}
       <button class="icon-btn" on:click={() => editMetadataOpen = true} title="Edit metadata" aria-label="Edit metadata">✎</button>
     {/if}
@@ -345,6 +438,12 @@
     <div class="state">Photo not available</div>
   {/if}
 </div>
+
+<AlbumPicker
+  open={albumPickerOpen}
+  mediaItemIds={item ? [item.id] : []}
+  onclose={() => albumPickerOpen = false}
+/>
 
 {#if item}
   <MetadataEditor

@@ -398,6 +398,40 @@ func TestPhotoAlbums_AddItem_AcceptsPhoto(t *testing.T) {
 	}
 }
 
+// AddCollectionItem is ON CONFLICT DO NOTHING ... RETURNING, so re-adding a
+// photo already in the album yields pgx.ErrNoRows. That's an idempotent
+// no-op (204), not a server error; any other insert failure still 500s.
+func TestPhotoAlbums_AddItem_AlreadyInAlbumIsNoOp(t *testing.T) {
+	uid := uuid.New()
+	albumID := uuid.New()
+	mediaID := uuid.New()
+	for _, tc := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"duplicate", pgx.ErrNoRows, http.StatusNoContent},
+		{"db failure", errors.New("connection reset"), http.StatusInternalServerError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &mockPhotoAlbumDB{
+				getResult:    ownedAlbum(uid, albumID),
+				getMediaItem: gen.GetMediaItemRow{ID: mediaID, Type: "photo"},
+				addItemErr:   tc.err,
+			}
+			h := NewPhotoAlbumHandler(m, slog.Default())
+			req := withUser(httptest.NewRequest("POST", "/",
+				bytes.NewReader([]byte(`{"media_item_id":"`+mediaID.String()+`"}`))), uid)
+			req = withChiParam(req, "id", albumID.String())
+			rec := httptest.NewRecorder()
+			h.AddItem(rec, req)
+			if rec.Code != tc.want {
+				t.Fatalf("status: got %d, want %d (body=%s)", rec.Code, tc.want, rec.Body.String())
+			}
+		})
+	}
+}
+
 func TestPhotoAlbums_AddItem_404OnMissingMediaItem(t *testing.T) {
 	uid := uuid.New()
 	albumID := uuid.New()
