@@ -7,19 +7,77 @@ const SCOPE_ATTR = 'data-focus-scope';
 type BackHandler = () => boolean;
 type KeyHandler = (k: RemoteKey, e: KeyboardEvent) => boolean;
 
+// Holding OK this long on an element with a long-press handler opens its
+// options instead of activating it (Android's long-press timeout is ~500).
+const LONG_PRESS_MS = 600;
+// After a long press fires, Enter key-repeats keep arriving until the key
+// is released. A gap longer than this between them means a fresh press
+// (covers firmware that never sends keyup or doesn't flag repeats).
+const REPEAT_GAP_MS = 350;
+
 class FocusManager {
   private current: HTMLElement | null = null;
   private backStack: BackHandler[] = [];
   private keyHandlers: KeyHandler[] = [];
 
+  // Long press on OK. Elements opt in via the focusable action's
+  // onLongPress; for them the click moves from keydown to keyup so a hold
+  // can turn into the long-press instead. Every other element still
+  // activates on keydown, exactly as before.
+  private longPress = new WeakMap<HTMLElement, () => void>();
+  private pressTarget: HTMLElement | null = null;
+  private pressTimer: ReturnType<typeof setTimeout> | null = null;
+  // Set once a long press fired, until the key is released (or a fresh press
+  // arrives): swallows the hold's remaining repeats + its keyup so they can't
+  // activate whatever the long-press just focused (a dialog's first option).
+  private swallowEnterUntil = 0;
+  private swallowingEnter = false;
+
   init(root: HTMLElement = document.body) {
     root.addEventListener('keydown', this.onKey, true);
+    root.addEventListener('keyup', this.onKeyUp, true);
     this.focusFirst();
   }
 
   destroy(root: HTMLElement = document.body) {
     root.removeEventListener('keydown', this.onKey, true);
+    root.removeEventListener('keyup', this.onKeyUp, true);
+    this.cancelPress();
   }
+
+  /** Register (or clear, with undefined) an element's long-press handler. */
+  setLongPress(el: HTMLElement, handler: (() => void) | undefined) {
+    if (handler) this.longPress.set(el, handler);
+    else this.longPress.delete(el);
+  }
+
+  /** The element that currently has the focus ring (null when none). */
+  currentElement(): HTMLElement | null {
+    return this.current && document.body.contains(this.current) ? this.current : null;
+  }
+
+  private cancelPress() {
+    if (this.pressTimer) clearTimeout(this.pressTimer);
+    this.pressTimer = null;
+    this.pressTarget = null;
+  }
+
+  private onKeyUp = (e: KeyboardEvent) => {
+    if (toRemoteKey(e) !== 'enter') return;
+    if (this.swallowingEnter) {
+      this.swallowingEnter = false;
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    const target = this.pressTarget;
+    if (!target) return;
+    this.cancelPress();
+    e.preventDefault();
+    e.stopPropagation();
+    // Released before the long-press threshold: an ordinary activation.
+    if (document.body.contains(target)) target.click();
+  };
 
   pushBack(handler: BackHandler) {
     this.backStack.push(handler);
@@ -74,6 +132,20 @@ class FocusManager {
     const k = toRemoteKey(e);
     if (!k) return;
 
+    // Any other key abandons a pending long press (no click, no options).
+    if (k !== 'enter' && this.pressTarget) this.cancelPress();
+    if (k === 'enter' && this.swallowingEnter) {
+      const now = Date.now();
+      if (e.repeat || now < this.swallowEnterUntil) {
+        // Still the hold that fired the long press.
+        this.swallowEnterUntil = now + REPEAT_GAP_MS;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      this.swallowingEnter = false; // a fresh press
+    }
+
     for (let i = this.keyHandlers.length - 1; i >= 0; i--) {
       if (this.keyHandlers[i](k, e)) {
         e.preventDefault();
@@ -107,10 +179,28 @@ class FocusManager {
       if (!this.current || !document.body.contains(this.current)) {
         this.focusFirst();
       }
-      if (this.current) {
-        e.preventDefault();
-        this.current.click();
+      const el = this.current;
+      if (!el) return;
+      e.preventDefault();
+      const onLong = this.longPress.get(el);
+      if (!onLong) {
+        el.click();
+        return;
       }
+      // Long-press capable: keyup before the threshold clicks (onKeyUp),
+      // holding past it opens the options instead. Repeats of the same
+      // hold are ignored.
+      if (this.pressTarget) return;
+      this.pressTarget = el;
+      this.pressTimer = setTimeout(() => {
+        const target = this.pressTarget;
+        this.cancelPress();
+        if (!target || !document.body.contains(target)) return;
+        this.swallowingEnter = true;
+        // Generous first window: some remotes start repeating late.
+        this.swallowEnterUntil = Date.now() + 1000;
+        (this.longPress.get(target) ?? onLong)();
+      }, LONG_PRESS_MS);
       return;
     }
 

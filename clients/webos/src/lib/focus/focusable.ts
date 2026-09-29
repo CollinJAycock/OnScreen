@@ -3,6 +3,9 @@ import { focusManager } from './manager';
 interface Options {
   autofocus?: boolean;
   onFocus?: () => void;
+  /** Holding OK on this element calls this instead of clicking it (a short
+   *  press still clicks). See FocusManager's long-press handling. */
+  onLongPress?: () => void;
 }
 
 export function focusable(node: HTMLElement, opts: Options = {}) {
@@ -18,9 +21,15 @@ export function focusable(node: HTMLElement, opts: Options = {}) {
   if (opts.autofocus) {
     queueMicrotask(() => focusManager.focus(node));
   }
+  focusManager.setLongPress(node, opts.onLongPress);
 
   return {
+    update(next: Options = {}) {
+      opts = next;
+      focusManager.setLongPress(node, next.onLongPress);
+    },
     destroy() {
+      focusManager.setLongPress(node, undefined);
       observer.disconnect();
       node.removeAttribute('data-focusable');
       node.removeAttribute('data-focused');

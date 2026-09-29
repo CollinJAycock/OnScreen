@@ -2,6 +2,7 @@
 // `paused`/`stopped` events immediately. Safe to call stop() multiple times.
 
 import { endpoints, ApiError } from '$lib/api';
+import { isPlaybackStoppedError, stoppedTextFromServer } from '$lib/playbackStop';
 
 const INTERVAL_MS = 10_000;
 
@@ -17,9 +18,13 @@ export class ProgressReporter {
   // onBlocked fires when a 'playing' heartbeat is rejected with a parental
   // watch-limit 403 (a daily cap reached or the allowed-hours window closing
   // mid-session). The caller pauses playback and shows the block message.
+  // onStopped fires on 403 PLAYBACK_STOPPED — an admin stopped this stream
+  // from Now Playing and the server refuses it for a while — with the
+  // sentence to show (the backstop for a missed playback.stop event).
   start(
     getState: () => { positionMs: number; durationMs: number },
-    onBlocked?: (reason: string) => void
+    onBlocked?: (reason: string) => void,
+    onStopped?: (message: string) => void
   ) {
     this.stop();
     this.timer = setInterval(() => {
@@ -30,6 +35,8 @@ export class ProgressReporter {
       void endpoints.items.progress(this.itemID, s.positionMs, s.durationMs, 'playing').catch((e) => {
         if (onBlocked && e instanceof ApiError && e.code === 'PARENTAL_LIMIT') {
           onBlocked(e.message);
+        } else if (onStopped && e instanceof ApiError && e.status === 403 && isPlaybackStoppedError(e)) {
+          onStopped(stoppedTextFromServer(e.message));
         }
       });
     }, INTERVAL_MS);

@@ -54,6 +54,26 @@ export function pushTo(hashRoute: string) {
   goto(hashRoute);
 }
 
+// One-shot start positions for the next /watch of an item. The player
+// normally resumes from the item's own view_offset_ms; "Watch again" and
+// the show / season up-next button need to say "from the top" (or from the
+// up-next episode's resume point) instead.
+const startOverrides = new Map<string, number>();
+
+/** Open the player for an item, optionally at a given position. */
+export function playItem(id: string, startMs?: number) {
+  if (startMs !== undefined) startOverrides.set(id, Math.max(0, startMs));
+  else startOverrides.delete(id);
+  goto(`#/watch/${id}`);
+}
+
+/** The position playItem asked for, consumed on read (undefined = resume). */
+export function takeStartOverride(id: string): number | undefined {
+  const v = startOverrides.get(id);
+  startOverrides.delete(id);
+  return v;
+}
+
 /** Detail-page back handler. Pops the stack; falls back to hub when
  *  empty (e.g. cold-launch deep link). */
 export function goBack() {

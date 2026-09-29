@@ -8,20 +8,30 @@ import type {
   FavoriteItem,
   HistoryItem,
   HubData,
+  IssueKind,
   ItemDetail,
+  LastFMLinkStart,
   Library,
   ManagedProfile,
   Marker,
   MediaCollection,
+  MediaIssue,
   MediaItem,
   MediaRequest,
   NowNext,
   OnlineSubtitle,
   PairCodeResponse,
+  PlaybackRate,
   Recording,
+  ScrobbleLinkResult,
+  ScrobbleStatus,
   SearchResult,
-  TranscodeSession
+  TraktLinkStart,
+  TranscodeSession,
+  UpNext,
+  WatchFilter
 } from './types';
+import { watchQuery } from '$lib/watchState';
 
 // Response shape for list endpoints that wrap data in { data, meta }.
 // The client unwraps `data` already, so these pull the array directly.
@@ -32,9 +42,17 @@ export const hub = {
 
 export const libraries = {
   list: () => api.get<Library[]>('/api/v1/libraries'),
-  listItems: (libraryID: string, sort = 'title', dir: 'asc' | 'desc' = 'asc') =>
+  /** `watch` narrows by the caller's watch state (v2.5; older servers
+   *  ignore it — the library page only offers the filter to newer ones). */
+  listItems: (libraryID: string, sort = 'title', dir: 'asc' | 'desc' = 'asc', watch: WatchFilter | '' = '') =>
     api.get<MediaItem[]>(
-      `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=200`
+      `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=200${watchQuery(watch)}`
+    ),
+  /** "Surprise me" (v2.5): one random item matching the filter. 404 when
+   *  nothing matches. */
+  random: (libraryID: string, watch: WatchFilter | '' = '') =>
+    api.get<{ id: string; type: string }>(
+      `/api/v1/libraries/${libraryID}/random${watch ? `?watch=${watch}` : ''}`
     )
 };
 
@@ -88,7 +106,36 @@ export const items = {
       state
     }),
   addFavorite: (id: string) => api.post<void>(`/api/v1/items/${id}/favorite`, {}),
-  removeFavorite: (id: string) => api.del<void>(`/api/v1/items/${id}/favorite`)
+  removeFavorite: (id: string) => api.del<void>(`/api/v1/items/${id}/favorite`),
+
+  // ── Watch state (v2.5) ──
+  // Played / unplayed without playing. On a show or season the server
+  // applies it to every episode underneath the caller can see.
+  markWatched: (id: string) => api.post<void>(`/api/v1/items/${id}/watched`, {}),
+  markUnwatched: (id: string) => api.del<void>(`/api/v1/items/${id}/watched`),
+  /** Hide an item from Continue Watching until it's played again. */
+  dismissContinueWatching: (id: string) =>
+    api.post<void>(`/api/v1/items/${id}/dismiss-continue-watching`, {}),
+  /** Show or season: which episode Play should start. */
+  upNext: (id: string) => api.get<UpNext>(`/api/v1/items/${id}/up-next`),
+
+  // ── Audiobook listening speed (v2.5) ──
+  // {id} is the book or one of its chapters (it resolves to the book).
+  // Non-audiobooks are 422; a server without the routes is 404.
+  playbackRate: (id: string) => api.get<PlaybackRate>(`/api/v1/items/${id}/playback-rate`),
+  setPlaybackRate: (id: string, rate: number) =>
+    api.put<void>(`/api/v1/items/${id}/playback-rate`, { rate })
+};
+
+// ── Report a problem (v2.5) ────────────────────────────────────────────────
+
+export const issues = {
+  /** The caller's own reports on an item, newest first. */
+  listMine: (itemID: string) => api.get<MediaIssue[]>(`/api/v1/items/${itemID}/issues`),
+  /** 409 ALREADY_REPORTED for a second open report of the same kind;
+   *  429 TOO_MANY_OPEN_ISSUES past the per-user cap. */
+  create: (itemID: string, body: { kind: IssueKind; note?: string; file_id?: string }) =>
+    api.post<MediaIssue>(`/api/v1/items/${itemID}/issues`, body)
 };
 
 export const search = {
@@ -391,22 +438,25 @@ export const users = {
   watchLimit: () => api.get<WatchLimitInfo>('/api/v1/users/me/watch-limit'),
 };
 
-// ── Scrobbling (ListenBrainz) ────────────────────────────────────
-// Per-user external scrobble link. The token is write-only — the
-// server returns only whether one is linked and whether submission is
-// enabled, never the token itself. An empty token unlinks (the server
-// forces enabled=false on an empty token). Mirrors the web client's
-// scrobbleApi; the listen-submit trigger is entirely server-side (on a
-// 'stopped' watch event past the listen threshold), so this is purely
-// the per-user link toggle.
-export interface ScrobbleStatus {
-  listenbrainz_linked: boolean;
-  listenbrainz_enabled: boolean;
-}
-
+// ── Scrobbling ───────────────────────────────────────────────────
+// Per-user external scrobble links. The ListenBrainz token is write-only —
+// the server returns only whether one is linked and whether submission is
+// enabled; an empty token unlinks. Last.fm and Trakt (v2.5) link through an
+// approval on the service's own site, then the TV polls `complete` with the
+// sealed pending handle. The scrobbles themselves are sent server-side from
+// watch events, so every client's plays count once a service is linked.
+// Mirrors the web client's scrobbleApi.
 export const scrobble = {
   status: () => api.get<ScrobbleStatus>('/api/v1/users/me/scrobble'),
   /** Link or update the ListenBrainz token. An empty token unlinks. */
   setListenBrainz: (token: string, enabled: boolean) =>
     api.put<void>('/api/v1/users/me/scrobble/listenbrainz', { token, enabled }),
+  startLastFM: () => api.post<LastFMLinkStart>('/api/v1/users/me/scrobble/lastfm/link', {}),
+  completeLastFM: (pending: string) =>
+    api.post<ScrobbleLinkResult>('/api/v1/users/me/scrobble/lastfm/link/complete', { pending }),
+  unlinkLastFM: () => api.del<void>('/api/v1/users/me/scrobble/lastfm'),
+  startTrakt: () => api.post<TraktLinkStart>('/api/v1/users/me/scrobble/trakt/link', {}),
+  completeTrakt: (pending: string) =>
+    api.post<ScrobbleLinkResult>('/api/v1/users/me/scrobble/trakt/link/complete', { pending }),
+  unlinkTrakt: () => api.del<void>('/api/v1/users/me/scrobble/trakt'),
 };
