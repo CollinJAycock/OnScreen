@@ -1,4 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
+import type { Chapter } from '$lib/api';
 import type { ReplayGainInfo } from '$lib/replaygain';
 
 export interface AudioTrack {
@@ -17,6 +18,12 @@ export interface AudioTrack {
   // browser player looks the tags up itself before the track starts.
   // An empty object means "no tags" (played at unity).
   replayGain?: ReplayGainInfo;
+  // Set when the track is an audiobook (the audiobook page, Play on…);
+  // unset for music. bookId is the audiobook: the track itself for a
+  // single-file book, its parent for a chapter — listening speed and
+  // bookmarks hang off it. chapters are a single-file book's embedded
+  // chapters (files[0].chapters), for chapter skips and the sleep timer.
+  audiobook?: { bookId: string; chapters?: Chapter[] };
 }
 
 export type RepeatMode = 'off' | 'one' | 'all';
@@ -33,6 +40,10 @@ interface AudioState {
   // previously-played track instead of jumping randomly again.
   shuffleOrder: number[];
   shufflePos: number;
+  // Bumped by seek() (and by Previous restarting a track) so the player
+  // moves the element to positionMS. positionMS alone can't say that: it
+  // also changes on every timeupdate the player reports.
+  seekSeq: number;
 }
 
 const initial: AudioState = {
@@ -43,7 +54,8 @@ const initial: AudioState = {
   shuffle: false,
   repeat: 'off',
   shuffleOrder: [],
-  shufflePos: -1
+  shufflePos: -1,
+  seekSeq: 0
 };
 
 function fisherYates(n: number, startWith: number): number[] {
@@ -121,19 +133,28 @@ function createAudioStore() {
       update((s) => advance(s, 1));
     },
 
+    // Advance like next() but leave the new track paused at its start —
+    // the sleep timer's "end of chapter" stopping at a track boundary, so
+    // Play picks up with the next chapter rather than replaying this one.
+    nextPaused() {
+      update((s) => ({ ...advance(s, 1), playing: false }));
+    },
+
     prev() {
       // Standard player UX: if past 3s into the track, restart it; otherwise
       // jump to the previous track. This avoids accidentally losing position.
       const s = get({ subscribe });
       if (s.positionMS > 3000) {
-        update((s2) => ({ ...s2, positionMS: 0 }));
+        update((s2) => ({ ...s2, positionMS: 0, seekSeq: s2.seekSeq + 1 }));
         return;
       }
       update((s2) => advance(s2, -1));
     },
 
+    // Move playback within the current track (a bookmark in the chapter
+    // that's already playing). The player applies it to the element.
     seek(ms: number) {
-      update((s) => ({ ...s, positionMS: Math.max(0, ms) }));
+      update((s) => ({ ...s, positionMS: Math.max(0, ms), seekSeq: s.seekSeq + 1 }));
     },
 
     // Reports current playback position from the audio element. Throttled

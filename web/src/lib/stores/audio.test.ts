@@ -50,3 +50,39 @@ describe('peekNext / nextTrack — gapless preload candidate', () => {
     expect(get(nextTrack)).toBeNull();
   });
 });
+
+describe('seek / Previous restart / nextPaused', () => {
+  it('seek moves the position and bumps seekSeq so the player applies it', () => {
+    audio.play([t('a')], 0);
+    const before = get(audio).seekSeq;
+    audio.seek(42_000);
+    expect(get(audio).positionMS).toBe(42_000);
+    expect(get(audio).seekSeq).toBe(before + 1);
+  });
+
+  it('Previous past 3 s restarts the track as a seek', () => {
+    audio.play([t('a'), t('b')], 1);
+    audio.setPosition(10_000);
+    const before = get(audio).seekSeq;
+    audio.prev();
+    expect(get(audio).index).toBe(1);
+    expect(get(audio).positionMS).toBe(0);
+    expect(get(audio).seekSeq).toBe(before + 1);
+  });
+
+  it('a reported position is not a seek', () => {
+    audio.play([t('a')], 0);
+    const before = get(audio).seekSeq;
+    audio.setPosition(5_000);
+    expect(get(audio).seekSeq).toBe(before);
+  });
+
+  it('nextPaused advances but stays paused', () => {
+    audio.play([t('a'), t('b')], 0);
+    audio.nextPaused();
+    const s = get(audio);
+    expect(s.index).toBe(1);
+    expect(s.positionMS).toBe(0);
+    expect(s.playing).toBe(false);
+  });
+});

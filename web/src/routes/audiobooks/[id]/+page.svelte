@@ -2,16 +2,19 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
+  import { itemApi, assetUrl, type ItemDetail, type ChildItem, type Bookmark } from '$lib/api';
   import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
+  import { bookmarkAdded } from '$lib/stores/bookmarks';
+  import { toast } from '$lib/stores/toast';
   import { replayGainFromFile } from '$lib/replaygain';
+  import { chapterAt, formatPosition, insertBookmark, listeningUnavailable, resumeStartMS } from '$lib/audiobook';
 
   // Audiobook detail page: shows the book + lists its chapters (when the
   // book is multi-file, each audiobook_chapter is its own row with its
-  // own file). Single-file books with no chapter children get just a
-  // "Play" button — the watch page handles their embedded chapter
-  // markers separately for the resume-snap feature, but here they
-  // surface as one tile.
+  // own file). A single-file book lists its embedded chapters instead
+  // (files[0].chapters), and plays as one track in the global audio
+  // player, which skips between those chapters and resumes at the start
+  // of the one you were in. Below the chapters: the listener's bookmarks.
   //
   // Mirrors albums/[id]/+page.svelte one-for-one because the data shape
   // is identical (audiobook → audiobook_chapter ≅ album → track). Kept
@@ -28,8 +31,21 @@
   let error = '';
   let isAdmin = false;
 
+  // The listener's bookmarks in this book, in listening order. The section
+  // hides when the server has no bookmark routes (an older server).
+  let bookmarks: Bookmark[] = [];
+  let bookmarksLoaded = false;
+  let bookmarksAvailable = true;
+  let bookmarksError = '';
+  let editingId = '';
+  let editNote = '';
+  let savingNote = false;
+
   $: id = $page.params.id!;
   $: nowPlayingId = $currentTrack?.id ?? null;
+  // A single-file book's embedded chapters, and the one playing now.
+  $: bookChapters = book?.files[0]?.chapters ?? [];
+  $: playingChapter = book && nowPlayingId === book.id ? chapterAt(bookChapters, $audio.positionMS) : null;
 
   onMount(async () => {
     const raw = localStorage.getItem('onscreen_user');
@@ -37,6 +53,14 @@
     try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     await load();
   });
+
+  // A bookmark added from the player while this page is open joins the
+  // list in its place.
+  onMount(() =>
+    bookmarkAdded.subscribe((evt) => {
+      if (evt && book && evt.bookId === book.id) bookmarks = insertBookmark(bookmarks, evt.bookmark, book.id);
+    })
+  );
 
   async function removeItem() {
     if (!book) return;
@@ -80,6 +104,7 @@
       }
       book = detail;
       bookFile = detail.files[0] ? { id: detail.files[0].id } : null;
+      void loadBookmarks(detail.id);
 
       // Walk the parent chain for the breadcrumb. parent may be either
       // a book_series (parent.parent = book_author) or directly a
@@ -156,6 +181,7 @@
         artistId: author?.id,
         posterPath: book?.poster_path,
         replayGain: replayGainFromFile(cd?.files[0]),
+        audiobook: book ? { bookId: book.id } : undefined,
       });
     }
     return { queue, index };
@@ -166,6 +192,43 @@
     if (!chapterDetails.has(c.id)) return;
     const { queue, index } = buildQueue(idx);
     audio.play(queue, index, startMS);
+  }
+
+  // A single-file book is one track; its embedded chapters ride along for
+  // the player's chapter skips and "end of chapter" sleep timer.
+  function bookTrack(): AudioTrack | null {
+    const f = book?.files[0];
+    if (!book || !f) return null;
+    return {
+      id: book.id,
+      fileId: f.id,
+      title: book.title,
+      durationMS: book.duration_ms ?? f.duration_ms,
+      artist: author?.title,     // author byline
+      artistId: author?.id,
+      posterPath: book.poster_path,
+      replayGain: replayGainFromFile(f),
+      audiobook: { bookId: book.id, chapters: f.chapters ?? [] },
+    };
+  }
+
+  // Play itemId (the book, or one of its chapters) from startMS — a
+  // bookmark, or an embedded chapter. When the player already has that
+  // item, just move there: queueing the same track again wouldn't seek.
+  function playFrom(itemId: string, startMS: number) {
+    if (nowPlayingId === itemId) {
+      audio.seek(startMS);
+      audio.resume();
+      return;
+    }
+    if (book && itemId === book.id) {
+      const t = bookTrack();
+      if (t) audio.play([t], 0, startMS);
+      return;
+    }
+    const idx = chapters.findIndex((c) => c.id === itemId);
+    if (idx >= 0 && chapterDetails.has(itemId)) playChapter(idx, startMS);
+    else toast.error("That chapter isn't available to play");
   }
 
   // findResumePoint scans chapters back-to-front looking for the most
@@ -184,12 +247,17 @@
 
   $: resumePoint = chapterDetails.size > 0 ? findResumePoint() : null;
 
+  // Single-file resume: the start of the embedded chapter the saved
+  // offset is in (0 = nothing to resume).
+  $: singleResumeMS = book && chapters.length === 0
+    ? resumeStartMS(bookChapters, book.view_offset_ms, book.duration_ms ?? 0)
+    : 0;
+  $: singleResumeChapter = singleResumeMS > 0 ? chapterAt(bookChapters, singleResumeMS) : null;
+
   function playBook() {
     // Multi-file: start from the resume point if any, otherwise the
-    // first playable chapter. Single-file: route to the watch page
-    // where the embedded chapter-marker resume-snap and full HLS
-    // pipeline live (audio store doesn't yet handle the single-file-
-    // with-chapter-markers case).
+    // first playable chapter. Single-file: the one track, from its
+    // resume point.
     if (chapters.length > 0) {
       if (resumePoint) {
         playChapter(resumePoint.chapterIdx, resumePoint.positionMS);
@@ -199,7 +267,8 @@
       if (firstPlayable >= 0) playChapter(firstPlayable);
       return;
     }
-    if (book) goto(`/watch/${book.id}`);
+    const t = bookTrack();
+    if (t) audio.play([t], 0, singleResumeMS);
   }
 
   function startFromBeginning() {
@@ -207,8 +276,77 @@
       const firstPlayable = chapters.findIndex((c) => chapterDetails.has(c.id));
       if (firstPlayable >= 0) playChapter(firstPlayable);
     } else if (book) {
-      goto(`/watch/${book.id}`);
+      playFrom(book.id, 0);
     }
+  }
+
+  async function loadBookmarks(bookId: string) {
+    bookmarks = [];
+    bookmarksLoaded = false;
+    bookmarksAvailable = true;
+    bookmarksError = '';
+    cancelEdit();
+    try {
+      const list = await itemApi.listBookmarks(bookId);
+      if (book?.id !== bookId) return;
+      bookmarks = list ?? [];
+      bookmarksLoaded = true;
+    } catch (e) {
+      if (book?.id !== bookId) return;
+      if (listeningUnavailable(e)) bookmarksAvailable = false;
+      else bookmarksError = "Couldn't load bookmarks.";
+    }
+  }
+
+  // The chapter a bookmark sits in: the chapter file for a multi-file
+  // book, the embedded chapter at its position for a single-file one.
+  function bookmarkChapter(b: Bookmark): string {
+    if (book && b.item_id !== book.id) return b.item_title;
+    return chapterAt(bookChapters, b.position_ms)?.title ?? '';
+  }
+
+  function startEdit(b: Bookmark) {
+    editingId = b.id;
+    editNote = b.note;
+  }
+
+  function cancelEdit() {
+    editingId = '';
+    editNote = '';
+  }
+
+  async function saveNote(b: Bookmark) {
+    if (savingNote) return;
+    const note = editNote.trim();
+    savingNote = true;
+    try {
+      await itemApi.updateBookmark(b.id, note);
+      bookmarks = bookmarks.map((x) => (x.id === b.id ? { ...x, note } : x));
+      cancelEdit();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the note');
+    } finally {
+      savingNote = false;
+    }
+  }
+
+  async function removeBookmark(b: Bookmark) {
+    try {
+      await itemApi.deleteBookmark(b.id);
+    } catch (e: unknown) {
+      // Already gone (deleted from another device): drop it here too.
+      if (!listeningUnavailable(e)) {
+        toast.error(e instanceof Error ? e.message : 'Could not delete the bookmark');
+        return;
+      }
+    }
+    bookmarks = bookmarks.filter((x) => x.id !== b.id);
+    if (editingId === b.id) cancelEdit();
+    toast.success('Bookmark deleted');
+  }
+
+  function focusOnMount(node: HTMLElement) {
+    node.focus();
   }
 
   function formatDuration(ms?: number): string {
@@ -284,18 +422,26 @@
                   disabled={chapters.length === 0 ? !bookFile : chapterDetails.size === 0}
                   title={resumePoint
                     ? `Resume "${chapters[resumePoint.chapterIdx]?.title ?? ''}" at ${formatDuration(resumePoint.positionMS)}`
-                    : 'Play from the first chapter'}>
+                    : singleResumeMS > 0
+                      ? `Resume at ${formatPosition(singleResumeMS)}`
+                      : 'Play from the first chapter'}>
             <span class="ico">▶</span>
             {#if resumePoint}
               Resume
               <span class="resume-meta">
                 · ch&nbsp;{(chapters[resumePoint.chapterIdx]?.index ?? resumePoint.chapterIdx + 1)} · {formatDuration(resumePoint.positionMS)}
               </span>
+            {:else if singleResumeMS > 0}
+              Resume
+              <span class="resume-meta">
+                {#if singleResumeChapter}· ch&nbsp;{bookChapters.indexOf(singleResumeChapter) + 1}{/if}
+                · {formatPosition(singleResumeMS)}
+              </span>
             {:else}
               Play
             {/if}
           </button>
-          {#if resumePoint}
+          {#if resumePoint || singleResumeMS > 0}
             <button class="btn-restart" on:click={startFromBeginning}
                     title="Start from chapter 1">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="13" height="13"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg>
@@ -315,7 +461,28 @@
     </header>
 
     {#if chapters.length === 0}
-      <p class="empty">Single-file audiobook — press Play to start.</p>
+      {#if bookFile && bookChapters.length > 0}
+        <ol class="tracks">
+          {#each bookChapters as ch, i (i)}
+            {@const playing = playingChapter === ch}
+            <li class="row" class:playing>
+              <button class="num" on:click={() => book && playFrom(book.id, ch.start_ms)}
+                      title="Play {ch.title || `chapter ${i + 1}`}">
+                {#if playing}
+                  <span class="eq" aria-hidden="true">♫</span>
+                {:else}
+                  <span class="num-text">{i + 1}</span>
+                  <span class="num-play" aria-hidden="true">▶</span>
+                {/if}
+              </button>
+              <div class="title">{ch.title || `Chapter ${i + 1}`}</div>
+              <div class="dur">{formatDuration(Math.max(0, ch.end_ms - ch.start_ms))}</div>
+            </li>
+          {/each}
+        </ol>
+      {:else}
+        <p class="empty">Single-file audiobook — press Play to start.</p>
+      {/if}
     {:else}
       <ol class="tracks">
         {#each chapters as c, i (c.id)}
@@ -337,6 +504,60 @@
           </li>
         {/each}
       </ol>
+    {/if}
+
+    {#if bookmarksAvailable}
+      <section class="bookmarks" aria-labelledby="bookmarks-heading">
+        <h2 id="bookmarks-heading">Bookmarks</h2>
+        {#if bookmarksError}
+          <p class="bm-empty">{bookmarksError}</p>
+        {:else if bookmarks.length === 0}
+          {#if bookmarksLoaded}
+            <p class="bm-empty">No bookmarks yet — add one from the player while you listen.</p>
+          {/if}
+        {:else}
+          <ul class="bm-list">
+            {#each bookmarks as b (b.id)}
+              {@const where = bookmarkChapter(b)}
+              <li class="bm-row">
+                <button class="bm-play" on:click={() => playFrom(b.item_id, b.position_ms)}
+                        title="Play from here"
+                        aria-label="Play from {where ? `${where}, ` : ''}{formatPosition(b.position_ms)}">
+                  <span class="ico" aria-hidden="true">▶</span>
+                  {formatPosition(b.position_ms)}
+                </button>
+                <div class="bm-body">
+                  {#if where}<div class="bm-chapter">{where}</div>{/if}
+                  {#if editingId === b.id}
+                    <form class="bm-edit" on:submit|preventDefault={() => saveNote(b)}>
+                      <input
+                        type="text"
+                        maxlength="500"
+                        placeholder="Note"
+                        aria-label="Bookmark note"
+                        bind:value={editNote}
+                        use:focusOnMount
+                        on:keydown={(e) => { if (e.key === 'Escape') cancelEdit(); }}
+                      />
+                      <button type="submit" class="bm-btn primary" disabled={savingNote}>Save</button>
+                      <button type="button" class="bm-btn" on:click={cancelEdit}>Cancel</button>
+                    </form>
+                  {:else if b.note}
+                    <div class="bm-note">{b.note}</div>
+                  {/if}
+                </div>
+                {#if editingId !== b.id}
+                  <div class="bm-actions">
+                    <button class="bm-btn" on:click={() => startEdit(b)}>{b.note ? 'Edit note' : 'Add note'}</button>
+                    <button class="bm-btn danger" on:click={() => removeBookmark(b)}
+                            aria-label="Delete bookmark at {formatPosition(b.position_ms)}">Delete</button>
+                  </div>
+                {/if}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
     {/if}
   {/if}
 </div>
@@ -439,10 +660,56 @@
   .empty, .loading, .err { color: var(--text-muted); padding: 2rem 0; }
   .err { color: var(--danger, #f87171); }
 
+  .bookmarks { margin-top: 2.5rem; }
+  .bookmarks h2 { font-size: 1.1rem; margin: 0 0 0.75rem; }
+  .bm-empty { color: var(--text-muted); font-size: 0.9rem; margin: 0; }
+  .bm-list { list-style: none; padding: 0; margin: 0;
+             border-top: 1px solid var(--border, rgba(255,255,255,0.08)); }
+  .bm-row {
+    display: grid; grid-template-columns: auto 1fr auto;
+    gap: 0.75rem; align-items: center;
+    padding: 0.55rem 0.75rem;
+    border-bottom: 1px solid var(--border, rgba(255,255,255,0.06));
+  }
+  .bm-row:hover { background: var(--surface-hover, rgba(255,255,255,0.04)); }
+  .bm-play {
+    display: inline-flex; align-items: center; gap: 0.4rem;
+    background: transparent; border: 1px solid var(--border-strong, rgba(255,255,255,0.12));
+    border-radius: 999px; color: var(--text-secondary); cursor: pointer;
+    padding: 0.3rem 0.8rem; font-size: 0.8rem; font-variant-numeric: tabular-nums;
+  }
+  .bm-play .ico { font-size: 0.6rem; }
+  .bm-play:hover { color: var(--accent); border-color: var(--accent); }
+  .bm-body { min-width: 0; }
+  .bm-chapter { font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .bm-note { color: var(--text-secondary); font-size: 0.85rem; line-height: 1.4;
+             white-space: pre-wrap; overflow-wrap: anywhere; }
+  .bm-actions { display: flex; gap: 0.4rem; }
+  .bm-btn {
+    background: var(--input-bg, transparent);
+    border: 1px solid var(--border-strong, rgba(255,255,255,0.12)); border-radius: 6px;
+    color: var(--text-secondary); font-size: 0.75rem; font-weight: 500;
+    cursor: pointer; padding: 0.3rem 0.7rem; transition: all 0.12s;
+  }
+  .bm-btn:hover { color: var(--text-primary); background: var(--bg-hover, rgba(255,255,255,0.05)); }
+  .bm-btn:disabled { opacity: 0.6; cursor: default; }
+  .bm-btn.primary { background: var(--accent); border-color: var(--accent); color: white; }
+  .bm-btn.danger { color: #c66; border-color: rgba(204,102,102,0.3); }
+  .bm-btn.danger:hover { color: #e88; border-color: rgba(232,136,136,0.5); }
+  .bm-edit { display: flex; gap: 0.4rem; align-items: center; margin-top: 0.25rem; }
+  .bm-edit input {
+    flex: 1; min-width: 0; padding: 0.35rem 0.55rem; font-size: 0.85rem;
+    background: var(--input-bg, transparent); color: var(--text-primary);
+    border: 1px solid var(--border-strong, rgba(255,255,255,0.12)); border-radius: 6px;
+  }
+  .bm-edit input:focus { outline: none; border-color: var(--accent); }
+
   @media (max-width: 600px) {
     .page { padding: 1.5rem 1rem 6rem; }
     .hero { flex-direction: column; align-items: flex-start; gap: 1rem; }
     .hero-poster { width: 160px; height: 160px; }
     .hero-meta h1 { font-size: 1.6rem; }
+    .bm-row { grid-template-columns: auto 1fr; }
+    .bm-actions { grid-column: 1 / -1; justify-content: flex-end; }
   }
 </style>

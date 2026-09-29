@@ -22,6 +22,16 @@ describe('transferAction', () => {
     if (a.kind === 'audio') expect(a.startMS).toBe(1000);
   });
 
+  it('marks an audiobook with its book and embedded chapters, a chapter with its parent', () => {
+    const chapters = [{ title: 'One', start_ms: 0, end_ms: 60_000 }];
+    const book = transferAction({ ...track, id: 'b1', type: 'audiobook', files: [{ id: 'f1', chapters }] }, 0);
+    expect(book.kind === 'audio' && book.track.audiobook).toEqual({ bookId: 'b1', chapters });
+    const chapter = transferAction({ ...track, id: 'c1', type: 'audiobook_chapter', parent_id: 'b1' }, 0);
+    expect(chapter.kind === 'audio' && chapter.track.audiobook).toEqual({ bookId: 'b1' });
+    const song = transferAction(track, 0);
+    expect(song.kind === 'audio' && song.track.audiobook).toBeUndefined();
+  });
+
   it('starts audio from 0 when the position is at or past the end', () => {
     const a = transferAction(track, 240_000);
     expect(a.kind === 'audio' && a.startMS).toBe(0);

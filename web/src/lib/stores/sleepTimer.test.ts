@@ -5,6 +5,7 @@ import {
   sleepTimerActive,
   startSleepTimer,
   cancelSleepTimer,
+  createSleepTimer,
   formatRemaining,
 } from './sleepTimer';
 
@@ -86,5 +87,41 @@ describe('sleepTimer', () => {
     expect(formatRemaining(12 * 60 * 1000 + 3 * 1000)).toBe('12:03');
     // Ceiling rounding: 999ms left should still read 1s, not 0s.
     expect(formatRemaining(999)).toBe('0:01');
+  });
+});
+
+describe('createSleepTimer', () => {
+  beforeEach(() => {
+    cancelSleepTimer();
+    vi.useFakeTimers();
+  });
+
+  it('runs independently of the watch page timer', () => {
+    const player = createSleepTimer();
+    const playerFire = vi.fn();
+    const pageFire = vi.fn();
+    player.start('30m', playerFire);
+    startSleepTimer('15m', pageFire);
+
+    // The watch page tearing down (cancelSleepTimer in onDestroy) leaves
+    // the player's timer running.
+    cancelSleepTimer();
+    expect(get(player).mode).toBe('30m');
+    vi.advanceTimersByTime(30 * 60 * 1000 + 100);
+    expect(playerFire).toHaveBeenCalledOnce();
+    expect(pageFire).not.toHaveBeenCalled();
+    expect(get(sleepTimer).mode).toBe('off');
+    expect(get(player).mode).toBe('off');
+  });
+
+  it('chapter mode sets state without ticking or firing', () => {
+    const player = createSleepTimer();
+    const onFire = vi.fn();
+    player.start('chapter', onFire);
+    expect(get(player)).toEqual({ mode: 'chapter', remainingMs: 0 });
+    vi.advanceTimersByTime(2 * 60 * 60 * 1000);
+    expect(onFire).not.toHaveBeenCalled();
+    player.cancel();
+    expect(get(player).mode).toBe('off');
   });
 });
