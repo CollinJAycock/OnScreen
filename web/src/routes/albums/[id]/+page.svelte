@@ -6,6 +6,7 @@
   import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
   import TrackInfo from '$lib/components/TrackInfo.svelte';
   import { replayGainFromFile } from '$lib/replaygain';
+  import { albumTrackOrder, discGroups } from '$lib/albumDiscs';
 
   let album: ItemDetail | null = null;
   let tracks: ChildItem[] = [];
@@ -17,6 +18,7 @@
 
   $: id = $page.params.id!;
   $: nowPlayingId = $currentTrack?.id ?? null;
+  $: discs = discGroups(tracks);
 
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
@@ -55,8 +57,7 @@
 
       const list = await itemApi.children(id);
       // Disc, then track: every disc restarts at track 1.
-      tracks = list.items.sort((a, b) =>
-        (a.disc_number ?? 1) - (b.disc_number ?? 1) || (a.index ?? 9999) - (b.index ?? 9999));
+      tracks = albumTrackOrder(list.items);
 
       // Resolve full detail for every track in parallel. Tracks need a file to
       // stream; without one the play button is disabled. We keep the full
@@ -192,36 +193,42 @@
     {#if tracks.length === 0}
       <p class="empty">No tracks found.</p>
     {:else}
-      <ol class="tracks">
-        {#each tracks as t, i (t.id)}
-          {@const detail = trackDetails.get(t.id)}
-          {@const playable = !!detail}
-          {@const playing = nowPlayingId === t.id}
-          {@const badge = qualityBadge(detail?.files[0])}
-          <li class="row" class:playing class:disabled={!playable}>
-            <button class="num" on:click={() => playTrack(i)} disabled={!playable}
-                    title={playable ? `Play ${t.title}` : 'No file available'}>
-              {#if playing}
-                <span class="eq" aria-hidden="true">♫</span>
+      {#each discs as d (d.disc)}
+        {#if discs.length > 1}
+          <h2 class="disc">Disc {d.disc}</h2>
+        {/if}
+        <ol class="tracks">
+          {#each d.tracks as t, j (t.id)}
+            {@const i = d.start + j}
+            {@const detail = trackDetails.get(t.id)}
+            {@const playable = !!detail}
+            {@const playing = nowPlayingId === t.id}
+            {@const badge = qualityBadge(detail?.files[0])}
+            <li class="row" class:playing class:disabled={!playable}>
+              <button class="num" on:click={() => playTrack(i)} disabled={!playable}
+                      title={playable ? `Play ${t.title}` : 'No file available'}>
+                {#if playing}
+                  <span class="eq" aria-hidden="true">♫</span>
+                {:else}
+                  <span class="num-text">{t.index ?? i + 1}</span>
+                  <span class="num-play" aria-hidden="true">▶</span>
+                {/if}
+              </button>
+              <div class="title">{t.title}</div>
+              {#if badge}
+                <span class="badge {badge.cls}" title="{badge.label} audio">{badge.label}</span>
               {:else}
-                <span class="num-text">{t.index ?? i + 1}</span>
-                <span class="num-play" aria-hidden="true">▶</span>
+                <span class="badge-spacer"></span>
               {/if}
-            </button>
-            <div class="title">{t.title}</div>
-            {#if badge}
-              <span class="badge {badge.cls}" title="{badge.label} audio">{badge.label}</span>
-            {:else}
-              <span class="badge-spacer"></span>
-            {/if}
-            <div class="dur">{formatDuration(t.duration_ms)}</div>
-            <button class="info" on:click={() => detail && (infoTrack = detail)}
-                    disabled={!detail} title="File details" aria-label="File details">
-              ⓘ
-            </button>
-          </li>
-        {/each}
-      </ol>
+              <div class="dur">{formatDuration(t.duration_ms)}</div>
+              <button class="info" on:click={() => detail && (infoTrack = detail)}
+                      disabled={!detail} title="File details" aria-label="File details">
+                ⓘ
+              </button>
+            </li>
+          {/each}
+        </ol>
+      {/each}
     {/if}
   {/if}
 </div>
@@ -271,6 +278,11 @@
 
   .tracks { list-style: none; padding: 0; margin: 0;
             border-top: 1px solid var(--border, rgba(255,255,255,0.08)); }
+  .disc {
+    margin: 2rem 0 0.5rem; font-size: 0.75rem; font-weight: 600;
+    text-transform: uppercase; letter-spacing: 0.1em; color: var(--text-muted);
+  }
+  .disc:first-of-type { margin-top: 0; }
   .row {
     display: grid; grid-template-columns: 3rem 1fr auto auto 2.5rem;
     gap: 0.75rem; align-items: center;

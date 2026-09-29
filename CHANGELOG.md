@@ -298,7 +298,9 @@ app's Search › Discover tab (which could request titles) was removed:
   `media_items.disc_number` and makes the one-track-per-position index
   per disc); albums list in disc-then-track order and the children API
   returns `disc_number`. An album already folded this way separates when
-  the affected files are next re-imported.
+  the affected files are next re-imported. The web album page heads each
+  disc ("Disc 2") on an album with more than one, so its restarted track
+  numbers read right.
 - **A scan merged an author's audiobooks into one.** The post-scan
   dedupe compared books by `original_title`, where the scanner keeps the
   author, so every book by one author without distinct years counted as a
