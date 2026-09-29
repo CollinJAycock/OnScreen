@@ -181,10 +181,14 @@ ORDER BY l.id,
 -- regexes inside normalize_dedupe_title() are no-ops on child titles
 -- (albums don't carry "[release-group]" prefixes or "S2" suffixes), so
 -- using the same function is safe and keeps one definition.
+-- Except audiobooks: their original_title holds the author (the scanner
+-- stashes it there), so it would make every book by one author a
+-- "duplicate" of the others. They compare by title alone.
 WITH normalized AS (
     SELECT id, parent_id, type, year, tmdb_id, tvdb_id, musicbrainz_id,
            poster_path, created_at,
-           normalize_dedupe_title(coalesce(NULLIF(original_title, ''), title)) AS norm
+           normalize_dedupe_title(CASE WHEN type = 'audiobook' THEN title
+                                       ELSE coalesce(NULLIF(original_title, ''), title) END) AS norm
     FROM media_items
     WHERE type = $1
       AND parent_id IS NOT NULL
@@ -230,7 +234,8 @@ WHERE rn > 1
 -- reparents the chapters into the rightful author's audiobook tile.
 WITH normalized AS (
     SELECT mi.id, mi.parent_id, mi.year, mi.poster_path, mi.tmdb_id, mi.created_at,
-           normalize_dedupe_title(coalesce(NULLIF(mi.original_title, ''), mi.title)) AS norm,
+           -- Title alone: an audiobook's original_title is its author.
+           normalize_dedupe_title(mi.title) AS norm,
            EXISTS (
                SELECT 1 FROM media_files mf
                WHERE mf.media_item_id = mi.id

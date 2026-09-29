@@ -291,6 +291,20 @@ app's Search › Discover tab (which could request titles) was removed:
   per disc); albums list in disc-then-track order and the children API
   returns `disc_number`. An album already folded this way separates when
   the affected files are next re-imported.
+- **A scan merged an author's audiobooks into one.** The post-scan
+  dedupe compared books by `original_title`, where the scanner keeps the
+  author, so every book by one author without distinct years counted as a
+  duplicate of the others. The scan kept one, soft-deleted the rest, and
+  moved their files onto it. Books are now compared by title, both under
+  one author and across authors; albums are unchanged. Books merged by
+  earlier scans stay merged until their files are re-imported.
+- **Multi-file audiobooks had no chapter order.** The scanner never
+  numbered a book's chapter files, so lists and queues took whatever order
+  the rows sat in, which a later update could shuffle. A chapter now gets
+  its number from the file name's leading number ("01 Title"), else its
+  track tag. The number doesn't affect matching, so a bad tag can't merge
+  chapters. Chapters already in a library are numbered on the next scan
+  without re-importing, and anything still unnumbered sorts by title.
 - **Native clients played multi-disc albums out of order.** Android TV,
   the phone app, Tizen, webOS and Roku ordered and advanced tracks by
   number alone, so the discs interleaved: disc 2 track 5 went on to disc 1
