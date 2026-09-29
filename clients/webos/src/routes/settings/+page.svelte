@@ -15,6 +15,8 @@
   import { focusManager } from '$lib/focus/manager';
   import TopNav from '$lib/components/TopNav.svelte';
   import { APP_VERSION } from '$lib/version';
+  import { hasExtraScrobblers, scrobbleSummary } from '$lib/scrobbleLink';
+  import type { ScrobbleStatus } from '$lib/api';
 
   const username = $derived(api.getUser()?.username ?? '');
   const serverUrl = $derived(api.getOrigin() ?? '');
@@ -47,13 +49,12 @@
   let prefsLoaded = $state(false);
   let prefsSaving = $state(false);
 
-  // ListenBrainz scrobble link status — surfaced as a row that opens
-  // the dedicated /settings/scrobble link flow.
-  let scrobbleLinked = $state(false);
-  let scrobbleEnabled = $state(false);
-  const scrobbleLabel = $derived(
-    scrobbleLinked ? (scrobbleEnabled ? 'Linked' : 'Paused') : 'Off'
-  );
+  // Scrobble link status (ListenBrainz, plus Last.fm + Trakt on v2.5
+  // servers) — surfaced as a row that opens the dedicated
+  // /settings/scrobble link flow.
+  let scrobbleStatus = $state<ScrobbleStatus | null>(null);
+  const scrobbleBadge = $derived(scrobbleSummary(scrobbleStatus));
+  const scrobbleExtras = $derived(hasExtraScrobblers(scrobbleStatus));
 
   onMount(() => {
     (async () => {
@@ -71,9 +72,7 @@
 
     (async () => {
       try {
-        const s = await endpoints.scrobble.status();
-        scrobbleLinked = s.listenbrainz_linked;
-        scrobbleEnabled = s.listenbrainz_enabled;
+        scrobbleStatus = await endpoints.scrobble.status();
       } catch {
         // Best-effort — the row falls back to "Off" if status can't load.
       }
@@ -229,10 +228,15 @@
     <div class="section-title">Scrobbling</div>
     <button use:focusable class="action-row" onclick={() => goto('#/settings/scrobble')}>
       <div class="action-title">
-        ListenBrainz <span class="badge {scrobbleLinked ? 'on' : 'off'}">{scrobbleLabel}</span>
+        {scrobbleExtras ? 'ListenBrainz, Last.fm and Trakt' : 'ListenBrainz'}
+        <span class="badge {scrobbleBadge.on ? 'on' : 'off'}">{scrobbleBadge.label}</span>
       </div>
       <div class="action-desc">
-        Submit a listen to ListenBrainz when you finish a music track.
+        {#if scrobbleExtras}
+          Send the music you play to ListenBrainz or Last.fm, and the movies and episodes you watch to Trakt.
+        {:else}
+          Submit a listen to ListenBrainz when you finish a music track.
+        {/if}
       </div>
     </button>
   </section>

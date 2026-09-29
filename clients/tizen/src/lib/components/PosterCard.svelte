@@ -7,10 +7,26 @@
     posterPath?: string;
     subtitle?: string;
     progressRatio?: number;
+    /** Fully watched: a check mark in the corner. */
+    watched?: boolean;
+    /** Shows / seasons with episodes left: a count pill in the corner. */
+    unwatchedCount?: number | null;
     onclick?: () => void;
+    /** Holding OK opens this card's options (short press still clicks). */
+    onlongpress?: () => void;
     autofocus?: boolean;
   }
-  let { title, posterPath, subtitle, progressRatio, onclick, autofocus }: Props = $props();
+  let {
+    title,
+    posterPath,
+    subtitle,
+    progressRatio,
+    watched = false,
+    unwatchedCount = null,
+    onclick,
+    onlongpress,
+    autofocus,
+  }: Props = $props();
 
   // api.assetUrl handles origin + `?token=<paseto>` for the
   // RequiredAllowQueryToken-protected /artwork/ route. The naive
@@ -19,12 +35,23 @@
   const posterUrl = $derived(posterPath ? api.assetUrl(`/artwork/${posterPath}?w=400`) : '');
 </script>
 
-<button use:focusable={{ autofocus }} class="card" {onclick}>
-  {#if posterUrl}
-    <img src={posterUrl} alt="" loading="lazy" />
-  {:else}
-    <div class="no-poster">{title.slice(0, 2).toUpperCase()}</div>
-  {/if}
+<button use:focusable={{ autofocus, onLongPress: onlongpress }} class="card" {onclick}>
+  <div class="art">
+    {#if posterUrl}
+      <img src={posterUrl} alt="" loading="lazy" />
+    {:else}
+      <div class="no-poster">{title.slice(0, 2).toUpperCase()}</div>
+    {/if}
+    {#if unwatchedCount != null && unwatchedCount > 0}
+      <span class="badge count" aria-label="{unwatchedCount} unwatched">{unwatchedCount}</span>
+    {:else if watched}
+      <span class="badge check" aria-label="Watched">
+        <svg viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+          <polyline points="5 12.5 10 17.5 19 7" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </span>
+    {/if}
+  </div>
   {#if progressRatio !== undefined && progressRatio > 0}
     <div class="progress" style="width: {Math.min(100, progressRatio * 100)}%"></div>
   {/if}
@@ -48,6 +75,10 @@
     flex: 0 0 auto;
   }
 
+  .art {
+    position: relative;
+  }
+
   img, .no-poster {
     width: 240px;
     height: 360px;
@@ -63,6 +94,34 @@
     justify-content: center;
     font-size: var(--font-xl);
     color: var(--text-muted);
+  }
+
+  /* Watch-state corner badge: a check for watched, a count pill for
+     unwatched episodes. Dark outline keeps it legible on bright art. */
+  .badge {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 0 3px rgba(7, 7, 13, 0.75);
+    color: #fff;
+    background: var(--accent);
+  }
+  .badge.check {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+  }
+  .badge.count {
+    min-width: 40px;
+    height: 40px;
+    padding: 0 10px;
+    border-radius: 20px;
+    font-size: var(--font-xs);
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
   }
 
   .progress {
@@ -106,7 +165,11 @@
     margin-top: 4px;
     line-height: 1.3;
     /* Reserve the line even when no subtitle is rendered, so cards
-       with item.year align with cards that lack it. */
+       with item.year align with cards that lack it. One line only —
+       Next Up's "S2 · E5 — Episode title" can run long. */
     min-height: calc(var(--font-xs) * 1.3);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 </style>

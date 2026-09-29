@@ -23,6 +23,27 @@
   import { findSiblings } from '$lib/player/siblings';
   import type { OnlineSubtitle } from '$lib/api';
   import { pickPreferredSubtitle } from '$lib/subtitleSelect';
+  import { takeStartOverride } from '$lib/nav';
+  import {
+    PLAYBACK_STOP_EVENT,
+    PLAYBACK_STOPPED_CODE,
+    adminStopText,
+    isPlaybackStoppedError,
+    isStopForPlayer,
+    parsePlaybackStop,
+    probePlaybackStopped,
+    stoppedTextFromServer
+  } from '$lib/playbackStop';
+  import {
+    RATE_PRESETS,
+    RateCheck,
+    applyMediaRate,
+    clampRate,
+    formatRate,
+    hasListeningSpeed,
+    presetIndex,
+    sameRate
+  } from '$lib/audiobookSpeed';
 
   const itemID = page.params.id!;
   // Fallback HTML5 video element — used only when AVPlay isn't
@@ -67,9 +88,29 @@
   function startHeartbeat() {
     reporter?.start(
       () => ({ positionMs: position, durationMs: duration }),
-      (reason) => applyParentalBlock(reason)
+      (reason) => applyParentalBlock(reason),
+      (message) => handleAdminStop(message)
     );
   }
+
+  // Admin "stop this stream" (Now Playing). Set once playback was stopped by
+  // the playback.stop event or a 403 PLAYBACK_STOPPED; the player is torn
+  // down, the admin's message stays on screen, and only Back does anything.
+  let adminStopped = $state(false);
+
+  // Audiobook listening speed (books + their chapter files; music stays at
+  // 1×). Audiobooks play through the HTML5 <video> element on Tizen (never
+  // AVPlay — see the audio-only branch in onMount), so this is the platform
+  // player's playbackRate. If the TV accepts the rate but keeps playing at
+  // 1× for a given file, RateCheck notices and the control is withdrawn
+  // with a note rather than showing a speed that isn't happening.
+  let speed = $state(1);
+  let speedPickerOpen = $state(false);
+  let speedCursor = $state(1);
+  let speedUnsupported = $state(false);
+  const rateCheck = new RateCheck();
+  let rateCheckTimer: ReturnType<typeof setInterval> | null = null;
+  const speedAvailable = $derived(!!item && hasListeningSpeed(item.type) && !speedUnsupported);
 
   // Lightweight breadcrumb logger — routes to the debug console only.
   // Used to ship as an on-screen HUD; the HUD is gone now that the
@@ -299,6 +340,7 @@
     if (controlsTimer) { clearTimeout(controlsTimer); controlsTimer = null; }
     if (audioLoadTimer) { clearTimeout(audioLoadTimer); audioLoadTimer = null; }
     if (upNextTimer) { clearInterval(upNextTimer); upNextTimer = null; }
+    if (rateCheckTimer) { clearInterval(rateCheckTimer); rateCheckTimer = null; }
   }
 
   async function stopAndLeave() {
@@ -306,7 +348,39 @@
     goto(`#/item/${itemID}`);
   }
 
+  // Stop at once and show the admin's message: the SSE playback.stop event
+  // (matched by isStopForPlayer) or a 403 PLAYBACK_STOPPED from the progress
+  // heartbeat / transcode start / the media bytes. teardown() reports
+  // 'stopped' (the resume point is kept) and ends the transcode session.
+  function handleAdminStop(text: string) {
+    if (adminStopped) return;
+    adminStopped = true;
+    closePickers();
+    closeOnlineSubtitleSearch();
+    speedPickerOpen = false;
+    dismissUpNext();
+    activeMarker = null;
+    teardown();
+    try {
+      video?.pause();
+      if (video?.getAttribute('src')) {
+        video.removeAttribute('src');
+        video.load();
+      }
+    } catch { /* element already gone */ }
+    paused = true;
+    loading = false;
+    error = text;
+  }
+
   function onKey(k: RemoteKey): boolean {
+    // Stopped by an admin: the message stays up; Back leaves.
+    if (adminStopped) {
+      if (k === 'back') void stopAndLeave();
+      return true;
+    }
+    // Audiobook speed picker (↑/↓ on the now-playing view).
+    if (speedKey(k)) return true;
     // Audio + subtitle pickers grab keys before everything else when
     // open — up/down moves cursor, enter selects, back closes.
     if (pickerKey(k)) return true;
@@ -378,10 +452,96 @@
     return false;
   }
 
+  // ── Audiobook speed ────────────────────────────────────────────────
+
+  function openSpeedPicker() {
+    closePickers();
+    speedCursor = presetIndex(speed);
+    speedPickerOpen = true;
+  }
+
+  function speedKey(k: RemoteKey): boolean {
+    if (!speedPickerOpen) {
+      // Only once the now-playing view is up (the picker lives inside it).
+      if ((k === 'up' || k === 'down') && speedAvailable && !loading && !error &&
+          !audioPickerOpen && !subtitlePickerOpen && !onlineSubsOpen) {
+        openSpeedPicker();
+        return true;
+      }
+      return false;
+    }
+    const len = RATE_PRESETS.length;
+    if (k === 'back') { speedPickerOpen = false; return true; }
+    if (k === 'up') { speedCursor = (speedCursor - 1 + len) % len; return true; }
+    if (k === 'down') { speedCursor = (speedCursor + 1) % len; return true; }
+    if (k === 'enter') {
+      speedPickerOpen = false;
+      void chooseSpeed(RATE_PRESETS[speedCursor]);
+      return true;
+    }
+    return false; // seek / play keys keep working under the picker
+  }
+
+  // The book's saved speed (a chapter resolves to its book; a book never set
+  // starts at the user's latest speed). A server without the route (404) or
+  // a non-book (422) leaves 1× — the control still works on this device.
+  async function loadSpeed() {
+    if (!item || !hasListeningSpeed(item.type)) return;
+    try {
+      const r = await endpoints.items.playbackRate(itemID);
+      speed = clampRate(r.rate);
+    } catch { /* keep 1× */ }
+    applySpeed();
+  }
+
+  // Put the element at the right speed for the item: the book's speed for
+  // audiobooks, 1× for everything else. Re-applied after loads / play since
+  // a new src resets playbackRate on some engines.
+  function applySpeed() {
+    if (!video || usingAvPlay || adminStopped) return;
+    const target = item && hasListeningSpeed(item.type) && !speedUnsupported ? speed : 1;
+    if (sameRate(video.playbackRate, target) && sameRate(video.defaultPlaybackRate, target)) return;
+    const ok = applyMediaRate(video, target);
+    rateCheck.clear();
+    if (!ok && !sameRate(target, 1)) speedIgnored();
+  }
+
+  // The platform refused the rate (or plays at 1× regardless). Withdraw the
+  // control on this TV for this play; the book's saved speed is left alone
+  // for the user's other devices.
+  function speedIgnored() {
+    speedUnsupported = true;
+    speedPickerOpen = false;
+    if (video) applyMediaRate(video, 1);
+  }
+
+  async function chooseSpeed(rate: number) {
+    speed = clampRate(rate);
+    applySpeed();
+    if (speedUnsupported) return;
+    try {
+      await endpoints.items.setPlaybackRate(itemID, speed);
+    } catch { /* older server: the speed still applies on this device */ }
+  }
+
+  function startRateCheck() {
+    if (rateCheckTimer) clearInterval(rateCheckTimer);
+    rateCheckTimer = setInterval(() => {
+      const v = video;
+      if (!v || paused || loading || speedUnsupported || !item || !hasListeningSpeed(item.type) ||
+          v.seeking || v.readyState < 3) {
+        rateCheck.reset();
+        return;
+      }
+      if (rateCheck.sample(performance.now(), v.currentTime * 1000, speed) === 'ignored') speedIgnored();
+    }, 1000);
+  }
+
   // ── Audio + subtitle pickers ───────────────────────────────────────
 
   function openAudioPicker() {
     subtitlePickerOpen = false;
+    speedPickerOpen = false;
     pickerCursor = activeAudioIndex < 0 ? 0 : activeAudioIndex;
     audioPickerOpen = true;
     showControls();
@@ -389,6 +549,7 @@
 
   function openSubtitlePicker() {
     audioPickerOpen = false;
+    speedPickerOpen = false;
     pickerCursor = activeSubtitleIndex < 0 ? 0 : activeSubtitleIndex + 1;
     subtitlePickerOpen = true;
     showControls();
@@ -531,6 +692,10 @@
       activeAudioIndex = pickerIndex;
     } catch (e) {
       console.warn('audio re-issue failed', e);
+      if (isPlaybackStoppedError(e)) {
+        handleAdminStop(stoppedTextFromServer(e.message));
+        return;
+      }
       // The old session is already torn down by this point — without
       // surfacing the failure the UI keeps showing "playing" (and the
       // heartbeat keeps reporting it) over a dead player.
@@ -870,6 +1035,21 @@
     } catch {
       return;
     }
+    if (data.type === PLAYBACK_STOP_EVENT) {
+      // Admin stop. The channel is per user, so act only when it targets
+      // this player: this item, and our transcode session when the event
+      // names one. The TV reports no client name in its heartbeats, so a
+      // stop naming another device of the user's is never ours.
+      const stop = parsePlaybackStop(data.data);
+      if (stop && isStopForPlayer(stop, {
+        itemId: item ? itemID : null,
+        sessionId: session?.session_id ?? null,
+        clientName: '',
+      })) {
+        handleAdminStop(adminStopText(stop.message));
+      }
+      return;
+    }
     if (data.type !== 'progress.updated' || data.item_id !== itemID) return;
     if (!data.data?.position_ms) return;
     if (!paused) return; // active local playback wins
@@ -963,7 +1143,9 @@
   // (browser `vite dev`).
   function attachVideoListeners(v: HTMLVideoElement, startMs: number) {
     v.addEventListener('loadedmetadata', () => {
+      if (adminStopped) return;
       if (startMs > 0) v.currentTime = startMs / 1000;
+      applySpeed();
       loading = false;
       // Auto-apply the user's preferred subtitle now that textTracks are
       // populated — same path a manual pick takes. Runs once; a no-op if no
@@ -986,12 +1168,19 @@
     });
     v.addEventListener('pause', () => {
       paused = true;
+      // After an admin stop 'stopped' was already reported; a late 'paused'
+      // would put the stream back on Now Playing.
+      if (adminStopped) return;
       reporter?.paused(position, duration);
       showControls();
     });
     v.addEventListener('play', () => {
       paused = false;
+      applySpeed();
     });
+    // A seek or a refill jumps the media clock; start a fresh speed window.
+    v.addEventListener('seeked', () => rateCheck.reset());
+    v.addEventListener('waiting', () => rateCheck.reset());
     v.addEventListener('ended', () => {
       reporter?.stopped(duration, duration);
       if (nextSibling) {
@@ -999,6 +1188,15 @@
       } else {
         goto(`#/item/${itemID}`);
       }
+    });
+    // A direct-play stream the server refused after an admin stop surfaces
+    // only as a media error; ask the server what the refusal was.
+    v.addEventListener('error', () => {
+      const src = v.currentSrc || v.getAttribute('src') || '';
+      if (adminStopped || !src) return;
+      void probePlaybackStopped(src).then((text) => {
+        if (text) handleAdminStop(text);
+      });
     });
   }
 
@@ -1107,7 +1305,9 @@
         await loadPreferredSubtitle();
 
         const file = item.files[0];
-        const startMs = item.view_offset_ms ?? 0;
+        // Resume point, unless the caller asked for another start ("Watch
+        // again" / the show's up-next episode — see playItem in nav.ts).
+        const startMs = takeStartOverride(itemID) ?? item.view_offset_ms ?? 0;
         dbg(`file: vc=${file.video_codec || '∅'} ac=${file.audio_codec || '∅'} ${file.resolution_w || '?'}x${file.resolution_h || '?'}`);
 
         // Audio-only items skip the HLS transcode path. The TV's
@@ -1134,7 +1334,14 @@
             return;
           }
           reporter = new ProgressReporter(itemID);
-          reporter.start(() => ({ positionMs: position, durationMs: duration }));
+          // Same refusal handling as video: parental limit + admin stop.
+          startHeartbeat();
+          // Audiobooks: the book's speed (fetched in the background, applied
+          // whenever it lands) and the check that the TV honours it.
+          if (hasListeningSpeed(item.type)) {
+            void loadSpeed();
+            startRateCheck();
+          }
           // Attach listeners BEFORE setting src — otherwise a fast
           // loadedmetadata fires before the handler is wired, loading
           // stays true forever, and the music view never appears.
@@ -1348,6 +1555,9 @@
           // Transcode start refused by the parental watch limit.
           error = parentalBlockMessage(e.message);
           loading = false;
+        } else if (e instanceof ApiError && e.code === PLAYBACK_STOPPED_CODE) {
+          // Transcode start refused: an admin stopped this stream moments ago.
+          handleAdminStop(stoppedTextFromServer(e.message));
         } else {
           error = (e as Error).message;
           loading = false;
@@ -1405,7 +1615,13 @@
           <span>{item.year}</span>
         {/if}
         <span>{paused ? '❚❚ Paused' : '▶ Playing'}</span>
+        {#if speedAvailable}
+          <span class="music-speed">Speed {formatRate(speed)}</span>
+        {/if}
       </div>
+      {#if speedUnsupported && hasListeningSpeed(item.type)}
+        <div class="music-note">This TV can only play this book at normal speed.</div>
+      {/if}
       <div class="music-bar">
         <div class="music-elapsed">{fmt(position)}</div>
         <div class="music-track">
@@ -1427,9 +1643,23 @@
           <span>◀◀ ▶▶ seek 30s</span>
         {/if}
         {#if chapters.length > 0}<span>red/green chapters</span>{/if}
+        {#if speedAvailable}<span>↑ ↓ speed</span>{/if}
         <span>back exit</span>
       </div>
     </div>
+    <!-- Speed picker: ↑/↓ opens it, ↑/↓ moves, OK picks, Back closes.
+         Lives inside .music-view — the view sits above .player, so a
+         picker there would be hidden behind it. -->
+    {#if speedPickerOpen}
+      <div class="picker speed-picker">
+        <div class="picker-title">Speed</div>
+        {#each RATE_PRESETS as r, i (r)}
+          <div class="picker-row" class:active={i === speedCursor} class:current={sameRate(r, speed)}>
+            {#if sameRate(r, speed)}● {/if}{formatRate(r)}
+          </div>
+        {/each}
+      </div>
+    {/if}
   </div>
 {/if}
 
@@ -1781,6 +2011,17 @@
     font-size: var(--font-sm);
     color: var(--text-muted);
     margin-top: 8px;
+  }
+  .music-speed {
+    color: var(--text-primary);
+  }
+  .music-note {
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
+    margin-top: -12px;
+  }
+  .picker.speed-picker {
+    min-width: 240px;
   }
 
   .controls {

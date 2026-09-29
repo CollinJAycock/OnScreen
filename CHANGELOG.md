@@ -41,9 +41,9 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   on the next attempt.
 
 The additions below are server + web client unless marked otherwise; the
-Android apps' share is listed under "Android apps" at the end of this
-section. Tizen, webOS and Roku are unchanged apart from benefiting from
-additive server fixes.
+Android apps' and the Tizen / webOS TV apps' shares are listed under
+"Android apps" and "TV apps" at the end of this section. Roku is unchanged
+apart from benefiting from additive server fixes.
 
 Requests:
 
@@ -230,6 +230,40 @@ app's Search › Discover tab (which could request titles) was removed:
   - On a server without these routes, speed still works on the device and
     bookmarks stay hidden.
 - `request_*` notifications are never surfaced.
+
+TV apps (Tizen + webOS), in lockstep. No request features: the Discover
+page stays as it was.
+
+- **Next Up and Plan to Watch** home rows; **remove from Continue
+  Watching** by holding OK on a Continue Watching card, which opens its
+  options (a short press still opens the title).
+- **Show/season Play button** driven by up-next ("Resume S3 · E4", "Play
+  S3 · E5", "Watch again" from the start), opening on the right season.
+- **Mark watched / unwatched** for movies and episodes, "Mark all…" on show
+  and season pages (confirmation before unwatching a show), and holding OK
+  on an episode card.
+- **Library grids**: watched / unwatched-count / progress badges, a Watch
+  filter (all / unwatched / in progress / watched, kept while you visit a
+  title), and Surprise me, for video libraries.
+- **Report a problem** from movie, episode, show and season pages, with an
+  optional note typed on the on-screen keyboard; kinds already reported
+  are marked.
+- **Admin Stop** ends playback at once with the admin's message: the
+  playback.stop event, plus the server's 403 PLAYBACK_STOPPED on the
+  heartbeat, a transcode start or an audio re-issue, and a probe of the
+  stream when a direct-play audio stream errors.
+- **Last.fm and Trakt** connect / disconnect on the Scrobbling screen,
+  beside ListenBrainz. Trakt's code and activation address, and Last.fm's
+  approval address, are shown as a QR code (a small in-tree encoder, no new
+  dependency) and as text, for a phone; the screen polls until the link
+  settles. A service the admin hasn't set up says so.
+- **Audiobook listening speed** (0.75×–3×, ↑/↓ on the now-playing screen),
+  loaded from and saved to the book on the server; music stays at 1×. Both
+  apps play audiobooks through the webview's media element (not AVPlay on
+  Tizen), keeping pitch where the engine does. If a TV accepts a speed but
+  keeps playing at 1×, which the player checks while playing, the control
+  is withdrawn for that play with a note.
+- On a server without these routes, each feature stays hidden.
 
 ### Changed
 

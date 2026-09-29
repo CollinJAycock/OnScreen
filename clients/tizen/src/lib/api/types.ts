@@ -9,6 +9,12 @@ export interface HubItem {
   view_offset_ms?: number;
   duration_ms?: number;
   updated_at: number;
+  /** Episode tiles (Next Up, recently-added episodes): the show they belong to. */
+  show_title?: string;
+  show_id?: string;
+  /** Next Up tiles: position within the show (0 = unknown). */
+  season_number?: number;
+  episode_number?: number;
 }
 
 export interface HubData {
@@ -16,6 +22,11 @@ export interface HubData {
   continue_watching_tv?: HubItem[];
   continue_watching_movies?: HubItem[];
   continue_watching_other?: HubItem[];
+  // v2.5: the next unwatched episode of each show in progress, and the
+  // items marked Plan to Watch. Always present (maybe empty) on servers that
+  // have them — absent means an older server.
+  next_up?: HubItem[];
+  plan_to_watch?: HubItem[];
   recently_added: HubItem[];
   // Per-library "Recently added to <Library>" strips. Each entry is
   // one library's slice; hub renders one row per entry. Falls back
@@ -33,10 +44,18 @@ export interface HubLibraryRow {
 export interface Library {
   id: string;
   name: string;
-  type: 'movie' | 'show' | 'music' | 'photo';
+  /** movie | show | music | photo | anime | cartoons | home_video |
+   *  audiobook | podcast | book | … — the server's library type. */
+  type: string;
   created_at: string;
   updated_at: string;
 }
+
+/** Caller's watch state for a video (v2.5; manual marks included). */
+export type WatchStateValue = 'watched' | 'in_progress' | 'unwatched';
+
+/** `?watch=` on the library listing and /random. */
+export type WatchFilter = 'unwatched' | 'in_progress' | 'watched';
 
 export interface MediaItem {
   id: string;
@@ -51,6 +70,12 @@ export interface MediaItem {
   thumb_path?: string;
   created_at: string;
   updated_at: string;
+  // v2.5 listing fields — absent on older servers.
+  watch_state?: WatchStateValue;
+  view_offset_ms?: number;
+  /** Shows / seasons: episodes in total and episodes not yet watched. */
+  leaf_count?: number;
+  unwatched_count?: number;
 }
 
 export interface AudioStream {
@@ -112,6 +137,9 @@ export interface ItemDetail {
   parent_id?: string;
   index?: number;
   view_offset_ms: number;
+  /** Playable videos (v2.5): the caller's watch state. Absent on other
+   *  types and on older servers. */
+  watch_state?: WatchStateValue;
   updated_at: number;
   is_favorite: boolean;
   files: ItemFile[];
@@ -130,6 +158,94 @@ export interface ChildItem {
   /** A track's disc within its album (index is its number on that disc).
    *  Absent reads as disc 1: single-disc albums, non-tracks, older servers. */
   disc_number?: number;
+  /** The caller's playback state on this child (episode rows). */
+  view_offset_ms?: number;
+  watched?: boolean;
+}
+
+// What Play on a show or season starts (GET /items/{id}/up-next, v2.5):
+//   resume  — an episode is part-watched
+//   next    — the episode after the last one finished
+//   start   — nothing watched yet (first episode)
+//   rewatch — everything watched (first episode again)
+//   none    — no playable episodes
+export interface UpNext {
+  mode: 'resume' | 'next' | 'start' | 'rewatch' | 'none';
+  episode?: {
+    id: string;
+    title: string;
+    season_id: string;
+    season_number: number;
+    episode_number: number;
+    view_offset_ms?: number;
+    duration_ms?: number;
+    thumb_path?: string;
+  };
+}
+
+// ── Report a problem (v2.5) ────────────────────────────────────────────────
+
+export type IssueKind = 'video' | 'audio' | 'subtitles' | 'wrong_match' | 'other';
+
+/** A problem report as its reporter sees it. */
+export interface MediaIssue {
+  id: string;
+  item_id: string;
+  file_id?: string;
+  kind: IssueKind;
+  note?: string;
+  status: 'open' | 'resolved' | 'dismissed';
+  created_at: string;
+  resolved_at?: string;
+  resolution_note?: string;
+}
+
+// ── Audiobook listening speed (v2.5) ───────────────────────────────────────
+
+/** Per-user speed for a book. source: 'book' (set on this book), 'recent'
+ *  (the user's latest speed on another book) or 'default' (1.0). */
+export interface PlaybackRate {
+  rate: number;
+  source: 'book' | 'recent' | 'default';
+}
+
+// ── Scrobbling ─────────────────────────────────────────────────────────────
+
+/** Per-user external-scrobble status. Credentials are never returned. The
+ *  Last.fm / Trakt fields (v2.5) are absent from older servers;
+ *  *_available says whether the admin has set the service up at all. */
+export interface ScrobbleStatus {
+  listenbrainz_linked: boolean;
+  listenbrainz_enabled: boolean;
+  lastfm_available?: boolean;
+  lastfm_linked?: boolean;
+  lastfm_username?: string;
+  trakt_available?: boolean;
+  trakt_linked?: boolean;
+  trakt_username?: string;
+}
+
+/** Where a Last.fm / Trakt link stands after a complete call. */
+export interface ScrobbleLinkResult {
+  status: 'pending' | 'slow_down' | 'linked' | 'expired' | 'denied';
+  username?: string;
+}
+
+/** Last.fm link: the user approves OnScreen at auth_url, the TV polls
+ *  complete with the sealed pending handle. */
+export interface LastFMLinkStart {
+  auth_url: string;
+  pending: string;
+}
+
+/** Trakt link (device code): the user enters user_code at verification_url,
+ *  the TV polls complete every `interval` seconds for `expires_in`. */
+export interface TraktLinkStart {
+  user_code: string;
+  verification_url: string;
+  expires_in: number;
+  interval: number;
+  pending: string;
 }
 
 export interface SearchResult {
@@ -214,12 +330,13 @@ export interface Marker {
 // Notification SSE event shape. The server multiplexes user-facing
 // notifications with internal sync events (progress.updated) on one
 // stream — clients filter by `type` and act on the ones they care
-// about. The TV client only consumes progress.updated for resume sync.
+// about. The TV player consumes progress.updated (resume sync) and
+// playback.stop (an admin stopped this stream — see playbackStop.ts).
 export interface NotificationEvent {
   id: string;
   type: string;
   item_id?: string;
-  data?: { position_ms?: number; duration_ms?: number; state?: string };
+  data?: { position_ms?: number; duration_ms?: number; state?: string; [key: string]: unknown };
 }
 
 // ── Collections ─────────────────────────────────────────────────────────────
