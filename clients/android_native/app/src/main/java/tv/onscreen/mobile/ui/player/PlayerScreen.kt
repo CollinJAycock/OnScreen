@@ -105,15 +105,18 @@ import androidx.compose.runtime.produceState
 import androidx.core.content.ContextCompat
 import androidx.media3.common.MediaMetadata
 import androidx.media3.session.MediaController
+import androidx.media3.session.MediaSession
 import androidx.media3.session.SessionToken
 import kotlinx.coroutines.suspendCancellableCoroutine
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.playback.ActiveVideoTracker
 import tv.onscreen.mobile.playback.AudiobookSpeed
+import tv.onscreen.mobile.playback.KeysOnlySessionPlayer
 import tv.onscreen.mobile.playback.PlaybackService
 import tv.onscreen.mobile.ui.LocalInPipMode
 import tv.onscreen.mobile.ui.item.BookmarkFormat
+import java.util.UUID
 
 @OptIn(UnstableApi::class)
 @Composable
@@ -140,7 +143,11 @@ fun PlayerScreen(
     val context = LocalContext.current
     var cellularConfirmed by remember { mutableStateOf(false) }
     var cellularPromptVisible by remember { mutableStateOf(false) }
-    val isVideo = ui.item?.files?.firstOrNull()?.video_codec != null
+    // Not for an item the background service is already playing: nothing new
+    // starts streaming, and its item may load after the player is showing
+    // (see PlayerViewModel.bindToServiceItem) — an illustrated chapter's
+    // picture stream would then swap the player out for this gate mid-play.
+    val isVideo = !ui.playingInService && ui.item?.files?.firstOrNull()?.video_codec != null
     LaunchedEffect(ui.source, isVideo) {
         if (ui.source != null && isVideo && !cellularConfirmed && !cellularPromptVisible) {
             if (vm.shouldWarnCellular() && isOnCellular(context)) {
@@ -269,8 +276,8 @@ private fun PlayerHost(
     // below). The queue plays the file directly, so even if this item's own
     // decision came back as a transcode, no second, screen-owned player may
     // start alongside it (and PlayerViewModel.prepare no longer starts that
-    // transcode — it hands back the direct source for an item the service
-    // has current).
+    // transcode — for an item the service has current it binds at once,
+    // before the item has even loaded; see bindToServiceItem).
     // The leaf actually playing: a container route (album → first / resumed
     // track) resolves to it in the VM. The service keys its queue on it.
     val playingId = ui.item?.id ?: itemId
@@ -288,6 +295,7 @@ private fun PlayerHost(
         itemId = playingId,
         item = ui.item,
         explicitStart = explicitStart,
+        bindOnly = ui.playingInService,
     )
     val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
         if (serviceAudio) {
@@ -402,6 +410,12 @@ private fun PlayerHost(
         return
     }
 
+    // A screen bound to the item the service is playing shows before that
+    // item has loaded (PlayerViewModel.bindToServiceItem). Until it has, the
+    // service's own metadata says what kind of item it is, so a book still
+    // gets its speed control and the sleep timer's end-of-chapter mode.
+    val kind = itemType ?: if (serviceAudio) serviceItemType(player) else null
+
     // Tell MainActivity whether to auto-enter PiP on
     // onUserLeaveHint. We mark "playing" only for video so audio
     // playback doesn't collapse to a black PiP window when the
@@ -497,7 +511,24 @@ private fun PlayerHost(
     // expect (and avoided a class of foreground-service-startup
     // crashes the handoff was introducing).
     DisposableEffect(player, serviceAudio) {
+        // A screen-owned player gets a media session of its own, for the
+        // media keys: without one, PlaybackService's was the app's only
+        // session, and a headset / Bluetooth play key during a video
+        // restarted an ended or paused book underneath it (see
+        // VideoMediaKeys.kt). Only a MediaSessionService posts a
+        // notification, so this adds none. It sees the item through
+        // KeysOnlySessionPlayer, which keeps the url (a transcode token)
+        // out of the platform session. A fresh id each time: ids must be
+        // unique per process, and the service's session has the default.
+        val keySession = if (serviceAudio) null else {
+            MediaSession.Builder(context, KeysOnlySessionPlayer(player))
+                .setId("video-" + UUID.randomUUID())
+                .build()
+        }
         onDispose {
+            // The session goes first, so it never outlives the player it
+            // forwards to.
+            keySession?.release()
             // Screen-owned players (video AND transcoded audio) are freed
             // here. Service audio: the MediaController is released by
             // rememberAudioController's awaitDispose, and leaving the
@@ -689,7 +720,7 @@ private fun PlayerHost(
     // player (a MediaController mirrors the service player), so it shows
     // what's audible whoever set it — this screen, the saved speed the
     // service applied, or the lock screen.
-    val bookSpeed = AudiobookSpeed.hasSpeed(itemType)
+    val bookSpeed = AudiobookSpeed.hasSpeed(kind)
     var playerSpeed by remember(player) { mutableFloatStateOf(player.playbackParameters.speed) }
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -1847,6 +1878,12 @@ private fun ReplayGainReadout(db: Double) {
  *
  * [explicitStart]: the screen was opened at a specific position (an
  * audiobook bookmark), so even the item already playing jumps there.
+ *
+ * [bindOnly]: the service already had this item current when the screen
+ * prepared ([PlayerUiState.playingInService]) — bind to the queue as it is,
+ * like a follower. Should the queue have moved on before the controller
+ * connected, the follower in PlayerHost catches up with it; handing the item
+ * over again would yank the queue back to a track that just ended.
  */
 @Composable
 private fun rememberAudioController(
@@ -1855,6 +1892,7 @@ private fun rememberAudioController(
     itemId: String,
     item: ItemDetail?,
     explicitStart: Boolean,
+    bindOnly: Boolean,
 ): MediaController? {
     val context = LocalContext.current
     return produceState<MediaController?>(initialValue = null, enabled, source, itemId) {
@@ -1885,7 +1923,8 @@ private fun rememberAudioController(
 
         // Don't restart the track that's already playing in the service
         // when the user re-opens the now-playing screen.
-        if (controller.currentMediaItem?.mediaId != itemId && !following) {
+        val current = controller.currentMediaItem?.mediaId == itemId
+        if (!current && !following && !bindOnly) {
             val startMs = (source as? PlaybackSource.DirectPlay)?.startMs ?: 0L
             val queuedAt = (0 until controller.mediaItemCount)
                 .firstOrNull { controller.getMediaItemAt(it).mediaId == itemId }
@@ -1920,7 +1959,7 @@ private fun rememberAudioController(
                 controller.prepare()
                 controller.playWhenReady = true
             }
-        } else if (explicitStart && !following) {
+        } else if (current && explicitStart && !following) {
             // A bookmark in the item that's already playing: jump there
             // instead of carrying on from where it is.
             controller.seekTo((source as? PlaybackSource.DirectPlay)?.startMs ?: 0L)
@@ -1931,6 +1970,13 @@ private fun rememberAudioController(
         awaitDispose { controller.release() }
     }.value
 }
+
+/** The OnScreen item type the background service recorded on its current
+ *  item ([PlaybackService.EXTRA_TYPE]), read through a controller bound to
+ *  it; null when it recorded none. */
+private fun serviceItemType(player: Player): String? =
+    (player.mediaMetadata.extras ?: player.currentMediaItem?.mediaMetadata?.extras)
+        ?.getString(PlaybackService.EXTRA_TYPE)
 
 /**
  * Marks a now-playing screen that was opened to FOLLOW the background queue

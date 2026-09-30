@@ -11,6 +11,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
@@ -86,10 +87,12 @@ class PlayerViewModelTest {
     )
 
     /** ItemRepository mock with [getMarkers] pre-stubbed so prepare()'s
-     *  unconditional markers fetch doesn't blow up the test. */
+     *  unconditional markers fetch doesn't blow up the test, and an empty
+     *  recent-items cache (read when binding to the service's item). */
     private fun itemRepo(): ItemRepository {
         val repo = mockk<ItemRepository>()
         coEvery { repo.getMarkers(any()) } returns emptyList()
+        every { repo.cachedItem(any()) } returns null
         return repo
     }
 
@@ -151,11 +154,15 @@ class PlayerViewModelTest {
         return w
     }
 
-    /** Audiobook repo for the playback-decision tests: none of them plays a
-     *  book, so the speed lookup is never reached. (PlayerViewModelAudiobookTest
-     *  covers speed, bookmarks and the chapter sleep timer.) */
+    /** Audiobook repo for the playback-decision tests: a book's speed lookup
+     *  (the bind-to-service tests play one) knows nothing, so it plays at 1×.
+     *  (PlayerViewModelAudiobookTest covers speed, bookmarks and the chapter
+     *  sleep timer.) */
     private fun stubAudiobooks(): tv.onscreen.mobile.data.repository.AudiobookRepository =
-        mockk(relaxed = true)
+        mockk<tv.onscreen.mobile.data.repository.AudiobookRepository>(relaxed = true).also {
+            coEvery { it.listeningSpeed(any(), any()) } returns
+                tv.onscreen.mobile.data.repository.ListeningSpeed(rate = null, serverSupport = false)
+        }
 
     /** Notifications repo whose SSE stream emits nothing — keeps the
      *  cross-device resume path silent during tests that don't exercise
@@ -324,7 +331,9 @@ class PlayerViewModelTest {
     fun `a track the background service already plays starts no server transcode`() = runTest(dispatcher) {
         // The now-playing screen followed the service's queue onto a track
         // the server would remux: the screen only binds to the service (which
-        // plays the file directly), so no ffmpeg session may be started.
+        // plays the file directly), so no ffmpeg session may be started — nor
+        // is the decision even asked for. The source is the service's own
+        // handle for the item, not a stream url.
         val itemRepo = itemRepo()
         coEvery { itemRepo.getItem("track-7") } returns alacTrack()
         coEvery { itemRepo.getChildren(any()) } returns emptyList()
@@ -336,8 +345,196 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         val src = vm.state.value.source as PlaybackSource.DirectPlay
-        assertThat(src.url).isEqualTo("http://srv/media/files/f7.m4a")
+        assertThat(src.url).isEqualTo(tv.onscreen.mobile.playback.MusicQueue.placeholderUri("track-7"))
+        assertThat(vm.state.value.playingInService).isTrue()
+        assertThat(vm.state.value.item?.id).isEqualTo("track-7")
         coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any()) }
+        coVerify(exactly = 0) { transcodeRepo.decide(any(), any()) }
+    }
+
+    @Test
+    fun `an album resolving to the track the service plays starts no server transcode`() = runTest(dispatcher) {
+        // Play on the album lands on the track already playing in the
+        // background: the cold path finds that out only after resolving the
+        // leaf, and hands back the direct source instead of a remux.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("album-1") } returns ItemDetail(
+            id = "album-1", library_id = "lib-m", title = "Album", type = "album",
+        )
+        coEvery { itemRepo.getChildren("album-1") } returns listOf(
+            ChildItem(id = "track-7", title = "Track 7", type = "track", index = 7),
+        )
+        coEvery { itemRepo.getItem("track-7") } returns alacTrack()
+        val transcodeRepo = remuxingTranscodeRepo()
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        vm.backgroundItemId = { "track-7" }
+        vm.prepare("album-1")
+        advanceUntilIdle()
+
+        val src = vm.state.value.source as PlaybackSource.DirectPlay
+        assertThat(src.url).isEqualTo("http://srv/media/files/f7.m4a")
+        assertThat(vm.state.value.playingInService).isTrue()
+        coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    // ── Reopening over the item the background service is playing ─────────
+
+    private fun book(id: String, title: String = "Book") = ItemDetail(
+        id = id, library_id = "lib-b", title = title, type = "audiobook",
+        files = listOf(
+            ItemFile(id = "f-$id", stream_url = "/media/files/f-$id.m4b", container = "m4b", audio_codec = "aac"),
+        ),
+    )
+
+    @Test
+    fun `reopening over the service's item publishes at once and asks nothing first`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val fetched = kotlinx.coroutines.CompletableDeferred<ItemDetail>()
+        coEvery { itemRepo.getItem("b") } coAnswers { fetched.await() }
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
+        val watchLimit = stubWatchLimit()
+        val prefs = prefs()
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs, serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+
+        // Straight away — not after the fetch: the screen binds its
+        // controller now instead of spinning.
+        val first = vm.state.value
+        assertThat(first.loading).isFalse()
+        assertThat(first.error).isNull()
+        assertThat(first.source).isNotNull()
+        assertThat(first.playingInService).isTrue()
+        assertThat(first.item).isNull()
+
+        runCurrent()
+        fetched.complete(book("b"))
+        advanceUntilIdle()
+
+        val loaded = vm.state.value
+        assertThat(loaded.item?.id).isEqualTo("b")
+        // The very same instance: the controller is keyed on it, and a new
+        // one would rebind it.
+        assertThat(loaded.source).isSameInstanceAs(first.source)
+        assertThat(loaded.loading).isFalse()
+        coVerify(exactly = 0) { transcodeRepo.decide(any(), any()) }
+        coVerify(exactly = 0) { watchLimit.get() }
+        coVerify(exactly = 0) { prefs.get() }
+        coVerify(exactly = 0) { itemRepo.getMarkers(any()) }
+    }
+
+    @Test
+    fun `end of chapter set before the service's item loads still arms its stop`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val fetched = kotlinx.coroutines.CompletableDeferred<ItemDetail>()
+        coEvery { itemRepo.getItem("b") } coAnswers { fetched.await() }
+
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        try {
+            vm.setSleepTimer(SleepTimer.EndOfChapter)
+            // The service must not chain past this chapter, item or no item.
+            assertThat(tv.onscreen.mobile.playback.StopAfterItem.isArmedFor("b")).isTrue()
+
+            fetched.complete(book("b"))
+            advanceUntilIdle()
+            assertThat(tv.onscreen.mobile.playback.StopAfterItem.isArmedFor("b")).isTrue()
+            assertThat(vm.sleepTimer.value?.mode).isEqualTo(SleepTimer.EndOfChapter)
+        } finally {
+            vm.setSleepTimer(SleepTimer.Off)
+            tv.onscreen.mobile.playback.StopAfterItem.disarm("b")
+        }
+    }
+
+    @Test
+    fun `a copy of the service's item fetched earlier shows until the fresh one lands`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        every { itemRepo.cachedItem("b") } returns book("b", title = "Old title")
+        coEvery { itemRepo.getItem("b") } returns book("b", title = "New title")
+
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        val first = vm.state.value
+        assertThat(first.item?.title).isEqualTo("Old title")
+
+        advanceUntilIdle()
+        assertThat(vm.state.value.item?.title).isEqualTo("New title")
+        assertThat(vm.state.value.source).isSameInstanceAs(first.source)
+    }
+
+    @Test
+    fun `a bookmark in the service's item keeps its position`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("b") } returns book("b")
+
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b", startAtMs = 95_000)
+
+        assertThat((vm.state.value.source as PlaybackSource.DirectPlay).startMs).isEqualTo(95_000)
+    }
+
+    @Test
+    fun `the server refusing the service's item shows the refusal`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("b") } throws
+            httpError(403, """{"error":{"code":"CONTENT_RESTRICTED","message":"rating"}}""")
+
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).isEqualTo("content_restricted")
+    }
+
+    @Test
+    fun `an unreachable server leaves the bound screen as it is`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("b") } throws java.io.IOException("unreachable")
+
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).isNull()
+        assertThat(vm.state.value.loading).isFalse()
+        assertThat(vm.state.value.source).isNotNull()
+    }
+
+    @Test
+    fun `the cold path asks for the decision alongside the watch limit and markers`() = runTest(dispatcher) {
+        // Once the one call that everything needs (the item) is back, the
+        // rest go out together rather than one after another.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        val decided = kotlinx.coroutines.CompletableDeferred<String?>()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo ->
+            coEvery { repo.decide(any(), any()) } coAnswers { decided.await() }
+        }
+        val watchLimit = stubWatchLimit()
+        val prefs = prefs()
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs, serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        vm.prepare("movie-1")
+        runCurrent()
+
+        // The decision is still out, and the other three already went.
+        assertThat(vm.state.value.loading).isTrue()
+        coVerify(exactly = 1) { transcodeRepo.decide("movie-1", "f1") }
+        coVerify(exactly = 1) { watchLimit.get() }
+        coVerify(exactly = 1) { prefs.get() }
+        coVerify(exactly = 1) { itemRepo.getMarkers("movie-1") }
+
+        decided.complete("directPlay")
+        advanceUntilIdle()
+        assertThat(vm.state.value.source).isInstanceOf(PlaybackSource.DirectPlay::class.java)
+        assertThat(vm.state.value.playingInService).isFalse()
     }
 
     @Test
