@@ -420,7 +420,8 @@ class PlayerViewModelTest {
         assertThat(loaded.source).isSameInstanceAs(first.source)
         assertThat(loaded.loading).isFalse()
         coVerify(exactly = 0) { transcodeRepo.decide(any(), any()) }
-        coVerify(exactly = 0) { watchLimit.get() }
+        // Asked behind the publish, alongside the item.
+        coVerify(exactly = 1) { watchLimit.get() }
         coVerify(exactly = 0) { prefs.get() }
         coVerify(exactly = 0) { itemRepo.getMarkers(any()) }
     }
@@ -490,6 +491,46 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.error).isEqualTo("content_restricted")
+    }
+
+    @Test
+    fun `an exhausted watch limit blocks the service's item on reopening`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("b") } returns book("b")
+        val watchLimit = mockk<tv.onscreen.mobile.data.repository.WatchLimitRepository>()
+        coEvery { watchLimit.get() } returns tv.onscreen.mobile.data.model.WatchLimitData(
+            daily_limit_minutes = 60,
+            allowed_start_minute = null,
+            allowed_end_minute = null,
+            used_minutes_today = 60,
+            remaining_minutes = 0,
+            allowed = false,
+            reason = "daily_limit_reached",
+        )
+
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        assertThat(vm.state.value.error).isNull()
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).contains("watch-time limit")
+    }
+
+    @Test
+    fun `a watch limit that can't be read leaves the bound screen as it is`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("b") } returns book("b")
+        val watchLimit = mockk<tv.onscreen.mobile.data.repository.WatchLimitRepository>()
+        coEvery { watchLimit.get() } throws java.io.IOException("unreachable")
+
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).isNull()
+        assertThat(vm.state.value.item?.id).isEqualTo("b")
     }
 
     @Test

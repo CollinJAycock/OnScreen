@@ -649,20 +649,36 @@ func TestNarrowItemWrites_Integration(t *testing.T) {
 	if err := svc.UpdateItemPosterPath(ctx, itemID, "Artist/Album/cover.jpg"); err != nil {
 		t.Fatalf("UpdateItemPosterPath: %v", err)
 	}
+	taken := time.Date(2019, 7, 14, 0, 0, 0, 0, time.UTC)
+	if err := svc.UpdateItemTakenAt(ctx, itemID, taken); err != nil {
+		t.Fatalf("UpdateItemTakenAt: %v", err)
+	}
 	var (
 		title, sortTitle, artist, summary, poster string
 		year                                      int32
 		genres                                    []string
 		durationMS                                int64
+		takenAt                                   time.Time
 	)
-	if err := pool.QueryRow(ctx, `SELECT title, sort_title, year, genres, original_title, summary, duration_ms, poster_path FROM media_items WHERE id = $1`, itemID).
-		Scan(&title, &sortTitle, &year, &genres, &artist, &summary, &durationMS, &poster); err != nil {
+	if err := pool.QueryRow(ctx, `SELECT title, sort_title, year, genres, original_title, summary, duration_ms, poster_path, originally_available_at FROM media_items WHERE id = $1`, itemID).
+		Scan(&title, &sortTitle, &year, &genres, &artist, &summary, &durationMS, &poster, &takenAt); err != nil {
 		t.Fatal(err)
 	}
-	if durationMS != 124000 || poster != "Artist/Album/cover.jpg" {
-		t.Errorf("duration %d poster %q, want 124000 and the cover", durationMS, poster)
+	if durationMS != 124000 || poster != "Artist/Album/cover.jpg" || !takenAt.Equal(taken) {
+		t.Errorf("duration %d poster %q taken %v, want 124000, the cover and %v", durationMS, poster, takenAt, taken)
 	}
 	if title != "Song" || sortTitle != "song" || year != 1968 || len(genres) != 1 || genres[0] != "Rock" || artist != "Artist" || summary != "A summary" {
 		t.Errorf("other columns changed: %q %q %d %v %q %q", title, sortTitle, year, genres, artist, summary)
+	}
+
+	if disc, err := svc.StoredTrackDisc(ctx, itemID); err != nil || disc != nil {
+		t.Errorf("StoredTrackDisc before a fill = %v, %v; want nil", disc, err)
+	}
+	disc2 := 2
+	if _, err := svc.FillTrackPosition(ctx, itemID, nil, &disc2); err != nil {
+		t.Fatalf("FillTrackPosition: %v", err)
+	}
+	if disc, err := svc.StoredTrackDisc(ctx, itemID); err != nil || disc == nil || *disc != 2 {
+		t.Errorf("StoredTrackDisc after a fill = %v, %v; want 2", disc, err)
 	}
 }

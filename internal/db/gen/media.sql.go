@@ -1374,6 +1374,19 @@ func (q *Queries) GetShowPostersForEpisodes(ctx context.Context, dollar_1 []uuid
 	return items, nil
 }
 
+const getTrackDiscNumber = `-- name: GetTrackDiscNumber :one
+SELECT disc_number FROM media_items WHERE id = $1
+`
+
+// A track's stored disc, read on the primary: the scanner checks it right
+// after a concurrent fill, which a replica may not show yet.
+func (q *Queries) GetTrackDiscNumber(ctx context.Context, id uuid.UUID) (*int32, error) {
+	row := q.db.QueryRow(ctx, getTrackDiscNumber, id)
+	var disc_number *int32
+	err := row.Scan(&disc_number)
+	return disc_number, err
+}
+
 const hardDeleteMediaFile = `-- name: HardDeleteMediaFile :execrows
 DELETE FROM media_files WHERE id = $1
 `
@@ -6195,6 +6208,25 @@ type UpdateMediaItemPosterPathParams struct {
 // or a book's cover as its poster. Same reason as UpdateMediaItemDuration.
 func (q *Queries) UpdateMediaItemPosterPath(ctx context.Context, arg UpdateMediaItemPosterPathParams) error {
 	_, err := q.db.Exec(ctx, updateMediaItemPosterPath, arg.PosterPath, arg.ID)
+	return err
+}
+
+const updateMediaItemTakenAt = `-- name: UpdateMediaItemTakenAt :exec
+UPDATE media_items
+SET originally_available_at = $1,
+    updated_at              = NOW()
+WHERE id = $2
+`
+
+type UpdateMediaItemTakenAtParams struct {
+	TakenAt pgtype.Date `json:"taken_at"`
+	ID      uuid.UUID   `json:"id"`
+}
+
+// Sets only an item's originally_available_at: a photo's EXIF capture date.
+// Same reason as UpdateMediaItemDuration.
+func (q *Queries) UpdateMediaItemTakenAt(ctx context.Context, arg UpdateMediaItemTakenAtParams) error {
+	_, err := q.db.Exec(ctx, updateMediaItemTakenAt, arg.TakenAt, arg.ID)
 	return err
 }
 

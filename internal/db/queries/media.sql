@@ -582,6 +582,19 @@ SET poster_path = sqlc.arg(poster_path),
     updated_at  = NOW()
 WHERE id = sqlc.arg(id);
 
+-- name: UpdateMediaItemTakenAt :exec
+-- Sets only an item's originally_available_at: a photo's EXIF capture date.
+-- Same reason as UpdateMediaItemDuration.
+UPDATE media_items
+SET originally_available_at = sqlc.arg(taken_at),
+    updated_at              = NOW()
+WHERE id = sqlc.arg(id);
+
+-- name: GetTrackDiscNumber :one
+-- A track's stored disc, read on the primary: the scanner checks it right
+-- after a concurrent fill, which a replica may not show yet.
+SELECT disc_number FROM media_items WHERE id = $1;
+
 -- name: UpdateMediaItemTitle :exec
 -- Narrow update used by the admin re-enrich-unmatched tool: rewrites only
 -- the title + sort_title without touching the metadata fields that

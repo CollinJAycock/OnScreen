@@ -165,8 +165,11 @@ func TestProcessMusicHierarchy_FoldedRowTakenByOtherDisc(t *testing.T) {
 	}
 }
 
-// A folded row can carry the other disc's title. Once the file whose
-// (disc, track) it is resolves to it, the row takes that file's title.
+// A folded row can carry the other disc's title. The file whose fill gives
+// the row its disc takes it over, title included. No other file retitles a
+// row: not one of two copies a row rightly holds (it has its disc already,
+// and the copies' tags may name it differently), not a file without a disc
+// tag, which splits nothing.
 func TestProcessMusicHierarchy_RetitlesTrackAtItsPosition(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
@@ -177,26 +180,28 @@ func TestProcessMusicHierarchy_RetitlesTrackAtItsPosition(t *testing.T) {
 		comments    []string
 		want        string // "" = no retitle
 	}{
-		{name: "folded row titled by the other disc", stored: "Beta", index: ip(1), disc: ip(1),
+		{name: "this file's fill splits the fold", stored: "Beta", index: ip(1),
 			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1/2"}, want: "Alpha"},
-		{name: "disc filled in by this file", stored: "Beta", index: ip(1),
-			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1/2"}, want: "Alpha"},
-		{name: "no disc tag, no stored disc", stored: "Beta", index: ip(1),
-			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1"}, want: "Alpha"},
-		{name: "other scripts compare by their letters", stored: "東京", index: ip(1), disc: ip(1),
-			comments: []string{"TITLE=大阪", "TRACKNUMBER=1", "DISCNUMBER=1"}, want: "大阪"},
-		{name: "same title once folded", stored: "the alpha!", index: ip(1), disc: ip(1),
+		{name: "a row that already had its disc keeps its title", stored: "Song", index: ip(1), disc: ip(1),
+			comments: []string{"TITLE=Song (Remastered)", "TRACKNUMBER=1", "DISCNUMBER=1/2"}},
+		{name: "no disc tag splits nothing", stored: "Beta", index: ip(1),
+			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1"}},
+		{name: "found without a number", stored: "Beta",
 			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
-		{name: "row at another number", stored: "Beta", index: ip(2), disc: ip(1),
+		{name: "other scripts compare by their letters", stored: "東京", index: ip(1),
+			comments: []string{"TITLE=大阪", "TRACKNUMBER=1", "DISCNUMBER=1"}, want: "大阪"},
+		{name: "same title once folded", stored: "the alpha!", index: ip(1),
+			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
+		{name: "row at another number", stored: "Beta", index: ip(2),
 			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
 		{name: "row on another disc", stored: "Beta", index: ip(1), disc: ip(2),
 			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
 		{name: "row's disc unknown", stored: "Beta", index: ip(1), fillRefused: true,
 			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
-		{name: "no number in the tags", stored: "Beta", index: ip(1), disc: ip(1),
-			comments: []string{"TITLE=Alpha"}},
+		{name: "no number in the tags", stored: "Beta", index: ip(1),
+			comments: []string{"TITLE=Alpha", "DISCNUMBER=1"}},
 		// A title set in the metadata editor survives a re-read of its file.
-		{name: "a row that wasn't folded keeps its title", stored: "My Title", index: ip(1), disc: ip(1),
+		{name: "a row that wasn't folded keeps its title", stored: "My Title", index: ip(1),
 			notFolded: true, comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -238,9 +243,38 @@ func TestProcessMusicHierarchy_RetitlesTrackAtItsPosition(t *testing.T) {
 			if len(svc.titleCalls) != 1 || svc.titleCalls[0] != tc.want {
 				t.Errorf("retitles = %v, want [%s]", svc.titleCalls, tc.want)
 			}
-			// The caller writes the duration with the returned title.
+			// The returned item matches the stored row.
 			if got.Title != tc.want || got.SortTitle != sortTitle(tc.want) {
 				t.Errorf("returned title = %q / %q, want %q", got.Title, got.SortTitle, tc.want)
+			}
+		})
+	}
+}
+
+// A file with no disc tag is disc 1's, as the album sees it: a row another
+// file just filled with disc 2 is not its row, and one filled with disc 1 is.
+func TestDiscTakenByOtherFile(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		inMemory *int // the row's disc as this file found it
+		stored   *int // the row's disc now
+		tagDisc  int
+		want     bool
+	}{
+		{name: "other disc filled it", stored: ip(1), tagDisc: 2, want: true},
+		{name: "this disc filled it", stored: ip(2), tagDisc: 2},
+		{name: "no disc tag, disc 2 filled it", stored: ip(2), want: true},
+		{name: "no disc tag, disc 1 filled it", stored: ip(1)},
+		{name: "still no disc", tagDisc: 2},
+		{name: "had its disc when found", inMemory: ip(1), stored: ip(1), tagDisc: 2},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			svc := newMockMediaService()
+			row := &media.Item{ID: uuid.New(), Type: "track", Index: ip(1), DiscNumber: tc.stored}
+			svc.items[row.ID] = row
+			found := &media.Item{ID: row.ID, Type: "track", Index: ip(1), DiscNumber: tc.inMemory}
+			if got := newTestScanner(svc).discTakenByOtherFile(context.Background(), found, tc.tagDisc); got != tc.want {
+				t.Errorf("discTakenByOtherFile = %v, want %v", got, tc.want)
 			}
 		})
 	}

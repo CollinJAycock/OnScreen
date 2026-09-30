@@ -144,13 +144,9 @@ func (s *Scanner) syncHomeVideoPoster(ctx context.Context, item *media.Item, rel
 	if item.PosterPath != nil && *item.PosterPath == relPath {
 		return
 	}
-	if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-		ID:         item.ID,
-		Title:      item.Title,
-		SortTitle:  item.SortTitle,
-		Year:       item.Year,
-		PosterPath: &relPath,
-	}); err != nil {
+	// Only the poster: UpdateItemMetadata would also blank the video's
+	// summary and the rest.
+	if err := s.media.UpdateItemPosterPath(ctx, item.ID, relPath); err != nil {
 		s.logger.WarnContext(ctx, "failed to update home_video poster_path",
 			"item_id", item.ID, "err", err)
 		return

@@ -188,14 +188,9 @@ func (s *Scanner) syncBookCoverPath(ctx context.Context, book *media.Item, relPa
 	if book.PosterPath != nil && *book.PosterPath == relPath {
 		return
 	}
-	if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-		ID:         book.ID,
-		Title:      book.Title,
-		SortTitle:  book.SortTitle,
-		Year:       book.Year,
-		DurationMS: book.DurationMS,
-		PosterPath: &relPath,
-	}); err != nil {
+	// Only the poster: UpdateItemMetadata would also blank the book's
+	// author, summary and genres.
+	if err := s.media.UpdateItemPosterPath(ctx, book.ID, relPath); err != nil {
 		s.logger.WarnContext(ctx, "failed to update book poster_path",
 			"book_id", book.ID, "err", err)
 		return

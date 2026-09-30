@@ -412,10 +412,11 @@ Roku channel (no request features, as on Android):
   dropped everything but Latin letters, so every Japanese, Cyrillic or Greek
   title matched every other: a Japanese album came in as one track, and an
   artist's non-Latin albums as one album.
-- **A scan no longer blanks metadata when it records a length or a cover.**
-  The scanner's update of a track's changed length, and of a photo's or a
-  book's cover, went through the full metadata write, which cleared the
-  year, genres, tags and artist (a book's author and summary) it wasn't
+- **A scan no longer blanks metadata when it records a length, a cover or a
+  photo's date.** The scanner's update of a track's changed length, of an
+  album's, artist's, author's, book's or home video's cover, and of a
+  photo's capture date went through the full metadata write, which cleared
+  the year, genres, summary, tags and artist (a book's author) it wasn't
   given. They now touch only their own column.
 - **Phone: a book or album page no longer flashes "No playable files".**
   Coming back to a page from the player reloaded it from scratch, and a book
@@ -425,12 +426,16 @@ Roku channel (no request features, as on Android):
 - **Phone: the full player opens at once over audio already playing.** It
   waited on five network calls in a row (several seconds on a slow link,
   with taps lost) for an item the background service was already playing;
-  it now shows the controls straight away and loads the rest alongside.
+  it now shows the controls straight away and loads the rest alongside,
+  including the parental watch limit, which still blocks a paused book
+  reopened past it.
 - **Phone: a headset or Bluetooth key during a video controls the video.**
   The app's only media session was the audio service's, so a play key
   during a video restarted a finished or paused audiobook underneath it,
   paused the video, and reset the book's resume point. Video now has its
-  own session, which starts playback only while its screen is up.
+  own session, which starts playback only while its screen is up. The
+  audio's notification buttons always work, and pause and stop still reach
+  the audio while a video is up.
 - **Android TV background audio, from a hardware test run.** Found on a
   Fire TV Stick while testing the session hand-off:
   - Reopening an item while its own player was on screen (a deep link, a

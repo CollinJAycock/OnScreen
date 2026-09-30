@@ -161,6 +161,12 @@ class ItemDetailViewModel @Inject constructor(
                         loadSeq = before.loadSeq + 1,
                     )
                 }
+                // The download manifest, for the Download button. A disk
+                // read, so it takes nothing from the fetches below, and it
+                // runs on its own: behind them it waited out a slow or
+                // offline children fetch, and a refresh that cancelled this
+                // load cancelled it too, leaving the button on stale state.
+                viewModelScope.launch { downloads.store.load() }
                 // Watching-status is best-effort — the detail page is
                 // useful even when the server is on an older build that
                 // 404s the route. Fetched after the main detail so the
@@ -195,9 +201,6 @@ class ItemDetailViewModel @Inject constructor(
                         playStartResolved = true,
                     )
                 }
-                // Last: the manifest only feeds the Download button, so it
-                // waits behind what Play needs.
-                downloads.store.load()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

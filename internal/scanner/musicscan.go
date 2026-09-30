@@ -242,13 +242,19 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	// An existing track is returned as stored: one imported before its
 	// number could be read (a Vorbis "02/12" tag, a number only in the
 	// filename) or before discs were kept still has none. Fill it in now.
-	fill := func(track *media.Item) {
-		if err := s.fillTrackPosition(ctx, track, tags.Track, tags.Disc, "tags"); err != nil {
+	fill := func(track *media.Item) bool {
+		changed, err := s.fillTrackPosition(ctx, track, tags.Track, tags.Disc, "tags")
+		if err != nil {
 			s.logger.WarnContext(ctx, "fill track position failed",
 				"path", path, "track_id", track.ID, "track", tags.Track, "disc", tags.Disc, "err", err)
 		}
+		return changed
 	}
-	fill(track)
+	// A folded row this file splits: found by its number, with no disc
+	// stored, and this file's fill writes its disc. Only that makes the row
+	// this file's to retitle (retitleTrack).
+	splitsFold := track.Index != nil && track.DiscNumber == nil && tags.Disc > 0
+	filled := fill(track)
 	// Both files of a folded track can be resolving it at once (see
 	// rereadFoldedTrack): the row has no disc yet, so each file finds it and
 	// fills in its own disc, and the first fill wins. If the other file's
@@ -258,12 +264,16 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 		if track, err = s.media.FindOrCreateHierarchyItem(ctx, trackParams); err != nil {
 			return nil, nil, err
 		}
-		fill(track)
+		splitsFold = track.Index != nil && track.DiscNumber == nil && tags.Disc > 0
+		filled = fill(track)
 	}
-	// Only a row that held several files: one an older scan folded may carry
-	// the other disc's title. Any other row keeps its title, which may be one
-	// set in the metadata editor.
-	if s.wasFoldedTrack(libraryID, track.ID) {
+	// Only a folded row, and only by the file that split it: the row may
+	// carry the other disc's title. Any other row keeps its title, which may
+	// be one set in the metadata editor. A row that rightly holds two copies
+	// already has its disc, so neither copy retitles it (their tags may name
+	// it differently: "Song" and "Song (Remastered)"), and a file with no
+	// disc tag never splits anything.
+	if splitsFold && filled && s.wasFoldedTrack(libraryID, track.ID) {
 		s.retitleTrack(ctx, track, tags)
 	}
 
@@ -298,8 +308,9 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 // Fill-only: a number the track already has is left alone. source names
 // where the numbers came from, for the log. An error means nothing was
 // written — typically because another track in the album already holds
-// that position (idx_media_items_parent_type_index).
-func (s *Scanner) fillTrackPosition(ctx context.Context, track *media.Item, trackNum, disc int, source string) error {
+// that position (idx_media_items_parent_type_index). The bool reports whether
+// this call wrote anything.
+func (s *Scanner) fillTrackPosition(ctx context.Context, track *media.Item, trackNum, disc int, source string) (bool, error) {
 	var index, discNumber *int
 	if track.Index == nil && trackNum > 0 {
 		index = &trackNum
@@ -308,11 +319,11 @@ func (s *Scanner) fillTrackPosition(ctx context.Context, track *media.Item, trac
 		discNumber = &disc
 	}
 	if index == nil && discNumber == nil {
-		return nil
+		return false, nil
 	}
 	changed, err := s.media.FillTrackPosition(ctx, track.ID, index, discNumber)
 	if err != nil || !changed {
-		return err
+		return false, err
 	}
 	if index != nil {
 		track.Index = index
@@ -322,7 +333,7 @@ func (s *Scanner) fillTrackPosition(ctx context.Context, track *media.Item, trac
 	}
 	s.logger.DebugContext(ctx, "track position filled",
 		"track_id", track.ID, "track", trackNum, "disc", disc, "source", source)
-	return nil
+	return true, nil
 }
 
 // discTakenByOtherFile reports whether track, which this file's tags place
@@ -330,15 +341,19 @@ func (s *Scanner) fillTrackPosition(ctx context.Context, track *media.Item, trac
 // on the row it was handed, yet wrote none, because a file of another disc
 // filled the row in between. Costs a read only in that case — a row that
 // already had a disc, or took this file's, answers from memory.
+//
+// A file with no disc tag counts as disc 1, as the rest of the album sees
+// it. The stored disc is read on the primary (StoredTrackDisc): the other
+// file's fill is milliseconds old, and a replica would not show it.
 func (s *Scanner) discTakenByOtherFile(ctx context.Context, track *media.Item, disc int) bool {
-	if disc <= 0 || track.DiscNumber != nil {
+	if track.DiscNumber != nil {
 		return false
 	}
-	stored, err := s.media.GetItem(ctx, track.ID)
-	if err != nil || stored.DiscNumber == nil {
+	stored, err := s.media.StoredTrackDisc(ctx, track.ID)
+	if err != nil || stored == nil {
 		return false
 	}
-	return *stored.DiscNumber != disc
+	return *stored != max(disc, 1)
 }
 
 // retitleTrack gives track the title its file's tags carry, when the track
@@ -347,10 +362,10 @@ func (s *Scanner) discTakenByOtherFile(ctx context.Context, track *media.Item, d
 // Found by its number, a track comes back as stored. On an album an older
 // scanner folded (see rereadFoldedTrack), a disc 1 row held disc 2's file
 // too and may carry disc 2's title; once the fold splits, the row is disc
-// 1's by its disc but not yet by its name. Called only for such rows
-// (wasFoldedTrack): any other track's title may have been set in the
-// metadata editor, and a re-read (a changed file, a metadata reprobe) must
-// not undo that. Titles that match once folded (media.SameTitle: case,
+// 1's by its disc but not yet by its name. Called only for such a row
+// (wasFoldedTrack), and only by the file whose fill just gave it its disc:
+// any other track's title may have been set in the metadata editor, and a
+// re-read (a changed file, a metadata reprobe) must not undo that. Titles that match once folded (media.SameTitle: case,
 // punctuation, a leading article) are left alone, and so is a row whose disc
 // isn't known to be the tags' disc.
 func (s *Scanner) retitleTrack(ctx context.Context, track *media.Item, tags *MusicTags) {
@@ -376,7 +391,7 @@ func (s *Scanner) retitleTrack(ctx context.Context, track *media.Item, tags *Mus
 	}
 	s.logger.InfoContext(ctx, "track retitled from its tags",
 		"track_id", track.ID, "from", track.Title, "to", tags.Title)
-	// processFile writes the track's duration with the in-memory title.
+	// Keep the returned item in step with the stored row.
 	track.Title, track.SortTitle = tags.Title, st
 }
 
@@ -402,7 +417,7 @@ func (s *Scanner) healUnchangedTrack(ctx context.Context, item *media.Item, file
 		return
 	}
 	if pos := parseMusicPath(path); pos.Track > 0 && (pos.Disc > 0 || s.albumIsSingleDisc(ctx, item)) {
-		if s.fillTrackPosition(ctx, item, pos.Track, pos.Disc, "path") == nil {
+		if _, err := s.fillTrackPosition(ctx, item, pos.Track, pos.Disc, "path"); err == nil {
 			return
 		}
 		// Taken by another track: the name is wrong or leaves out the
@@ -413,7 +428,7 @@ func (s *Scanner) healUnchangedTrack(ctx context.Context, item *media.Item, file
 		s.unnumberedTracks.Store(file.ID, struct{}{})
 		return
 	}
-	if err := s.fillTrackPosition(ctx, item, tags.Track, tags.Disc, "tags"); err != nil {
+	if _, err := s.fillTrackPosition(ctx, item, tags.Track, tags.Disc, "tags"); err != nil {
 		s.logger.WarnContext(ctx, "track number not filled; another track in the album holds it",
 			"path", path, "track_id", item.ID, "track", tags.Track, "disc", tags.Disc, "err", err)
 		s.unnumberedTracks.Store(file.ID, struct{}{})
@@ -561,13 +576,10 @@ func (s *Scanner) extractAlbumArt(ctx context.Context, album *media.Item, filePa
 func (s *Scanner) updateAlbumPoster(ctx context.Context, album *media.Item, relPath string) {
 	// Normalize to forward slashes for cross-platform consistency.
 	relPath = filepath.ToSlash(relPath)
-	if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-		ID:         album.ID,
-		Title:      album.Title,
-		SortTitle:  album.SortTitle,
-		Year:       album.Year,
-		PosterPath: &relPath,
-	}); err != nil {
+	// Only the poster: UpdateItemMetadata would also blank the album's
+	// genres and summary. A split fold's CD1 and CD2 files each set their
+	// own folder's cover, so this runs on the heal's re-reads.
+	if err := s.media.UpdateItemPosterPath(ctx, album.ID, relPath); err != nil {
 		s.logger.WarnContext(ctx, "failed to update album poster_path",
 			"album_id", album.ID, "err", err)
 	}
@@ -677,13 +689,9 @@ func (s *Scanner) extractArtistArt(ctx context.Context, artist *media.Item, file
 // updateArtistPoster sets the artist's poster_path in the database.
 func (s *Scanner) updateArtistPoster(ctx context.Context, artist *media.Item, relPath string) {
 	relPath = filepath.ToSlash(relPath)
-	if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-		ID:         artist.ID,
-		Title:      artist.Title,
-		SortTitle:  artist.SortTitle,
-		Year:       artist.Year,
-		PosterPath: &relPath,
-	}); err != nil {
+	// Only the poster: UpdateItemMetadata would also blank the artist's
+	// biography and genres.
+	if err := s.media.UpdateItemPosterPath(ctx, artist.ID, relPath); err != nil {
 		s.logger.WarnContext(ctx, "failed to update artist poster_path",
 			"artist_id", artist.ID, "err", err)
 	}

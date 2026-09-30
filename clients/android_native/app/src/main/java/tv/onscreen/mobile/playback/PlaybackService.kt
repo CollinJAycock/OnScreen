@@ -222,7 +222,9 @@ class PlaybackService : MediaSessionService() {
      * and would start the book or music underneath it is consumed and
      * ignored ([ServiceMediaKeys]). The video's own session normally takes
      * the keys (PlayerScreen); this catches what the platform still routes
-     * here. Returning false leaves every other key to Media3's handling.
+     * here. The notification's buttons arrive here too, as the notification
+     * controller: those are a tap on the audio's own controls and always
+     * act. Returning false leaves every other key to Media3's handling.
      */
     private val mediaKeyBackstop = object : MediaSession.Callback {
         override fun onMediaButtonEvent(
@@ -230,15 +232,20 @@ class PlaybackService : MediaSessionService() {
             controllerInfo: MediaSession.ControllerInfo,
             intent: Intent,
         ): Boolean {
+            if (session.isMediaNotificationController(controllerInfo)) return false
+            val key = androidx.core.content.IntentCompat.getParcelableExtra(
+                intent, Intent.EXTRA_KEY_EVENT, android.view.KeyEvent::class.java,
+            ) ?: return false
             val player = session.player
             // "isPlaying" is the tracker's name for "a video player is up",
             // paused or not (it drives picture-in-picture).
             val ignore = ServiceMediaKeys.ignore(
                 videoOnScreen = ActiveVideoTracker.isPlaying(),
+                keyCode = key.keyCode,
                 playWhenReady = player.playWhenReady,
                 playbackState = player.playbackState,
             )
-            if (ignore) android.util.Log.i(TAG, "media button ignored: a video is on screen")
+            if (ignore) android.util.Log.i(TAG, "media button ${key.keyCode} ignored: a video is on screen")
             return ignore
         }
     }

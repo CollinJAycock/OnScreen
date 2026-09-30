@@ -65,7 +65,7 @@ class ItemDetailViewModelTest {
         ChildItem(id = id, title = "Ch-$id", type = "audiobook_chapter", index = index)
 
     @Test
-    fun `an album's Play waits on its tracks, fetched before the download manifest`() = runTest(dispatcher) {
+    fun `an album's Play waits on its tracks, the download manifest does not`() = runTest(dispatcher) {
         val gate = CompletableDeferred<List<ChildItem>>()
         coEvery { repo.getItem("al") } returns detail("al", "album")
         coEvery { repo.getChildren("al") } coAnswers { gate.await() }
@@ -81,7 +81,7 @@ class ItemDetailViewModelTest {
         assertThat(s.loadSeq).isEqualTo(1)
         assertThat(s.childrenLoaded).isFalse()
         assertThat(s.playStartResolved).isFalse()
-        coVerify(exactly = 0) { store.load() }
+        coVerify(exactly = 1) { store.load() }
 
         gate.complete(listOf(track("t1", 1), track("t2", 2)))
         advanceUntilIdle()

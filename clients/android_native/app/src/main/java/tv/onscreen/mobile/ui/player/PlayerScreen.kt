@@ -441,8 +441,9 @@ private fun PlayerHost(
     val inPip = LocalInPipMode.current
 
     // Pause screen-owned VIDEO when the app stops (screen off, or the user
-    // switches apps without PiP). The screen-owned player publishes no
-    // MediaSession and no notification, so audio kept playing from a black
+    // switches apps without PiP). The screen-owned player has no
+    // notification (its media session only takes the keys, and starts
+    // nothing while the screen is down), so audio kept playing from a black
     // screen with no lockscreen control and no way to stop it short of
     // returning to the app — while still burning a transcode session. PiP
     // is exempt: it is on screen with its own controls. Service audio is

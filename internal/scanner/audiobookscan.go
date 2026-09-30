@@ -435,12 +435,7 @@ func (s *Scanner) fetchExternalAudiobookArt(ctx context.Context, book, author *m
 				"author_id", author.ID, "name", author.Title, "err", err)
 		} else if portraitURL != "" {
 			if relPath, ok := s.downloadAndStorePoster(ctx, author.ID, portraitURL, authorDir, roots); ok {
-				if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-					ID:         author.ID,
-					Title:      author.Title,
-					SortTitle:  author.SortTitle,
-					PosterPath: &relPath,
-				}); err != nil {
+				if err := s.media.UpdateItemPosterPath(ctx, author.ID, relPath); err != nil {
 					s.logger.WarnContext(ctx, "failed to update author poster_path",
 						"author_id", author.ID, "err", err)
 				} else {

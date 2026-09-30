@@ -171,6 +171,20 @@ func (m *mockMediaService) UpdateItemPosterPath(_ context.Context, id uuid.UUID,
 	return nil
 }
 
+func (m *mockMediaService) UpdateItemTakenAt(_ context.Context, id uuid.UUID, takenAt time.Time) error {
+	if it, ok := m.items[id]; ok {
+		it.OriginallyAvailableAt = &takenAt
+	}
+	return nil
+}
+
+func (m *mockMediaService) StoredTrackDisc(_ context.Context, id uuid.UUID) (*int, error) {
+	if it, ok := m.items[id]; ok {
+		return it.DiscNumber, nil
+	}
+	return nil, errors.New("not found")
+}
+
 func (m *mockMediaService) UpdateItemLyrics(_ context.Context, _ uuid.UUID, _, _ *string) error {
 	return nil
 }

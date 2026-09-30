@@ -230,6 +230,17 @@ func (m *mockQuerier) ListFoldedTrackItemIDs(_ context.Context, libraryID uuid.U
 	}
 	return out, nil
 }
+func (m *mockQuerier) UpdateMediaItemTakenAt(_ context.Context, id uuid.UUID, takenAt time.Time) error {
+	return nil
+}
+
+func (m *mockQuerier) GetTrackDiscNumber(_ context.Context, id uuid.UUID) (*int, error) {
+	if it, ok := m.items[id]; ok {
+		return it.DiscNumber, nil
+	}
+	return nil, nil
+}
+
 func (m *mockQuerier) UpdateMediaItemDuration(_ context.Context, id uuid.UUID, durationMS int64) error {
 	return nil
 }

@@ -271,6 +271,9 @@ type Querier interface {
 	// each, for the same reason.
 	UpdateMediaItemDuration(ctx context.Context, id uuid.UUID, durationMS int64) error
 	UpdateMediaItemPosterPath(ctx context.Context, id uuid.UUID, posterPath string) error
+	UpdateMediaItemTakenAt(ctx context.Context, id uuid.UUID, takenAt time.Time) error
+	// GetTrackDiscNumber reads a track's stored disc (nil: none stored).
+	GetTrackDiscNumber(ctx context.Context, id uuid.UUID) (*int, error)
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
@@ -1537,6 +1540,26 @@ func (s *Service) UpdateItemPosterPath(ctx context.Context, id uuid.UUID, poster
 		return fmt.Errorf("update item poster %s: %w", id, err)
 	}
 	return nil
+}
+
+// UpdateItemTakenAt sets an item's originally_available_at and nothing else:
+// a photo's EXIF capture date. Same reason as UpdateItemDuration.
+func (s *Service) UpdateItemTakenAt(ctx context.Context, id uuid.UUID, takenAt time.Time) error {
+	if err := s.rw.UpdateMediaItemTakenAt(ctx, id, takenAt); err != nil {
+		return fmt.Errorf("update item taken date %s: %w", id, err)
+	}
+	return nil
+}
+
+// StoredTrackDisc reads a track's disc as stored now. Read from rw: the
+// scanner checks it right after another file of the same fold may have
+// filled it in, which a replica may not show yet.
+func (s *Service) StoredTrackDisc(ctx context.Context, id uuid.UUID) (*int, error) {
+	disc, err := s.rw.GetTrackDiscNumber(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("read track disc %s: %w", id, err)
+	}
+	return disc, nil
 }
 
 // FindTopLevelItem looks up a top-level item (parent_id IS NULL) by

@@ -779,10 +779,14 @@ class PlayerViewModel @Inject constructor(
      * spinner for seconds and taps were lost. None of it is needed here. The
      * decision was thrown away for a service item anyway (it plays the file
      * directly); preferences and markers only feed a screen-owned video
-     * player; and the service's heartbeat still enforces a watch limit, a
-     * revoked library or an admin stop (HeartbeatRefusal). So publish at
-     * once, showing the copy of the item fetched last if there is one, and
-     * refresh the item behind it.
+     * player; and the service's heartbeat enforces a revoked library or an
+     * admin stop (HeartbeatRefusal). So publish at once, showing the copy of
+     * the item fetched last if there is one, and refresh the item behind it.
+     *
+     * The watch limit is asked behind the publish too, with the item. The
+     * heartbeat only speaks once the audio plays: a paused book reopened past
+     * an exhausted limit offered a Play that ran ten seconds before it was
+     * cut off, where the cold path shows the block up front.
      *
      * The source is published ONCE and kept: rememberAudioController is keyed
      * on it, and a new instance would rebind the controller. The screen only
@@ -813,6 +817,8 @@ class PlayerViewModel @Inject constructor(
         subscribeRemoteProgress(itemId)
         subscribeAdminStops(itemId)
         viewModelScope.launch {
+            // Fails open, as on the cold path.
+            val limitCall = async { orNull { watchLimitRepo.get() } }
             val fresh = try {
                 itemRepo.getItem(itemId)
             } catch (e: CancellationException) {
@@ -828,6 +834,12 @@ class PlayerViewModel @Inject constructor(
             }
             // Another prepare() took over while this loaded.
             if (_state.value.source !== source) return@launch
+            val wl = limitCall.await()
+            if (_state.value.source !== source) return@launch
+            if (wl != null && !wl.allowed) {
+                _state.update { it.copy(item = fresh, error = parentalBlockMessage(wl.reason)) }
+                return@launch
+            }
             val file = fresh.files.firstOrNull()
             _state.update {
                 it.copy(

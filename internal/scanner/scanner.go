@@ -123,6 +123,8 @@ type MediaService interface {
 	UpdateItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error
 	UpdateItemDuration(ctx context.Context, id uuid.UUID, durationMS int64) error
 	UpdateItemPosterPath(ctx context.Context, id uuid.UUID, posterPath string) error
+	UpdateItemTakenAt(ctx context.Context, id uuid.UUID, takenAt time.Time) error
+	StoredTrackDisc(ctx context.Context, id uuid.UUID) (*int, error)
 	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
@@ -497,7 +499,11 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	// Music: note the tracks holding several files before the file pass, so
 	// their unchanged files are read again rather than skipped and a track
 	// an older scanner folded from two discs is split (resolveUnchangedFile).
-	if libraryType == "music" {
+	// Full scans only: a directory scan (the watcher's, running alongside)
+	// replaced the running full scan's snapshot with its own and removed
+	// that when it finished, so the full scan's later files went without
+	// one. A directory scan still reads a full scan's snapshot while one runs.
+	if fullScan && libraryType == "music" {
 		if folded := s.loadFoldedTracks(ctx, libraryID); folded != nil {
 			defer s.foldedTracks.CompareAndDelete(libraryID, folded)
 		}
@@ -1485,13 +1491,11 @@ func (s *Scanner) persistPhotoEXIF(ctx context.Context, item *media.Item, path s
 	// Mirror DateTimeOriginal onto the item so the existing date-sort path
 	// works for photos.
 	if ex.TakenAt != nil && (item.OriginallyAvailableAt == nil || !item.OriginallyAvailableAt.Equal(*ex.TakenAt)) {
-		taken := *ex.TakenAt
-		s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-			ID:                    item.ID,
-			Title:                 item.Title,
-			SortTitle:             item.SortTitle,
-			OriginallyAvailableAt: &taken,
-		})
+		// Only the date: UpdateItemMetadata would also blank the photo's
+		// caption (summary) and tags.
+		if err := s.media.UpdateItemTakenAt(ctx, item.ID, *ex.TakenAt); err != nil {
+			s.logger.WarnContext(ctx, "update photo taken date failed", "item_id", item.ID, "err", err)
+		}
 	}
 }
 

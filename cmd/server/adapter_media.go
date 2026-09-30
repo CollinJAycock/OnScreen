@@ -145,6 +145,19 @@ func (a *mediaAdapter) ListFoldedTrackItemIDs(ctx context.Context, libraryID uui
 	return a.q.ListFoldedTrackItemIDs(ctx, libraryID)
 }
 
+func (a *mediaAdapter) UpdateMediaItemTakenAt(ctx context.Context, id uuid.UUID, takenAt time.Time) error {
+	return a.q.UpdateMediaItemTakenAt(ctx, gen.UpdateMediaItemTakenAtParams{ID: id, TakenAt: pgtype.Date{Time: takenAt, Valid: true}})
+}
+
+func (a *mediaAdapter) GetTrackDiscNumber(ctx context.Context, id uuid.UUID) (*int, error) {
+	disc, err := a.q.GetTrackDiscNumber(ctx, id)
+	if err != nil || disc == nil {
+		return nil, err
+	}
+	d := int(*disc)
+	return &d, nil
+}
+
 func (a *mediaAdapter) UpdateMediaItemDuration(ctx context.Context, id uuid.UUID, durationMS int64) error {
 	return a.q.UpdateMediaItemDuration(ctx, gen.UpdateMediaItemDurationParams{ID: id, DurationMs: &durationMS})
 }
