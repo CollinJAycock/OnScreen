@@ -119,6 +119,8 @@ type MediaService interface {
 	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
 	UpdateItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
 	FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error)
+	ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
+	UpdateItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error
 	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
@@ -179,6 +181,22 @@ type Scanner struct {
 	// instead, which reads its tags anyway. Keyed by media_files.id; values
 	// are unused.
 	unnumberedTracks sync.Map
+
+	// foldedTracks holds, per music library, the tracks that held more than
+	// one active file when the library's running scan started (see
+	// loadFoldedTracks). Keyed by library ID; values are *trackSet.
+	foldedTracks sync.Map
+	// foldChecked holds the IDs of unchanged music files already sent down
+	// the slow path because their track held other files too, so a genuine
+	// second copy (the same song as FLAC and as MP3) pays for that once per
+	// process, not on every scan. Keyed by media_files.id; values are unused.
+	foldChecked sync.Map
+}
+
+// trackSet is a snapshot of track item IDs. Held by pointer so a scan can
+// remove its own snapshot without removing a newer one.
+type trackSet struct {
+	ids map[uuid.UUID]struct{}
 }
 
 // New creates a Scanner.
@@ -471,6 +489,15 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 		} else if restored > 0 {
 			s.logger.InfoContext(ctx, "audiobook merge repair: restored books merged by the old dedupe",
 				"library_id", libraryID, "books", restored, "files_to_reimport", reimport)
+		}
+	}
+
+	// Music: note the tracks holding several files before the file pass, so
+	// their unchanged files are read again rather than skipped and a track
+	// an older scanner folded from two discs is split (resolveUnchangedFile).
+	if libraryType == "music" {
+		if folded := s.loadFoldedTracks(ctx, libraryID); folded != nil {
+			defer s.foldedTracks.CompareAndDelete(libraryID, folded)
 		}
 	}
 
@@ -960,7 +987,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		// the single case where "unchanged on disk" must not mean
 		// "nothing to do" — resolveUnchangedFile falls through to the
 		// slow path for it instead of skipping.
-		if item, file, skip := s.resolveUnchangedFile(ctx, libraryType, path, existing); skip {
+		if item, file, skip := s.resolveUnchangedFile(ctx, libraryID, libraryType, path, existing); skip {
 			return item, file, false, nil
 		}
 		healing = true
@@ -1004,7 +1031,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 			// orphan-heal gate included: an orphan episode that now
 			// parses has identical content to last scan, so it lands
 			// here too and must fall through for the same reason.
-			if item, file, skip := s.resolveUnchangedFile(ctx, libraryType, path, existing); skip {
+			if item, file, skip := s.resolveUnchangedFile(ctx, libraryID, libraryType, path, existing); skip {
 				return item, file, false, nil
 			}
 		}
@@ -1280,14 +1307,15 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 // item and its row when the owning item still needs enrichment, nil/nil
 // when there is nothing to do at all. skip=false means run the slow
 // path anyway — the row's item is an orphan episode whose filename now
-// parses, and only the slow path can re-parent it: processShowHierarchy
-// resolves the real owner, CreateOrUpdateFile re-points
-// media_files.media_item_id at it, and CleanupEmptyItems at scan end
-// drops the vacated leaf.
+// parses, or a track holding other files too (see rereadFoldedTrack), and
+// only the slow path can re-parent it: processShowHierarchy or
+// processMusicHierarchy resolves the real owner, CreateOrUpdateFile
+// re-points media_files.media_item_id at it, and CleanupEmptyItems at
+// scan end drops a vacated leaf.
 //
 // Both short-circuits call this so the decision can't drift between
 // them. A GetItem failure keeps today's behaviour: fast-skip.
-func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryType, path string, existing *media.File) (*media.Item, *media.File, bool) {
+func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryID uuid.UUID, libraryType, path string, existing *media.File) (*media.Item, *media.File, bool) {
 	item, err := s.media.GetItem(ctx, existing.MediaItemID)
 	if err != nil {
 		return nil, nil, true
@@ -1295,6 +1323,11 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryType, path st
 	if s.orphanEpisodeNowParses(libraryType, item, path) {
 		s.logger.InfoContext(ctx, "orphan episode now parses — re-parenting",
 			"path", path, "orphan_item_id", item.ID)
+		return nil, nil, false
+	}
+	if libraryType == "music" && s.rereadFoldedTrack(libraryID, item, existing) {
+		s.logger.DebugContext(ctx, "track holds other files too — re-reading to split a fold",
+			"path", path, "track_id", item.ID)
 		return nil, nil, false
 	}
 	// A track imported without a track number gets one here. Unlike the
@@ -1338,6 +1371,54 @@ func (s *Scanner) orphanEpisodeNowParses(libraryType string, item *media.Item, p
 	}
 	_, ok := parseEpisodeIdentity(path)
 	return ok
+}
+
+// loadFoldedTracks snapshots the tracks in libraryID that hold more than one
+// active file, for rereadFoldedTrack, and returns the snapshot (nil when it
+// can't be read: the scan then skips unchanged files as it always did).
+func (s *Scanner) loadFoldedTracks(ctx context.Context, libraryID uuid.UUID) *trackSet {
+	ids, err := s.media.ListFoldedTrackItemIDs(ctx, libraryID)
+	if err != nil {
+		s.foldedTracks.Delete(libraryID)
+		s.logger.WarnContext(ctx, "list tracks holding several files failed", "library_id", libraryID, "err", err)
+		return nil
+	}
+	set := &trackSet{ids: make(map[uuid.UUID]struct{}, len(ids))}
+	for _, id := range ids {
+		set.ids[id] = struct{}{}
+	}
+	s.foldedTracks.Store(libraryID, set)
+	if len(ids) > 0 {
+		s.logger.InfoContext(ctx, "tracks holding several files; re-reading their files once",
+			"library_id", libraryID, "tracks", len(ids))
+	}
+	return set
+}
+
+// rereadFoldedTrack reports whether an unchanged music file must take the
+// slow path because its track held other files when this scan started.
+//
+// That is how an older scanner left a multi-disc album: it matched disc 2's
+// track 1 to disc 1's by number alone and hung both files on one row (The
+// Beatles' "The Beatles" came out as 17 tracks, each of disc 2's played
+// under a disc 1 title). Numbers now match per disc, but an unchanged file
+// is skipped before its tags are read, so the fold would never split. The
+// slow path reads the tags, resolves the file's own (disc, track), and
+// CreateOrUpdateFile moves the file to it.
+//
+// A track can also rightly hold two files, the same song as FLAC and as MP3.
+// Its files resolve back to it, so each file is sent down the slow path once
+// per process (foldChecked), not on every scan.
+func (s *Scanner) rereadFoldedTrack(libraryID uuid.UUID, item *media.Item, file *media.File) bool {
+	v, ok := s.foldedTracks.Load(libraryID)
+	if !ok {
+		return false
+	}
+	if _, folded := v.(*trackSet).ids[item.ID]; !folded {
+		return false
+	}
+	_, done := s.foldChecked.LoadOrStore(file.ID, struct{}{})
+	return !done
 }
 
 // persistPhotoEXIF extracts EXIF tags from an image and writes them to

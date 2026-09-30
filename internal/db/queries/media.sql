@@ -1821,6 +1821,23 @@ WHERE id = sqlc.arg('id')
   AND ((index IS NULL AND sqlc.narg('track_index')::int IS NOT NULL)
        OR (disc_number IS NULL AND sqlc.narg('disc_number')::int IS NOT NULL));
 
+-- name: ListFoldedTrackItemIDs :many
+-- Tracks in a library that hold two or more active files. A track is one
+-- recording, so this is either a genuine second copy (the same song as FLAC
+-- and as MP3 in one album) or a fold: before tracks carried a disc number,
+-- the scanner matched disc 2's track 1 to disc 1's by number and hung both
+-- files on one row. The music scan loads this at its start and re-reads
+-- these tracks' unchanged files, whose tags can split a fold.
+SELECT mf.media_item_id
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+WHERE mi.library_id = $1
+  AND mi.type = 'track'
+  AND mi.deleted_at IS NULL
+  AND mf.status = 'active'
+GROUP BY mf.media_item_id
+HAVING count(*) > 1;
+
 -- name: GetShowPostersForEpisodes :many
 -- Resolves the show ancestor poster for a batch of episode IDs.
 -- Episodes have parent_id → season; season has parent_id → show.

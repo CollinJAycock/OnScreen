@@ -2127,6 +2127,44 @@ func (q *Queries) ListFilesForIntegrityCheck(ctx context.Context, arg ListFilesF
 	return items, nil
 }
 
+const listFoldedTrackItemIDs = `-- name: ListFoldedTrackItemIDs :many
+SELECT mf.media_item_id
+FROM media_files mf
+JOIN media_items mi ON mi.id = mf.media_item_id
+WHERE mi.library_id = $1
+  AND mi.type = 'track'
+  AND mi.deleted_at IS NULL
+  AND mf.status = 'active'
+GROUP BY mf.media_item_id
+HAVING count(*) > 1
+`
+
+// Tracks in a library that hold two or more active files. A track is one
+// recording, so this is either a genuine second copy (the same song as FLAC
+// and as MP3 in one album) or a fold: before tracks carried a disc number,
+// the scanner matched disc 2's track 1 to disc 1's by number and hung both
+// files on one row. The music scan loads this at its start and re-reads
+// these tracks' unchanged files, whose tags can split a fold.
+func (q *Queries) ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listFoldedTrackItemIDs, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var media_item_id uuid.UUID
+		if err := rows.Scan(&media_item_id); err != nil {
+			return nil, err
+		}
+		items = append(items, media_item_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listGenresWithCounts = `-- name: ListGenresWithCounts :many
 SELECT g::text AS genre, COUNT(*)::bigint AS count
 FROM media_items, unnest(genres) AS g

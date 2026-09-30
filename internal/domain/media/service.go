@@ -261,6 +261,12 @@ type Querier interface {
 	// audiobook chapter's index, where they are NULL, leaving stored values
 	// alone. Reports whether the row changed.
 	FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error)
+	// ListFoldedTrackItemIDs lists the tracks in a library that hold two or
+	// more active files.
+	ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
+	// UpdateMediaItemTitle rewrites only an item's title and sort title,
+	// leaving the fields UpdateMediaItemMetadata would overwrite alone.
+	UpdateMediaItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
@@ -1301,6 +1307,42 @@ func normalizeTitle(s string) string {
 
 var andWordRE = regexp.MustCompile(`\s+(and|&)\s+`)
 
+// SameTitle reports whether a and b are one title once folded the way
+// normalizeTitle folds them: case, diacritics, a leading article,
+// punctuation and "&" vs "and" don't count. normalizeTitle keeps only a-z
+// and 0-9, so a title in another script ("東京", "Кино") folds to nothing,
+// or to its digits alone; SameTitle compares those letters too, or every
+// such title would be the same as every other.
+func SameTitle(a, b string) bool {
+	return normalizeTitle(a) == normalizeTitle(b) && otherScriptLetters(a) == otherScriptLetters(b)
+}
+
+// otherScriptLetters returns the letters of s that normalizeTitle drops for
+// not being Latin, lowercased and without diacritics. Latin letters it drops
+// ("ø", "ß") stay out, so for a Latin title SameTitle says exactly what
+// normalizeTitle says.
+func otherScriptLetters(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return ""
+	}
+	if folded, _, err := transform.String(newDiacriticStripper(), s); err == nil {
+		s = folded
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) && !unicode.Is(unicode.Latin, r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, s)
+}
+
 // createMuFor returns a per-key mutex that serializes FindOrCreate* calls for
 // the same (library, type, title, year) tuple, preventing duplicate inserts.
 func (s *Service) createMuFor(p CreateItemParams) *sync.Mutex {
@@ -1441,6 +1483,28 @@ func (s *Service) FillTrackPosition(ctx context.Context, id uuid.UUID, index, di
 		return false, fmt.Errorf("fill track position %s: %w", id, err)
 	}
 	return changed, nil
+}
+
+// ListFoldedTrackItemIDs returns the tracks in a library that hold two or
+// more active files: a genuine second copy of one recording, or a fold an
+// older scanner made by matching disc 2's track 1 to disc 1's. Read from rw
+// because the scan acts on it straight away.
+func (s *Service) ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := s.rw.ListFoldedTrackItemIDs(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list folded tracks %s: %w", libraryID, err)
+	}
+	return ids, nil
+}
+
+// UpdateItemTitle sets an item's title and sort title and nothing else.
+// UpdateItemMetadata would also rewrite year, genres, duration and the rest
+// from its params, which a caller holding only a new title doesn't have.
+func (s *Service) UpdateItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error {
+	if err := s.rw.UpdateMediaItemTitle(ctx, id, title, sortTitle); err != nil {
+		return fmt.Errorf("update item title %s: %w", id, err)
+	}
+	return nil
 }
 
 // FindTopLevelItem looks up a top-level item (parent_id IS NULL) by

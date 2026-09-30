@@ -141,6 +141,18 @@ func (a *mediaAdapter) FillTrackPosition(ctx context.Context, id uuid.UUID, inde
 	return n > 0, err
 }
 
+func (a *mediaAdapter) ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListFoldedTrackItemIDs(ctx, libraryID)
+}
+
+func (a *mediaAdapter) UpdateMediaItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error {
+	return a.q.UpdateMediaItemTitle(ctx, gen.UpdateMediaItemTitleParams{
+		ID:        id,
+		Title:     title,
+		SortTitle: sortTitle,
+	})
+}
+
 func (a *mediaAdapter) SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error {
 	return a.q.SetMediaItemKind(ctx, gen.SetMediaItemKindParams{
 		ID:   id,

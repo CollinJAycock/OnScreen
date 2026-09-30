@@ -47,9 +47,9 @@ func fmtPos(disc, index *int) string {
 //
 // The heal must keep the file skipped (no hash, no ffprobe, no upsert) and
 // read the file only when the path can't place the track: no number in the
-// name, a multi-disc album and no disc in the path, or a position another
-// track already holds. A file the tags can't place either is read once per
-// process, not once per scan.
+// name, no disc in the path of an album not known to hold one disc, or a
+// position another track already holds. A file the tags can't place either
+// is read once per process, not once per scan.
 func TestProcessFile_UnchangedTrackGetsPosition(t *testing.T) {
 	// taken refuses a fill of the given position, as the unique
 	// (parent, disc, track) index does when another track holds it.
@@ -75,8 +75,15 @@ func TestProcessFile_UnchangedTrackGetsPosition(t *testing.T) {
 		opens    int // file reads the heal may make, over two scans
 		fills    int // FillTrackPosition calls, over two scans
 	}{
-		{name: "number in filename", rel: "A/Album/07 - Song.flac",
+		{name: "number in filename, single-disc album", rel: "A/Album/07 - Song.flac", discs: ip(1),
 			want: ip(7), opens: 0, fills: 1},
+		// An album that never learned its disc count may span several: the
+		// name's number could be any disc's.
+		{name: "number in filename, disc count unknown: read tags", rel: "A/Album/07 - Song.flac",
+			want: ip(7), opens: 1, fills: 1},
+		{name: "disc count unknown: disc 2's track 1 stays off disc 1", rel: "A/Album/01 - Ace.flac",
+			comments: []string{"TRACKNUMBER=1", "DISCNUMBER=2"}, opens: 1, fills: 1,
+			want: ip(1), wantDisc: ip(2)},
 		{name: "disc-track filename on a multi-disc album", rel: "A/Box/2-05 Song.flac", discs: ip(2),
 			want: ip(5), wantDisc: ip(2), opens: 0, fills: 1},
 		{name: "disc folder on a multi-disc album", rel: "A/Box/CD2/05 - Song.flac", discs: ip(2),
@@ -87,10 +94,10 @@ func TestProcessFile_UnchangedTrackGetsPosition(t *testing.T) {
 		{name: "no number in filename: read Vorbis N/M tags", rel: "A/Album/Song.flac",
 			comments: []string{"TRACKNUMBER=02/12", "DISCNUMBER=1/1"}, opens: 1, fills: 1,
 			want: ip(2), wantDisc: ip(1)},
-		{name: "path's position taken: tags settle it", rel: "A/Album/03 - Song.flac",
+		{name: "path's position taken: tags settle it", rel: "A/Album/03 - Song.flac", discs: ip(1),
 			comments: []string{"TRACKNUMBER=03/12", "DISCNUMBER=2/2"}, fillErr: taken(1, 3),
 			want: ip(3), wantDisc: ip(2), opens: 1, fills: 2},
-		{name: "tags' position taken too: give up once", rel: "A/Album/03 - Song.flac",
+		{name: "tags' position taken too: give up once", rel: "A/Album/03 - Song.flac", discs: ip(1),
 			comments: []string{"TRACKNUMBER=3"}, fillErr: taken(1, 3),
 			want: nil, opens: 1, fills: 2},
 		{name: "no number anywhere: read once", rel: "A/Album/Song.flac",
