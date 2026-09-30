@@ -3,11 +3,14 @@ package tv.onscreen.mobile.ui.player
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import tv.onscreen.mobile.data.api.HeartbeatRefusal
@@ -36,6 +39,7 @@ import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.isActive
 import tv.onscreen.mobile.playback.AudiobookSpeed
 import tv.onscreen.mobile.playback.LocalProgressTracker
+import tv.onscreen.mobile.playback.MusicQueue
 import tv.onscreen.mobile.playback.NextSiblingResolver
 import tv.onscreen.mobile.playback.PlaybackService
 import tv.onscreen.mobile.playback.StopAfterItem
@@ -93,6 +97,10 @@ data class PlayerUiState(
     /** Audiobooks: whether the server takes bookmarks (false until the
      *  speed lookup says so, and on a server that predates them). */
     val bookmarksSupported: Boolean = false,
+    /** The background PlaybackService already has this item current: the
+     *  screen binds to it as it is, and never hands it over again. Nothing
+     *  new starts streaming, so the cellular prompt doesn't apply either. */
+    val playingInService: Boolean = false,
     val error: String? = null,
 )
 
@@ -337,7 +345,9 @@ class PlayerViewModel @Inject constructor(
                 // sees STATE_ENDED — and tell the background service to
                 // end there rather than chain on (see StopAfterItem).
                 _sleepTimer.value = SleepTimerState(mode = mode, remainingMs = 0)
-                _state.value.item?.id?.let(::armStopAfterItem)
+                // The prepared id stands in while the item is still loading
+                // (a screen bound to the service's item shows before it has).
+                (_state.value.item?.id ?: preparedItemId)?.let(::armStopAfterItem)
                 if (mode == SleepTimer.EndOfChapter) startChapterWatch()
             }
             is SleepTimer.Minutes -> startCountdown(mode, SleepTimerMath.initialMs(mode))
@@ -461,7 +471,7 @@ class PlayerViewModel @Inject constructor(
                 _sleepTimer.value = st
                 armStopAfterItem(itemId)
                 // The chapter watch starts once the item (its chapter marks)
-                // has loaded — see prepare().
+                // has loaded — see loadItemExtras().
             }
             SleepTimer.Off -> Unit
         }
@@ -521,6 +531,11 @@ class PlayerViewModel @Inject constructor(
     @OptIn(UnstableApi::class)
     internal var backgroundItemId: () -> String? = { PlaybackService.currentItemId }
 
+    /** The playable item prepare() settled on (a container resolves to a
+     *  leaf), once known. Ahead of [PlayerUiState.item] on a screen bound to
+     *  the service's item, which shows before the item has loaded. */
+    private var preparedItemId: String? = null
+
     /** Live playback mode reported with progress beacons — feeds the
      *  analytics direct-vs-transcode split. Updated on source selection and
      *  on every (re)started transcode session, so mid-watch switches
@@ -570,9 +585,20 @@ class PlayerViewModel @Inject constructor(
         // A timer the previous screen handed over when it followed the
         // background queue here (see handOffSleepTimer).
         adoptSleepTimer(itemId)
+        preparedItemId = null
+        if (backgroundItemId() == itemId) {
+            bindToServiceItem(itemId, startAtMs)
+            return
+        }
         val requestedId = itemId
         viewModelScope.launch {
             try {
+                // Neither depends on which item plays, so both are in flight
+                // while the item loads rather than after it. Neither can fail
+                // the prepare: preferences are optional and the watch limit
+                // fails open.
+                val prefsCall = async { orNull { preferencesRepo.get() } }
+                val limitCall = async { orNull { watchLimitRepo.get() } }
                 // Container items (show / season / album / artist /
                 // audiobook / podcast / anime) carry no files of their
                 // own — only their children do. Hitting Play on a show
@@ -615,14 +641,31 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
                 val itemId = resolvedId
-                val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
-                val prefs = try { preferencesRepo.get() } catch (_: Exception) { null }
+                preparedItemId = itemId
                 // Server-authoritative play decision (capability profiles). The
                 // device's X-Client-Capabilities header (AuthInterceptor) tells the
                 // server what it can decode; map the verdict to a PlaybackMode and
                 // fall back to the local PlaybackHelper when the server is
                 // unreachable. ExoPlayer range-requests, so no faststart refinement.
-                val verdict = transcodeRepo.decide(itemId, file.id)
+                // It and the markers need only the resolved item, so they load
+                // side by side (and alongside the two calls above).
+                val verdictCall = async { orNull { transcodeRepo.decide(itemId, file.id) } }
+                val markersCall = async { orNull { itemRepo.getMarkers(itemId) }.orEmpty() }
+                val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
+                val explicitStart = startAtMs?.takeIf { it >= 0 && resolvedId == requestedId }
+                val startMs = explicitStart ?: if (fromStart) 0L else item.view_offset_ms
+
+                // Offline-first: if the user has a completed download
+                // for this file, play the local copy. Skips even the
+                // transcode/remux negotiation — the on-disk file is
+                // the original bytes the server has.
+                downloads.store.load()
+                val downloaded = downloads.store.get(file.id)
+                val localFile = downloaded?.takeIf { it.status == "completed" }
+                    ?.let { downloads.store.fileFor(it) }
+                    ?.takeIf { it.exists() && it.length() > 0 }
+
+                val verdict = verdictCall.await()
                 val mode = run {
                     val resolved = when (verdict) {
                         "directPlay" -> PlaybackMode.DirectPlay
@@ -640,18 +683,6 @@ class PlayerViewModel @Inject constructor(
                     )
                     resolved
                 }
-                val explicitStart = startAtMs?.takeIf { it >= 0 && resolvedId == requestedId }
-                val startMs = explicitStart ?: if (fromStart) 0L else item.view_offset_ms
-
-                // Offline-first: if the user has a completed download
-                // for this file, play the local copy. Skips even the
-                // transcode/remux negotiation — the on-disk file is
-                // the original bytes the server has.
-                downloads.store.load()
-                val downloaded = downloads.store.get(file.id)
-                val localFile = downloaded?.takeIf { it.status == "completed" }
-                    ?.let { downloads.store.fileFor(it) }
-                    ?.takeIf { it.exists() && it.length() > 0 }
 
                 // Parental watch-limit pre-flight — block a restricted user
                 // before any stream/transcode starts. Runs for local downloads
@@ -660,14 +691,13 @@ class PlayerViewModel @Inject constructor(
                 // downloaded copy start past an exhausted limit. (The truly
                 // offline path returned earlier via playFromLocalIfDownloaded.)
                 // Fail-open if the check errors; the progress 403 still catches
-                // a cap reached mid-session.
-                try {
-                    val wl = watchLimitRepo.get()
-                    if (!wl.allowed) {
-                        _state.value = PlayerUiState(loading = false, error = parentalBlockMessage(wl.reason))
-                        return@launch
-                    }
-                } catch (_: Exception) { /* limit lookup failed — fail open */ }
+                // a cap reached mid-session. Nothing has started streaming yet:
+                // the decision call only asks.
+                val wl = limitCall.await()
+                if (wl != null && !wl.allowed) {
+                    _state.value = PlayerUiState(loading = false, error = parentalBlockMessage(wl.reason))
+                    return@launch
+                }
 
                 // Dolby Vision is not supported: the server returns the "unsupported"
                 // verdict (DV can't be tonemapped correctly server-side — see
@@ -681,11 +711,13 @@ class PlayerViewModel @Inject constructor(
                     return@launch
                 }
 
-                // The background service already has this item current — the
-                // now-playing screen followed its queue onto the track, or was
-                // re-opened on it. The screen only binds to the service, which
-                // plays the file directly, so a server remux/transcode started
-                // here would be an ffmpeg session nobody ever reads.
+                // The background service already has this item current — a
+                // container (album, book) resolved to the track it is playing,
+                // or its queue moved onto the item while this loaded. (Opened
+                // on the item itself, prepare() binds without any of this —
+                // see bindToServiceItem.) The screen only binds to the service,
+                // which plays the file directly, so a server remux/transcode
+                // started here would be an ffmpeg session nobody ever reads.
                 val playingInService = backgroundItemId() == itemId
 
                 val source = when {
@@ -711,7 +743,8 @@ class PlayerViewModel @Inject constructor(
                     else -> error("unreachable")
                 }
 
-                val markers = itemRepo.getMarkers(itemId)
+                val markers = markersCall.await()
+                val prefs = prefsCall.await()
 
                 _state.value = PlayerUiState(
                     loading = false,
@@ -723,61 +756,144 @@ class PlayerViewModel @Inject constructor(
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
                     forcedSubtitlesOnly = prefs?.forced_subtitles_only ?: false,
+                    playingInService = playingInService,
                 )
 
-                // Audiobooks: the book's listening speed (and whether the
-                // server takes bookmarks). An end-of-chapter timer handed
-                // over from the previous screen can watch the chapter marks
-                // now that they're loaded.
-                loadListeningSpeed(item)
-                if (_sleepTimer.value?.mode == SleepTimer.EndOfChapter) startChapterWatch()
-
-                // Trickplay cues — best-effort. If the server hasn't
-                // generated thumbnails yet (status != "done"), the
-                // status fetch returns a `not_started` sentinel and
-                // we skip the VTT fetch entirely. Local-file playback
-                // (offline) also skips since trickplay endpoints need
-                // a live server.
-                if (localFile == null) {
-                    loadTrickplayCues(itemId)
-                }
-
-                // Lyrics — only meaningful for tracks. Server 404s
-                // for non-tracks anyway; the repo maps that to null.
-                // Best-effort, no error surface — overlay just doesn't
-                // appear when there are none.
-                if (item.type == "track" && localFile == null) {
-                    loadLyrics(itemId)
-                }
-
-                // Episode + track auto-advance: same parent + index
-                // relationship on both sides. The screen branches on
-                // item.type to decide whether to surface an overlay
-                // (episodes) or chain silently (music tracks).
-                if (item.parent_id != null && item.index != null &&
-                    (item.type == "episode" || item.type == "track")) {
-                    loadNextSibling(item.id, item.parent_id, item.index, item.type)
-                }
-
+                loadItemExtras(item, itemId, streamed = localFile == null)
                 subscribeRemoteProgress(itemId)
                 subscribeAdminStops(itemId)
             } catch (e: Exception) {
-                val msg = if (e is HttpException && e.code() == 403) {
-                    // 403 covers three gates: the content-rating ceiling, the
-                    // parental watch limit, and an admin stop (a restart inside
-                    // the stop window — transcode start answers PLAYBACK_STOPPED).
-                    // Parse the code so each shows right.
-                    val err = e.apiError()
-                    when (err?.code) {
-                        "PARENTAL_LIMIT" -> parentalBlockMessage(err.message)
-                        PlaybackStop.ERROR_CODE -> PlaybackStop.textFromServer(err.message)
-                        else -> "content_restricted"
-                    }
-                } else e.message
-                _state.value = PlayerUiState(loading = false, error = msg)
+                _state.value = PlayerUiState(loading = false, error = failureMessage(e))
             }
         }
     }
+
+    /**
+     * Reopening the full player over the item PlaybackService already has
+     * current: the mini player, the notification, or a detail page's Play on
+     * the track that is playing.
+     *
+     * This used to run the whole cold path first — the item, preferences, the
+     * play decision, the watch limit and the markers, one call after another —
+     * and only then build the MediaController, so the screen sat on a black
+     * spinner for seconds and taps were lost. None of it is needed here. The
+     * decision was thrown away for a service item anyway (it plays the file
+     * directly); preferences and markers only feed a screen-owned video
+     * player; and the service's heartbeat still enforces a watch limit, a
+     * revoked library or an admin stop (HeartbeatRefusal). So publish at
+     * once, showing the copy of the item fetched last if there is one, and
+     * refresh the item behind it.
+     *
+     * The source is published ONCE and kept: rememberAudioController is keyed
+     * on it, and a new instance would rebind the controller. The screen only
+     * binds (see [PlayerUiState.playingInService]); the source's position is
+     * where a bookmark jumps, and its url is the service's own queue
+     * placeholder for the item, never a url built from a cached copy whose
+     * stream token may have expired.
+     */
+    private fun bindToServiceItem(itemId: String, startAtMs: Long?) {
+        preparedItemId = itemId
+        hlsOffsetMs = 0
+        lastTranscodeRequest = null
+        activeDecision = "directPlay"
+        val cached = itemRepo.cachedItem(itemId)
+        val source = PlaybackSource.DirectPlay(
+            MusicQueue.placeholderUri(itemId),
+            startAtMs?.takeIf { it >= 0 } ?: 0L,
+        )
+        _state.value = PlayerUiState(
+            loading = false,
+            source = source,
+            item = cached,
+            audioStreams = cached?.files?.firstOrNull()?.audio_streams.orEmpty(),
+            subtitles = cached?.files?.firstOrNull()?.subtitle_streams.orEmpty(),
+            playingInService = true,
+        )
+        if (cached != null) loadItemExtras(cached, itemId, streamed = true)
+        subscribeRemoteProgress(itemId)
+        subscribeAdminStops(itemId)
+        viewModelScope.launch {
+            val fresh = try {
+                itemRepo.getItem(itemId)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The server refusing the item is its answer, shown as on the
+                // cold path (the service's heartbeat stops the audio). Anything
+                // else — offline, a 5xx — leaves the screen on what it has.
+                if (isServerRefusal(e) && _state.value.source === source) {
+                    _state.update { it.copy(error = failureMessage(e)) }
+                }
+                return@launch
+            }
+            // Another prepare() took over while this loaded.
+            if (_state.value.source !== source) return@launch
+            val file = fresh.files.firstOrNull()
+            _state.update {
+                it.copy(
+                    item = fresh,
+                    audioStreams = file?.audio_streams.orEmpty(),
+                    subtitles = file?.subtitle_streams.orEmpty(),
+                )
+            }
+            if (cached == null) loadItemExtras(fresh, itemId, streamed = true)
+        }
+    }
+
+    /** The best-effort loads that follow once [item] is showing. [streamed]:
+     *  not a local download (trickplay and lyrics need the server). */
+    private fun loadItemExtras(item: ItemDetail, itemId: String, streamed: Boolean) {
+        // Audiobooks: the book's listening speed (and whether the
+        // server takes bookmarks). An end-of-chapter timer set before
+        // the item loaded, or handed over from the previous screen, can
+        // watch the chapter marks now that they're here.
+        loadListeningSpeed(item)
+        if (_sleepTimer.value?.mode == SleepTimer.EndOfChapter) startChapterWatch()
+
+        // Trickplay cues — best-effort. If the server hasn't
+        // generated thumbnails yet (status != "done"), the
+        // status fetch returns a `not_started` sentinel and
+        // we skip the VTT fetch entirely. Local-file playback
+        // (offline) also skips since trickplay endpoints need
+        // a live server.
+        if (streamed) {
+            loadTrickplayCues(itemId)
+        }
+
+        // Lyrics — only meaningful for tracks. Server 404s
+        // for non-tracks anyway; the repo maps that to null.
+        // Best-effort, no error surface — overlay just doesn't
+        // appear when there are none.
+        if (item.type == "track" && streamed) {
+            loadLyrics(itemId)
+        }
+
+        // Episode + track auto-advance: same parent + index
+        // relationship on both sides. The screen branches on
+        // item.type to decide whether to surface an overlay
+        // (episodes) or chain silently (music tracks).
+        val parentId = item.parent_id
+        val index = item.index
+        val type = item.type
+        if (parentId != null && index != null && (type == "episode" || type == "track")) {
+            viewModelScope.launch { loadNextSibling(item.id, parentId, index, type) }
+        }
+    }
+
+    /** What the screen shows for a prepare that failed with [e]. */
+    private fun failureMessage(e: Exception): String? =
+        if (e is HttpException && e.code() == 403) {
+            // 403 covers three gates: the content-rating ceiling, the
+            // parental watch limit, and an admin stop (a restart inside
+            // the stop window — transcode start answers PLAYBACK_STOPPED).
+            // Parse the code so each shows right.
+            val err = e.apiError()
+            when (err?.code) {
+                "PARENTAL_LIMIT" -> parentalBlockMessage(err.message)
+                PlaybackStop.ERROR_CODE -> PlaybackStop.textFromServer(err.message)
+                else -> "content_restricted"
+            }
+        } else e.message
 
     /** Offline fallback: walk the download manifest for a completed
      *  entry whose item_id matches [itemId], and if one exists, build
@@ -1307,3 +1423,15 @@ class PlayerViewModel @Inject constructor(
         spriteCache.clear()
     }
 }
+
+/** [block]'s result, or null if it fails — for the calls prepare() can do
+ *  without. Inline, so [block] may suspend; a cancellation still propagates
+ *  (swallowing it would keep a cleared screen's prepare running). */
+private inline fun <T> orNull(block: () -> T): T? =
+    try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (_: Exception) {
+        null
+    }

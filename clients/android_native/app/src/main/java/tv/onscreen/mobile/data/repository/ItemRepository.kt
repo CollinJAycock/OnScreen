@@ -29,7 +29,27 @@ open class ItemRepository @Inject constructor(
      *  listen never scrobbles; this scope is never cancelled. */
     private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    open suspend fun getItem(id: String): ItemDetail = api.getItem(id).data
+    /** The last items [getItem] fetched, by id. Bounded and access-ordered,
+     *  so the head is always the least recently used. Guarded by itself:
+     *  PlaybackService fetches queue entries on ExoPlayer's loader thread
+     *  while the UI fetches on the main one. */
+    private val recentItems = object : LinkedHashMap<String, ItemDetail>(16, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ItemDetail>?): Boolean =
+            size > RECENT_ITEMS_MAX
+    }
+
+    open suspend fun getItem(id: String): ItemDetail =
+        api.getItem(id).data.also { item -> synchronized(recentItems) { recentItems[id] = item } }
+
+    /**
+     * The copy of [id] that [getItem] last fetched in this process, or null.
+     * No network. For showing an item at once while a fresh copy loads: the
+     * now-playing screen reopened over the track the background service is
+     * playing (see PlayerViewModel.prepare) was a black spinner until the
+     * fetch returned. Display only: the stream token in an old copy may have
+     * expired, so never build a stream url from it.
+     */
+    open fun cachedItem(id: String): ItemDetail? = synchronized(recentItems) { recentItems[id] }
 
     open suspend fun getChildren(id: String): List<ChildItem> =
         api.getChildren(id).data
@@ -157,5 +177,11 @@ open class ItemRepository @Inject constructor(
         } catch (e: retrofit2.HttpException) {
             if (e.code() == 404) null else throw e
         }
+    }
+
+    private companion object {
+        /** An album's worth of queue entries plus what the user browsed to
+         *  reach it; the items are small. */
+        const val RECENT_ITEMS_MAX = 64
     }
 }
