@@ -43,6 +43,10 @@ type mockMediaService struct {
 	fileCalls []media.CreateFileParams
 	// Count calls to GetItem (the orphan-heal gate must run once per file).
 	getItemCalls int
+	// ListFoldedTrackItemIDs' result per library, and the titles
+	// UpdateItemTitle was called with.
+	foldedTracks map[uuid.UUID][]uuid.UUID
+	titleCalls   []string
 
 	// Dedupe stub: records calls and returns dedupeResult/dedupeErr.
 	dedupeCalls  []dedupeCall
@@ -179,6 +183,16 @@ func (m *mockMediaService) FillTrackPosition(_ context.Context, id uuid.UUID, in
 		it.DiscNumber, changed = &v, true
 	}
 	return changed, nil
+}
+func (m *mockMediaService) ListFoldedTrackItemIDs(_ context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	return m.foldedTracks[libraryID], nil
+}
+func (m *mockMediaService) UpdateItemTitle(_ context.Context, id uuid.UUID, title, sortTitle string) error {
+	m.titleCalls = append(m.titleCalls, title)
+	if it, ok := m.items[id]; ok {
+		it.Title, it.SortTitle = title, sortTitle
+	}
+	return nil
 }
 func (m *mockMediaService) SetItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil

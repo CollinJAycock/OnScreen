@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -24,6 +25,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -257,7 +259,9 @@ func TestTrackPosition_Integration_RescanHealsUnnumberedTracks(t *testing.T) {
 	scan("collapsed rescan")
 	final := tracks("collapsed rescan") // fails if Alpha's row still has both files
 	expect("collapsed rescan", final, "Beta", 2, 1)
-	expect("collapsed rescan", final, "Alpha", -1, 1) // unchanged file: disc stays unknown
+	// Alpha's file is unchanged, but its track held two files when the scan
+	// started, so it is read again too and the row gains its disc.
+	expect("collapsed rescan", final, "Alpha", 1, 1)
 	if final["Alpha"].itemID != alpha || final["Beta"].itemID == alpha {
 		t.Error("collapsed rescan: Beta's file is still on Alpha's row")
 	}
@@ -267,6 +271,329 @@ func TestTrackPosition_Integration_RescanHealsUnnumberedTracks(t *testing.T) {
 	}
 	if len(kids) != 2 || kids[0].Title != "Alpha" || kids[1].Title != "Beta" {
 		t.Errorf("box order after collapsed rescan = %v, want [Alpha Beta]", titles(kids))
+	}
+}
+
+// fileConc sets a scan's file concurrency. At 1 the files are processed one
+// at a time in walk (lexical) order.
+type fileConc int
+
+func (c fileConc) ScanFileConcurrency() int  { return int(c) }
+func (fileConc) ScanLibraryConcurrency() int { return 1 }
+
+// trackFile is one active music file and the track row holding it.
+type trackFile struct {
+	itemID      uuid.UUID
+	parentID    uuid.UUID
+	title       string
+	index, disc *int32
+	scannedAt   time.Time
+	files       int64 // active files on that track
+}
+
+func (f trackFile) pos() (disc, index int32) {
+	disc, index = -1, -1
+	if f.disc != nil {
+		disc = *f.disc
+	}
+	if f.index != nil {
+		index = *f.index
+	}
+	return
+}
+
+// trackFiles returns the library's active track files by file name.
+func trackFiles(t *testing.T, pool *pgxpool.Pool, libID uuid.UUID, label string) map[string]trackFile {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		SELECT mf.file_path, mi.id, mi.parent_id, mi.title, mi.index, mi.disc_number, mf.scanned_at,
+		       (SELECT count(*) FROM media_files o WHERE o.media_item_id = mi.id AND o.status = 'active')
+		FROM media_files mf JOIN media_items mi ON mi.id = mf.media_item_id
+		WHERE mi.library_id = $1 AND mi.type = 'track' AND mi.deleted_at IS NULL
+		  AND mf.status = 'active'`, libID)
+	if err != nil {
+		t.Fatalf("%s: query track files: %v", label, err)
+	}
+	defer rows.Close()
+	out := map[string]trackFile{}
+	for rows.Next() {
+		var path string
+		var f trackFile
+		var parent pgtype.UUID
+		if err := rows.Scan(&path, &f.itemID, &parent, &f.title, &f.index, &f.disc, &f.scannedAt, &f.files); err != nil {
+			t.Fatalf("%s: scan row: %v", label, err)
+		}
+		f.parentID = uuid.UUID(parent.Bytes)
+		out[filepath.Base(path)] = f
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("%s: rows: %v", label, err)
+	}
+	return out
+}
+
+// expectFile checks the track holding a file: its title, (disc, track) with
+// -1 for NULL, and how many files it holds.
+func expectFile(t *testing.T, label string, got map[string]trackFile, name, title string, disc, index int32, files int64) {
+	t.Helper()
+	f, ok := got[name]
+	if !ok {
+		t.Fatalf("%s: no file %q (have %d files)", label, name, len(got))
+	}
+	if d, i := f.pos(); f.title != title || d != disc || i != index || f.files != files {
+		t.Errorf("%s: %q is on %q at disc %d track %d with %d files; want %q at disc %d track %d with %d",
+			label, name, f.title, d, i, f.files, title, disc, index, files)
+	}
+}
+
+// An album an older scanner folded: it matched disc 2's track 1 to disc 1's
+// by number alone, so disc 2's file hangs off disc 1's row, disc 2 has no
+// row, and no track has a disc. Nothing on disk changes. A plain rescan must
+// split it — the folded track's files are read again because the track
+// holds two — and leave the row disc 1's, titled as disc 1's song whichever
+// title the fold left on it. A track that rightly holds two files (the same
+// song twice, as FLAC and MP3 would be) stays as it is, and is read again
+// only once per process.
+func TestTrackPosition_Integration_RescanSplitsFoldedTracks(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	adapter := &mediaAdapter{q: q}
+
+	for _, tc := range []struct {
+		name      string
+		files     int    // scan file concurrency
+		foldTitle string // the title the fold left on disc 1's row
+	}{
+		{name: "fold titled by disc 1", files: 2, foldTitle: "Alpha"},
+		// One file at a time, in walk order: Alpha's file (CD1) resolves the
+		// row first, gives it disc 1, and retitles it.
+		{name: "fold titled by disc 2", files: 1, foldTitle: "Beta"},
+		// Both files resolve the disc-less row at once. Whichever fills in
+		// its disc first keeps the row; the other file gets its own.
+		{name: "fold titled by disc 2, files at once", files: 4, foldTitle: "Beta"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sc := scanner.New(media.NewService(adapter, adapter, logger), nil, fileConc(tc.files), logger)
+			root := t.TempDir()
+			file := func(rel string) string { return filepath.Join(root, filepath.FromSlash(rel)) }
+			box := func(comments ...string) []string {
+				return append([]string{"ARTIST=Artist", "ALBUM=Box"}, comments...)
+			}
+			writeVorbisFLAC(t, file("Artist/Box/CD1/01 - Alpha.flac"), box("TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1/2")...)
+			writeVorbisFLAC(t, file("Artist/Box/CD1/02 - Gamma.flac"), box("TITLE=Gamma", "TRACKNUMBER=2", "DISCNUMBER=1/2")...)
+			writeVorbisFLAC(t, file("Artist/Box/CD2/01 - Beta.flac"), box("TITLE=Beta", "TRACKNUMBER=1", "DISCNUMBER=2/2")...)
+			for _, name := range []string{"01 - Song.flac", "01 - Song (copy).flac"} {
+				writeVorbisFLAC(t, file("Artist/Dual/"+name),
+					"TITLE=Song", "ARTIST=Artist", "ALBUM=Dual", "TRACKNUMBER=1")
+			}
+
+			lib, err := q.CreateLibrary(ctx, gen.CreateLibraryParams{
+				Name: "Music " + tc.name, Type: "music", ScanPaths: []string{root},
+				Agent: "tmdb", Language: "en", ScanInterval: time.Hour, MetadataRefreshInterval: 24 * time.Hour,
+			})
+			if err != nil {
+				t.Fatalf("create library: %v", err)
+			}
+			scan := func(label string) {
+				t.Helper()
+				if _, err := sc.ScanLibrary(ctx, lib.ID, "music", []string{root}); err != nil {
+					t.Fatalf("%s: scan: %v", label, err)
+				}
+			}
+
+			scan("import")
+			got := trackFiles(t, pool, lib.ID, "import")
+			expectFile(t, "import", got, "01 - Alpha.flac", "Alpha", 1, 1, 1)
+			expectFile(t, "import", got, "02 - Gamma.flac", "Gamma", 1, 2, 1)
+			expectFile(t, "import", got, "01 - Beta.flac", "Beta", 2, 1, 1)
+			expectFile(t, "import", got, "01 - Song.flac", "Song", -1, 1, 2)
+			if got["01 - Song.flac"].itemID != got["01 - Song (copy).flac"].itemID {
+				t.Fatal("import: the two copies of Song are on two tracks")
+			}
+
+			// Fold Box the way an older scanner left it.
+			alpha, beta := got["01 - Alpha.flac"].itemID, got["01 - Beta.flac"].itemID
+			for _, stmt := range []struct {
+				sql  string
+				args []any
+			}{
+				{`UPDATE media_files SET media_item_id = $1 WHERE media_item_id = $2`, []any{alpha, beta}},
+				{`DELETE FROM media_items WHERE id = $1`, []any{beta}},
+				{`UPDATE media_items SET disc_number = NULL WHERE library_id = $1 AND type = 'track'`, []any{lib.ID}},
+				{`UPDATE media_items SET title = $2, sort_title = lower($2) WHERE id = $1`, []any{alpha, tc.foldTitle}},
+			} {
+				if _, err := pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+					t.Fatalf("fold Box: %v", err)
+				}
+			}
+			folded := trackFiles(t, pool, lib.ID, "folded")
+			expectFile(t, "folded", folded, "01 - Alpha.flac", tc.foldTitle, -1, 1, 2)
+			expectFile(t, "folded", folded, "01 - Beta.flac", tc.foldTitle, -1, 1, 2)
+
+			// 1. Rescan, no file touched: the fold splits.
+			scan("rescan")
+			after := trackFiles(t, pool, lib.ID, "rescan")
+			expectFile(t, "rescan", after, "01 - Alpha.flac", "Alpha", 1, 1, 1)
+			expectFile(t, "rescan", after, "01 - Beta.flac", "Beta", 2, 1, 1)
+			if after["01 - Alpha.flac"].itemID == after["01 - Beta.flac"].itemID {
+				t.Error("rescan: Alpha and Beta still share a track")
+			}
+			if tc.files == 1 && after["01 - Alpha.flac"].itemID != alpha {
+				t.Error("rescan: disc 1's row was replaced rather than retitled")
+			}
+			if tc.foldTitle == "Alpha" && after["01 - Alpha.flac"].itemID != alpha {
+				t.Error("rescan: Alpha's file left its own row")
+			}
+			// Gamma's track held only its file: skipped as before, disc
+			// unknown as the fold left it.
+			expectFile(t, "rescan", after, "02 - Gamma.flac", "Gamma", -1, 2, 1)
+			if !after["02 - Gamma.flac"].scannedAt.Equal(folded["02 - Gamma.flac"].scannedAt) {
+				t.Error("rescan: Gamma's unchanged file was re-processed")
+			}
+			// The two copies of Song are read again and stay together.
+			expectFile(t, "rescan", after, "01 - Song.flac", "Song", -1, 1, 2)
+			if after["01 - Song.flac"].itemID != after["01 - Song (copy).flac"].itemID {
+				t.Error("rescan: the two copies of Song were split")
+			}
+			kids, err := q.ListMediaItemChildren(ctx, pgtype.UUID{Bytes: after["02 - Gamma.flac"].parentID, Valid: true})
+			if err != nil {
+				t.Fatalf("list box tracks: %v", err)
+			}
+			if names := titles(kids); len(names) != 3 || names[0] != "Alpha" || names[1] != "Gamma" || names[2] != "Beta" {
+				t.Errorf("rescan: box order = %v, want [Alpha Gamma Beta]", names)
+			}
+
+			// 2. Rescan again: nothing left to split, and Song's copies were
+			// read once this process — every file takes the fast skip.
+			scan("second rescan")
+			again := trackFiles(t, pool, lib.ID, "second rescan")
+			for name, f := range after {
+				if again[name].itemID != f.itemID {
+					t.Errorf("second rescan: %q moved to another track", name)
+				}
+				if !again[name].scannedAt.Equal(f.scannedAt) {
+					t.Errorf("second rescan: %q was re-processed", name)
+				}
+			}
+		})
+	}
+
+	// Titles in another script fold to nothing under normalizeTitle, so the
+	// title match used to hang every file of such an album on its first
+	// track, even on a fresh scan. A rescan splits that fold too.
+	t.Run("titles in another script", func(t *testing.T) {
+		sc := scanner.New(media.NewService(adapter, adapter, logger), nil, fileConc(2), logger)
+		root := t.TempDir()
+		names := []string{"東京", "大阪", "京都"}
+		for i, title := range names {
+			writeVorbisFLAC(t, filepath.Join(root, "Artist", "日本", fmt.Sprintf("%02d - %s.flac", i+1, title)),
+				"TITLE="+title, "ARTIST=Artist", "ALBUM=日本", fmt.Sprintf("TRACKNUMBER=%d", i+1))
+		}
+		lib, err := q.CreateLibrary(ctx, gen.CreateLibraryParams{
+			Name: "Music in another script", Type: "music", ScanPaths: []string{root},
+			Agent: "tmdb", Language: "en", ScanInterval: time.Hour, MetadataRefreshInterval: 24 * time.Hour,
+		})
+		if err != nil {
+			t.Fatalf("create library: %v", err)
+		}
+		scan := func(label string) {
+			t.Helper()
+			if _, err := sc.ScanLibrary(ctx, lib.ID, "music", []string{root}); err != nil {
+				t.Fatalf("%s: scan: %v", label, err)
+			}
+		}
+		file := func(i int) string { return fmt.Sprintf("%02d - %s.flac", i+1, names[i]) }
+
+		scan("import")
+		got := trackFiles(t, pool, lib.ID, "import")
+		for i, title := range names {
+			expectFile(t, "import", got, file(i), title, -1, int32(i+1), 1)
+		}
+
+		// Fold the album onto its first track.
+		first := got[file(0)].itemID
+		for i := 1; i < len(names); i++ {
+			other := got[file(i)].itemID
+			if _, err := pool.Exec(ctx, `UPDATE media_files SET media_item_id = $1 WHERE media_item_id = $2`, first, other); err != nil {
+				t.Fatalf("fold: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `DELETE FROM media_items WHERE id = $1`, other); err != nil {
+				t.Fatalf("fold: %v", err)
+			}
+		}
+		expectFile(t, "folded", trackFiles(t, pool, lib.ID, "folded"), file(1), names[0], -1, 1, 3)
+
+		scan("rescan")
+		after := trackFiles(t, pool, lib.ID, "rescan")
+		for i, title := range names {
+			expectFile(t, "rescan", after, file(i), title, -1, int32(i+1), 1)
+		}
+	})
+}
+
+// Two unnumbered tracks of an album that never learned its disc count, each
+// "01 - …" by name, disc 2's sorting first. The name's number doesn't say
+// which disc: trusted on its own, it put disc 2's Ace on disc 1's track 1,
+// and disc 1's own track 1 then couldn't take its place. The rescan must
+// read both files' tags (still without the slow path).
+func TestTrackPosition_Integration_UnknownDiscCountReadsTags(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	adapter := &mediaAdapter{q: q}
+	// One file at a time, in walk order: Ace's file before One's.
+	sc := scanner.New(media.NewService(adapter, adapter, logger), nil, fileConc(1), logger)
+
+	root := t.TempDir()
+	pair := filepath.Join(root, "Artist", "Pair")
+	writeVorbisFLAC(t, filepath.Join(pair, "01 - Ace.flac"),
+		"TITLE=Ace", "ARTIST=Artist", "ALBUM=Pair", "TRACKNUMBER=1", "DISCNUMBER=2")
+	writeVorbisFLAC(t, filepath.Join(pair, "01 - One.flac"),
+		"TITLE=One", "ARTIST=Artist", "ALBUM=Pair", "TRACKNUMBER=1", "DISCNUMBER=1")
+
+	lib, err := q.CreateLibrary(ctx, gen.CreateLibraryParams{
+		Name: "Music", Type: "music", ScanPaths: []string{root},
+		Agent: "tmdb", Language: "en", ScanInterval: time.Hour, MetadataRefreshInterval: 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("create library: %v", err)
+	}
+	scan := func(label string) {
+		t.Helper()
+		if _, err := sc.ScanLibrary(ctx, lib.ID, "music", []string{root}); err != nil {
+			t.Fatalf("%s: scan: %v", label, err)
+		}
+	}
+
+	scan("import")
+	got := trackFiles(t, pool, lib.ID, "import")
+	expectFile(t, "import", got, "01 - Ace.flac", "Ace", 2, 1, 1)
+	expectFile(t, "import", got, "01 - One.flac", "One", 1, 1, 1)
+
+	// As an older scanner left the album: no numbers, no discs, no count.
+	for _, stmt := range []string{
+		`UPDATE media_items SET index = NULL, disc_number = NULL WHERE library_id = $1 AND type = 'track'`,
+		`UPDATE media_items SET disc_total = NULL WHERE library_id = $1 AND type = 'album'`,
+	} {
+		if _, err := pool.Exec(ctx, stmt, lib.ID); err != nil {
+			t.Fatalf("clear positions: %v", err)
+		}
+	}
+
+	scan("rescan")
+	after := trackFiles(t, pool, lib.ID, "rescan")
+	expectFile(t, "rescan", after, "01 - Ace.flac", "Ace", 2, 1, 1)
+	expectFile(t, "rescan", after, "01 - One.flac", "One", 1, 1, 1)
+	for name, f := range after {
+		if f.itemID != got[name].itemID {
+			t.Errorf("rescan: %q moved to a new track row", name)
+		}
+		if !f.scannedAt.Equal(got[name].scannedAt) {
+			t.Errorf("rescan: %q file was re-processed", name)
+		}
 	}
 }
 

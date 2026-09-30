@@ -261,6 +261,12 @@ type Querier interface {
 	// audiobook chapter's index, where they are NULL, leaving stored values
 	// alone. Reports whether the row changed.
 	FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error)
+	// ListFoldedTrackItemIDs lists the tracks in a library that hold two or
+	// more active files.
+	ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
+	// UpdateMediaItemTitle rewrites only an item's title and sort title,
+	// leaving the fields UpdateMediaItemMetadata would overwrite alone.
+	UpdateMediaItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
@@ -1301,6 +1307,49 @@ func normalizeTitle(s string) string {
 
 var andWordRE = regexp.MustCompile(`\s+(and|&)\s+`)
 
+// SameTitle reports whether a and b are one title once folded the way
+// normalizeTitle folds them: case, diacritics, a leading article,
+// punctuation and "&" vs "and" don't count. normalizeTitle keeps only a-z
+// and 0-9, so a title in another script ("東京", "Кино") folds to nothing,
+// or to its digits alone; SameTitle compares those letters too, or every
+// such title would be the same as every other.
+func SameTitle(a, b string) bool {
+	return titleKeyOf(a) == titleKeyOf(b)
+}
+
+// titleKey is a title as SameTitle compares it.
+type titleKey struct{ latin, other string }
+
+func titleKeyOf(s string) titleKey {
+	return titleKey{latin: normalizeTitle(s), other: otherScriptLetters(s)}
+}
+
+// otherScriptLetters returns the letters of s that normalizeTitle drops for
+// not being Latin, lowercased and without diacritics. Latin letters it drops
+// ("ø", "ß") stay out, so for a Latin title SameTitle says exactly what
+// normalizeTitle says.
+func otherScriptLetters(s string) string {
+	ascii := true
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			ascii = false
+			break
+		}
+	}
+	if ascii {
+		return ""
+	}
+	if folded, _, err := transform.String(newDiacriticStripper(), s); err == nil {
+		s = folded
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) && !unicode.Is(unicode.Latin, r) {
+			return unicode.ToLower(r)
+		}
+		return -1
+	}, s)
+}
+
 // createMuFor returns a per-key mutex that serializes FindOrCreate* calls for
 // the same (library, type, title, year) tuple, preventing duplicate inserts.
 func (s *Service) createMuFor(p CreateItemParams) *sync.Mutex {
@@ -1443,6 +1492,28 @@ func (s *Service) FillTrackPosition(ctx context.Context, id uuid.UUID, index, di
 	return changed, nil
 }
 
+// ListFoldedTrackItemIDs returns the tracks in a library that hold two or
+// more active files: a genuine second copy of one recording, or a fold an
+// older scanner made by matching disc 2's track 1 to disc 1's. Read from rw
+// because the scan acts on it straight away.
+func (s *Service) ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := s.rw.ListFoldedTrackItemIDs(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list folded tracks %s: %w", libraryID, err)
+	}
+	return ids, nil
+}
+
+// UpdateItemTitle sets an item's title and sort title and nothing else.
+// UpdateItemMetadata would also rewrite year, genres, duration and the rest
+// from its params, which a caller holding only a new title doesn't have.
+func (s *Service) UpdateItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error {
+	if err := s.rw.UpdateMediaItemTitle(ctx, id, title, sortTitle); err != nil {
+		return fmt.Errorf("update item title %s: %w", id, err)
+	}
+	return nil
+}
+
 // FindTopLevelItem looks up a top-level item (parent_id IS NULL) by
 // library+type+title without creating one. Returns (nil, nil) if not found.
 // Used by the music scanner to decide whether a collab tag like
@@ -1507,6 +1578,11 @@ func (s *Service) FindOrCreateHierarchyItem(ctx context.Context, p CreateItemPar
 // tags disagree, an album whose numbers are being filled in by a rescan —
 // and the first one in index order must not take a file that plainly
 // belongs to the other.
+//
+// Titles compare as SameTitle has them. normalizeTitle alone folds a title
+// in another script ("東京", "Кино") to nothing, so each such sibling
+// matched every other by title: every file of a Japanese album resolved to
+// its first track, and every Japanese album of an artist to the first one.
 func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *Item {
 	if p.ParentID != nil {
 		// Parented item: search among siblings.
@@ -1514,7 +1590,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 		if err != nil {
 			return nil
 		}
-		normP := normalizeTitle(p.Title) // loop-invariant; hoist out (see findItemByTitle)
+		pKey := titleKeyOf(p.Title) // loop-invariant; hoist out (see findItemByTitle)
 		pDisc := TrackDisc(p.DiscNumber)
 		var partial *Item
 		for i := range children {
@@ -1527,7 +1603,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 			byIndex := p.Index != nil && c.Index != nil && *c.Index == *p.Index &&
 				TrackDisc(c.DiscNumber) == pDisc
 			// Title matching covers named items and unnumbered rows.
-			byTitle := p.Title != "" && normalizeTitle(c.Title) == normP &&
+			byTitle := p.Title != "" && titleKeyOf(c.Title) == pKey &&
 				(c.DiscNumber == nil || *c.DiscNumber == pDisc)
 			if byIndex && byTitle {
 				return c

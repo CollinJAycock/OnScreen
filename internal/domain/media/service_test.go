@@ -208,6 +208,37 @@ func (m *mockQuerier) FillTrackPosition(_ context.Context, id uuid.UUID, index, 
 	m.items[id] = it
 	return changed, nil
 }
+
+// ListFoldedTrackItemIDs mirrors the SQL: live tracks in the library with
+// more than one active file.
+func (m *mockQuerier) ListFoldedTrackItemIDs(_ context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	var out []uuid.UUID
+	for id, files := range m.files {
+		it, ok := m.items[id]
+		if !ok || it.Type != "track" || it.LibraryID != libraryID || it.DeletedAt != nil {
+			continue
+		}
+		active := 0
+		for _, f := range files {
+			if f.Status == "active" {
+				active++
+			}
+		}
+		if active > 1 {
+			out = append(out, id)
+		}
+	}
+	return out, nil
+}
+func (m *mockQuerier) UpdateMediaItemTitle(_ context.Context, id uuid.UUID, title, sortTitle string) error {
+	it, ok := m.items[id]
+	if !ok {
+		return pgx.ErrNoRows
+	}
+	it.Title, it.SortTitle = title, sortTitle
+	m.items[id] = it
+	return nil
+}
 func (m *mockQuerier) SetMediaItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
@@ -1042,6 +1073,36 @@ func TestNormalizeTitle(t *testing.T) {
 			got := normalizeTitle(tt.input)
 			if got != tt.want {
 				t.Errorf("normalizeTitle(%q) = %q, want %q", tt.input, got, tt.want)
+			}
+		})
+	}
+}
+
+// normalizeTitle keeps only a-z and 0-9, so titles in other scripts fold to
+// nothing (or to their digits) and would all compare equal. SameTitle also
+// compares their letters; Latin titles behave exactly as normalizeTitle says.
+func TestSameTitle(t *testing.T) {
+	tests := []struct {
+		a, b string
+		want bool
+	}{
+		{"The Beatles", "beatles", true},
+		{"Rock & Roll", "Rock and Roll", true},
+		{"Beyoncé", "Beyonce", true},
+		{"Straße", "Strae", true}, // as normalizeTitle has it: "ß" is Latin, so no second key
+		{"Alpha", "Beta", false},
+		{"東京", "東京", true},
+		{"東京", "大阪", false},
+		{"東京 1", "大阪 1", false}, // same digits, different words
+		{"東京、", "東京", true},     // punctuation doesn't count here either
+		{"Кино", "кино", true},
+		{"Кино", "Мир", false},
+		{"", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.a+"|"+tt.b, func(t *testing.T) {
+			if got := SameTitle(tt.a, tt.b); got != tt.want {
+				t.Errorf("SameTitle(%q, %q) = %v, want %v", tt.a, tt.b, got, tt.want)
 			}
 		})
 	}
