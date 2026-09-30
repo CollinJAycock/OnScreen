@@ -1,6 +1,7 @@
 package transcode
 
 import (
+	"strconv"
 	"testing"
 )
 
@@ -160,6 +161,69 @@ func TestParseCapabilities_HDR(t *testing.T) {
 	if !ParseCapabilities("dovi=1").SupportsDV {
 		t.Error("dovi=1 should set SupportsDV")
 	}
+}
+
+// hlg is tri-state: absent (nil — hdr decides HLG, the pre-hlg behaviour),
+// claimed, or denied. hdr is untouched by it either way.
+func TestParseCapabilities_HLG(t *testing.T) {
+	cases := []struct {
+		header  string
+		wantHLG *bool
+		wantHDR bool
+	}{
+		{"", nil, false},
+		{"hdr=1", nil, true},
+		{"hdr=0", nil, false},
+		{"hdr=1,hlg=1", boolPtr(true), true},
+		{"hdr=1,hlg=0", boolPtr(false), true},
+		{"hdr=1&HLG=true", boolPtr(true), true},
+		{"hlg=false", boolPtr(false), false},
+	}
+	for _, tc := range cases {
+		got := ParseCapabilities(tc.header)
+		if (got.SupportsHLG == nil) != (tc.wantHLG == nil) ||
+			(got.SupportsHLG != nil && *got.SupportsHLG != *tc.wantHLG) {
+			t.Errorf("%q: SupportsHLG = %s, want %s", tc.header, fmtBoolPtr(got.SupportsHLG), fmtBoolPtr(tc.wantHLG))
+		}
+		if got.SupportsHDR != tc.wantHDR {
+			t.Errorf("%q: SupportsHDR = %v, want %v", tc.header, got.SupportsHDR, tc.wantHDR)
+		}
+	}
+}
+
+// vp9MaxBitDepth is VP9's own depth ceiling, separate from the maxbitdepth the
+// HEVC gate reads; 0 (absent or unusable) means "not declared".
+func TestParseCapabilities_VP9BitDepth(t *testing.T) {
+	cases := []struct {
+		header    string
+		wantVP9   int
+		wantVideo int
+	}{
+		{"", 0, 8},
+		{"maxbitdepth=10", 0, 10},
+		{"vp9MaxBitDepth=10", 10, 8},
+		{"vp9maxbitdepth=8,maxbitdepth=10", 8, 10},
+		{"vp9MaxBitDepth=0", 0, 8},
+		{"vp9MaxBitDepth=abc", 0, 8},
+	}
+	for _, tc := range cases {
+		got := ParseCapabilities(tc.header)
+		if got.MaxVP9BitDepth != tc.wantVP9 {
+			t.Errorf("%q: MaxVP9BitDepth = %d, want %d", tc.header, got.MaxVP9BitDepth, tc.wantVP9)
+		}
+		if got.MaxVideoBitDepth != tc.wantVideo {
+			t.Errorf("%q: MaxVideoBitDepth = %d, want %d", tc.header, got.MaxVideoBitDepth, tc.wantVideo)
+		}
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
+func fmtBoolPtr(b *bool) string {
+	if b == nil {
+		return "nil"
+	}
+	return strconv.FormatBool(*b)
 }
 
 func TestClientCapabilities_Supports(t *testing.T) {

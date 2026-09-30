@@ -91,15 +91,17 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	// codec and music would always fall through to Transcode.
 	audioOnly := videoAlias == "" && audioAlias != ""
 	clientSupportsVideo := audioOnly || caps.SupportsVideoCodec(videoAlias)
-	// Audio is playable as-is only if the client decodes the codec AND can
-	// render the channel layout. A source with more channels than the client's
-	// cap (e.g. 7.1 to a 5.1/stereo client) can't direct-play or remux — the
-	// layout is fixed in the bitstream, and most decoders reject >5.1 AAC
-	// outright (the 7.1-AAC browser finding) — so it must transcode to downmix.
-	// The downmix target is chosen separately by TargetAudioChannels.
+	// Audio is playable as-is only if the client decodes the codec, can read it
+	// out of this container (containerCarriesAudio), AND can render the channel
+	// layout. A source with more channels than the client's cap (e.g. 7.1 to a
+	// 5.1/stereo client) can't direct-play or remux — the layout is fixed in the
+	// bitstream, and most decoders reject >5.1 AAC outright (the 7.1-AAC browser
+	// finding) — so it must transcode to downmix. The downmix target is chosen
+	// separately by TargetAudioChannels.
 	srcChannels := SourceAudioChannels(file.AudioStreams, -1)
 	channelsFit := caps.MaxAudioChannels <= 0 || srcChannels <= 0 || srcChannels <= caps.MaxAudioChannels
-	clientSupportsAudio := audioAlias == "" || (caps.SupportsAudioCodec(audioAlias) && channelsFit)
+	clientSupportsAudio := audioAlias == "" ||
+		(caps.SupportsAudioCodec(audioAlias) && channelsFit && containerCarriesAudio(containerAlias, audioAlias))
 	clientSupportsContainer := caps.SupportsContainer(containerAlias)
 
 	// Dolby Vision: we neither pass it through nor tonemap it. The only correct
@@ -113,6 +115,8 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	}
 	// Other HDR (HDR10 / HDR10+ / HLG): if the client can't display it, tonemap
 	// (transcode). These carry a standard base that tonemap_cuda handles fine.
+	// HLG is judged by the client's hlg answer when it gave one (see
+	// clientSupportsHDR).
 	if isHDR(hdrType) && !clientSupportsHDR(caps, hdrType) {
 		return DecisionTranscode
 	}
@@ -126,9 +130,13 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	// fix: Fruits Basket S1E1 is HEVC Main 12 and was being directStream'd to
 	// Main-10 clients like Fire TV, which can't decode it.) Codec-aware: H.264
 	// Hi10P/Hi12P is undecodable by browsers/most devices regardless of declared
-	// depth; AV1/VP9 high-bit-depth decode tracks their 8-bit support so isn't
-	// gated here. Uses VideoBitDepth (video stream depth), not BitDepth (audio).
-	// Both DirectPlay and DirectStream preserve source depth, so only a re-encode fixes it.
+	// depth; AV1 high-bit-depth decode tracks its 8-bit support so isn't gated
+	// here. VP9 is gated only against a VP9-specific depth the client declared
+	// (vp9MaxBitDepth): Profile 2 is a separate decoder profile that SHIELD, for
+	// one, lacks, but a profile that doesn't mention it keeps the old "tracks
+	// 8-bit" assumption. Uses VideoBitDepth (video stream depth), not BitDepth
+	// (audio). Both DirectPlay and DirectStream preserve source depth, so only a
+	// re-encode fixes it.
 	if bd := derefInt(file.VideoBitDepth); bd >= 10 {
 		switch videoAlias {
 		case "h264":
@@ -136,6 +144,10 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		case "h265":
 			if caps.MaxVideoBitDepth < bd {
 				return DecisionTranscode // e.g. Main 12 source on a Main 10 (or 8-bit) decoder
+			}
+		case "vp9":
+			if caps.MaxVP9BitDepth > 0 && caps.MaxVP9BitDepth < bd {
+				return DecisionTranscode // e.g. Profile 2 source on an 8-bit-only VP9 decoder
 			}
 		}
 	}
@@ -248,6 +260,18 @@ func canonicalContainer(container string) string {
 	}
 }
 
+// containerCarriesAudio reports whether a client that decodes audioAlias can
+// also read it out of containerAlias. TrueHD in MPEG-TS is the gap: it is a
+// Blu-ray (HDMV) stream type, not an ISO/IEC 13818-1 one, and general TS
+// demuxers skip it — Media3's among them, which is what the Android TV client
+// claiming truehd (for passthrough) plays through. Direct-played there, a TS
+// file with a TrueHD track would show the picture with no sound; it remuxes
+// instead, and the remux converts the audio (TrueHD is never stream-copied
+// into the HLS containers).
+func containerCarriesAudio(containerAlias, audioAlias string) bool {
+	return !(audioAlias == "truehd" && containerAlias == "ts")
+}
+
 func isHDR(hdrType string) bool {
 	switch strings.ToLower(hdrType) {
 	case "hdr10", "hdr10plus", "hlg", "dolby_vision":
@@ -260,7 +284,14 @@ func clientSupportsHDR(caps ClientCapabilities, hdrType string) bool {
 	switch strings.ToLower(hdrType) {
 	case "dolby_vision":
 		return caps.SupportsDV
-	case "hdr10", "hdr10plus", "hlg":
+	case "hdr10", "hdr10plus":
+		return caps.SupportsHDR
+	case "hlg":
+		// An explicit hlg answer wins over hdr (an HDR10 display may still
+		// mangle HLG); without one, hdr covers HLG as it always has.
+		if caps.SupportsHLG != nil {
+			return *caps.SupportsHLG
+		}
 		return caps.SupportsHDR
 	}
 	return false

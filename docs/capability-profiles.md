@@ -127,6 +127,59 @@ resolution already cover the common decode failures.
 - A JSON body field on transcode-start is richer but only works for that POST;
   the header is uniform. (Open question §9.)
 
+### 5.1 Header grammar (as implemented)
+
+`X-Client-Capabilities` is a list of `key=value` pairs separated by `,` or `&`;
+list values are separated by `:`. Keys are case-insensitive; unknown keys are
+ignored. A boolean is "yes" for `true` or any positive integer (`1`) and "no"
+for anything else (`0`, `false`).
+
+```
+videoDecoder=h264:h265:vp9,audioDecoder=aac:ac3,protocols=mp4:mkv,maxWidth=3840,maxHeight=2160,maxAudioChannels=8,maxbitdepth=10,vp9MaxBitDepth=8,hdr=1,hlg=0
+```
+
+| Key | Value | When absent | Drives |
+|---|---|---|---|
+| `videoDecoder` | codecs (`h264`, `h265`/`hevc`, `av1`, `vp9`, …) | `h264` | video codec check |
+| `audioDecoder` | codecs (`aac`, `ac3`, `eac3`, `dts`, …) | `aac` | audio codec check |
+| `protocols` | containers (`mp4`, `mkv`, `ts`, …) | `mkv`/`mp4`/`mov` assumed | container check |
+| `maxWidth` / `maxHeight` | pixels | 1920 / 1080 | resolution check + transcode output size |
+| `maxAudioChannels` | channel count | 6 (5.1) | channel check + downmix target |
+| `maxbitdepth` (alias `videobitdepth`) | 8 / 10 / 12 | 8 | HEVC depth check + 8-bit transcode output |
+| `vp9MaxBitDepth` | 8 / 10 / 12 | not declared — VP9 isn't depth-gated | VP9 depth check (below) |
+| `hdr` | boolean | no | HDR10 / HDR10+, and HLG unless `hlg` is sent |
+| `hlg` | boolean | not declared — `hdr` decides HLG | HLG check (below) |
+| `dovi` (alias `dolbyvision`) | boolean | no | Dolby Vision (else `unsupported`) |
+
+**HLG (`hlg`).** An HDR10 display isn't necessarily an HLG one: NVIDIA SHIELD
+outputs HDR10 but sends HLG flagged as SDR (dark, green picture). So for an HLG
+source (`hdr_type = hlg`):
+- `hlg=1` — direct play, or remux with the HLG signal intact, whatever `hdr` says.
+- `hlg=0` — `transcode`, tone-mapped to SDR: exactly what an HDR source gets on
+  an `hdr=0` client (every HDR transcode tone-maps). Remux is not offered, since
+  it would carry the HLG signal through.
+- no `hlg` key — `hdr` decides, as it did for every client before the key
+  existed (old TV builds, web, Tizen, webOS, Roku are unchanged).
+
+`hlg` never affects HDR10, HDR10+ or Dolby Vision sources.
+
+**10-bit VP9 (`vp9MaxBitDepth`).** VP9 Profile 2 (10-bit) is its own decoder
+profile — SHIELD hardware-decodes 8-bit VP9 but not Profile 2 — so VP9 gets its
+own depth ceiling rather than a yes/no token: it mirrors `maxbitdepth`, and it
+also covers 12-bit Profile 3. For a VP9 source of known depth ≥ 10:
+- depth ≤ `vp9MaxBitDepth` (e.g. `vp9MaxBitDepth=10` for Profile 2) — direct play.
+- depth > `vp9MaxBitDepth` (e.g. `vp9MaxBitDepth=8`) — `transcode` to the usual
+  output codec (H.264/HEVC/AV1; VP9 is never an output), whose depth follows
+  `maxbitdepth`.
+- no `vp9MaxBitDepth` key — not gated: 10-bit VP9 follows VP9 support, the
+  pre-existing assumption.
+
+`maxbitdepth` does not apply to VP9, and `vp9MaxBitDepth` applies to nothing
+else. 8-bit VP9 and VP9 of unknown depth are never gated.
+
+Both rules also show on the admin Now Playing cards ("HLG not supported by client
+(tonemapped to SDR)", "10-bit VP9 → client max 8-bit").
+
 ## 6. Server-side refactor
 
 1. **Middleware/helper**: parse `X-Client-Capabilities` once per request into
@@ -279,6 +332,14 @@ inert across all clients.
   decision Task), and Roku's local decision already probes `roDeviceInfo` — the
   most accurate local decision of any client. Lowest value, highest risk; revisit
   with a real Roku.
+
+**Done — `hlg` + `vp9MaxBitDepth` (2026-09-30, server only).** Two explicit
+capabilities for NVIDIA SHIELD, which shows HDR10 but not HLG and decodes 8-bit
+VP9 but not Profile 2 (rules in §5.1). Both are opt-in: a profile without the
+keys decides exactly as before, so nothing changes until a client sends them.
+The Android TV client's header should add `hlg=0|1` (from the display's
+supported HDR types) and `vp9MaxBitDepth=8|10` (from the VP9 decoder's Profile 2
+support).
 
 **Remaining:**
 1. **Redeploy QA** with `ea91ad4` so the *web* flip actually consults the server

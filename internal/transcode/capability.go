@@ -19,13 +19,25 @@ type ClientCapabilities struct {
 	// Defaults to 8 — most browsers/devices can't decode 10-bit (HEVC Main 10
 	// or H.264 Hi10P), so a client must explicitly declare 10-bit support.
 	MaxVideoBitDepth int
-	SupportsHDR      bool // HDR10
-	SupportsDV       bool // Dolby Vision
-	SupportsHEVC     bool // H.265
-	SupportsAV1      bool
+	// MaxVP9BitDepth is the deepest VP9 the client can decode (vp9MaxBitDepth=8
+	// or 10). 0 = not declared: VP9 isn't bit-depth gated, the behaviour from
+	// before the key existed. Separate from MaxVideoBitDepth because VP9
+	// Profile 2 (10-bit) is its own decoder profile: NVIDIA SHIELD hardware-
+	// decodes 8-bit VP9 and HEVC Main 10, but not VP9 Profile 2.
+	MaxVP9BitDepth int
+	SupportsHDR    bool // HDR10 / HDR10+ (and HLG when SupportsHLG is nil)
+	// SupportsHLG is the client's explicit HLG answer (hlg=1 / hlg=0); nil when
+	// the profile doesn't mention HLG, in which case SupportsHDR covers it. An
+	// HDR10 display isn't necessarily an HLG one: SHIELD outputs HDR10 but sends
+	// HLG flagged as SDR (dark, green picture).
+	SupportsHLG  *bool
+	SupportsDV   bool // Dolby Vision
+	SupportsHEVC bool // H.265
+	SupportsAV1  bool
 }
 
-// ParseCapabilities parses the X-Client-Capabilities header value.
+// ParseCapabilities parses the X-Client-Capabilities header value. Keys are
+// case-insensitive; the full grammar is in docs/capability-profiles.md.
 // Format: "videoDecoder=h264:h265,audioDecoder=ac3:aac,maxWidth=1920,maxHeight=1080"
 func ParseCapabilities(header string) ClientCapabilities {
 	caps := ClientCapabilities{
@@ -79,10 +91,18 @@ func ParseCapabilities(header string) ClientCapabilities {
 			if d := parseInt(val); d > 0 {
 				caps.MaxVideoBitDepth = d
 			}
+		case "vp9maxbitdepth":
+			if d := parseInt(val); d > 0 {
+				caps.MaxVP9BitDepth = d
+			}
 		case "hdr":
-			// HDR10 / HLG display capability (e.g. hdr=1). Drives the HDR gate
-			// in Decide — an HDR source on a non-HDR client must tonemap.
+			// HDR10 display capability (e.g. hdr=1), and HLG too unless the
+			// profile answers hlg separately. Drives the HDR gate in Decide —
+			// an HDR source on a non-HDR client must tonemap.
 			caps.SupportsHDR = parseInt(val) > 0 || strings.EqualFold(val, "true")
+		case "hlg":
+			hlg := parseInt(val) > 0 || strings.EqualFold(val, "true")
+			caps.SupportsHLG = &hlg
 		case "dovi", "dolbyvision":
 			caps.SupportsDV = parseInt(val) > 0 || strings.EqualFold(val, "true")
 		}

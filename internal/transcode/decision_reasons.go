@@ -92,6 +92,10 @@ func DecisionReasons(file media.File, caps ClientCapabilities) []Reason {
 				if caps.MaxVideoBitDepth < bd {
 					add(ReasonVideo, "%d-bit HEVC → client max %d-bit", bd, caps.MaxVideoBitDepth)
 				}
+			case "vp9":
+				if caps.MaxVP9BitDepth > 0 && caps.MaxVP9BitDepth < bd {
+					add(ReasonVideo, "%d-bit VP9 → client max %d-bit", bd, caps.MaxVP9BitDepth)
+				}
 			}
 		}
 		w, h := derefInt(file.ResolutionW), derefInt(file.ResolutionH)
@@ -108,6 +112,9 @@ func DecisionReasons(file media.File, caps ClientCapabilities) []Reason {
 		case !caps.SupportsAudioCodec(audioAlias):
 			audioBad = true
 			add(ReasonAudio, "%s audio not supported by client", audioCodecLabel(audioAlias))
+		case !containerCarriesAudio(containerAlias, audioAlias):
+			audioBad = true
+			add(ReasonAudio, "%s audio in %s not supported by client", audioCodecLabel(audioAlias), containerLabel(containerAlias))
 		case caps.MaxAudioChannels > 0 && srcCh > caps.MaxAudioChannels:
 			audioBad = true
 			add(ReasonAudio, "%s audio → client max %s", ChannelLabel(srcCh), ChannelLabel(caps.MaxAudioChannels))

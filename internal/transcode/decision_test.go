@@ -239,6 +239,120 @@ func TestDecide_Unsupported_DolbyVision_ClientNoDV(t *testing.T) {
 	}
 }
 
+// TestDecide_HLGAndVP9Depth pins the two explicit capabilities NVIDIA SHIELD
+// needs (it outputs HDR10 but not HLG, and hardware-decodes 8-bit VP9 but not
+// Profile 2): hlg= and vp9MaxBitDepth= decide those sources when the profile
+// carries them, and a profile without them decides exactly as before.
+func TestDecide_HLGAndVP9Depth(t *testing.T) {
+	hevc10 := func(hdrType, container string) func() media.File {
+		return func() media.File {
+			f := baseFile()
+			f.VideoCodec = strPtr("hevc")
+			f.Container = strPtr(container)
+			f.VideoBitDepth = intPtr(10)
+			f.HDRType = strPtr(hdrType)
+			return f
+		}
+	}
+	vp9 := func(depth int) func() media.File {
+		return func() media.File {
+			f := baseFile()
+			f.VideoCodec = strPtr("vp9")
+			f.AudioCodec = strPtr("opus")
+			f.Container = strPtr("webm")
+			if depth > 0 {
+				f.VideoBitDepth = intPtr(depth)
+			}
+			return f
+		}
+	}
+	const hevcClient = "videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4,maxbitdepth=10"
+	const vp9Client = "videoDecoder=h264:vp9,audioDecoder=aac:opus,protocols=mp4:mkv:webm"
+
+	cases := []struct {
+		name string
+		file func() media.File
+		caps string
+		want Decision
+	}{
+		// ── HLG ─────────────────────────────────────────────────────────────
+		{"hlg, old profile hdr=1: HLG rides on hdr", hevc10("hlg", "mp4"), hevcClient + ",hdr=1", DecisionDirectPlay},
+		{"hlg, old profile hdr=0: tonemap", hevc10("hlg", "mp4"), hevcClient + ",hdr=0", DecisionTranscode},
+		{"hlg, old profile no hdr key: tonemap", hevc10("hlg", "mp4"), hevcClient, DecisionTranscode},
+		{"hlg, hdr=1 hlg=1: direct play", hevc10("hlg", "mp4"), hevcClient + ",hdr=1,hlg=1", DecisionDirectPlay},
+		{"hlg, hdr=1 hlg=1 wrong container: remux keeps HLG", hevc10("hlg", "mkv"), hevcClient + ",hdr=1,hlg=1", DecisionDirectStream},
+		{"hlg, hdr=1 hlg=0 (SHIELD): tonemap", hevc10("hlg", "mp4"), hevcClient + ",hdr=1,hlg=0", DecisionTranscode},
+		{"hlg, hdr=1 hlg=0 wrong container: tonemap, not remux", hevc10("hlg", "mkv"), hevcClient + ",hdr=1,hlg=0", DecisionTranscode},
+		{"hlg, hdr=0 hlg=1: hlg answer wins", hevc10("hlg", "mp4"), hevcClient + ",hdr=0,hlg=1", DecisionDirectPlay},
+		{"hlg, hlg=true spelling", hevc10("hlg", "mp4"), hevcClient + ",hdr=1,hlg=true", DecisionDirectPlay},
+		{"hdr10 unaffected by hlg=0", hevc10("hdr10", "mp4"), hevcClient + ",hdr=1,hlg=0", DecisionDirectPlay},
+		{"hdr10+ unaffected by hlg=0", hevc10("hdr10plus", "mp4"), hevcClient + ",hdr=1,hlg=0", DecisionDirectPlay},
+		{"hdr10 still tonemaps on hdr=0 hlg=1", hevc10("hdr10", "mp4"), hevcClient + ",hdr=0,hlg=1", DecisionTranscode},
+
+		// ── VP9 bit depth ───────────────────────────────────────────────────
+		{"10-bit vp9, old profile: not gated", vp9(10), vp9Client, DecisionDirectPlay},
+		{"10-bit vp9, claims vp9MaxBitDepth=10", vp9(10), vp9Client + ",vp9MaxBitDepth=10", DecisionDirectPlay},
+		{"10-bit vp9, denies with vp9MaxBitDepth=8 (SHIELD)", vp9(10), vp9Client + ",vp9MaxBitDepth=8", DecisionTranscode},
+		{"12-bit vp9 on a 10-bit vp9 decoder", vp9(12), vp9Client + ",vp9MaxBitDepth=10", DecisionTranscode},
+		{"10-bit vp9 claim ignores the HEVC-only maxbitdepth", vp9(10), vp9Client + ",maxbitdepth=8,vp9MaxBitDepth=10", DecisionDirectPlay},
+		{"8-bit vp9, old profile", vp9(8), vp9Client, DecisionDirectPlay},
+		{"8-bit vp9 on an 8-bit vp9 decoder", vp9(8), vp9Client + ",vp9MaxBitDepth=8", DecisionDirectPlay},
+		{"vp9 of unknown depth isn't gated", vp9(0), vp9Client + ",vp9MaxBitDepth=8", DecisionDirectPlay},
+		{"10-bit hevc unaffected by vp9MaxBitDepth", hevc10("", "mp4"), "videoDecoder=h264:h265,audioDecoder=aac,protocols=mp4,vp9MaxBitDepth=10", DecisionTranscode},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Decide(tc.file(), ParseCapabilities(tc.caps), defaultServerCaps); got != tc.want {
+				t.Errorf("caps %q: want %s, got %s", tc.caps, tc.want, got)
+			}
+		})
+	}
+}
+
+// TestDecide_TrueHDInContainer pins what a client claiming truehd (the Android
+// TV client, when its audio output takes TrueHD as a bitstream) gets: TrueHD in
+// MKV or MP4 direct-plays, 7.1 included, while TrueHD in MPEG-TS (a Blu-ray
+// .m2ts rip) remuxes with the audio converted, since Media3 can't demux it
+// there. A profile without truehd decides exactly as before.
+func TestDecide_TrueHDInContainer(t *testing.T) {
+	withAudio := func(audio, container, video string) func() media.File {
+		return func() media.File {
+			f := baseFile()
+			f.VideoCodec = strPtr(video)
+			f.AudioCodec = strPtr(audio)
+			f.Container = strPtr(container)
+			f.AudioStreams = []byte(`[{"codec":"` + audio + `","channels":8}]`)
+			return f
+		}
+	}
+	const client = "videoDecoder=h264:h265:vp9,protocols=mp4:mkv:webm:ts,maxAudioChannels=8"
+	const trueHDClient = client + ",audioDecoder=aac:ac3:eac3:truehd"
+	const oldClient = client + ",audioDecoder=aac:ac3:eac3"
+
+	cases := []struct {
+		name string
+		file func() media.File
+		caps string
+		want Decision
+	}{
+		{"7.1 truehd in mkv: direct play", withAudio("truehd", "matroska", "hevc"), trueHDClient, DecisionDirectPlay},
+		{"truehd in mp4: direct play", withAudio("truehd", "mp4", "h264"), trueHDClient, DecisionDirectPlay},
+		{"truehd in m2ts: remux", withAudio("truehd", "mpegts", "h264"), trueHDClient, DecisionDirectStream},
+		{"hevc truehd in m2ts: remux", withAudio("truehd", "mpegts", "hevc"), trueHDClient, DecisionDirectStream},
+		{"vp9 truehd in ts: vp9 can't remux", withAudio("truehd", "mpegts", "vp9"), trueHDClient, DecisionTranscode},
+		{"dts in ts is carried", withAudio("dts", "mpegts", "h264"), client + ",audioDecoder=aac:dts", DecisionDirectPlay},
+		{"truehd in mkv, no truehd claim: remux", withAudio("truehd", "matroska", "h264"), oldClient, DecisionDirectStream},
+		{"truehd in m2ts, no truehd claim: remux", withAudio("truehd", "mpegts", "h264"), oldClient, DecisionDirectStream},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Decide(tc.file(), ParseCapabilities(tc.caps), defaultServerCaps); got != tc.want {
+				t.Errorf("caps %q: want %s, got %s", tc.caps, tc.want, got)
+			}
+		})
+	}
+}
+
 func TestDecide_DirectPlay_DolbyVision_ClientSupportsDV(t *testing.T) {
 	file := baseFile()
 	file.HDRType = strPtr("dolby_vision")
@@ -421,7 +535,10 @@ func TestCanonicalCodecs(t *testing.T) {
 }
 
 func TestClientSupportsHDR(t *testing.T) {
+	yes, no := true, false
 	capsHDR := ClientCapabilities{SupportsHDR: true}
+	capsHDRNoHLG := ClientCapabilities{SupportsHDR: true, SupportsHLG: &no}
+	capsHLGOnly := ClientCapabilities{SupportsHLG: &yes}
 	capsDV := ClientCapabilities{SupportsDV: true}
 	capsNone := ClientCapabilities{}
 
@@ -432,7 +549,12 @@ func TestClientSupportsHDR(t *testing.T) {
 	}{
 		{capsHDR, "hdr10", true},
 		{capsHDR, "hdr10plus", true},
-		{capsHDR, "hlg", true},
+		{capsHDR, "hlg", true}, // no hlg answer: hdr covers HLG
+		{capsNone, "hlg", false},
+		{capsHDRNoHLG, "hlg", false}, // explicit hlg=0 beats hdr=1
+		{capsHDRNoHLG, "hdr10", true},
+		{capsHLGOnly, "hlg", true},
+		{capsHLGOnly, "hdr10", false},
 		{capsNone, "hdr10", false},
 		{capsDV, "dolby_vision", true},
 		{capsHDR, "dolby_vision", false}, // HDR10 support ≠ DV support

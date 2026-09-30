@@ -53,6 +53,18 @@ func TestDecisionReasons_Table(t *testing.T) {
 			want: []string{"TrueHD audio not supported by client", "MKV container not supported by client"},
 		},
 		{
+			name: "truehd in mpeg-ts on a truehd client",
+			file: func() media.File {
+				f := baseFile()
+				f.AudioCodec = strPtr("truehd")
+				f.AudioStreams = sevenOne
+				f.Container = strPtr("mpegts")
+				return f
+			},
+			caps: "videoDecoder=h264,audioDecoder=aac:truehd,protocols=mkv:ts,maxAudioChannels=8",
+			want: []string{"TrueHD audio in MPEG-TS not supported by client"},
+		},
+		{
 			name: "every problem is listed, not just the first",
 			file: func() media.File {
 				f := baseFile()
@@ -98,6 +110,28 @@ func TestDecisionReasons_Table(t *testing.T) {
 			},
 			caps: "videoDecoder=h264:h265,audioDecoder=aac,maxBitDepth=10",
 			want: []string{"12-bit HEVC → client max 10-bit"},
+		},
+		{
+			name: "hlg on an hdr10 client that denies hlg",
+			file: func() media.File {
+				f := baseFile()
+				f.VideoCodec = strPtr("hevc")
+				f.HDRType = strPtr("hlg")
+				return f
+			},
+			caps: "videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv,hdr=1,hlg=0",
+			want: []string{"HLG not supported by client (tonemapped to SDR)"},
+		},
+		{
+			name: "profile 2 vp9 on an 8-bit vp9 decoder",
+			file: func() media.File {
+				f := baseFile()
+				f.VideoCodec = strPtr("vp9")
+				f.VideoBitDepth = intPtr(10)
+				return f
+			},
+			caps: "videoDecoder=h264:vp9,audioDecoder=aac,protocols=mkv,vp9MaxBitDepth=8",
+			want: []string{"10-bit VP9 → client max 8-bit"},
 		},
 		{
 			name: "vp9 needing an audio change can't remux",
