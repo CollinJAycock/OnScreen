@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -49,14 +50,18 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.work.WorkInfo
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -66,6 +71,7 @@ import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.downloads.DownloadEntry
 import tv.onscreen.mobile.data.downloads.DownloadWorker
@@ -116,46 +122,107 @@ class ItemDetailViewModel @Inject constructor(
                 }
             }
 
+    private var loadJob: Job? = null
+
+    /**
+     * Load [itemId], or refresh it in place when the page already shows it
+     * (the screen calls this again on return from the player). A refresh
+     * keeps the detail, children and album start on screen until the new
+     * ones land: resetting to a spinner wiped them, and until they came
+     * back the page drew a greyed-out Play and "No playable files".
+     */
     fun load(itemId: String) {
-        viewModelScope.launch {
-            _state.value = ItemDetailUi(loading = true)
+        loadJob?.cancel()
+        val current = _state.value
+        if (current.detail?.id != itemId || current.error != null) {
+            _state.value = ItemDetailUi(loading = true, loadSeq = current.loadSeq)
+        }
+        loadJob = viewModelScope.launch {
             try {
                 val detail = repo.getItem(itemId)
                 val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
-                _state.value = ItemDetailUi(loading = false, detail = detail, serverUrl = serverUrl)
-                downloads.store.load()
+                val container = isContainer(detail.type)
+                val before = _state.value
+                // A new loadSeq on every publish: the screen re-binds the
+                // watch state and bookmarks to it.
+                _state.value = if (before.detail?.id == itemId) {
+                    before.copy(
+                        loading = false,
+                        detail = detail,
+                        serverUrl = serverUrl,
+                        childrenLoaded = before.childrenLoaded || !container,
+                        loadSeq = before.loadSeq + 1,
+                    )
+                } else {
+                    ItemDetailUi(
+                        detail = detail,
+                        serverUrl = serverUrl,
+                        childrenLoaded = !container,
+                        loadSeq = before.loadSeq + 1,
+                    )
+                }
                 // Watching-status is best-effort — the detail page is
                 // useful even when the server is on an older build that
                 // 404s the route. Fetched after the main detail so the
                 // page renders without waiting on it.
                 refreshWatchStatus(itemId)
-                // Children list — seasons under a show, episodes under
-                // a season, tracks under an album, chapters under an
-                // audiobook. Without this list, the user lands on a
-                // bare title + Play and has no way to drill into the
-                // structure. Best-effort: an empty list just means
-                // the body shows the leaf-style layout (Play + meta).
-                if (isContainer(detail.type)) {
-                    runCatching { repo.getChildren(itemId) }
-                        .onSuccess { kids ->
-                            _state.value = _state.value.copy(children = kids)
-                        }
+                // Children list — tracks under an album, albums under an
+                // artist, chapters under an audiobook. Without this list,
+                // the user lands on a bare title + Play and has no way to
+                // drill into the structure. Fetched straight after the
+                // detail because a multi-file audiobook's Play and an
+                // album's first track both wait on it. Best-effort: a
+                // failure keeps what the page had (nothing, on a first
+                // load), and the body shows the leaf-style layout.
+                if (container) {
+                    val kids = attempt { repo.getChildren(itemId) }
+                    if (_state.value.detail?.id != itemId) return@launch
+                    _state.value = _state.value.copy(
+                        children = kids.getOrElse { _state.value.children },
+                        childrenLoaded = true,
+                    )
                 }
                 // Album / artist: no files of their own - Play starts the
                 // first track (an artist's first album), and the playback
                 // service queues the rest around it (MusicQueue).
                 if (MusicQueue.startsFromContainer(detail.type)) {
-                    val start = runCatching {
+                    val start = attempt {
                         MusicQueue.playStart(detail.type, _state.value.children) { repo.getChildren(it) }
-                    }.getOrNull()
-                    if (_state.value.detail?.id == itemId) {
-                        _state.value = _state.value.copy(playStartId = start, playStartResolved = true)
                     }
+                    if (_state.value.detail?.id != itemId) return@launch
+                    _state.value = _state.value.copy(
+                        playStartId = start.getOrElse { _state.value.playStartId },
+                        playStartResolved = true,
+                    )
                 }
+                // Last: the manifest only feeds the Download button, so it
+                // waits behind what Play needs.
+                downloads.store.load()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                _state.value = ItemDetailUi(loading = false, error = e.message)
+                val s = _state.value
+                _state.value = if (s.detail?.id == itemId) {
+                    // The page is up (a refresh that failed, say offline
+                    // after playing a download): keep it rather than swap
+                    // it for an error screen, with nothing left pending.
+                    s.copy(loading = false, childrenLoaded = true, playStartResolved = true)
+                } else {
+                    ItemDetailUi(loading = false, error = e.message, loadSeq = s.loadSeq)
+                }
             }
         }
+    }
+
+    /** [block]'s outcome, without swallowing cancellation the way
+     *  runCatching does: a load superseded mid-fetch must stop, not write
+     *  its failure over the page. */
+    private inline fun <T> attempt(block: () -> T): Result<T> = try {
+        Result.success(block())
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        Result.failure(e)
     }
 
     /** Top-level types that have a meaningful children list to
@@ -296,10 +363,17 @@ data class ItemDetailUi(
      *  book_author/book_series — the last two route to dedicated
      *  screens). */
     val children: List<tv.onscreen.mobile.data.model.ChildItem> = emptyList(),
+    /** Whether [children] has answered (either way). True at once for types
+     *  that don't fetch children; until then an audiobook's Play waits
+     *  instead of reading as "no playable files". */
+    val childrenLoaded: Boolean = false,
     /** Album / artist: the track Play starts ([MusicQueue.playStart]); null
      *  until resolved or when there's nothing to play. */
     val playStartId: String? = null,
     val playStartResolved: Boolean = false,
+    /** Bumped each time a load publishes a detail, including a refresh of
+     *  the same item, so the screen can re-bind what hangs off it. */
+    val loadSeq: Int = 0,
     val error: String? = null,
     /** Transient enqueue/delete error from the Download button. The
      *  screen reads this to show a Toast, then calls clearDownloadError
@@ -430,21 +504,19 @@ fun ItemDetailScreen(
     LaunchedEffect(itemId) { vm.load(itemId) }
     val ui by vm.state.collectAsStateWithLifecycle()
 
-    // Audiobook bookmarks bind to each finished load — incl. the reload on
+    // Audiobook bookmarks bind to each loaded detail — incl. the refresh on
     // return from the player, which is how one just added there shows up.
-    // Keyed on loading rather than the detail itself so a favourite toggle
+    // Keyed on loadSeq rather than the detail itself so a favourite toggle
     // (a detail copy) doesn't re-fetch them.
     val bookmarksUi by bookmarksVm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(ui.detail?.id, ui.loading) {
-        if (!ui.loading) ui.detail?.let(bookmarksVm::bind)
-    }
+    LaunchedEffect(ui.detail?.id, ui.loadSeq) { ui.detail?.let(bookmarksVm::bind) }
 
     // Watch state (watched toggle / up-next / episode marks) binds to each
-    // detail load — incl. the reload on return from the player, which is
-    // what refreshes resume points and marks. Keyed on the id so a
-    // favourite toggle (a detail copy) doesn't re-fetch episodes.
+    // loaded detail the same way — the refresh on return from the player
+    // is what brings back resume points and marks made there. The refresh
+    // keeps the id, so the id alone would no longer re-bind.
     val watchUi by watchVm.state.collectAsStateWithLifecycle()
-    LaunchedEffect(ui.detail?.id) { ui.detail?.let(watchVm::bind) }
+    LaunchedEffect(ui.detail?.id, ui.loadSeq) { ui.detail?.let(watchVm::bind) }
 
     // Surface enqueue / delete failures from the Download button as a
     // Toast so the user gets feedback instead of a silent no-op.
@@ -525,6 +597,12 @@ fun ItemDetailScreen(
                     val downloadStates by vm.downloadState.collectAsStateWithLifecycle()
                     val chapters = d.files.firstOrNull()?.chapters.orEmpty()
                     val showChapters = d.type == "audiobook" && chapters.isNotEmpty()
+                    // A multi-disc album's tracks, disc by disc. Display
+                    // only: ui.children keeps the server's order, which is
+                    // the play order MusicQueue queues.
+                    val discs = remember(d.type, ui.children) {
+                        if (d.type == "album") albumDiscGroups(ui.children) else emptyList()
+                    }
                     // Children list can run long (50-episode anime
                     // seasons, 200-track classical albums) and chapter
                     // tables likewise — render the whole page in a
@@ -562,6 +640,14 @@ fun ItemDetailScreen(
                                     Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
                                 }
                                 Spacer(Modifier.height(16.dp))
+                                // What Play resolves to isn't known yet: a
+                                // multi-file audiobook plays through its
+                                // chapter children, an album / artist through
+                                // its first track. Until those answer, Play
+                                // waits rather than reading as unplayable.
+                                val playPending =
+                                    (d.type == "audiobook" && d.files.isEmpty() && !ui.childrenLoaded) ||
+                                        (MusicQueue.startsFromContainer(d.type) && !ui.playStartResolved)
                                 // Show / season: the up-next button + Mark
                                 // all (ItemWatchSections) replace Play —
                                 // a container has no files of its own.
@@ -591,21 +677,22 @@ fun ItemDetailScreen(
                                     // instead.
                                     val hasFile = d.files.isNotEmpty()
                                     val musicStart = ui.playStartId
+                                    // The player starts at the resume point
+                                    // (PlayerViewModel.prepare reads
+                                    // view_offset_ms), so say so. The watch
+                                    // VM's copy wins once bound: a mark
+                                    // clears the resume point.
+                                    val bound = watchUi.itemId == d.id
+                                    val leafLabel = leafPlayLabel(
+                                        resumeMs = if (bound) watchUi.resumeMs else d.view_offset_ms,
+                                        watched = if (bound) watchUi.itemWatched
+                                            else d.watch_state == WatchStateValue.WATCHED,
+                                    )
                                     if (isBook || hasFile || isMultiFileBook(d, ui.children)) {
                                         // (A multi-file audiobook has no file
                                         // of its own; the player resolves it
                                         // to the chapter to resume.)
-                                        // The player starts at the resume
-                                        // point (PlayerViewModel.prepare reads
-                                        // view_offset_ms), so say so. The
-                                        // watch VM's copy wins once bound: a
-                                        // mark clears the resume point.
-                                        val bound = watchUi.itemId == d.id
-                                        val label = if (isBook) "Read" else leafPlayLabel(
-                                            resumeMs = if (bound) watchUi.resumeMs else d.view_offset_ms,
-                                            watched = if (bound) watchUi.itemWatched
-                                                else d.watch_state == WatchStateValue.WATCHED,
-                                        )
+                                        val label = if (isBook) "Read" else leafLabel
                                         Button(onClick = {
                                             if (isBook) onOpenBook(itemId) else onPlay(itemId)
                                         }) {
@@ -621,6 +708,20 @@ fun ItemDetailScreen(
                                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                                             Spacer(Modifier.width(6.dp))
                                             Text("Play")
+                                        }
+                                    } else if (playPending) {
+                                        // Same size as the Play it turns into:
+                                        // a spinner where the icon goes, and the
+                                        // label an audiobook will settle on.
+                                        Button(onClick = {}, enabled = false) {
+                                            Box(Modifier.size(24.dp), contentAlignment = Alignment.Center) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(18.dp),
+                                                    strokeWidth = 2.dp,
+                                                )
+                                            }
+                                            Spacer(Modifier.width(6.dp))
+                                            Text(if (d.type == "audiobook") leafLabel else "Play")
                                         }
                                     } else {
                                         Button(onClick = {}, enabled = false) {
@@ -644,11 +745,11 @@ fun ItemDetailScreen(
                                     }
                                 }
                                 // (Albums / artists: only once the first
-                                // track lookup came back empty.)
-                                val musicPending = MusicQueue.startsFromContainer(d.type) &&
-                                    (ui.playStartId != null || !ui.playStartResolved)
+                                // track lookup came back empty; audiobooks
+                                // once their children did.)
+                                val hasMusicStart = MusicQueue.startsFromContainer(d.type) && ui.playStartId != null
                                 if (d.files.isEmpty() && d.type != "book" && !isWatchContainerType(d.type) &&
-                                    !musicPending && !isMultiFileBook(d, ui.children)
+                                    !playPending && !hasMusicStart && !isMultiFileBook(d, ui.children)
                                 ) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
@@ -762,9 +863,40 @@ fun ItemDetailScreen(
                                     Spacer(Modifier.height(8.dp))
                                 }
                             }
-                            items(ui.children, key = { it.id }) { child ->
-                                Box(modifier = Modifier.padding(horizontal = 16.dp)) {
-                                    ChildRow(child = child, onClick = { onOpenItem(child.id) })
+                            if (discs.size > 1) {
+                                // Every disc restarts at track 1, so each
+                                // disc's run gets a heading.
+                                discs.forEachIndexed { i, group ->
+                                    item(key = "disc-${group.disc}") {
+                                        Text(
+                                            stringResource(R.string.disc_heading, group.disc),
+                                            style = MaterialTheme.typography.titleSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(
+                                                start = 16.dp,
+                                                end = 16.dp,
+                                                top = if (i == 0) 0.dp else 16.dp,
+                                            ),
+                                        )
+                                    }
+                                    items(group.tracks, key = { it.id }) { child ->
+                                        Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                                            ChildRow(child = child, onClick = { onOpenItem(child.id) })
+                                        }
+                                    }
+                                }
+                            } else {
+                                items(ui.children, key = { it.id }) { child ->
+                                    Box(modifier = Modifier.padding(horizontal = 16.dp)) {
+                                        ChildRow(child = child, onClick = { onOpenItem(child.id) })
+                                    }
+                                }
+                            }
+                        } else if (!ui.childrenLoaded) {
+                            // Only a container is ever waiting on children.
+                            item(key = "children-loading") {
+                                Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
+                                    CircularProgressIndicator()
                                 }
                             }
                         }

@@ -40,4 +40,7 @@
     <string name="bookmark_delete_body">The bookmark at %1$s is removed on all your devices.</string>
     <string name="bookmark_update_failed">Couldn\'t save the note.</string>
     <string name="bookmark_delete_failed">Couldn\'t delete the bookmark.</string>
+
+    <!-- Music: album page -->
+    <string name="disc_heading">Disc %1$d</string>
 </resources>
