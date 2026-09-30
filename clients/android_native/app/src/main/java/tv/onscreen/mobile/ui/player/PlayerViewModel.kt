@@ -1453,11 +1453,12 @@ class PlayerViewModel @Inject constructor(
      *  The returned url carries NO credential — the token goes into
      *  [StreamTokenVault] and the player's resolving data source re-attaches
      *  it as the request leaves. For the audio branch this url becomes a
-     *  MediaSession MediaItem, and media3 copies that uri into the platform
-     *  session's METADATA_KEY_MEDIA_URI, readable by any notification-listener
-     *  app; keeping the token out of the uri is what closes that. The video
-     *  branch shares the builder and gets the same treatment via the resolver
-     *  wrapper in PlayerScreen. */
+     *  MediaSession MediaItem, and media3 before 1.8 copied that uri into the
+     *  platform session's METADATA_KEY_MEDIA_URI, readable by any
+     *  notification-listener app; keeping the token out of the uri is what
+     *  closes that (see StreamTokenVault). The video branch shares the
+     *  builder and gets the same treatment via the resolver wrapper in
+     *  PlayerScreen. */
     private suspend fun buildDirectPlayUrl(
         serverUrl: String,
         streamPath: String,

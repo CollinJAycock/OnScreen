@@ -7,8 +7,10 @@ import tv.onscreen.android.data.model.ItemFile
  * Decides the playback strategy for a given file on Android TV.
  *
  * ExoPlayer handles far more codecs natively than a browser:
- * - Video: H.264, H.265 (hardware on most devices), VP9, AV1
- * - Audio: AAC, MP3, Opus, FLAC, Vorbis, AC3, EAC3 (passthrough), DTS
+ * - Video: H.264, H.265 (hardware on most devices), VP9, AV1 (where the
+ *   device decodes it in hardware)
+ * - Audio: AAC, MP3, Opus, FLAC, Vorbis, AC3, EAC3 (passthrough), DTS and
+ *   TrueHD (where the device decodes them or the output takes them)
  * - Containers: MP4, MKV, WebM, MOV, TS
  *
  * So direct play covers the vast majority of content.
@@ -26,22 +28,19 @@ sealed class PlaybackMode {
 
 object PlaybackHelper {
 
+    /** Plus "av1" on a device with a hardware AV1 decoder ([supportsAv1]). */
     private val directPlayVideoCodecs = setOf(
-        "h264", "hevc", "h265", "vp9", "av1",
-    )
-
-    private val directPlayAudioCodecs = setOf(
-        "aac", "mp3", "opus", "flac", "vorbis",
-        "ac3", "eac3", "dts",
+        "h264", "hevc", "h265", "vp9",
     )
 
     private val directPlayContainers = setOf(
         "mp4", "mkv", "matroska", "webm", "mov",
     )
 
-    /** Video codecs ExoPlayer can play but that may need container remux. */
+    /** Video codecs ExoPlayer can play but that may need container remux.
+     *  Plus "av1", as for [directPlayVideoCodecs]. */
     private val remuxVideoCodecs = setOf(
-        "h264", "hevc", "h265", "vp9", "av1",
+        "h264", "hevc", "h265", "vp9",
     )
 
     /** The play mode for the server's decision [verdict] ("directPlay",
@@ -57,7 +56,20 @@ object PlaybackHelper {
         else -> decide(file)
     }
 
-    fun decide(file: ItemFile): PlaybackMode {
+    /** The local decision, for when the server gives none. What this device
+     *  plays is read the way the capabilities header reads it, so the two
+     *  agree: AV1 only with a hardware decoder, DTS and TrueHD only as
+     *  [deviceAudioDecoders] claims them. */
+    fun decide(file: ItemFile): PlaybackMode = decide(file, supportsAv1(), deviceAudioDecoders(output))
+
+    /**
+     * [decide] for a device that decodes AV1 in hardware or not ([av1]) and
+     * plays [audioCodecs]. Both used to be assumed: AV1 direct played (or was
+     * remuxed) on boxes with only Android's software AV1 decoder, where 4K
+     * stutters, and DTS direct played on boxes with neither a DTS decoder nor
+     * an output that takes it, which play the film silently.
+     */
+    internal fun decide(file: ItemFile, av1: Boolean, audioCodecs: Collection<String>): PlaybackMode {
         val video = file.video_codec?.lowercase()
         val audio = file.audio_codec?.lowercase()
         val container = file.container?.lowercase()
@@ -65,8 +77,9 @@ object PlaybackHelper {
         // Audio-only files — always direct play.
         if (video.isNullOrEmpty()) return PlaybackMode.DirectPlay
 
-        val videoOk = video in directPlayVideoCodecs
-        val audioOk = audio.isNullOrEmpty() || audio in directPlayAudioCodecs
+        val av1Ok = av1 && video == "av1"
+        val videoOk = video in directPlayVideoCodecs || av1Ok
+        val audioOk = audio.isNullOrEmpty() || audio in audioCodecs
         val containerOk = container in directPlayContainers
 
         if (videoOk && audioOk && containerOk) {
@@ -74,7 +87,7 @@ object PlaybackHelper {
         }
 
         // Video codec is compatible but container or audio isn't — remux.
-        if (video in remuxVideoCodecs) {
+        if (video in remuxVideoCodecs || av1Ok) {
             return PlaybackMode.Remux
         }
 
@@ -168,6 +181,30 @@ object PlaybackHelper {
                 }
             }
         }
+    }
+
+    /** Whether a HARDWARE VP9 decoder reports Profile 2 (10-bit), the
+     *  vp9MaxBitDepth claim. Profile 2 is a decoder profile of its own: an
+     *  NVIDIA SHIELD decodes 8-bit VP9 and 10-bit HEVC in hardware, but not
+     *  10-bit VP9. Software doesn't count, as for AV1 ([supportsAv1]):
+     *  Android's own VP9 decoder reports Profile 2 there too. */
+    private fun supportsVp9Profile2(): Boolean =
+        decoderInfos.any { info ->
+            isHardware(info) && info.supportedTypes.any { type ->
+                type.equals("video/x-vnd.on2.vp9", ignoreCase = true) && try {
+                    decodesVp9Profile2(info.getCapabilitiesForType(type).profileLevels.map { it.profile })
+                } catch (e: Exception) {
+                    false
+                }
+            }
+        }
+
+    /** Whether a VP9 decoder's [profiles] (MediaCodecInfo.CodecProfileLevel)
+     *  include Profile 2, plain or HDR. */
+    internal fun decodesVp9Profile2(profiles: Collection<Int>): Boolean = profiles.any {
+        it == android.media.MediaCodecInfo.CodecProfileLevel.VP9Profile2 ||
+            it == android.media.MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR ||
+            it == android.media.MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR10Plus
     }
 
     /** Whether the device can decode HEVC (probed from the platform codec list). */
@@ -273,15 +310,20 @@ object PlaybackHelper {
      * 4K claim for the unlikely path where [initDisplayCaps] never ran (a
      * 1080p Fire TV stick used to claim maxHeight=2160 unconditionally, the
      * server then direct-played 4K files the panel couldn't show and the
-     * stick couldn't smoothly decode), HDR as the decoder allows, no DTS.
+     * stick couldn't smoothly decode), HDR as the decoder allows, no DTS. No
+     * TrueHD and no HLG either, until the output or the screen says so.
      */
     private data class Output(
         /** The audio output takes 8-channel DTS as a bitstream ([onAudioOutputChanged]). */
         val dts: Boolean = false,
+        /** The audio output takes 8-channel TrueHD as a bitstream ([onAudioOutputChanged]). */
+        val truehd: Boolean = false,
         val width: Int = 3840,
         val height: Int = 2160,
         /** The screen shows HDR10 ([displayShowsHdr10]). */
         val hdr: Boolean = true,
+        /** The screen shows HLG ([displayShowsHlg]). */
+        val hlg: Boolean = false,
     )
 
     @Volatile private var output = Output()
@@ -325,8 +367,8 @@ object PlaybackHelper {
     /**
      * The audio output changed (a receiver switched on or off, the TV's
      * surround setting, a different HDMI sink): what it takes as a bitstream
-     * decides the DTS claim, so the header is rebuilt when that changes.
-     * Registered at app start (OnScreenApp) through Media3's
+     * decides the DTS and TrueHD claims, so the header is rebuilt when that
+     * changes. Registered at app start (OnScreenApp) through Media3's
      * AudioCapabilitiesReceiver, which reads the HDMI sink the same way the
      * player's audio sink does.
      */
@@ -337,17 +379,22 @@ object PlaybackHelper {
         // takes DTS but fewer channels than a film has refuses it. With no
         // DTS decoder to fall back on, that film played silently (no audio
         // track selected, no error). 8 channels: what the header claims.
-        val dts = audio.isPassthroughPlaybackSupported(
+        fun passthrough(mime: String) = audio.isPassthroughPlaybackSupported(
             androidx.media3.common.Format.Builder()
-                .setSampleMimeType(androidx.media3.common.MimeTypes.AUDIO_DTS)
+                .setSampleMimeType(mime)
                 .setChannelCount(8)
                 .setSampleRate(48_000)
                 .build(),
             androidx.media3.common.AudioAttributes.DEFAULT,
         )
-        if (dts == output.dts) return
-        android.util.Log.i("PlaybackHelper", "audio output ${if (dts) "takes" else "doesn't take"} 8-channel DTS as a bitstream")
-        updateOutput { it.copy(dts = dts) }
+        val dts = passthrough(androidx.media3.common.MimeTypes.AUDIO_DTS)
+        val truehd = passthrough(androidx.media3.common.MimeTypes.AUDIO_TRUEHD)
+        if (dts == output.dts && truehd == output.truehd) return
+        android.util.Log.i(
+            "PlaybackHelper",
+            "audio output takes as a bitstream: 8-channel DTS ${if (dts) "yes" else "no"}, 8-channel TrueHD ${if (truehd) "yes" else "no"}",
+        )
+        updateOutput { it.copy(dts = dts, truehd = truehd) }
     }
 
     /**
@@ -357,12 +404,22 @@ object PlaybackHelper {
      * it. Most Android TV boxes (Fire TV sticks, Nvidia Shields) have no DTS
      * decoder at all, so claiming DTS only for a decoder made the server
      * convert DTS for them even with a DTS receiver attached.
+     *
+     * TrueHD plays only the second way (Android ships no TrueHD decoder), so
+     * it is claimed only for an output that takes it: a Shield on an Atmos
+     * receiver then direct-plays a Blu-ray remux's TrueHD track instead of
+     * getting it converted to AAC.
      */
-    internal fun audioDecoders(dtsDecoder: Boolean, dtsOutput: Boolean): List<String> {
+    internal fun audioDecoders(dtsDecoder: Boolean, dtsOutput: Boolean, truehdOutput: Boolean): List<String> {
         val audio = mutableListOf("aac", "mp3", "opus", "flac", "vorbis", "ac3", "eac3")
         if (dtsDecoder || dtsOutput) audio.add("dts")
+        if (truehdOutput) audio.add("truehd")
         return audio
     }
+
+    /** [audioDecoders] for this device and the output state [out]. */
+    private fun deviceAudioDecoders(out: Output): List<String> =
+        audioDecoders(hasDecoderFor("audio/vnd.dts"), out.dts, out.truehd)
 
     /**
      * Read the screen now (at app start, before any request builds the
@@ -394,7 +451,7 @@ object PlaybackHelper {
      * getCurrentDisplayModeSize reads on TVs. Claiming the UI size made the
      * server transcode every 1080p file down to 720p there.
      *
-     * And whether the screen shows HDR ([displayShowsHdr10]).
+     * And which HDR the screen shows ([displayShowsHdr10], [displayShowsHlg]).
      */
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     private fun readDisplay(context: android.content.Context) {
@@ -424,13 +481,17 @@ object PlaybackHelper {
                 sdk = android.os.Build.VERSION.SDK_INT,
             )
             val hdr = displayShowsHdr10(hdrTypes)
+            val hlg = displayShowsHlg(hdrTypes, android.os.Build.MANUFACTURER)
             val before = output
-            updateOutput { if (w > 0 && h > 0) it.copy(width = w, height = h, hdr = hdr) else it.copy(hdr = hdr) }
+            updateOutput {
+                if (w > 0 && h > 0) it.copy(width = w, height = h, hdr = hdr, hlg = hlg) else it.copy(hdr = hdr, hlg = hlg)
+            }
             if (output != before) {
                 android.util.Log.i(
                     "PlaybackHelper",
                     "screen: ${output.width}x${output.height}, HDR types ${hdrTypes?.joinToString() ?: "unknown"}: " +
-                        if (hdr) "shows HDR10" else "SDR only (HDR sources are tone-mapped by the server)",
+                        "HDR10 ${if (hdr) "yes" else "no"}, HLG ${if (hlg) "yes" else "no"} " +
+                        "(the server tone-maps HDR sources the screen doesn't show)",
                 )
             }
         } catch (_: Exception) {
@@ -449,18 +510,30 @@ object PlaybackHelper {
 
     /**
      * Whether a screen reporting [hdrTypes] ([screenHdrTypes]) shows HDR10,
-     * the server's one HDR claim (it covers HDR10, HDR10+ and HLG sources).
-     * An empty list is a screen that shows none: HDR sent to it came out
-     * washed out, grey and dim, where the server would have tone-mapped it
-     * to SDR. Null, a platform that can't say, keeps the claim the decoder
-     * allows, as before.
+     * the server's hdr claim (HDR10 and HDR10+ sources; HLG has its own,
+     * [displayShowsHlg]). An empty list is a screen that shows none: HDR
+     * sent to it came out washed out, grey and dim, where the server would
+     * have tone-mapped it to SDR. Null, a platform that can't say, keeps the
+     * claim the decoder allows, as before.
      */
     internal fun displayShowsHdr10(hdrTypes: IntArray?): Boolean =
         hdrTypes == null || hdrTypes.any { it == HDR_TYPE_HDR10 || it == HDR_TYPE_HDR10_PLUS }
 
-    /** Display.HdrCapabilities.HDR_TYPE_HDR10 / HDR_TYPE_HDR10_PLUS (API 29
-     *  for the latter; the values are what matter on older ones). */
+    /**
+     * Whether a screen reporting [hdrTypes] shows HLG, the server's hlg
+     * claim: only when it lists HLG, so a platform that can't say gets HLG
+     * tone-mapped to SDR. Never through an NVIDIA SHIELD ([manufacturer]
+     * NVIDIA), whatever the TV reports: it outputs HDR10, but sends HLG
+     * flagged as SDR, and the TV shows it as such.
+     */
+    internal fun displayShowsHlg(hdrTypes: IntArray?, manufacturer: String?): Boolean =
+        !manufacturer.equals("NVIDIA", ignoreCase = true) && hdrTypes?.contains(HDR_TYPE_HLG) == true
+
+    /** Display.HdrCapabilities.HDR_TYPE_HDR10 / HDR_TYPE_HLG /
+     *  HDR_TYPE_HDR10_PLUS (API 29 for the last; the values are what matter
+     *  on older ones). */
     private const val HDR_TYPE_HDR10 = 2
+    private const val HDR_TYPE_HLG = 3
     private const val HDR_TYPE_HDR10_PLUS = 4
 
     /** Height ceiling for transcode requests: never ask for more rows than
@@ -474,9 +547,8 @@ object PlaybackHelper {
         // DTS is probed too — claiming it unconditionally made the server pick a
         // DTS passthrough/output a box that can neither decode nor pass it on
         // couldn't play. See audioDecoders.
-        val audio = audioDecoders(hasDecoderFor("audio/vnd.dts"), out.dts)
-        val tenBit = supports10Bit()
-        return listOf(
+        val audio = deviceAudioDecoders(out)
+        val keys = listOf(
             "videoDecoder=" + video.joinToString(":"),
             "audioDecoder=" + audio.joinToString(":"),
             // Raw-audio containers must be listed too, or the server can't
@@ -489,12 +561,29 @@ object PlaybackHelper {
             "maxWidth=${out.width}",
             "maxHeight=${out.height}",
             "maxAudioChannels=8",
-            // 10-bit only when a decoder actually reports a Main10/HDR profile;
-            // HDR only when the screen shows it too. A 10-bit SDR file still
-            // plays on an SDR screen, but HDR sent to one came out washed
-            // out: the server tone-maps it instead when this says 0.
-            "maxbitdepth=" + if (tenBit) "10" else "8",
-            "hdr=" + if (tenBit && out.hdr) "1" else "0",
-        ).joinToString(",")
+        )
+        return (keys + depthAndHdrKeys(supports10Bit(), supportsVp9Profile2(), out.hdr, out.hlg)).joinToString(",")
     }
+
+    /**
+     * The header's bit-depth and HDR keys (docs/capability-profiles.md §5.1),
+     * from what the decoders report ([tenBit]: a Main10 profile,
+     * [vp9Profile2]: a hardware VP9 Profile 2 one) and what the screen shows
+     * ([hdr10], [hlg]).
+     */
+    internal fun depthAndHdrKeys(tenBit: Boolean, vp9Profile2: Boolean, hdr10: Boolean, hlg: Boolean): List<String> = listOf(
+        // 10-bit only when a decoder actually reports a Main10/HDR profile;
+        // HDR only when the screen shows it too. A 10-bit SDR file still
+        // plays on an SDR screen, but HDR sent to one came out washed
+        // out: the server tone-maps it instead when this says 0.
+        "maxbitdepth=" + if (tenBit) "10" else "8",
+        // VP9's own ceiling (the server reads maxbitdepth for HEVC only):
+        // without it the server takes 10-bit VP9 for playable wherever VP9 is.
+        "vp9MaxBitDepth=" + if (vp9Profile2) "10" else "8",
+        "hdr=" + if (tenBit && hdr10) "1" else "0",
+        // HLG answered on its own, always: without it the server lets hdr
+        // decide HLG, and an HDR10 screen isn't necessarily an HLG one (nor
+        // is any screen behind a SHIELD, see displayShowsHlg).
+        "hlg=" + if (tenBit && hlg) "1" else "0",
+    )
 }

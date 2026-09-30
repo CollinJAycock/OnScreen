@@ -183,6 +183,12 @@ class PlaybackService : MediaSessionService() {
 
     override fun onCreate() {
         super.onCreate()
+        // No notification for an IDLE player. Media3 1.6+ keeps it up after a
+        // stop or a fatal error (a resumable "paused" card) until the queue is
+        // cleared; this service instead tears down on STATE_IDLE, and while a
+        // MediaController is still bound (MiniPlayerBar) that card would
+        // linger as the ghost the IDLE handler below exists to prevent.
+        setShowNotificationForIdlePlayer(SHOW_NOTIFICATION_FOR_IDLE_PLAYER_NEVER)
         // Resolver chain, outermost first:
         //  1. queue placeholders (onscreen-item://<id>) → the file's clean
         //     stream url, fetched when ExoPlayer first opens the entry;
@@ -198,6 +204,7 @@ class PlaybackService : MediaSessionService() {
             if (id == null) dataSpec else dataSpec.withUri(Uri.parse(resolveQueueItem(id)))
         }
         val player = ExoPlayer.Builder(this, ReplayGainRenderersFactory(this, replayGain, ::tagsFor))
+            .withoutStuckDetection()
             .setMediaSourceFactory(DefaultMediaSourceFactory(dsFactory))
             .setAudioAttributes(
                 AudioAttributes.Builder()
@@ -225,8 +232,12 @@ class PlaybackService : MediaSessionService() {
      * here. The notification's buttons arrive here too, as the notification
      * controller: those are a tap on the audio's own controls and always
      * act. Returning false leaves every other key to Media3's handling.
+     *
+     * Only key-downs are judged: Media3 1.9+ hands the callback the key-up
+     * too, and a key-up starts nothing either way (Media3 consumes a media
+     * key's up without acting on it).
      */
-    private val mediaKeyBackstop = object : MediaSession.Callback {
+    private val mediaKeyBackstop = object : FullAccessSessionCallback() {
         override fun onMediaButtonEvent(
             session: MediaSession,
             controllerInfo: MediaSession.ControllerInfo,
@@ -236,6 +247,7 @@ class PlaybackService : MediaSessionService() {
             val key = androidx.core.content.IntentCompat.getParcelableExtra(
                 intent, Intent.EXTRA_KEY_EVENT, android.view.KeyEvent::class.java,
             ) ?: return false
+            if (key.action != android.view.KeyEvent.ACTION_DOWN) return false
             val player = session.player
             // "isPlaying" is the tracker's name for "a video player is up",
             // paused or not (it drives picture-in-picture).
@@ -392,10 +404,13 @@ class PlaybackService : MediaSessionService() {
 
     override fun onTaskRemoved(rootIntent: Intent?) {
         // Swiping the app away with nothing actively playing should not
-        // leave a dangling session in the system controls.
+        // leave a dangling session in the system controls. Not a bare
+        // stopSelf(): Media3 1.6+ holds the service in the foreground for 10
+        // minutes after a pause, and this also drops that hold (the pause is
+        // a no-op here — nothing is playing).
         val player = session?.player
         if (player == null || !player.playWhenReady || player.mediaItemCount == 0) {
-            stopSelf()
+            pauseAllPlayersAndStopSelf()
         }
     }
 
@@ -851,9 +866,9 @@ class PlaybackService : MediaSessionService() {
      *  Returns the url WITHOUT the credential and stashes the credential in
      *  [StreamTokenVault], which the player's data source re-attaches at
      *  request time. The token must not ride in the MediaItem uri — this is a
-     *  MediaSession player, and media3 republishes that uri into the platform
-     *  session's METADATA_KEY_MEDIA_URI where any notification-listener app
-     *  can read it. */
+     *  MediaSession player, and media3 before 1.8 republished that uri into the
+     *  platform session's METADATA_KEY_MEDIA_URI, where any notification-
+     *  listener app can read it (see StreamTokenVault). */
     private suspend fun buildDirectPlayUrl(streamPath: String, streamToken: String?): String? {
         val server = prefs.getServerUrl()?.trimEnd('/') ?: return null
         val token = if (!streamToken.isNullOrEmpty()) streamToken else prefs.getAssetToken()

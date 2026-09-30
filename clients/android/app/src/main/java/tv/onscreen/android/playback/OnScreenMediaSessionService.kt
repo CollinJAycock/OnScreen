@@ -23,6 +23,7 @@ import androidx.media3.session.MediaNotification
 import androidx.media3.session.MediaSession
 import androidx.media3.session.MediaSessionService
 import com.google.common.collect.ImmutableList
+import com.google.common.util.concurrent.ListenableFuture
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -186,7 +187,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
      * way must call startForeground within seconds or Android kills the
      * app, so go to the foreground briefly with a silent notification, then
      * stop. A plain start that isn't allowed to go to the foreground just
-     * stops.
+     * stops. (Media3 1.10+ settles its own stale restarts the same way before
+     * this runs; the taken-back case is still only ours.)
      */
     private fun settleStrayStart(startId: Int) {
         runCatching {
@@ -221,10 +223,20 @@ class OnScreenMediaSessionService : MediaSessionService() {
     /** Keep the service in the foreground for a paused player too, for
      *  [BackgroundPause.HOLD_MS]: Media3 drops it from the foreground on a
      *  pause, and Android then stops the idle background service within a
-     *  minute, releasing a player the listener meant to resume. */
-    override fun onUpdateNotification(session: MediaSession, startInForegroundRequired: Boolean) {
-        super.onUpdateNotification(session, startInForegroundRequired || holdsWhilePaused())
-    }
+     *  minute, releasing a player the listener meant to resume.
+     *
+     *  Since Media3 1.6 a player that pauses while the service holds it stays
+     *  in the foreground for 10 minutes by itself, but one parked already
+     *  paused (paused, then HOME) never played here and gets no such grace,
+     *  so the hold stays. It sits on the async variant: Media3's default
+     *  path now takes the flag passed here and ignores the one handed on to
+     *  super.onUpdateNotification, so overriding that one (as under 1.3)
+     *  would silently drop the hold. */
+    override fun onUpdateNotificationAsync(
+        session: MediaSession,
+        startInForegroundRequired: Boolean,
+    ): ListenableFuture<Void?> =
+        super.onUpdateNotificationAsync(session, startInForegroundRequired || holdsWhilePaused())
 
     /**
      * Media3's default notification, with one change. A new session decodes
@@ -240,30 +252,29 @@ class OnScreenMediaSessionService : MediaSessionService() {
     ) : MediaNotification.Provider {
         override fun createNotification(
             session: MediaSession,
-            customLayout: ImmutableList<CommandButton>,
+            mediaButtonPreferences: ImmutableList<CommandButton>,
             actionFactory: MediaNotification.ActionFactory,
             onNotificationChangedCallback: MediaNotification.Provider.Callback,
-        ): MediaNotification = base.createNotification(session, customLayout, actionFactory) { notification ->
+        ): MediaNotification = base.createNotification(session, mediaButtonPreferences, actionFactory) { notification ->
             onNotificationChangedCallback.onNotificationChanged(notification)
             if (holdsWhilePaused()) {
                 mainHandler.post {
                     if (session !== this@OnScreenMediaSessionService.session || !holdsWhilePaused()) return@post
-                    try {
-                        onUpdateNotification(session, true)
-                    } catch (e: IllegalStateException) {
-                        // Android 12+ refuses a foreground start once the app's
-                        // allowance has run out (ForegroundServiceStartNotAllowed-
-                        // Exception); Media3's own path catches it the same way.
-                        // The hold is lost: Android stops the service later and
-                        // teardown releases the player.
-                        android.util.Log.w(TAG, "could not keep the paused player in the foreground", e)
-                    }
+                    // Back through onUpdateNotificationAsync, which applies the
+                    // hold. Android 12+ may refuse the foreground start once the
+                    // app's allowance has run out; Media3 catches that on this
+                    // path itself. The hold is lost then: Android stops the
+                    // service later and teardown releases the player.
+                    triggerNotificationUpdate()
                 }
             }
         }
 
         override fun handleCustomCommand(session: MediaSession, action: String, extras: Bundle): Boolean =
             base.handleCustomCommand(session, action, extras)
+
+        override fun getNotificationChannelInfo(): MediaNotification.Provider.NotificationChannelInfo =
+            base.notificationChannelInfo
     }
 
     private fun holdsWhilePaused(): Boolean {
@@ -332,7 +343,12 @@ class OnScreenMediaSessionService : MediaSessionService() {
             itemDurationMs = { activeItemDurationMs },
             nowPlaying = { activeNowPlaying },
         )
-        val newSession = MediaSession.Builder(this, sessionPlayer).build()
+        // Full access for the platform's controllers (the assistant, the
+        // system's media controls), which Media3 1.11 would otherwise leave
+        // read-only whenever it can't vouch for them.
+        val newSession = MediaSession.Builder(this, sessionPlayer)
+            .setCallback(FullAccessSessionCallback())
+            .build()
         session = newSession
         // Register the session with the service. onGetSession only fires
         // when a *controller* connects, but the park/handoff model never

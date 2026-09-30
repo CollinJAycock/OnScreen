@@ -116,8 +116,10 @@ import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.playback.ActiveVideoTracker
 import tv.onscreen.mobile.playback.AudiobookSpeed
+import tv.onscreen.mobile.playback.FullAccessSessionCallback
 import tv.onscreen.mobile.playback.KeysOnlySessionPlayer
 import tv.onscreen.mobile.playback.PlaybackService
+import tv.onscreen.mobile.playback.withoutStuckDetection
 import tv.onscreen.mobile.ui.LocalInPipMode
 import tv.onscreen.mobile.ui.item.BookmarkFormat
 import java.util.UUID
@@ -304,7 +306,7 @@ private fun PlayerHost(
     val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
         if (serviceAudio) {
             null
-        } else ExoPlayer.Builder(context).build().apply {
+        } else ExoPlayer.Builder(context).withoutStuckDetection().build().apply {
             // DefaultDataSource dispatches by URI scheme — file://
             // routes to FileDataSource, http(s):// to the wrapped
             // DefaultHttpDataSource. The bare HTTP factory we used
@@ -545,6 +547,7 @@ private fun PlayerHost(
             }
             MediaSession.Builder(context, KeysOnlySessionPlayer(player, onScreen))
                 .setId("video-" + UUID.randomUUID())
+                .setCallback(FullAccessSessionCallback())
                 .build()
         }
         onDispose {

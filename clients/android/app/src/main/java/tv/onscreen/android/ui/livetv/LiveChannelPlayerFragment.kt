@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.playback.withoutStuckDetection
 import tv.onscreen.android.ui.common.focusableOnTv
 import tv.onscreen.android.ui.playback.PlaybackHelper
 import javax.inject.Inject
@@ -135,7 +136,7 @@ class LiveChannelPlayerFragment : Fragment() {
         val url = streamUrl ?: return
         releasePlayer()
 
-        val exo = ExoPlayer.Builder(requireContext()).build()
+        val exo = ExoPlayer.Builder(requireContext()).withoutStuckDetection().build()
         // DefaultHttpDataSource's 8 s connect / 8 s read defaults are too
         // tight for the tuner / proxy spinning up the first segment, and
         // the default load-error policy gives up after one try. Mirror the

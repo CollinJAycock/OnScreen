@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.playback
 
+import android.media.MediaCodecInfo.CodecProfileLevel
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import tv.onscreen.android.data.model.ItemFile
@@ -271,12 +272,63 @@ class PlaybackHelperTest {
 
     @Test
     fun `DTS is claimed for a decoder or an output that takes it`() {
-        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false)).doesNotContain("dts")
-        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = true, dtsOutput = false)).contains("dts")
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false, truehdOutput = false)).doesNotContain("dts")
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = true, dtsOutput = false, truehdOutput = false)).contains("dts")
         // A Fire TV or Shield (no DTS decoder) on a DTS receiver.
-        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = true)).contains("dts")
-        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false))
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = true, truehdOutput = false)).contains("dts")
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false, truehdOutput = false))
             .containsAtLeast("aac", "ac3", "eac3", "flac")
+    }
+
+    @Test
+    fun `TrueHD is claimed only for an output that takes it`() {
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = true, dtsOutput = true, truehdOutput = false))
+            .doesNotContain("truehd")
+        // A Shield on an Atmos receiver: both passed through.
+        assertThat(PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = true, truehdOutput = true))
+            .containsAtLeast("dts", "truehd")
+    }
+
+    // ── decide: the local fallback reads the device as the header does ──────
+
+    private val noPassthrough = PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false, truehdOutput = false)
+
+    private fun passesThrough(dts: Boolean = false, truehd: Boolean = false) =
+        PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = dts, truehdOutput = truehd)
+
+    @Test
+    fun `AV1 plays as-is only with a hardware AV1 decoder`() {
+        val av1 = file(container = "mkv", video = "av1", audio = "opus")
+        val av1InTs = file(container = "ts", video = "av1", audio = "aac")
+        // A Shield or an older stick (Android's software decoder only): a
+        // server transcode, not a remux, whose copied AV1 would still decode
+        // in software.
+        assertThat(PlaybackHelper.decide(av1, av1 = false, audioCodecs = noPassthrough)).isEqualTo(PlaybackMode.Transcode(1080))
+        assertThat(PlaybackHelper.decide(av1InTs, av1 = false, audioCodecs = noPassthrough)).isEqualTo(PlaybackMode.Transcode(1080))
+        assertThat(PlaybackHelper.decide(av1, av1 = true, audioCodecs = noPassthrough)).isEqualTo(PlaybackMode.DirectPlay)
+        assertThat(PlaybackHelper.decide(av1InTs, av1 = true, audioCodecs = noPassthrough)).isEqualTo(PlaybackMode.Remux)
+        // This JVM has no decoders at all.
+        assertThat(PlaybackHelper.decide(av1)).isEqualTo(PlaybackMode.Transcode(1080))
+    }
+
+    @Test
+    fun `DTS plays as-is only where it is decoded or passed through`() {
+        val dts = file(container = "mkv", video = "hevc", audio = "dts")
+        // No DTS decoder and no receiver that takes it: the audio is
+        // converted, the video copied. Direct play would have been silent.
+        assertThat(PlaybackHelper.decide(dts, av1 = false, audioCodecs = noPassthrough)).isEqualTo(PlaybackMode.Remux)
+        assertThat(PlaybackHelper.decide(dts, av1 = false, audioCodecs = passesThrough(dts = true))).isEqualTo(PlaybackMode.DirectPlay)
+        val dtsDecoder = PlaybackHelper.audioDecoders(dtsDecoder = true, dtsOutput = false, truehdOutput = false)
+        assertThat(PlaybackHelper.decide(dts, av1 = false, audioCodecs = dtsDecoder)).isEqualTo(PlaybackMode.DirectPlay)
+        // This JVM has neither.
+        assertThat(PlaybackHelper.decide(dts)).isEqualTo(PlaybackMode.Remux)
+    }
+
+    @Test
+    fun `TrueHD plays as-is only where the output takes it`() {
+        val truehd = file(container = "mkv", video = "hevc", audio = "truehd")
+        assertThat(PlaybackHelper.decide(truehd, av1 = false, audioCodecs = noPassthrough)).isEqualTo(PlaybackMode.Remux)
+        assertThat(PlaybackHelper.decide(truehd, av1 = false, audioCodecs = passesThrough(truehd = true))).isEqualTo(PlaybackMode.DirectPlay)
     }
 
     @Test
@@ -291,6 +343,58 @@ class PlaybackHelperTest {
         assertThat(PlaybackHelper.displayShowsHdr10(intArrayOf(1))).isFalse()
         // A platform that can't say keeps the old claim.
         assertThat(PlaybackHelper.displayShowsHdr10(null)).isTrue()
+    }
+
+    @Test
+    fun `HLG is claimed only for a screen that lists it, and never through a SHIELD`() {
+        assertThat(PlaybackHelper.displayShowsHlg(intArrayOf(2, 3, 4), "Hisense")).isTrue()
+        assertThat(PlaybackHelper.displayShowsHlg(intArrayOf(3), "Amazon")).isTrue()
+        // HDR10 alone, no HDR, or a platform that can't say.
+        assertThat(PlaybackHelper.displayShowsHlg(intArrayOf(2, 4), "Hisense")).isFalse()
+        assertThat(PlaybackHelper.displayShowsHlg(intArrayOf(), "Google")).isFalse()
+        assertThat(PlaybackHelper.displayShowsHlg(null, "Google")).isFalse()
+        // SHIELD sends HLG flagged as SDR whatever the TV reports.
+        assertThat(PlaybackHelper.displayShowsHlg(intArrayOf(1, 2, 3), "NVIDIA")).isFalse()
+        assertThat(PlaybackHelper.displayShowsHlg(intArrayOf(2, 3), "nvidia")).isFalse()
+        // No maker known (a blank build property): not a SHIELD.
+        assertThat(PlaybackHelper.displayShowsHlg(intArrayOf(3), null)).isTrue()
+    }
+
+    @Test
+    fun `10-bit VP9 is claimed only for a Profile 2 decoder`() {
+        // SHIELD's hardware VP9 decoder: Profile 0 only.
+        assertThat(PlaybackHelper.decodesVp9Profile2(listOf(CodecProfileLevel.VP9Profile0))).isFalse()
+        assertThat(PlaybackHelper.decodesVp9Profile2(emptyList())).isFalse()
+        // 4:4:4 (Profile 1) is 8-bit too.
+        assertThat(PlaybackHelper.decodesVp9Profile2(listOf(CodecProfileLevel.VP9Profile0, CodecProfileLevel.VP9Profile1)))
+            .isFalse()
+        assertThat(PlaybackHelper.decodesVp9Profile2(listOf(CodecProfileLevel.VP9Profile0, CodecProfileLevel.VP9Profile2)))
+            .isTrue()
+        assertThat(PlaybackHelper.decodesVp9Profile2(listOf(CodecProfileLevel.VP9Profile2HDR))).isTrue()
+        assertThat(PlaybackHelper.decodesVp9Profile2(listOf(CodecProfileLevel.VP9Profile2HDR10Plus))).isTrue()
+    }
+
+    @Test
+    fun `the depth and HDR keys answer VP9 and HLG apart`() {
+        // A SHIELD on an HDR10 TV: Main10 HEVC, 8-bit-only VP9, no HLG.
+        assertThat(PlaybackHelper.depthAndHdrKeys(tenBit = true, vp9Profile2 = false, hdr10 = true, hlg = false))
+            .containsExactly("maxbitdepth=10", "vp9MaxBitDepth=8", "hdr=1", "hlg=0").inOrder()
+        assertThat(PlaybackHelper.depthAndHdrKeys(tenBit = true, vp9Profile2 = true, hdr10 = true, hlg = true))
+            .containsExactly("maxbitdepth=10", "vp9MaxBitDepth=10", "hdr=1", "hlg=1").inOrder()
+        // A screen that shows HLG but not HDR10: hlg answers for itself.
+        assertThat(PlaybackHelper.depthAndHdrKeys(tenBit = true, vp9Profile2 = false, hdr10 = false, hlg = true))
+            .containsExactly("maxbitdepth=10", "vp9MaxBitDepth=8", "hdr=0", "hlg=1").inOrder()
+        // An 8-bit decoder claims no HDR, whatever the screen shows.
+        assertThat(PlaybackHelper.depthAndHdrKeys(tenBit = false, vp9Profile2 = false, hdr10 = true, hlg = true))
+            .containsExactly("maxbitdepth=8", "vp9MaxBitDepth=8", "hdr=0", "hlg=0").inOrder()
+    }
+
+    @Test
+    fun `the header always carries vp9MaxBitDepth and hlg`() {
+        // This JVM has no decoders and never read a screen; both keys still
+        // go out, since without them the server gates neither.
+        assertThat(PlaybackHelper.clientCapabilitiesHeader().split(","))
+            .containsAtLeast("maxbitdepth=8", "vp9MaxBitDepth=8", "hdr=0", "hlg=0")
     }
 
     @Test

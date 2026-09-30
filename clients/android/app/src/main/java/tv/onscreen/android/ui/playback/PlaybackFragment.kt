@@ -53,6 +53,7 @@ import tv.onscreen.android.data.repository.TrickplayRepository
 import tv.onscreen.android.playback.AudioItemTypes
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.withoutStuckDetection
 import tv.onscreen.android.ui.KeyEventHandler
 import tv.onscreen.android.ui.detail.DetailFragment
 import javax.inject.Inject
@@ -1156,12 +1157,20 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // user activity) means we release the flag the moment
             // the user pauses, so paused-and-walked-away doesn't
             // hold the screen forever.
+            // Video only: music and audiobooks show a still cover, and
+            // the flag kept Ambient Mode / the screensaver off for as
+            // long as they played (Play's TV app quality guideline
+            // TV-BA). The audio carries on under the screensaver: onStop
+            // parks it in the background service as for HOME.
             val window = activity?.window
-            if (isPlaying) {
+            if (isPlaying && !isAudioItem()) {
                 window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-                progressTracker?.start(arguments?.getString(ARG_ITEM_ID) ?: return, viewModel.hlsOffsetMs)
             } else {
                 window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+            }
+            if (isPlaying) {
+                progressTracker?.start(arguments?.getString(ARG_ITEM_ID) ?: return, viewModel.hlsOffsetMs)
+            } else {
                 progressTracker?.onPause()
             }
         }
@@ -1385,6 +1394,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 } else {
                     factory
                 }
+                // SingleSampleMediaSource is deprecated in Media3 (it hands the
+                // text renderer raw WebVTT); the player keeps render-time
+                // decoding on for it. See subtitleRenderersFactory.
+                @Suppress("DEPRECATION")
                 val subtitleSources = subtitleConfigurations().map { cfg ->
                     androidx.media3.exoplayer.source.SingleSampleMediaSource
                         .Factory(subFactory)
@@ -1593,6 +1606,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             androidx.media3.datasource.DefaultDataSource.Factory(ctx, DefaultHttpDataSource.Factory()),
         )
         val builder = ExoPlayer.Builder(ctx)
+            .withoutStuckDetection()
+            .setRenderersFactory(subtitleRenderersFactory(ctx))
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dsFactory),
             )
@@ -1629,6 +1644,42 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             )
         }
     }
+
+    /**
+     * The renderers ExoPlayer.Builder builds by default, with render-time
+     * ("legacy") subtitle decoding kept on in the text renderer, for the HLS
+     * side-loads in playSource. Those are SingleSampleMediaSources, which pass
+     * the renderer the raw WebVTT file; since Media3 1.4 the renderer takes
+     * only subtitles parsed during extraction unless this is on, and fails
+     * playback as soon as such a track is selected. Tracks parsed during
+     * extraction (the container's own, and direct play's side-loads through
+     * DefaultMediaSourceFactory) take the new path either way.
+     *
+     * Not swapped for the ProgressiveMediaSource that DefaultMediaSourceFactory
+     * builds for a side-load now: its lazy loading is internal to Media3, so a
+     * hand-built one makes the HLS source wait on every VTT download before it
+     * prepares, and fails the whole source when one fails. A
+     * SingleSampleMediaSource prepares at once, and
+     * setTreatLoadErrorsAsEndOfStream turns a failed VTT into an empty track.
+     * Media3 has deprecated both it and this switch; they go together when it
+     * removes them.
+     */
+    @Suppress("DEPRECATION")
+    @androidx.annotation.OptIn(androidx.media3.common.util.ExperimentalApi::class)
+    private fun subtitleRenderersFactory(ctx: android.content.Context): androidx.media3.exoplayer.RenderersFactory =
+        object : androidx.media3.exoplayer.DefaultRenderersFactory(ctx) {
+            override fun buildTextRenderers(
+                context: android.content.Context,
+                output: androidx.media3.exoplayer.text.TextOutput,
+                outputLooper: android.os.Looper,
+                extensionRendererMode: Int,
+                out: ArrayList<androidx.media3.exoplayer.Renderer>,
+            ) {
+                super.buildTextRenderers(context, output, outputLooper, extensionRendererMode, out)
+                out.filterIsInstance<androidx.media3.exoplayer.text.TextRenderer>()
+                    .forEach { it.experimentalSetLegacyDecodingEnabled(true) }
+            }
+        }
 
     private fun showSpeedPicker() {
         val labels = AudiobookSpeed.PRESETS.map { AudiobookSpeed.label(it) }.toTypedArray()

@@ -23,6 +23,11 @@ import androidx.media3.datasource.ResolvingDataSource
  * can then call `MediaSessionManager.getActiveSessions()` and read the token
  * straight out of the metadata. No OnScreen permission, no root, no ADB.
  *
+ * Media3 1.8 stopped copying that uri (the platform metadata now carries
+ * `MediaItem.RequestMetadata.mediaUri`, which this app never sets). The vault
+ * stays: a credential that never enters a MediaItem does not depend on what
+ * the bridge chooses to publish.
+ *
  * The fix is to keep the credential out of the MediaItem entirely: the player
  * only ever sees the clean URL, and [resolverFactory] appends `?token=` to the
  * outgoing [androidx.media3.datasource.DataSpec] below the player, where

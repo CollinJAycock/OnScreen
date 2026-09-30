@@ -2,6 +2,7 @@ package tv.onscreen.mobile.playback
 
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
+import androidx.media3.common.audio.AudioProcessor.StreamMetadata
 import androidx.media3.common.audio.BaseAudioProcessor
 import java.nio.ByteBuffer
 import kotlin.math.roundToInt
@@ -191,7 +192,7 @@ class ReplayGainAudioProcessor(
         return (x ushr 11).toDouble() / (1L shl 53).toDouble()
     }
 
-    override fun onFlush() {
+    override fun onFlush(streamMetadata: StreamMetadata) {
         // A flush (seek / reconfigure) keeps the stream's tags; any ramp in
         // flight just lands.
         currentGain = rampTarget

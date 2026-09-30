@@ -22,7 +22,7 @@ android {
     namespace = "tv.onscreen.android"
     // compileSdk + targetSdk track Play Console's target-API floor
     // (API 36 / Android 16 as of Aug 2026 — updates are blocked below
-    // it from Aug 30, 2026). TV surface check for 36:
+    // it from Aug 31, 2026). TV surface check for 36:
     //
     // - BACK: targeting 36 turns on the OnBackInvokedDispatcher model by
     //   default on Android 16 devices, and that is NOT gesture- or phone-only:
@@ -95,8 +95,18 @@ android {
         // problem, admin-stop handling, and removal of the dead request code.
         // 20 was built for the API-36 re-upload and may or may not have been
         // uploaded — a new code either way.
-        versionCode = 21
-        versionName = "1.3.0"
+        //
+        // 22 / 1.4.0: the Media3 1.3.1 -> 1.11 upgrade, the Match frame rate
+        // setting (the display switches to the video's rate), AV1 claimed
+        // only with a hardware decoder, DTS and TrueHD passed through to an
+        // output that takes them, HDR and HLG claimed only for a screen that
+        // shows them, the background-audio fixes from the Fire TV runs
+        // (transcoded tracks, paused tracks, a crash on a quick reopen, deep
+        // links from the background), and NVIDIA SHIELD support (no HLG or
+        // 10-bit VP9 claims, the app's own mode switch). A minor version:
+        // the new claims change what the server sends to every device.
+        versionCode = 22
+        versionName = "1.4.0"
     }
 
     // Per-store flavor split. Both stores ship the same app and code; they
@@ -263,16 +273,18 @@ dependencies {
     // quality compliance.
     implementation("androidx.tvprovider:tvprovider:1.0.0")
 
-    // Media3 / ExoPlayer
-    implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
-    implementation("androidx.media3:media3-ui-leanback:1.3.1")
+    // Media3 / ExoPlayer. Every media3 artifact is one release: bump them
+    // together through this one value, never individually.
+    val media3 = "1.11.1"
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3")
+    implementation("androidx.media3:media3-ui-leanback:$media3")
     // media3-ui (non-Leanback PlayerView) is used by the Live TV
     // channel player — its Leanback counterpart is bundled with the
     // detail-page playback machinery and doesn't fit a fullscreen
     // channel surface.
-    implementation("androidx.media3:media3-ui:1.3.1")
-    implementation("androidx.media3:media3-session:1.3.1")
+    implementation("androidx.media3:media3-ui:$media3")
+    implementation("androidx.media3:media3-session:$media3")
 
     // Networking
     implementation("com.squareup.retrofit2:retrofit:2.11.0")

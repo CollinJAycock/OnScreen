@@ -18,10 +18,14 @@ import android.view.SurfaceHolder
  *
  * - Android 11 and older (Nvidia Shield, Fire TV, most Android TV sets):
  *   the window asks for the mode itself (preferredDisplayModeId), the only
- *   way on those versions. Shield and Fire TV honour it only with their own
- *   "match frame rate" setting on. A switch blanks the HDMI picture and
- *   sound for a moment, so [match] reports when the display is back and the
- *   player holds playback until then.
+ *   way on those versions. Fire TV honours it only with its own "Match
+ *   Original Frame Rate" setting on. Shield honours it with nothing to set:
+ *   its "Match frame rate (beta)" quick setting is a manual per-playback
+ *   switch for apps that don't switch themselves, which this one doesn't
+ *   need. (Media3 turns the Shield decoder's own frame-rate conversion off,
+ *   auto-frc=0, so the mode switch is the only judder fix there.) A switch
+ *   blanks the HDMI picture and sound for a moment, so [match] reports when
+ *   the display is back and the player holds playback until then.
  * - Android 12 and later: the video surface declares its frame rate with
  *   CHANGE_FRAME_RATE_ALWAYS, and the system switches or not by the TV's
  *   "Match content frame rate" setting (Never / Seamless only / Always), a
@@ -179,8 +183,8 @@ class FrameRateSwitcher(private val activity: Activity) {
     /**
      * Waits for the display to report [modeId], then [SETTLE_MS] more for the
      * TV to show a picture again. Gives up after [NO_EVENT_MS] without any
-     * display change (the request was ignored: Shield's and Fire TV's own
-     * frame-rate setting is off), or after [SWITCH_TIMEOUT_MS] in all.
+     * display change (the request was ignored: Fire TV's own frame-rate
+     * setting is off), or after [SWITCH_TIMEOUT_MS] in all.
      */
     private inner class Waiter(private val modeId: Int, private val onReady: () -> Unit) : DisplayManager.DisplayListener {
         private var done = false

@@ -28,13 +28,18 @@ class OnScreenApp : Application(), ImageLoaderFactory, Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
-        // OSMDroid one-time init. Sets the User-Agent OSM's tile
-        // policy requires (avoid the bare "okhttp" default that
-        // gets rate-limited) and tells OSMDroid to use the app's
-        // private cache dir for tiles — no external-storage
-        // permission needed on API 29+.
+        // OSMDroid one-time init. OSM's tile usage policy wants a
+        // User-Agent that names the app and a way to reach its
+        // maintainer (osmdroid won't fetch MAPNIK tiles under its own
+        // "osmdroid" default, and a bare package name says neither
+        // which build nor who to contact). Configuration.load() is
+        // never called, so osmdroid's "<package>/<versionCode>" agent
+        // stays unset and this is the value the tile server sees.
+        // Tiles go in the app's private cache dir — no
+        // external-storage permission needed on API 29+.
         org.osmdroid.config.Configuration.getInstance().apply {
-            userAgentValue = packageName
+            userAgentValue = "OnScreen/${BuildConfig.VERSION_NAME} " +
+                "(+https://github.com/CollinJAycock/OnScreen)"
             osmdroidBasePath = cacheDir.resolve("osmdroid")
             osmdroidTileCache = cacheDir.resolve("osmdroid/tiles")
         }

@@ -126,7 +126,7 @@
     <string name="scrobbling">Scrobbling</string>
     <string name="playback_settings">Playback</string>
     <string name="match_frame_rate">Match frame rate</string>
-    <string name="match_frame_rate_hint">Switches the TV to the video\'s frame rate while it plays, so films don\'t judder. The screen goes dark for a moment as it switches. Nvidia Shield and Fire TV also need their own match frame rate setting on. On Android 12 and later, the TV\'s Match content frame rate setting decides.</string>
+    <string name="match_frame_rate_hint">Switches the TV to the video\'s frame rate while it plays, so films don\'t judder. The screen goes dark for a moment as it switches. Fire TV also needs its own Match Original Frame Rate setting on. Nvidia Shield needs nothing more. On Android 12 and later, the TV\'s Match content frame rate setting decides.</string>
     <string name="setting_on">On</string>
     <string name="setting_off">Off</string>
     <string name="change_server">Change server</string>

@@ -41,6 +41,12 @@ jobs:
       # Provides cmdline-tools + accepts SDK licenses so AGP can resolve
       # compileSdk 36 / build-tools on the runner.
       - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          # The default list starts with the long-retired "tools" package,
+          # which the runner's sdkmanager no longer finds, failing the step
+          # (and every run) since 2026-09-25. AGP fetches the platform and
+          # build-tools it needs itself.
+          packages: platform-tools
 
       # Gradle dependency + build cache (keyed on the wrapper + build files).
       - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4.4.3

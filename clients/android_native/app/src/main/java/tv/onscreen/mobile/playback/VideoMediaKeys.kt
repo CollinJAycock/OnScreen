@@ -30,12 +30,12 @@ import androidx.media3.common.Player
  * stop it. Pausing always works.
  *
  * The session exists only to take media keys. What it must not do is
- * republish the item: media3's legacy bridge copies
- * `MediaItem.localConfiguration.uri` into the platform session's
- * METADATA_KEY_MEDIA_URI (and the timeline into its queue), where any
- * notification-listener app can read it — see [StreamTokenVault]. A direct-
- * play url is clean, but a transcode or remux playlist url carries its
- * session token in the query, and an offline one is a file path. Every read
+ * republish the item: media3's legacy bridge publishes the item's metadata
+ * and the timeline (as its queue) on the platform session, and before 1.8 it
+ * copied `MediaItem.localConfiguration.uri` into METADATA_KEY_MEDIA_URI too,
+ * where any notification-listener app can read it — see [StreamTokenVault].
+ * A direct-play url is clean, but a transcode or remux playlist url carries
+ * its session token in the query, and an offline one is a file path. Every read
  * the bridge makes goes through these command checks
  * (PlayerWrapper.get…WithCommandCheck), so hiding the three commands hides the
  * item. Play/pause and seeking are untouched.

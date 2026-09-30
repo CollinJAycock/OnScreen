@@ -117,13 +117,13 @@ class ReplayGainRenderersFactory(
     override fun buildAudioSink(
         context: Context,
         enableFloatOutput: Boolean,
-        enableAudioTrackPlaybackParams: Boolean,
+        enableAudioOutputPlaybackParameters: Boolean,
     ): AudioSink =
         DefaultAudioSink.Builder(context)
             // Float output would route around custom processors entirely
             // (DefaultAudioSink only runs them on its integer-PCM path).
             .setEnableFloatOutput(false)
-            .setEnableAudioTrackPlaybackParams(enableAudioTrackPlaybackParams)
+            .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParameters)
             .setAudioProcessors(arrayOf(processor))
             .build()
 

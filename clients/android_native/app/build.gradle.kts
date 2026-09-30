@@ -61,8 +61,15 @@ android {
         // admin-stop handling, ReplayGain + gapless album queues, and removal
         // of the Search › Discover request tab. 1005 was built for the API-36
         // re-upload and may or may not have been uploaded.
-        versionCode = 1006
-        versionName = "0.2.0"
+        //
+        // 1007 / 0.3.0: the Media3 1.3.1 → 1.11.1 upgrade, the detail page
+        // refreshing in place on return with per-disc album headings, the
+        // player reopening at once over background audio, the audio player's
+        // cover and controls over playing audio, media keys during a video,
+        // and the watch-limit check on that fast reopen. 1006 exists as more
+        // than one build, so 1007 is the next clean code.
+        versionCode = 1007
+        versionName = "0.3.0"
     }
 
     signingConfigs {
@@ -175,10 +182,12 @@ dependencies {
     ksp("androidx.hilt:hilt-compiler:1.2.0")
 
     // Media3 / ExoPlayer — same versions as the TV client so the
-    // transcode + HLS path stays identical.
-    implementation("androidx.media3:media3-exoplayer:1.3.1")
-    implementation("androidx.media3:media3-exoplayer-hls:1.3.1")
-    implementation("androidx.media3:media3-ui:1.3.1")
+    // transcode + HLS path stays identical. Every media3 artifact moves
+    // together: mixing versions fails at runtime, not at compile time.
+    val media3 = "1.11.1"
+    implementation("androidx.media3:media3-exoplayer:$media3")
+    implementation("androidx.media3:media3-exoplayer-hls:$media3")
+    implementation("androidx.media3:media3-ui:$media3")
     // media3-session powers the background-audio MediaSessionService:
     // it owns the audio player, publishes a MediaSession (lockscreen /
     // Bluetooth / Android Auto controls + the OS now-playing widget),
@@ -186,7 +195,7 @@ dependencies {
     // manages the foreground-service promotion itself — the service goes
     // foreground while the UI is foreground (playback starts on a tap),
     // avoiding the start-FGS-on-teardown crash the old handoff hit.
-    implementation("androidx.media3:media3-session:1.3.1")
+    implementation("androidx.media3:media3-session:$media3")
 
     // Google Cast SDK — `MediaRouteButton` for the Cast picker, plus
     // `CastContext` / `CastSession` for sending LOAD requests to the

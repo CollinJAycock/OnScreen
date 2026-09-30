@@ -13,7 +13,7 @@
 
   <main class="content">
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated: 2026-05-04</p>
+    <p class="updated">Last updated: 2026-09-30</p>
 
     <p>
       OnScreen is an open-source, self-hosted media server. This policy
@@ -79,7 +79,12 @@
       <li>
         on Android TV, the operating system's <code>WatchNextPrograms</code>
         content provider, which integrates with your TV launcher's
-        "Continue Watching" row. This data stays on your device.
+        "Continue Watching" row. This data stays on your device,
+      </li>
+      <li>
+        the two third-party services described under
+        <a href="#third-party-services">Third-party services</a> below,
+        for Chromecast and for the photo map.
       </li>
     </ul>
 
@@ -112,13 +117,41 @@
       data.
     </p>
 
-    <h2>Third-party services</h2>
+    <h2 id="third-party-services">Third-party services</h2>
 
     <p>
-      The clients do not contain advertising SDKs, analytics SDKs, crash
-      reporting services, or any third-party libraries that send data
-      outside your device. The full list of dependencies is visible in
-      the project's source code.
+      The clients contain no advertising, analytics or crash-reporting
+      SDKs. Two features reach services run by others:
+    </p>
+
+    <ul>
+      <li>
+        <strong>Chromecast (Google Cast).</strong> The web app loads
+        Google's Cast sender library from <code>gstatic.com</code> on the
+        player page, and the Android phone app includes Google Play
+        services' Cast framework. To find and control cast devices, the
+        Cast framework sends Google diagnostic information about device
+        discovery and cast sessions, and about the device and the app. The
+        developer receives none of it, and it can't be turned off in the
+        app. Google handles it under the
+        <a href="https://policies.google.com/privacy" target="_blank" rel="noopener noreferrer">Google
+        Privacy Policy</a>. The Android TV app doesn't include Cast.
+      </li>
+      <li>
+        <strong>Photo map (OpenStreetMap).</strong> When you open the map
+        of your photos in the web or Android phone app, map tiles are
+        fetched from the OpenStreetMap Foundation's tile servers
+        (<code>tile.openstreetmap.org</code>). Those servers see your IP
+        address and which map areas you view, not your photos or their
+        locations. See the
+        <a href="https://osmfoundation.org/wiki/Privacy_Policy" target="_blank" rel="noopener noreferrer">OSMF
+        Privacy Policy</a>.
+      </li>
+    </ul>
+
+    <p>
+      The full list of dependencies is visible in the project's source
+      code.
     </p>
 
     <h2>Account and data deletion</h2>

@@ -17,7 +17,10 @@ import androidx.media3.datasource.ResolvingDataSource
  * into `METADATA_KEY_MEDIA_URI` on the active platform session, where any app
  * the user enabled as a notification listener (or any MEDIA_CONTENT_CONTROL
  * holder) can read it via `MediaSessionManager.getActiveSessions()` — and the
- * fallback credential is the 24 h user-wide purpose=asset token.
+ * fallback credential is the 24 h user-wide purpose=asset token. (Media3 1.8
+ * stopped copying that uri; the platform metadata now carries only
+ * `RequestMetadata.mediaUri`, which these items don't set. The vault stays as
+ * defence in depth: nothing downstream of the player needs the credential.)
  *
  * The MediaItem therefore only ever carries the clean URL; [resolverFactory]
  * appends `?token=` to the outgoing DataSpec below the player, where nothing

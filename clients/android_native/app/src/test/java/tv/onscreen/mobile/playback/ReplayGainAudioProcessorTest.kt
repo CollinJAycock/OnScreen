@@ -2,6 +2,7 @@ package tv.onscreen.mobile.playback
 
 import androidx.media3.common.C
 import androidx.media3.common.audio.AudioProcessor.AudioFormat
+import androidx.media3.common.audio.AudioProcessor.StreamMetadata
 import com.google.common.truth.Truth.assertThat
 import org.junit.Test
 import java.nio.ByteBuffer
@@ -22,7 +23,7 @@ class ReplayGainAudioProcessorTest {
         tags: ReplayGainInfo? = null,
     ) = ReplayGainAudioProcessor(dither = dither).apply {
         configure(format)
-        flush()
+        flush(StreamMetadata.DEFAULT)
         setSettings(settings)
         setStreamTags(tags)
     }
@@ -146,11 +147,11 @@ class ReplayGainAudioProcessorTest {
     fun `encodings it does not scale leave the stage inactive`() {
         val p = ReplayGainAudioProcessor()
         p.configure(AudioFormat(44_100, 2, C.ENCODING_PCM_24BIT))
-        p.flush()
+        p.flush(StreamMetadata.DEFAULT)
         assertThat(p.isActive).isFalse()
         val q = ReplayGainAudioProcessor()
         q.configure(stereo16)
-        q.flush()
+        q.flush(StreamMetadata.DEFAULT)
         assertThat(q.isActive).isTrue()
     }
 
@@ -158,7 +159,7 @@ class ReplayGainAudioProcessorTest {
     fun `a flush keeps the stream's tags`() {
         val p = processor(tags = ReplayGainInfo(trackGain = -6.0, trackPeak = 0.9))
         p.run16(listOf(1000, 1000))
-        p.flush() // e.g. a seek within the track
+        p.flush(StreamMetadata.DEFAULT) // e.g. a seek within the track
         assertThat(p.run16(listOf(10000, 10000))).isEqualTo(List(2) { (10000 * db(-6.0)).roundToInt() })
     }
 
@@ -167,7 +168,7 @@ class ReplayGainAudioProcessorTest {
         val seen = mutableListOf<Double?>()
         val p = ReplayGainAudioProcessor(dither = false, onAppliedChanged = { seen += it }).apply {
             configure(stereo16)
-            flush()
+            flush(StreamMetadata.DEFAULT)
             setSettings(ReplayGainAudioProcessor.Settings(ReplayGainMode.TRACK, 0.0))
             setStreamTags(ReplayGainInfo(trackGain = -6.2, trackPeak = 0.9))
         }

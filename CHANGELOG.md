@@ -336,14 +336,23 @@ Roku channel (no request features, as on Android):
   requests the mode and holds playback until the TV shows a picture again,
   and the TV goes back to its usual mode when the player closes; moving on
   to the next episode keeps the mode a few seconds longer, so it doesn't
-  blank the screen twice. Shield and Fire TV apply the request only with
-  their own "match frame rate" setting on (playback then starts after a
-  moment). On Android 12 and later the TV's Match content frame rate setting
+  blank the screen twice. Fire TV applies the request only with its own
+  Match Original Frame Rate setting on (playback then starts after a
+  moment); Nvidia Shield needs no setting of its own. On Android 12 and later the TV's Match content frame rate setting
   decides. A new Settings switch, Playback > Match frame rate (on by
   default), turns it off.
 - **`frame_rate` on item files.** `GET /api/v1/items/{id}` now includes each
   file's probed frame rate, so a TV client can switch the display before the
   player has loaded the stream.
+- **Capability keys `hlg` and `vp9MaxBitDepth`.** An HDR10 screen isn't
+  necessarily an HLG one (NVIDIA SHIELD sends HLG flagged as SDR: a dark,
+  green picture), and a device that decodes 8-bit VP9 may not decode 10-bit
+  VP9 (Profile 2). With `hlg=0` an HLG source is transcoded and tone-mapped
+  to SDR, as HDR is for an `hdr=0` client; with `vp9MaxBitDepth=8` a 10-bit
+  VP9 source is transcoded. A client that sends neither key is decided
+  exactly as before. The grammar is in
+  [docs/capability-profiles.md](docs/capability-profiles.md) §5.1, and Now
+  Playing shows both reasons.
 
 ### Changed
 
@@ -372,6 +381,44 @@ Roku channel (no request features, as on Android):
   a bitstream at the channel count the app claims (8, so a 7.1 DTS-HD film
   can't play silently on an output limited to fewer), and the claim follows
   the output as it changes (a receiver switched off).
+- **Both Android apps: Media3 1.11.1** (from 1.3.1). Amazon recommends 1.5.1
+  or later, and with Media3 1.9 a DTS-HD MA or DTS:X track in an MKV reaches
+  a receiver in full instead of as its DTS core. Where 1.11 changed a
+  behaviour the apps rely on, they keep the old one. System controllers
+  (remote and headset keys, Assistant, Bluetooth, watches, cars) keep full
+  access to the player. The new stuck-player detectors are off: they would
+  end a VBR MP3 whose header under-reports its length a minute past that
+  length, and a book or album paused by a phone call longer than 10
+  minutes. A paused TV book stays resumable in the background. The phone
+  shows no notification for a stopped player, and swiping the app away
+  pauses and stops its audio. The TV app's subtitles for HLS streams use
+  Media3's legacy decoding, which 1.4 and later need for subtitles loaded
+  beside the stream. Upstream's retuned buffering (playback starts after
+  1 s buffered instead of 2.5 s) is taken as is, except on low-memory TVs,
+  which keep their own.
+- **Android TV on NVIDIA SHIELD.** SHIELD shows HDR10 but sends HLG flagged
+  as SDR, and hardware-decodes 8-bit VP9 but not 10-bit. The TV app now
+  sends `hlg=1` only for a screen that lists HLG, and never from an NVIDIA
+  device, so HLG is tone-mapped to SDR instead of shown dark and green. It
+  sends `vp9MaxBitDepth=10` only for a hardware VP9 Profile 2 decoder, so
+  10-bit VP9 is transcoded instead of decoded on the CPU. Both keys are
+  sent on every device.
+- **Android TV sends Dolby TrueHD / Atmos to a receiver that takes it.**
+  Android has no TrueHD decoder, so TrueHD was always converted. It is now
+  claimed when the HDMI output takes 8-channel TrueHD as a bitstream, and
+  the claim follows the output. The server remuxes TrueHD in an MPEG-TS
+  file (`.m2ts`) for a client that claims it, converting the audio,
+  because Media3 can't read TrueHD out of TS.
+- **Android TV's own play decision, used when the server's is unavailable,
+  matches its header.** It direct-played AV1 without a hardware AV1
+  decoder, and DTS with neither a DTS decoder nor an output that takes it
+  (a silent film). It now asks the server to transcode, or remuxes with
+  converted audio.
+- **Android TV keeps the screen on only for video.** Music and audiobooks
+  held the screen on for as long as they played, so the screensaver or
+  Ambient Mode never started (Play's TV quality guideline TV-BA). Now the
+  screensaver starts as usual and the audio keeps playing, handed to the
+  background service as on HOME.
 - **webOS requests up to 2160** on transcode start (was hardcoded 1080 —
   which also forced the server to downscale-transcode every 4K source
   instead of direct-playing it).
@@ -593,6 +640,20 @@ Roku channel (no request features, as on Android):
   season or album, as the TV app's already did.
 - **Web home tiles wider than their posters** when a title or Next Up
   subtitle was long.
+- **The privacy page names the third parties a client can reach.** It said
+  no library in the clients sends data off the device, but the web player
+  loads Google's Cast sender script, the phone app's Cast framework reports
+  diagnostics to Google, and the photo map loads its tiles from
+  OpenStreetMap. A new "Third-party services" section lists them, with links
+  to their privacy policies (the TV app has no Cast).
+- **The phone's photo map follows OpenStreetMap's tile policy.** It showed
+  no attribution and identified itself to the tile servers only by package
+  name. It now shows "© OpenStreetMap contributors", linked to OSM's
+  copyright page, and sends "OnScreen/<version>" with the project's URL.
+- **Android CI failed at SDK setup since 2026-09-25.** The setup action's
+  default package list starts with the retired `tools` package, which the
+  SDK manager no longer serves; the phone and TV workflows now install only
+  `platform-tools` and let the Android Gradle plugin fetch the rest.
 
 ## [v2.4.0] — 2026-08-05
 

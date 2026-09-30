@@ -1,16 +1,29 @@
 package tv.onscreen.mobile.ui.photo
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.Marker
 import tv.onscreen.mobile.data.model.PhotoMapPoint
+
+private const val OSM_COPYRIGHT_URL = "https://www.openstreetmap.org/copyright"
 
 /**
  * OpenStreetMap-backed map view, wrapped for Compose.
@@ -32,6 +45,12 @@ import tv.onscreen.mobile.data.model.PhotoMapPoint
  * phone client a single user browsing their own geotagged photos
  * is well under the threshold; if traffic ever justifies it we can
  * swap [TileSourceFactory.MAPNIK] for a self-hosted tile-server URL.
+ * The same policy rules out bulk prefetching: MAPNIK's TileSourcePolicy
+ * makes osmdroid's CacheManager refuse it and keeps the pre-cache off
+ * the network, so tiles are only fetched as the viewport shows them
+ * and then served from osmdroid's on-disk cache — don't add an area
+ * download here. It also requires visible attribution: the label
+ * drawn over the map.
  */
 @Composable
 fun OsmMap(
@@ -40,6 +59,7 @@ fun OsmMap(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val uriHandler = LocalUriHandler.current
     // remember holds one MapView for the composition lifetime; the
     // factory recompose path below would otherwise create a new
     // MapView on every emission and leak tile-fetcher threads.
@@ -53,60 +73,79 @@ fun OsmMap(
         }
     }
 
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx ->
-            mapView.apply {
-                setTileSource(TileSourceFactory.MAPNIK)
-                setMultiTouchControls(true)
-                setZoomLevel(2.0)
-                setBuiltInZoomControls(false)
-            }
-        },
-        update = { view ->
-            // Recompute markers when the points list changes. We
-            // clear-and-rebuild rather than diffing because the marker
-            // count is bounded (server caps the /photos/map response)
-            // and the diff cost would dwarf the rebuild on a phone.
-            view.overlays.clear()
-            points.forEach { p ->
-                val marker = Marker(view).apply {
-                    position = GeoPoint(p.lat, p.lon)
-                    setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
-                    title = p.taken_at ?: ""
-                    setOnMarkerClickListener { _, _ ->
-                        onMarkerTap(p)
-                        true
+    Box(modifier = modifier) {
+        AndroidView(
+            modifier = Modifier.fillMaxSize(),
+            factory = { ctx ->
+                mapView.apply {
+                    setTileSource(TileSourceFactory.MAPNIK)
+                    setMultiTouchControls(true)
+                    setZoomLevel(2.0)
+                    setBuiltInZoomControls(false)
+                }
+            },
+            update = { view ->
+                // Recompute markers when the points list changes. We
+                // clear-and-rebuild rather than diffing because the marker
+                // count is bounded (server caps the /photos/map response)
+                // and the diff cost would dwarf the rebuild on a phone.
+                view.overlays.clear()
+                points.forEach { p ->
+                    val marker = Marker(view).apply {
+                        position = GeoPoint(p.lat, p.lon)
+                        setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                        title = p.taken_at ?: ""
+                        setOnMarkerClickListener { _, _ ->
+                            onMarkerTap(p)
+                            true
+                        }
+                    }
+                    view.overlays.add(marker)
+                }
+                // Auto-zoom to the bounding box of the markers so the
+                // user lands on something visible. Single point → city-
+                // level zoom; many points → zoomToBoundingBox sizes the
+                // viewport to fit them all.
+                if (points.isNotEmpty()) {
+                    val controller = view.controller
+                    if (points.size == 1) {
+                        controller.setZoom(13.0)
+                        controller.setCenter(GeoPoint(points[0].lat, points[0].lon))
+                    } else {
+                        val lats = points.map { it.lat }
+                        val lons = points.map { it.lon }
+                        val box = org.osmdroid.util.BoundingBox(
+                            lats.max(), lons.max(),
+                            lats.min(), lons.min(),
+                        )
+                        // Defer until layout settles so the BoundingBox
+                        // calculation has real dimensions; otherwise
+                        // zoomToBoundingBox is a no-op on the first paint.
+                        view.post {
+                            view.zoomToBoundingBox(box, false, 64)
+                        }
                     }
                 }
-                view.overlays.add(marker)
-            }
-            // Auto-zoom to the bounding box of the markers so the
-            // user lands on something visible. Single point → city-
-            // level zoom; many points → zoomToBoundingBox sizes the
-            // viewport to fit them all.
-            if (points.isNotEmpty()) {
-                val controller = view.controller
-                if (points.size == 1) {
-                    controller.setZoom(13.0)
-                    controller.setCenter(GeoPoint(points[0].lat, points[0].lon))
-                } else {
-                    val lats = points.map { it.lat }
-                    val lons = points.map { it.lon }
-                    val box = org.osmdroid.util.BoundingBox(
-                        lats.max(), lons.max(),
-                        lats.min(), lons.min(),
-                    )
-                    // Defer until layout settles so the BoundingBox
-                    // calculation has real dimensions; otherwise
-                    // zoomToBoundingBox is a no-op on the first paint.
-                    view.post {
-                        view.zoomToBoundingBox(box, false, 64)
-                    }
-                }
-            }
-            view.invalidate()
-        },
-    )
+                view.invalidate()
+            },
+        )
+        // OSM's attribution guidelines: "© OpenStreetMap contributors" on
+        // the map, linked to the copyright page. A Compose label rather
+        // than osmdroid's CopyrightOverlay, which paints bare text onto
+        // the canvas and can't carry the link. The tiles are light in
+        // either app theme, so the box is white in both.
+        Text(
+            "© OpenStreetMap contributors",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.Black,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .background(Color.White.copy(alpha = 0.8f))
+                // openUri throws on a phone with no browser; the label
+                // just does nothing there.
+                .clickable { runCatching { uriHandler.openUri(OSM_COPYRIGHT_URL) } }
+                .padding(horizontal = 6.dp, vertical = 2.dp),
+        )
+    }
 }
 
