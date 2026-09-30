@@ -1314,7 +1314,14 @@ var andWordRE = regexp.MustCompile(`\s+(and|&)\s+`)
 // or to its digits alone; SameTitle compares those letters too, or every
 // such title would be the same as every other.
 func SameTitle(a, b string) bool {
-	return normalizeTitle(a) == normalizeTitle(b) && otherScriptLetters(a) == otherScriptLetters(b)
+	return titleKeyOf(a) == titleKeyOf(b)
+}
+
+// titleKey is a title as SameTitle compares it.
+type titleKey struct{ latin, other string }
+
+func titleKeyOf(s string) titleKey {
+	return titleKey{latin: normalizeTitle(s), other: otherScriptLetters(s)}
 }
 
 // otherScriptLetters returns the letters of s that normalizeTitle drops for
@@ -1571,6 +1578,11 @@ func (s *Service) FindOrCreateHierarchyItem(ctx context.Context, p CreateItemPar
 // tags disagree, an album whose numbers are being filled in by a rescan —
 // and the first one in index order must not take a file that plainly
 // belongs to the other.
+//
+// Titles compare as SameTitle has them. normalizeTitle alone folds a title
+// in another script ("東京", "Кино") to nothing, so each such sibling
+// matched every other by title: every file of a Japanese album resolved to
+// its first track, and every Japanese album of an artist to the first one.
 func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *Item {
 	if p.ParentID != nil {
 		// Parented item: search among siblings.
@@ -1578,7 +1590,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 		if err != nil {
 			return nil
 		}
-		normP := normalizeTitle(p.Title) // loop-invariant; hoist out (see findItemByTitle)
+		pKey := titleKeyOf(p.Title) // loop-invariant; hoist out (see findItemByTitle)
 		pDisc := TrackDisc(p.DiscNumber)
 		var partial *Item
 		for i := range children {
@@ -1591,7 +1603,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 			byIndex := p.Index != nil && c.Index != nil && *c.Index == *p.Index &&
 				TrackDisc(c.DiscNumber) == pDisc
 			// Title matching covers named items and unnumbered rows.
-			byTitle := p.Title != "" && normalizeTitle(c.Title) == normP &&
+			byTitle := p.Title != "" && titleKeyOf(c.Title) == pKey &&
 				(c.DiscNumber == nil || *c.DiscNumber == pDisc)
 			if byIndex && byTitle {
 				return c

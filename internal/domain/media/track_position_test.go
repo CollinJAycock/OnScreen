@@ -93,6 +93,37 @@ func TestFindOrCreateHierarchyItem_PreDiscRows(t *testing.T) {
 	}
 }
 
+// normalizeTitle folds a title in another script to nothing, so each such
+// sibling used to be a title match for every other: on a fresh scan every
+// file of a Japanese album resolved to its first track, and every Japanese
+// album of an artist to the first album.
+func TestFindOrCreateHierarchyItem_OtherScriptTitlesDontFold(t *testing.T) {
+	svc, q := newService(t)
+	album := uuid.New()
+	first := seedTrack(q, album, "東京", intp(1), intp(1))
+
+	if got := findTrack(t, svc, album, "大阪", intp(1), intp(2)); got.ID == first.ID {
+		t.Fatal("track 2 matched track 1 by a title that folds to nothing")
+	}
+	// A track's own title still finds it.
+	if got := findTrack(t, svc, album, "東京", intp(1), nil); got.ID != first.ID {
+		t.Error("an unnumbered file did not find its track by its own title")
+	}
+
+	artist := uuid.New()
+	stored := Item{ID: uuid.New(), Type: "album", Title: "東京", ParentID: &artist}
+	q.items[stored.ID] = stored
+	got, err := svc.FindOrCreateHierarchyItem(context.Background(), CreateItemParams{
+		Type: "album", Title: "大阪", ParentID: &artist,
+	})
+	if err != nil {
+		t.Fatalf("FindOrCreateHierarchyItem(album): %v", err)
+	}
+	if got.ID == stored.ID {
+		t.Error("an album matched the artist's other album by a title that folds to nothing")
+	}
+}
+
 // When two siblings share a number, the one that also has the file's title
 // is the file's track — not whichever sorts first.
 func TestFindOrCreateHierarchyItem_ExactMatchBeatsNumberOnly(t *testing.T) {

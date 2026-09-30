@@ -15,6 +15,7 @@ package main
 import (
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"log/slog"
 	"os"
@@ -478,6 +479,58 @@ func TestTrackPosition_Integration_RescanSplitsFoldedTracks(t *testing.T) {
 			}
 		})
 	}
+
+	// Titles in another script fold to nothing under normalizeTitle, so the
+	// title match used to hang every file of such an album on its first
+	// track, even on a fresh scan. A rescan splits that fold too.
+	t.Run("titles in another script", func(t *testing.T) {
+		sc := scanner.New(media.NewService(adapter, adapter, logger), nil, fileConc(2), logger)
+		root := t.TempDir()
+		names := []string{"東京", "大阪", "京都"}
+		for i, title := range names {
+			writeVorbisFLAC(t, filepath.Join(root, "Artist", "日本", fmt.Sprintf("%02d - %s.flac", i+1, title)),
+				"TITLE="+title, "ARTIST=Artist", "ALBUM=日本", fmt.Sprintf("TRACKNUMBER=%d", i+1))
+		}
+		lib, err := q.CreateLibrary(ctx, gen.CreateLibraryParams{
+			Name: "Music in another script", Type: "music", ScanPaths: []string{root},
+			Agent: "tmdb", Language: "en", ScanInterval: time.Hour, MetadataRefreshInterval: 24 * time.Hour,
+		})
+		if err != nil {
+			t.Fatalf("create library: %v", err)
+		}
+		scan := func(label string) {
+			t.Helper()
+			if _, err := sc.ScanLibrary(ctx, lib.ID, "music", []string{root}); err != nil {
+				t.Fatalf("%s: scan: %v", label, err)
+			}
+		}
+		file := func(i int) string { return fmt.Sprintf("%02d - %s.flac", i+1, names[i]) }
+
+		scan("import")
+		got := trackFiles(t, pool, lib.ID, "import")
+		for i, title := range names {
+			expectFile(t, "import", got, file(i), title, -1, int32(i+1), 1)
+		}
+
+		// Fold the album onto its first track.
+		first := got[file(0)].itemID
+		for i := 1; i < len(names); i++ {
+			other := got[file(i)].itemID
+			if _, err := pool.Exec(ctx, `UPDATE media_files SET media_item_id = $1 WHERE media_item_id = $2`, first, other); err != nil {
+				t.Fatalf("fold: %v", err)
+			}
+			if _, err := pool.Exec(ctx, `DELETE FROM media_items WHERE id = $1`, other); err != nil {
+				t.Fatalf("fold: %v", err)
+			}
+		}
+		expectFile(t, "folded", trackFiles(t, pool, lib.ID, "folded"), file(1), names[0], -1, 1, 3)
+
+		scan("rescan")
+		after := trackFiles(t, pool, lib.ID, "rescan")
+		for i, title := range names {
+			expectFile(t, "rescan", after, file(i), title, -1, int32(i+1), 1)
+		}
+	})
 }
 
 // Two unnumbered tracks of an album that never learned its disc count, each
