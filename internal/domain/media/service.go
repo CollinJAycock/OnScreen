@@ -267,6 +267,10 @@ type Querier interface {
 	// UpdateMediaItemTitle rewrites only an item's title and sort title,
 	// leaving the fields UpdateMediaItemMetadata would overwrite alone.
 	UpdateMediaItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error
+	// UpdateMediaItemDuration and UpdateMediaItemPosterPath set one column
+	// each, for the same reason.
+	UpdateMediaItemDuration(ctx context.Context, id uuid.UUID, durationMS int64) error
+	UpdateMediaItemPosterPath(ctx context.Context, id uuid.UUID, posterPath string) error
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
@@ -1510,6 +1514,27 @@ func (s *Service) ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUI
 func (s *Service) UpdateItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error {
 	if err := s.rw.UpdateMediaItemTitle(ctx, id, title, sortTitle); err != nil {
 		return fmt.Errorf("update item title %s: %w", id, err)
+	}
+	return nil
+}
+
+// UpdateItemDuration sets an item's duration and nothing else: the scanner's
+// write when a probe finds a track's length changed. Through
+// UpdateItemMetadata, with only a title and a duration to give, it blanked
+// the track's year, genres, tags and artist.
+func (s *Service) UpdateItemDuration(ctx context.Context, id uuid.UUID, durationMS int64) error {
+	if err := s.rw.UpdateMediaItemDuration(ctx, id, durationMS); err != nil {
+		return fmt.Errorf("update item duration %s: %w", id, err)
+	}
+	return nil
+}
+
+// UpdateItemPosterPath sets an item's poster path and nothing else: the
+// scanner's write of a photo's own file, or a book's cover, as its poster.
+// Same reason as UpdateItemDuration.
+func (s *Service) UpdateItemPosterPath(ctx context.Context, id uuid.UUID, posterPath string) error {
+	if err := s.rw.UpdateMediaItemPosterPath(ctx, id, posterPath); err != nil {
+		return fmt.Errorf("update item poster %s: %w", id, err)
 	}
 	return nil
 }

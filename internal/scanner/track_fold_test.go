@@ -173,6 +173,7 @@ func TestProcessMusicHierarchy_RetitlesTrackAtItsPosition(t *testing.T) {
 		stored      string // the row's title
 		index, disc *int   // the row's position
 		fillRefused bool   // the row's disc can't be filled in
+		notFolded   bool   // the row held one file when the scan started
 		comments    []string
 		want        string // "" = no retitle
 	}{
@@ -194,6 +195,9 @@ func TestProcessMusicHierarchy_RetitlesTrackAtItsPosition(t *testing.T) {
 			comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
 		{name: "no number in the tags", stored: "Beta", index: ip(1), disc: ip(1),
 			comments: []string{"TITLE=Alpha"}},
+		// A title set in the metadata editor survives a re-read of its file.
+		{name: "a row that wasn't folded keeps its title", stored: "My Title", index: ip(1), disc: ip(1),
+			notFolded: true, comments: []string{"TITLE=Alpha", "TRACKNUMBER=1", "DISCNUMBER=1"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
@@ -213,7 +217,12 @@ func TestProcessMusicHierarchy_RetitlesTrackAtItsPosition(t *testing.T) {
 				return nil
 			}
 
-			got, _, err := newTestScanner(svc).processMusicHierarchy(context.Background(), uuid.New(), path, []string{root})
+			sc := newTestScanner(svc)
+			libraryID := uuid.New()
+			if !tc.notFolded {
+				sc.foldedTracks.Store(libraryID, &trackSet{ids: map[uuid.UUID]struct{}{existing.ID: {}}})
+			}
+			got, _, err := sc.processMusicHierarchy(context.Background(), libraryID, path, []string{root})
 			if err != nil {
 				t.Fatalf("processMusicHierarchy: %v", err)
 			}

@@ -400,6 +400,37 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **Multi-disc albums an older scan folded now split on the next scan.** A
+  scanner that matched tracks by number alone hung disc 2's track 1 on disc
+  1's (The Beatles' "The Beatles" came out as 17 tracks, Piggies playing
+  Revolution 9). New scans were already right, but an unchanged file skips
+  the tag read, so old folds never split. A music scan now re-reads the
+  files of any track holding several, once per server start, moves each to
+  its own disc and track, and gives the disc 1 row back its own title. No
+  migration: run a music library scan after upgrading.
+- **Albums with titles in another script no longer merge.** Title matching
+  dropped everything but Latin letters, so every Japanese, Cyrillic or Greek
+  title matched every other: a Japanese album came in as one track, and an
+  artist's non-Latin albums as one album.
+- **A scan no longer blanks metadata when it records a length or a cover.**
+  The scanner's update of a track's changed length, and of a photo's or a
+  book's cover, went through the full metadata write, which cleared the
+  year, genres, tags and artist (a book's author and summary) it wasn't
+  given. They now touch only their own column.
+- **Phone: a book or album page no longer flashes "No playable files".**
+  Coming back to a page from the player reloaded it from scratch, and a book
+  made of chapter files looked unplayable until its chapters loaded. The
+  page now refreshes in place, and Play shows a small spinner until it
+  knows where to start. Multi-disc albums get "Disc 1 / Disc 2" headings.
+- **Phone: the full player opens at once over audio already playing.** It
+  waited on five network calls in a row (several seconds on a slow link,
+  with taps lost) for an item the background service was already playing;
+  it now shows the controls straight away and loads the rest alongside.
+- **Phone: a headset or Bluetooth key during a video controls the video.**
+  The app's only media session was the audio service's, so a play key
+  during a video restarted a finished or paused audiobook underneath it,
+  paused the video, and reset the book's resume point. Video now has its
+  own session, which starts playback only while its screen is up.
 - **Android TV background audio, from a hardware test run.** Found on a
   Fire TV Stick while testing the session hand-off:
   - Reopening an item while its own player was on screen (a deep link, a

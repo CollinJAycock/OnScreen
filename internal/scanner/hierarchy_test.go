@@ -157,6 +157,20 @@ func (m *mockMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateI
 	return nil, errors.New("not found")
 }
 
+func (m *mockMediaService) UpdateItemDuration(_ context.Context, id uuid.UUID, durationMS int64) error {
+	if it, ok := m.items[id]; ok {
+		it.DurationMS = &durationMS
+	}
+	return nil
+}
+
+func (m *mockMediaService) UpdateItemPosterPath(_ context.Context, id uuid.UUID, posterPath string) error {
+	if it, ok := m.items[id]; ok {
+		it.PosterPath = &posterPath
+	}
+	return nil
+}
+
 func (m *mockMediaService) UpdateItemLyrics(_ context.Context, _ uuid.UUID, _, _ *string) error {
 	return nil
 }

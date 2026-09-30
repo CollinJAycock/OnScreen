@@ -145,6 +145,14 @@ func (a *mediaAdapter) ListFoldedTrackItemIDs(ctx context.Context, libraryID uui
 	return a.q.ListFoldedTrackItemIDs(ctx, libraryID)
 }
 
+func (a *mediaAdapter) UpdateMediaItemDuration(ctx context.Context, id uuid.UUID, durationMS int64) error {
+	return a.q.UpdateMediaItemDuration(ctx, gen.UpdateMediaItemDurationParams{ID: id, DurationMs: &durationMS})
+}
+
+func (a *mediaAdapter) UpdateMediaItemPosterPath(ctx context.Context, id uuid.UUID, posterPath string) error {
+	return a.q.UpdateMediaItemPosterPath(ctx, gen.UpdateMediaItemPosterPathParams{ID: id, PosterPath: &posterPath})
+}
+
 func (a *mediaAdapter) UpdateMediaItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error {
 	return a.q.UpdateMediaItemTitle(ctx, gen.UpdateMediaItemTitleParams{
 		ID:        id,

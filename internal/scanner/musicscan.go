@@ -260,7 +260,12 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 		}
 		fill(track)
 	}
-	s.retitleTrack(ctx, track, tags)
+	// Only a row that held several files: one an older scan folded may carry
+	// the other disc's title. Any other row keeps its title, which may be one
+	// set in the metadata editor.
+	if s.wasFoldedTrack(libraryID, track.ID) {
+		s.retitleTrack(ctx, track, tags)
+	}
 
 	// 4. Album art: prefer disk-side cover files (cover.jpg / folder.jpg /
 	// album.jpg / front.jpg / poster.jpg), then fall back to embedded
@@ -342,10 +347,12 @@ func (s *Scanner) discTakenByOtherFile(ctx context.Context, track *media.Item, d
 // Found by its number, a track comes back as stored. On an album an older
 // scanner folded (see rereadFoldedTrack), a disc 1 row held disc 2's file
 // too and may carry disc 2's title; once the fold splits, the row is disc
-// 1's by its disc but not yet by its name. A file whose title tag was edited
-// comes through the same way. Titles that match once folded (media.SameTitle:
-// case, punctuation, a leading article) are left alone, and so is a row
-// whose disc isn't known to be the tags' disc.
+// 1's by its disc but not yet by its name. Called only for such rows
+// (wasFoldedTrack): any other track's title may have been set in the
+// metadata editor, and a re-read (a changed file, a metadata reprobe) must
+// not undo that. Titles that match once folded (media.SameTitle: case,
+// punctuation, a leading article) are left alone, and so is a row whose disc
+// isn't known to be the tags' disc.
 func (s *Scanner) retitleTrack(ctx context.Context, track *media.Item, tags *MusicTags) {
 	if tags.Track <= 0 || tags.Title == "" || track.Index == nil || *track.Index != tags.Track {
 		return

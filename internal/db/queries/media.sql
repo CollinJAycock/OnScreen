@@ -563,6 +563,25 @@ WHERE parent_id IS NULL
 ORDER BY created_at ASC
 LIMIT sqlc.arg('result_limit')::int;
 
+-- name: UpdateMediaItemDuration :exec
+-- Sets only an item's duration: the scanner's write when a probe finds a
+-- track's length changed. UpdateMediaItemMetadata writes every metadata
+-- column from its params, and the scanner's partial call with just a title
+-- and a duration blanked the rest (year, genres, tags, the track artist in
+-- original_title).
+UPDATE media_items
+SET duration_ms = sqlc.arg(duration_ms),
+    updated_at  = NOW()
+WHERE id = sqlc.arg(id);
+
+-- name: UpdateMediaItemPosterPath :exec
+-- Sets only an item's poster path: the scanner's write of a photo's own file
+-- or a book's cover as its poster. Same reason as UpdateMediaItemDuration.
+UPDATE media_items
+SET poster_path = sqlc.arg(poster_path),
+    updated_at  = NOW()
+WHERE id = sqlc.arg(id);
+
 -- name: UpdateMediaItemTitle :exec
 -- Narrow update used by the admin re-enrich-unmatched tool: rewrites only
 -- the title + sort_title without touching the metadata fields that

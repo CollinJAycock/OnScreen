@@ -20,7 +20,13 @@ import androidx.media3.common.Player
 
 /**
  * The player a screen-owned player's MediaSession is built on: the real one,
- * with its current item, timeline and metadata hidden from the session.
+ * with its current item, timeline and metadata hidden from the session, and
+ * starting only while [canStart] (the player's screen is up).
+ *
+ * The session lives as long as the player screen, and that includes the app
+ * in the background, where ON_STOP has paused the video. A headset play then
+ * started the video's sound with nothing on screen and no notification to
+ * stop it. Pausing always works.
  *
  * The session exists only to take media keys. What it must not do is
  * republish the item: media3's legacy bridge copies
@@ -33,7 +39,18 @@ import androidx.media3.common.Player
  * (PlayerWrapper.get…WithCommandCheck), so hiding the three commands hides the
  * item. Play/pause and seeking are untouched.
  */
-class KeysOnlySessionPlayer(player: Player) : ForwardingPlayer(player) {
+class KeysOnlySessionPlayer(
+    player: Player,
+    private val canStart: () -> Boolean = { true },
+) : ForwardingPlayer(player) {
+
+    override fun play() {
+        if (canStart()) super.play()
+    }
+
+    override fun setPlayWhenReady(playWhenReady: Boolean) {
+        if (!playWhenReady || canStart()) super.setPlayWhenReady(playWhenReady)
+    }
 
     override fun isCommandAvailable(command: Int): Boolean =
         command !in HIDDEN && super.isCommandAvailable(command)

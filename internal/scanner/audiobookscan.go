@@ -340,14 +340,10 @@ func (s *Scanner) extractAudiobookArt(ctx context.Context, book *media.Item, aut
 // poster — first-book-wins keeps later scans from churning the
 // author tile every time another book is added.
 func (s *Scanner) syncAudiobookPosterPaths(ctx context.Context, book *media.Item, author *media.Item, relPath string) {
+	// Only the poster: UpdateItemMetadata would also blank the book's
+	// author (original_title), summary, genres and the rest.
 	if book.PosterPath == nil || *book.PosterPath != relPath {
-		if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-			ID:         book.ID,
-			Title:      book.Title,
-			SortTitle:  book.SortTitle,
-			Year:       book.Year,
-			PosterPath: &relPath,
-		}); err != nil {
+		if err := s.media.UpdateItemPosterPath(ctx, book.ID, relPath); err != nil {
 			s.logger.WarnContext(ctx, "failed to update audiobook poster_path",
 				"book_id", book.ID, "err", err)
 		} else {
@@ -355,12 +351,7 @@ func (s *Scanner) syncAudiobookPosterPaths(ctx context.Context, book *media.Item
 		}
 	}
 	if author != nil && (author.PosterPath == nil || *author.PosterPath == "") {
-		if _, err := s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-			ID:         author.ID,
-			Title:      author.Title,
-			SortTitle:  author.SortTitle,
-			PosterPath: &relPath,
-		}); err != nil {
+		if err := s.media.UpdateItemPosterPath(ctx, author.ID, relPath); err != nil {
 			s.logger.WarnContext(ctx, "failed to update author poster_path",
 				"author_id", author.ID, "err", err)
 		} else {

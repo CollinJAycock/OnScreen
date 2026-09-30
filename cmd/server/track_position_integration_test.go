@@ -423,6 +423,9 @@ func TestTrackPosition_Integration_RescanSplitsFoldedTracks(t *testing.T) {
 				{`DELETE FROM media_items WHERE id = $1`, []any{beta}},
 				{`UPDATE media_items SET disc_number = NULL WHERE library_id = $1 AND type = 'track'`, []any{lib.ID}},
 				{`UPDATE media_items SET title = $2, sort_title = lower($2) WHERE id = $1`, []any{alpha, tc.foldTitle}},
+				// The folded row's own metadata, and the length of disc 2's
+				// file (a fold's row played the other disc's length).
+				{`UPDATE media_items SET year = 1968, genres = '{Rock}', original_title = 'Box Artist', duration_ms = 999999 WHERE id = $1`, []any{alpha}},
 			} {
 				if _, err := pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
 					t.Fatalf("fold Box: %v", err)
@@ -445,6 +448,21 @@ func TestTrackPosition_Integration_RescanSplitsFoldedTracks(t *testing.T) {
 			}
 			if tc.foldTitle == "Alpha" && after["01 - Alpha.flac"].itemID != alpha {
 				t.Error("rescan: Alpha's file left its own row")
+			}
+			// The split re-reads the row; its year, genres and artist stay.
+			if after["01 - Alpha.flac"].itemID == alpha {
+				var year *int32
+				var genres []string
+				var artist *string
+				var durationMS *int64
+				if err := pool.QueryRow(ctx, `SELECT year, genres, original_title, duration_ms FROM media_items WHERE id = $1`, alpha).
+					Scan(&year, &genres, &artist, &durationMS); err != nil {
+					t.Fatalf("read Alpha's row: %v", err)
+				}
+				if year == nil || *year != 1968 || len(genres) != 1 || genres[0] != "Rock" || artist == nil || *artist != "Box Artist" {
+					t.Errorf("rescan: Alpha's metadata = year %v genres %v artist %v, want 1968 [Rock] Box Artist", year, genres, artist)
+				}
+				_ = durationMS // the test's tag-only FLACs probe with no length
 			}
 			// Gamma's track held only its file: skipped as before, disc
 			// unknown as the fold left it.
@@ -603,4 +621,48 @@ func titles(rows []gen.ListMediaItemChildrenRow) []string {
 		out[i] = r.Title
 	}
 	return out
+}
+
+// The scanner's single-column writes (a track's new length, a photo's or a
+// book's poster) change that column alone. They went through
+// UpdateMediaItemMetadata, which writes every metadata column from its
+// params, so the scanner's partial calls blanked a track's year, genres and
+// artist, and a book's author and summary.
+func TestNarrowItemWrites_Integration(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+	adapter := &mediaAdapter{q: q}
+	svc := media.NewService(adapter, adapter, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	var libID, itemID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO libraries (name, type, scan_paths) VALUES ('m', 'music', '{/m}') RETURNING id`).Scan(&libID); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx, `INSERT INTO media_items (library_id, type, title, sort_title, year, genres, original_title, summary, duration_ms)
+		VALUES ($1, 'track', 'Song', 'song', 1968, '{Rock}', 'Artist', 'A summary', 1000) RETURNING id`, libID).Scan(&itemID); err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.UpdateItemDuration(ctx, itemID, 124000); err != nil {
+		t.Fatalf("UpdateItemDuration: %v", err)
+	}
+	if err := svc.UpdateItemPosterPath(ctx, itemID, "Artist/Album/cover.jpg"); err != nil {
+		t.Fatalf("UpdateItemPosterPath: %v", err)
+	}
+	var (
+		title, sortTitle, artist, summary, poster string
+		year                                      int32
+		genres                                    []string
+		durationMS                                int64
+	)
+	if err := pool.QueryRow(ctx, `SELECT title, sort_title, year, genres, original_title, summary, duration_ms, poster_path FROM media_items WHERE id = $1`, itemID).
+		Scan(&title, &sortTitle, &year, &genres, &artist, &summary, &durationMS, &poster); err != nil {
+		t.Fatal(err)
+	}
+	if durationMS != 124000 || poster != "Artist/Album/cover.jpg" {
+		t.Errorf("duration %d poster %q, want 124000 and the cover", durationMS, poster)
+	}
+	if title != "Song" || sortTitle != "song" || year != 1968 || len(genres) != 1 || genres[0] != "Rock" || artist != "Artist" || summary != "A summary" {
+		t.Errorf("other columns changed: %q %q %d %v %q %q", title, sortTitle, year, genres, artist, summary)
+	}
 }

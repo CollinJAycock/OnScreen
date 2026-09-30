@@ -5965,6 +5965,28 @@ func (q *Queries) UpdateMediaFileTechnicalMetadata(ctx context.Context, arg Upda
 	return err
 }
 
+const updateMediaItemDuration = `-- name: UpdateMediaItemDuration :exec
+UPDATE media_items
+SET duration_ms = $1,
+    updated_at  = NOW()
+WHERE id = $2
+`
+
+type UpdateMediaItemDurationParams struct {
+	DurationMs *int64    `json:"duration_ms"`
+	ID         uuid.UUID `json:"id"`
+}
+
+// Sets only an item's duration: the scanner's write when a probe finds a
+// track's length changed. UpdateMediaItemMetadata writes every metadata
+// column from its params, and the scanner's partial call with just a title
+// and a duration blanked the rest (year, genres, tags, the track artist in
+// original_title).
+func (q *Queries) UpdateMediaItemDuration(ctx context.Context, arg UpdateMediaItemDurationParams) error {
+	_, err := q.db.Exec(ctx, updateMediaItemDuration, arg.DurationMs, arg.ID)
+	return err
+}
+
 const updateMediaItemLyrics = `-- name: UpdateMediaItemLyrics :exec
 UPDATE media_items
 SET lyrics_plain = $2,
@@ -6155,6 +6177,25 @@ func (q *Queries) UpdateMediaItemMetadata(ctx context.Context, arg UpdateMediaIt
 		&i.DeletedAt,
 	)
 	return i, err
+}
+
+const updateMediaItemPosterPath = `-- name: UpdateMediaItemPosterPath :exec
+UPDATE media_items
+SET poster_path = $1,
+    updated_at  = NOW()
+WHERE id = $2
+`
+
+type UpdateMediaItemPosterPathParams struct {
+	PosterPath *string   `json:"poster_path"`
+	ID         uuid.UUID `json:"id"`
+}
+
+// Sets only an item's poster path: the scanner's write of a photo's own file
+// or a book's cover as its poster. Same reason as UpdateMediaItemDuration.
+func (q *Queries) UpdateMediaItemPosterPath(ctx context.Context, arg UpdateMediaItemPosterPathParams) error {
+	_, err := q.db.Exec(ctx, updateMediaItemPosterPath, arg.PosterPath, arg.ID)
+	return err
 }
 
 const updateMediaItemTitle = `-- name: UpdateMediaItemTitle :exec

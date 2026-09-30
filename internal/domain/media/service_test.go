@@ -230,6 +230,14 @@ func (m *mockQuerier) ListFoldedTrackItemIDs(_ context.Context, libraryID uuid.U
 	}
 	return out, nil
 }
+func (m *mockQuerier) UpdateMediaItemDuration(_ context.Context, id uuid.UUID, durationMS int64) error {
+	return nil
+}
+
+func (m *mockQuerier) UpdateMediaItemPosterPath(_ context.Context, id uuid.UUID, posterPath string) error {
+	return nil
+}
+
 func (m *mockQuerier) UpdateMediaItemTitle(_ context.Context, id uuid.UUID, title, sortTitle string) error {
 	it, ok := m.items[id]
 	if !ok {

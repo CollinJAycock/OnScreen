@@ -121,6 +121,8 @@ type MediaService interface {
 	FillTrackPosition(ctx context.Context, id uuid.UUID, index, disc *int) (bool, error)
 	ListFoldedTrackItemIDs(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
 	UpdateItemTitle(ctx context.Context, id uuid.UUID, title, sortTitle string) error
+	UpdateItemDuration(ctx context.Context, id uuid.UUID, durationMS int64) error
+	UpdateItemPosterPath(ctx context.Context, id uuid.UUID, posterPath string) error
 	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
@@ -1264,14 +1266,13 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 
 	// Tracks: copy duration from the probe result to the item so the
 	// children API can return it without joining against media_files.
+	// Only the duration: UpdateItemMetadata would also blank the track's
+	// year, genres and artist, and a split fold rewrites many durations.
 	if libraryType == "music" && item.Type == "track" && probe.DurationMs != nil &&
 		(item.DurationMS == nil || *item.DurationMS != *probe.DurationMs) {
-		s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-			ID:         item.ID,
-			Title:      item.Title,
-			SortTitle:  item.SortTitle,
-			DurationMS: probe.DurationMs,
-		})
+		if err := s.media.UpdateItemDuration(ctx, item.ID, *probe.DurationMs); err != nil {
+			s.logger.WarnContext(ctx, "update track duration failed", "item_id", item.ID, "err", err)
+		}
 	}
 
 	// Photos use the file itself as the poster. Set poster_path to the
@@ -1280,12 +1281,11 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		for _, root := range roots {
 			if rel, relErr := filepath.Rel(root, path); relErr == nil && !strings.HasPrefix(rel, "..") {
 				relSlash := filepath.ToSlash(rel)
-				s.media.UpdateItemMetadata(ctx, media.UpdateItemMetadataParams{
-					ID:         item.ID,
-					Title:      item.Title,
-					SortTitle:  item.SortTitle,
-					PosterPath: &relSlash,
-				})
+				// Only the poster: UpdateItemMetadata would also blank the
+				// photo's taken date and the rest.
+				if err := s.media.UpdateItemPosterPath(ctx, item.ID, relSlash); err != nil {
+					s.logger.WarnContext(ctx, "update photo poster failed", "item_id", item.ID, "err", err)
+				}
 				break
 			}
 		}
@@ -1393,6 +1393,17 @@ func (s *Scanner) loadFoldedTracks(ctx context.Context, libraryID uuid.UUID) *tr
 			"library_id", libraryID, "tracks", len(ids))
 	}
 	return set
+}
+
+// wasFoldedTrack reports whether trackID held more than one active file when
+// the library's running scan started (loadFoldedTracks).
+func (s *Scanner) wasFoldedTrack(libraryID, trackID uuid.UUID) bool {
+	v, ok := s.foldedTracks.Load(libraryID)
+	if !ok {
+		return false
+	}
+	_, folded := v.(*trackSet).ids[trackID]
+	return folded
 }
 
 // rereadFoldedTrack reports whether an unchanged music file must take the

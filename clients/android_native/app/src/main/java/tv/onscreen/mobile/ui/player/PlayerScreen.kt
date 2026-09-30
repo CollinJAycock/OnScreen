@@ -510,6 +510,7 @@ private fun PlayerHost(
     // the simpler "back stops playback" model matches what users
     // expect (and avoided a class of foreground-service-startup
     // crashes the handoff was introducing).
+    val keysLifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(player, serviceAudio) {
         // A screen-owned player gets a media session of its own, for the
         // media keys: without one, PlaybackService's was the app's only
@@ -521,7 +522,13 @@ private fun PlayerHost(
         // out of the platform session. A fresh id each time: ids must be
         // unique per process, and the service's session has the default.
         val keySession = if (serviceAudio) null else {
-            MediaSession.Builder(context, KeysOnlySessionPlayer(player))
+            // Keys start playback only while the screen is up (STARTED, which
+            // PiP keeps): in the background the video is paused, and there is
+            // nothing on screen to stop sound a headset key would start.
+            val onScreen = {
+                keysLifecycle.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+            }
+            MediaSession.Builder(context, KeysOnlySessionPlayer(player, onScreen))
                 .setId("video-" + UUID.randomUUID())
                 .build()
         }

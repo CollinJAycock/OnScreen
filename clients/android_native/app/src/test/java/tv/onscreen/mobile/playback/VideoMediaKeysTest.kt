@@ -12,6 +12,32 @@ import org.junit.Test
  */
 class VideoMediaKeysTest {
 
+    // ── The video session's player ─────────────────────────────────────
+
+    @Test
+    fun `a key starts the video only while its screen is up`() {
+        val video = mockk<Player>(relaxed = true)
+        var onScreen = false
+        val keys = KeysOnlySessionPlayer(video) { onScreen }
+
+        keys.play()
+        keys.playWhenReady = true
+        io.mockk.verify(exactly = 0) { video.play() }
+        io.mockk.verify(exactly = 0) { video.playWhenReady = true }
+
+        // Pausing always goes through.
+        keys.pause()
+        keys.playWhenReady = false
+        io.mockk.verify { video.pause() }
+        io.mockk.verify { video.playWhenReady = false }
+
+        onScreen = true
+        keys.play()
+        keys.playWhenReady = true
+        io.mockk.verify { video.play() }
+        io.mockk.verify { video.playWhenReady = true }
+    }
+
     // ── The service's backstop ────────────────────────────────────────
 
     @Test
