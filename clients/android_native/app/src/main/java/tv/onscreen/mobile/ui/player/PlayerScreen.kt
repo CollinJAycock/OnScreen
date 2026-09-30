@@ -68,12 +68,15 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.boundsInRoot
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -88,6 +91,7 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
 import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.exoplayer.source.ProgressiveMediaSource
+import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -415,6 +419,16 @@ private fun PlayerHost(
     // service's own metadata says what kind of item it is, so a book still
     // gets its speed control and the sleep timer's end-of-chapter mode.
     val kind = itemType ?: if (serviceAudio) serviceItemType(player) else null
+
+    // The service's queue entry names the item's album or book. With that
+    // already fetched (the page the player came from, the previous track's
+    // cover), the cover shows at once: a screen that followed the queue to
+    // the next track used to wait for the track to load first.
+    LaunchedEffect(player, playingId, serviceAudio) {
+        if (serviceAudio && player.currentMediaItem?.mediaId == playingId) {
+            vm.primeArtwork(playingId, serviceItemType(player), serviceParentId(player))
+        }
+    }
 
     // Tell MainActivity whether to auto-enter PiP on
     // onUserLeaveHint. We mark "playing" only for video so audio
@@ -878,91 +892,139 @@ private fun PlayerHost(
     val density = LocalDensity.current
     val layoutDirection = LocalLayoutDirection.current
 
-    AndroidView(
-        modifier = Modifier
-            .fillMaxSize()
-            // Feed the surface bounds to ActiveVideoTracker so
-            // MainActivity can hand them to setSourceRectHint on the
-            // PiP params. Without this the auto-enter animation
-            // doesn't morph out of the player view — see the comment
-            // on ActiveVideoTracker.setSourceRect.
-            .onGloballyPositioned { coords ->
-                val r = coords.boundsInWindow()
-                ActiveVideoTracker.setSourceRect(
-                    android.graphics.Rect(
-                        r.left.toInt(), r.top.toInt(),
-                        r.right.toInt(), r.bottom.toInt(),
-                    ),
-                )
+    // Audio gets its own page (AudioNowPlaying): the cover and title above
+    // the controls, which stay up — there is no picture under them. Video,
+    // and a chapter that carries a picture (an illustrated edition's
+    // slideshow), keep the full-bleed player and its auto-hiding controls.
+    val audioLayout = isAudioOnly && !rememberShowsPicture(player)
+    val landscape = LocalConfiguration.current.orientation ==
+        android.content.res.Configuration.ORIENTATION_LANDSCAPE
+    // Where the top bar ends: the audio page starts below it. The bar wraps
+    // to a second row on a narrow phone with every action showing.
+    var topBarBottomPx by remember { mutableIntStateOf(0) }
+
+    val playerSurface: @Composable (Modifier) -> Unit = { surfaceModifier ->
+        AndroidView(
+            modifier = surfaceModifier
+                // Feed the surface bounds to ActiveVideoTracker so
+                // MainActivity can hand them to setSourceRectHint on the
+                // PiP params. Without this the auto-enter animation
+                // doesn't morph out of the player view — see the comment
+                // on ActiveVideoTracker.setSourceRect.
+                .onGloballyPositioned { coords ->
+                    val r = coords.boundsInWindow()
+                    ActiveVideoTracker.setSourceRect(
+                        android.graphics.Rect(
+                            r.left.toInt(), r.top.toInt(),
+                            r.right.toInt(), r.bottom.toInt(),
+                        ),
+                    )
+                },
+            factory = { ctx ->
+                // The player is attached in update, like any later one.
+                PlayerView(ctx).apply {
+                    useController = true
+                    playerViewRef.value = this
+                    applySubtitleStyle(subtitleStyle)
+                    // Mirror the built-in controller's show/hide into our
+                    // Compose state so the floating toolbar follows the
+                    // same auto-hide timer instead of staying pinned to
+                    // the screen during playback.
+                    setControllerVisibilityListener(
+                        PlayerView.ControllerVisibilityListener { visibility ->
+                            controlsVisible = visibility == android.view.View.VISIBLE
+                        },
+                    )
+                    // Hook the built-in TimeBar to drive trickplay
+                    // previews. The id is part of Media3's public layout —
+                    // exo_progress is the DefaultTimeBar inside the
+                    // controller. addListener takes an OnScrubListener
+                    // whose onScrubMove fires continuously while the user
+                    // drags, perfect for thumbnail lookup.
+                    val timeBar = findViewById<androidx.media3.ui.DefaultTimeBar?>(
+                        androidx.media3.ui.R.id.exo_progress,
+                    )
+                    // The TimeBar reports SESSION-relative positions; trickplay
+                    // cues are indexed against the whole file. Without the
+                    // offset, scrubbing a resumed transcode previews frames
+                    // hlsOffsetMs earlier than the thumb — the further into the
+                    // file the session started, the more wrong the preview.
+                    timeBar?.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
+                        override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) {
+                            vm.onScrubMove(position + vm.hlsOffsetMs)
+                        }
+                        override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) {
+                            vm.onScrubMove(position + vm.hlsOffsetMs)
+                        }
+                        override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) {
+                            vm.onScrubStop()
+                        }
+                    })
+                }
             },
-        factory = { ctx ->
-            PlayerView(ctx).apply {
-                this.player = player
-                useController = true
-                playerViewRef.value = this
-                applySubtitleStyle(subtitleStyle)
-                // Mirror the built-in controller's show/hide into our
-                // Compose state so the floating toolbar follows the
-                // same auto-hide timer instead of staying pinned to
-                // the screen during playback.
-                setControllerVisibilityListener(
-                    PlayerView.ControllerVisibilityListener { visibility ->
-                        controlsVisible = visibility == android.view.View.VISIBLE
-                    },
-                )
-                // Hook the built-in TimeBar to drive trickplay
-                // previews. The id is part of Media3's public layout —
-                // exo_progress is the DefaultTimeBar inside the
-                // controller. addListener takes an OnScrubListener
-                // whose onScrubMove fires continuously while the user
-                // drags, perfect for thumbnail lookup.
-                val timeBar = findViewById<androidx.media3.ui.DefaultTimeBar?>(
-                    androidx.media3.ui.R.id.exo_progress,
-                )
-                // The TimeBar reports SESSION-relative positions; trickplay
-                // cues are indexed against the whole file. Without the
-                // offset, scrubbing a resumed transcode previews frames
-                // hlsOffsetMs earlier than the thumb — the further into the
-                // file the session started, the more wrong the preview.
-                timeBar?.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
-                    override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) {
-                        vm.onScrubMove(position + vm.hlsOffsetMs)
-                    }
-                    override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) {
-                        vm.onScrubMove(position + vm.hlsOffsetMs)
-                    }
-                    override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) {
-                        vm.onScrubStop()
-                    }
-                })
-            }
-        },
-        // factory runs ONCE for this composable node, so a player created
-        // later — an audio-track switch re-issues the transcode session and
-        // builds a new ExoPlayer — never reached the view: PlayerView kept
-        // rendering (and controlling) the released one, leaving a frozen
-        // frame and dead transport controls for the rest of playback.
-        update = { view ->
-            if (view.player !== player) view.player = player
-            // Background music plays a real queue (the album), so offer the
-            // controller's shuffle toggle there; video has no queue.
-            view.setShowShuffleButton(serviceAudio)
-            // Edge-to-edge is mandatory at targetSdk 35+ (Android 16 removed
-            // the opt-out). The video stays full-bleed, but Media3's
-            // controller has no inset handling: under 3-button navigation the
-            // nav bar sat on the duration label and swallowed taps on the
-            // settings gear (portrait) or the seek bar's end + gear
-            // (landscape, bar on the side). Pad only the controller into the
-            // safe area. The inset reads are snapshot-observed, so this block
-            // re-runs on rotation / nav-mode changes.
-            view.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_controller)
-                ?.setPadding(
-                    safeInsets.getLeft(density, layoutDirection),
-                    safeInsets.getTop(density),
-                    safeInsets.getRight(density, layoutDirection),
-                    safeInsets.getBottom(density),
-                )
-        },
+            // factory runs ONCE for this composable node, so a player created
+            // later — an audio-track switch re-issues the transcode session and
+            // builds a new ExoPlayer — never reached the view: PlayerView kept
+            // rendering (and controlling) the released one, leaving a frozen
+            // frame and dead transport controls for the rest of playback.
+            update = { view ->
+                val attached = view.player !== player
+                if (attached) view.player = player
+                // Background music plays a real queue (the album), so offer the
+                // controller's shuffle toggle there; video has no queue.
+                view.setShowShuffleButton(serviceAudio)
+                // Audio keeps its controls up: there is no picture under them.
+                // Video shows them for the usual few seconds.
+                view.controllerShowTimeoutMs = if (audioLayout) 0 else PlayerControlView.DEFAULT_SHOW_TIMEOUT_MS
+                view.controllerHideOnTouch = !audioLayout
+                // The audio page draws the cover itself, above the controls.
+                view.artworkDisplayMode =
+                    if (audioLayout) PlayerView.ARTWORK_DISPLAY_MODE_OFF else PlayerView.ARTWORK_DISPLAY_MODE_FIT
+                // PlayerView shows its controller by itself only for a player
+                // that isn't playing. One attached already playing — audio the
+                // service is playing (the mini player, the notification), a
+                // video that resumed — opened on the top bar alone, over a black
+                // page for audio, and for audio the first tap hid even that.
+                if (!inPip && (audioLayout || attached)) view.showController()
+                // Edge-to-edge is mandatory at targetSdk 35+ (Android 16 removed
+                // the opt-out). The video stays full-bleed, but Media3's
+                // controller has no inset handling: under 3-button navigation the
+                // nav bar sat on the duration label and swallowed taps on the
+                // settings gear (portrait) or the seek bar's end + gear
+                // (landscape, bar on the side). Pad only the controller into the
+                // safe area. The inset reads are snapshot-observed, so this block
+                // re-runs on rotation / nav-mode changes. On the audio page the
+                // controls sit below the cover (beside it in landscape), so the
+                // edges they don't reach take no inset.
+                val coverAtLeft = audioLayout && landscape && layoutDirection == LayoutDirection.Ltr
+                val coverAtRight = audioLayout && landscape && layoutDirection == LayoutDirection.Rtl
+                view.findViewById<android.view.View>(androidx.media3.ui.R.id.exo_controller)
+                    ?.setPadding(
+                        if (coverAtLeft) 0 else safeInsets.getLeft(density, layoutDirection),
+                        if (audioLayout) 0 else safeInsets.getTop(density),
+                        if (coverAtRight) 0 else safeInsets.getRight(density, layoutDirection),
+                        safeInsets.getBottom(density),
+                    )
+            },
+            // A view leaving the composition (the screen closing) lets go of
+            // the player: PlayerView keeps its listeners on it until then.
+            onRelease = { view -> view.player = null },
+        )
+    }
+    // Below the top bar: at least its first row, measured once it lays out.
+    val belowTopBar = maxOf(
+        with(density) { safeInsets.getTop(density).toDp() } + 80.dp,
+        with(density) { topBarBottomPx.toDp() },
+    )
+    PlayerPage(
+        audio = audioLayout,
+        landscape = landscape,
+        player = player,
+        artworkUrl = ui.artworkUrl,
+        artworkChecked = ui.artworkChecked,
+        fallbackTitle = ui.item?.title,
+        topPadding = belowTopBar,
+        surface = playerSurface,
     )
 
     // Trickplay scrub-preview overlay. Renders above the seekbar when
@@ -1021,6 +1083,8 @@ private fun PlayerHost(
             plain = ui.lyricsPlain,
             positionMs = positionMs,
             onDismiss = { showLyrics = false },
+            // The audio page keeps its top bar up: start below it.
+            topPadding = if (controlsVisible) maxOf(LYRICS_EDGE, belowTopBar + 8.dp) else LYRICS_EDGE,
         )
     }
 
@@ -1061,6 +1125,7 @@ private fun PlayerHost(
       FlowRow(
         modifier = Modifier
             .align(Alignment.TopEnd)
+            .onGloballyPositioned { topBarBottomPx = it.boundsInRoot().bottom.toInt() }
             .padding(16.dp),
         horizontalArrangement = Arrangement.End,
     ) {
@@ -1874,8 +1939,9 @@ private fun ReplayGainReadout(db: Double) {
  * Only the controller (not the service player) is released when this
  * leaves the composition, so backing out keeps audio playing. Re-entering
  * for the item already playing in the service binds without restarting.
- * Album art comes from the service player's extracted metadata, so no
- * artworkUri is set here.
+ * No artworkUri is set here: the screen shows the item's poster itself
+ * (AudioNowPlaying), and art embedded in the file reaches it through the
+ * service player's extracted metadata.
  *
  * The service builds the album queue around the one track handed over
  * (gapless — see PlaybackService / MusicQueue). A track that is already IN
@@ -1978,6 +2044,15 @@ private fun rememberAudioController(
         awaitDispose { controller.release() }
     }.value
 }
+
+/** Lyrics keep this far from the screen's top and bottom edges. */
+private val LYRICS_EDGE = 96.dp
+
+/** The album or book the background service recorded its current item
+ *  under ([PlaybackService.EXTRA_PARENT_ID]); null when it recorded none. */
+private fun serviceParentId(player: Player): String? =
+    (player.mediaMetadata.extras ?: player.currentMediaItem?.mediaMetadata?.extras)
+        ?.getString(PlaybackService.EXTRA_PARENT_ID)
 
 /** The OnScreen item type the background service recorded on its current
  *  item ([PlaybackService.EXTRA_TYPE]), read through a controller bound to
@@ -2245,6 +2320,7 @@ private fun LyricsOverlay(
     plain: String?,
     positionMs: Long,
     onDismiss: () -> Unit,
+    topPadding: androidx.compose.ui.unit.Dp,
 ) {
     val activeIndex = remember(cues, positionMs) {
         if (cues.isNullOrEmpty()) -1
@@ -2278,7 +2354,7 @@ private fun LyricsOverlay(
                 state = listState,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 24.dp, vertical = 96.dp),
+                    .padding(start = 24.dp, end = 24.dp, top = topPadding, bottom = LYRICS_EDGE),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
                 itemsIndexed(cues) { idx, cue ->
@@ -2302,7 +2378,7 @@ private fun LyricsOverlay(
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 24.dp, vertical = 96.dp)
+                    .padding(start = 24.dp, end = 24.dp, top = topPadding, bottom = LYRICS_EDGE)
                     .verticalScroll(scroll),
             )
         }

@@ -436,6 +436,17 @@ Roku channel (no request features, as on Android):
   own session, which starts playback only while its screen is up. The
   audio's notification buttons always work, and pause and stop still reach
   the audio while a video is up.
+- **Phone: the audio player shows the cover and what's playing.** It showed
+  only art embedded in the file, which most libraries don't have, so the
+  page was black with the controls in the middle. It now shows the album's
+  or book's cover (a podcast episode: its show's), the title, and the
+  artist or author, above the controls (beside them in landscape), and the
+  next track's cover appears at once when the queue moves on.
+- **Phone: the player's controls show when it opens over audio already
+  playing.** Opened from the mini player or the notification, it showed a
+  black page with only the top bar, and the first tap hid even that. Audio
+  now keeps its controls up; video shows them for a few seconds as it
+  starts, then hides them with the top bar.
 - **Android TV background audio, from a hardware test run.** Found on a
   Fire TV Stick while testing the session hand-off:
   - Reopening an item while its own player was on screen (a deep link, a

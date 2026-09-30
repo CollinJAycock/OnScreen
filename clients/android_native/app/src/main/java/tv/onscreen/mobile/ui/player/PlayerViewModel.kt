@@ -15,6 +15,7 @@ import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import tv.onscreen.mobile.data.api.HeartbeatRefusal
 import tv.onscreen.mobile.data.api.apiError
+import tv.onscreen.mobile.data.artworkUrl
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.ItemDetail
@@ -101,6 +102,14 @@ data class PlayerUiState(
      *  screen binds to it as it is, and never hands it over again. Nothing
      *  new starts streaming, so the cellular prompt doesn't apply either. */
     val playingInService: Boolean = false,
+    /** Audio: the cover the player shows, as a full URL. The item's own
+     *  poster, else its parent's: the scanner puts the art on the album,
+     *  the book or the podcast, and a track or chapter seldom has one of
+     *  its own. Null until resolved, and when neither has one. */
+    val artworkUrl: String? = null,
+    /** The cover lookup has finished: without [artworkUrl] now, there is
+     *  none to show and the player shows its placeholder. */
+    val artworkChecked: Boolean = false,
     val error: String? = null,
 )
 
@@ -261,6 +270,49 @@ class PlayerViewModel @Inject constructor(
      *  are valid for the rest of the session. */
     fun onScrubStop() {
         _state.value = _state.value.copy(scrubPreview = null)
+    }
+
+    // ── Artwork ───────────────────────────────────────────────────────
+
+    /** Resolve the audio player's cover ([PlayerUiState.artworkUrl]).
+     *  Best-effort, and never fails playback: with no poster anywhere the
+     *  player shows its placeholder. */
+    private fun loadArtwork(item: ItemDetail) {
+        if (item.type !in AUDIO_TYPES) return
+        viewModelScope.launch {
+            val url = orNull { artworkUrlFor(item) }
+            // Another prepare() took over while this loaded.
+            if (_state.value.item?.id != item.id) return@launch
+            _state.update { it.copy(artworkUrl = url ?: it.artworkUrl, artworkChecked = true) }
+        }
+    }
+
+    /**
+     * The cover of [itemId], which the background service is playing, from
+     * its queue entry: its [type] and the [parentId] the service recorded.
+     * No network, and nothing unless the parent is in the recent-items cache
+     * — then the cover shows before the item itself loads. [loadArtwork]
+     * still settles it once the item is here.
+     */
+    fun primeArtwork(itemId: String, type: String?, parentId: String?) {
+        if (preparedItemId != itemId || _state.value.artworkUrl != null) return
+        if (type !in PARENT_ART_TYPES || parentId == null) return
+        val path = itemRepo.cachedItem(parentId)?.poster_path ?: return
+        val server = lastServerOrigin?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: return
+        _state.update { it.copy(artworkUrl = artworkUrl(server, path, width = ARTWORK_WIDTH)) }
+    }
+
+    /** The item's poster, else — for a track, a chapter or an episode — its
+     *  album's, book's or podcast's. Not a book's parent: that is its
+     *  author, whose portrait is no cover. The parent usually comes from the
+     *  recent-items cache: the page the player was opened from fetched it. */
+    private suspend fun artworkUrlFor(item: ItemDetail): String? {
+        val parentId = item.parent_id?.takeIf { item.type in PARENT_ART_TYPES }
+        val path = item.poster_path ?: parentId?.let { id ->
+            (itemRepo.cachedItem(id) ?: orNull { itemRepo.getItem(id) })?.poster_path
+        } ?: return null
+        val server = serverPrefs.getServerUrl()?.trimEnd('/')?.takeIf { it.isNotEmpty() } ?: return null
+        return artworkUrl(server, path, width = ARTWORK_WIDTH)
     }
 
     // ── Lyrics ────────────────────────────────────────────────────────
@@ -855,6 +907,8 @@ class PlayerViewModel @Inject constructor(
     /** The best-effort loads that follow once [item] is showing. [streamed]:
      *  not a local download (trickplay and lyrics need the server). */
     private fun loadItemExtras(item: ItemDetail, itemId: String, streamed: Boolean) {
+        loadArtwork(item)
+
         // Audiobooks: the book's listening speed (and whether the
         // server takes bookmarks). An end-of-chapter timer set before
         // the item loaded, or handed over from the previous screen, can
@@ -1435,6 +1489,19 @@ class PlayerViewModel @Inject constructor(
         spriteCache.clear()
     }
 }
+
+/** Item types the player shows as audio, with a cover. A podcast is the
+ *  show; the scanner files its playable episodes as podcast_episode. */
+private val AUDIO_TYPES = setOf("track", "audiobook", "audiobook_chapter", "podcast", "podcast_episode")
+
+/** Audio whose cover is its parent's: a track's album, a chapter's book, an
+ *  episode's podcast. */
+private val PARENT_ART_TYPES = setOf("track", "audiobook_chapter", "podcast_episode")
+
+/** Cover width asked of the server: the player shows it up to the screen's
+ *  width. The album and book pages ask the same, so the player finds the
+ *  cover they showed in the image cache. */
+private const val ARTWORK_WIDTH = 1080
 
 /** [block]'s result, or null if it fails — for the calls prepare() can do
  *  without. Inline, so [block] may suspend; a cancellation still propagates

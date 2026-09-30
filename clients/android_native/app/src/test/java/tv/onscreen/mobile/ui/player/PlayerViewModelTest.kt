@@ -45,7 +45,10 @@ class PlayerViewModelTest {
     private val dispatcher = StandardTestDispatcher()
 
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
-    @After  fun tearDown() { Dispatchers.resetMain() }
+    @After  fun tearDown() {
+        Dispatchers.resetMain()
+        io.mockk.unmockkStatic(android.net.Uri::class)
+    }
 
     private fun directPlayFile() = ItemFile(
         id = "f1",
@@ -105,6 +108,7 @@ class PlayerViewModelTest {
     private fun serverPrefs(url: String? = "http://srv"): ServerPrefs {
         val p = mockk<ServerPrefs>(relaxed = true)
         coEvery { p.getServerUrl() } returns url
+        every { p.serverUrl } returns kotlinx.coroutines.flow.flowOf(url)
         coEvery { p.getAccessToken() } returns null
         return p
     }
@@ -386,6 +390,179 @@ class PlayerViewModelTest {
             ItemFile(id = "f-$id", stream_url = "/media/files/f-$id.m4b", container = "m4b", audio_codec = "aac"),
         ),
     )
+
+    // ── The audio player's cover ──────────────────────────────────────
+
+    private fun track(id: String, parentId: String?, poster: String? = null) = ItemDetail(
+        id = id, library_id = "lib-m", title = "Track $id", type = "track",
+        parent_id = parentId, poster_path = poster,
+        files = listOf(
+            ItemFile(id = "f-$id", stream_url = "/media/files/f-$id.flac", container = "flac", audio_codec = "flac"),
+        ),
+    )
+
+    private fun album(id: String, poster: String?) = ItemDetail(
+        id = id, library_id = "lib-m", title = "Album", type = "album", poster_path = poster,
+    )
+
+    /** android.net.Uri is a stub in JVM tests (encode answers null, which
+     *  ArtworkUrl can't take): let path segments through as they are. */
+    private fun passThroughUriEncode() {
+        io.mockk.mockkStatic(android.net.Uri::class)
+        every { android.net.Uri.encode(any<String>()) } answers { firstArg() }
+    }
+
+    private fun playerFor(itemRepo: ItemRepository) = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+
+    @Test
+    fun `a track without a cover of its own shows its album's`() = runTest(dispatcher) {
+        passThroughUriEncode()
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("t") } returns track("t", parentId = "al")
+        coEvery { itemRepo.getItem("al") } returns album("al", poster = "Artist/Album/cover.jpg")
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "t" }
+        vm.prepare("t")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.artworkUrl).isEqualTo("http://srv/artwork/Artist/Album/cover.jpg?w=1080")
+        coVerify(exactly = 1) { itemRepo.getItem("al") }
+    }
+
+    @Test
+    fun `the album page the player came from answers from the cache`() = runTest(dispatcher) {
+        passThroughUriEncode()
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("t") } returns track("t", parentId = "al")
+        every { itemRepo.cachedItem("al") } returns album("al", poster = "Artist/Album/cover.jpg")
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "t" }
+        vm.prepare("t")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.artworkUrl).isEqualTo("http://srv/artwork/Artist/Album/cover.jpg?w=1080")
+        coVerify(exactly = 0) { itemRepo.getItem("al") }
+    }
+
+    @Test
+    fun `a track with a cover of its own asks nothing of its album`() = runTest(dispatcher) {
+        passThroughUriEncode()
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("t") } returns track("t", parentId = "al", poster = "Artist/Album/t.jpg")
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "t" }
+        vm.prepare("t")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.artworkUrl).isEqualTo("http://srv/artwork/Artist/Album/t.jpg?w=1080")
+        coVerify(exactly = 0) { itemRepo.getItem("al") }
+    }
+
+    @Test
+    fun `no cover anywhere leaves the placeholder`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("t") } returns track("t", parentId = "al")
+        coEvery { itemRepo.getItem("al") } returns album("al", poster = null)
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "t" }
+        vm.prepare("t")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.artworkUrl).isNull()
+        assertThat(vm.state.value.error).isNull()
+    }
+
+    @Test
+    fun `a book without a cover doesn't take its author's portrait`() = runTest(dispatcher) {
+        passThroughUriEncode()
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("b") } returns book("b").copy(parent_id = "author-1")
+        coEvery { itemRepo.getItem("author-1") } returns
+            ItemDetail(id = "author-1", library_id = "lib-b", title = "Author", type = "author", poster_path = "Author/portrait.jpg")
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.artworkUrl).isNull()
+        coVerify(exactly = 0) { itemRepo.getItem("author-1") }
+    }
+
+    @Test
+    fun `a podcast episode shows its show's cover`() = runTest(dispatcher) {
+        passThroughUriEncode()
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("e") } returns track("e", parentId = "show").copy(type = "podcast_episode")
+        coEvery { itemRepo.getItem("show") } returns
+            ItemDetail(id = "show", library_id = "lib-p", title = "Show", type = "podcast", poster_path = "Show/cover.jpg")
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "e" }
+        vm.prepare("e")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.artworkUrl).isEqualTo("http://srv/artwork/Show/cover.jpg?w=1080")
+    }
+
+    @Test
+    fun `the next track's cover shows from its queue entry before the track loads`() = runTest(dispatcher) {
+        passThroughUriEncode()
+        val itemRepo = itemRepo()
+        val fetched = kotlinx.coroutines.CompletableDeferred<ItemDetail>()
+        coEvery { itemRepo.getItem("t2") } coAnswers { fetched.await() }
+        every { itemRepo.cachedItem("al") } returns album("al", poster = "Artist/Album/cover.jpg")
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "t2" }
+        vm.prepare("t2")
+        runCurrent()
+        assertThat(vm.state.value.artworkChecked).isFalse()
+
+        // What the screen reads off the service's queue entry once bound.
+        vm.primeArtwork("t2", "track", "al")
+        assertThat(vm.state.value.artworkUrl).isEqualTo("http://srv/artwork/Artist/Album/cover.jpg?w=1080")
+
+        fetched.complete(track("t2", parentId = "al"))
+        advanceUntilIdle()
+        assertThat(vm.state.value.artworkUrl).isEqualTo("http://srv/artwork/Artist/Album/cover.jpg?w=1080")
+        assertThat(vm.state.value.artworkChecked).isTrue()
+    }
+
+    @Test
+    fun `a book's queue entry never primes its author's portrait`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("b") } coAnswers { kotlinx.coroutines.awaitCancellation() }
+        every { itemRepo.cachedItem("author-1") } returns
+            ItemDetail(id = "author-1", library_id = "lib-b", title = "Author", type = "author", poster_path = "Author/portrait.jpg")
+
+        val vm = playerFor(itemRepo)
+        vm.backgroundItemId = { "b" }
+        vm.prepare("b")
+        runCurrent()
+        vm.primeArtwork("b", "audiobook", "author-1")
+
+        assertThat(vm.state.value.artworkUrl).isNull()
+    }
+
+    @Test
+    fun `a video asks for no cover`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), parentId = "season-1", index = 1)
+        coEvery { itemRepo.getChildren(any()) } returns emptyList()
+
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        vm.prepare("ep-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.artworkUrl).isNull()
+        coVerify(exactly = 0) { itemRepo.getItem("season-1") }
+    }
 
     @Test
     fun `reopening over the service's item publishes at once and asks nothing first`() = runTest(dispatcher) {
