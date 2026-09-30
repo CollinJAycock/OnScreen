@@ -408,6 +408,19 @@ Roku channel (no request features, as on Android):
   files of any track holding several, once per server start, moves each to
   its own disc and track, and gives the disc 1 row back its own title. No
   migration: run a music library scan after upgrading.
+- **Multi-disc sets named "112-artist-title" place each disc.** Some
+  releases put the disc in front of the track number with nothing between
+  ("112-…" is disc 1 track 12, "212-…" disc 2 track 12) and carry no disc
+  tag. The scanner read that as track 112, or went by the track tag alone,
+  so every disc's track 12 was one track. A file with no disc tag whose name
+  starts with three digits ending in its tagged track number now gets the
+  first digit as its disc, when its folder holds the set named the same
+  way: most of that disc's earlier tracks and another disc's first track. A
+  real track 112, a title that is a number, a band named with one (311,
+  808 State) or a countdown folder numbered straight through doesn't, even
+  beside such a set. Albums an older scan folded
+  this way split on the next music scan, and a later disc's tracks that no
+  other disc has move to their disc without being re-read.
 - **Albums with titles in another script no longer merge.** Title matching
   dropped everything but Latin letters, so every Japanese, Cyrillic or Greek
   title matched every other: a Japanese album came in as one track, and an

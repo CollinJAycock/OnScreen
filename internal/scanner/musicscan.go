@@ -410,7 +410,11 @@ func (s *Scanner) retitleTrack(ctx context.Context, track *media.Item, tags *Mus
 // unnumberedTracks so later scans skip it. No hash, no ffprobe, and the file
 // stays skipped either way.
 func (s *Scanner) healUnchangedTrack(ctx context.Context, item *media.Item, file *media.File, path string) {
-	if item == nil || item.Type != "track" || item.Index != nil {
+	if item == nil || item.Type != "track" {
+		return
+	}
+	if item.Index != nil {
+		s.healUnchangedTrackDisc(ctx, item, file, path)
 		return
 	}
 	if _, seen := s.unnumberedTracks.Load(file.ID); seen {
@@ -432,6 +436,55 @@ func (s *Scanner) healUnchangedTrack(ctx context.Context, item *media.Item, file
 		s.logger.WarnContext(ctx, "track number not filled; another track in the album holds it",
 			"path", path, "track_id", item.ID, "track", tags.Track, "disc", tags.Disc, "err", err)
 		s.unnumberedTracks.Store(file.ID, struct{}{})
+	}
+}
+
+// healUnchangedTrackDisc gives a numbered track with no disc the one its
+// fused file name names ("215-…" as track 15: disc 2; see discFromFusedName),
+// for a file the scan is otherwise skipping. A set named that way was
+// imported with no discs at all, and the fold heal (rereadFoldedTrack) only
+// re-reads tracks holding several files: a later disc's tracks past the end
+// of every other disc held one file each, so they stayed on disc 1. Disc 1
+// itself is what no disc already means, so only 2 and up are written; the
+// name and the row's number are all it takes, and the file stays skipped.
+//
+// Only a track holding this file alone. A folded track (several discs'
+// files on one row) is the fold heal's to split by re-reading them; a
+// directory scan, which doesn't load the fold list, wrote one file's disc
+// onto such a row under another disc's title. Each file is weighed once per
+// process: one that gives no disc isn't listed again every scan.
+func (s *Scanner) healUnchangedTrackDisc(ctx context.Context, item *media.Item, file *media.File, path string) {
+	if item.DiscNumber != nil || item.Index == nil || file == nil {
+		return
+	}
+	// The name alone rules out almost every track, disc 1's among them,
+	// before anything is read.
+	if d, _ := fusedDisc(filepath.Base(path), *item.Index); d < 2 {
+		return
+	}
+	if _, seen := s.fusedDiscChecked.LoadOrStore(file.ID, struct{}{}); seen {
+		return
+	}
+	files, err := s.media.GetFiles(ctx, item.ID)
+	if err != nil {
+		return
+	}
+	active := 0
+	for _, f := range files {
+		if f.Status == "active" {
+			active++
+		}
+	}
+	if active != 1 {
+		return
+	}
+	disc := discFromFusedName(ctx, s.mediaStore(), path, *item.Index)
+	if disc < 2 {
+		return
+	}
+	if _, err := s.fillTrackPosition(ctx, item, 0, disc, "fused name"); err != nil {
+		s.logger.WarnContext(ctx, "disc not filled from the file name; another track holds the position",
+			"path", path, "track_id", item.ID, "disc", disc, "track", *item.Index, "err", err)
 	}
 }
 

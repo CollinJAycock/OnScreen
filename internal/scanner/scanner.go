@@ -185,6 +185,10 @@ type Scanner struct {
 	// instead, which reads its tags anyway. Keyed by media_files.id; values
 	// are unused.
 	unnumberedTracks sync.Map
+	// fusedDiscChecked holds the IDs of unchanged music files whose fused
+	// name healUnchangedTrackDisc has weighed this process, so a name that
+	// gives no disc isn't listed against its folder every scan.
+	fusedDiscChecked sync.Map
 
 	// foldedTracks holds, per music library, the tracks that held more than
 	// one active file when the library's running scan started (see

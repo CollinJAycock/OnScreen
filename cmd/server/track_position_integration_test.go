@@ -551,6 +551,120 @@ func TestTrackPosition_Integration_RescanSplitsFoldedTracks(t *testing.T) {
 	})
 }
 
+// A box whose release fuses the disc onto the track number in the file name
+// ("101-artist-alpha.flac" is disc 1 track 1, "201-…" disc 2 track 1), in one
+// folder with no disc tags. Read as tracks 101 and 201, or by the tags'
+// track numbers alone, every disc's track 1 was one position: an older scan
+// hung all their files on one track. Import places each disc, and a rescan
+// splits the fold with no file touched.
+func TestTrackPosition_Integration_FusedDiscNames(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	adapter := &mediaAdapter{q: q}
+	sc := scanner.New(media.NewService(adapter, adapter, logger), nil, fileConc(2), logger)
+
+	root := t.TempDir()
+	box := func(name string, comments ...string) {
+		writeVorbisFLAC(t, filepath.Join(root, "Artist", "Box", name),
+			append([]string{"ARTIST=Artist", "ALBUM=Box"}, comments...)...)
+	}
+	box("101-artist-alpha.flac", "TITLE=Alpha", "TRACKNUMBER=1")
+	box("102-artist-gamma.flac", "TITLE=Gamma", "TRACKNUMBER=2")
+	box("201-artist-beta.flac", "TITLE=Beta", "TRACKNUMBER=1")
+	box("301-artist-delta.flac", "TITLE=Delta", "TRACKNUMBER=1")
+	// Disc 2's track 3: disc 1 stops at 2, so no other disc has a track 3
+	// and nothing folds onto it.
+	box("203-artist-epsilon.flac", "TITLE=Epsilon", "TRACKNUMBER=3")
+	// A band named with a number: every name opens with it, and track 11's
+	// number matches. The folder holds no set, so no disc.
+	writeVorbisFLAC(t, filepath.Join(root, "311", "Transistor", "311 - 01 - Transistor.flac"),
+		"TITLE=Transistor", "ARTIST=311", "ALBUM=Transistor", "TRACKNUMBER=1")
+	writeVorbisFLAC(t, filepath.Join(root, "311", "Transistor", "311 - 11 - Prisoner.flac"),
+		"TITLE=Prisoner", "ARTIST=311", "ALBUM=Transistor", "TRACKNUMBER=11")
+	// A long single-disc album's real track 112, and a title that is a
+	// number: neither is a disc.
+	writeVorbisFLAC(t, filepath.Join(root, "Artist", "Long", "112 - Hundred Twelve.flac"),
+		"TITLE=Hundred Twelve", "ARTIST=Artist", "ALBUM=Long", "TRACKNUMBER=112")
+	writeVorbisFLAC(t, filepath.Join(root, "Artist", "Long", "1901.flac"),
+		"TITLE=1901", "ARTIST=Artist", "ALBUM=Long", "TRACKNUMBER=1")
+
+	lib, err := q.CreateLibrary(ctx, gen.CreateLibraryParams{
+		Name: "Music with fused disc names", Type: "music", ScanPaths: []string{root},
+		Agent: "tmdb", Language: "en", ScanInterval: time.Hour, MetadataRefreshInterval: 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("create library: %v", err)
+	}
+	scan := func(label string) {
+		t.Helper()
+		if _, err := sc.ScanLibrary(ctx, lib.ID, "music", []string{root}); err != nil {
+			t.Fatalf("%s: scan: %v", label, err)
+		}
+	}
+
+	scan("import")
+	got := trackFiles(t, pool, lib.ID, "import")
+	expectFile(t, "import", got, "101-artist-alpha.flac", "Alpha", 1, 1, 1)
+	expectFile(t, "import", got, "102-artist-gamma.flac", "Gamma", 1, 2, 1)
+	expectFile(t, "import", got, "201-artist-beta.flac", "Beta", 2, 1, 1)
+	expectFile(t, "import", got, "301-artist-delta.flac", "Delta", 3, 1, 1)
+	expectFile(t, "import", got, "203-artist-epsilon.flac", "Epsilon", 2, 3, 1)
+	expectFile(t, "import", got, "311 - 01 - Transistor.flac", "Transistor", -1, 1, 1)
+	expectFile(t, "import", got, "311 - 11 - Prisoner.flac", "Prisoner", -1, 11, 1)
+	expectFile(t, "import", got, "112 - Hundred Twelve.flac", "Hundred Twelve", -1, 112, 1)
+	expectFile(t, "import", got, "1901.flac", "1901", -1, 1, 1)
+
+	// Fold every disc's track 1 onto Alpha's row, discs forgotten, the way
+	// a scan that couldn't read the discs left it.
+	alpha := got["101-artist-alpha.flac"].itemID
+	for _, other := range []string{"201-artist-beta.flac", "301-artist-delta.flac"} {
+		id := got[other].itemID
+		if _, err := pool.Exec(ctx, `UPDATE media_files SET media_item_id = $1 WHERE media_item_id = $2`, alpha, id); err != nil {
+			t.Fatalf("fold: %v", err)
+		}
+		if _, err := pool.Exec(ctx, `DELETE FROM media_items WHERE id = $1`, id); err != nil {
+			t.Fatalf("fold: %v", err)
+		}
+	}
+	if _, err := pool.Exec(ctx, `UPDATE media_items SET disc_number = NULL WHERE library_id = $1 AND type = 'track'`, lib.ID); err != nil {
+		t.Fatalf("fold: %v", err)
+	}
+	folded := trackFiles(t, pool, lib.ID, "folded")
+	expectFile(t, "folded", folded, "301-artist-delta.flac", "Alpha", -1, 1, 3)
+	expectFile(t, "folded", folded, "203-artist-epsilon.flac", "Epsilon", -1, 3, 1)
+
+	// A directory scan (the watcher's) doesn't load the fold list, so it
+	// can't split the fold, and it must not write one file's disc onto the
+	// folded track either: it holds disc 1's file under disc 1's title.
+	if _, err := sc.ScanDirectory(ctx, lib.ID, "music", filepath.Join(root, "Artist", "Box"), []string{root}); err != nil {
+		t.Fatalf("directory scan: %v", err)
+	}
+	dirScan := trackFiles(t, pool, lib.ID, "directory scan")
+	expectFile(t, "directory scan", dirScan, "201-artist-beta.flac", "Alpha", -1, 1, 3)
+
+	scan("rescan")
+	after := trackFiles(t, pool, lib.ID, "rescan")
+	expectFile(t, "rescan", after, "101-artist-alpha.flac", "Alpha", 1, 1, 1)
+	expectFile(t, "rescan", after, "201-artist-beta.flac", "Beta", 2, 1, 1)
+	expectFile(t, "rescan", after, "301-artist-delta.flac", "Delta", 3, 1, 1)
+	ids := map[uuid.UUID]bool{}
+	for _, name := range []string{"101-artist-alpha.flac", "201-artist-beta.flac", "301-artist-delta.flac"} {
+		ids[after[name].itemID] = true
+	}
+	if len(ids) != 3 {
+		t.Errorf("rescan: the three discs' track 1 are on %d tracks, want 3", len(ids))
+	}
+	// Epsilon's track held only its file, so the fold heal passes it by;
+	// its name gives it back disc 2, and the unchanged file stays skipped.
+	expectFile(t, "rescan", after, "203-artist-epsilon.flac", "Epsilon", 2, 3, 1)
+	if !after["203-artist-epsilon.flac"].scannedAt.Equal(folded["203-artist-epsilon.flac"].scannedAt) {
+		t.Error("rescan: Epsilon's unchanged file was re-processed")
+	}
+	expectFile(t, "rescan", after, "311 - 11 - Prisoner.flac", "Prisoner", -1, 11, 1)
+}
+
 // Two unnumbered tracks of an album that never learned its disc count, each
 // "01 - …" by name, disc 2's sorting first. The name's number doesn't say
 // which disc: trusted on its own, it put disc 2's Ace on disc 1's track 1,

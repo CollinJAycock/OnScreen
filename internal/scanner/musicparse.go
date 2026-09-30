@@ -7,10 +7,13 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -70,6 +73,13 @@ var trackNumberRE = regexp.MustCompile(`^(\d{1,3})\s*[-.\s]\s*`)
 // so a title that merely opens with numbers ("1-800-273-8255") isn't taken
 // for one. Checked before trackNumberRE, which would read "1-01" as track 1.
 var discTrackRE = regexp.MustCompile(`^(\d{1,2})[-.](\d{2})(?:\s*[-.]\s*|\s+|$)`)
+
+// fusedDiscTrackRE matches the leading number of a name that fuses a
+// one-digit disc onto a two-digit track with nothing between them, then the
+// separator: "112-the_beatles-piggies.flac" is disc 1, track 12. A bare
+// number ("1901.flac", a title) doesn't count. The rest of its set uses the
+// same separator. See discFromFusedName.
+var fusedDiscTrackRE = regexp.MustCompile(`^(\d{3})([\s._-]+)`)
 
 // discDirRE finds a disc marker in the name of the folder holding a track:
 // "CD1", "CD 2", "Disc 3", "disk_04", "Album (Disc 2)", "Album [CD2]". The
@@ -134,6 +144,14 @@ func ReadMusicTagsStore(ctx context.Context, store mediastore.Store, filePath st
 	}
 	if tags.Disc == 0 {
 		tags.Disc = fb.Disc
+	}
+	// Some releases fuse the disc onto the track number in the name:
+	// "112-…" disc 1 track 12, "212-…" disc 2 track 12. The path alone
+	// reads that as track 112, so it takes the tags' track number to see
+	// it. Without it both discs' track 12 were one position in the album,
+	// and a scan hung both files on one track.
+	if tags.Disc == 0 {
+		tags.Disc = discFromFusedName(ctx, store, filePath, tags.Track)
 	}
 	// AlbumArtist defaults to Artist when the tag is missing — avoids a hole
 	// in the artist/album hierarchy while still letting compilations override
@@ -452,6 +470,138 @@ func splitGenres(s string) []string {
 		parts = next
 	}
 	return parts
+}
+
+// discFromFusedName returns the disc a fused "DTT" name gives the file at
+// filePath, which its tags (or its track row) place at [track] — "112-…"
+// with track 12 is disc 1 — or 0.
+//
+// The name alone isn't enough. Its last two digits must be the track number,
+// so a real track 112 (tagged 112) isn't read as one; but a single-disc album
+// whose names open with a number — the band 311 ("311 - 11 - Prisoner",
+// track 11), "808 State - … - 08 Lift", "702 - …" — passes that once per
+// album and would have put one track on a disc of its own. So the folder
+// must hold the set too, named with the same separator: this disc's first
+// track, another disc's first track, and at least half of this disc's
+// tracks before this one ("101-" … "111-" for "112-"). A real set has them
+// whatever follows the number (the artist, each track's own artist on a
+// compilation, the title); a stray numbered file has no such run behind it,
+// even in a folder it shares with a set. And none numbered as a disc set
+// never is: a disc's numbering restarts, so it has no track 00 ("100-")
+// and there is no disc 0 ("001-"), where a folder numbered straight
+// through — a "Top 500" countdown whose files keep their albums' tags —
+// has both, and would otherwise pass. One-digit discs only; "1012-…"
+// (disc 10) stays unread.
+func discFromFusedName(ctx context.Context, store mediastore.Store, filePath string, track int) int {
+	disc, sep := fusedDisc(filepath.Base(filePath), track)
+	if disc == 0 {
+		return 0
+	}
+	firsts := map[int]bool{}  // discs whose track 1 is here
+	earlier := map[int]bool{} // this disc's tracks before this one
+	for _, name := range folderFileNames(ctx, store, filePath) {
+		n, s, ok := fusedPrefix(name)
+		if !ok || s != sep {
+			continue
+		}
+		d, t := n/100, n%100
+		if d == 0 || t == 0 {
+			return 0
+		}
+		if t == 1 {
+			firsts[d] = true
+		}
+		if d == disc && t >= 1 && t < track {
+			earlier[t] = true
+		}
+	}
+	if !firsts[disc] || len(firsts) < 2 || 2*len(earlier) < track-1 {
+		return 0
+	}
+	return disc
+}
+
+// fusedDisc returns the disc the fused prefix of file name [name] gives it
+// as track [track], or 0 when it has none or ends in another number, and the
+// separator after the number.
+func fusedDisc(name string, track int) (int, string) {
+	if track < 1 || track > 99 {
+		return 0, ""
+	}
+	n, sep, ok := fusedPrefix(name)
+	if !ok || n%100 != track || n/100 == 0 {
+		return 0, ""
+	}
+	return n / 100, sep
+}
+
+// fusedPrefix returns the three-digit number a file name opens with and the
+// separator after it.
+func fusedPrefix(name string) (int, string, bool) {
+	m := fusedDiscTrackRE.FindStringSubmatch(strings.TrimSuffix(name, filepath.Ext(name)))
+	if m == nil {
+		return 0, "", false
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0, "", false
+	}
+	return n, m[2], true
+}
+
+// remoteFolders keeps a remote store's folder listings for a minute
+// (folder → folderListing). A scan reads a folder's files together, and each
+// file of a fused set would otherwise list the folder again: a paginated
+// LIST under its prefix.
+var remoteFolders sync.Map
+
+type folderListing struct {
+	names []string
+	at    time.Time
+}
+
+const remoteFolderTTL = time.Minute
+
+// folderFileNames lists the names of the files beside filePath. Local disk
+// (directly or behind the Provider) reads just that directory; another store
+// lists its objects under it. nil when the store can't list, which leaves a
+// fused name unread.
+func folderFileNames(ctx context.Context, store mediastore.Store, filePath string) []string {
+	dir := filepath.Dir(filePath)
+	if mediastore.IsLocal(store) {
+		entries, err := os.ReadDir(dir)
+		if err != nil {
+			return nil
+		}
+		names := make([]string, 0, len(entries))
+		for _, e := range entries {
+			if !e.IsDir() {
+				names = append(names, e.Name())
+			}
+		}
+		return names
+	}
+	lister, ok := store.(mediastore.Lister)
+	if !ok {
+		return nil
+	}
+	if v, ok := remoteFolders.Load(dir); ok {
+		if l := v.(folderListing); time.Since(l.at) < remoteFolderTTL {
+			return l.names
+		}
+	}
+	prefix := strings.TrimSuffix(dir, "/") + "/"
+	var names []string
+	if err := lister.Walk(ctx, prefix, func(o mediastore.ObjectInfo) error {
+		if filepath.Dir(o.Key) == dir {
+			names = append(names, filepath.Base(o.Key))
+		}
+		return nil
+	}); err != nil {
+		return nil
+	}
+	remoteFolders.Store(dir, folderListing{names: names, at: time.Now()})
+	return names
 }
 
 // parseMusicPath derives metadata from the file's path using the common
