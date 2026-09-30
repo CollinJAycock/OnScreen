@@ -19,7 +19,8 @@ import androidx.media3.common.util.UnstableApi
  * fragment, progress tracker, markers, media keys and the service handoff
  * keep the RAW player and their existing own-offset arithmetic.
  *
- * Absolute seeks are translated back to session time. A target OUTSIDE the
+ * Absolute seeks — BOTH seekTo overloads; the adapter uses the indexed
+ * one — are translated back to session time. A target OUTSIDE the
  * session's transcoded window — before the resume point, or past the
  * growing live edge — cannot be reached by an in-window seek at all (before
  * the window it doesn't exist; past the edge ExoPlayer clamps and
@@ -60,7 +61,27 @@ class ContentTimeForwardingPlayer(
         return if (d == C.TIME_UNSET) d else d + offsetMs()
     }
 
-    override fun seekTo(positionMs: Long) {
+    override fun seekTo(positionMs: Long) = seekInWindow(positionMs) { super.seekTo(it) }
+
+    // The overload the glue actually reaches: LeanbackPlayerAdapter.seekTo
+    // (the scrub bar's seek) calls player.seekTo(currentMediaItemIndex, pos),
+    // never the one above, and ForwardingPlayer hands it to the delegate
+    // untranslated — a scrub on a resumed session landed hlsOffsetMs late,
+    // usually past the transcoded edge, and scrubbing back before the resume
+    // point never re-issued.
+    //
+    // C.TIME_UNSET here means "the item's default position", not a time:
+    // it goes to the delegate as-is. Through the window check it would read
+    // as a target before the resume point and restart the session at 0.
+    override fun seekTo(mediaItemIndex: Int, positionMs: Long) {
+        if (positionMs == C.TIME_UNSET) return super.seekTo(mediaItemIndex, positionMs)
+        seekInWindow(positionMs) { super.seekTo(mediaItemIndex, it) }
+    }
+
+    /** Seeks to content time [positionMs] through [seekSession] (given
+     *  session time) when it's inside this session's window; otherwise
+     *  hands it to [onSeekOutsideWindow]. */
+    private fun seekInWindow(positionMs: Long, seekSession: (Long) -> Unit) {
         val off = offsetMs()
         val windowMs = super.getDuration()
         val windowEnd = if (windowMs == C.TIME_UNSET) Long.MAX_VALUE else off + windowMs
@@ -68,6 +89,6 @@ class ContentTimeForwardingPlayer(
             onSeekOutsideWindow(positionMs.coerceAtLeast(0L))
             return
         }
-        super.seekTo(positionMs - off)
+        seekSession(positionMs - off)
     }
 }
