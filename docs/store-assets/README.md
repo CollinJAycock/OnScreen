@@ -21,10 +21,13 @@ per-client trees focused on code.
 
 ### `master/`
 
-Source-of-truth artwork. Everything else is derived from `icon-512.png`.
+Source-of-truth artwork. Everything else is derived from `icon-512.png`,
+except the desktop client's icons, which need a larger source and come from
+`icon-1024.png`.
 
 | File | Purpose |
 |---|---|
+| `icon-1024.png` | 1024×1024 master: the JPEG embedded in `favicon.svg`, decoded to PNG. Source for the desktop client's icon set (`cargo tauri icon`; see `clients/desktop/src-tauri/icons/README.md`). |
 | `icon-512.png` | 512×512 master icon. Source for every other icon. |
 | `icon-192.png` | 192×192 PWA / web-manifest variant. |
 | `favicon.svg` | SVG wrapper around the master JPEG; web fallback. |

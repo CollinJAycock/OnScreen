@@ -137,16 +137,6 @@ fn get_server_url(app: AppHandle) -> Result<Option<String>, String> {
         .and_then(|v| v.as_str().map(String::from)))
 }
 
-/// Validates and persists the OnScreen server URL the user picked.
-///
-/// Validation here is intentionally minimal — the URL must parse and
-/// use http or https — because the *real* validation (does this URL
-/// host a healthy OnScreen server?) is a network round-trip the
-/// frontend should do explicitly so the user gets a clear "couldn't
-/// reach the server" error rather than a silent persist that breaks
-/// at first request. Per the same logic, we don't probe `/health/live`
-/// from Rust on save: the frontend is the right place to surface
-/// "checking…" UX and capture the response shape mismatch path.
 /// Removes the stored server URL so the layout's first-run gate
 /// kicks in on the next reload. Symmetric with clear_tokens — the
 /// /native/server "Sign out + clear server URL" button uses both
@@ -160,77 +150,327 @@ fn clear_server_url(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// The acceptance rules for a server URL, shared by `set_server_url` and
-/// `validate_server_url` so a pre-check can never disagree with the save.
-/// Returns the normalised string that gets persisted plus its parsed form.
-fn parse_server_url(url: &str) -> Result<(String, url::Url), String> {
-    let trimmed = url.trim().trim_end_matches('/').to_string();
-    if trimmed.is_empty() {
-        return Err("server URL cannot be empty".into());
-    }
-    let parsed = match url::Url::parse(&trimmed) {
-        Ok(u) => u,
-        // "nas.local" / "10.0.0.5:7070"-style input with no scheme at all.
-        Err(url::ParseError::RelativeUrlWithoutBase) => {
-            return Err(format!(
-                "server URL must start with https:// or http:// (e.g. https://{trimmed})"
-            ))
+/// True when `host` can only be a local-network (or loopback) address:
+/// RFC 1918 / CGNAT (Tailscale) / link-local / loopback IPv4, ULA /
+/// link-local / loopback IPv6, single-label names and the conventional
+/// local suffixes. The same rules as the TV apps' `isLocalNetworkHost`
+/// (clients/webos/src/lib/api/client.ts), so every first-party client
+/// agrees on which servers plain http:// is acceptable for.
+fn is_local_network_host(host: &url::Host<&str>) -> bool {
+    match host {
+        url::Host::Ipv4(ip) => is_local_ipv4(ip),
+        url::Host::Ipv6(ip) => {
+            if let Some(v4) = ip.to_ipv4_mapped() {
+                return is_local_ipv4(&v4);
+            }
+            let first = ip.segments()[0];
+            ip.is_loopback()
+                || (first & 0xfe00) == 0xfc00 // fc00::/7 unique local
+                || (first & 0xffc0) == 0xfe80 // fe80::/10 link-local
         }
-        Err(e) => return Err(format!("invalid server URL: {e}")),
+        url::Host::Domain(d) => {
+            let h = d.trim_end_matches('.').to_ascii_lowercase();
+            if h.is_empty() {
+                return false;
+            }
+            if h == "localhost" || h.ends_with(".localhost") {
+                return true;
+            }
+            if [".local", ".lan", ".home.arpa", ".internal"]
+                .iter()
+                .any(|suffix| h.ends_with(suffix))
+            {
+                return true;
+            }
+            // Single-label names ("nas", "plexbox") only resolve via local DNS.
+            !h.contains('.')
+        }
+    }
+}
+
+fn is_local_ipv4(ip: &std::net::Ipv4Addr) -> bool {
+    let [a, b, _, _] = ip.octets();
+    a == 10
+        || a == 127
+        || (a == 172 && (16..=31).contains(&b))
+        || (a == 192 && b == 168)
+        || (a == 169 && b == 254)
+        || (a == 100 && (64..=127).contains(&b))
+}
+
+/// "https://…" / "HTTP://…" / "ftp://…": the input names a scheme.
+fn has_scheme(s: &str) -> bool {
+    match s.find("://") {
+        Some(i) if i > 0 => {
+            let scheme = &s[..i];
+            scheme.starts_with(|c: char| c.is_ascii_alphabetic())
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+        }
+        _ => false,
+    }
+}
+
+/// The acceptance rules for a server URL with an explicit scheme. Shared by
+/// `set_server_url`, `resolve_server_input` and `probe_server_url`, so what
+/// the setup screen tries can never disagree with what the save accepts.
+/// Returns the normalised string that gets persisted (lower-case scheme and
+/// host, default port and trailing slash dropped) plus its parsed form.
+///
+/// Plain http:// is accepted for local-network hosts only — the usual
+/// self-hosted `http://192.168.1.50:7070` — in release and debug builds
+/// alike. To anything else it is refused: the password and the 30-day
+/// refresh token ride this URL, and over cleartext across the internet
+/// they're readable on every hop.
+fn parse_server_url(url: &str) -> Result<(String, url::Url), String> {
+    let trimmed = url.trim();
+    if trimmed.is_empty() {
+        return Err("Enter your OnScreen server's address.".into());
+    }
+    if !has_scheme(trimmed) {
+        return Err(format!(
+            "The server address must start with https:// or http:// (got {trimmed:?})."
+        ));
+    }
+    let parsed = url::Url::parse(trimmed)
+        .map_err(|e| format!("{trimmed:?} isn't a valid server address ({e})."))?;
+    let host = match parsed.host() {
+        Some(h) if !matches!(h, url::Host::Domain("")) => h,
+        _ => return Err(format!("{trimmed:?} has no host name or IP address.")),
     };
     match parsed.scheme() {
         "https" => {}
         "http" => {
-            // http:// is allowed in debug builds (developers running
-            // a local dev server on `localhost:7070`) but rejected in
-            // release builds for any non-loopback host. The bearer
-            // token rides this URL — over plaintext on a coffee-shop
-            // wifi it would be sniffed in seconds. Loopback exempts
-            // home-network test rigs that haven't set up TLS yet.
-            let host = parsed.host_str().unwrap_or("");
-            let is_loopback = host == "localhost"
-                || host == "127.0.0.1"
-                || host == "[::1]"
-                || host == "::1";
-            #[cfg(not(debug_assertions))]
-            if !is_loopback {
+            if !is_local_network_host(&host) {
                 return Err(format!(
-                    "plaintext http:// not allowed for {host:?} — use https:// (loopback addresses are exempt)"
+                    "OnScreen only connects over plain http:// to servers on your local network, \
+                     and {host} isn't one — your password would cross the internet unencrypted. \
+                     Use the server's https:// address, or its local IP address \
+                     (for example http://192.168.1.50:7070)."
                 ));
             }
-            #[cfg(debug_assertions)]
-            let _ = is_loopback; // silence warning in dev
-        }
-        // "nas:7070" parses as scheme "nas" + path "7070": the user meant
-        // host:port, so say what to type rather than "unsupported scheme".
-        _ if !trimmed.contains("://") => {
-            return Err(format!(
-                "server URL must start with https:// or http:// (e.g. https://{trimmed})"
-            ))
         }
         other => {
             return Err(format!(
-                "unsupported scheme {other:?} — server URL must be http:// or https://"
+                "Unsupported address type {other}:// — the server address must start with \
+                 https:// or http://."
             ))
         }
     }
-    Ok((trimmed, parsed))
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return Err(
+            "Leave the user name and password out of the server address — you sign in on the next screen."
+                .into(),
+        );
+    }
+    if parsed.query().is_some() || parsed.fragment().is_some() {
+        return Err("The server address can't contain ? or #.".into());
+    }
+    let normalised = parsed.as_str().trim_end_matches('/').to_string();
+    Ok((normalised, parsed))
 }
 
-/// Validate-only twin of `set_server_url`: the same rules, but it
-/// persists nothing and leaves the stored tokens alone. The
-/// /native/server page calls it BEFORE revoking the current session on
-/// a server switch, so a URL the save would reject (unsupported scheme,
-/// plaintext http:// to a LAN host in release builds) can't sign the
-/// user out of the server they're still using.
+/// One URL the setup screen should try for what the user typed.
+#[derive(Serialize, Debug, PartialEq, Eq)]
+pub struct ServerCandidate {
+    /// Normalised server URL, as `set_server_url` would store it.
+    pub url: String,
+    /// Plain http:// — the UI flags the connection as unencrypted.
+    pub cleartext: bool,
+    /// The host is on the local network (loopback, RFC 1918, .local, …).
+    pub local: bool,
+}
+
+/// Turns what the user typed into the server URL(s) to try, in order.
+///
+/// - With a scheme: exactly that URL, under `parse_server_url`'s rules (an
+///   explicit https:// is never retried over http://).
+/// - Without one ("onscreen.example.com", "10.0.0.66:7070", "nas:7070"):
+///   https:// first, then http:// — the http:// fallback only for
+///   local-network hosts, the same order as the TV apps' setup screens.
+fn server_url_candidates(input: &str) -> Result<Vec<ServerCandidate>, String> {
+    let typed = input.trim();
+    if typed.is_empty() {
+        return Err("Enter your OnScreen server's address.".into());
+    }
+    let candidate = |s: &str| {
+        parse_server_url(s).map(|(url, parsed)| ServerCandidate {
+            cleartext: parsed.scheme() == "http",
+            local: parsed.host().is_some_and(|h| is_local_network_host(&h)),
+            url,
+        })
+    };
+    if has_scheme(typed) {
+        return candidate(typed).map(|c| vec![c]);
+    }
+    // "http:/host", "https:host": a scheme with the slashes mistyped.
+    let lower = typed.to_ascii_lowercase();
+    if lower.starts_with("http:") || lower.starts_with("https:") {
+        return Err(format!(
+            "Check the address {typed:?} — it should look like https://onscreen.example.com or 192.168.1.50:7070."
+        ));
+    }
+    let typed = typed.trim_end_matches('/');
+    let https = candidate(&format!("https://{typed}")).map_err(|_| {
+        format!(
+            "{typed:?} isn't a valid server address — it should look like \
+             https://onscreen.example.com or 192.168.1.50:7070."
+        )
+    })?;
+    let mut out = vec![https];
+    // Refused for public hosts by parse_server_url — https:// only, then.
+    if let Ok(http) = candidate(&format!("http://{typed}")) {
+        out.push(http);
+    }
+    Ok(out)
+}
+
+/// The URLs the setup screen should try for what the user typed, or a
+/// user-facing reason the input can't be a server address. Persists
+/// nothing. The webview probes each candidate itself (that is the request
+/// path the app will actually use — CORS, certificates and all) and saves
+/// the first that answers with `set_server_url`.
 #[tauri::command]
-fn validate_server_url(url: String) -> Result<(), String> {
-    parse_server_url(&url).map(|_| ())
+fn resolve_server_input(input: String) -> Result<Vec<ServerCandidate>, String> {
+    server_url_candidates(&input)
 }
 
+/// What a reachable OnScreen server says about itself.
+#[derive(Serialize, Debug)]
+pub struct ServerProbe {
+    /// The URL that answered (an http:// URL that redirected to https://
+    /// on the same host comes back as the https:// one).
+    pub url: String,
+    pub name: String,
+    pub version: String,
+}
+
+/// Rust-side reachability check, used by the setup screen to explain WHY
+/// the webview couldn't reach a server: a webview `fetch` failure is an
+/// opaque "Failed to fetch", whether the host is down, the certificate is
+/// bad or the server's CORS policy refused the app's origin. This request
+/// isn't subject to CORS, so "Rust reached it, the webview didn't" means
+/// the server is up but doesn't allow the app's origin.
+///
+/// Only URLs `parse_server_url` accepts are probed; the request is an
+/// unauthenticated GET of the public capabilities endpoint, follows at most
+/// one same-host http:// → https:// redirect, and returns nothing but the
+/// server's name and version.
+#[tauri::command]
+async fn probe_server_url(url: String) -> Result<ServerProbe, String> {
+    let (base, _) = parse_server_url(&url)?;
+    tauri::async_runtime::spawn_blocking(move || probe_server_blocking(&base, true))
+        .await
+        .map_err(|e| format!("server check failed: {e}"))?
+}
+
+fn probe_server_blocking(base: &str, allow_upgrade: bool) -> Result<ServerProbe, String> {
+    use std::time::Duration;
+    let agent = ureq::AgentBuilder::new()
+        .redirects(0)
+        .timeout_connect(Duration::from_secs(5))
+        .timeout(Duration::from_secs(10))
+        .build();
+    let endpoint = format!("{base}/api/v1/system/capabilities");
+    let resp = match agent.get(&endpoint).call() {
+        Ok(r) => r,
+        Err(ureq::Error::Status(code, _)) => {
+            return Err(format!(
+                "{base} answered with HTTP {code} — is this an OnScreen server's address?"
+            ))
+        }
+        Err(ureq::Error::Transport(t)) => return Err(format!("{base}: {}", describe_transport(&t))),
+    };
+    if (300..400).contains(&resp.status()) {
+        let location = resp.header("Location").unwrap_or("").to_string();
+        if allow_upgrade {
+            if let Some(upgraded) = https_upgrade_of(&endpoint, &location) {
+                return probe_server_blocking(&upgraded, false);
+            }
+        }
+        return Err(format!("{base} redirected to {location:?} — enter that address instead."));
+    }
+    let body = resp
+        .into_string()
+        .map_err(|e| format!("{base}: reading the reply failed: {e}"))?;
+    let json: serde_json::Value = serde_json::from_str(&body).map_err(|_| {
+        format!("{base} answered, but not like an OnScreen server — check the address and port.")
+    })?;
+    let server = json
+        .get("data")
+        .and_then(|d| d.get("server"))
+        .filter(|s| s.is_object())
+        .ok_or_else(|| {
+            format!("{base} answered, but not like an OnScreen server — check the address and port.")
+        })?;
+    let field = |k: &str| server.get(k).and_then(|v| v.as_str()).unwrap_or("").to_string();
+    Ok(ServerProbe {
+        url: base.to_string(),
+        name: field("name"),
+        version: field("version"),
+    })
+}
+
+/// The https:// server URL to adopt when probing `base` over http:// was
+/// answered with a redirect to https:// on the SAME host (a reverse proxy
+/// forcing TLS). Never a downgrade, never another host.
+fn https_upgrade_of(endpoint: &str, location: &str) -> Option<String> {
+    let from = url::Url::parse(endpoint).ok()?;
+    if from.scheme() != "http" {
+        return None;
+    }
+    let to = from.join(location).ok()?;
+    if to.scheme() != "https" || to.host_str() != from.host_str() {
+        return None;
+    }
+    // Keep any path prefix the server lives under (reverse-proxy subpath).
+    let suffix = "/api/v1/system/capabilities";
+    let to_path = to.path().strip_suffix(suffix)?;
+    let mut upgraded = to.clone();
+    upgraded.set_path(to_path);
+    upgraded.set_query(None);
+    upgraded.set_fragment(None);
+    let (normalised, _) = parse_server_url(upgraded.as_str()).ok()?;
+    Some(normalised)
+}
+
+fn describe_transport(t: &ureq::Transport) -> String {
+    use ureq::ErrorKind;
+    let detail = {
+        let mut parts = Vec::new();
+        if let Some(m) = t.message() {
+            parts.push(m.to_string());
+        }
+        if let Some(src) = std::error::Error::source(t) {
+            parts.push(src.to_string());
+        }
+        parts.join(": ")
+    };
+    let lower = detail.to_ascii_lowercase();
+    match t.kind() {
+        ErrorKind::Dns => "the host name couldn't be found (DNS lookup failed).".into(),
+        ErrorKind::ConnectionFailed if lower.contains("timed out") => {
+            "the connection timed out — is the server running, and is the port right?".into()
+        }
+        ErrorKind::ConnectionFailed => {
+            "the connection was refused — is the server running, and is the port right?".into()
+        }
+        _ if lower.contains("certificate") || lower.contains("tls") || lower.contains("corrupt message") => {
+            format!("a secure (https://) connection couldn't be set up ({detail}).")
+        }
+        _ if lower.contains("timed out") => "the server didn't answer in time.".into(),
+        _ if detail.is_empty() => t.to_string(),
+        _ => detail,
+    }
+}
+
+/// Persists the server URL the setup screen tested, under the same rules as
+/// `resolve_server_input` (this is the authoritative check: the webview has
+/// no store permission, so it can't write `settings.json` around it).
 #[tauri::command]
 fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
-    let (trimmed, parsed) = parse_server_url(&url)?;
+    let (normalised, parsed) = parse_server_url(&url)?;
     let store = app.store(STORE_FILE).map_err(|e| e.to_string())?;
     // Tokens are bound to the server that issued them. When the origin
     // changes, drop them BEFORE persisting the new URL so the old
@@ -245,7 +485,7 @@ fn set_server_url(app: AppHandle, url: String) -> Result<(), String> {
     if prev_origin.as_ref() != Some(&parsed.origin()) {
         wipe_tokens(&app)?;
     }
-    store.set(KEY_SERVER_URL, trimmed);
+    store.set(KEY_SERVER_URL, normalised);
     store.save().map_err(|e| e.to_string())?;
     Ok(())
 }
@@ -658,6 +898,10 @@ pub fn run() {
             // global-shortcut handler does, so the AudioPlayer's
             // listener handles both paths uniformly.
             let show_item = MenuItem::with_id(app, "show", "Show OnScreen", true, None::<&str>)?;
+            // Escape hatch to the server setting from any screen (the setup
+            // wizard and error pages have no sidebar link to it).
+            let server_item =
+                MenuItem::with_id(app, "server", "Change server…", true, None::<&str>)?;
             let play_item = MenuItem::with_id(app, "play-pause", "Play / Pause", true, None::<&str>)?;
             let next_item = MenuItem::with_id(app, "next", "Next", true, None::<&str>)?;
             let prev_item = MenuItem::with_id(app, "previous", "Previous", true, None::<&str>)?;
@@ -665,7 +909,16 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit OnScreen", true, None::<&str>)?;
             let menu = Menu::with_items(
                 app,
-                &[&show_item, &sep, &play_item, &next_item, &prev_item, &sep, &quit_item],
+                &[
+                    &show_item,
+                    &server_item,
+                    &sep,
+                    &play_item,
+                    &next_item,
+                    &prev_item,
+                    &sep,
+                    &quit_item,
+                ],
             )?;
             let _tray = TrayIconBuilder::with_id("main")
                 .tooltip("OnScreen")
@@ -678,6 +931,10 @@ pub fn run() {
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "show" => focus_main_window(app),
+                    "server" => {
+                        focus_main_window(app);
+                        let _ = app.emit("open-server-settings", ());
+                    }
                     "play-pause" | "next" | "previous" => {
                         let _ = app.emit("media-key", event.id.as_ref());
                     }
@@ -714,7 +971,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_app_version,
             get_server_url,
-            validate_server_url,
+            resolve_server_input,
+            probe_server_url,
             set_server_url,
             clear_server_url,
             get_tokens,
@@ -744,4 +1002,182 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running OnScreen desktop");
+}
+
+
+#[cfg(test)]
+mod server_url_tests {
+    use super::*;
+
+    fn ok(input: &str) -> String {
+        parse_server_url(input).unwrap_or_else(|e| panic!("{input:?} rejected: {e}")).0
+    }
+
+    fn err(input: &str) -> String {
+        match parse_server_url(input) {
+            Ok((u, _)) => panic!("{input:?} accepted as {u:?}"),
+            Err(e) => e,
+        }
+    }
+
+    fn urls(input: &str) -> Vec<String> {
+        server_url_candidates(input)
+            .unwrap_or_else(|e| panic!("{input:?} rejected: {e}"))
+            .into_iter()
+            .map(|c| c.url)
+            .collect()
+    }
+
+    #[test]
+    fn https_is_accepted_for_any_host() {
+        assert_eq!(ok("https://onscreen.wolverscreen.com"), "https://onscreen.wolverscreen.com");
+        assert_eq!(ok("https://8.8.8.8:7070"), "https://8.8.8.8:7070");
+        assert_eq!(ok("https://10.0.0.66:7070"), "https://10.0.0.66:7070");
+    }
+
+    #[test]
+    fn plaintext_http_is_accepted_for_local_network_hosts() {
+        // The examples the setup screen prints, the NAS, and every range the
+        // TV apps' isLocalNetworkHost treats as local.
+        for u in [
+            "http://192.168.1.50:7070",
+            "http://10.0.0.66:7070",
+            "http://172.16.0.1:7070",
+            "http://172.31.255.254",
+            "http://100.64.0.1:7070",
+            "http://100.127.255.1",
+            "http://169.254.10.20:7070",
+            "http://127.0.0.1:7070",
+            "http://127.0.0.2:7070",
+            "http://localhost:7070",
+            "http://onscreen.localhost:7070",
+            "http://nas.local:7070",
+            "http://nas.lan",
+            "http://media.home.arpa",
+            "http://onscreen.internal",
+            "http://nas:7070",
+            "http://NAS.LOCAL.:7070",
+            "http://[::1]:7070",
+            "http://[fd12:3456::1]:7070",
+            "http://[fe80::1]:7070",
+            "http://[::ffff:192.168.1.5]:7070",
+        ] {
+            ok(u);
+        }
+    }
+
+    #[test]
+    fn plaintext_http_is_refused_for_public_hosts() {
+        for u in [
+            "http://onscreen.wolverscreen.com",
+            "http://8.8.8.8:7070",
+            "http://172.32.0.1",
+            "http://172.15.0.1",
+            "http://100.128.0.1",
+            "http://192.169.1.1",
+            "http://11.0.0.1",
+            "http://[2001:db8::1]:7070",
+            "http://[::ffff:8.8.8.8]",
+            "http://example.local.evil.com",
+        ] {
+            let e = err(u);
+            assert!(e.contains("local network"), "{u}: {e}");
+            assert!(e.contains("https://"), "{u}: {e}");
+        }
+    }
+
+    #[test]
+    fn normalises_what_it_stores() {
+        assert_eq!(ok("  HTTPS://OnScreen.Example.COM:443/  "), "https://onscreen.example.com");
+        assert_eq!(ok("http://192.168.1.50:7070/"), "http://192.168.1.50:7070");
+        assert_eq!(ok("http://localhost:80"), "http://localhost");
+        // A reverse-proxy subpath is kept (api.ts appends /api/v1 to it).
+        assert_eq!(ok("https://example.com/onscreen/"), "https://example.com/onscreen");
+    }
+
+    #[test]
+    fn rejects_what_cannot_be_a_server_address() {
+        assert!(err("").contains("Enter"));
+        assert!(err("   ").contains("Enter"));
+        assert!(err("ftp://nas.local").contains("ftp://"));
+        assert!(err("onscreen.example.com").contains("https://"));
+        assert!(err("https://").contains("valid") || err("https://").contains("host"));
+        assert!(err("https://user:secret@example.com").contains("user name and password"));
+        assert!(err("https://example.com/?x=1").contains("?"));
+        assert!(err("https://example.com/#top").contains("#"));
+        assert!(err("https://exa mple.com").contains("valid"));
+    }
+
+    #[test]
+    fn a_bare_local_host_tries_https_then_http() {
+        assert_eq!(urls("10.0.0.66:7070"), ["https://10.0.0.66:7070", "http://10.0.0.66:7070"]);
+        assert_eq!(urls("192.168.1.50:7070/"), ["https://192.168.1.50:7070", "http://192.168.1.50:7070"]);
+        // "nas:7070" used to parse as scheme "nas" and be rejected.
+        assert_eq!(urls("nas:7070"), ["https://nas:7070", "http://nas:7070"]);
+        assert_eq!(urls("localhost:7070"), ["https://localhost:7070", "http://localhost:7070"]);
+        assert_eq!(urls("[::1]:7070"), ["https://[::1]:7070", "http://[::1]:7070"]);
+        let c = server_url_candidates("nas.local:7070").unwrap();
+        assert!(!c[0].cleartext && c[0].local);
+        assert!(c[1].cleartext && c[1].local);
+    }
+
+    #[test]
+    fn a_bare_public_host_tries_https_only() {
+        assert_eq!(urls("onscreen.wolverscreen.com"), ["https://onscreen.wolverscreen.com"]);
+        let c = server_url_candidates("onscreen.wolverscreen.com").unwrap();
+        assert_eq!(
+            c,
+            [ServerCandidate {
+                url: "https://onscreen.wolverscreen.com".into(),
+                cleartext: false,
+                local: false
+            }]
+        );
+    }
+
+    #[test]
+    fn an_explicit_scheme_is_used_as_typed() {
+        assert_eq!(urls("https://10.0.0.66:7070"), ["https://10.0.0.66:7070"]);
+        assert_eq!(urls("http://10.0.0.66:7070"), ["http://10.0.0.66:7070"]);
+        assert_eq!(urls("HTTP://localhost:7070"), ["http://localhost:7070"]);
+        let e = server_url_candidates("http://onscreen.wolverscreen.com").unwrap_err();
+        assert!(e.contains("local network"), "{e}");
+    }
+
+    #[test]
+    fn malformed_bare_input_gets_a_readable_error() {
+        for bad in ["", "http:/10.0.0.66", "https:example.com", "exa mple.com", "ftp://x"] {
+            let e = server_url_candidates(bad).unwrap_err();
+            assert!(!e.is_empty(), "{bad:?}");
+        }
+        assert!(server_url_candidates("http:/10.0.0.66").unwrap_err().contains("should look like"));
+    }
+
+    #[test]
+    fn https_upgrade_is_same_host_only() {
+        let ep = "http://nas.local:7070/api/v1/system/capabilities";
+        assert_eq!(
+            https_upgrade_of(ep, "https://nas.local/api/v1/system/capabilities").as_deref(),
+            Some("https://nas.local")
+        );
+        assert_eq!(
+            https_upgrade_of(
+                "http://example.lan/onscreen/api/v1/system/capabilities",
+                "https://example.lan/onscreen/api/v1/system/capabilities"
+            )
+            .as_deref(),
+            Some("https://example.lan/onscreen")
+        );
+        // Another host, a downgrade, or an unrelated path: not adopted.
+        assert_eq!(https_upgrade_of(ep, "https://evil.example/api/v1/system/capabilities"), None);
+        assert_eq!(https_upgrade_of(ep, "http://nas.local:8080/api/v1/system/capabilities"), None);
+        assert_eq!(https_upgrade_of(ep, "https://nas.local/login"), None);
+        assert_eq!(
+            https_upgrade_of(
+                "https://nas.local/api/v1/system/capabilities",
+                "https://nas.local:8443/api/v1/system/capabilities"
+            ),
+            None
+        );
+    }
 }

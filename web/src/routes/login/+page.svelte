@@ -2,6 +2,8 @@
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
   import { authApi, api, ApiRequestError } from '$lib/api';
+  import { isTauri, getServerUrl } from '$lib/native';
+  import { cleartextWarning } from '$lib/serverConnect';
 
   let username = '';
   let password = '';
@@ -34,7 +36,17 @@
   // Kept in one spot so client + server-redirect target agree.
   const NEXT_REDIRECT_KEY = 'onscreen_post_login_redirect';
 
+  // Desktop client: which server this sign-in goes to, with the way to
+  // change it (otherwise a wrong or dead server leaves the user stuck here —
+  // the desktop app has no address bar).
+  const desktop = isTauri();
+  let serverUrl: string | null = null;
+  $: serverWarning = cleartextWarning(serverUrl);
+
   onMount(async () => {
+    if (desktop) {
+      getServerUrl().then((u) => { serverUrl = u; }).catch(() => {});
+    }
     // Redirect to setup if no users exist yet.
     try {
       const status = await authApi.setupStatus();
@@ -159,6 +171,16 @@
       <h1>OnScreen</h1>
     </div>
     <p class="subtitle">{totpRequired ? 'Two-factor authentication' : 'Sign in to your media server'}</p>
+
+    {#if desktop}
+      <div class="server-line">
+        <span class="server-url" title={serverUrl ?? ''}>{serverUrl ?? '…'}</span>
+        <a href="/native/server" class="server-change">Change server</a>
+      </div>
+      {#if serverWarning}
+        <div class="cleartext-warning" role="note">{serverWarning}</div>
+      {/if}
+    {/if}
 
     {#if totpRequired}
       <form on:submit|preventDefault={handleTotpVerify}>
@@ -458,6 +480,40 @@
     background: var(--border);
     border-color: var(--border-strong);
     color: var(--text-primary);
+  }
+
+  .server-line {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: 0.6rem;
+    margin: -1.25rem 0 1.25rem;
+    font-size: 0.78rem;
+    min-width: 0;
+  }
+  .server-url {
+    color: var(--text-secondary);
+    font-family: ui-monospace, monospace;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    min-width: 0;
+  }
+  .server-change {
+    color: var(--accent-text);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  .server-change:hover { text-decoration: underline; }
+  .cleartext-warning {
+    margin: 0 0 1.25rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid rgba(217,119,6,0.35);
+    background: rgba(251,191,36,0.10);
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+    line-height: 1.5;
   }
 
   .setup-link {

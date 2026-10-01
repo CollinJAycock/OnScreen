@@ -5,7 +5,7 @@
 # so once Vite is up the webview hot-reloads on every Svelte change.
 #
 # First run: ensure Tauri CLI is installed (`cargo install tauri-cli
-# --locked --version "^2.0"`) and that web/node_modules is populated
+# --locked --version 2.12.1`, the version CI pins) and that web/node_modules is populated
 # (`npm --prefix ..\..\web install`). After that, just:
 #
 #   cd clients\desktop
@@ -26,7 +26,7 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     exit 1
 }
 if (-not (cargo tauri --version 2>$null)) {
-    Write-Host "==> Tauri CLI not installed. Run: cargo install tauri-cli --locked --version `"^2.0`"" -ForegroundColor Yellow
+    Write-Host "==> Tauri CLI not installed. Run: cargo install tauri-cli --locked --version 2.12.1 (the version CI pins)" -ForegroundColor Yellow
     exit 1
 }
 

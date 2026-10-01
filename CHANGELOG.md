@@ -39,6 +39,77 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   H.264); Tizen, whose AVPlay claims are static, records a persistent
   demotion on NOT_SUPPORTED-class errors so overclaimed panels self-correct
   on the next attempt.
+- **Desktop installers for Windows and Linux** — a `v*` tag now attaches the
+  desktop client's installers to its GitHub release: an MSI and an NSIS
+  setup `.exe` for Windows x64, and a `.deb`, an `.rpm` and an `.AppImage`
+  for Linux x86_64 (glibc 2.39+: Ubuntu 24.04, Debian 13, Fedora 40 or
+  newer), with `onscreen-desktop-checksums.txt`. No release carried them
+  before: the Desktop client workflow failed on every tag (its Windows
+  upload pattern used `{msi,nsis}`, which upload-artifact doesn't expand,
+  and the Linux build had no ALSA headers). The `.deb` and `.rpm` declare
+  ALSA and D-Bus, which Tauri's defaults leave out (on a minimal Ubuntu the
+  app couldn't start).
+  - **Versions follow the tag.** `v2.5.0` builds `OnScreen_2.5.0_*`
+    installers, so a newer `.deb`/`.rpm` upgrades an installed one (the
+    desktop client was versioned 0.1.0 until now). WiX takes numeric
+    versions only, so a pre-release tag such as `v2.5.0-rc1` builds 2.5.0
+    installers. The MSI upgrade code is pinned in `tauri.conf.json`, so
+    each MSI replaces any earlier one.
+  - **Video in the AppImage.** The AppImage carries GStreamer and the
+    plugins WebKitGTK plays video with (gst-libav for H.264, HEVC, AAC,
+    AC-3 and E-AC-3, plus VP9, Opus and the MP4/Matroska/WebM demuxers, and
+    `autovideoflip` so rotated phone clips play upright), so
+    it no longer depends on the host's plugins, which its GStreamer
+    couldn't find outside Debian-family distros. The `.deb` recommends
+    `gstreamer1.0-libav` and `gstreamer1.0-plugins-bad`, which Ubuntu
+    leaves out by default.
+  - **Icons.** App icons are generated from the 1024 px master (new:
+    `docs/store-assets/master/icon-1024.png`) instead of resized favicons:
+    a Windows icon up to 256 px and standard Linux icon sizes. Linux menus
+    list the client under Audio/Video.
+  - **Repeatable builds.** The desktop `Cargo.lock` is committed and
+    release builds use `--locked`; CI and the Docker recipe pin Rust 1.93.0
+    and tauri-cli 2.12.1, and PRs that touch the desktop client (including
+    Dependabot's `Cargo.lock` bumps) run `cargo check --locked` with that
+    Rust. When a tag is moved, the newer run cancels the superseded one,
+    and `publish` uploads only if the tag still points at the commit it
+    built. A manual run of the workflow on a tag (re)publishes that tag's
+    installers.
+
+  The installers are not code-signed, so Windows SmartScreen warns on first
+  run, and there is no auto-updater yet. macOS is left out until the client
+  compiles there. Linux installers also build locally in Docker
+  (`clients/desktop/linux-build`); see the desktop client's README.
+- **Desktop client: setting and changing the server** — the installed
+  desktop app couldn't be pointed at a working server.
+  - **Bare addresses work.** `192.168.1.50:7070`, `nas.local:7070` or
+    `onscreen.example.com` are accepted. Without a scheme `https://` is tried
+    first, then `http://`, as on the TV apps. Before, the field's URL
+    validation blocked them with "Please enter a URL."
+  - **LAN servers over plain `http://` are allowed.** Release builds refused
+    `http://` to everything but loopback, including the setup screen's own
+    `http://192.168.1.50:7070` example. Plain `http://` is now accepted for
+    local-network hosts, using the same rules as the TV apps, and the sign-in
+    screen and the Server page flag it as not encrypted. It is still refused
+    for public hosts.
+  - **The server is tested before it is saved,** and the error says what's
+    wrong: no answer, a bad certificate, not an OnScreen server, or a server
+    whose CORS policy refuses the app (naming the origin to allow). Before,
+    any well-formed URL was saved and the app opened a sign-in page that
+    could never work.
+  - **The server can be changed.** Use **Change server** on the sign-in
+    screen, **Server** in the sidebar (for every user) or the tray icon's
+    **Change server…**. When the saved server doesn't answer at startup, a
+    **Can't connect** screen offers **Try again** and **Change server**.
+    Before, nothing linked the server page; the only way out was deleting
+    `settings.json` by hand. Disconnect now asks for confirmation in the page
+    itself: in the desktop webview, `window.confirm` never blocked, so the
+    confirmation was skipped.
+  - **Needs a server that allows the app's origin.** Servers with the CORS
+    fix (see "The desktop app couldn't reach a server" under Fixed) allow
+    it automatically; on an older one an admin adds `http://tauri.localhost`
+    (Windows) or `tauri://localhost` (Linux) to the CORS allowed origins and
+    restarts the server. The setup screen says when that's the problem.
 
 The additions below are server + web client unless marked otherwise; the
 Android apps', the Tizen / webOS TV apps' and the Roku channel's shares
