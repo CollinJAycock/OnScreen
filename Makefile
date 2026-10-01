@@ -245,10 +245,10 @@ client-deps:
 
 ## client-check: cargo check the desktop client (~30s after first cache fill)
 ## Fast smoke test that proves the Rust + cpal + claxon + ureq stack
-## compiles without going through a full bundle. Run this first when
-## you don't trust a Rust change.
+## (and its unit tests) compiles without going through a full bundle.
+## Run this first when you don't trust a Rust change; CI runs the tests.
 client-check:
-	cd $(CLIENT_DESKTOP_DIR) && cargo check --locked
+	cd $(CLIENT_DESKTOP_DIR) && cargo check --locked --all-targets
 
 ## client-dev: launch the desktop client pointing at the Vite dev server
 ## Starts Vite in the background (web/dev mode at :5173) and runs

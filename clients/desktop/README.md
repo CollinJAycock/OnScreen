@@ -126,7 +126,7 @@ cd clients/desktop/src-tauri && cargo tauri dev   # another
 ## Smoke check (no full build)
 
 ```bash
-make client-check        # cargo check --locked, ~30s after first cache fill
+make client-check        # cargo check --locked --all-targets, ~30s after first cache fill
 ```
 
 Catches Rust-level regressions in audio.rs / lib.rs before paying
@@ -294,13 +294,15 @@ desktop client at all.
 
 - **PR check**: a PR that touches `clients/desktop/` or the workflow (this
   includes Dependabot's `Cargo.lock` bumps) runs only the `check` job:
-  `cargo check --locked` on Ubuntu 24.04 with the pinned Rust. No frontend
+  `cargo test --locked` on Ubuntu 24.04 with the pinned Rust. No frontend
   build, no bundling, no artifacts, read-only token. It catches a dependency
-  that no longer compiles, or that needs a newer Rust than `RUST_VERSION`,
-  before merge instead of on the next release tag. The full installer builds
-  stay off PRs because they're slow. Locally, `make client-check` runs
-  `cargo check --locked`; to match CI exactly, run it on the pinned
-  toolchain (`cargo +1.93.0 check --locked` in `clients/desktop/src-tauri`).
+  that no longer compiles, one that needs a newer Rust than `RUST_VERSION`,
+  or a broken unit test (the server-address rules), before merge instead of
+  on the next release tag. The full installer builds stay off PRs because
+  they're slow. Locally, `make client-check` runs
+  `cargo check --locked --all-targets`; to match CI exactly, run the tests on
+  the pinned toolchain (`cargo +1.93.0 test --locked` in
+  `clients/desktop/src-tauri`).
 - **Toolchain**: pinned in the workflow's `env` (`RUST_VERSION` 1.93.0,
   `TAURI_CLI_VERSION` 2.12.1), with the same values as the Dockerfile's
   build args (the Makefile's `client-deps` and `build.ps1` carry the same

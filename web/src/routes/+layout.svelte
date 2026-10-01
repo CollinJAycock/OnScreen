@@ -7,7 +7,7 @@
   import {
     isTauri, getServerUrl, setServerUrl, getStoredTokens, reloadApp, onOpenServerSettings,
   } from '$lib/native';
-  import { connectToServer, errorText, type ConnectResult } from '$lib/serverConnect';
+  import { connectToServer, errorText, originOf, type ConnectResult } from '$lib/serverConnect';
   import ServerConnectForm from '$lib/components/ServerConnectForm.svelte';
   import { derived } from 'svelte/store';
   import Logo from '$lib/components/Logo.svelte';
@@ -349,9 +349,12 @@
   // app over against it. Reloading is cheaper than re-wiring every module
   // that cached the old (or missing) API base. On a change of server Rust
   // drops the stored tokens before saving, so nothing the old server issued
-  // is sent to the new one.
+  // is sent to the new one; the old server's user goes too, or the app would
+  // reopen as that user (admin links and all) against the new server. No
+  // revoke: from the can't-connect screen the old server isn't answering.
   async function saveServerUrl(result: ConnectResult) {
     await setServerUrl(result.url);
+    if (originOf(result.url) !== originOf(storedServerUrl)) api.setUser(null);
     reloadApp();
   }
 

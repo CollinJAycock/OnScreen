@@ -70,7 +70,7 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   - **Repeatable builds.** The desktop `Cargo.lock` is committed and
     release builds use `--locked`; CI and the Docker recipe pin Rust 1.93.0
     and tauri-cli 2.12.1, and PRs that touch the desktop client (including
-    Dependabot's `Cargo.lock` bumps) run `cargo check --locked` with that
+    Dependabot's `Cargo.lock` bumps) run `cargo test --locked` with that
     Rust. When a tag is moved, the newer run cancels the superseded one,
     and `publish` uploads only if the tag still points at the commit it
     built. A manual run of the workflow on a tag (re)publishes that tag's

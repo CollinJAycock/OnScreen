@@ -428,6 +428,43 @@ describe('desktop server setup', () => {
     expect(screen.getByRole('heading', { name: 'Change server' })).toBeTruthy();
   });
 
+  // Rust drops the old server's tokens on a change of server; the user it
+  // signed in must go too, or the app reopens as them (admin links and
+  // all) against the new server until the first 401.
+  it("switching servers from the can't-connect screen forgets the old server's user", async () => {
+    mockGetServerUrl.mockResolvedValue('https://old.example.com');
+    vi.mocked(authApi.setupStatus).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    mockConnect
+      .mockRejectedValueOnce(new Error("Couldn't connect to the server."))
+      .mockResolvedValueOnce({ url: 'http://10.0.0.66:7070', cleartext: true });
+    render(Layout);
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Change server' }));
+    await fireEvent.input(screen.getByRole('textbox', { name: 'Server address' }), {
+      target: { value: '10.0.0.66:7070' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => expect(mockReloadApp).toHaveBeenCalled());
+    expect(mockSetServerUrl).toHaveBeenCalledWith('http://10.0.0.66:7070');
+    expect(api.setUser).toHaveBeenCalledWith(null);
+  });
+
+  it("Try again's address, saved unchanged, keeps the signed-in user", async () => {
+    mockGetServerUrl.mockResolvedValue('http://10.0.0.66:7070');
+    vi.mocked(authApi.setupStatus).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    mockConnect
+      .mockRejectedValueOnce(new Error("Couldn't connect to the server."))
+      .mockResolvedValueOnce({ url: 'http://10.0.0.66:7070', cleartext: true });
+    render(Layout);
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Change server' }));
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => expect(mockReloadApp).toHaveBeenCalled());
+    expect(api.setUser).not.toHaveBeenCalled();
+  });
+
   it('a saved server that answers loads the app, with a Server link in the sidebar', async () => {
     mockGetServerUrl.mockResolvedValue('http://10.0.0.66:7070');
     await renderShell();

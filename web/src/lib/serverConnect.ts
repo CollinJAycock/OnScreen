@@ -39,6 +39,12 @@ class NoReply extends Error {}
 /** The webview got a readable reply that isn't a healthy OnScreen server. */
 class BadReply extends Error {}
 
+/** The origin of a server URL, or null when there is none to compare. */
+export function originOf(u: string | null | undefined): string | null {
+  if (!u) return null;
+  try { return new URL(u.trim()).origin; } catch { return null; }
+}
+
 /** A Tauri command rejection is the Rust `Err(String)` itself, not an Error. */
 export function errorText(e: unknown): string {
   if (typeof e === 'string') return e;
@@ -99,6 +105,9 @@ async function webviewProbe(base: string, fetchFn: typeof fetch, timeoutMs: numb
     try {
       body = await resp.json();
     } catch {
+      // The timeout also covers the body: an abort here is no answer, not
+      // a wrong one.
+      if (ctrl.signal.aborted) throw new NoReply('timed out');
       // not JSON: falls through to the shape check
     }
     if (!isOnScreenCapabilities(body)) {
@@ -137,7 +146,7 @@ export async function connectToServer(input: string, deps: ConnectDeps = {}): Pr
   }
   if (!candidates.length) throw new Error("Enter your OnScreen server's address.");
 
-  const unreached: ServerCandidate[] = [];
+  const unreached: { c: ServerCandidate; timedOut: boolean }[] = [];
   const badReplies: string[] = [];
   for (const [i, c] of candidates.entries()) {
     status(`Trying ${c.url}…`);
@@ -147,7 +156,7 @@ export async function connectToServer(input: string, deps: ConnectDeps = {}): Pr
       return { url, cleartext: url.startsWith('http://') };
     } catch (e) {
       if (e instanceof BadReply) badReplies.push(e.message);
-      else unreached.push(c);
+      else unreached.push({ c, timedOut: e instanceof NoReply && e.message === 'timed out' });
     }
   }
 
@@ -156,7 +165,7 @@ export async function connectToServer(input: string, deps: ConnectDeps = {}): Pr
   // allow this app's origin.
   status('Checking why the server could not be reached…');
   const reasons: string[] = [];
-  for (const c of unreached) {
+  for (const { c, timedOut } of unreached) {
     let probe: ServerProbe;
     try {
       probe = await invoke<ServerProbe>('probe_server_url', { url: c.url });
@@ -164,12 +173,20 @@ export async function connectToServer(input: string, deps: ConnectDeps = {}): Pr
       reasons.push(errorText(e));
       continue;
     }
-    if (probe.url !== c.url) {
-      // http:// that redirects to https:// — try the https:// URL directly.
+    // Before blaming CORS, give the webview one more go: at the https:// URL
+    // an http:// one redirects to, or with the full timeout when its first
+    // try only ran out of time (Rust's probe waits longer than a bare
+    // host's https:// try, so a slow server can answer Rust alone).
+    if (probe.url !== c.url || timedOut) {
       try {
         const url = await webviewProbe(probe.url, fetchFn, timeouts.other);
         return { url, cleartext: url.startsWith('http://') };
-      } catch {
+      } catch (e) {
+        if (e instanceof NoReply && e.message === 'timed out') {
+          throw new Error(
+            `The OnScreen server at ${probe.url} is running, but it answered too slowly. Try again.`,
+          );
+        }
         // fall through to the CORS explanation
       }
     }

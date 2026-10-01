@@ -185,6 +185,71 @@ describe('connectToServer', () => {
     });
   });
 
+  it('a server too slow for the first try but answering Rust is retried, not blamed on CORS', async () => {
+    let calls = 0;
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      calls += 1;
+      // First try: no answer before its timeout. Retry: answers.
+      if (calls > 1) return Promise.resolve(okResponse(String(input)));
+      return new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      });
+    });
+    const invoke = fakeInvoke(barePublic, (u) => ({ url: u, name: 'OnScreen', version: '2.5.0' }));
+
+    expect(
+      await connectToServer('onscreen.example.com', {
+        invoke,
+        fetch,
+        origin: ORIGIN,
+        timeouts: { first: 5, other: 5 },
+      }),
+    ).toEqual({ url: 'https://onscreen.example.com', cleartext: false });
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('a server that answers Rust but stays too slow for the webview says so, not CORS', async () => {
+    const fetch = vi.fn((_: RequestInfo | URL, init?: RequestInit) =>
+      new Promise<Response>((_, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+      }),
+    );
+    const invoke = fakeInvoke(barePublic, (u) => ({ url: u, name: 'OnScreen', version: '2.5.0' }));
+
+    const err = await connectToServer('onscreen.example.com', {
+      invoke,
+      fetch,
+      origin: ORIGIN,
+      timeouts: { first: 5, other: 5 },
+    }).catch((e) => e);
+
+    expect(err.message).toContain('answered too slowly');
+    expect(err.message).not.toContain('CORS');
+  });
+
+  it('a body cut off by the timeout is no answer, not "not an OnScreen server"', async () => {
+    const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        url: String(input),
+        json: () =>
+          new Promise((_, reject) => {
+            init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          }),
+      } as unknown as Response),
+    );
+    const err = await connectToServer('http://10.0.0.66:7070', {
+      invoke: fakeInvoke([{ url: 'http://10.0.0.66:7070', cleartext: true, local: true }]),
+      fetch,
+      origin: ORIGIN,
+      timeouts: { first: 5, other: 5 },
+    }).catch((e) => e);
+
+    expect(err.message).not.toContain('not like an OnScreen server');
+    expect(err.message).toContain('the connection was refused');
+  });
+
   it('gives up on a silent https:// attempt after its timeout and moves on to http://', async () => {
     const fetch = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);

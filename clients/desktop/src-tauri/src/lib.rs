@@ -436,7 +436,6 @@ fn https_upgrade_of(endpoint: &str, location: &str) -> Option<String> {
 }
 
 fn describe_transport(t: &ureq::Transport) -> String {
-    use ureq::ErrorKind;
     let detail = {
         let mut parts = Vec::new();
         if let Some(m) = t.message() {
@@ -447,21 +446,30 @@ fn describe_transport(t: &ureq::Transport) -> String {
         }
         parts.join(": ")
     };
+    describe_transport_error(t.kind(), &detail)
+}
+
+/// `describe_transport` on a kind and its message + source text, split out
+/// because tests can't build a `ureq::Transport`.
+fn describe_transport_error(kind: ureq::ErrorKind, detail: &str) -> String {
+    use ureq::ErrorKind;
     let lower = detail.to_ascii_lowercase();
-    match t.kind() {
+    // ureq reports a failed TLS handshake (bad or expired certificate,
+    // https:// to a plain-HTTP port) as ConnectionFailed "tls connection
+    // init failed", so this is checked before the ConnectionFailed arms.
+    let tls = lower.contains("certificate") || lower.contains("tls") || lower.contains("corrupt message");
+    match kind {
         ErrorKind::Dns => "the host name couldn't be found (DNS lookup failed).".into(),
+        _ if tls => format!("a secure (https://) connection couldn't be set up ({detail})."),
         ErrorKind::ConnectionFailed if lower.contains("timed out") => {
             "the connection timed out — is the server running, and is the port right?".into()
         }
         ErrorKind::ConnectionFailed => {
             "the connection was refused — is the server running, and is the port right?".into()
         }
-        _ if lower.contains("certificate") || lower.contains("tls") || lower.contains("corrupt message") => {
-            format!("a secure (https://) connection couldn't be set up ({detail}).")
-        }
         _ if lower.contains("timed out") => "the server didn't answer in time.".into(),
-        _ if detail.is_empty() => t.to_string(),
-        _ => detail,
+        _ if detail.is_empty() => kind.to_string(),
+        _ => detail.to_string(),
     }
 }
 
@@ -1179,5 +1187,30 @@ mod server_url_tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn a_failed_tls_handshake_is_not_reported_as_refused() {
+        use ureq::ErrorKind::{ConnectionFailed, Dns};
+        // The texts ureq 2.12 gives for a failed handshake (rtls.rs): https://
+        // to a plain-HTTP port, and a bad or expired certificate.
+        for detail in [
+            "tls connection init failed: received corrupt message of type InvalidContentType",
+            "tls connection init failed: invalid peer certificate: Expired",
+            "tls connection init failed: invalid peer certificate: UnknownIssuer",
+        ] {
+            let m = describe_transport_error(ConnectionFailed, detail);
+            assert!(m.contains("secure (https://)"), "{detail}: {m}");
+            assert!(m.contains(detail), "{detail}: {m}");
+        }
+        let refused = describe_transport_error(
+            ConnectionFailed,
+            "Connect error: No connection could be made because the target machine actively refused it. (os error 10061)",
+        );
+        assert!(refused.contains("refused"), "{refused}");
+        let timed_out = describe_transport_error(ConnectionFailed, "Connect error: connection timed out");
+        assert!(timed_out.contains("timed out"), "{timed_out}");
+        let dns = describe_transport_error(Dns, "No ip address for nas.local");
+        assert!(dns.contains("DNS"), "{dns}");
     }
 }

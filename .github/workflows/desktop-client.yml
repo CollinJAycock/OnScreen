@@ -7,10 +7,11 @@ name: Desktop client
 # attaches them to that tag's GitHub release.
 #
 # PRs that touch the desktop client (including Dependabot's Cargo.lock
-# bumps) or this workflow get only the check job: `cargo check --locked`
-# with the pinned Rust, so a dependency that no longer compiles, or that
-# needs a newer Rust than RUST_VERSION, fails on the PR instead of on the
-# next release tag. ci.yml doesn't build the desktop client.
+# bumps) or this workflow get only the check job: `cargo test --locked`
+# with the pinned Rust, so a dependency that no longer compiles, one that
+# needs a newer Rust than RUST_VERSION, or a broken unit test (the server
+# address rules live there) fails on the PR instead of on the next release
+# tag. ci.yml doesn't build the desktop client.
 on:
   workflow_dispatch:
   push:
@@ -94,10 +95,11 @@ jobs:
 
       # --locked: fail if Cargo.lock doesn't match Cargo.toml, as the
       # release builds would. Without the custom-protocol feature Tauri
-      # compiles in dev mode (devUrl), so web/dist isn't needed.
-      - name: cargo check --locked
+      # compiles in dev mode (devUrl), so web/dist isn't needed. The unit
+      # tests are pure functions; they need no display.
+      - name: cargo test --locked
         working-directory: clients/desktop/src-tauri
-        run: cargo check --locked
+        run: cargo test --locked
 
   build:
     name: ${{ matrix.os-name }}

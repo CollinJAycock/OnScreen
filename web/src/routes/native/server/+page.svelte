@@ -9,13 +9,8 @@
   } from '$lib/native';
   import { nativeEngine } from '$lib/stores/nativeEngine';
   import { api, authApi } from '$lib/api';
-  import { cleartextWarning, errorText, type ConnectResult } from '$lib/serverConnect';
+  import { cleartextWarning, errorText, originOf, type ConnectResult } from '$lib/serverConnect';
   import ServerConnectForm from '$lib/components/ServerConnectForm.svelte';
-
-  function originOf(u: string | null): string | null {
-    if (!u) return null;
-    try { return new URL(u.trim()).origin; } catch { return null; }
-  }
 
   let loading = true;
   let currentUrl: string | null = null;
