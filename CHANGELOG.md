@@ -520,6 +520,20 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **The desktop app couldn't reach a server: every call failed with
+  "Failed to fetch".** The installed app calls the server from its own
+  webview origin (`http://tauri.localhost` on Windows, `tauri://localhost`
+  on macOS and Linux), which the server allowed only when an admin had
+  typed it into the CORS list. On a stock server the preflight answered
+  405 and no response carried `Access-Control-Allow-Origin`, so the browser
+  engine refused them all. The server now allows these origins (and
+  `https://tauri.localhost`, for a build with `useHttpsScheme`) without
+  configuration, as it already did for the TV apps' `null` / `file://`
+  origins: exact matches only (no ports or look-alike hosts), and never
+  with `Access-Control-Allow-Credentials` — the desktop app signs in with
+  its bearer token, as before. The CSRF checks are unchanged. Until a
+  server is updated, add `http://tauri.localhost, tauri://localhost` under
+  Settings → General → CORS allowed origins and restart it.
 - **The Upcoming calendar showed restricted users titles from libraries
   they can't see.** An entry was hidden only when its Radarr/Sonarr folder
   mapped into a library the user has no grant on; a folder no library

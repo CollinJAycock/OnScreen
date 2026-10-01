@@ -1044,7 +1044,9 @@ func (s *Service) SetTLS(ctx context.Context, cfg TLSConfig) error {
 //
 // CORSAllowedOrigins is a list of origins permitted for cross-origin XHR.
 // Use ["*"] to allow any origin — safe because the API authenticates via
-// Authorization: Bearer headers, not cookies. Empty disables CORS entirely.
+// Authorization: Bearer headers, not cookies. Empty allows no further
+// origins; the first-party TV and desktop apps' webview origins are always
+// allowed (see middleware.CORS). The server reads the list once at startup.
 type GeneralConfig struct {
 	BaseURL            string   `json:"base_url,omitempty"`
 	LogLevel           string   `json:"log_level,omitempty"`

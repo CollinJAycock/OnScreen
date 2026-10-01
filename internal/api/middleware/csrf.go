@@ -33,6 +33,15 @@ import (
 //   - If neither header is present, allow: a cross-site attacker's browser always
 //     sends at least one of them, so their absence means a same-origin or
 //     non-browser caller, which SameSite could not have protected against anyway.
+//
+// Native-app webview origins (the TV apps' `null` / `file://…`, the desktop
+// app's `http://tauri.localhost` / `https://tauri.localhost` /
+// `tauri://localhost`) get NO exemption here, unlike in CORS: they are foreign
+// origins like any other. That costs those apps nothing — they send JSON
+// bodies and authenticate with Bearer (the desktop fetches with
+// `credentials: 'omit'`), so neither the credential-path check nor the cookie
+// gate ever engages for them — and it keeps the guard from trusting `null`,
+// which a sandboxed iframe on a hostile site can send.
 func CSRFGuard(allowedOrigins []string) func(http.Handler) http.Handler {
 	allowed := make(map[string]bool, len(allowedOrigins))
 	for _, o := range allowedOrigins {
@@ -51,8 +60,9 @@ func CSRFGuard(allowedOrigins []string) func(http.Handler) http.Handler {
 			// Browsers can only send such a request without a CORS preflight
 			// when the Content-Type is a form/text type, so refusing a
 			// cross-origin non-JSON body here closes it while leaving every
-			// real client alone (web and TV apps send application/json; native
-			// clients send no Sec-Fetch-Site/Origin at all).
+			// real client alone (the web, TV and desktop apps send
+			// application/json; native clients send no Sec-Fetch-Site/Origin at
+			// all).
 			if !isSafeMethod(r.Method) && credentialPaths[r.URL.Path] &&
 				crossOriginRequest(r, allowed) && !isJSONBody(r) {
 				denyCSRF(w)

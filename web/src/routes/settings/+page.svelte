@@ -286,7 +286,8 @@
           <div class="hint">
             Comma-separated origin list for cross-origin XHR. Use <code>*</code> to allow any
             origin (safe — the API authenticates via Bearer headers, not cookies).
-            Leave blank for same-origin only.
+            Leave blank for same-origin only. The TV and desktop apps are always
+            allowed; they don't need to be listed.
           </div>
         </div>
       </section>
