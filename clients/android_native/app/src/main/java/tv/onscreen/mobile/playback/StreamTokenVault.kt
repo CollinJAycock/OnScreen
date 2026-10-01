@@ -69,7 +69,8 @@ object StreamTokenVault {
      */
     fun register(cleanUrl: String, token: String?): String {
         // Bounded by MAX_ENTRIES (see [tokens]). Playback touches a handful of
-        // URLs per session; eviction only trips if something loops, and then
+        // URLs per session, plus one per side-loaded subtitle; eviction only
+        // trips if something loops, and then
         // drops the least-recently-used credential, never the new or live one.
         if (!token.isNullOrEmpty()) synchronized(lock) { tokens[cleanUrl] = token }
         return cleanUrl
@@ -129,6 +130,10 @@ object StreamTokenVault {
         return cleaned to token
     }
 
-    /** Internal so the eviction tests fill to the real cap. */
-    internal const val MAX_ENTRIES = 64
+    /** Internal so the eviction tests fill to the real cap. Room for a
+     *  remux / transcode that side-loads every subtitle of a disc rip (each
+     *  is a vaulted url — see ui.player.SubtitleTracks; dozens is not rare)
+     *  without pushing out the background queue's credentials. A few hundred
+     *  short strings is still nothing to hold. */
+    internal const val MAX_ENTRIES = 256
 }

@@ -145,6 +145,7 @@ class PlayerViewModelAdminStopTest {
             trickplayRepo = trickplay,
             watchLimitRepo = watchLimit,
             audiobooks = mockk(relaxed = true),
+            serverCapabilities = mockk(relaxed = true),
         )
     }
 

@@ -7,6 +7,12 @@ data class TranscodeSession(
     val session_id: String,
     val playlist_url: String,
     val token: String,
+    /** Content time (seconds) the session's stream really opens at. A remux
+     *  (video copied) can only start on a keyframe, so this can be several
+     *  seconds EARLIER than the position asked for — or 0, when the nearest
+     *  keyframe is the file's first. Null (absent) only from a server that
+     *  predates the field. See PlayerViewModel.adoptSession. */
+    val start_offset_sec: Double? = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -38,7 +44,11 @@ data class PlaybackDecision(
 @JsonClass(generateAdapter = true)
 data class ProgressRequest(
     val view_offset_ms: Long,
-    val duration_ms: Long,
+    /** Null (omitted on the wire) when the player can't tell: the server then
+     *  keeps the duration it knows for the item rather than storing none.
+     *  Only sent to a server that says so (ServerFeatures
+     *  .progress_without_duration) — see PlayerViewModel.reportProgress. */
+    val duration_ms: Long?,
     val state: String,
     /** Playback decision for the analytics direct-vs-transcode split.
      *  Null (omitted on the wire) when unknown. */

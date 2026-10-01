@@ -40,5 +40,22 @@ data class ItemFile(
     val replaygain_album_peak: Double? = null,
     val audio_streams: List<AudioStream> = emptyList(),
     val subtitle_streams: List<SubtitleStream> = emptyList(),
+    /** Subtitle files attached to this file on the server (OpenSubtitles
+     *  downloads, uploads) — a SEPARATE array from the container's
+     *  subtitle_streams. Until this field existed Moshi dropped it, so the
+     *  player's "Find more online…" download succeeded server-side and the
+     *  track never appeared in the picker. (The TV client had the same bug.) */
+    val external_subtitles: List<ExternalSubtitle> = emptyList(),
     val chapters: List<Chapter> = emptyList(),
+)
+
+@JsonClass(generateAdapter = true)
+data class ExternalSubtitle(
+    val id: String,
+    val language: String = "",
+    val title: String? = null,
+    val forced: Boolean = false,
+    val sdh: Boolean = false,
+    /** Server-relative fetch URL (`/media/external-subtitles/{id}`). */
+    val url: String = "",
 )

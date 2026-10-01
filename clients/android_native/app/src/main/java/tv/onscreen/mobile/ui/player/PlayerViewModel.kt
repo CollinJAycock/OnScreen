@@ -4,8 +4,11 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.job
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,6 +25,7 @@ import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.PlaybackStop
 import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.SubtitleStream
+import tv.onscreen.mobile.data.model.TranscodeSession
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.prefs.SubtitlePrefs
 import tv.onscreen.mobile.data.prefs.SubtitleStyle
@@ -31,6 +35,7 @@ import tv.onscreen.mobile.data.model.OnlineSubtitle
 import tv.onscreen.mobile.data.repository.NotificationsRepository
 import tv.onscreen.mobile.data.repository.OnlineSubtitleRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
+import tv.onscreen.mobile.data.repository.ServerCapabilitiesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 import tv.onscreen.mobile.data.repository.TrickplayRepository
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
@@ -50,7 +55,22 @@ import javax.inject.Inject
 
 sealed class PlaybackSource {
     data class DirectPlay(val url: String, val startMs: Long) : PlaybackSource()
-    data class Hls(val playlistUrl: String, val offsetMs: Long) : PlaybackSource()
+
+    /** A remux / transcode session. [offsetMs]: the content time the stream
+     *  opens at — its 0:00. [requestedMs]: the content time playback was
+     *  asked to start at. */
+    data class Hls(val playlistUrl: String, val offsetMs: Long, val requestedMs: Long) : PlaybackSource() {
+        /** Where in the STREAM the player starts, so playback begins at
+         *  [requestedMs] (web's desiredStartSec). A session that opens
+         *  mid-file opens at or just before the request — a remux copies the
+         *  video, so only at a keyframe, up to several seconds earlier. A
+         *  full-timeline one (the ABR and pre-encoded ladders report a
+         *  start_offset_sec of 0) opens at 0:00 of the file, and resuming
+         *  means seeking in it: starting it at 0 played a 45:00 resume from
+         *  the top, and the first progress beat saved that over the resume
+         *  point. */
+        val startMs: Long get() = (requestedMs - offsetMs).coerceAtLeast(0L)
+    }
 }
 
 /** Snapshot of the OpenSubtitles search dialog. Kept on the VM so
@@ -67,7 +87,21 @@ data class PlayerUiState(
     val source: PlaybackSource? = null,
     val item: ItemDetail? = null,
     val audioStreams: List<AudioStream> = emptyList(),
+    /** Remux / transcode: the audio stream the server session carries, as its
+     *  position in [audioStreams] — the server's audio-relative
+     *  audio_stream_index (see AudioSelection). Null on direct play, where the
+     *  player's own track selection says which. */
+    val sessionAudioRow: Int? = null,
+    /** The row an audio switch is moving to, while its replacement session
+     *  starts — seconds on a cold ffmpeg start, during which
+     *  [sessionAudioRow] still names the old one. Null when no switch is
+     *  under way: it clears once the switch lands or fails. */
+    val pendingAudioRow: Int? = null,
     val subtitles: List<SubtitleStream> = emptyList(),
+    /** Every subtitle the playing file has — its embedded streams, then the
+     *  files attached to it on the server — with the side-load urls a
+     *  remux / transcode needs (see SubtitleTracks). */
+    val subtitleTracks: List<SubtitleTrack> = emptyList(),
     val markers: List<Marker> = emptyList(),
     val nextSibling: ChildItem? = null,
     val preferredAudioLang: String? = null,
@@ -111,7 +145,11 @@ data class PlayerUiState(
      *  none to show and the player shows its placeholder. */
     val artworkChecked: Boolean = false,
     val error: String? = null,
-)
+) {
+    /** Remux / transcode: the audio row the viewer has, or is getting — what
+     *  the picker marks, and what a pick is "already playing" against. */
+    val targetAudioRow: Int? get() = pendingAudioRow ?: sessionAudioRow
+}
 
 /** Outcome of "Add bookmark", for the screen's confirmation toast. */
 sealed class BookmarkNotice {
@@ -155,6 +193,7 @@ class PlayerViewModel @Inject constructor(
     private val trickplayRepo: TrickplayRepository,
     private val watchLimitRepo: WatchLimitRepository,
     private val audiobooks: AudiobookRepository,
+    private val serverCapabilities: ServerCapabilitiesRepository,
 ) : ViewModel() {
 
     /** Whether to gate video playback behind a "you're on cellular,
@@ -576,6 +615,12 @@ class PlayerViewModel @Inject constructor(
     private var sseJob: kotlinx.coroutines.Job? = null
     private var localProgressMs: Long = 0L
 
+    /** The server keeps the duration it knows when a progress report leaves
+     *  it out (see ServerFeatures.progress_without_duration). Asked when
+     *  [prepare] starts; false until the answer is in, and when there is
+     *  none — reports with no duration are then skipped, as they always were. */
+    private var progressWithoutDuration = false
+
     private var transcodeSessionId: String? = null
 
     /** Id of the item the background PlaybackService has current, or null.
@@ -598,19 +643,28 @@ class PlayerViewModel @Inject constructor(
     var hlsOffsetMs: Long = 0L
         private set
 
-    /** Full CONTENT duration in ms, independent of the current session.
+    /** Full CONTENT duration in ms, independent of the current session, or
+     *  [ContentDuration.UNKNOWN] — which the progress reports send without a
+     *  duration. One answer for the progress reports and the Up Next lead-in.
      *
-     *  A resumed transcode/remux playlist only covers the remainder of the
-     *  file, so `player.duration` on an HLS session is (content − offset).
-     *  Progress beacons send a content-ABSOLUTE position (position + offset)
-     *  — pairing that with the session duration makes the server see a
-     *  ratio far past the real one, marking things watched (and scrobbling)
-     *  early, and writing a resume marker other devices can't interpret.
-     *  Falls back to the player-reported value only when the item carries
-     *  no duration. */
-    fun contentDurationMs(playerDurationMs: Long): Long {
-        val known = _state.value.item?.duration_ms ?: 0L
-        return if (known > 0) known else playerDurationMs
+     *  Progress beacons send a content-ABSOLUTE position (position + offset).
+     *  Pairing that with anything shorter than the content makes the server
+     *  see a ratio far past the real one, marking things watched (and
+     *  scrobbling) early and clearing the resume point. This used to fall
+     *  back to the player's duration whenever the ITEM carried none — which
+     *  the API often omits although the file has one — and on an HLS session
+     *  that is only what the server has produced so far: a movie resumed over
+     *  HLS was marked watched about four minutes in. Now the player's only
+     *  when [playerDurationTrusted], then the playing file's, then the item's
+     *  listed runtime (see ContentDuration). */
+    fun contentDurationMs(playerDurationMs: Long, playerDurationTrusted: Boolean): Long {
+        val item = _state.value.item
+        return ContentDuration.of(
+            itemDurationMs = item?.duration_ms,
+            fileDurationMs = item?.files?.firstOrNull()?.duration_ms,
+            playerDurationMs = playerDurationMs,
+            playerDurationTrusted = playerDurationTrusted,
+        )
     }
 
     // Cache the inputs needed to re-issue a transcode session when
@@ -638,9 +692,18 @@ class PlayerViewModel @Inject constructor(
         // background queue here (see handOffSleepTimer).
         adoptSleepTimer(itemId)
         preparedItemId = null
+        // An audio switch still starting for what played before brings a
+        // session nobody will play: it stops it when it lands.
+        audioSwitch = null
         if (backgroundItemId() == itemId) {
             bindToServiceItem(itemId, startAtMs)
             return
+        }
+        // This screen reports progress for what it plays (a service-bound one
+        // leaves that to PlaybackService). Asked once per server — cached —
+        // and never held up for: the first report is ten seconds off.
+        viewModelScope.launch {
+            progressWithoutDuration = orNull { serverCapabilities.progressWithoutDuration() } ?: false
         }
         val requestedId = itemId
         viewModelScope.launch {
@@ -797,13 +860,28 @@ class PlayerViewModel @Inject constructor(
 
                 val markers = markersCall.await()
                 val prefs = prefsCall.await()
+                // Side-load urls for the subtitles: every text one on a remux /
+                // transcode (that HLS has no text of its own), the attached
+                // files on direct play. A service-bound screen loads none.
+                val subtitleTracks = if (playingInService) {
+                    SubtitleTracks.build("", file, assetToken = null, sideLoadEmbedded = false)
+                } else {
+                    SubtitleTracks.build(
+                        serverUrl, file, subtitleAssetToken(file, source is PlaybackSource.Hls),
+                        sideLoadEmbedded = source is PlaybackSource.Hls,
+                    )
+                }
 
                 _state.value = PlayerUiState(
                     loading = false,
                     source = source,
                     item = item,
                     audioStreams = file.audio_streams,
+                    // Started with no audio_stream_index: the server's default,
+                    // the file's first audio stream (`-map 0:a:0`).
+                    sessionAudioRow = if (source is PlaybackSource.Hls && file.audio_streams.isNotEmpty()) 0 else null,
                     subtitles = file.subtitle_streams,
+                    subtitleTracks = subtitleTracks,
                     markers = markers,
                     preferredAudioLang = prefs?.preferred_audio_lang,
                     preferredSubtitleLang = prefs?.preferred_subtitle_lang,
@@ -863,6 +941,8 @@ class PlayerViewModel @Inject constructor(
             item = cached,
             audioStreams = cached?.files?.firstOrNull()?.audio_streams.orEmpty(),
             subtitles = cached?.files?.firstOrNull()?.subtitle_streams.orEmpty(),
+            // No side-load urls: the service's player loads nothing but the file.
+            subtitleTracks = SubtitleTracks.build("", cached?.files?.firstOrNull(), assetToken = null, sideLoadEmbedded = false),
             playingInService = true,
         )
         if (cached != null) loadItemExtras(cached, itemId, streamed = true)
@@ -898,6 +978,7 @@ class PlayerViewModel @Inject constructor(
                     item = fresh,
                     audioStreams = file?.audio_streams.orEmpty(),
                     subtitles = file?.subtitle_streams.orEmpty(),
+                    subtitleTracks = SubtitleTracks.build("", file, assetToken = null, sideLoadEmbedded = false),
                 )
             }
             if (cached == null) loadItemExtras(fresh, itemId, streamed = true)
@@ -946,8 +1027,9 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** What the screen shows for a prepare that failed with [e]. */
-    private fun failureMessage(e: Exception): String? =
+    /** What the screen shows for a prepare that failed with [e]. Never null:
+     *  a null error left the screen on its spinner for good. */
+    private fun failureMessage(e: Exception): String =
         if (e is HttpException && e.code() == 403) {
             // 403 covers three gates: the content-rating ceiling, the
             // parental watch limit, and an admin stop (a restart inside
@@ -959,7 +1041,15 @@ class PlayerViewModel @Inject constructor(
                 PlaybackStop.ERROR_CODE -> PlaybackStop.textFromServer(err.message)
                 else -> "content_restricted"
             }
-        } else e.message
+        } else {
+            // Any other refusal says why in its error body — a transcode start
+            // on a file the server can't read answers 422 "This file appears
+            // to be corrupt …". Retrofit's own message is the bare "HTTP 422",
+            // which is all this screen used to show.
+            (e as? HttpException)?.apiError()?.message?.takeIf { it.isNotBlank() }
+                ?: e.message?.takeIf { it.isNotBlank() }
+                ?: START_FAILED_MESSAGE
+        }
 
     /** Offline fallback: walk the download manifest for a completed
      *  entry whose item_id matches [itemId], and if one exists, build
@@ -1156,77 +1246,175 @@ class PlayerViewModel @Inject constructor(
         fileId: String,
         videoCopy: Boolean,
         serverUrl: String,
-        audioStreamIndex: Int? = null,
-        // Audio-track switching passes false: stopping the live session
-        // before the replacement exists means a failed re-issue leaves the
-        // player bound to a session the server has already reaped, so
-        // playback dies at the next segment. The caller stops the old
-        // session itself once the new one is in hand.
-        stopPrevious: Boolean = true,
     ): PlaybackSource {
-        if (stopPrevious) stopActiveTranscode()
+        stopActiveTranscode()
+        val req = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
+        return adoptSession(requestSession(req, posMs, audioStreamIndex = null), req, posMs)
+    }
 
-        val session = transcodeRepo.start(
-            itemId = itemId,
-            height = height,
+    /** Ask the server for a session of [req] opening at [posMs], with audio
+     *  row [audioStreamIndex] (null: the server's default, the first). The
+     *  screen plays none of it until [adoptSession]. */
+    private suspend fun requestSession(req: TranscodeRequest, posMs: Long, audioStreamIndex: Int?): TranscodeSession =
+        transcodeRepo.start(
+            itemId = req.itemId,
+            height = req.height,
             positionMs = posMs,
-            fileId = fileId,
-            videoCopy = videoCopy,
+            fileId = req.fileId,
+            videoCopy = req.videoCopy,
             audioStreamIndex = audioStreamIndex,
             supportsHevc = PlaybackHelper.supportsHevc(),
         )
 
+    /** Make [session] the one this screen plays, reports and retires, and
+     *  return its source. */
+    private fun adoptSession(session: TranscodeSession, req: TranscodeRequest, posMs: Long): PlaybackSource {
         transcodeSessionId = session.session_id
         transcodeToken = session.token
-        hlsOffsetMs = posMs
-        lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl)
+        // Where the session REALLY opens, not where it was asked to: a remux
+        // copies the video, so it can only start on a keyframe — up to several
+        // seconds earlier on a sparse-GOP rip — and the server reports that
+        // point as start_offset_sec. Everything content-timed on this screen
+        // is position + hlsOffsetMs: the progress reports, skip markers,
+        // chapters, and now the side-loaded subtitles, whose cues would show
+        // seconds early against the picture with the requested offset. A real
+        // 0 is kept: resuming a few seconds in, before the first keyframe
+        // after 0:00, opens the session at the very start, and an ABR ladder's
+        // stream always covers the whole file from 0:00 — the player seeks to
+        // the request in either. Only an older server, which sends no field
+        // at all, falls back to the request.
+        hlsOffsetMs = session.start_offset_sec?.takeIf { it >= 0.0 }
+            ?.let { (it * 1000.0).toLong() }
+            ?: posMs
+        lastTranscodeRequest = req
         // videoCopy = remux session (original video bits, container rewrap) —
         // the server calls that verdict directStream.
-        activeDecision = if (videoCopy) "directStream" else "transcode"
+        activeDecision = if (req.videoCopy) "directStream" else "transcode"
 
-        return PlaybackSource.Hls("$serverUrl${session.playlist_url}", posMs)
+        // The player starts at posMs within it (see PlaybackSource.Hls.startMs),
+        // on an audio-track switch's new session as on the first.
+        return PlaybackSource.Hls("${req.serverUrl}${session.playlist_url}", hlsOffsetMs, posMs)
     }
 
-    /** Re-issue the active transcode session with a new
-     *  audio_stream_index, preserving the current position. Direct-
-     *  play swaps tracks via the player's track selector and never
-     *  comes through here. */
-    fun switchAudioStream(audioStreamIndex: Int, currentPositionMs: Long) {
+    /** The source an audio-track switch replaced, until its player's
+     *  progress reporter has let go of it. */
+    private var swappedOutSource: PlaybackSource? = null
+
+    /**
+     * Whether [source] was replaced by an audio-track switch rather than
+     * ended — the screen's progress reporter asks as that source's player goes
+     * away, and then sends nothing: playback carries on in the new session.
+     *
+     * Not 'stopped': the server drops every stream session of the item on a
+     * 'stopped' report — the one just started for the new track included — so
+     * the new player would run dry once it had played what it had buffered
+     * (it is also a scrobble 'stop'). Not 'paused' either: that fires the
+     * pause webhooks, and Trakt would get a pause and a fresh start for one
+     * uninterrupted watch. The new player's first beat moves the position on
+     * within ten seconds. Answers once.
+     */
+    fun swappedOut(source: PlaybackSource): Boolean {
+        if (swappedOutSource !== source) return false
+        swappedOutSource = null
+        return true
+    }
+
+    /** Re-issue the active transcode session with the audio of picker row
+     *  [audioRow] — its position in [PlayerUiState.audioStreams], which is
+     *  the server's audio-relative audio_stream_index, never
+     *  AudioStream.index (see AudioSelection) — preserving the current
+     *  position. Direct-play swaps tracks via the player's track selector
+     *  and never comes through here. */
+    fun switchAudioStream(audioRow: Int, currentPositionMs: Long) {
         val req = lastTranscodeRequest ?: return
-        viewModelScope.launch {
-            // Hold the live session open across the request. Only once the
-            // replacement is in hand is the old one retired — a failed
-            // switch then really is benign (playback continues on the old
-            // track), which is what the previous comment claimed while the
-            // code had already killed it.
-            val prevSession = transcodeSessionId
-            val prevToken = transcodeToken
-            try {
-                val source = startTranscode(
-                    itemId = req.itemId,
-                    height = req.height,
-                    posMs = currentPositionMs + hlsOffsetMs,
-                    fileId = req.fileId,
-                    videoCopy = req.videoCopy,
-                    serverUrl = req.serverUrl,
-                    audioStreamIndex = audioStreamIndex,
-                    stopPrevious = false,
-                )
-                _state.value = _state.value.copy(source = source)
-                if (prevSession != null && prevToken != null) {
-                    transcodeRepo.stopDetached(prevSession, prevToken)
-                }
-            } catch (e: Exception) {
-                // An admin stop refuses a replacement session for the stop
-                // window; that's the end of playback, not a failed switch.
-                val stopped = (e as? HttpException)?.takeIf { it.code() == 403 }?.apiError()
-                    ?.takeIf { it.code == PlaybackStop.ERROR_CODE }
-                if (stopped != null) {
-                    stopForAdmin(PlaybackStop.textFromServer(stopped.message))
-                    return@launch
-                }
-                android.util.Log.w("PlayerViewModel", "audio stream switch failed", e)
+        val ui = _state.value
+        // Not a row: it names no audio stream of this file, and a session
+        // asked for one ends with no playlist at all — a playback error a
+        // few seconds later, the old session already retired.
+        if (audioRow !in ui.audioStreams.indices) {
+            android.util.Log.w(
+                "PlayerViewModel",
+                "ignoring audio switch: row $audioRow of ${ui.audioStreams.size} audio stream(s)",
+            )
+            return
+        }
+        // Already the row playing, or the one on its way: a new session would
+        // only rebuffer. The session's row changes only once the replacement
+        // has started — seconds on a cold ffmpeg start — and checked against
+        // that alone, a pick back to the playing row meanwhile was dropped as
+        // "already playing" (the switch then landed on the row just left), and
+        // picking the pending row again started a second switch alongside it.
+        //
+        // A pick back to the session's row does start a session: the server
+        // keeps one per viewer and item, so the start in flight has already
+        // retired the live one, whose player only has its buffer left.
+        if (audioRow == ui.targetAudioRow) return
+        // The newest pick wins: a switch still starting is superseded.
+        audioSwitch = null
+        _state.update { it.copy(pendingAudioRow = audioRow) }
+        val posMs = currentPositionMs + hlsOffsetMs
+        // Lazy, so [audioSwitch] names it before it runs (see runAudioSwitch).
+        val switch = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            runAudioSwitch(coroutineContext.job, req, audioRow, posMs)
+        }
+        audioSwitch = switch
+        switch.start()
+    }
+
+    /** The audio switch still starting its session — the latest pick's — or
+     *  null. One superseded by a later pick (or by a new prepare(), or an
+     *  admin stop) is no longer it, and plays nothing. */
+    private var audioSwitch: Job? = null
+
+    /**
+     * Start [audioRow]'s session at [posMs] and, if [self] is still the
+     * current switch when it is in hand, play it.
+     *
+     * The live session is held open across the request and retired only once
+     * the replacement is in hand, so a failed switch leaves the old track
+     * playing and marked. A superseded switch is let run, not cancelled:
+     * cancelling the request can lose a session the server has already
+     * started, where letting it land hands over its id — and its own stop
+     * retires it unplayed. Two quick picks used to leak the first one's
+     * session, and the later pick to land played, whichever it was.
+     */
+    private suspend fun runAudioSwitch(self: Job, req: TranscodeRequest, audioRow: Int, posMs: Long) {
+        val session = try {
+            requestSession(req, posMs, audioStreamIndex = audioRow)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // An admin stop refuses a replacement session for the stop
+            // window; that's the end of playback, not a failed switch — for
+            // whichever pick it answers.
+            val stopped = (e as? HttpException)?.takeIf { it.code() == 403 }?.apiError()
+                ?.takeIf { it.code == PlaybackStop.ERROR_CODE }
+            if (stopped != null) {
+                stopForAdmin(PlaybackStop.textFromServer(stopped.message))
+                return
             }
+            android.util.Log.w("PlayerViewModel", "audio stream switch failed", e)
+            // A superseded switch's failure leaves the later pick's row alone.
+            if (audioSwitch === self) {
+                audioSwitch = null
+                _state.update { it.copy(pendingAudioRow = null) }
+            }
+            return
+        }
+        if (audioSwitch !== self) {
+            transcodeRepo.stopDetached(session.session_id, session.token)
+            return
+        }
+        audioSwitch = null
+        val prevSession = transcodeSessionId
+        val prevToken = transcodeToken
+        val source = adoptSession(session, req, posMs)
+        // Publishing the new source ends the old player; its terminal
+        // report must not go out (see [swappedOut]).
+        swappedOutSource = _state.value.source
+        _state.update { it.copy(source = source, sessionAudioRow = audioRow, pendingAudioRow = null) }
+        if (prevSession != null && prevToken != null) {
+            transcodeRepo.stopDetached(prevSession, prevToken)
         }
     }
 
@@ -1252,14 +1440,25 @@ class PlayerViewModel @Inject constructor(
      *  will pick up where this one left off. Runs on viewModelScope —
      *  fine for the periodic 'playing' heartbeat, which should stop
      *  when playback does. Terminal 'stopped' must use
-     *  [reportProgressFinal] instead (see its note). */
+     *  [reportProgressFinal] instead (see its note).
+     *
+     *  [durationMs] [ContentDuration.UNKNOWN]: on a server that says it keeps
+     *  the duration it knows when a report leaves it out
+     *  ([progressWithoutDuration]), the beat still goes, without one. Skipping
+     *  it meant a parental watch limit never counted the time (the server
+     *  accrues it per 'playing' beat), the beat's own admin-stop and access
+     *  refusals never came, and Now Playing showed a frozen position. Any
+     *  other server stores each report's duration as sent — the missing one
+     *  over the known one, so the item read "unwatched" and left Continue
+     *  Watching — and there the beat is skipped, as it always was. */
     fun reportProgress(itemId: String, positionMs: Long, durationMs: Long, state: String) {
-        if (durationMs <= 0) return
+        if (durationMs <= 0 && !progressWithoutDuration) return
         localProgressMs = positionMs
         LocalProgressTracker.record(itemId, positionMs)
+        val duration = durationMs.takeIf { it > 0 }
         viewModelScope.launch {
             try {
-                itemRepo.updateProgress(itemId, positionMs, durationMs, state, activeDecision)
+                itemRepo.updateProgress(itemId, positionMs, duration, state, activeDecision)
             } catch (e: Exception) {
                 // A 'playing' heartbeat rejected with a parental watch-limit
                 // 403 means the cap was reached (or the allowed-hours window
@@ -1293,10 +1492,18 @@ class PlayerViewModel @Inject constructor(
      *  the back stack, so a viewModelScope.launch here would be
      *  cancelled before the PUT lands — dropping the 'stop' watch-event
      *  the server scrobbles on, so a completed music track would never
-     *  reach ListenBrainz. */
+     *  reach ListenBrainz.
+     *
+     *  An unknown [durationMs] goes out as none where the heartbeat's would
+     *  (and is skipped where it would be): the report still records where
+     *  playback stopped, ends the stream in Now Playing and drops its server
+     *  session. With no duration anywhere the server has no ratio to call the
+     *  item watched by, so it isn't. */
     fun reportProgressFinal(itemId: String, positionMs: Long, durationMs: Long) {
-        if (durationMs <= 0) return
-        itemRepo.reportProgressDetached(itemId, positionMs, durationMs, "stopped", activeDecision)
+        if (durationMs <= 0 && !progressWithoutDuration) return
+        itemRepo.reportProgressDetached(
+            itemId, positionMs, durationMs.takeIf { it > 0 }, "stopped", activeDecision,
+        )
     }
 
     /** Cleared by the screen after it consumes the seek signal so the
@@ -1325,22 +1532,57 @@ class PlayerViewModel @Inject constructor(
         }
     }
 
-    /** Download the chosen subtitle and attach it to the active file.
-     *  The next /items/{id} fetch will see it in the subtitle_streams
-     *  list — the player won't auto-pick it, since it'd need a fresh
-     *  prepare(); the user toggles it from the existing subtitle picker. */
+    /** Download the chosen subtitle and attach it to the active file, then
+     *  re-read the file's subtitles so it shows up in the picker right away:
+     *  the server lists it under the file's external_subtitles, and the
+     *  screen side-loads it into the running player (see PlayerHost). Not
+     *  auto-selected — the user picks it from the subtitle sheet. */
     fun downloadOnlineSubtitle(itemId: String, candidate: OnlineSubtitle, onDone: () -> Unit) {
         val fileId = _state.value.item?.files?.firstOrNull()?.id ?: return
         viewModelScope.launch {
             try {
                 onlineSubtitles.download(itemId, fileId, candidate)
                 _onlineSubtitleSearch.value = OnlineSubtitleSearchUi()
+                refreshSubtitleTracks(itemId, fileId)
                 onDone()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 _onlineSubtitleSearch.value = _onlineSubtitleSearch.value.copy(error = e.message)
             }
         }
     }
+
+    /** Re-read [fileId]'s subtitles from the server. Best-effort: on failure
+     *  the list stays as it was (the download is still there next time). */
+    private suspend fun refreshSubtitleTracks(itemId: String, fileId: String) {
+        val fresh = orNull { itemRepo.getItem(itemId) } ?: return
+        val file = fresh.files.firstOrNull { it.id == fileId } ?: return
+        // Another prepare() took over meanwhile.
+        if (_state.value.item?.files?.firstOrNull()?.id != fileId) return
+        val serverUrl = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
+        val hls = _state.value.source is PlaybackSource.Hls
+        val tracks = SubtitleTracks.build(
+            serverUrl, file, subtitleAssetToken(file, hls), sideLoadEmbedded = hls,
+        )
+        _state.update { it.copy(subtitles = file.subtitle_streams, subtitleTracks = tracks) }
+    }
+
+    /** The asset token, when [file]'s subtitles need it: attached files take
+     *  nothing else, and embedded streams (side-loaded only on an HLS
+     *  session, [hls]) only lack a better one when the file has no stream
+     *  token of its own. */
+    private suspend fun subtitleAssetToken(
+        file: tv.onscreen.mobile.data.model.ItemFile,
+        hls: Boolean,
+    ): String? =
+        if (file.external_subtitles.isNotEmpty() ||
+            (hls && file.stream_token.isNullOrEmpty() && file.subtitle_streams.isNotEmpty())
+        ) {
+            orNull { serverPrefs.getAssetToken() }
+        } else {
+            null
+        }
 
     fun clearOnlineSubtitleSearch() {
         _onlineSubtitleSearch.value = OnlineSubtitleSearchUi()
@@ -1424,8 +1666,10 @@ class PlayerViewModel @Inject constructor(
     private fun stopForAdmin(text: String) {
         if (_state.value.error != null) return
         stopEventsJob?.cancel()
+        // An audio switch still starting brings a session nobody will play.
+        audioSwitch = null
         stopActiveTranscode()
-        _state.value = _state.value.copy(error = text)
+        _state.value = _state.value.copy(error = text, pendingAudioRow = null)
     }
 
     fun stopActiveTranscode() {
@@ -1503,6 +1747,9 @@ private val PARENT_ART_TYPES = setOf("track", "audiobook_chapter", "podcast_epis
  *  width. The album and book pages ask the same, so the player finds the
  *  cover they showed in the image cache. */
 private const val ARTWORK_WIDTH = 1080
+
+/** A failed start that carries no message of its own. */
+internal const val START_FAILED_MESSAGE = "Couldn’t start playback."
 
 /** [block]'s result, or null if it fails — for the calls prepare() can do
  *  without. Inline, so [block] may suspend; a cancellation still propagates

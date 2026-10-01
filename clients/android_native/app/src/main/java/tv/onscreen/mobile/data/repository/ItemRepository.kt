@@ -54,10 +54,12 @@ open class ItemRepository @Inject constructor(
     open suspend fun getChildren(id: String): List<ChildItem> =
         api.getChildren(id).data
 
+    /** [durationMs] null: not known — the field is left out (see
+     *  ProgressRequest.duration_ms). */
     open suspend fun updateProgress(
         itemId: String,
         offsetMs: Long,
-        durationMs: Long,
+        durationMs: Long?,
         state: String,
         decision: String? = null,
     ) {
@@ -73,7 +75,7 @@ open class ItemRepository @Inject constructor(
     open fun reportProgressDetached(
         itemId: String,
         offsetMs: Long,
-        durationMs: Long,
+        durationMs: Long?,
         state: String,
         decision: String? = null,
     ) {

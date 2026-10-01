@@ -63,6 +63,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -85,12 +86,9 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
+import androidx.media3.common.Tracks
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.hls.HlsMediaSource
-import androidx.media3.exoplayer.source.MediaSource
-import androidx.media3.exoplayer.source.ProgressiveMediaSource
 import androidx.media3.ui.PlayerControlView
 import androidx.media3.ui.PlayerView
 import kotlinx.coroutines.delay
@@ -99,7 +97,6 @@ import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.OnlineSubtitle
-import tv.onscreen.mobile.data.model.SubtitleStream
 import tv.onscreen.mobile.cast.CastMediaInfo
 import tv.onscreen.mobile.cast.CastSender
 import tv.onscreen.mobile.data.prefs.SubtitleStyle
@@ -119,6 +116,7 @@ import tv.onscreen.mobile.playback.AudiobookSpeed
 import tv.onscreen.mobile.playback.FullAccessSessionCallback
 import tv.onscreen.mobile.playback.KeysOnlySessionPlayer
 import tv.onscreen.mobile.playback.PlaybackService
+import tv.onscreen.mobile.playback.withBufferProfile
 import tv.onscreen.mobile.playback.withoutStuckDetection
 import tv.onscreen.mobile.ui.LocalInPipMode
 import tv.onscreen.mobile.ui.item.BookmarkFormat
@@ -193,13 +191,24 @@ fun PlayerScreen(
     ) {
         when {
             // Padded + centred: the admin-stop sentence ("Playback was
-            // stopped by the server admin: …") runs to several lines.
-            ui.error != null -> Text(
-                ui.error!!,
-                color = Color.White,
-                textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            // stopped by the server admin: …") runs to several lines. With a
+            // way out on screen: the message alone on black left only the
+            // system back gesture, which reads as a hung player. No Retry —
+            // nothing here starts the item again, and most of what lands here
+            // (an admin stop, a watch limit, a file the server can't read)
+            // would only refuse again.
+            ui.error != null -> Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(24.dp),
-            )
+            ) {
+                Text(
+                    ui.error!!,
+                    color = Color.White,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+                Spacer(Modifier.height(16.dp))
+                Button(onClick = onClose) { Text(stringResource(R.string.close)) }
+            }
             ui.loading || ui.source == null -> CircularProgressIndicator()
             // Wait until the user has acknowledged cellular (or it
             // wasn't applicable). Without this gate, ExoPlayer fires
@@ -303,57 +312,58 @@ private fun PlayerHost(
         explicitStart = explicitStart,
         bindOnly = ui.playingInService,
     )
+    // MIME hint when we know the container — helps ExoPlayer pick the right
+    // extractor for offline files where the file:// scheme carries no
+    // Content-Type header.
+    val containerHint = ui.item?.files?.firstOrNull()?.container?.let { c ->
+        when (c.lowercase()) {
+            "mp4", "m4v", "m4a", "m4b" -> "video/mp4"
+            "mkv" -> "video/x-matroska"
+            "webm" -> "video/webm"
+            "mp3" -> "audio/mpeg"
+            "flac" -> "audio/flac"
+            "ogg" -> "audio/ogg"
+            "wav" -> "audio/wav"
+            "aac" -> "audio/aac"
+            else -> null
+        }
+    }
+    // The subtitles the picker offers for this source, and the ones the
+    // player side-loads to make that true (see SubtitleTracks): on a remux /
+    // transcode every subtitle comes in as a side-loaded WebVTT file, since
+    // the server's HLS carries no text streams — without them the picker had
+    // nothing to select there. Direct play reads the container's own streams
+    // and side-loads only the attached ("downloaded") files.
+    val isHls = source is PlaybackSource.Hls
+    val subtitleRows = remember(ui.subtitleTracks, isHls) { SubtitleTracks.rows(ui.subtitleTracks, isHls) }
+    val sideLoads = remember(ui.subtitleTracks, isHls) { SubtitleTracks.sideLoads(ui.subtitleTracks, isHls) }
     val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
         if (serviceAudio) {
             null
-        } else ExoPlayer.Builder(context).withoutStuckDetection().build().apply {
-            // DefaultDataSource dispatches by URI scheme — file://
-            // routes to FileDataSource, http(s):// to the wrapped
-            // DefaultHttpDataSource. The bare HTTP factory we used
-            // before crashed with ClassCastException the first time
-            // an offline file:// URL hit it (downloaded items).
-            // Wrapped in the vault resolver so direct-play URLs — which are
-            // now built WITHOUT their `?token=` (see StreamTokenVault) —
-            // regain the credential as the request leaves. file:// offline
-            // sources are registered with no token and pass straight through.
-            val dsFactory = tv.onscreen.mobile.playback.StreamTokenVault.resolverFactory(
-                androidx.media3.datasource.DefaultDataSource.Factory(
-                    context,
-                    DefaultHttpDataSource.Factory(),
-                ),
-            )
-            // MIME hint when we know the container — helps ExoPlayer
-            // pick the right extractor for offline files where the
-            // file:// scheme carries no Content-Type header.
-            val containerHint = ui.item?.files?.firstOrNull()?.container?.let { c ->
-                when (c.lowercase()) {
-                    "mp4", "m4v", "m4a", "m4b" -> "video/mp4"
-                    "mkv" -> "video/x-matroska"
-                    "webm" -> "video/webm"
-                    "mp3" -> "audio/mpeg"
-                    "flac" -> "audio/flac"
-                    "ogg" -> "audio/ogg"
-                    "wav" -> "audio/wav"
-                    "aac" -> "audio/aac"
-                    else -> null
-                }
-            }
-            val mediaSource: MediaSource = when (source) {
-                is PlaybackSource.DirectPlay -> {
-                    val mediaItem = MediaItem.Builder()
-                        .setUri(Uri.parse(source.url))
-                        .apply { containerHint?.let { setMimeType(it) } }
-                        .build()
-                    ProgressiveMediaSource.Factory(dsFactory).createMediaSource(mediaItem)
-                }
-                is PlaybackSource.Hls ->
-                    HlsMediaSource.Factory(dsFactory)
-                        .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
-            }
-            setMediaSource(mediaSource)
+        } else ExoPlayer.Builder(context)
+            .withoutStuckDetection()
+            // Waits for 1.3.1's buffer before playing, not 1.9's thinner one:
+            // a remux / transcode refills only as fast as the server makes it
+            // (see BufferProfile).
+            .withBufferProfile()
+            // Render-time decoding for the side-loaded WebVTT (see
+            // subtitleRenderersFactory) — Media3 1.4+ fails playback the moment
+            // one is selected without it.
+            .setRenderersFactory(subtitleRenderersFactory(context))
+            .build().apply {
+            setMediaSource(playerMediaSource(context, source, containerHint, sideLoads))
+            // The one start seek, set before prepare. HLS: into the stream,
+            // to the requested content time (see PlaybackSource.Hls.startMs) —
+            // an ABR session covers the whole file, so its 0 played a resume
+            // from the top. An audio-track switch lands here too (new source,
+            // new player); a side-load swap and a retry keep the position.
+            // A start of 0 holds on HLS only through the source's live
+            // configuration (see hlsMediaItem): the player moves a 0 to the
+            // live window's default, which is otherwise near the live edge.
+            // Later trips to that default go through HlsSessionPlayer.
             val startMs = when (source) {
                 is PlaybackSource.DirectPlay -> source.startMs
-                is PlaybackSource.Hls -> 0L
+                is PlaybackSource.Hls -> source.startMs
             }
             // Apply server-side language preferences once at prepare
             // time. ExoPlayer's track selector handles direct-play
@@ -378,10 +388,11 @@ private fun PlayerHost(
             ui.preferredSubtitleLang?.let { lang ->
                 // Normalized 639-2/B → 639-1 matching so a pref of "en"
                 // gates correctly against an ffprobe "eng" stream (see
-                // langMatchesSubtitle). ExoPlayer normalizes internally
-                // for the actual selection; we only need the gate to
-                // agree on which streams count as in-language.
-                val inLang = ui.subtitles.filter { langMatchesSubtitle(it.language, lang) }
+                // SubtitleTracks.languagesMatch). ExoPlayer normalizes
+                // internally for the actual selection; we only need the gate
+                // to agree on which tracks count as in-language — the ones
+                // this source can actually show (the picker's rows).
+                val inLang = subtitleRows.filter { SubtitleTracks.languagesMatch(it.language, lang) }
                 val enable = if (ui.forcedSubtitlesOnly) inLang.any { it.forced } else inLang.isNotEmpty()
                 if (enable) {
                     trackSelectionParameters = trackSelectionParameters.buildUpon()
@@ -405,11 +416,37 @@ private fun PlayerHost(
             playWhenReady = true
         }
     }
+    // A subtitle downloaded mid-play ("Find more online…") changes the list
+    // without changing the source. Swap the SAME player onto a source with the
+    // new side-load, where it is now, so the track can be picked at once. Not
+    // a new player: that would end this one — a 'stopped' report, which also
+    // makes the server drop the stream session this player is reading.
+    val loadedSideLoads = remember(videoPlayer) { mutableStateOf(sideLoads) }
+    LaunchedEffect(videoPlayer, sideLoads) {
+        val p = videoPlayer ?: return@LaunchedEffect
+        if (sideLoads == loadedSideLoads.value) return@LaunchedEffect
+        loadedSideLoads.value = sideLoads
+        p.setMediaSource(playerMediaSource(context, source, containerHint, sideLoads), p.currentPosition)
+        p.prepare()
+    }
+    // A remux / transcode session's player goes through HlsSessionPlayer,
+    // which keeps Media3 off the live window's default position (see there).
+    // A prepare after an error builds its source anew, with the side-loads
+    // loaded by then.
+    val screenPlayer: Player? = remember(videoPlayer) {
+        val exo = videoPlayer ?: return@remember null
+        if (source is PlaybackSource.Hls) {
+            HlsSessionPlayer(exo) { playerMediaSource(context, source, containerHint, loadedSideLoads.value) }
+        } else {
+            exo
+        }
+    }
 
     // Unified Player the rest of this screen drives: the screen-owned
-    // ExoPlayer for video, or the background MediaController for audio.
+    // ExoPlayer for video (through HlsSessionPlayer on a remux / transcode),
+    // or the background MediaController for audio.
     // Null only while the audio controller is still connecting.
-    val player: Player = (videoPlayer ?: audioController) ?: run {
+    val player: Player = (screenPlayer ?: audioController) ?: run {
         Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             CircularProgressIndicator(color = Color.White)
         }
@@ -545,7 +582,11 @@ private fun PlayerHost(
             val onScreen = {
                 keysLifecycle.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
             }
-            MediaSession.Builder(context, KeysOnlySessionPlayer(player, onScreen))
+            // The application context, like the audio controller's (see
+            // rememberAudioController): the session may register a media-button
+            // receiver on its context and unregisters it on release, which must
+            // not depend on the Activity still being alive.
+            MediaSession.Builder(context.applicationContext, KeysOnlySessionPlayer(player, onScreen))
                 .setId("video-" + UUID.randomUUID())
                 .setCallback(FullAccessSessionCallback())
                 .build()
@@ -661,11 +702,19 @@ private fun PlayerHost(
     LaunchedEffect(player, itemType, nextSibling, upNextDismissed) {
         if (itemType != "episode" || nextSibling == null) return@LaunchedEffect
         if (upNextDismissed) return@LaunchedEffect
+        // Captured with the player, like the progress reporter's offset.
+        val offsetMs = vm.hlsOffsetMs
         while (isActive) {
             delay(1000)
-            val dur = player.duration
-            val pos = player.currentPosition
-            if (dur > 0 && dur != Long.MAX_VALUE) {
+            // In content time, against the CONTENT duration: on a remux /
+            // transcode the player's duration is only what the server has
+            // produced so far (see ContentDuration), so "25 s left" read true
+            // whenever playback caught up with ffmpeg — the overlay popped up
+            // minutes into the episode. Unknown duration: no lead-in (the
+            // end-of-stream handler still offers the next episode).
+            val dur = contentDurationOf(player, source, vm)
+            val pos = player.currentPosition + offsetMs
+            if (dur > 0) {
                 val remaining = dur - pos
                 if (remaining in 0..25_000 && !showUpNext) {
                     showUpNext = true
@@ -682,7 +731,11 @@ private fun PlayerHost(
     // auto-advances pops this screen — cancelling the VM scope — at
     // the same instant we report, and that's the event the server
     // scrobbles on, so it must outlive the teardown.
-    DisposableEffect(itemId, source, serviceAudio) {
+    // Reported against the item PLAYING (playingId), not the route's: Play on
+    // a show or season routes here with the container's id and the VM plays
+    // an episode of it — reporting the container's id put the episode's
+    // progress on the show, and the episode never got a resume point.
+    DisposableEffect(playingId, source, serviceAudio) {
         if (serviceAudio) {
             // PlaybackService owns 'playing'/'stopped' reporting for
             // service audio so it survives this screen — and the whole
@@ -693,7 +746,7 @@ private fun PlayerHost(
         } else {
             // Capture the offset THIS player was started with. Reading
             // vm.hlsOffsetMs at dispose time was wrong on an audio-track
-            // switch: startTranscode has already set the field for the NEW
+            // switch: adoptSession has already set the field for the NEW
             // session to (old position + old offset), so the terminal report
             // for the OLD player came out at roughly double the true
             // position — far enough to cross the server's watched threshold
@@ -705,24 +758,32 @@ private fun PlayerHost(
                     delay(10_000)
                     if (player.playWhenReady && player.duration > 0) {
                         val pos = player.currentPosition + offsetAtStart
-                        // Content duration, not the player's: a resumed HLS
-                        // playlist covers only the remainder, so pairing a
-                        // content-absolute position with the session duration
-                        // reads as far further through the file than it is —
-                        // enough to trip the server's watched threshold (and
-                        // scrobble) early.
+                        // Content duration, never the player's on a remux /
+                        // transcode: that session's playlist grows as the
+                        // server works (and a resumed one covers only the
+                        // rest of the file), so pairing a content-absolute
+                        // position with it read as far further through the
+                        // film than it was — a resumed movie was marked
+                        // watched, its resume point cleared, four minutes in.
+                        // Unknown (0): the beat goes without a duration to a
+                        // server that takes that, and is skipped otherwise
+                        // (see PlayerViewModel.reportProgress).
                         vm.reportProgress(
-                            itemId, pos, vm.contentDurationMs(player.duration), "playing",
+                            playingId, pos, contentDurationOf(player, source, vm), "playing",
                         )
                     }
                 }
             }
             onDispose {
                 job.cancel()
+                // An audio-track switch replaced this source: playback goes
+                // on in the new session, and this player reports nothing on
+                // its way out (see PlayerViewModel.swappedOut).
+                if (vm.swappedOut(source)) return@onDispose
                 if (player.duration > 0) {
                     val pos = player.currentPosition + offsetAtStart
                     vm.reportProgressFinal(
-                        itemId, pos, vm.contentDurationMs(player.duration),
+                        playingId, pos, contentDurationOf(player, source, vm),
                     )
                 }
             }
@@ -867,7 +928,25 @@ private fun PlayerHost(
         player.addListener(listener)
         onDispose { player.removeListener(listener) }
     }
-    val activeAudioIndex = remember { mutableIntStateOf(-1) }
+
+    // The viewer's subtitle pick on this screen; null until they make one (the
+    // saved preference applies). Re-applied whenever the player's tracks
+    // change: a track override names one player's track, and an audio-track
+    // switch on a remux / transcode builds a NEW player (a new session), whose
+    // prepare-time preference would otherwise silently replace the pick — as
+    // would a picked side-load that hadn't loaded when it was chosen.
+    var subtitleChoice by remember { mutableStateOf<SubtitleChoice?>(null) }
+    val currentSubtitleRows by rememberUpdatedState(subtitleRows)
+    DisposableEffect(player) {
+        subtitleChoice?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
+        val listener = object : Player.Listener {
+            override fun onTracksChanged(tracks: Tracks) {
+                subtitleChoice?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
+            }
+        }
+        player.addListener(listener)
+        onDispose { player.removeListener(listener) }
+    }
 
     // Subtitle style is read once per render and pushed into the
     // SubtitleView on every change. The PlayerView reference is held
@@ -1239,7 +1318,10 @@ private fun PlayerHost(
                 )
             }
         }
-        if (ui.subtitles.isNotEmpty()) {
+        // Any subtitle the file has, attached files included. On a remux /
+        // transcode of a file whose only subtitles are image-based the picker
+        // has no rows, but still offers Off and "Find more online…".
+        if (ui.subtitleTracks.isNotEmpty()) {
             IconButton(onClick = { showSubtitlePicker = true }) {
                 Icon(Icons.Default.Subtitles, contentDescription = "Subtitles", tint = Color.White)
             }
@@ -1349,10 +1431,14 @@ private fun PlayerHost(
     if (showAudioPicker && !inPip) {
         AudioPickerDialog(
             streams = ui.audioStreams,
-            activeIndex = activeAudioIndex.intValue,
+            // What is playing, read each time the sheet opens — it used to
+            // mark only a row picked on this screen, so it opened with none.
+            // On a remux / transcode, a switch still starting marks its row.
+            activeIndex = remember(player, ui.targetAudioRow) {
+                AudioSelection.selectedRow(player, ui.audioStreams, ui.targetAudioRow, isHls)
+            },
             onPick = { idx ->
                 showAudioPicker = false
-                activeAudioIndex.intValue = idx
                 applyAudioSelection(idx, ui.audioStreams, source, player, vm)
             },
             onDismiss = { showAudioPicker = false },
@@ -1363,8 +1449,23 @@ private fun PlayerHost(
 
     if (showSubtitlePicker && !inPip) {
         SubtitlePickerDialog(
-            streams = ui.subtitles,
-            player = player,
+            rows = subtitleRows,
+            // Read off the player's actual selection each time the sheet opens.
+            selectedTrackId = remember(player) { SubtitleSelection.selectedTrackId(player, subtitleRows) },
+            onPick = { row ->
+                showSubtitlePicker = false
+                val choice = if (row == null) SubtitleChoice.Off else SubtitleChoice.Track(row.trackId)
+                subtitleChoice = choice
+                if (!SubtitleSelection.apply(player, choice, subtitleRows) && row != null) {
+                    // Its track isn't among the player's yet (still preparing):
+                    // steer by language meanwhile — the tracks listener above
+                    // selects the exact track once it appears.
+                    player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                        .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
+                        .setPreferredTextLanguage(row.language.ifBlank { null })
+                        .build()
+                }
+            },
             onFindMore = {
                 showSubtitlePicker = false
                 showOnlineSubtitleSearch = true
@@ -1447,7 +1548,10 @@ private fun PlayerHost(
 
     if (showOnlineSubtitleSearch && !inPip) {
         OnlineSubtitleSearchDialog(
-            itemId = itemId,
+            // The item playing, not the route's: Play on a show or season
+            // routes here with the container's id, and the server attaches a
+            // download only to a file of the item it was asked for.
+            itemId = playingId,
             preferredLang = ui.preferredSubtitleLang,
             vm = vm,
             onDismiss = {
@@ -1485,10 +1589,14 @@ private fun PlayerHost(
         PlaybackErrorOverlay(
             onRetry = {
                 // Resume where the failure happened. seekToDefaultPosition()
-                // sends the player back to the START of the window, so
-                // retrying a network blip 40 minutes into a film restarted
-                // the film — the comment above always claimed "at the
-                // current position", the code did the opposite.
+                // sends a file back to its START, so retrying a network blip
+                // 40 minutes into a film restarted the film — the comment
+                // above always claimed "at the current position", the code
+                // did the opposite. On a remux / transcode the prepare also
+                // puts a new source in (see HlsSessionPlayer): the old one
+                // would take a retry at its window's default position — 0,
+                // after an error before the playlist first grew — as no
+                // position at all, and start where that default had drifted.
                 val resumeAt = player.currentPosition.coerceAtLeast(0L)
                 playbackError = null
                 player.prepare()
@@ -1588,8 +1696,9 @@ private fun applyAudioSelection(
         // switch we re-issue the session at the current position with
         // a new audio_stream_index. Direct play falls through to
         // ExoPlayer's track selector which sees every audio track in
-        // the source container.
-        vm.switchAudioStream(stream.index, player.currentPosition)
+        // the source container. The ROW goes, not stream.index: the
+        // server counts audio streams only (see AudioSelection).
+        vm.switchAudioStream(idx, player.currentPosition)
     } else {
         // Select the exact track, not just its language. Preferring a
         // language is a no-op when the user is choosing BETWEEN tracks that
@@ -1626,7 +1735,9 @@ private fun AudioPickerDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         title = { Text("Audio") },
         text = {
-            Column {
+            // Scrolls, like the subtitle sheet: a long track list in
+            // landscape otherwise runs under the buttons.
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 streams.forEachIndexed { i, s ->
                     Row(
                         modifier = Modifier
@@ -1647,68 +1758,59 @@ private fun AudioPickerDialog(
     )
 }
 
-@OptIn(UnstableApi::class)
+/**
+ * The subtitle sheet: Off, one row per track [rows] lists, and "Find more
+ * online…". [selectedTrackId] is the row showing now (null: Off), read off the
+ * player's actual selection — the sheet used to compare each stream's language
+ * ("eng") with the player's preferred text language, which Media3 normalises
+ * ("en"), so after any pick it reopened with nothing selected. [onPick] gets
+ * the row itself (null for Off), and the caller selects exactly that track:
+ * picking by language could never reach the second of two same-language
+ * tracks (English full vs SDH vs PGS).
+ */
 @Composable
 private fun SubtitlePickerDialog(
-    streams: List<SubtitleStream>,
-    player: Player,
+    rows: List<SubtitleTrack>,
+    selectedTrackId: String?,
+    onPick: (SubtitleTrack?) -> Unit,
     onFindMore: () -> Unit,
     onDismiss: () -> Unit,
 ) {
-    val current = player.trackSelectionParameters
-    val disabled = current.disabledTrackTypes.contains(C.TRACK_TYPE_TEXT)
-    val activeLang = current.preferredTextLanguages.firstOrNull()
-
     AlertDialog(
         onDismissRequest = onDismiss,
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         title = { Text("Subtitles") },
         text = {
-            Column {
+            // Scrolls: in landscape a file with a handful of tracks ran past
+            // the dialog, and the last rows sat under the buttons, unreachable.
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 // Rows are clickable end-to-end (radio onClick = null, the
                 // Row owns the action): on device, taps in the gap between
                 // the radio and the label registered nothing, which reads
-                // as a broken sheet. "Off" also shows selected when NO text
-                // preference is set yet — the sheet used to open with no
-                // selection at all, not even Off.
-                val chooseOff = {
-                    player.trackSelectionParameters =
-                        player.trackSelectionParameters.buildUpon()
-                            .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, true)
-                            .build()
-                    onDismiss()
-                }
+                // as a broken sheet. "Off" shows selected whenever no track
+                // is — the sheet used to open with no selection at all.
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = chooseOff)
+                        .clickable(onClick = { onPick(null) })
                         .padding(vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    RadioButton(selected = disabled || activeLang == null, onClick = null)
+                    RadioButton(selected = selectedTrackId == null, onClick = null)
                     Spacer(Modifier.width(8.dp))
                     Text("Off")
                 }
-                streams.forEach { s ->
-                    val selected = !disabled && s.language == activeLang
-                    val choose = {
-                        player.trackSelectionParameters =
-                            player.trackSelectionParameters.buildUpon()
-                                .setTrackTypeDisabled(C.TRACK_TYPE_TEXT, false)
-                                .setPreferredTextLanguage(s.language)
-                                .build()
-                        onDismiss()
-                    }
+                rows.forEach { row ->
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable(onClick = choose)
+                            .clickable(onClick = { onPick(row) })
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
-                        RadioButton(selected = selected, onClick = null)
+                        RadioButton(selected = row.trackId == selectedTrackId, onClick = null)
                         Spacer(Modifier.width(8.dp))
-                        Text(formatSubtitleLabel(s))
+                        Text(SubtitleTracks.label(row))
                     }
                 }
                 Row(
@@ -1749,7 +1851,9 @@ private fun OnlineSubtitleSearchDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         title = { Text("Find subtitles") },
         text = {
-            Column {
+            // Scrolls, like the subtitle sheet: up to 20 results ran past the
+            // dialog in landscape, the last ones unreachable under the buttons.
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.OutlinedTextField(
                         value = lang,
@@ -1775,7 +1879,8 @@ private fun OnlineSubtitleSearchDialog(
                         )
                     }) { Text("Search") }
                 }
-                Spacer(Modifier.width(8.dp))
+                // A height: this was Spacer(width), no gap at all in a Column.
+                Spacer(Modifier.height(8.dp))
                 when {
                     ui.loading -> CircularProgressIndicator()
                     ui.error != null -> Text(ui.error!!)
@@ -1786,13 +1891,17 @@ private fun OnlineSubtitleSearchDialog(
                                 sub = sub,
                                 onPick = {
                                     vm.downloadOnlineSubtitle(itemId, sub) {
-                                        // Server attaches the .srt to
-                                        // the file's media_files row;
-                                        // user has to open the
-                                        // subtitle picker again to
-                                        // toggle it on. (Auto-toggle
-                                        // would need a fresh prepare
-                                        // and a small audio cut.)
+                                        // The server attaches it to the
+                                        // playing file, and the VM has
+                                        // re-read the file's subtitles:
+                                        // the same player re-prepares
+                                        // onto a source with the new
+                                        // side-load, at its current
+                                        // position (no new player or
+                                        // stream session), and it's
+                                        // listed in the subtitle sheet
+                                        // to pick — not switched on by
+                                        // itself.
                                         onDismiss()
                                     }
                                 },
@@ -1961,6 +2070,17 @@ private fun ReplayGainReadout(db: Double) {
  * like a follower. Should the queue have moved on before the controller
  * connected, the follower in PlayerHost catches up with it; handing the item
  * over again would yank the queue back to a track that just ended.
+ *
+ * Built on the APPLICATION context, never the Activity's. A controller binds
+ * to the service on the context it is given, and release() doesn't unbind
+ * there and then: it posts the unbind (Media3's
+ * SequencedFutureManager.lazyRelease, which holds it back up to 30 s while
+ * commands are still unanswered). Swiping the task away from Recents with
+ * this screen up destroyed the Activity; its context cleanup unbound the
+ * "leaked ServiceConnection" itself, and the posted unbind then threw "Service
+ * not registered" on the main thread — a crash (Galaxy S24 FE, Media3
+ * 1.11.1). The application context outlives every screen, so the connection
+ * is still registered whenever the unbind runs. MiniPlayerBar does the same.
  */
 @Composable
 private fun rememberAudioController(
@@ -1971,20 +2091,20 @@ private fun rememberAudioController(
     explicitStart: Boolean,
     bindOnly: Boolean,
 ): MediaController? {
-    val context = LocalContext.current
+    val appContext = LocalContext.current.applicationContext
     return produceState<MediaController?>(initialValue = null, enabled, source, itemId) {
         if (!enabled) {
             value = null
             return@produceState
         }
         val following = AudioQueueFollow.consume(itemId)
-        val token = SessionToken(context, ComponentName(context, PlaybackService::class.java))
-        val future = MediaController.Builder(context, token).buildAsync()
+        val token = SessionToken(appContext, ComponentName(appContext, PlaybackService::class.java))
+        val future = MediaController.Builder(appContext, token).buildAsync()
         val controller: MediaController? = try {
             suspendCancellableCoroutine { cont ->
                 future.addListener(
                     { cont.resumeWith(Result.success(runCatching { future.get() }.getOrNull())) },
-                    ContextCompat.getMainExecutor(context),
+                    ContextCompat.getMainExecutor(appContext),
                 )
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -2106,6 +2226,19 @@ private fun enterPip(activity: Activity?) {
     }
 }
 
+/** The content duration progress and the Up Next lead-in count against, or
+ *  [ContentDuration.UNKNOWN] — never the player's duration on a remux /
+ *  transcode session, nor a dynamic or live window's (see ContentDuration). */
+private fun contentDurationOf(player: Player, source: PlaybackSource, vm: PlayerViewModel): Long =
+    vm.contentDurationMs(
+        playerDurationMs = player.duration,
+        playerDurationTrusted = ContentDuration.playerDurationTrusted(
+            hlsSession = source is PlaybackSource.Hls,
+            windowDynamic = player.isCurrentMediaItemDynamic,
+            windowLive = player.isCurrentMediaItemLive,
+        ),
+    )
+
 private fun formatAudioLabel(s: AudioStream): String {
     val parts = mutableListOf<String>()
     if (s.language.isNotEmpty()) parts += s.language
@@ -2124,45 +2257,6 @@ private fun formatScrubMs(ms: Long): String {
     val m = (totalSec % 3600) / 60
     val s = totalSec % 60
     return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
-}
-
-private fun formatSubtitleLabel(s: SubtitleStream): String {
-    val parts = mutableListOf<String>()
-    if (s.language.isNotEmpty()) parts += s.language
-    if (s.title.isNotEmpty()) parts += s.title
-    if (s.forced) parts += "forced"
-    if (s.sdh) parts += "SDH"
-    return parts.joinToString(" · ")
-}
-
-// Minimal ISO 639-2/B (and a couple of 639-2/T) → 639-1 map, mirroring the
-// web client's normalizeLang. ffprobe usually reports 3-letter codes ("eng",
-// "spa") while the saved subtitle preference is a 2-letter 639-1 code ("en",
-// "es"); the forced-only gate must treat those as equal. Anything not here
-// falls back to a primary-subtag comparison, so an unknown code simply won't
-// false-match.
-private val ISO6392_TO_1: Map<String, String> = mapOf(
-    "eng" to "en", "spa" to "es", "fre" to "fr", "fra" to "fr", "ger" to "de",
-    "deu" to "de", "ita" to "it", "por" to "pt", "rus" to "ru", "jpn" to "ja",
-    "chi" to "zh", "zho" to "zh", "kor" to "ko", "ara" to "ar", "dut" to "nl",
-    "nld" to "nl", "swe" to "sv", "nor" to "no", "dan" to "da", "fin" to "fi",
-    "pol" to "pl", "tur" to "tr", "heb" to "he", "hin" to "hi", "tha" to "th",
-    "vie" to "vi", "ces" to "cs", "cze" to "cs", "gre" to "el", "ell" to "el",
-    "hun" to "hu", "ron" to "ro", "rum" to "ro", "ukr" to "uk", "ind" to "id",
-)
-
-/** Reduce a language tag to a canonical 639-1 primary subtag (lowercased).
- *  "ENG" → "en", "en-US" → "en", "xyz" → "xyz". */
-private fun normalizeSubtitleLang(code: String?): String {
-    if (code.isNullOrEmpty()) return ""
-    val primary = code.lowercase().split('-', '_').first()
-    return ISO6392_TO_1[primary] ?: primary
-}
-
-/** True when two language tags resolve to the same 639-1 primary subtag. */
-private fun langMatchesSubtitle(a: String?, b: String?): Boolean {
-    val na = normalizeSubtitleLang(a)
-    return na.isNotEmpty() && na == normalizeSubtitleLang(b)
 }
 
 /**
@@ -2186,7 +2280,8 @@ private fun SubtitleStyleDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
         title = { Text("Subtitle style") },
         text = {
-            Column {
+            // Scrolls: four option rows outgrow a landscape phone.
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 StylePickerRow(
                     label = "Size",
                     options = SubtitleStyle.Size.values().toList(),
@@ -2404,7 +2499,9 @@ private fun SpeedDialog(
         confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) } },
         title = { Text(stringResource(R.string.player_speed_title)) },
         text = {
-            Column {
+            // Scrolls: in landscape the presets ran past the dialog and the
+            // fastest ones sat under the Close button, unreachable.
+            Column(modifier = Modifier.verticalScroll(rememberScrollState())) {
                 AudiobookSpeed.PRESETS.forEach { rate ->
                     Row(
                         modifier = Modifier

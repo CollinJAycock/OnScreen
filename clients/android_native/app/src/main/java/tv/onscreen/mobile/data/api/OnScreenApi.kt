@@ -99,6 +99,12 @@ interface OnScreenApi {
         @Header("Authorization") deviceTokenHeader: String,
     ): Response<ApiResponse<TokenPair>>
 
+    // ── Server capabilities ───────────────────────────────────────────────────
+
+    /** Public; see ServerCapabilitiesRepository, which asks once per server. */
+    @GET("api/v1/system/capabilities")
+    suspend fun getCapabilities(): ApiResponse<ServerCapabilities>
+
     // ── Hub ─────────────────────────────────────────────────────────────────
 
     @GET("api/v1/hub")

@@ -54,7 +54,13 @@ import tv.onscreen.mobile.playback.PlaybackService
  */
 @Composable
 fun MiniPlayerBar(onOpen: (String) -> Unit) {
-    val context = LocalContext.current
+    // The APPLICATION context, never the Activity's: the controller binds to
+    // PlaybackService on the context it is given and unbinds from a task it
+    // posts on release. Swiping the app away from Recents destroys the
+    // Activity, whose context cleanup unbinds the "leaked" connection first —
+    // and the posted unbind then crashed the app with "Service not
+    // registered". Same fix as PlayerScreen's rememberAudioController.
+    val context = LocalContext.current.applicationContext
     var controller by remember { mutableStateOf<MediaController?>(null) }
     var mediaId by remember { mutableStateOf<String?>(null) }
     var title by remember { mutableStateOf("") }

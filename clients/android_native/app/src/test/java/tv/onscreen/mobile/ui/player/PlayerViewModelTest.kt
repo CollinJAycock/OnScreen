@@ -37,6 +37,7 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.NotificationsRepository
 import tv.onscreen.mobile.data.repository.OnlineSubtitleRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
+import tv.onscreen.mobile.data.repository.ServerCapabilitiesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -168,6 +169,13 @@ class PlayerViewModelTest {
                 tv.onscreen.mobile.data.repository.ListeningSpeed(rate = null, serverSupport = false)
         }
 
+    /** The server's capabilities: by default one that predates
+     *  progress_without_duration (or couldn't be asked). */
+    private fun stubCapabilities(progressWithoutDuration: Boolean = false): ServerCapabilitiesRepository =
+        mockk<ServerCapabilitiesRepository>().also {
+            coEvery { it.progressWithoutDuration() } returns progressWithoutDuration
+        }
+
     /** Notifications repo whose SSE stream emits nothing — keeps the
      *  cross-device resume path silent during tests that don't exercise
      *  it. Tests that *do* (the SSE ones below) override per-test. */
@@ -214,7 +222,7 @@ class PlayerViewModelTest {
             coEvery { itemRepo.getItem("movie-1") } returns
                 movieDetail(directPlayFile().copy(stream_token = "st-24h"), viewOffsetMs = 12_000L)
 
-            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
             vm.prepare("movie-1")
             advanceUntilIdle()
 
@@ -245,7 +253,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile(), viewOffsetMs = 18_000L)
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1", fromStart = true)
         advanceUntilIdle()
 
@@ -264,7 +272,7 @@ class PlayerViewModelTest {
         // string; the asset-route middleware rejects it there.
         coEvery { sp.getAssetToken() } returns "as-24h"
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), sp, subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), sp, subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -302,7 +310,7 @@ class PlayerViewModelTest {
             token = "tok",
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -310,6 +318,9 @@ class PlayerViewModelTest {
         assertThat(src.playlistUrl).isEqualTo("http://srv/transcode/sess-1.m3u8")
         assertThat(src.offsetMs).isEqualTo(30_000L)
         assertThat(vm.hlsOffsetMs).isEqualTo(30_000L)
+        // No start_offset_sec (an older server): the stream opens at the
+        // request, so the player starts at its head.
+        assertThat(src.startMs).isEqualTo(0L)
     }
 
     private fun alacTrack() = ItemDetail(
@@ -343,7 +354,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getChildren(any()) } returns emptyList()
         val transcodeRepo = remuxingTranscodeRepo()
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "track-7" }
         vm.prepare("track-7")
         advanceUntilIdle()
@@ -371,7 +382,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getItem("track-7") } returns alacTrack()
         val transcodeRepo = remuxingTranscodeRepo()
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "track-7" }
         vm.prepare("album-1")
         advanceUntilIdle()
@@ -412,7 +423,7 @@ class PlayerViewModelTest {
         every { android.net.Uri.encode(any<String>()) } answers { firstArg() }
     }
 
-    private fun playerFor(itemRepo: ItemRepository) = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+    private fun playerFor(itemRepo: ItemRepository) = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
 
     @Test
     fun `a track without a cover of its own shows its album's`() = runTest(dispatcher) {
@@ -556,7 +567,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), parentId = "season-1", index = 1)
         coEvery { itemRepo.getChildren(any()) } returns emptyList()
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("ep-1")
         advanceUntilIdle()
 
@@ -573,7 +584,7 @@ class PlayerViewModelTest {
         val watchLimit = stubWatchLimit()
         val prefs = prefs()
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs, serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs, serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b")
 
@@ -609,7 +620,7 @@ class PlayerViewModelTest {
         val fetched = kotlinx.coroutines.CompletableDeferred<ItemDetail>()
         coEvery { itemRepo.getItem("b") } coAnswers { fetched.await() }
 
-        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b")
         try {
@@ -633,7 +644,7 @@ class PlayerViewModelTest {
         every { itemRepo.cachedItem("b") } returns book("b", title = "Old title")
         coEvery { itemRepo.getItem("b") } returns book("b", title = "New title")
 
-        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b")
         val first = vm.state.value
@@ -649,7 +660,7 @@ class PlayerViewModelTest {
         val itemRepo = itemRepo()
         coEvery { itemRepo.getItem("b") } returns book("b")
 
-        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b", startAtMs = 95_000)
 
@@ -662,7 +673,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getItem("b") } throws
             httpError(403, """{"error":{"code":"CONTENT_RESTRICTED","message":"rating"}}""")
 
-        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b")
         advanceUntilIdle()
@@ -685,7 +696,7 @@ class PlayerViewModelTest {
             reason = "daily_limit_reached",
         )
 
-        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b")
         assertThat(vm.state.value.error).isNull()
@@ -701,7 +712,7 @@ class PlayerViewModelTest {
         val watchLimit = mockk<tv.onscreen.mobile.data.repository.WatchLimitRepository>()
         coEvery { watchLimit.get() } throws java.io.IOException("unreachable")
 
-        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b")
         advanceUntilIdle()
@@ -715,7 +726,7 @@ class PlayerViewModelTest {
         val itemRepo = itemRepo()
         coEvery { itemRepo.getItem("b") } throws java.io.IOException("unreachable")
 
-        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, mockk(relaxed = true), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "b" }
         vm.prepare("b")
         advanceUntilIdle()
@@ -738,7 +749,7 @@ class PlayerViewModelTest {
         val watchLimit = stubWatchLimit()
         val prefs = prefs()
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs, serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs, serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), watchLimit, stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         runCurrent()
 
@@ -762,7 +773,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getChildren(any()) } returns emptyList()
         val transcodeRepo = remuxingTranscodeRepo()
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.backgroundItemId = { "some-other-track" }
         vm.prepare("track-7")
         advanceUntilIdle()
@@ -777,7 +788,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile()).copy(files = emptyList())
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -804,7 +815,7 @@ class PlayerViewModelTest {
         )
         coEvery { itemRepo.getItem("ep-3") } returns episodeDetail(directPlayFile(), "season-1", 3)
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("season-1")
         advanceUntilIdle()
 
@@ -836,7 +847,7 @@ class PlayerViewModelTest {
             )
             coEvery { itemRepo.getItem("ep-2") } returns episodeDetail(directPlayFile(), "season-1", 2)
 
-            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
             vm.prepare("season-1")
             advanceUntilIdle()
 
@@ -867,7 +878,7 @@ class PlayerViewModelTest {
         )
         coEvery { itemRepo.getItem("ep-3") } returns episodeDetail(directPlayFile(), "season-2", 3)
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("show-1")
         advanceUntilIdle()
 
@@ -890,7 +901,7 @@ class PlayerViewModelTest {
             )
             coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
 
-            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
             vm.prepare("season-1")
             advanceUntilIdle()
 
@@ -903,7 +914,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
         coEvery { itemRepo.getItem(any()) } throws RuntimeException("api 500")
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -920,7 +931,7 @@ class PlayerViewModelTest {
             ChildItem(id = "ep-2", title = "E2", type = "episode", index = 2),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("ep-1")
         advanceUntilIdle()
 
@@ -933,7 +944,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -948,7 +959,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getItem("ep-1") } returns episodeDetail(directPlayFile(), "season-1", 1)
         coEvery { itemRepo.getChildren("season-1") } throws RuntimeException("offline")
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("ep-1")
         advanceUntilIdle()
 
@@ -962,7 +973,7 @@ class PlayerViewModelTest {
     fun `stopActiveTranscode is a no-op when no session is active`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
 
         vm.stopActiveTranscode()
         advanceUntilIdle()
@@ -983,7 +994,7 @@ class PlayerViewModelTest {
             token = "tok-9",
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -1003,15 +1014,67 @@ class PlayerViewModelTest {
     }
 
     @Test
-    fun `reportProgress no-ops when duration is zero`() = runTest(dispatcher) {
+    fun `reportProgress with an unknown duration still beats, leaving the duration out`() = runTest(dispatcher) {
+        // Skipping it stopped a parental watch limit from counting the time;
+        // this server keeps the duration it knows when the field is absent.
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
-
-        vm.reportProgress("movie-1", 1_000L, 0L, "playing")
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        coEvery { itemRepo.updateProgress(any(), any(), any(), any(), any()) } returns Unit
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities(progressWithoutDuration = true))
+        vm.prepare("movie-1")
         advanceUntilIdle()
 
-        coVerify(exactly = 0) { itemRepo.updateProgress(any(), any(), any(), any()) }
+        vm.reportProgress("movie-1", 1_000L, ContentDuration.UNKNOWN, "playing")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { itemRepo.updateProgress("movie-1", 1_000L, null, "playing", any()) }
+    }
+
+    @Test
+    fun `an older server gets no report with an unknown duration`() = runTest(dispatcher) {
+        // It stores each report's duration as sent: the missing one would
+        // replace the one it has, and the item read "unwatched" and left
+        // Continue Watching. The pre-flag behaviour — skip — stands there.
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        coEvery { itemRepo.updateProgress(any(), any(), any(), any(), any()) } returns Unit
+        every { itemRepo.reportProgressDetached(any(), any(), any(), any(), any()) } returns Unit
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities(progressWithoutDuration = false))
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        vm.reportProgress("movie-1", 1_000L, ContentDuration.UNKNOWN, "playing")
+        vm.reportProgressFinal("movie-1", 1_000L, ContentDuration.UNKNOWN)
+        // A known duration still goes out as ever.
+        vm.reportProgress("movie-1", 2_000L, 90_000L, "playing")
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { itemRepo.updateProgress(any(), any(), null, any(), any()) }
+        verify(exactly = 0) { itemRepo.reportProgressDetached(any(), any(), any(), any(), any()) }
+        coVerify(exactly = 1) { itemRepo.updateProgress("movie-1", 2_000L, 90_000L, "playing", any()) }
+    }
+
+    @Test
+    fun `a capability lookup that fails, or hasn't answered, sends no report without a duration`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        coEvery { itemRepo.updateProgress(any(), any(), any(), any(), any()) } returns Unit
+        val caps = mockk<ServerCapabilitiesRepository>()
+        coEvery { caps.progressWithoutDuration() } throws java.io.IOException("unreachable")
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), caps)
+
+        // Before prepare has asked.
+        vm.reportProgress("movie-1", 1_000L, ContentDuration.UNKNOWN, "playing")
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        vm.reportProgress("movie-1", 2_000L, ContentDuration.UNKNOWN, "playing")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).isNull()
+        coVerify(exactly = 0) { itemRepo.updateProgress(any(), any(), any(), any(), any()) }
     }
 
     @Test
@@ -1029,7 +1092,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -1051,7 +1114,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -1078,7 +1141,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         // Record a local report at 60_000ms; the SSE event lands at
         // 60_500ms which is within the 3 s same-device echo window.
         vm.reportProgress("movie-1", 60_000L, 600_000L, "playing")
@@ -1103,7 +1166,7 @@ class PlayerViewModelTest {
             ),
         )
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), notif, stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
         assertThat(vm.remoteResumeMs.value).isEqualTo(90_000L)
@@ -1117,7 +1180,7 @@ class PlayerViewModelTest {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
         coEvery { itemRepo.updateProgress(any(), any(), any(), any()) } returns Unit
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
 
         vm.reportProgress("movie-1", 5_000L, 90_000L, "playing")
         advanceUntilIdle()
@@ -1135,7 +1198,7 @@ class PlayerViewModelTest {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
         every { itemRepo.reportProgressDetached(any(), any(), any(), any()) } returns Unit
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
 
         vm.reportProgressFinal("track-7", 180_000L, 180_000L)
         advanceUntilIdle()
@@ -1145,15 +1208,19 @@ class PlayerViewModelTest {
     }
 
     @Test
-    fun `reportProgressFinal no-ops when duration is zero`() = runTest(dispatcher) {
+    fun `reportProgressFinal with an unknown duration still stops, leaving the duration out`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
-
-        vm.reportProgressFinal("track-7", 1_000L, 0L)
+        coEvery { itemRepo.getItem("track-7") } returns movieDetail(directPlayFile()).copy(id = "track-7")
+        every { itemRepo.reportProgressDetached(any(), any(), any(), any(), any()) } returns Unit
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities(progressWithoutDuration = true))
+        vm.prepare("track-7")
         advanceUntilIdle()
 
-        verify(exactly = 0) { itemRepo.reportProgressDetached(any(), any(), any(), any()) }
+        vm.reportProgressFinal("track-7", 1_000L, ContentDuration.UNKNOWN)
+        advanceUntilIdle()
+
+        verify(exactly = 1) { itemRepo.reportProgressDetached("track-7", 1_000L, null, "stopped", any()) }
     }
 
     @Test
@@ -1166,7 +1233,7 @@ class PlayerViewModelTest {
                 provider_file_id = 42, file_name = "Movie.srt", language = "en",
             ),
         )
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), subs, stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), subs, stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
 
         vm.searchOnlineSubtitles("movie-1", "en", null)
         advanceUntilIdle()
@@ -1183,7 +1250,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
         val subs = mockk<OnlineSubtitleRepository>()
         coEvery { subs.search(any(), any(), any()) } throws RuntimeException("rate limited")
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), subs, stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), subs, stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
 
         vm.searchOnlineSubtitles("movie-1", "en", null)
         advanceUntilIdle()
@@ -1198,7 +1265,7 @@ class PlayerViewModelTest {
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
         val subs = mockk<OnlineSubtitleRepository>()
         coEvery { subs.download(any(), any(), any()) } returns Unit
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), subs, stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), subs, stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -1254,7 +1321,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
         coEvery { itemRepo.getItem("movie-1") } throws httpError(403, """{"error":{"code":"CONTENT_RESTRICTED","message":"rating"}}""")
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -1268,7 +1335,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
         coEvery { itemRepo.getItem("movie-1") } throws httpError(404)
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -1282,7 +1349,7 @@ class PlayerViewModelTest {
         val transcodeRepo = mockk<TranscodeRepository>(relaxed = true)
         coEvery { itemRepo.getItem("movie-1") } throws java.io.IOException("unreachable")
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloadsWithMovie(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.prepare("movie-1")
         advanceUntilIdle()
 
@@ -1298,10 +1365,736 @@ class PlayerViewModelTest {
         coEvery { itemRepo.updateProgress(any(), any(), any(), any(), any()) } throws
             httpError(403, """{"error":{"code":"FORBIDDEN","message":"no access"}}""")
 
-        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
         vm.reportProgress("movie-1", 1_000L, 10_000L, "playing")
         advanceUntilIdle()
 
         assertThat(vm.state.value.error).isEqualTo("content_restricted")
+    }
+
+    // ── Content duration (the resumed-HLS "watched after 4 minutes" bug) ──
+
+    /** A movie the server remuxes, resumed an hour in. The API omitted the
+     *  item's duration; its file has one — the device case. */
+    private fun resumedRemuxMovie(itemDurationMs: Long?, fileDurationMs: Long?) = ItemDetail(
+        id = "movie-1",
+        library_id = "lib-1",
+        title = "Test Movie",
+        type = "movie",
+        duration_ms = itemDurationMs,
+        view_offset_ms = 3_600_000L,
+        files = listOf(transcodeFile().copy(duration_ms = fileDurationMs)),
+    )
+
+    /** [startOffsetSec] null: a server that predates the field. */
+    private fun remuxRepo(startOffsetSec: Double? = null) = mockk<TranscodeRepository>(relaxed = true).also { repo ->
+        coEvery { repo.decide(any(), any()) } returns "directStream"
+        coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } returns
+            TranscodeSession(
+                session_id = "sess-r",
+                playlist_url = "/transcode/sess-r.m3u8",
+                token = "tok",
+                start_offset_sec = startOffsetSec,
+            )
+    }
+
+    @Test
+    fun `content duration falls back to the file's when the item has none, never the HLS window`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns resumedRemuxMovie(itemDurationMs = null, fileDurationMs = 7_200_000L)
+        val vm = PlayerViewModel(itemRepo, remuxRepo(), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        assertThat(vm.state.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+
+        // The session's growing EVENT playlist reports ~4 minutes. Position
+        // 1 h + 4 min against THAT read as far past 90% — watched, resume point
+        // cleared. Against the file's 2 h it is ~53%.
+        assertThat(vm.contentDurationMs(playerDurationMs = 240_000L, playerDurationTrusted = false))
+            .isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `on HLS the file's duration wins over the item's listed runtime`() = runTest(dispatcher) {
+        // The position reported is time in the file; the item's is a TMDB
+        // runtime in whole minutes, here 3 min short of the file.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns resumedRemuxMovie(itemDurationMs = 7_020_000L, fileDurationMs = 7_200_000L)
+        val vm = PlayerViewModel(itemRepo, remuxRepo(), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.contentDurationMs(playerDurationMs = 240_000L, playerDurationTrusted = false))
+            .isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `on direct play the settled player's duration wins`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(directPlayFile().copy(duration_ms = 7_200_000L)).copy(duration_ms = 7_020_000L)
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.contentDurationMs(playerDurationMs = 7_201_000L, playerDurationTrusted = true))
+            .isEqualTo(7_201_000L)
+        // Not prepared yet (C.TIME_UNSET): the file's, not the runtime.
+        assertThat(vm.contentDurationMs(playerDurationMs = Long.MIN_VALUE + 1, playerDurationTrusted = true))
+            .isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `with no duration anywhere an HLS session reports without one rather than a wrong ratio`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns resumedRemuxMovie(itemDurationMs = null, fileDurationMs = null)
+        coEvery { itemRepo.updateProgress(any(), any(), any(), any(), any()) } returns Unit
+        every { itemRepo.reportProgressDetached(any(), any(), any(), any(), any()) } returns Unit
+        val vm = PlayerViewModel(itemRepo, remuxRepo(), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities(progressWithoutDuration = true))
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        val dur = vm.contentDurationMs(playerDurationMs = 240_000L, playerDurationTrusted = false)
+        assertThat(dur).isEqualTo(ContentDuration.UNKNOWN)
+        // The screen passes that straight through, and the duration is left
+        // out — never the ~4 min HLS window, which read as past 90%. This
+        // server keeps the duration it knows when the field is absent.
+        vm.reportProgress("movie-1", 3_840_000L, dur, "playing")
+        vm.reportProgressFinal("movie-1", 3_840_000L, dur)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { itemRepo.updateProgress("movie-1", 3_840_000L, null, "playing", "directStream") }
+        verify(exactly = 1) { itemRepo.reportProgressDetached("movie-1", 3_840_000L, null, "stopped", "directStream") }
+    }
+
+    @Test
+    fun `a direct-play file with no known duration still reports against the player's`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.contentDurationMs(playerDurationMs = 5_400_000L, playerDurationTrusted = true))
+            .isEqualTo(5_400_000L)
+    }
+
+    @Test
+    fun `a remux session is offset by where the server really opened it`() = runTest(dispatcher) {
+        // Video copied → the session can only open on a keyframe, here 1.5 s
+        // before the resume point. Content time (progress, markers, subtitle
+        // cues) is position + hlsOffsetMs, so the offset must be the real one.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns resumedRemuxMovie(itemDurationMs = null, fileDurationMs = 7_200_000L)
+        val vm = PlayerViewModel(itemRepo, remuxRepo(startOffsetSec = 3_598.5), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.hlsOffsetMs).isEqualTo(3_598_500L)
+        val src = vm.state.value.source as PlaybackSource.Hls
+        assertThat(src.offsetMs).isEqualTo(3_598_500L)
+        // And the player starts 1.5 s into the stream — at the resume point,
+        // not the keyframe before it.
+        assertThat(src.requestedMs).isEqualTo(3_600_000L)
+        assertThat(src.startMs).isEqualTo(1_500L)
+    }
+
+    @Test
+    fun `a remux the server opened at 0 is not offset by the requested position`() = runTest(dispatcher) {
+        // Resumed 4 s in, before the first keyframe after 0:00: the session
+        // really starts at the top of the file. Treating that 0 as "no field"
+        // offset everything content-timed — subtitle cues, markers, progress —
+        // by the 4 s asked for.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns
+            resumedRemuxMovie(itemDurationMs = null, fileDurationMs = 7_200_000L).copy(view_offset_ms = 4_000L)
+        val vm = PlayerViewModel(itemRepo, remuxRepo(startOffsetSec = 0.0), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.hlsOffsetMs).isEqualTo(0L)
+        val src = vm.state.value.source as PlaybackSource.Hls
+        assertThat(src.offsetMs).isEqualTo(0L)
+        // The player seeks the 4 s in instead.
+        assertThat(src.startMs).isEqualTo(4_000L)
+    }
+
+    @Test
+    fun `a full-timeline session starts the player at the resume point`() = runTest(dispatcher) {
+        // An ABR ladder's stream covers the whole file from 0:00 and says so
+        // (start_offset_sec 0), whatever position was asked for. Started at
+        // 0, a resume 45 minutes in played from the top — and the first beat
+        // saved 0:10 over the resume point.
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(transcodeFile(), viewOffsetMs = 2_700_000L)
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true).also { repo ->
+            coEvery { repo.decide(any(), any()) } returns "transcode"
+            coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } returns
+                TranscodeSession(session_id = "abr", playlist_url = "/t/abr.m3u8", token = "tok", start_offset_sec = 0.0)
+        }
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        coVerify { transcodeRepo.start("movie-1", 1080, 2_700_000L, "f2", false, null, any()) }
+        val src = vm.state.value.source as PlaybackSource.Hls
+        assertThat(src.offsetMs).isEqualTo(0L)
+        assertThat(vm.hlsOffsetMs).isEqualTo(0L)
+        assertThat(src.startMs).isEqualTo(2_700_000L)
+    }
+
+    @Test
+    fun `an audio-track switch on a full-timeline session starts the new player where the old one was`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(transcodeFile().copy(audio_streams = threeAudioStreams), viewOffsetMs = 2_700_000L)
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true).also { repo ->
+            coEvery { repo.decide(any(), any()) } returns "transcode"
+            coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } returnsMany listOf(
+                TranscodeSession(session_id = "abr-1", playlist_url = "/t/abr-1.m3u8", token = "tok-1", start_offset_sec = 0.0),
+                TranscodeSession(session_id = "abr-2", playlist_url = "/t/abr-2.m3u8", token = "tok-2", start_offset_sec = 0.0),
+            )
+        }
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        // A minute after the resume point, in stream time = content time.
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 2_760_000L)
+        advanceUntilIdle()
+
+        coVerify { transcodeRepo.start("movie-1", 1080, 2_760_000L, "f2", false, 2, any()) }
+        val src = vm.state.value.source as PlaybackSource.Hls
+        assertThat(src.playlistUrl).isEqualTo("http://srv/t/abr-2.m3u8")
+        assertThat(src.startMs).isEqualTo(2_760_000L)
+    }
+
+    @Test
+    fun `the start position is never before the stream`() {
+        // A server rounding the keyframe it opened at up past the request.
+        assertThat(PlaybackSource.Hls("u", offsetMs = 3_598_500L, requestedMs = 3_598_400L).startMs).isEqualTo(0L)
+        assertThat(PlaybackSource.Hls("u", offsetMs = 0L, requestedMs = 0L).startMs).isEqualTo(0L)
+    }
+
+    @Test
+    fun `the source an audio-track switch replaced reports nothing on its way out`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns resumedRemuxMovie(itemDurationMs = null, fileDurationMs = 7_200_000L)
+            .let { it.copy(files = it.files.map { f -> f.copy(audio_streams = threeAudioStreams) }) }
+        val transcodeRepo = mockk<TranscodeRepository>(relaxed = true).also { repo ->
+            coEvery { repo.decide(any(), any()) } returns "directStream"
+            coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } returnsMany listOf(
+                TranscodeSession(session_id = "sess-1", playlist_url = "/t/sess-1.m3u8", token = "tok-1", start_offset_sec = 3_600.0),
+                TranscodeSession(session_id = "sess-2", playlist_url = "/t/sess-2.m3u8", token = "tok-2", start_offset_sec = 3_660.0),
+            )
+        }
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        val first = vm.state.value.source!!
+
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 60_000L)
+        advanceUntilIdle()
+        val second = vm.state.value.source!!
+        assertThat(second).isNotSameInstanceAs(first)
+        // The old session is retired by its own stop, once the new one is in hand.
+        verify(exactly = 1) { transcodeRepo.stopDetached("sess-1", "tok-1") }
+
+        // The old player's reporter asks once; the new one, and a player that
+        // really ends, are not swapped out.
+        assertThat(vm.swappedOut(first)).isTrue()
+        assertThat(vm.swappedOut(first)).isFalse()
+        assertThat(vm.swappedOut(second)).isFalse()
+    }
+
+    @Test
+    fun `a server without start_offset_sec offsets by the requested position`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns resumedRemuxMovie(itemDurationMs = null, fileDurationMs = 7_200_000L)
+        val vm = PlayerViewModel(itemRepo, remuxRepo(startOffsetSec = null), prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.hlsOffsetMs).isEqualTo(3_600_000L)
+    }
+
+    // ── Audio tracks ──────────────────────────────────────────────────────
+
+    /** A film's three audio streams as the API lists them: in the file's
+     *  audio order, each with its ABSOLUTE ffprobe index (the video is #0). */
+    private val threeAudioStreams = listOf(
+        AudioStream(1, "ac3", 6, "eng", "English 5.1"),
+        AudioStream(2, "aac", 2, "eng", "Commentary"),
+        AudioStream(3, "aac", 2, "jpn", "Japanese"),
+    )
+
+    /** Remux repo whose first session ("sess-1") opens the film and whose
+     *  later starts answer [next] in turn. */
+    private fun audioSwitchRepo(vararg next: TranscodeSession) = mockk<TranscodeRepository>(relaxed = true).also { repo ->
+        coEvery { repo.decide(any(), any()) } returns "directStream"
+        coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } returnsMany listOf(
+            TranscodeSession(session_id = "sess-1", playlist_url = "/t/sess-1.m3u8", token = "tok-1", start_offset_sec = 0.0),
+            *next,
+        )
+    }
+
+    private fun kotlinx.coroutines.test.TestScope.preparedAudioSwitch(repo: TranscodeRepository): PlayerViewModel {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile().copy(audio_streams = threeAudioStreams))
+        val vm = PlayerViewModel(itemRepo, repo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        return vm
+    }
+
+    @Test
+    fun `a remux session starts on the server's default audio, the first row`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val vm = preparedAudioSwitch(repo)
+
+        // No audio_stream_index asked for: ffmpeg maps 0:a:0.
+        coVerify { repo.start("movie-1", 0, 0L, "f2", true, null, any()) }
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(0)
+    }
+
+    @Test
+    fun `direct play leaves the audio row to the player`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns "directPlay" }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.source).isInstanceOf(PlaybackSource.DirectPlay::class.java)
+        assertThat(vm.state.value.sessionAudioRow).isNull()
+    }
+
+    @Test
+    fun `an audio switch asks for the picked row, not the stream's absolute index`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo(
+            TranscodeSession(session_id = "sess-2", playlist_url = "/t/sess-2.m3u8", token = "tok-2", start_offset_sec = 0.0),
+        )
+        val vm = preparedAudioSwitch(repo)
+
+        // The last row, "Japanese" — ffprobe stream #3, the THIRD audio stream.
+        // Sending 3 named a fourth audio stream the file doesn't have: no
+        // playlist, then a playback error.
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 60_000L)
+        advanceUntilIdle()
+
+        coVerify { repo.start("movie-1", 0, 60_000L, "f2", true, 2, any()) }
+        coVerify(exactly = 0) { repo.start(any(), any(), any(), any(), any(), 3, any()) }
+        assertThat((vm.state.value.source as PlaybackSource.Hls).playlistUrl).isEqualTo("http://srv/t/sess-2.m3u8")
+        // The picker now marks the row playing.
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(2)
+    }
+
+    @Test
+    fun `an audio switch to no row of the file starts nothing`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val vm = preparedAudioSwitch(repo)
+        val before = vm.state.value.source
+
+        vm.switchAudioStream(audioRow = 3, currentPositionMs = 60_000L)
+        vm.switchAudioStream(audioRow = -1, currentPositionMs = 60_000L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repo.start(any(), any(), any(), any(), any(), any(), any()) }
+        verify(exactly = 0) { repo.stopDetached(any(), any()) }
+        assertThat(vm.state.value.source).isSameInstanceAs(before)
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(0)
+    }
+
+    @Test
+    fun `picking the audio already playing starts no new session`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val vm = preparedAudioSwitch(repo)
+        val before = vm.state.value.source
+
+        vm.switchAudioStream(audioRow = 0, currentPositionMs = 60_000L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repo.start(any(), any(), any(), any(), any(), any(), any()) }
+        assertThat(vm.state.value.source).isSameInstanceAs(before)
+    }
+
+    @Test
+    fun `a failed audio switch keeps playing, and showing, the old track`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        coEvery { repo.start(any(), any(), any(), any(), any(), 1, any()) } throws httpError(500)
+        val vm = preparedAudioSwitch(repo)
+        val before = vm.state.value.source
+
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
+        advanceUntilIdle()
+
+        verify(exactly = 0) { repo.stopDetached(any(), any()) }
+        assertThat(vm.state.value.source).isSameInstanceAs(before)
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(0)
+        assertThat(vm.state.value.pendingAudioRow).isNull()
+        assertThat(vm.state.value.targetAudioRow).isEqualTo(0)
+        assertThat(vm.state.value.error).isNull()
+    }
+
+    // ── Audio picks while a switch is starting ────────────────────────────
+
+    /** Session [n] of the film, "sess-n". */
+    private fun session(n: Int) =
+        TranscodeSession(session_id = "sess-$n", playlist_url = "/t/sess-$n.m3u8", token = "tok-$n", start_offset_sec = 0.0)
+
+    /** Holds [repo]'s start of [row]'s session — a cold ffmpeg start — until
+     *  the test completes the returned deferred. */
+    private fun holdStart(repo: TranscodeRepository, row: Int): kotlinx.coroutines.CompletableDeferred<TranscodeSession> {
+        val started = kotlinx.coroutines.CompletableDeferred<TranscodeSession>()
+        coEvery { repo.start(any(), any(), any(), any(), any(), row, any()) } coAnswers { started.await() }
+        return started
+    }
+
+    private fun PlayerViewModel.playlist() = (state.value.source as PlaybackSource.Hls).playlistUrl
+
+    @Test
+    fun `the picker marks a switch's row while its session starts`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val started = holdStart(repo, row = 2)
+        val vm = preparedAudioSwitch(repo)
+        val before = vm.state.value.source
+
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 60_000L)
+        runCurrent()
+
+        // Still the first session playing — but the sheet marks the pick, not
+        // the row the viewer just left.
+        assertThat(vm.state.value.source).isSameInstanceAs(before)
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(0)
+        assertThat(vm.state.value.pendingAudioRow).isEqualTo(2)
+        assertThat(vm.state.value.targetAudioRow).isEqualTo(2)
+
+        started.complete(session(2))
+        advanceUntilIdle()
+
+        assertThat(vm.playlist()).isEqualTo("http://srv/t/sess-2.m3u8")
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(2)
+        assertThat(vm.state.value.pendingAudioRow).isNull()
+        assertThat(vm.state.value.targetAudioRow).isEqualTo(2)
+    }
+
+    @Test
+    fun `picking the playing row while a switch starts switches back`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val toCommentary = holdStart(repo, row = 1)
+        coEvery { repo.start(any(), any(), any(), any(), any(), 0, any()) } returns session(3)
+        val vm = preparedAudioSwitch(repo)
+
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
+        runCurrent()
+        // Back to English before Commentary's session is up. Checked against
+        // the session's row alone this was "already playing" and dropped —
+        // and Commentary played once it was.
+        vm.switchAudioStream(audioRow = 0, currentPositionMs = 61_000L)
+        advanceUntilIdle()
+
+        // A session of its own: the start in flight has already retired the
+        // live one on the server, which keeps one per viewer and item.
+        coVerify(exactly = 1) { repo.start("movie-1", 0, 61_000L, "f2", true, 0, any()) }
+        assertThat(vm.playlist()).isEqualTo("http://srv/t/sess-3.m3u8")
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(0)
+        assertThat(vm.state.value.pendingAudioRow).isNull()
+
+        // Commentary's session lands late: stopped, never played.
+        toCommentary.complete(session(2))
+        advanceUntilIdle()
+
+        verify(exactly = 1) { repo.stopDetached("sess-2", "tok-2") }
+        assertThat(vm.playlist()).isEqualTo("http://srv/t/sess-3.m3u8")
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(0)
+    }
+
+    @Test
+    fun `picking the row a switch is starting again starts no second session`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val started = holdStart(repo, row = 1)
+        val vm = preparedAudioSwitch(repo)
+
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
+        runCurrent()
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 62_000L)
+        runCurrent()
+        started.complete(session(2))
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repo.start(any(), any(), any(), any(), any(), 1, any()) }
+        assertThat(vm.playlist()).isEqualTo("http://srv/t/sess-2.m3u8")
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(1)
+        verify(exactly = 1) { repo.stopDetached(any(), any()) }
+        verify(exactly = 1) { repo.stopDetached("sess-1", "tok-1") }
+    }
+
+    @Test
+    fun `a superseded switch's session is stopped, not played, when it lands first`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val toCommentary = holdStart(repo, row = 1)
+        val toJapanese = holdStart(repo, row = 2)
+        val vm = preparedAudioSwitch(repo)
+        val first = vm.state.value.source!!
+
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
+        runCurrent()
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 61_000L)
+        runCurrent()
+        assertThat(vm.state.value.pendingAudioRow).isEqualTo(2)
+
+        // Commentary's session, up first, was picked over. It used to play
+        // until Japanese's replaced it — and then nothing ever stopped it.
+        toCommentary.complete(session(2))
+        advanceUntilIdle()
+
+        verify(exactly = 1) { repo.stopDetached("sess-2", "tok-2") }
+        assertThat(vm.state.value.source).isSameInstanceAs(first)
+        assertThat(vm.state.value.pendingAudioRow).isEqualTo(2)
+
+        toJapanese.complete(session(3))
+        advanceUntilIdle()
+
+        assertThat(vm.playlist()).isEqualTo("http://srv/t/sess-3.m3u8")
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(2)
+        assertThat(vm.state.value.pendingAudioRow).isNull()
+        verify(exactly = 1) { repo.stopDetached("sess-1", "tok-1") }
+        assertThat(vm.swappedOut(first)).isTrue()
+
+        // The one session left is the one playing: leaving stops it.
+        vm.stopActiveTranscode()
+        verify(exactly = 1) { repo.stopDetached("sess-3", "tok-3") }
+        verify(exactly = 3) { repo.stopDetached(any(), any()) }
+    }
+
+    @Test
+    fun `a superseded switch's session is stopped, not played, when it lands last`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val toCommentary = holdStart(repo, row = 1)
+        val toJapanese = holdStart(repo, row = 2)
+        val vm = preparedAudioSwitch(repo)
+
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
+        runCurrent()
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 61_000L)
+        runCurrent()
+        toJapanese.complete(session(3))
+        advanceUntilIdle()
+        val japanese = vm.state.value.source
+
+        // Landing last, it used to replace the pick that had already played.
+        toCommentary.complete(session(2))
+        advanceUntilIdle()
+
+        verify(exactly = 1) { repo.stopDetached("sess-2", "tok-2") }
+        assertThat(vm.state.value.source).isSameInstanceAs(japanese)
+        assertThat(vm.playlist()).isEqualTo("http://srv/t/sess-3.m3u8")
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(2)
+        vm.stopActiveTranscode()
+        verify(exactly = 1) { repo.stopDetached("sess-3", "tok-3") }
+    }
+
+    @Test
+    fun `a superseded switch that fails leaves the later pick marked`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val toCommentary = holdStart(repo, row = 1)
+        val toJapanese = holdStart(repo, row = 2)
+        val vm = preparedAudioSwitch(repo)
+
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
+        runCurrent()
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 61_000L)
+        runCurrent()
+        toCommentary.completeExceptionally(httpError(500))
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.pendingAudioRow).isEqualTo(2)
+        assertThat(vm.state.value.targetAudioRow).isEqualTo(2)
+        assertThat(vm.state.value.error).isNull()
+
+        toJapanese.complete(session(3))
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(2)
+        assertThat(vm.state.value.pendingAudioRow).isNull()
+    }
+
+    @Test
+    fun `a switch that lands after an admin stop is stopped, not played`() = runTest(dispatcher) {
+        val repo = audioSwitchRepo()
+        val started = holdStart(repo, row = 1)
+        val vm = preparedAudioSwitch(repo)
+        val before = vm.state.value.source
+
+        vm.switchAudioStream(audioRow = 1, currentPositionMs = 60_000L)
+        runCurrent()
+        vm.onStreamRefusedByAdminStop("Stopped by the server admin")
+        started.complete(session(2))
+        advanceUntilIdle()
+
+        verify(exactly = 1) { repo.stopDetached("sess-1", "tok-1") }
+        verify(exactly = 1) { repo.stopDetached("sess-2", "tok-2") }
+        assertThat(vm.state.value.source).isSameInstanceAs(before)
+        assertThat(vm.state.value.pendingAudioRow).isNull()
+        assertThat(vm.state.value.error).isEqualTo("Stopped by the server admin")
+    }
+
+    // ── A start that fails ────────────────────────────────────────────────
+
+    @Test
+    fun `a refused transcode start shows the server's own message`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        val repo = mockk<TranscodeRepository>(relaxed = true).also {
+            coEvery { it.decide(any(), any()) } returns "transcode"
+            coEvery { it.start(any(), any(), any(), any(), any(), any(), any()) } throws httpError(
+                422,
+                """{"error":{"code":"SOURCE_UNREADABLE","message":"This file appears to be corrupt.","request_id":"r1"}}""",
+            )
+        }
+        val vm = PlayerViewModel(itemRepo, repo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        // Was Retrofit's bare "HTTP 422".
+        assertThat(vm.state.value.error).isEqualTo("This file appears to be corrupt.")
+        assertThat(vm.state.value.source).isNull()
+    }
+
+    @Test
+    fun `a refusal with no error body falls back to the status`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        val repo = mockk<TranscodeRepository>(relaxed = true).also {
+            coEvery { it.decide(any(), any()) } returns "transcode"
+            coEvery { it.start(any(), any(), any(), any(), any(), any(), any()) } throws httpError(502, "<html>bad gateway</html>")
+        }
+        val vm = PlayerViewModel(itemRepo, repo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).startsWith("HTTP 502")
+    }
+
+    @Test
+    fun `a 403 still names the gate, not the raw server message`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        val repo = mockk<TranscodeRepository>(relaxed = true).also {
+            coEvery { it.decide(any(), any()) } returns "transcode"
+            coEvery { it.start(any(), any(), any(), any(), any(), any(), any()) } throws httpError(
+                403,
+                """{"error":{"code":"PARENTAL_LIMIT","message":"daily_limit_reached"}}""",
+            )
+        }
+        val vm = PlayerViewModel(itemRepo, repo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.error).contains("watch-time limit")
+    }
+
+    @Test
+    fun `a failure with no message still shows one rather than the spinner`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        coEvery { itemRepo.getItem(any()) } throws IllegalStateException()
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        // A null error with no source is the screen's spinner, for good.
+        assertThat(vm.state.value.error).isEqualTo(START_FAILED_MESSAGE)
+    }
+
+    // ── Subtitles ─────────────────────────────────────────────────────────
+
+    private fun subtitledRemuxFile() = transcodeFile().copy(
+        stream_token = "st-file",
+        subtitle_streams = listOf(
+            SubtitleStream(2, "subrip", "eng", "English", false),
+            SubtitleStream(3, "subrip", "eng", "English SDH", false, sdh = true),
+            SubtitleStream(4, "hdmv_pgs_subtitle", "eng", "English PGS", false),
+        ),
+        external_subtitles = listOf(
+            tv.onscreen.mobile.data.model.ExternalSubtitle(
+                id = "x1", language = "spa", title = "Spanish",
+                url = "/media/external-subtitles/x1",
+            ),
+        ),
+    )
+
+    @Test
+    fun `an HLS session gets every text subtitle as a side-load with a vaulted credential`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(subtitledRemuxFile())
+        val sp = serverPrefs()
+        coEvery { sp.getAssetToken() } returns "as-24h"
+        val vm = PlayerViewModel(itemRepo, remuxRepo(), prefs(), sp, subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        val tracks = vm.state.value.subtitleTracks
+        assertThat(tracks.map { it.trackId })
+            .containsExactly("sub:emb:2", "sub:emb:3", "sub:emb:4", "sub:ext:x1").inOrder()
+        val byId = tracks.associateBy { it.trackId }
+        // Embedded: ABSOLUTE stream index, the file's own stream token.
+        assertThat(byId.getValue("sub:emb:2").url).isEqualTo("http://srv/media/subtitles/f2/2")
+        assertThat(StreamTokenVault.tokenForTest("http://srv/media/subtitles/f2/2")).isEqualTo("st-file")
+        // Image-based: the server won't serve it as text — nothing to load.
+        assertThat(byId.getValue("sub:emb:4").url).isNull()
+        // Attached file: the asset token (a stream token is refused there).
+        assertThat(byId.getValue("sub:ext:x1").url).isEqualTo("http://srv/media/external-subtitles/x1")
+        assertThat(StreamTokenVault.tokenForTest("http://srv/media/external-subtitles/x1")).isEqualTo("as-24h")
+        // No credential in any url the player sees.
+        tracks.mapNotNull { it.url }.forEach { assertThat(it).doesNotContain("token=") }
+        // The picker on this HLS session: the three that can be side-loaded.
+        assertThat(SubtitleTracks.rows(tracks, hls = true).map { it.trackId })
+            .containsExactly("sub:emb:2", "sub:emb:3", "sub:ext:x1").inOrder()
+    }
+
+    @Test
+    fun `a downloaded subtitle joins the tracks without a new source or session`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val file = directPlayFile().copy(stream_token = "st-24h")
+        coEvery { itemRepo.getItem("movie-1") } returnsMany listOf(
+            movieDetail(file),
+            movieDetail(
+                file.copy(
+                    external_subtitles = listOf(
+                        tv.onscreen.mobile.data.model.ExternalSubtitle(
+                            id = "x9", language = "fre", url = "/media/external-subtitles/x9",
+                        ),
+                    ),
+                ),
+            ),
+        )
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo -> coEvery { repo.decide(any(), any()) } returns null }
+        val sp = serverPrefs()
+        coEvery { sp.getAssetToken() } returns "as-24h"
+        val online = stubSubtitles()
+        val candidate = tv.onscreen.mobile.data.model.OnlineSubtitle(
+            provider_file_id = 1, file_name = "movie.fr.srt", language = "fr",
+        )
+        val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), sp, subPrefs(), playbackPrefs(), emptyDownloads(), emptyNotifications(), online, stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        val source = vm.state.value.source
+        assertThat(vm.state.value.subtitleTracks.map { it.trackId }).containsExactly("sub:emb:1")
+
+        var done = false
+        vm.downloadOnlineSubtitle("movie-1", candidate) { done = true }
+        advanceUntilIdle()
+
+        assertThat(done).isTrue()
+        coVerify { online.download("movie-1", "f1", candidate) }
+        assertThat(vm.state.value.subtitleTracks.map { it.trackId })
+            .containsExactly("sub:emb:1", "sub:ext:x9").inOrder()
+        // Same source: the screen side-loads the new file into the running
+        // player instead of starting playback over.
+        assertThat(vm.state.value.source).isSameInstanceAs(source)
     }
 }

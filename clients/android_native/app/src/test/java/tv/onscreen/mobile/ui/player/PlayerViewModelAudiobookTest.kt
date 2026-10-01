@@ -150,6 +150,7 @@ class PlayerViewModelAudiobookTest {
             trickplayRepo = trickplay,
             watchLimitRepo = watchLimit,
             audiobooks = books,
+            serverCapabilities = mockk(relaxed = true),
         )
     }
 
