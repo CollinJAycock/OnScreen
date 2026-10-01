@@ -143,7 +143,11 @@ func TestDiscoverSearch_RequestGate(t *testing.T) {
 		}
 	})
 
-	t.Run("feature off wins over the gate", func(t *testing.T) {
+	// With no TMDB wired at all the handler answers feature-off before the
+	// lookup. (In production TMDB is the agent adapter, which only reports
+	// "no agent" when called, so a refused account gets the 403 first —
+	// either way a clean refusal, never a 500.)
+	t.Run("no TMDB wired answers before the gate", func(t *testing.T) {
 		gate := &fakeRequestGate{allowed: false}
 		h := NewDiscoverHandler(gateFakeDiscoverDB{}, nil, nil, slog.Default()).WithRequestGate(gate)
 		if rec := discoverSearch(h, user); rec.Code != http.StatusServiceUnavailable {
