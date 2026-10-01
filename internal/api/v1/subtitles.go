@@ -119,6 +119,16 @@ type ExternalSubtitleJSON struct {
 	URL      string  `json:"url"`
 }
 
+// writeSubtitlesNotConfigured is the feature-off answer for search and
+// download when OpenSubtitles isn't enabled (features.subtitles_external is
+// false). Still a 503, but in the standard error envelope with a code: the
+// old bare {"error": "..."} body had no message a client could read, so the
+// web player showed "HTTP 503".
+func writeSubtitlesNotConfigured(w http.ResponseWriter, r *http.Request) {
+	respond.Error(w, r, http.StatusServiceUnavailable, "SUBTITLES_NOT_CONFIGURED",
+		"online subtitle search is not configured on this server")
+}
+
 // Search handles GET /api/v1/items/{id}/subtitles/search?lang=en&query=...
 // The item is used to derive the title/year/episode metadata sent upstream.
 func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
@@ -173,9 +183,7 @@ func (h *SubtitleHandler) Search(w http.ResponseWriter, r *http.Request) {
 	results, err := h.svc.Search(r.Context(), opts)
 	if err != nil {
 		if errors.Is(err, subtitles.ErrNoProvider) {
-			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{
-				"error": "subtitle provider not configured",
-			})
+			writeSubtitlesNotConfigured(w, r)
 			return
 		}
 		h.logger.WarnContext(r.Context(), "subtitles: search", "id", itemID, "err", err)
@@ -268,9 +276,7 @@ func (h *SubtitleHandler) Download(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		if errors.Is(err, subtitles.ErrNoProvider) {
-			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{
-				"error": "subtitle provider not configured",
-			})
+			writeSubtitlesNotConfigured(w, r)
 			return
 		}
 		if errors.Is(err, subtitles.ErrQuotaExhausted) {

@@ -25,8 +25,9 @@ type mockHubDB struct {
 	cwRows []gen.ListContinueWatchingRow
 	cwErr  error
 
-	raRows []gen.ListRecentlyAddedRow
-	raErr  error
+	raRows  []gen.ListRecentlyAddedRow
+	raErr   error
+	raCalls []gen.ListRecentlyAddedParams
 
 	trRows []gen.ListTrendingRow
 	trErr  error
@@ -39,7 +40,8 @@ func (m *mockHubDB) ListContinueWatching(_ context.Context, _ gen.ListContinueWa
 	return m.cwRows, nil
 }
 
-func (m *mockHubDB) ListRecentlyAdded(_ context.Context, _ gen.ListRecentlyAddedParams) ([]gen.ListRecentlyAddedRow, error) {
+func (m *mockHubDB) ListRecentlyAdded(_ context.Context, arg gen.ListRecentlyAddedParams) ([]gen.ListRecentlyAddedRow, error) {
+	m.raCalls = append(m.raCalls, arg)
 	if m.raErr != nil {
 		return nil, m.raErr
 	}
@@ -230,6 +232,45 @@ func TestHub_Get_Trending(t *testing.T) {
 			}
 		}
 	})
+}
+
+// The cross-library Recently Added strip carries the caller's grant set into
+// the query, so the LIMIT counts only rows they can see (filtered afterwards,
+// newer items elsewhere crowded a restricted user's out and the strip came
+// back empty). Admins are unscoped; no grants means no query.
+func TestHub_Get_RecentlyAddedScopedInSQL(t *testing.T) {
+	lib := uuid.New()
+	db := &mockHubDB{raRows: []gen.ListRecentlyAddedRow{{ID: uuid.New(), LibraryID: lib, Title: "Sintel", Type: "movie"}}}
+	h := newHubHandler(db).WithLibraryAccess(&stubLibraryAccessChecker{allowed: map[uuid.UUID]struct{}{lib: {}}})
+	rec := httptest.NewRecorder()
+	h.Get(rec, hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil)))
+	var resp struct {
+		Data HubResponse `json:"data"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+	if len(db.raCalls) != 1 || len(db.raCalls[0].LibraryIds) != 1 || db.raCalls[0].LibraryIds[0] != lib {
+		t.Fatalf("recently added query = %+v, want library_ids [%s]", db.raCalls, lib)
+	}
+	if len(resp.Data.RecentlyAdded) != 1 {
+		t.Errorf("recently_added = %+v, want the granted item", resp.Data.RecentlyAdded)
+	}
+
+	db = &mockHubDB{}
+	h = newHubHandler(db).WithLibraryAccess(&stubLibraryAccessChecker{allowed: map[uuid.UUID]struct{}{}})
+	rec = httptest.NewRecorder()
+	h.Get(rec, hubAuthedRequest(httptest.NewRequest("GET", "/api/v1/hub", nil)))
+	if rec.Code != http.StatusOK || len(db.raCalls) != 0 {
+		t.Errorf("no grants: status %d, queries %d; want 200 and no query", rec.Code, len(db.raCalls))
+	}
+
+	db = &mockHubDB{}
+	h = newHubHandler(db).WithLibraryAccess(&stubLibraryAccessChecker{allowed: map[uuid.UUID]struct{}{lib: {}}})
+	admin := httptest.NewRequest("GET", "/api/v1/hub", nil)
+	admin = admin.WithContext(middleware.WithClaims(admin.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true}))
+	h.Get(httptest.NewRecorder(), admin)
+	if len(db.raCalls) != 1 || db.raCalls[0].LibraryIds != nil {
+		t.Errorf("admin query = %+v, want library_ids NULL", db.raCalls)
+	}
 }
 
 func TestHub_Get_EmptySections(t *testing.T) {

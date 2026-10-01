@@ -843,8 +843,11 @@ ORDER BY GREATEST(
 LIMIT $3;
 
 -- name: SearchMediaItemsGlobal :many
--- See SearchMediaItems for query semantics. Global variant drops the
--- library_id filter; per-user library access is enforced in the handler.
+-- See SearchMediaItems for query semantics. Global variant searches every
+-- library the caller may see: library_ids is their grant set (NULL = admin,
+-- every library). It has to be applied here, before the LIMIT — filtering
+-- afterwards in the handler let the top rows across the whole server crowd
+-- a restricted user's own matches out, so a common word found nothing.
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
@@ -857,6 +860,8 @@ WHERE deleted_at IS NULL
      OR title % $1
      OR (original_title IS NOT NULL AND original_title % $1)
   )
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $1)),
@@ -1188,6 +1193,12 @@ REFRESH MATERIALIZED VIEW CONCURRENTLY hub_recently_added;
 -- shows with very recent activity, dedup may miss the long tail —
 -- acceptable trade for sub-second hub loads. Tighten the LIMIT here
 -- only if it becomes user-visible.
+--
+-- library_ids scopes the cross-library call (the home page's mixed strip) to
+-- the caller's grant set; NULL = admin, every library. Like library_id it is
+-- pushed into the candidate fetch: applied after the 500-row slice or the
+-- LIMIT, other libraries' newer items crowded a restricted user's out and
+-- the strip came back empty.
 WITH recent_episodes AS (
     SELECT e.id, e.library_id, e.parent_id, e.created_at,
            e.title, e.sort_title, e.original_title, e.year, e.summary, e.tagline,
@@ -1198,6 +1209,8 @@ WITH recent_episodes AS (
     FROM media_items e
     WHERE e.type = 'episode' AND e.deleted_at IS NULL
       AND (sqlc.narg('library_id')::uuid IS NULL OR e.library_id = sqlc.narg('library_id'))
+      AND (sqlc.narg('library_ids')::uuid[] IS NULL
+           OR e.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
     ORDER BY e.created_at DESC
     LIMIT 500
 ), episodes AS (
@@ -1266,6 +1279,8 @@ FROM (
                    'podcast', 'home_video', 'book')
       AND poster_path IS NOT NULL
       AND (sqlc.narg('library_id')::uuid IS NULL OR library_id = sqlc.narg('library_id'))
+      AND (sqlc.narg('library_ids')::uuid[] IS NULL
+           OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
 ) combined
 ORDER BY created_at DESC

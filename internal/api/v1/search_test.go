@@ -7,10 +7,13 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
 
+	"github.com/onscreen/onscreen/internal/api/middleware"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -19,6 +22,8 @@ import (
 type mockSearchDB struct {
 	globalRows []gen.SearchMediaItemsGlobalRow
 	globalErr  error
+	// globalCalls records each global query's arguments.
+	globalCalls []gen.SearchMediaItemsGlobalParams
 
 	scopedRows []gen.SearchMediaItemsRow
 	scopedErr  error
@@ -31,7 +36,8 @@ func (m *mockSearchDB) SearchMediaItems(_ context.Context, _ gen.SearchMediaItem
 	return m.scopedRows, nil
 }
 
-func (m *mockSearchDB) SearchMediaItemsGlobal(_ context.Context, _ gen.SearchMediaItemsGlobalParams) ([]gen.SearchMediaItemsGlobalRow, error) {
+func (m *mockSearchDB) SearchMediaItemsGlobal(_ context.Context, arg gen.SearchMediaItemsGlobalParams) ([]gen.SearchMediaItemsGlobalRow, error) {
+	m.globalCalls = append(m.globalCalls, arg)
 	if m.globalErr != nil {
 		return nil, m.globalErr
 	}
@@ -165,6 +171,50 @@ func TestSearch_DBError_Returns500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusInternalServerError)
+	}
+}
+
+// A restricted user's grant set goes into the global query, so the LIMIT
+// counts only rows they can see (filtered afterwards, the top rows across
+// every library could all be hidden and a common word found nothing). An
+// admin's query is unscoped; a user with no grants doesn't query at all.
+func TestSearch_GlobalScopedInSQL(t *testing.T) {
+	lib := uuid.New()
+	grants := &stubLibraryAccessChecker{allowed: map[uuid.UUID]struct{}{lib: {}}}
+	user := func(r *http.Request) *http.Request {
+		return r.WithContext(middleware.WithClaims(r.Context(), &auth.Claims{UserID: uuid.New()}))
+	}
+
+	db := &mockSearchDB{globalRows: []gen.SearchMediaItemsGlobalRow{{ID: uuid.New(), LibraryID: lib, Title: "Night of the Living Dead", Type: "movie"}}}
+	h := newSearchHandler(db).WithLibraryAccess(grants)
+	rec := httptest.NewRecorder()
+	h.Search(rec, user(httptest.NewRequest("GET", "/api/v1/search?q=night", nil)))
+	if rec.Code != http.StatusOK || len(db.globalCalls) != 1 {
+		t.Fatalf("status %d, calls %d", rec.Code, len(db.globalCalls))
+	}
+	if got := db.globalCalls[0].LibraryIds; len(got) != 1 || got[0] != lib {
+		t.Errorf("library_ids = %v, want [%s]", got, lib)
+	}
+	if !strings.Contains(rec.Body.String(), "Night of the Living Dead") {
+		t.Errorf("body = %s, want the granted match", rec.Body)
+	}
+
+	db = &mockSearchDB{}
+	h = newSearchHandler(db).WithLibraryAccess(grants)
+	h.Search(httptest.NewRecorder(), withClaims(httptest.NewRequest("GET", "/api/v1/search?q=night", nil)))
+	if len(db.globalCalls) != 1 || db.globalCalls[0].LibraryIds != nil {
+		t.Errorf("admin query = %+v, want library_ids NULL", db.globalCalls)
+	}
+
+	db = &mockSearchDB{}
+	h = newSearchHandler(db).WithLibraryAccess(&stubLibraryAccessChecker{allowed: map[uuid.UUID]struct{}{}})
+	rec = httptest.NewRecorder()
+	h.Search(rec, user(httptest.NewRequest("GET", "/api/v1/search?q=night", nil)))
+	if rec.Code != http.StatusOK || len(db.globalCalls) != 0 {
+		t.Errorf("no grants: status %d, calls %d; want 200 without a query", rec.Code, len(db.globalCalls))
+	}
+	if !strings.Contains(rec.Body.String(), `"data":[]`) {
+		t.Errorf("no grants: body = %s, want an empty list", rec.Body)
 	}
 }
 

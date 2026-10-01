@@ -4679,6 +4679,8 @@ WITH recent_episodes AS (
     FROM media_items e
     WHERE e.type = 'episode' AND e.deleted_at IS NULL
       AND ($1::uuid IS NULL OR e.library_id = $1)
+      AND ($2::uuid[] IS NULL
+           OR e.library_id = ANY($2::uuid[]))
     ORDER BY e.created_at DESC
     LIMIT 500
 ), episodes AS (
@@ -4702,7 +4704,7 @@ WITH recent_episodes AS (
         AND grandparent.deleted_at IS NULL
         AND grandparent.type = 'show'
         AND grandparent.poster_path IS NOT NULL
-    WHERE ($2::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= $2)
+    WHERE ($3::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= $3)
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -4747,14 +4749,17 @@ FROM (
                    'podcast', 'home_video', 'book')
       AND poster_path IS NOT NULL
       AND ($1::uuid IS NULL OR library_id = $1)
-      AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
+      AND ($2::uuid[] IS NULL
+           OR library_id = ANY($2::uuid[]))
+      AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
 ) combined
 ORDER BY created_at DESC
-LIMIT $3
+LIMIT $4
 `
 
 type ListRecentlyAddedParams struct {
 	LibraryID     pgtype.UUID `json:"library_id"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
 	Limit         int32       `json:"limit"`
 }
@@ -4814,8 +4819,19 @@ type ListRecentlyAddedRow struct {
 // shows with very recent activity, dedup may miss the long tail —
 // acceptable trade for sub-second hub loads. Tighten the LIMIT here
 // only if it becomes user-visible.
+//
+// library_ids scopes the cross-library call (the home page's mixed strip) to
+// the caller's grant set; NULL = admin, every library. Like library_id it is
+// pushed into the candidate fetch: applied after the 500-row slice or the
+// LIMIT, other libraries' newer items crowded a restricted user's out and
+// the strip came back empty.
 func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedParams) ([]ListRecentlyAddedRow, error) {
-	rows, err := q.db.Query(ctx, listRecentlyAdded, arg.LibraryID, arg.MaxRatingRank, arg.Limit)
+	rows, err := q.db.Query(ctx, listRecentlyAdded,
+		arg.LibraryID,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5598,7 +5614,9 @@ WHERE deleted_at IS NULL
      OR title % $1
      OR (original_title IS NOT NULL AND original_title % $1)
   )
-  AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
+  AND ($3::uuid[] IS NULL
+       OR library_id = ANY($3::uuid[]))
+  AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $1)),
     similarity(title, $1),
@@ -5608,9 +5626,10 @@ LIMIT $2
 `
 
 type SearchMediaItemsGlobalParams struct {
-	WebsearchToTsquery string `json:"websearch_to_tsquery"`
-	Limit              int32  `json:"limit"`
-	MaxRatingRank      *int32 `json:"max_rating_rank"`
+	WebsearchToTsquery string      `json:"websearch_to_tsquery"`
+	Limit              int32       `json:"limit"`
+	LibraryIds         []uuid.UUID `json:"library_ids"`
+	MaxRatingRank      *int32      `json:"max_rating_rank"`
 }
 
 type SearchMediaItemsGlobalRow struct {
@@ -5644,10 +5663,18 @@ type SearchMediaItemsGlobalRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
-// See SearchMediaItems for query semantics. Global variant drops the
-// library_id filter; per-user library access is enforced in the handler.
+// See SearchMediaItems for query semantics. Global variant searches every
+// library the caller may see: library_ids is their grant set (NULL = admin,
+// every library). It has to be applied here, before the LIMIT — filtering
+// afterwards in the handler let the top rows across the whole server crowd
+// a restricted user's own matches out, so a common word found nothing.
 func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaItemsGlobalParams) ([]SearchMediaItemsGlobalRow, error) {
-	rows, err := q.db.Query(ctx, searchMediaItemsGlobal, arg.WebsearchToTsquery, arg.Limit, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, searchMediaItemsGlobal,
+		arg.WebsearchToTsquery,
+		arg.Limit,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+	)
 	if err != nil {
 		return nil, err
 	}

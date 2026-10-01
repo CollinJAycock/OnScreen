@@ -465,6 +465,20 @@ type QuotaStatus struct {
 	TV         QuotaUsage
 }
 
+// CanRequest reports whether the user may request at all: admins always,
+// everyone else per users.can_request. Read from the users row like Create,
+// never from token claims. ErrNotFound for an unknown user.
+func (s *Service) CanRequest(ctx context.Context, userID uuid.UUID) (bool, error) {
+	perm, err := s.db.GetUserRequestPermissions(ctx, userID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, ErrNotFound
+		}
+		return false, fmt.Errorf("requests: can-request policy: %w", err)
+	}
+	return perm.IsAdmin || perm.CanRequest, nil
+}
+
 // Quota reports the user's request allowance: whether they may request at
 // all, and per media type the limit (their override, else the server
 // default), how many they've used in the window, and how many remain. Admins

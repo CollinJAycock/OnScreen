@@ -21,7 +21,7 @@ type PeopleService interface {
 	GetCredits(ctx context.Context, itemID uuid.UUID, itemType string, tmdbID *int) ([]people.Credit, error)
 	GetPerson(ctx context.Context, id uuid.UUID) (people.Person, error)
 	GetFilmography(ctx context.Context, personID uuid.UUID) ([]people.FilmographyEntry, error)
-	Search(ctx context.Context, prefix string, limit int32) ([]people.Summary, error)
+	Search(ctx context.Context, prefix string, limit int32, scope people.SearchScope) ([]people.Summary, error)
 }
 
 // PeopleItemLookup is the minimum item info the credits endpoint needs to
@@ -274,10 +274,27 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, out)
 }
 
-// Search handles GET /api/v1/people?q=foo.
+// Search handles GET /api/v1/people?q=foo. A restricted caller only finds
+// people credited on something they could open — a library they have a grant
+// on, within their content-rating ceiling — the scope Filmography applies to
+// its rows; the people table itself spans every library. Admins search it
+// all.
 func (h *PeopleHandler) Search(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query().Get("q")
-	results, err := h.svc.Search(r.Context(), q, 20)
+	var scope people.SearchScope
+	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+		scope.MaxRatingRank = maxRatingRankFromClaims(claims.MaxContentRating)
+		if h.access != nil {
+			allowed, err := h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
+			if err != nil {
+				h.logger.Error("search people: allowed libraries", "err", err)
+				respond.InternalError(w, r)
+				return
+			}
+			scope.LibraryIDs = allowedLibraryList(allowed) // nil = admin; empty = no grants
+		}
+	}
+	results, err := h.svc.Search(r.Context(), q, 20, scope)
 	if err != nil {
 		h.logger.Error("search people", "q", q, "err", err)
 		respond.InternalError(w, r)

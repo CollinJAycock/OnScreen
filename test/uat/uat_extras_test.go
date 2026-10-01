@@ -149,7 +149,7 @@ func (s *stubPeopleService) GetPerson(_ context.Context, _ uuid.UUID) (people.Pe
 func (s *stubPeopleService) GetFilmography(_ context.Context, _ uuid.UUID) ([]people.FilmographyEntry, error) {
 	return s.films, nil
 }
-func (s *stubPeopleService) Search(_ context.Context, _ string, _ int32) ([]people.Summary, error) {
+func (s *stubPeopleService) Search(_ context.Context, _ string, _ int32, _ people.SearchScope) ([]people.Summary, error) {
 	return s.results, nil
 }
 

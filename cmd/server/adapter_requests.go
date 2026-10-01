@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 
+	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/metadata"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 )
@@ -58,10 +60,12 @@ func (a *requestsTMDBAdapter) GetTVExternalIDs(ctx context.Context, tmdbID int) 
 // SearchMulti satisfies v1.DiscoverTMDB. Like GetTVExternalIDs, this method
 // only exists on *tmdb.Client today; non-TMDB agents (none yet) get an empty
 // result rather than an error so the Discover surface degrades to "no hits".
+// With no agent at all it reports v1.ErrDiscoverTMDBUnavailable, which the
+// handler answers with its feature-off 503 instead of a 500.
 func (a *requestsTMDBAdapter) SearchMulti(ctx context.Context, query string, maxResults int) ([]tmdb.DiscoverResult, error) {
 	agent := a.agentFn()
 	if agent == nil {
-		return nil, errTMDBUnavailable
+		return nil, fmt.Errorf("%w: %w", errTMDBUnavailable, v1.ErrDiscoverTMDBUnavailable)
 	}
 	tc, ok := agent.(*tmdb.Client)
 	if !ok {

@@ -79,3 +79,26 @@ func TestCapabilities_ProgressWithoutDurationWireName(t *testing.T) {
 		t.Errorf("features.progress_without_duration: got %v, want true", got)
 	}
 }
+
+// The web client hides the Upcoming tab and the Live TV link by these names,
+// and live_tv keeps meaning "the subsystem is wired" (a server can say
+// live_tv:true with no tuner), so the wire names are part of the contract.
+func TestCapabilities_ConfigFlagWireNames(t *testing.T) {
+	h := NewCapabilitiesHandler(&fakeCapsProvider{resp: CapabilitiesResponse{
+		Features: CapabilitiesFeatures{Upcoming: true, LiveTV: true, LiveTVConfigured: false},
+	}})
+	rec := httptest.NewRecorder()
+	h.Get(rec, httptest.NewRequest("GET", "/api/v1/system/capabilities", nil))
+	var env struct {
+		Data struct {
+			Features map[string]any `json:"features"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	f := env.Data.Features
+	if f["upcoming"] != true || f["live_tv"] != true || f["live_tv_configured"] != false {
+		t.Errorf("features = %v, want upcoming:true live_tv:true live_tv_configured:false", f)
+	}
+}

@@ -299,17 +299,27 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Recently added — newest items across all libraries (the mixed
 	// top-of-home strip). Kept for discovery across the whole catalog;
 	// the per-library strips below narrow the same idea per section.
-	// Fetch extra rows so we still have ≥20 after deduplication.
-	raRows, err := h.db.ListRecentlyAdded(r.Context(), gen.ListRecentlyAddedParams{
-		Limit:         40,
-		MaxRatingRank: maxRank,
-	})
-	if err != nil {
-		h.logger.ErrorContext(r.Context(), "hub: recently added", "err", err)
+	// Fetch extra rows so we still have ≥20 after deduplication. The
+	// caller's grant set is part of the query: filtered after the LIMIT,
+	// newer items in libraries they can't see crowded theirs out and a
+	// restricted user got an empty strip. No grants = nothing to fetch.
+	var (
+		raRows []gen.ListRecentlyAddedRow
+		raErr  error
+	)
+	if libIDs := allowedLibraryList(allowed); libIDs == nil || len(libIDs) > 0 {
+		raRows, raErr = h.db.ListRecentlyAdded(r.Context(), gen.ListRecentlyAddedParams{
+			LibraryIds:    libIDs,
+			Limit:         40,
+			MaxRatingRank: maxRank,
+		})
+	}
+	if raErr != nil {
+		h.logger.ErrorContext(r.Context(), "hub: recently added", "err", raErr)
 	} else {
 		seen := make(map[uuid.UUID]bool)
 		for _, row := range raRows {
-			if !libAllowed(row.LibraryID) {
+			if !libAllowed(row.LibraryID) { // defence in depth; the SQL already scoped
 				continue
 			}
 			// SQL already dedupes (one row per show via window function on

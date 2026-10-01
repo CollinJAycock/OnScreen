@@ -2,12 +2,15 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os/exec"
+	"sync"
 	"sync/atomic"
 	"time"
 
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/config"
+	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/dbtools"
 	"github.com/onscreen/onscreen/internal/domain/settings"
 	"github.com/onscreen/onscreen/internal/observability"
@@ -51,6 +54,131 @@ type capabilitiesProvider struct {
 	// Capabilities() reads it. 0 until the first successful read, which
 	// keeps the schema-gated flags off rather than guessing.
 	schemaVersion atomic.Int64
+
+	// bundledTMDBKey / bundledOpenSubtitlesKey: this binary carries
+	// OnScreen's own application key (main.defaultTMDBAPIKey /
+	// defaultOpenSubtitlesAPIKey), the last fallback agentFn and the
+	// subtitle provider use. Set at wiring time.
+	bundledTMDBKey          bool
+	bundledOpenSubtitlesKey bool
+
+	// upcomingConfigured / tunerConfigured back features.upcoming and
+	// features.live_tv_configured: flags that follow admin configuration
+	// stored in the database. nil (tests, not wired) reads as false.
+	upcomingConfigured *cachedFlag
+	tunerConfigured    *cachedFlag
+}
+
+// configFlagTTL is how long a database-backed capability flag is reused.
+// The capabilities endpoint is anonymous, so a caller must not be able to
+// turn every request into a query; half a minute of lag after an admin
+// adds a tuner or an *arr service only delays a nav link.
+const configFlagTTL = 30 * time.Second
+
+// configFlagTimeout bounds one probe, so a stalled database can't hold the
+// anonymous capabilities endpoint (and everyone queued behind the probe).
+const configFlagTimeout = 2 * time.Second
+
+// cachedFlag memoises a database-backed capability flag for its ttl. A
+// failed probe keeps the previous answer (false before the first success)
+// and is not retried until the ttl passes, so a database outage costs one
+// query per ttl rather than one per capabilities request.
+type cachedFlag struct {
+	probe func(context.Context) (bool, error)
+	ttl   time.Duration
+	now   func() time.Time
+
+	mu      sync.Mutex
+	val     bool
+	checked time.Time // zero = never probed
+}
+
+func newCachedFlag(probe func(context.Context) (bool, error)) *cachedFlag {
+	return &cachedFlag{probe: probe, ttl: configFlagTTL, now: time.Now}
+}
+
+// get returns the flag, probing when the cached answer is older than ttl.
+// Concurrent callers wait for one probe rather than each running their own.
+func (f *cachedFlag) get(ctx context.Context) bool {
+	if f == nil {
+		return false
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := f.now()
+	if !f.checked.IsZero() && now.Sub(f.checked) < f.ttl {
+		return f.val
+	}
+	ctx, cancel := context.WithTimeout(ctx, configFlagTimeout)
+	defer cancel()
+	v, err := f.probe(ctx)
+	f.checked = now
+	if err == nil {
+		f.val = v
+	}
+	return f.val
+}
+
+// capabilitiesConfigDB is the slice of generated queries the configuration
+// flags read. Both tables are a handful of admin-created rows.
+type capabilitiesConfigDB interface {
+	ListArrServices(ctx context.Context) ([]gen.ArrService, error)
+	ListTunerDevices(ctx context.Context) ([]gen.TunerDevice, error)
+}
+
+// setConfigProbes wires the database-backed flags. Called from main.go
+// before the HTTP server starts.
+func (p *capabilitiesProvider) setConfigProbes(db capabilitiesConfigDB) {
+	p.upcomingConfigured = newCachedFlag(func(ctx context.Context) (bool, error) {
+		return hasCalendarArrService(ctx, db)
+	})
+	p.tunerConfigured = newCachedFlag(func(ctx context.Context) (bool, error) {
+		return hasEnabledTuner(ctx, db)
+	})
+}
+
+// hasCalendarArrService reports whether an enabled Radarr or Sonarr exists —
+// what the Upcoming calendar fans out to (Lidarr has no calendar there).
+func hasCalendarArrService(ctx context.Context, db capabilitiesConfigDB) (bool, error) {
+	svcs, err := db.ListArrServices(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list arr services: %w", err)
+	}
+	for _, s := range svcs {
+		if s.Enabled && (s.Kind == "radarr" || s.Kind == "sonarr") {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// hasEnabledTuner reports whether any tuner is enabled — the channel list
+// and guide only read channels of enabled tuners.
+func hasEnabledTuner(ctx context.Context, db capabilitiesConfigDB) (bool, error) {
+	tuners, err := db.ListTunerDevices(ctx)
+	if err != nil {
+		return false, fmt.Errorf("list tuner devices: %w", err)
+	}
+	for _, t := range tuners {
+		if t.Enabled {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// tmdbConfigured mirrors agentFn's key resolution: the stored setting, then
+// the TMDB_API_KEY env var, then a bundled key. Any of them means Discover
+// and request creation have a TMDB agent to call.
+func tmdbConfigured(stored, env string, bundled bool) bool {
+	return stored != "" || env != "" || bundled
+}
+
+// subtitlesExternalConfigured mirrors the subtitle provider: it searches
+// only when the operator enabled OpenSubtitles and there is a key — theirs
+// or the bundled one.
+func subtitlesExternalConfigured(cfg settings.OpenSubtitlesConfig, bundled bool) bool {
+	return cfg.Enabled && (cfg.APIKey != "" || bundled)
 }
 
 // progressKeepsDurationVersion is migration 00035_watch_progress_keep_duration:
@@ -142,6 +270,10 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 	oidcCfg := p.settings.OIDC(ctx)
 	ldapCfg := p.settings.LDAP(ctx)
 	osCfg := p.settings.OpenSubtitles(ctx)
+	// TMDB, read the way agentFn reads it. The env var alone used to decide
+	// requests / people_credits, so a key set in Settings (the usual way)
+	// reported both off while Discover worked.
+	tmdbOn := tmdbConfigured(p.settings.TMDBAPIKey(ctx), p.cfg.TMDBAPIKey, p.bundledTMDBKey)
 
 	resp := v1.CapabilitiesResponse{
 		Server: v1.CapabilitiesServer{
@@ -158,16 +290,18 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			Transcode: p.hasFFmpeg,
 			// ABR needs ffmpeg AND the operator opt-in (multi-rendition
 			// fan-out costs more encode capacity than single-rendition).
-			ABRLadder:         p.hasFFmpeg && p.cfg.TranscodeABR,
-			Trickplay:         p.hasFFmpeg,
-			SubtitlesExternal: osCfg.APIKey != "",
+			ABRLadder: p.hasFFmpeg && p.cfg.TranscodeABR,
+			Trickplay: p.hasFFmpeg,
+			// Same test the subtitle provider applies, so the flag is false
+			// exactly when search would answer "not configured".
+			SubtitlesExternal: subtitlesExternalConfigured(osCfg, p.bundledOpenSubtitlesKey),
 			SubtitlesOCR:      p.hasFFmpeg && p.hasTesseract,
 			OIDC:              oidcCfg.Enabled && oidcCfg.IssuerURL != "" && oidcCfg.ClientID != "",
 			LDAP:              ldapCfg.Enabled && ldapCfg.Host != "",
 			DevicePairing:     true,
 			Plugins:           true,
 			Backup:            p.hasPGDump,
-			PeopleCredits:     p.cfg.TMDBAPIKey != "",
+			PeopleCredits:     tmdbOn,
 			Photos:            true,
 			Music:             true,
 			Webhooks:          true,
@@ -177,11 +311,17 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			// configure at least one arr_service before approvals can
 			// dispatch downstream, but the user-facing surface is live
 			// as soon as TMDB is wired.
-			Requests: p.cfg.TMDBAPIKey != "",
+			Requests: tmdbOn,
+			// The Upcoming calendar has something to show only with an
+			// enabled Radarr or Sonarr.
+			Upcoming: p.upcomingConfigured.get(ctx),
 			// Always-on features that became first-class post-Phase-A.
 			LiveTV: p.liveTVAvailable,
 			DVR:    p.liveTVAvailable, // share one flag; DVR rides Live TV
-			Lyrics: true,
+			// live_tv / dvr stay "the subsystem is wired" (older clients
+			// read them that way); whether a tuner exists is its own flag.
+			LiveTVConfigured: p.liveTVAvailable && p.tunerConfigured.get(ctx),
+			Lyrics:           true,
 			// IntroMarkers needs both fpcalc (fingerprint) and ffmpeg
 			// (audio decode pre-roll) — either missing means the
 			// detector silently no-ops, so reflect honestly.

@@ -1569,6 +1569,10 @@ paths:
   /api/v1/people:
     get:
       summary: Search people
+      description: >
+        People whose name starts with `q`. A non-admin caller only finds people
+        credited on an item they could open (a library they have a grant on,
+        within their content-rating ceiling).
       tags: [People]
       parameters:
         - { in: query, name: q, schema: { type: string } }
@@ -1637,6 +1641,7 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/SubtitleSearchResult' }
+        '503': { description: 'SUBTITLES_NOT_CONFIGURED: OpenSubtitles is not enabled on this server (features.subtitles_external is false). Download answers the same.' }
 
   /api/v1/items/{id}/subtitles/download:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -2883,9 +2888,11 @@ paths:
       description: >
         Movie releases (cinema/digital/physical) and episode air times from every
         enabled *arr service, filtered for the caller: entries above a restricted
-        profile's content-rating ceiling (unrated = most restrictive) or bound for
-        a library the caller can't access are omitted. Cached server-side for up
-        to 5 minutes.
+        profile's content-rating ceiling (unrated = most restrictive) are omitted,
+        and a non-admin sees only entries whose *arr folder (after
+        arr_path_mappings) lies in a library they have a grant on — an entry no
+        library claims is hidden too. Admins see everything. Cached server-side
+        for up to 5 minutes.
       tags: [Requests]
       parameters:
         - { name: from, in: query, schema: { type: string, format: date }, description: 'Default today (UTC).' }
@@ -4498,7 +4505,9 @@ paths:
         the title is already in the user's library (`in_library`, `library_item_id`)
         and whether the calling user already has an open request for it
         (`has_active_request`, `active_request_id`, `active_request_status`).
-        Returns 503 with code TMDB_UNAVAILABLE when no TMDB key is configured.
+        Returns 503 with code TMDB_UNAVAILABLE when no TMDB key is configured
+        (`features.requests` is false), and 403 REQUESTS_DISABLED for a
+        non-admin account an admin has switched requesting off for.
       tags: [Discover]
       parameters:
         - in: query
@@ -4520,7 +4529,8 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/DiscoverItem' }
         '400': { description: Missing query. }
-        '503': { description: TMDB not configured. }
+        '403': { description: 'REQUESTS_DISABLED: an admin turned requesting off for this account.' }
+        '503': { description: 'TMDB_UNAVAILABLE: no TMDB key is configured.' }
 
   /api/v1/discover/tv/{tmdb_id}/seasons:
     get:
@@ -4533,7 +4543,8 @@ paths:
         restrictive rating), and the status of the caller's own active
         request covering the season, if any. An all-seasons request covers
         every regular season but not specials. Returns 503 TMDB_UNAVAILABLE
-        when no TMDB key is configured and 502 TMDB_LOOKUP_FAILED when TMDB
+        when no TMDB key is configured, 403 REQUESTS_DISABLED for a non-admin
+        account that may not request, and 502 TMDB_LOOKUP_FAILED when TMDB
         couldn't be read.
       tags: [Discover]
       parameters:
@@ -5034,21 +5045,23 @@ components:
               properties:
                 transcode:          { type: boolean, description: 'Hardware + software transcode pipeline; false when ffmpeg is missing.' }
                 trickplay:          { type: boolean, description: 'Sprite-sheet seekbar previews; rides on ffmpeg.' }
-                subtitles_external: { type: boolean, description: 'OpenSubtitles search + download; needs an OS API key configured.' }
+                subtitles_external: { type: boolean, description: 'OpenSubtitles search + download: enabled in Settings and a key available (the operator''s or a bundled one). When false, search and download answer 503 SUBTITLES_NOT_CONFIGURED.' }
                 subtitles_ocr:      { type: boolean, description: 'PGS / VOBSUB → text WebVTT via Tesseract; needs ffmpeg + tesseract.' }
                 oidc:               { type: boolean }
                 ldap:               { type: boolean }
                 device_pairing:     { type: boolean, description: 'PIN-based native client device pairing.' }
                 plugins:            { type: boolean, description: 'Outbound MCP plugin host.' }
                 backup:             { type: boolean, description: 'pg_dump-backed backup endpoint; false when pg_dump is missing.' }
-                people_credits:     { type: boolean, description: 'TMDB-sourced cast / crew; needs a TMDB API key configured.' }
+                people_credits:     { type: boolean, description: 'TMDB-sourced cast / crew; needs a TMDB API key (Settings, TMDB_API_KEY, or a bundled key).' }
                 photos:             { type: boolean }
                 music:              { type: boolean }
                 webhooks:           { type: boolean }
                 notifications:      { type: boolean, description: 'Real-time SSE notifications + in-app inbox.' }
-                requests:           { type: boolean, description: 'TMDB discover + media-request workflow with Sonarr/Radarr fan-out; needs a TMDB API key.' }
-                live_tv:            { type: boolean, description: 'Channel lineup + EPG; runtime-detected from configured tuners.' }
+                requests:           { type: boolean, description: 'TMDB discover + media-request workflow with Sonarr/Radarr fan-out; needs a TMDB API key (Settings, TMDB_API_KEY, or a bundled key). Whether the signed-in account may request is per user: GET /api/v1/requests/quota.' }
+                upcoming:           { type: boolean, description: 'At least one enabled Radarr or Sonarr feeds GET /api/v1/upcoming. Follows admin configuration within about 30 s.' }
+                live_tv:            { type: boolean, description: 'The Live TV subsystem is built in and wired. Says nothing about tuners; see live_tv_configured.' }
                 dvr:                { type: boolean, description: 'Recording rules + retention; rides Live TV.' }
+                live_tv_configured: { type: boolean, description: 'live_tv, and at least one enabled tuner is set up. Clients may hide their Live TV / DVR entry points when false. Follows admin configuration within about 30 s; absent on older servers.' }
                 lyrics:             { type: boolean, description: 'Embedded USLT extraction + LRCLIB / .lrc fallback.' }
                 intro_markers:      { type: boolean, description: 'AcoustID intro detection + ffmpeg blackdetect credits; needs fpcalc + ffmpeg.' }
                 chapters:           { type: boolean }

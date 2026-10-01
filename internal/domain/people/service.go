@@ -42,6 +42,16 @@ type Summary struct {
 	ProfilePath *string
 }
 
+// SearchScope limits a people search to what a caller can see. The zero
+// value is unrestricted (admins). LibraryIDs non-nil — even empty — limits
+// results to people credited on an item in one of those libraries;
+// MaxRatingRank non-nil additionally requires that item to be within the
+// content-rating ceiling.
+type SearchScope struct {
+	LibraryIDs    []uuid.UUID
+	MaxRatingRank *int32
+}
+
 // Credit is one cast or crew entry on an item.
 type Credit struct {
 	Person    Summary
@@ -72,7 +82,7 @@ type Querier interface {
 	GetPersonByID(ctx context.Context, id uuid.UUID) (Person, error)
 	GetPersonByTMDBID(ctx context.Context, tmdbID int) (Person, error)
 	UpsertPersonByTMDB(ctx context.Context, p Person) (Person, error)
-	SearchPeople(ctx context.Context, prefix string, limit int32) ([]Summary, error)
+	SearchPeople(ctx context.Context, prefix string, limit int32, scope SearchScope) ([]Summary, error)
 
 	ListCreditsForItem(ctx context.Context, itemID uuid.UUID) ([]Credit, error)
 	ListFilmographyForPerson(ctx context.Context, personID uuid.UUID) ([]FilmographyEntry, error)
@@ -270,8 +280,9 @@ func (s *Service) GetFilmography(ctx context.Context, personID uuid.UUID) ([]Fil
 	return s.q.ListFilmographyForPerson(ctx, personID)
 }
 
-// Search returns people whose name starts with the prefix.
-func (s *Service) Search(ctx context.Context, prefix string, limit int32) ([]Summary, error) {
+// Search returns people whose name starts with the prefix, limited to the
+// caller's scope (see SearchScope).
+func (s *Service) Search(ctx context.Context, prefix string, limit int32, scope SearchScope) ([]Summary, error) {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" {
 		return nil, nil
@@ -287,7 +298,7 @@ func (s *Service) Search(ctx context.Context, prefix string, limit int32) ([]Sum
 	if limit <= 0 || limit > 50 {
 		limit = 20
 	}
-	return s.q.SearchPeople(ctx, prefix, limit)
+	return s.q.SearchPeople(ctx, prefix, limit, scope)
 }
 
 // maxPeopleSearchRunes caps a people-search prefix.

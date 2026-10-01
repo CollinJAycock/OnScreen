@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/requests"
@@ -38,6 +40,19 @@ type DiscoverRequestLookup interface {
 	FindActiveForUserBatch(ctx context.Context, userID uuid.UUID, tmdbIDs []int) ([]gen.MediaRequest, error)
 }
 
+// DiscoverRequestGate says whether a user may request at all — admins
+// always, everyone else per users.can_request. Satisfied by
+// *requests.Service, which reads the users row rather than the token
+// claims (an admin's change takes effect before the token is reissued).
+type DiscoverRequestGate interface {
+	CanRequest(ctx context.Context, userID uuid.UUID) (bool, error)
+}
+
+// ErrDiscoverTMDBUnavailable is what a DiscoverTMDB / DiscoverSeasonTMDB
+// returns (wrapped) when no TMDB agent is configured. Both Discover
+// endpoints answer it with the feature-off 503 rather than a 500.
+var ErrDiscoverTMDBUnavailable = errors.New("discover: tmdb is not configured")
+
 // DiscoverHandler powers the Request UI's discover surface: a single TMDB
 // search-multi call enriched with library and request state so the user
 // sees "in your library", "you already requested this", or "request now"
@@ -50,6 +65,9 @@ type DiscoverHandler struct {
 	// access scopes the in-library lookup to what the caller may actually
 	// see. nil = no ACL wired (tests / minimal deployments) → no filtering.
 	access LibraryAccessChecker
+	// gate refuses the TMDB catalogue to users who may not request.
+	// nil = not wired (tests) → every caller may search.
+	gate DiscoverRequestGate
 	// seasons / seasonDB back season-level requests (discover_seasons.go):
 	// the per-season endpoint and the missing_seasons decoration. nil = not
 	// wired; the endpoint then answers 503 and results carry no season info.
@@ -72,6 +90,44 @@ func NewDiscoverHandler(db DiscoverDB, t DiscoverTMDB, reqs DiscoverRequestLooku
 func (h *DiscoverHandler) WithAccess(a LibraryAccessChecker) *DiscoverHandler {
 	h.access = a
 	return h
+}
+
+// WithRequestGate wires the can-request check. Discover exists to pick
+// something to request, so an account an admin has switched requesting off
+// for gets 403 REQUESTS_DISABLED (the same answer POST /requests gives)
+// instead of a TMDB catalogue it can't act on. Returns the handler for
+// chaining.
+func (h *DiscoverHandler) WithRequestGate(g DiscoverRequestGate) *DiscoverHandler {
+	h.gate = g
+	return h
+}
+
+// writeTMDBUnavailable is the feature-off answer: requests (and with them
+// Discover) are off on a server without a TMDB key. A 503 with a code, so a
+// client can tell it from a failure and show "not configured" copy.
+func writeTMDBUnavailable(w http.ResponseWriter, r *http.Request, msg string) {
+	respond.Error(w, r, http.StatusServiceUnavailable, "TMDB_UNAVAILABLE", msg)
+}
+
+// requestsAllowed answers 403 REQUESTS_DISABLED and returns false when the
+// caller may not request. Admins skip the lookup. A failed lookup fails
+// closed (500): the catalogue is only for accounts known to be allowed.
+func (h *DiscoverHandler) requestsAllowed(w http.ResponseWriter, r *http.Request, claims *auth.Claims) bool {
+	if h.gate == nil || claims.IsAdmin {
+		return true
+	}
+	ok, err := h.gate.CanRequest(r.Context(), claims.UserID)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "discover: can-request lookup", "err", err)
+		respond.InternalError(w, r)
+		return false
+	}
+	if !ok {
+		respond.Error(w, r, http.StatusForbidden, "REQUESTS_DISABLED",
+			"requesting is turned off for your account; ask an admin")
+		return false
+	}
+	return true
 }
 
 // DiscoverItem is one row in the Discover response. The shape is flat on
@@ -105,16 +161,21 @@ type DiscoverItem struct {
 //
 // Returns up to `limit` results (capped at 50) from TMDB's /search/multi,
 // each marked with whether it's already in the library and whether the
-// caller already has an open request for it.
+// caller already has an open request for it. 503 TMDB_UNAVAILABLE when no
+// TMDB key is configured (the requests feature is off); 403
+// REQUESTS_DISABLED for an account that may not request.
 func (h *DiscoverHandler) Search(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Unauthorized(w, r)
 		return
 	}
+	const unavailable = "TMDB API key is not configured — Discover requires TMDB to enrich titles"
 	if h.tmdb == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable, "TMDB_UNAVAILABLE",
-			"TMDB API key is not configured — Discover requires TMDB to enrich titles")
+		writeTMDBUnavailable(w, r, unavailable)
+		return
+	}
+	if !h.requestsAllowed(w, r, claims) {
 		return
 	}
 
@@ -127,6 +188,10 @@ func (h *DiscoverHandler) Search(w http.ResponseWriter, r *http.Request) {
 
 	results, err := h.tmdb.SearchMulti(r.Context(), query, limit)
 	if err != nil {
+		if errors.Is(err, ErrDiscoverTMDBUnavailable) {
+			writeTMDBUnavailable(w, r, unavailable)
+			return
+		}
 		h.logger.ErrorContext(r.Context(), "tmdb search multi failed", "q", query, "err", err)
 		respond.InternalError(w, r)
 		return
@@ -290,6 +355,10 @@ func libraryItemType(mediaType string) string {
 	}
 }
 
-// Compile-time guard: requests.Service satisfies DiscoverRequestLookup so
-// the wiring in main.go can pass *requests.Service directly.
-var _ DiscoverRequestLookup = (*requests.Service)(nil)
+// Compile-time guard: requests.Service satisfies DiscoverRequestLookup and
+// DiscoverRequestGate so the wiring in main.go can pass *requests.Service
+// directly.
+var (
+	_ DiscoverRequestLookup = (*requests.Service)(nil)
+	_ DiscoverRequestGate   = (*requests.Service)(nil)
+)
