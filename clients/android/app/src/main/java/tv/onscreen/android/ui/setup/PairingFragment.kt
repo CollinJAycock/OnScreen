@@ -46,6 +46,9 @@ import javax.inject.Inject
  *     action needed beyond noticing the new PIN).
  *   - Failure → show "couldn't reach server, retrying..." in the
  *     status line and keep polling. Manual cancel via Back exits.
+ *   - The poll runs on the view's scope, so it carries on while the app
+ *     is stopped; MainActivity keeps this screen (not Login) when it
+ *     routes back in, so the code on it survives HOME and the screensaver.
  */
 @AndroidEntryPoint
 class PairingFragment : Fragment() {
@@ -75,6 +78,16 @@ class PairingFragment : Fragment() {
             (activity as? MainActivity)?.navigateTo(NavigationDestination.LOGIN)
         }
         backBtn.requestFocus()
+
+        // No screensaver over the code while the user signs in on their
+        // phone: some TVs start theirs after a minute without a key press,
+        // hiding the code mid-typing. For a while only, so a code left on
+        // screen doesn't keep the TV lit for good.
+        view.keepScreenOn = true
+        viewLifecycleOwner.lifecycleScope.launch {
+            delay(KEEP_SCREEN_ON_MS)
+            view.keepScreenOn = false
+        }
 
         viewLifecycleOwner.lifecycleScope.launch {
             val server = prefs.serverUrl.first().orEmpty()
@@ -166,5 +179,10 @@ class PairingFragment : Fragment() {
         super.onDestroyView()
         pollJob?.cancel()
         pollJob = null
+    }
+
+    private companion object {
+        /** How long the pairing screen holds the screen on. */
+        const val KEEP_SCREEN_ON_MS = 30 * 60 * 1000L
     }
 }

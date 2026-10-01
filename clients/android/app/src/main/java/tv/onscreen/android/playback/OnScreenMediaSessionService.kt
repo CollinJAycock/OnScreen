@@ -118,7 +118,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
      *  (offset from the segment start) instead of content time. */
     private var activeHlsOffsetMs: Long = 0L
 
-    /** The active item's authoritative duration, from the handoff metadata.
+    /** The length listed for the active item (the file's, else the item's
+     *  runtime: PlaybackHelper.listedDurationMs), from the handoff metadata.
      *  Needed because a resumed HLS session's player.duration is only the
      *  REMAINING time — pairing it with an offset-corrected position marked
      *  items watched hours early. See PlaybackHelper.contentDurationMs. */
@@ -480,6 +481,16 @@ class OnScreenMediaSessionService : MediaSessionService() {
         }
     }
 
+    /** The active item's duration in content time, for its progress
+     *  reports: see PlaybackHelper.contentDurationMs. */
+    private fun contentDurationMs(player: ExoPlayer): Long = PlaybackHelper.contentDurationMs(
+        listedDurationMs = activeItemDurationMs,
+        playerDurationMs = player.duration,
+        hlsOffsetMs = activeHlsOffsetMs,
+        hlsSession = activeStreamSession != null,
+        playerWindowDynamic = player.isCurrentMediaItemDynamic,
+    )
+
     /** One 'playing' heartbeat if the player is actually playing (not
      *  paused, buffering, or finished — a finished player keeps
      *  playWhenReady, which kept reporting "playing" every 10 s after the
@@ -491,9 +502,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // offset-corrected; duration must be too, or a resumed HLS
         // session reports content-time position against remaining-time
         // duration and trips the server's watched threshold early.
-        val dur = PlaybackHelper.contentDurationMs(
-            activeItemDurationMs, player.duration, activeHlsOffsetMs,
-        )
+        val dur = contentDurationMs(player)
         if (dur <= 0) return true
         // A VBR file can play a little past the length it listed.
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(dur)
@@ -520,7 +529,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
     private fun reportState(player: ExoPlayer, state: String) {
         val itemId = activeItemId ?: return
         if (player.playbackState == Player.STATE_ENDED) return
-        val dur = PlaybackHelper.contentDurationMs(activeItemDurationMs, player.duration, activeHlsOffsetMs)
+        val dur = contentDurationMs(player)
         if (dur <= 0) return
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(dur)
         if (pos <= 0) return
@@ -605,9 +614,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         val type = activeItemType ?: return
         val parentId = activeParentId
         val index = activeIndex
-        val dur = PlaybackHelper.contentDurationMs(
-            activeItemDurationMs, player.duration, activeHlsOffsetMs,
-        )
+        val dur = contentDurationMs(player)
         if (dur > 0) {
             // On the detached scope: at the end of the queue the service
             // stops right away, and its own scope's cancellation would take
@@ -649,7 +656,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // those; a paused player sends none, so it is simply let go.
         if (!player.playWhenReady) return releaseAndStop()
         val itemId = activeItemId ?: return releaseAndStop()
-        val dur = PlaybackHelper.contentDurationMs(activeItemDurationMs, player.duration, activeHlsOffsetMs)
+        val dur = contentDurationMs(player)
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(maxOf(dur, 0L))
         scope.launch {
             val refusal = if (dur > 0) {
@@ -755,8 +762,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
         activeParentId = item.parent_id
         activeIndex = item.index
         activeHlsOffsetMs = next?.offsetMs ?: 0L
-        // Chapters and books carry their length on the file, not the item.
-        activeItemDurationMs = item.duration_ms ?: file.duration_ms
+        // The file's length first: the position reported is time in it.
+        activeItemDurationMs = PlaybackHelper.listedDurationMs(file.duration_ms, item.duration_ms)
         activeNowPlaying = names
 
         // Keep the handoff slot's metadata current so a fragment that
@@ -777,7 +784,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
         )
 
         if (next != null) {
-            player.setMediaSource(TranscodeHls.mediaSource(next.playlistUrl))
+            // From its start (requested 0: PlaybackHelper.hlsStartMs). The
+            // 0 alone doesn't pin that: until its ENDLIST the session
+            // playlist is live, and a start at 0 before it loads counts as
+            // "the default position", near the live edge (an audio encode
+            // runs many times faster than real time) but for the item's
+            // live target offset, which puts it at the head
+            // (TranscodeHls.mediaItem).
+            player.setMediaSource(TranscodeHls.mediaSource(next.playlistUrl), /* startPositionMs= */ 0L)
         } else {
             player.setMediaItem(MediaItem.fromUri(Uri.parse(checkNotNull(url))))
         }

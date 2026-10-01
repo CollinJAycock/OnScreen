@@ -12,6 +12,16 @@
         <item name="overlayDimMaskColor">@android:color/transparent</item>
         <item name="overlayDimActiveLevel">0%</item>
         <item name="overlayDimDimmedLevel">0%</item>
+        <!-- How long the player's controls stay up after the last key press
+             before they fade, while something plays (video, music or a
+             book). PlaybackSupportFragment reads
+             it from this theme. Leanback 1.0.0 leaves it at 0, which is "never":
+             its tickle() on every D-pad press cancelled the fade for good, and
+             so did the player's own tickle when playback started or resumed
+             (PlaybackFragment.syncControlsAutoHide), so the controls never
+             faded. Longer than the 3 s fade after playback starts
+             (playbackControlsAutoHideTimeout), as Leanback advises. -->
+        <item name="playbackControlsAutoHideTickleTimeout">5000</item>
     </style>
 
     <style name="PlayerDialog" parent="android:Theme.Material.Dialog.Alert">

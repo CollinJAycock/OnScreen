@@ -4,9 +4,13 @@ import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
+import androidx.media3.common.util.Util
 import com.google.common.truth.Truth.assertThat
+import io.mockk.Runs
 import io.mockk.every
+import io.mockk.just
 import io.mockk.mockk
+import io.mockk.slot
 import io.mockk.verify
 import org.junit.Test
 
@@ -70,6 +74,124 @@ class SessionPlayerTest {
         verify { inner.seekTo(8_000L) }
         player.seekTo(0, 100_000L)
         verify { inner.seekTo(0, 0L) }
+    }
+
+    @Test
+    fun `Play once the item has ended replays it from the session's start`() {
+        // Util.handlePlayButtonAction, as the system's media controls send
+        // Play: the player's own default of a session still being written
+        // trails its live edge.
+        every { inner.playbackState } returns Player.STATE_ENDED
+        every { inner.isCommandAvailable(any()) } returns true
+        Util.handlePlayButtonAction(player)
+        verify { inner.seekTo(0L) }
+        verify { inner.play() }
+        player.seekToDefaultPosition(0)
+        verify { inner.seekTo(0, 0L) }
+        verify(exactly = 0) { inner.seekToDefaultPosition() }
+        verify(exactly = 0) { inner.seekToDefaultPosition(any()) }
+    }
+
+    @Test
+    fun `no Next without a next item`() {
+        // The player offers one for a session still being written (a live
+        // stream to it), to its default position.
+        every { inner.hasNextMediaItem() } returns false
+        every { inner.isCommandAvailable(any()) } returns true
+        val builder = mockk<Player.Commands.Builder>()
+        val trimmed = mockk<Player.Commands>()
+        val offered = mockk<Player.Commands> {
+            every { contains(Player.COMMAND_SEEK_TO_NEXT) } returns true
+            every { buildUpon() } returns builder
+        }
+        every { builder.remove(Player.COMMAND_SEEK_TO_NEXT) } returns builder
+        every { builder.build() } returns trimmed
+        every { inner.availableCommands } returns offered
+
+        assertThat(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT)).isFalse()
+        assertThat(player.isCommandAvailable(Player.COMMAND_PLAY_PAUSE)).isTrue()
+        assertThat(player.availableCommands).isSameInstanceAs(trimmed)
+        player.seekToNext()
+        verify(exactly = 0) { inner.seekToNext() }
+    }
+
+    @Test
+    fun `Next to a next item passes through`() {
+        every { inner.hasNextMediaItem() } returns true
+        every { inner.isCommandAvailable(any()) } returns true
+        val offered = mockk<Player.Commands>()
+        every { inner.availableCommands } returns offered
+
+        assertThat(player.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT)).isTrue()
+        assertThat(player.availableCommands).isSameInstanceAs(offered)
+        player.seekToNext()
+        verify { inner.seekToNext() }
+    }
+
+    @Test
+    fun `listeners hear the session's commands, without Next`() {
+        // The media session takes the commands the player's event carries,
+        // not availableCommands: the event's own still offered Next.
+        every { inner.hasNextMediaItem() } returns false
+        every { inner.isCommandAvailable(any()) } returns true
+        val builder = mockk<Player.Commands.Builder>()
+        val trimmed = mockk<Player.Commands>()
+        val offered = mockk<Player.Commands> {
+            every { contains(Player.COMMAND_SEEK_TO_NEXT) } returns true
+            every { buildUpon() } returns builder
+        }
+        every { builder.remove(Player.COMMAND_SEEK_TO_NEXT) } returns builder
+        every { builder.build() } returns trimmed
+        every { inner.availableCommands } returns offered
+        val added = slot<Player.Listener>()
+        every { inner.addListener(capture(added)) } just Runs
+        val heard = mutableListOf<Player.Commands>()
+        val playing = mutableListOf<Boolean>()
+        var eventsFrom: Player? = null
+        val listener = object : Player.Listener {
+            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
+                heard += availableCommands
+            }
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                playing += isPlaying
+            }
+            override fun onEvents(player: Player, events: Player.Events) {
+                eventsFrom = player
+            }
+        }
+
+        player.addListener(listener)
+        added.captured.onAvailableCommandsChanged(offered)
+        added.captured.onIsPlayingChanged(true)
+        added.captured.onEvents(inner, mockk())
+
+        assertThat(heard).containsExactly(trimmed)
+        assertThat(playing).containsExactly(true)
+        assertThat(eventsFrom).isSameInstanceAs(player)
+        assertThat(eventsFrom!!.availableCommands).isSameInstanceAs(trimmed)
+
+        player.removeListener(listener)
+        verify { inner.removeListener(added.captured) }
+    }
+
+    @Test
+    fun `listeners hear a next item's Next`() {
+        every { inner.hasNextMediaItem() } returns true
+        every { inner.isCommandAvailable(any()) } returns true
+        val offered = mockk<Player.Commands>()
+        every { inner.availableCommands } returns offered
+        val added = slot<Player.Listener>()
+        every { inner.addListener(capture(added)) } just Runs
+        val heard = mutableListOf<Player.Commands>()
+
+        player.addListener(object : Player.Listener {
+            override fun onAvailableCommandsChanged(availableCommands: Player.Commands) {
+                heard += availableCommands
+            }
+        })
+        added.captured.onAvailableCommandsChanged(offered)
+
+        assertThat(heard).containsExactly(offered)
     }
 
     @Test

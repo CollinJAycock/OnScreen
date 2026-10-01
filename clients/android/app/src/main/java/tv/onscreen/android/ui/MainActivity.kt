@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.os.Bundle
+import android.os.SystemClock
 import android.util.Log
 import android.view.KeyEvent
 import androidx.core.content.ContextCompat
@@ -75,24 +76,42 @@ class MainActivity : FragmentActivity() {
         ) { /* denial is non-fatal — playback continues without the media rail */ }
 
     /** True when the next foreground entry should land on the Home screen
-     *  instead of whatever screen was up when the app left. Set in onStop
-     *  (HOME press, or a TV power-off on devices that do deliver lifecycle)
-     *  and by [screenOffReceiver] when a fragment transaction isn't possible
-     *  at that moment; consumed in onStart. The app's posture is
+     *  instead of whatever screen was up when the app left. Set by
+     *  [screenOffReceiver] when a fragment transaction isn't possible at that
+     *  moment, and for a first route that had to wait; consumed in onStart.
+     *  onStop asks for the same through [stoppedAtMs]. The app's posture is
      *  home-on-every-start: leaving the foreground for any reason means the
-     *  next entry starts fresh from Home. */
+     *  next entry starts fresh from Home — save the screensaver, which gives
+     *  back the screen it covered (see [ScreensaverStop]). */
     private var pendingHomeReset = false
+
+    /** When the activity last stopped (HOME press, or a TV power-off on
+     *  devices that do deliver lifecycle), as elapsedRealtime, while the Home
+     *  reset that stop asks for is still to come; null when none is. Kept
+     *  apart from [pendingHomeReset] because onStart may waive it: a stop the
+     *  screensaver caused is only known to be one once the dream's broadcast
+     *  has arrived, which can be after onStop. A screen-off during the
+     *  screensaver (the TV going to standby from it) still resets, through
+     *  [pendingHomeReset]. */
+    private var stoppedAtMs: Long? = null
+
+    /** The last screensaver start and end [dreamReceiver] heard, as
+     *  elapsedRealtime; null until one is. */
+    private var dreamStartedAtMs: Long? = null
+    private var dreamStoppedAtMs: Long? = null
 
     /** A Watch Next deep link that arrived while fragment state was saved
      *  (itemId to positionMs), for onStart to deliver. A guard only:
      *  FragmentActivity clears the saved-state flag as a new intent comes in,
      *  so a link from a tile clicked while the app is backgrounded commits
      *  at once from onNewIntent, on whichever side of onStart that lands.
-     *  Before onStart, [showPlayback] clearing [pendingHomeReset] keeps it;
-     *  after onStart (API 30 Fire TV), cancelling [homeResetJob] does. */
+     *  Before onStart, [showPlayback] clearing the pending reset
+     *  ([pendingHomeReset], [stoppedAtMs]) keeps it; after onStart (API 30
+     *  Fire TV), cancelling [homeResetJob] does. */
     private var pendingDeepLink: Pair<String, Long>? = null
 
-    /** The Home reset in flight ([resetToHome]). It reads the auth prefs
+    /** The Home reset in flight ([resetToHome]), or the wake from the
+     *  screensaver ([keepScreenAfterScreensaver]). It reads the auth prefs
      *  before it commits, so for a moment it is suspended with Home still to
      *  come. A player committed in that moment (a Watch Next link delivered
      *  after onStart, a transfer from another device) was replaced by Home
@@ -128,6 +147,23 @@ class MainActivity : FragmentActivity() {
         }
     }
 
+    /** Screensaver (dream) start and end, for onStart to tell a stop the
+     *  screensaver caused from any other. Music left on the now-playing
+     *  screen lets the screensaver come on (only video holds the screen on);
+     *  the music plays on in the background service, as after HOME, and
+     *  waking belongs back on the now-playing screen, not on Home. A dream
+     *  keeps the device interactive, so no SCREEN_OFF comes with it.
+     *  Registered onCreate→onDestroy like [screenOffReceiver]: it has to
+     *  hear the dream while the activity is stopped. */
+    private val dreamReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            when (intent?.action) {
+                Intent.ACTION_DREAMING_STARTED -> dreamStartedAtMs = SystemClock.elapsedRealtime()
+                Intent.ACTION_DREAMING_STOPPED -> dreamStoppedAtMs = SystemClock.elapsedRealtime()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -138,6 +174,15 @@ class MainActivity : FragmentActivity() {
             IntentFilter().apply {
                 addAction(Intent.ACTION_SCREEN_OFF)
                 addAction(Intent.ACTION_SCREEN_ON)
+            },
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
+        ContextCompat.registerReceiver(
+            this,
+            dreamReceiver,
+            IntentFilter().apply {
+                addAction(Intent.ACTION_DREAMING_STARTED)
+                addAction(Intent.ACTION_DREAMING_STOPPED)
             },
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
@@ -243,9 +288,25 @@ class MainActivity : FragmentActivity() {
             showPlayback(itemId, position)
             return
         }
-        if (pendingHomeReset) {
+        // The last stop's Home reset, unless that stop was the screensaver
+        // coming on and this start is the wake from it: then the screen it
+        // covered is the one to come back to (the now-playing screen has
+        // already taken its player back from the background service, in its
+        // own onStart).
+        val stoppedAt = stoppedAtMs
+        stoppedAtMs = null
+        val backFromScreensaver = stoppedAt != null && ScreensaverStop.returnsToScreen(
+            stoppedAtMs = stoppedAt,
+            dreamStartedAtMs = dreamStartedAtMs,
+            dreamStoppedAtMs = dreamStoppedAtMs,
+            nowMs = SystemClock.elapsedRealtime(),
+        )
+        if (pendingHomeReset || (stoppedAt != null && !backFromScreensaver)) {
             pendingHomeReset = false
             resetToHome()
+        } else if (backFromScreensaver) {
+            Log.i("MainActivity", "back from the screensaver: keeping the screen it covered")
+            keepScreenAfterScreensaver()
         }
     }
 
@@ -254,11 +315,14 @@ class MainActivity : FragmentActivity() {
         // Home-on-every-start: any exit from the foreground (HOME press,
         // launcher switch, TV power-off on devices that do deliver
         // lifecycle) means the next entry starts from the Home screen.
-        pendingHomeReset = true
+        // onStart makes the call: this stop may yet turn out to be the
+        // screensaver's (see stoppedAtMs).
+        stoppedAtMs = SystemClock.elapsedRealtime()
     }
 
     override fun onDestroy() {
         runCatching { unregisterReceiver(screenOffReceiver) }
+        runCatching { unregisterReceiver(dreamReceiver) }
         super.onDestroy()
     }
 
@@ -291,14 +355,45 @@ class MainActivity : FragmentActivity() {
     }
 
     /**
+     * The wake from the screensaver: the screen it covered stays up, and a
+     * video on it reopens where it stopped (see
+     * [PlaybackFragment.resumeAfterScreensaver]). The Home reset still
+     * happens when there is nothing to come back to (music the background
+     * service let go meanwhile), and when the app is no longer signed in: a
+     * sign-out while the screensaver ran (a session revoked elsewhere) found
+     * the activity stopped and couldn't route to Login then, and the onStart
+     * reset that used to catch it up is the one skipped here. Likewise a
+     * sign-in the screensaver covered that finished meanwhile (the pairing
+     * code entered on a phone): its move to Home was dropped with the
+     * activity stopped, and waking on the finished sign-in screen left the
+     * user there. Held as [homeResetJob] so a player [showPlayback] commits
+     * meanwhile wins.
+     */
+    private fun keepScreenAfterScreensaver() {
+        homeResetJob?.cancel()
+        homeResetJob = lifecycleScope.launch {
+            val signedIn = prefs.hasServer.first() && prefs.isLoggedIn.first()
+            currentCoroutineContext().ensureActive()
+            val current = supportFragmentManager.findFragmentById(R.id.main_container)
+            val onSignIn = current is LoginFragment || current is PairingFragment || current is ServerSetupFragment
+            val playback = current as? PlaybackFragment
+            if (!signedIn || onSignIn || playback?.resumeAfterScreensaver() == false) {
+                routeToRoot(popBackStack = true)
+            }
+        }
+    }
+
+    /**
      * Swap in playback of [itemId] from [positionMs] as the only screen (the
      * back stack is dropped, so BACK from it leaves the app): the screen the
      * user just asked for (a Watch Next tile, "play on this TV" from another
      * device). A Home reset that is pending or already on its way must not
-     * replace it.
+     * replace it. The players it moves on to (the next episode or track)
+     * stay the only screen, and its end leaves the app (PlayerStack).
      */
     private fun showPlayback(itemId: String, positionMs: Long) {
         pendingHomeReset = false
+        stoppedAtMs = null
         homeResetJob?.cancel()
         homeResetJob = null
         supportFragmentManager.popBackStack(
@@ -332,6 +427,11 @@ class MainActivity : FragmentActivity() {
         // always needs a commit even though no type would match it.
         val current = supportFragmentManager.findFragmentById(R.id.main_container)
         if (current != null && current::class == target::class) return
+        // Pairing is the other way to sign in, its code still on screen and
+        // polled for: swapping it for the login screen (HOME and back, the
+        // TV's power or screensaver) threw the code away while the user was
+        // typing it on their phone.
+        if (current is PairingFragment && target is LoginFragment) return
 
         if (supportFragmentManager.isStateSaved) {
             pendingHomeReset = true

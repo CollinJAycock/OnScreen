@@ -82,4 +82,30 @@ class NowPlayingTest {
         val np = NowPlaying.resolve(repo, item("ep-1", "episode", "Pilot", parent = "season-1"))
         assertThat(np).isEqualTo(NowPlaying("Pilot", mediaId = "ep-1"))
     }
+
+    @Test
+    fun `resolveWithParent hands back the parent it looked up`() = runTest {
+        val repo = mockk<ItemRepository>()
+        coEvery { repo.getItem("album-1") } returns album
+        coEvery { repo.getItem("artist-1") } returns artist
+
+        val (np, parent) = NowPlaying.resolveWithParent(repo, track)
+
+        assertThat(np.album).isEqualTo("High Voltage")
+        assertThat(parent).isEqualTo(album)
+    }
+
+    @Test
+    fun `a track shows its album's cover, a chapter its book's, a book not its author's`() {
+        val cover = "/artwork/album-1/poster.jpg"
+        assertThat(NowPlaying.parentCover(track, album.copy(poster_path = cover))).isEqualTo(cover)
+        val book = item("book-1", "audiobook", "A Clash of Kings", parent = "author-1").copy(poster_path = "/b.jpg")
+        val chapter = item("ch-1", "audiobook_chapter", "Daenerys III", parent = "book-1")
+        assertThat(NowPlaying.parentCover(chapter, book)).isEqualTo("/b.jpg")
+        val author = item("author-1", "book_author", "George R. R. Martin").copy(poster_path = "/a.jpg")
+        assertThat(NowPlaying.parentCover(book, author)).isNull()
+        // No parent, or one without a cover.
+        assertThat(NowPlaying.parentCover(track, null)).isNull()
+        assertThat(NowPlaying.parentCover(track, album.copy(poster_path = ""))).isNull()
+    }
 }

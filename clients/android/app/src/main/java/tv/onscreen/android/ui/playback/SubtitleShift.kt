@@ -27,44 +27,68 @@ object SubtitleShift {
     private val TIMESTAMP = Regex("""(?:(\d+):)?([0-5]\d):([0-5]\d)\.(\d{3})""")
 
     /**
-     * Shift every cue in [vtt] earlier by [offsetMs]. Cues that end at or
-     * before the new zero are dropped; cues straddling it are clamped to
-     * start at zero. Non-cue lines (header, notes, styling, cue settings
-     * after the arrow) pass through untouched.
+     * Shift every cue in [vtt] earlier by [offsetMs]. A cue that ends at or
+     * before the new zero is dropped whole, block by block: its id line too,
+     * which the line-by-line version left behind (one stray line per dropped
+     * cue, run together ahead of the first cue kept). One straddling the new
+     * zero is clamped to start there. Blocks without a timing line (the
+     * header, NOTE, STYLE) pass through untouched, as do the cue settings
+     * after the arrow. The phone client's SubtitleShift, ported back.
      */
     fun shiftWebVtt(vtt: String, offsetMs: Long): String {
         if (offsetMs <= 0) return vtt
         val out = StringBuilder(vtt.length)
-        var dropUntilBlank = false
-        for (line in vtt.lineSequence()) {
-            if (dropUntilBlank) {
-                if (line.isBlank()) dropUntilBlank = false
-                continue
+        val block = mutableListOf<String>()
+        var atStart = true
+        fun flush() {
+            if (block.isEmpty()) return
+            // The "WEBVTT" line is a block of its own. A first cue run
+            // straight on from it, with no blank line between, made one
+            // block with it, and dropping that cue dropped the header too:
+            // what was left no longer parsed as WebVTT at all.
+            if (atStart && isHeader(block[0]) && block.drop(1).any { it.contains("-->") }) {
+                out.append(block.removeAt(0)).append("\n\n")
             }
-            if (!line.contains("-->")) {
-                out.append(line).append('\n')
-                continue
+            atStart = false
+            val timingAt = block.indexOfFirst { it.contains("-->") }
+            if (timingAt < 0) {
+                block.forEach { out.append(it).append('\n') }
+            } else {
+                val timing = shiftTiming(block[timingAt], offsetMs)
+                if (timing != null) {
+                    block.forEachIndexed { i, line ->
+                        out.append(if (i == timingAt) timing else line).append('\n')
+                    }
+                }
             }
-            val matches = TIMESTAMP.findAll(line).toList()
-            if (matches.size < 2) {
-                out.append(line).append('\n')
-                continue
-            }
-            val start = parseMs(matches[0]) - offsetMs
-            val end = parseMs(matches[1]) - offsetMs
-            if (end <= 0) {
-                // Entire cue predates the resume point — drop it AND its
-                // payload lines (everything up to the next blank line), or
-                // the orphaned text would attach to the following cue.
-                dropUntilBlank = true
-                continue
-            }
-            val shifted = line
-                .replaceRange(matches[1].range, formatMs(end))
-                .replaceRange(matches[0].range, formatMs(start.coerceAtLeast(0)))
-            out.append(shifted).append('\n')
+            block.clear()
         }
+        for (line in vtt.lineSequence()) {
+            if (line.isBlank()) {
+                flush()
+                out.append('\n')
+            } else {
+                block += line
+            }
+        }
+        flush()
         return out.toString()
+    }
+
+    /** The file's "WEBVTT" line, after a byte-order mark if there is one. */
+    private fun isHeader(line: String): Boolean = line.removePrefix("\uFEFF").startsWith("WEBVTT")
+
+    /** The timing line shifted, or null when the cue ends before zero. A line
+     *  without two timestamps is left alone. */
+    private fun shiftTiming(line: String, offsetMs: Long): String? {
+        val matches = TIMESTAMP.findAll(line).toList()
+        if (matches.size < 2) return line
+        val start = parseMs(matches[0]) - offsetMs
+        val end = parseMs(matches[1]) - offsetMs
+        if (end <= 0) return null
+        return line
+            .replaceRange(matches[1].range, formatMs(end))
+            .replaceRange(matches[0].range, formatMs(start.coerceAtLeast(0)))
     }
 
     private fun parseMs(m: MatchResult): Long {
@@ -78,7 +102,7 @@ object SubtitleShift {
         val min = (ms % 3_600_000) / 60_000
         val s = (ms % 60_000) / 1_000
         val frac = ms % 1_000
-        return "%02d:%02d:%02d.%03d".format(h, min, s, frac)
+        return "%02d:%02d:%02d.%03d".format(java.util.Locale.US, h, min, s, frac)
     }
 }
 
@@ -136,6 +160,7 @@ class ShiftedVttDataSource(
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
         val d = data ?: return C.RESULT_END_OF_INPUT
+        if (length == 0) return 0
         if (position >= d.size) return C.RESULT_END_OF_INPUT
         val n = minOf(length, d.size - position)
         System.arraycopy(d, position, buffer, offset, n)

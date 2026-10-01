@@ -29,13 +29,16 @@ data class StreamSession(
     companion object {
         /** The session [started] opened. Its playlist token goes into the
          *  vault, and its offset is the server's keyframe-aligned
-         *  `start_offset_sec`, or [requestedMs] from a server that omits it. */
+         *  `start_offset_sec`, or [requestedMs] from a server that omits it.
+         *  A real 0 is kept, as on the phone: a resume a few seconds in, before
+         *  the first keyframe after 0:00, or a stream that covers the whole
+         *  file (a pre-encoded ladder), opens at the very start. Read as "not
+         *  sent", it put the offset at the resume point over a stream that
+         *  starts at 0:00, and every content time on the screen was off by it. */
         fun opened(started: TranscodeSession, serverUrl: String, requestedMs: Long): StreamSession {
-            val offsetMs = if (started.start_offset_sec > 0.0) {
-                (started.start_offset_sec * 1000.0).toLong()
-            } else {
-                requestedMs
-            }
+            val offsetMs = started.start_offset_sec?.takeIf { it >= 0.0 }
+                ?.let { (it * 1000.0).toLong() }
+                ?: requestedMs
             val (clean, token) = StreamTokenVault.split("$serverUrl${started.playlist_url}")
             return StreamSession(
                 id = started.session_id,

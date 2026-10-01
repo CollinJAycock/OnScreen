@@ -1,6 +1,8 @@
 package tv.onscreen.android.ui.playback
 
 import android.net.Uri
+import androidx.leanback.media.PlayerAdapter
+import androidx.media3.common.Player
 import tv.onscreen.android.data.model.ItemFile
 
 /**
@@ -240,17 +242,104 @@ object PlaybackHelper {
      * hour in reports position ≈ duration on its first heartbeat and the
      * server marks it watched.
      *
-     * Prefers the item's authoritative duration; otherwise re-absolutises the
-     * player's. Returns 0 when neither is known, which callers treat as
-     * "don't report".
+     * Nor is it while [playerWindowDynamic] (Player.isCurrentMediaItemDynamic):
+     * a server remux / transcode is an HLS EVENT playlist that grows as the
+     * server writes it, and until its ENDLIST the player's duration is only
+     * what exists so far — a few minutes into a film on a fresh session. The
+     * phone client, trusting it, marked a movie watched minutes into a resume.
+     *
+     * The position reported is time in the FILE, so the file's length is
+     * the one to divide it by. In order: the player's own duration when it
+     * is the file's (direct play, not an [hlsSession], window settled); the
+     * length the server lists ([listedDurationMs]: the file's probed one,
+     * else the item's runtime); a server session's, re-absolutised, once its
+     * playlist has ended. A runtime (TMDB's, in whole minutes) shorter than
+     * the file marks an item watched, and puts Up Next (which reads this
+     * length too) up, minutes early; a longer one can keep an item from ever
+     * reaching watched. Returns 0 when nothing is known, which callers treat
+     * as "don't report".
      */
-    fun contentDurationMs(itemDurationMs: Long?, playerDurationMs: Long, hlsOffsetMs: Long): Long {
-        if (itemDurationMs != null && itemDurationMs > 0L) return itemDurationMs
-        // C.TIME_UNSET is negative, so `<= 0` covers the unknown-duration case;
+    fun contentDurationMs(
+        listedDurationMs: Long?,
+        playerDurationMs: Long,
+        hlsOffsetMs: Long,
+        hlsSession: Boolean,
+        playerWindowDynamic: Boolean,
+    ): Long {
+        // C.TIME_UNSET is negative, so `> 0` also rules out "not known yet";
         // MAX_VALUE guards the unbounded/live shape.
-        if (playerDurationMs <= 0L || playerDurationMs == Long.MAX_VALUE) return 0L
-        return playerDurationMs + hlsOffsetMs
+        val settled = !playerWindowDynamic && playerDurationMs > 0L && playerDurationMs != Long.MAX_VALUE
+        if (settled && !hlsSession) return playerDurationMs
+        if (listedDurationMs != null && listedDurationMs > 0L) return listedDurationMs
+        if (settled) return playerDurationMs + hlsOffsetMs
+        return 0L
     }
+
+    /**
+     * The length the server lists for what is played, for
+     * [contentDurationMs]: the file's probed duration, else the item's
+     * runtime (the API omits the item's when it has none; chapters and books
+     * carry theirs on the file). A zero is no length either. Null when
+     * neither is known.
+     */
+    fun listedDurationMs(fileDurationMs: Long?, itemDurationMs: Long?): Long? =
+        fileDurationMs?.takeIf { it > 0L } ?: itemDurationMs?.takeIf { it > 0L }
+
+    /**
+     * Whether the Up Next card is due: [contentPositionMs] within [leadMs]
+     * of the end ([contentDurationMs], both content time). Never with no
+     * known length (0): a server remux's player duration is only the part
+     * written so far, which put the card up mid-film on a resumed session.
+     */
+    fun upNextDue(contentPositionMs: Long, contentDurationMs: Long, leadMs: Long): Boolean {
+        if (contentDurationMs <= 0L) return false
+        return contentDurationMs - contentPositionMs in 0..leadMs
+    }
+
+    /**
+     * Whether the Up Next countdown counts this second down: while the player
+     * plays, and at the end of the stream too ([Player.STATE_ENDED], where
+     * isPlaying is false) unless paused there. It counted only while playing,
+     * so the card the end of an episode puts up sat at its first second:
+     * nothing moved on to the next episode, and the screensaver came on over
+     * the frozen card. A pause holds it: whoever catches the card and pauses
+     * has asked to stay.
+     */
+    fun upNextCountdownTicks(isPlaying: Boolean, playbackState: Int, playWhenReady: Boolean): Boolean =
+        isPlaying || (playbackState == Player.STATE_ENDED && playWhenReady)
+
+    /**
+     * The remote's Play, and Play/Pause on a player that isn't playing. One an
+     * error stopped (IDLE, its dialog dismissed with Back) plays the way the
+     * transport bar's Play plays it, through [transport] (the glue's
+     * adapter): prepared again, a server session loaded again where it
+     * stopped (ContentTimeForwardingPlayer.prepare). The raw player's play()
+     * does neither, so the key did nothing there. Any other IDLE player keeps
+     * play(): one still waiting for its first source would end at once,
+     * prepared with nothing in it (and close the screen). So does one with no
+     * [transport]: the fragment passes none once the server refused playback.
+     */
+    fun playFromKey(player: Player, transport: PlayerAdapter?) {
+        if (transport != null && player.playbackState == Player.STATE_IDLE && player.playerError != null) {
+            transport.play()
+        } else {
+            player.play()
+        }
+    }
+
+    /**
+     * Where in a server session's stream (player time) playback starts, so it
+     * begins at [requestedMs] (content time) in a stream that opens at
+     * [offsetMs]: the web client's desiredStartSec. A remux copies the video,
+     * so it opens on the keyframe at or before the request, up to several
+     * seconds early, and started at its head it replayed them; a stream that
+     * covers the whole file (a pre-encoded ladder, offset 0) started a resume
+     * from 0:00. Further in when seg 0's head is silent ([seg0GapMs]: an audio
+     * re-encode after a mid-stream start), so the first frame shown comes
+     * with sound.
+     */
+    fun hlsStartMs(requestedMs: Long, offsetMs: Long, seg0GapMs: Long): Long =
+        maxOf(requestedMs - offsetMs, seg0GapMs, 0L)
 
     /**
      * Strips the `token` query parameter from a stream/asset URL before it

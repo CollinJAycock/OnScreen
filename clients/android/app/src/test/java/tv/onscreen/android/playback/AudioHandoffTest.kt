@@ -6,6 +6,7 @@ import io.mockk.mockk
 import io.mockk.every
 import io.mockk.verify
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import org.junit.After
 import org.junit.Before
@@ -177,5 +178,46 @@ class AudioHandoffTest {
         verify(exactly = 1) { player.release() }
         assertThat(ended).containsExactly(session("s1"))
         assertThat(AudioHandoff.peek()).isNull()
+    }
+
+    private fun player(state: Int, plays: Boolean = true, atMs: Long = 30_000L, error: PlaybackException? = null) =
+        mockk<Player>(relaxed = true) {
+            every { playbackState } returns state
+            every { playWhenReady } returns plays
+            every { currentPosition } returns atMs
+            every { playerError } returns error
+        }
+
+    @Test
+    fun `a player playing, buffering or paused mid-track is worth parking`() {
+        assertThat(AudioHandoff.parkable(player(Player.STATE_READY))).isTrue()
+        assertThat(AudioHandoff.parkable(player(Player.STATE_BUFFERING))).isTrue()
+        assertThat(AudioHandoff.parkable(player(Player.STATE_READY, plays = false))).isTrue()
+    }
+
+    @Test
+    fun `a failed player is never parked`() {
+        // The error dialog's OK leaves playback with the player still set
+        // to play: parked, the service showed it as playing and sent
+        // heartbeats for it.
+        val failed = player(Player.STATE_IDLE, error = mockk(relaxed = true))
+
+        assertThat(AudioHandoff.parkable(failed)).isFalse()
+    }
+
+    @Test
+    fun `an idle player is never parked, failed or not`() {
+        assertThat(AudioHandoff.parkable(player(Player.STATE_IDLE))).isFalse()
+        assertThat(AudioHandoff.parkable(player(Player.STATE_IDLE, plays = false, atMs = 0L))).isFalse()
+    }
+
+    @Test
+    fun `a finished player is never parked, though it still reads as playing`() {
+        assertThat(AudioHandoff.parkable(player(Player.STATE_ENDED, atMs = 317_000L))).isFalse()
+    }
+
+    @Test
+    fun `a player paused before it began is not parked`() {
+        assertThat(AudioHandoff.parkable(player(Player.STATE_READY, plays = false, atMs = 0L))).isFalse()
     }
 }

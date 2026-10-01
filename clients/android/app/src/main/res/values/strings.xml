@@ -105,6 +105,7 @@
     <string name="subtitles_pick_result">Choose a subtitle</string>
     <string name="subtitles_downloaded">Subtitle added</string>
     <string name="subtitles_download_failed">Couldn\'t download subtitle</string>
+    <string name="subtitles_unavailable">Subtitles unavailable</string>
     <string name="up_next">Up Next</string>
     <string name="play_now">Play Now</string>
     <string name="cancel">Cancel</string>

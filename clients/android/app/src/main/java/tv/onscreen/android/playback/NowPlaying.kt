@@ -79,15 +79,28 @@ data class NowPlaying(
         /** [of], looking the parent (and, for a track or chapter, the
          *  grandparent) up. Best effort: a lookup that fails leaves that
          *  name out rather than holding playback up. */
-        suspend fun resolve(itemRepo: ItemRepository, item: ItemDetail): NowPlaying {
-            if (!AudioItemTypes.isAudio(item.type)) return of(item)
+        suspend fun resolve(itemRepo: ItemRepository, item: ItemDetail): NowPlaying =
+            resolveWithParent(itemRepo, item).first
+
+        /** [resolve], with the parent it looked up (null when there is none,
+         *  or the lookup failed), for what else the screen shows of it. */
+        suspend fun resolveWithParent(itemRepo: ItemRepository, item: ItemDetail): Pair<NowPlaying, ItemDetail?> {
+            if (!AudioItemTypes.isAudio(item.type)) return of(item) to null
             val parent = item.parent_id?.let { lookup(itemRepo, it) }
             val grandparent = if (item.type == AudioItemTypes.TRACK || item.type == AudiobookSpeed.CHAPTER) {
                 parent?.parent_id?.let { lookup(itemRepo, it) }
             } else {
                 null
             }
-            return of(item, parent, grandparent)
+            return of(item, parent, grandparent) to parent
+        }
+
+        /** The cover of [item]'s [parent], for a now-playing screen when
+         *  [item] has no art of its own: a track's album, a chapter's book.
+         *  Nothing for a book, whose parent is its author. */
+        fun parentCover(item: ItemDetail, parent: ItemDetail?): String? = when (item.type) {
+            AudioItemTypes.TRACK, AudiobookSpeed.CHAPTER -> parent?.poster_path?.takeIf { it.isNotBlank() }
+            else -> null
         }
 
         private suspend fun lookup(itemRepo: ItemRepository, id: String): ItemDetail? = try {

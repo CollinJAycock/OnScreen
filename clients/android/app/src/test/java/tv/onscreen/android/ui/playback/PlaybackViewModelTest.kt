@@ -387,6 +387,51 @@ class PlaybackViewModelTest {
         assertThat(vm.hlsOffsetMs).isEqualTo(30_000L)
     }
 
+    /** prepare() at [startMs] against a session the server opens at
+     *  [startOffsetSec]; the HLS source it emits. */
+    private fun kotlinx.coroutines.test.TestScope.hlsSourceFor(
+        startMs: Long,
+        startOffsetSec: Double?,
+        verdict: String? = null,
+    ): Pair<PlaybackSource.Hls, PlaybackViewModel> {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns verdict
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(
+            session_id = "s", playlist_url = "/p.m3u8", token = "t", start_offset_sec = startOffsetSec,
+        )
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = startMs, serverUrl = "http://srv")
+        advanceUntilIdle()
+        return (vm.uiState.value.source as PlaybackSource.Hls) to vm
+    }
+
+    @Test
+    fun `a remux starts on the resume point inside its stream`() = runTest(dispatcher) {
+        // Resume at 45:00; the remux opened on the keyframe 2.5 s before.
+        val (hls, vm) = hlsSourceFor(startMs = 2_700_000L, startOffsetSec = 2_697.5, verdict = "directStream")
+        assertThat(vm.hlsOffsetMs).isEqualTo(2_697_500L)
+        assertThat(hls.initialSeekMs).isEqualTo(2_500L)
+    }
+
+    @Test
+    fun `a stream covering the whole file resumes inside it, not at 0 00`() = runTest(dispatcher) {
+        // start_offset_sec 0 (a pre-encoded ladder): a real 0, not "not sent".
+        val (hls, vm) = hlsSourceFor(startMs = 2_700_000L, startOffsetSec = 0.0)
+        assertThat(vm.hlsOffsetMs).isEqualTo(0L)
+        assertThat(hls.initialSeekMs).isEqualTo(2_700_000L)
+    }
+
+    @Test
+    fun `a server without start_offset_sec starts at its head`() = runTest(dispatcher) {
+        val (hls, vm) = hlsSourceFor(startMs = 2_700_000L, startOffsetSec = null)
+        assertThat(vm.hlsOffsetMs).isEqualTo(2_700_000L)
+        assertThat(hls.initialSeekMs).isEqualTo(0L)
+    }
+
     @Test
     fun `direct play url is clean and its stream token is vaulted`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
@@ -960,6 +1005,62 @@ class PlaybackViewModelTest {
     }
 
     /**
+     * `/media/external-subtitles/{id}` carries no file id, and a stream token
+     * is bound to one: the server refuses it there, so a downloaded subtitle
+     * sent with the file's stream token never loaded.
+     */
+    @Test
+    fun `a downloaded subtitle loads with the asset token, an embedded one with the stream token`() =
+        runTest(dispatcher) {
+            val itemRepo = itemRepo()
+            coEvery { itemRepo.getItem("movie-1") } returns movieDetail(
+                directPlayFile().copy(
+                    stream_token = "file-tok",
+                    subtitle_streams = listOf(SubtitleStream(2, "subrip", "eng", "", false)),
+                    external_subtitles = listOf(
+                        tv.onscreen.android.data.model.ExternalSubtitle(
+                            id = "x1",
+                            language = "en",
+                            url = "/media/external-subtitles/x1",
+                        ),
+                    ),
+                ),
+            )
+            val sp = mockk<tv.onscreen.android.data.prefs.ServerPrefs>(relaxed = true)
+            coEvery { sp.getAssetToken() } returns "as-24h"
+
+            val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), sp, audiobooks())
+            vm.prepare("movie-1", 0L, "http://srv")
+            advanceUntilIdle()
+
+            assertThat(vm.uiState.value.subtitleSources.map { it.url }).containsExactly(
+                "http://srv/media/subtitles/f1/2?token=file-tok",
+                "http://srv/media/external-subtitles/x1?token=as-24h",
+            ).inOrder()
+        }
+
+    @Test
+    fun `without an asset token only the embedded subtitles load`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(
+            directPlayFile().copy(
+                stream_token = "file-tok",
+                subtitle_streams = listOf(SubtitleStream(2, "subrip", "eng", "", false)),
+                external_subtitles = listOf(
+                    tv.onscreen.android.data.model.ExternalSubtitle(id = "x1", url = "/media/external-subtitles/x1"),
+                ),
+            ),
+        )
+
+        // serverPrefs(): relaxed, no asset token.
+        val vm = PlaybackViewModel(itemRepo, transcodeRepoMock(), prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", 0L, "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.subtitleSources.map { it.trackId }).containsExactly("sub:emb:2")
+    }
+
+    /**
      * reloadSubtitles used to re-issue the whole transcode session on the
      * premise that "a transcoded session bakes the subtitle set into its
      * playlist" — false, so the user paid a playback interruption plus a
@@ -1255,8 +1356,10 @@ class PlaybackViewModelTest {
             id = "track-1", library_id = "lib", title = "Song", type = "track",
             parent_id = "album-1", index = 1, files = listOf(flac),
         )
-        coEvery { itemRepo.getItem("album-1") } returns
-            ItemDetail(id = "album-1", library_id = "lib", title = "Album", type = "album", parent_id = "artist-1")
+        coEvery { itemRepo.getItem("album-1") } returns ItemDetail(
+            id = "album-1", library_id = "lib", title = "Album", type = "album", parent_id = "artist-1",
+            poster_path = "/artwork/album-1.jpg",
+        )
         coEvery { itemRepo.getItem("artist-1") } returns
             ItemDetail(id = "artist-1", library_id = "lib", title = "Artist", type = "artist")
         coEvery { itemRepo.getChildren("album-1") } returns emptyList()
@@ -1267,6 +1370,8 @@ class PlaybackViewModelTest {
 
         assertThat(vm.uiState.value.nowPlaying)
             .isEqualTo(NowPlaying("Song", artist = "Artist", album = "Album", mediaId = "track-1"))
+        // The album's cover, for a track without art of its own.
+        assertThat(vm.uiState.value.parentPosterPath).isEqualTo("/artwork/album-1.jpg")
     }
 
     @Test

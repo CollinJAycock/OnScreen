@@ -39,4 +39,17 @@ class StreamSessionTest {
         )
         assertThat(s.offsetMs).isEqualTo(15_000L)
     }
+
+    @Test
+    fun `a session opening at 0 opens at 0, not where it was asked`() {
+        // A stream covering the whole file (a pre-encoded ladder), or a
+        // resume before the first keyframe after 0:00. Read as "not sent",
+        // the offset went to the resume point over a stream starting at 0:00.
+        val s = StreamSession.opened(
+            TranscodeSession(session_id = "s", playlist_url = "/p.m3u8", token = "t", start_offset_sec = 0.0),
+            serverUrl = "http://srv",
+            requestedMs = 2_700_000L,
+        )
+        assertThat(s.offsetMs).isEqualTo(0L)
+    }
 }

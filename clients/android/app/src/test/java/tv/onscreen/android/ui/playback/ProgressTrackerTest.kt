@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.playback
 
+import androidx.media3.common.Player
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -10,6 +11,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.setMain
 import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runCurrent
@@ -41,6 +43,9 @@ class ProgressTrackerTest {
         var throwNext: Throwable? = null
         /** How long the server takes to answer each state, in ms. */
         var slow: Map<String, Long> = emptyMap()
+        /** How long it takes to answer a report of a content position, in
+         *  ms, whatever its state. */
+        var slowAt: Map<Long, Long> = emptyMap()
 
         data class Call(val itemId: String, val offsetMs: Long, val durationMs: Long, val state: String)
 
@@ -52,14 +57,23 @@ class ProgressTrackerTest {
         ) {
             throwNext?.let { throw it }
             slow[state]?.let { delay(it) }
+            slowAt[offsetMs]?.let { delay(it) }
             calls += Call(itemId, offsetMs, durationMs, state)
         }
     }
 
+    /** A tracker on [scope]'s virtual time, sending on [reports]. */
     private fun newTracker(
         repo: ItemRepository,
-        scope: CoroutineScope,
-    ): ProgressTracker = ProgressTracker(scope, repo, scope).apply {
+        scope: TestScope,
+        reports: ProgressTracker.Reports = ProgressTracker.Reports(scope),
+    ): ProgressTracker = ProgressTracker(
+        scope,
+        repo,
+        scope,
+        nowMs = { scope.testScheduler.currentTime },
+        reports = reports,
+    ).apply {
         positionProvider = { 5_000L }
         durationProvider = { 60_000L }
     }
@@ -575,5 +589,290 @@ class ProgressTrackerTest {
         runCurrent()
 
         assertThat(repo.calls.single().offsetMs).isEqualTo(60_000L)
+    }
+
+    // ── heartbeatFor: what a player change does to the heartbeat ────────────
+
+    private fun heartbeat(
+        isPlaying: Boolean = false,
+        playWhenReady: Boolean = true,
+        state: Int = Player.STATE_READY,
+        heldForFrameRate: Boolean = false,
+    ) = ProgressTracker.heartbeatFor(isPlaying, playWhenReady, state, heldForFrameRate)
+
+    @Test
+    fun `playing runs the heartbeat`() {
+        assertThat(heartbeat(isPlaying = true)).isEqualTo(ProgressTracker.Heartbeat.START)
+    }
+
+    @Test
+    fun `a rebuffer holds it without a pause`() {
+        assertThat(heartbeat(state = Player.STATE_BUFFERING)).isEqualTo(ProgressTracker.Heartbeat.HOLD)
+        // Nor is the display-switch hold a pause of the user's.
+        assertThat(heartbeat(playWhenReady = false, heldForFrameRate = true))
+            .isEqualTo(ProgressTracker.Heartbeat.HOLD)
+    }
+
+    @Test
+    fun `a pause is a pause, while buffering too`() {
+        assertThat(heartbeat(playWhenReady = false)).isEqualTo(ProgressTracker.Heartbeat.PAUSE)
+        assertThat(heartbeat(playWhenReady = false, state = Player.STATE_BUFFERING))
+            .isEqualTo(ProgressTracker.Heartbeat.PAUSE)
+        // Stopped playing while ready (suppressed: another app took the
+        // audio), or failed: not waiting for data.
+        assertThat(heartbeat(state = Player.STATE_READY)).isEqualTo(ProgressTracker.Heartbeat.PAUSE)
+        assertThat(heartbeat(state = Player.STATE_IDLE)).isEqualTo(ProgressTracker.Heartbeat.PAUSE)
+    }
+
+    @Test
+    fun `the end reports itself`() {
+        assertThat(heartbeat(state = Player.STATE_ENDED)).isEqualTo(ProgressTracker.Heartbeat.NONE)
+        assertThat(heartbeat(playWhenReady = false, state = Player.STATE_ENDED))
+            .isEqualTo(ProgressTracker.Heartbeat.NONE)
+    }
+
+    /** One BUFFERING / READY flap as the fragment follows it. */
+    private fun ProgressTracker.flap(stallMs: Long, playMs: Long, scope: TestScope) {
+        follow(heartbeat(state = Player.STATE_BUFFERING), "item-1", 0L)
+        scope.advanceTimeBy(stallMs)
+        follow(heartbeat(isPlaying = true), "item-1", 0L)
+        scope.advanceTimeBy(playMs)
+    }
+
+    @Test
+    fun `a stall flapping between buffering and ready sends no pause, and the heartbeat keeps its beat`() =
+        runTest(StandardTestDispatcher()) {
+            // The Fire TV remux stall: BUFFERING / READY every ~0.7 s. A
+            // 'paused' per flap sent five PUTs in 4 s; restarting the 10 s
+            // count on every flap sent no heartbeat at all while it lasted.
+            val repo = FakeRepo()
+            val tracker = newTracker(repo, this)
+            tracker.follow(heartbeat(isPlaying = true), "item-1", 0L)
+            repeat(18) { tracker.flap(stallMs = 700, playMs = 700, scope = this) } // 25.2 s
+            runCurrent()
+
+            assertThat(repo.calls.map { it.state }).containsExactly("playing", "playing")
+
+            // A real pause afterwards is still reported, once.
+            tracker.follow(heartbeat(playWhenReady = false), "item-1", 0L)
+            runCurrent()
+            assertThat(repo.calls.map { it.state }).containsExactly("playing", "playing", "paused").inOrder()
+        }
+
+    @Test
+    fun `a stall whose ready spells are shorter than the round trip still lands its beats`() =
+        runTest(StandardTestDispatcher()) {
+            // Each READY spell (700 ms) is shorter than the server takes to
+            // answer a 'playing' PUT (1 s). With the PUT inside the heartbeat
+            // job, the BUFFERING hold after it cancelled every beat in
+            // flight, and the due time had already moved on: none landed.
+            val repo = FakeRepo().apply { slow = mapOf("playing" to 1_000L) }
+            val tracker = newTracker(repo, this)
+            tracker.follow(heartbeat(isPlaying = true), "item-1", 0L)
+            repeat(18) { tracker.flap(stallMs = 700, playMs = 700, scope = this) } // 25.2 s
+            advanceTimeBy(1_000)
+            runCurrent()
+
+            assertThat(repo.calls.map { it.state }).containsExactly("playing", "playing")
+            tracker.stop()
+        }
+
+    @Test
+    fun `a beat due while the last one is still in flight is skipped`() = runTest(StandardTestDispatcher()) {
+        // A server taking 15 s to answer: the 20 s beat finds the 10 s one
+        // still out and doesn't queue behind it; the 30 s one goes.
+        val repo = FakeRepo().apply { slow = mapOf("playing" to 15_000L) }
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        advanceTimeBy(40_001)
+        runCurrent()
+        assertThat(repo.calls).hasSize(1) // the 10 s beat, answered at 25 s
+
+        advanceTimeBy(5_000)
+        runCurrent()
+        assertThat(repo.calls).hasSize(2) // the 30 s beat, answered at 45 s
+        tracker.stop()
+    }
+
+    @Test
+    fun `a pause after a slow beat lands after it`() = runTest(StandardTestDispatcher()) {
+        // The pause cancels the heartbeat, not the beat already out; the
+        // 'paused' waits for it on the lane. Landing after the 'paused', the
+        // 'playing' would put the item back in Now Playing as playing.
+        val repo = FakeRepo().apply { slow = mapOf("playing" to 1_000L) }
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        advanceTimeBy(10_500) // the beat is out
+        tracker.onPause()
+        advanceUntilIdle()
+
+        assertThat(repo.calls.map { it.state }).containsExactly("playing", "paused").inOrder()
+    }
+
+    @Test
+    fun `a teardown waits only so long for a hung beat`() = runTest(StandardTestDispatcher()) {
+        // A server that never answers the beat: the teardown's reports went
+        // out only when its call timed out (30 s). They get the beat's
+        // ordinary round trip now, then it is cancelled and they go.
+        val repo = FakeRepo().apply { slow = mapOf("playing" to 30_000L) }
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        advanceTimeBy(10_500) // the beat is out
+        tracker.onPause()
+        tracker.onStop()
+        advanceTimeBy(ProgressTracker.BEAT_GRACE_MS - 1)
+        runCurrent()
+        assertThat(repo.calls).isEmpty()
+
+        advanceTimeBy(1)
+        runCurrent()
+        assertThat(repo.calls.map { it.state }).containsExactly("paused", "stopped").inOrder()
+
+        // And the beat never lands after them.
+        advanceUntilIdle()
+        assertThat(repo.calls.map { it.state }).containsExactly("paused", "stopped").inOrder()
+    }
+
+    @Test
+    fun `a beat whose grace runs out while it waits behind a slow pause keeps its place`() =
+        runTest(StandardTestDispatcher()) {
+            // A pause at 5 s that the server takes 15 s to answer; played on,
+            // the next beat queues behind it. BACK then queues a pause and a
+            // stop behind the beat, whose grace runs out while it still
+            // waits: it goes unsent, but cancelled out of its wait it let the
+            // two behind it out ahead of the first pause, which landed last
+            // and left the item paused at 5 s.
+            val repo = FakeRepo().apply { slowAt = mapOf(5_000L to 15_000L) }
+            val tracker = newTracker(repo, this)
+            var position = 5_000L
+            tracker.positionProvider = { position }
+            tracker.start("item-1")
+            tracker.onPause() // out until 15 s
+            position = 6_000L
+            tracker.start("item-1")
+            advanceTimeBy(10_001) // the beat, queued behind the pause
+            position = 7_000L
+            tracker.onPause()
+            tracker.onStop()
+            advanceUntilIdle()
+
+            assertThat(repo.calls.map { it.state to it.offsetMs })
+                .containsExactly("paused" to 5_000L, "paused" to 7_000L, "stopped" to 7_000L)
+                .inOrder()
+        }
+
+    @Test
+    fun `a replaced tracker's slow beat lands before the new tracker's stop`() = runTest(StandardTestDispatcher()) {
+        // A session re-issue installs a new tracker while the old one's beat
+        // is out. With a lane each, the new tracker's 'stopped' went straight
+        // out and the old 'playing' landed after it, putting the item back
+        // in Now Playing.
+        val repo = FakeRepo().apply { slow = mapOf("playing" to 1_000L) }
+        val screen = ProgressTracker.Reports(this)
+        val old = newTracker(repo, this, screen)
+        old.start("item-1")
+        advanceTimeBy(10_500) // the beat is out
+        old.stop() // retired (PlaybackFragment.retireProgressTracker)
+        val replacement = newTracker(repo, this, screen)
+        replacement.bind("item-1")
+        replacement.onStop()
+        advanceUntilIdle()
+
+        assertThat(repo.calls.map { it.state }).containsExactly("playing", "stopped").inOrder()
+    }
+
+    @Test
+    fun `a new tracker's stop waits only so long for a replaced tracker's hung beat`() =
+        runTest(StandardTestDispatcher()) {
+            val repo = FakeRepo().apply { slow = mapOf("playing" to 30_000L) }
+            val screen = ProgressTracker.Reports(this)
+            val old = newTracker(repo, this, screen)
+            old.start("item-1")
+            advanceTimeBy(10_500) // the beat is out
+            old.stop()
+            val replacement = newTracker(repo, this, screen)
+            replacement.bind("item-1")
+            replacement.onStop()
+            advanceTimeBy(ProgressTracker.BEAT_GRACE_MS - 1)
+            runCurrent()
+            assertThat(repo.calls).isEmpty()
+
+            advanceTimeBy(1)
+            runCurrent()
+            assertThat(repo.calls.map { it.state }).containsExactly("stopped")
+
+            // And the old beat never lands after it.
+            advanceUntilIdle()
+            assertThat(repo.calls.map { it.state }).containsExactly("stopped")
+        }
+
+    @Test
+    fun `a hold leaves a slow beat to land`() = runTest(StandardTestDispatcher()) {
+        // A rebuffer is no teardown: the beat out when it starts still lands,
+        // however long the server takes.
+        val repo = FakeRepo().apply { slow = mapOf("playing" to 15_000L) }
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        advanceTimeBy(10_500) // the beat is out
+        tracker.follow(ProgressTracker.Heartbeat.HOLD, "item-1", 0L)
+        advanceTimeBy(15_000)
+        runCurrent()
+
+        assertThat(repo.calls.map { it.state }).containsExactly("playing")
+    }
+
+    @Test
+    fun `a beat due during a long stall goes at the first ready`() = runTest(StandardTestDispatcher()) {
+        val repo = FakeRepo()
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        advanceTimeBy(5_000)
+        tracker.stop() // rebuffer at 5 s
+        advanceTimeBy(12_000)
+        runCurrent()
+        assertThat(repo.calls).isEmpty()
+
+        tracker.start("item-1") // ready at 17 s: the 10 s beat is overdue
+        runCurrent()
+        assertThat(repo.calls.map { it.state }).containsExactly("playing")
+
+        // Then every 10 s from there.
+        advanceTimeBy(9_999)
+        runCurrent()
+        assertThat(repo.calls).hasSize(1)
+        advanceTimeBy(1)
+        runCurrent()
+        assertThat(repo.calls).hasSize(2)
+        tracker.stop()
+    }
+
+    @Test
+    fun `starting again while running keeps the beat`() = runTest(StandardTestDispatcher()) {
+        val repo = FakeRepo()
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        advanceTimeBy(6_000)
+        tracker.start("item-1")
+        advanceTimeBy(4_001)
+        runCurrent()
+        assertThat(repo.calls).hasSize(1)
+        tracker.stop()
+    }
+
+    @Test
+    fun `a pause starts the count afresh`() = runTest(StandardTestDispatcher()) {
+        val repo = FakeRepo()
+        val tracker = newTracker(repo, this)
+        tracker.start("item-1")
+        advanceTimeBy(9_000)
+        tracker.onPause()
+        tracker.start("item-1")
+        advanceTimeBy(9_999)
+        runCurrent()
+        assertThat(repo.calls.map { it.state }).containsExactly("paused")
+        advanceTimeBy(1)
+        runCurrent()
+        assertThat(repo.calls.map { it.state }).containsExactly("paused", "playing").inOrder()
+        tracker.stop()
     }
 }

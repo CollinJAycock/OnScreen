@@ -43,14 +43,17 @@ sealed class PlaybackSource {
      *   resume position the client asked for); falls back to the
      *   requested resume position when the server didn't return the
      *   field (older builds).
-     * @property initialSeekMs in-stream seek (in HLS-stream-relative
-     *   ms) to skip silent video at the head of segment 0. Set when
-     *   the server returns a non-zero `seg0_audio_gap_sec` — happens
-     *   on mid-stream seek with AC3 → AAC re-encode, where the AAC
+     * @property initialSeekMs in-stream start (in HLS-stream-relative
+     *   ms): the content position asked for, less [offsetMs]
+     *   (PlaybackHelper.hlsStartMs), so a remux starts on the resume
+     *   point rather than the keyframe before it and a stream that covers
+     *   the whole file resumes where it should, not at 0:00. Further in
+     *   when the server returns a larger `seg0_audio_gap_sec` — a
+     *   mid-stream start with AC3 → AAC re-encode, where the AAC
      *   encoder's first valid frame lands a few seconds after video's
-     *   first packet. The player should `exo.seekTo(initialSeekMs)`
-     *   on first start so the first thing the user sees coincides
-     *   with the first audible frame instead of silent video.
+     *   first packet — so the first thing the user sees coincides with
+     *   the first audible frame instead of silent video. The player
+     *   seeks here on first start, 0 included.
      */
     data class Hls(
         val playlistUrl: String,
@@ -116,6 +119,10 @@ data class PlaybackUiState(
      *  artist, album), once its parents are looked up. The fragment hands it
      *  over with the player. Null for video, and until then. */
     val nowPlaying: NowPlaying? = null,
+    /** Audio: the cover of the album (a track's) or book (a chapter's) the
+     *  item sits in, for the now-playing screen when the item has no art of
+     *  its own. Looked up with [nowPlaying]; null until then. */
+    val parentPosterPath: String? = null,
     val error: String? = null,
 )
 
@@ -390,14 +397,18 @@ class PlaybackViewModel @Inject constructor(
     /** Look up the speed of the book [item] belongs to. Nothing for anything
      *  that isn't an audiobook — it plays at 1×. A failed lookup (or a
      *  server without the route) leaves the book at 1×, still adjustable. */
-    /** Audio: look up the names the background session shows for [item].
-     *  Best effort and off the start path: playback doesn't wait for it. */
+    /** Audio: look up the names the background session shows for [item],
+     *  and from the same lookup its parent's cover. Best effort and off the
+     *  start path: playback doesn't wait for it. */
     private fun loadNowPlaying(item: ItemDetail) {
         if (!tv.onscreen.android.playback.AudioItemTypes.isAudio(item.type)) return
         viewModelScope.launch {
-            val names = NowPlaying.resolve(itemRepo, item)
+            val (names, parent) = NowPlaying.resolveWithParent(itemRepo, item)
             if (_uiState.value.item?.id != item.id) return@launch
-            _uiState.value = _uiState.value.copy(nowPlaying = names)
+            _uiState.value = _uiState.value.copy(
+                nowPlaying = names,
+                parentPosterPath = NowPlaying.parentCover(item, parent),
+            )
         }
     }
 
@@ -435,42 +446,53 @@ class PlaybackViewModel @Inject constructor(
     }
 
     /**
-     * Build the side-load list for [file]'s embedded subtitle streams, in the
-     * same order as `file.subtitle_streams` so a picker index maps straight
-     * across. Returns empty when no token is available (the endpoint is on the
-     * asset-token route group and ExoPlayer can't send a Bearer header).
+     * Build the side-load list for [file]'s embedded subtitle streams, then
+     * its attached files, the embedded ones in the same order as
+     * `file.subtitle_streams` so a picker index maps straight across. A track
+     * is left out when there is no token to load it with (both endpoints are
+     * on the asset-token route group and ExoPlayer can't send a Bearer
+     * header).
+     *
+     * Embedded: `/media/subtitles/{fileId}/{index}` takes the file's own
+     * stream token, else the asset token. Attached:
+     * `/media/external-subtitles/{id}` takes the asset token only: a stream
+     * token is bound to a file id, which that route doesn't carry, so the
+     * server refuses one there and a downloaded subtitle never loaded.
      */
     private suspend fun buildSubtitleSources(serverUrl: String, file: ItemFile): List<SubtitleTrackSource> {
         if (file.subtitle_streams.isEmpty() && file.external_subtitles.isEmpty()) return emptyList()
-        val token = file.stream_token?.takeIf { it.isNotEmpty() } ?: serverPrefs.getAssetToken()
-        if (token.isNullOrEmpty()) return emptyList()
-        val tok = java.net.URLEncoder.encode(token, "UTF-8")
+        fun encoded(token: String?) = token?.takeIf { it.isNotEmpty() }?.let { java.net.URLEncoder.encode(it, "UTF-8") }
+        val asset = encoded(serverPrefs.getAssetToken())
+        val fileTok = encoded(file.stream_token) ?: asset
         // Image-based tracks (PGS/VOBSUB/DVB) can't be rendered as WebVTT —
         // the server 415s the extraction and SingleSampleMediaSource's
         // treat-errors-as-EOS swallowed the failure, so the picker offered
         // tracks that silently never displayed. Skip them here; on direct
         // play ExoPlayer renders them natively from the container.
-        val embedded = file.subtitle_streams
+        val embedded = if (fileTok == null) emptyList() else file.subtitle_streams
             .filterNot { isImageBasedSubtitle(it.codec) }
             .map { s ->
                 SubtitleTrackSource(
                     // ABSOLUTE stream index here — /media/subtitles/{fileId}/{index}
                     // uses the API convention, NOT the relative one ffmpeg's
                     // -map 0:s:N takes. See internal/transcode/ffmpeg.go:181.
-                    url = "$serverUrl/media/subtitles/${file.id}/${s.index}?token=$tok",
+                    url = "$serverUrl/media/subtitles/${file.id}/${s.index}?token=$fileTok",
                     language = s.language,
-                    label = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } },
+                    label = SubtitleLabel.of(
+                        s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = "Track ${s.index}",
+                    ),
                     forced = s.forced,
                     sdh = s.sdh,
                     trackId = "sub:emb:${s.index}",
                     embeddedIndex = s.index,
                 )
             }
-        val external = file.external_subtitles.map { e ->
+        val attached = if (asset == null) emptyList() else file.external_subtitles.filter { it.url.isNotEmpty() }
+        val external = attached.map { e ->
             SubtitleTrackSource(
-                url = "$serverUrl${e.url}?token=$tok",
+                url = "$serverUrl${e.url}?token=$asset",
                 language = e.language,
-                label = (e.title ?: "").ifBlank { e.language.ifBlank { "External" } },
+                label = SubtitleLabel.of(e.language, e.title, e.forced, e.sdh, downloaded = true, fallback = "External"),
                 forced = e.forced,
                 sdh = e.sdh,
                 trackId = "sub:ext:${e.id}",
@@ -527,8 +549,9 @@ class PlaybackViewModel @Inject constructor(
         // the requested posMs. Without this, the scrubber-time mapping
         // is off by a couple of seconds whenever the input -ss snaps
         // back to a keyframe — visible to the user as "I scrubbed to
-        // 0:00 but the video is at 1:58". Falls back to posMs when the
-        // server didn't return the field (omitempty / older builds).
+        // 0:00 but the video is at 1:58". A reported 0 is kept (see
+        // StreamSession.opened); falls back to posMs only when the
+        // server didn't return the field (older builds).
         //
         // It also strips the playlist's `?token=` into the vault so the
         // MediaItem (which a parked audio player exposes through the
@@ -536,13 +559,15 @@ class PlaybackViewModel @Inject constructor(
         // server-embedded token, so only this top-level URL needs
         // re-attaching. See StreamTokenVault.
         val stream = StreamSession.opened(session, serverUrl, posMs)
-        // Initial in-stream seek to skip the silent-video gap at seg 0
-        // head. Non-zero only after a mid-stream seek with AC3 → AAC
-        // re-encode; the player jumps this far in on first start so
-        // the first frame the user sees lands together with the first
-        // audible audio frame instead of silent video while the AAC
-        // encoder warms up. Same omitempty fallback.
+        // Where in the stream the player starts: posMs, which the stream
+        // may open before (a remux on its keyframe) or long before (one
+        // covering the whole file, at 0:00), or past the silent-video gap at
+        // seg 0's head when that is further in. The gap is non-zero only
+        // after a mid-stream start with AC3 → AAC re-encode, so the first
+        // frame the user sees lands together with the first audible audio
+        // frame instead of silent video while the AAC encoder warms up.
         val seg0SkipMs = (session.seg0_audio_gap_sec * 1000.0).toLong()
+        val startInStreamMs = PlaybackHelper.hlsStartMs(posMs, stream.offsetMs, seg0SkipMs)
 
         hlsOffsetMs = stream.offsetMs
         lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl, audioStreamIndex)
@@ -555,7 +580,7 @@ class PlaybackViewModel @Inject constructor(
         return PlaybackSource.Hls(
             playlistUrl = stream.playlistUrl,
             offsetMs = stream.offsetMs,
-            initialSeekMs = seg0SkipMs,
+            initialSeekMs = startInStreamMs,
         )
     }
 

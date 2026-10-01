@@ -115,25 +115,106 @@ class PlaybackHelperTest {
     // deleted mid-movie by the same ratio.
 
     @Test
-    fun `prefers the item duration over the player's session-relative one`() {
+    fun `a server session's player duration never beats the listed one`() {
         // 2 h movie resumed at 1 h: the HLS session reports only the remaining
-        // hour. The item duration is authoritative and must win.
+        // hour. The listed length is the file's and must win.
         val dur = PlaybackHelper.contentDurationMs(
-            itemDurationMs = 7_200_000L,
+            listedDurationMs = 7_200_000L,
             playerDurationMs = 3_600_000L,
             hlsOffsetMs = 3_600_000L,
+            hlsSession = true,
+            playerWindowDynamic = false,
         )
         assertThat(dur).isEqualTo(7_200_000L)
     }
 
     @Test
-    fun `re-absolutises the player duration when the item duration is unknown`() {
+    fun `re-absolutises a settled session's duration when nothing is listed`() {
         val dur = PlaybackHelper.contentDurationMs(
-            itemDurationMs = null,
+            listedDurationMs = null,
             playerDurationMs = 3_600_000L,
             hlsOffsetMs = 3_600_000L,
+            hlsSession = true,
+            playerWindowDynamic = false,
         )
         assertThat(dur).isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `a growing HLS playlist's duration is never the item's`() {
+        // A remux resumed at 1 h: the server's EVENT playlist so far holds four
+        // minutes. Taken as the length, the first heartbeat at 1 h + a few s
+        // reported the film done (the phone client did exactly this).
+        assertThat(
+            PlaybackHelper.contentDurationMs(
+                listedDurationMs = null,
+                playerDurationMs = 240_000L,
+                hlsOffsetMs = 3_600_000L,
+                hlsSession = true,
+                playerWindowDynamic = true,
+            ),
+        ).isEqualTo(0L)
+        // The listed length still wins while the playlist grows.
+        assertThat(
+            PlaybackHelper.contentDurationMs(
+                listedDurationMs = 7_200_000L,
+                playerDurationMs = 240_000L,
+                hlsOffsetMs = 3_600_000L,
+                hlsSession = true,
+                playerWindowDynamic = true,
+            ),
+        ).isEqualTo(7_200_000L)
+    }
+
+    @Test
+    fun `a settled direct play's own duration comes first`() {
+        // The position is time in the file: the file's length as the player
+        // reads it beats a listed runtime a minute short (TMDB's 119 min).
+        assertThat(
+            PlaybackHelper.contentDurationMs(
+                listedDurationMs = 7_140_000L,
+                playerDurationMs = 7_163_000L,
+                hlsOffsetMs = 0L,
+                hlsSession = false,
+                playerWindowDynamic = false,
+            ),
+        ).isEqualTo(7_163_000L)
+    }
+
+    @Test
+    fun `a direct play not yet settled uses the listed length`() {
+        // Not prepared yet (C.TIME_UNSET).
+        assertThat(
+            PlaybackHelper.contentDurationMs(
+                listedDurationMs = 7_140_000L,
+                playerDurationMs = -9_223_372_036_854_775_807L,
+                hlsOffsetMs = 0L,
+                hlsSession = false,
+                playerWindowDynamic = false,
+            ),
+        ).isEqualTo(7_140_000L)
+        // A window still growing.
+        assertThat(
+            PlaybackHelper.contentDurationMs(
+                listedDurationMs = 7_140_000L,
+                playerDurationMs = 60_000L,
+                hlsOffsetMs = 0L,
+                hlsSession = false,
+                playerWindowDynamic = true,
+            ),
+        ).isEqualTo(7_140_000L)
+    }
+
+    @Test
+    fun `the listed length is the file's before the item's runtime`() {
+        // The file's probed length: the position reported is time in it.
+        assertThat(PlaybackHelper.listedDurationMs(7_163_000L, 7_140_000L)).isEqualTo(7_163_000L)
+        // Without one, the item's (TMDB minutes, or a book's own).
+        assertThat(PlaybackHelper.listedDurationMs(null, 7_140_000L)).isEqualTo(7_140_000L)
+        // A zero is no length.
+        assertThat(PlaybackHelper.listedDurationMs(0L, 7_140_000L)).isEqualTo(7_140_000L)
+        assertThat(PlaybackHelper.listedDurationMs(0L, null)).isNull()
+        assertThat(PlaybackHelper.listedDurationMs(null, null)).isNull()
     }
 
     @Test
@@ -145,9 +226,11 @@ class PlaybackHelperTest {
         // watched threshold and > WatchNextManager's 0.9 delete threshold).
         val contentPositionMs = 5_400_000L // 90 min, as ProgressTracker reports it
         val dur = PlaybackHelper.contentDurationMs(
-            itemDurationMs = null,
+            listedDurationMs = null,
             playerDurationMs = 1_800_000L, // 30 min remaining in this session
             hlsOffsetMs = 5_400_000L,
+            hlsSession = true,
+            playerWindowDynamic = false,
         )
         assertThat(dur).isEqualTo(7_200_000L)
         assertThat(contentPositionMs.toFloat() / dur).isWithin(0.01f).of(0.75f)
@@ -155,34 +238,96 @@ class PlaybackHelperTest {
     }
 
     @Test
-    fun `direct play is unaffected because the offset is zero`() {
-        val dur = PlaybackHelper.contentDurationMs(
-            itemDurationMs = null,
-            playerDurationMs = 7_200_000L,
-            hlsOffsetMs = 0L,
-        )
-        assertThat(dur).isEqualTo(7_200_000L)
-    }
-
-    @Test
     fun `unknown durations resolve to zero so callers skip the report`() {
         // ExoPlayer reports C.TIME_UNSET (negative) before the media is
         // prepared; 0 tells ProgressTracker / WatchNextManager to stay quiet
         // rather than publish a nonsense ratio.
+        for (hls in listOf(false, true)) {
+            assertThat(
+                PlaybackHelper.contentDurationMs(null, 0L, 0L, hlsSession = hls, playerWindowDynamic = false),
+            ).isEqualTo(0L)
+            assertThat(
+                PlaybackHelper.contentDurationMs(
+                    null,
+                    playerDurationMs = -9_223_372_036_854_775_807L,
+                    hlsOffsetMs = 1_000L,
+                    hlsSession = hls,
+                    playerWindowDynamic = false,
+                ),
+            ).isEqualTo(0L)
+            assertThat(
+                PlaybackHelper.contentDurationMs(null, Long.MAX_VALUE, 0L, hlsSession = hls, playerWindowDynamic = false),
+            ).isEqualTo(0L)
+        }
+        // A zero listed length falls through to the player rather than being
+        // taken literally.
         assertThat(
-            PlaybackHelper.contentDurationMs(null, playerDurationMs = 0L, hlsOffsetMs = 0L),
-        ).isEqualTo(0L)
-        assertThat(
-            PlaybackHelper.contentDurationMs(null, playerDurationMs = -9_223_372_036_854_775_807L, hlsOffsetMs = 1_000L),
-        ).isEqualTo(0L)
-        assertThat(
-            PlaybackHelper.contentDurationMs(null, playerDurationMs = Long.MAX_VALUE, hlsOffsetMs = 0L),
-        ).isEqualTo(0L)
-        // A zero/absent item duration falls through to the player rather than
-        // being taken literally.
-        assertThat(
-            PlaybackHelper.contentDurationMs(0L, playerDurationMs = 60_000L, hlsOffsetMs = 5_000L),
+            PlaybackHelper.contentDurationMs(0L, 60_000L, 5_000L, hlsSession = true, playerWindowDynamic = false),
         ).isEqualTo(65_000L)
+    }
+
+    // ── upNextDue ───────────────────────────────────────────────────────────
+
+    @Test
+    fun `Up Next is due in the last 25 s of the content`() {
+        val lead = 25_000L
+        assertThat(PlaybackHelper.upNextDue(7_174_000L, 7_200_000L, lead)).isFalse()
+        assertThat(PlaybackHelper.upNextDue(7_175_000L, 7_200_000L, lead)).isTrue()
+        assertThat(PlaybackHelper.upNextDue(7_200_000L, 7_200_000L, lead)).isTrue()
+        // Played past the listed end: the end of the stream shows it instead.
+        assertThat(PlaybackHelper.upNextDue(7_201_000L, 7_200_000L, lead)).isFalse()
+    }
+
+    @Test
+    fun `Up Next is never due with no known length`() {
+        // A remux resumed at 1 h whose length isn't known: its player
+        // duration (the four minutes written so far) put the card up mid-film.
+        assertThat(PlaybackHelper.upNextDue(3_610_000L, 0L, 25_000L)).isFalse()
+        assertThat(PlaybackHelper.upNextDue(0L, 0L, 25_000L)).isFalse()
+    }
+
+    @Test
+    fun `the Up Next countdown runs while playing and at the end, and holds on a pause`() {
+        val ready = androidx.media3.common.Player.STATE_READY
+        val ended = androidx.media3.common.Player.STATE_ENDED
+        val buffering = androidx.media3.common.Player.STATE_BUFFERING
+        // Playing (the card shown in the credits).
+        assertThat(PlaybackHelper.upNextCountdownTicks(true, ready, true)).isTrue()
+        // The end of the stream: isPlaying is false there, and the card it
+        // put up sat at its first second.
+        assertThat(PlaybackHelper.upNextCountdownTicks(false, ended, true)).isTrue()
+        // Paused, in the credits or at the end: stay.
+        assertThat(PlaybackHelper.upNextCountdownTicks(false, ready, false)).isFalse()
+        assertThat(PlaybackHelper.upNextCountdownTicks(false, ended, false)).isFalse()
+        // Rebuffering in the credits.
+        assertThat(PlaybackHelper.upNextCountdownTicks(false, buffering, true)).isFalse()
+    }
+
+    // ── hlsStartMs ──────────────────────────────────────────────────────────
+
+    @Test
+    fun `a remux starts on the resume point, not the keyframe it opened on`() {
+        // Resume at 45:00; the remux opened on the keyframe at 44:57.5.
+        assertThat(PlaybackHelper.hlsStartMs(2_700_000L, 2_697_500L, 0L)).isEqualTo(2_500L)
+    }
+
+    @Test
+    fun `a stream covering the whole file seeks to the resume point`() {
+        // A pre-encoded ladder reports start_offset_sec 0: its 0:00 is the
+        // file's, and started there a 45:00 resume played from the top.
+        assertThat(PlaybackHelper.hlsStartMs(2_700_000L, 0L, 0L)).isEqualTo(2_700_000L)
+    }
+
+    @Test
+    fun `a silent seg 0 head is skipped when it runs past the request`() {
+        assertThat(PlaybackHelper.hlsStartMs(60_000L, 60_000L, 1_500L)).isEqualTo(1_500L)
+        assertThat(PlaybackHelper.hlsStartMs(60_000L, 57_000L, 1_500L)).isEqualTo(3_000L)
+    }
+
+    @Test
+    fun `a stream opening after the request starts at its head`() {
+        assertThat(PlaybackHelper.hlsStartMs(10_000L, 12_000L, 0L)).isEqualTo(0L)
+        assertThat(PlaybackHelper.hlsStartMs(0L, 0L, 0L)).isEqualTo(0L)
     }
 
     // ── isStoppedStreamStatus ───────────────────────────────────────────────

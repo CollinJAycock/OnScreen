@@ -25,8 +25,13 @@ import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.hls.HlsMediaSource
+import androidx.media3.exoplayer.source.LoadEventInfo
+import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.exoplayer.source.MediaSource
+import androidx.media3.exoplayer.source.MediaSourceEventListener
 import androidx.media3.datasource.DefaultHttpDataSource
 import androidx.media3.ui.leanback.LeanbackPlayerAdapter
 import dagger.hilt.android.AndroidEntryPoint
@@ -53,6 +58,7 @@ import tv.onscreen.android.data.repository.TrickplayRepository
 import tv.onscreen.android.playback.AudioItemTypes
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.withBufferProfile
 import tv.onscreen.android.playback.withoutStuckDetection
 import tv.onscreen.android.ui.KeyEventHandler
 import tv.onscreen.android.ui.detail.DetailFragment
@@ -83,6 +89,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  view hierarchy for as long as the player lives in the service. */
     private var playerListener: Player.Listener? = null
     private var progressTracker: ProgressTracker? = null
+    /** The report lane of every progress tracker this screen installs, so
+     *  a new one's reports keep their order with those of the one it
+     *  replaced (see ProgressTracker.Reports). Outlives the view, as the
+     *  reports do. */
+    private val progressReports = ProgressTracker.Reports()
     private var glue: PlaybackTransportControlGlue<LeanbackPlayerAdapter>? = null
 
     private var audioStreams: List<AudioStream> = emptyList()
@@ -155,6 +166,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     /** Trickplay-thumbnail load. Single job because installation is
      *  one-shot per session. */
     private var trickplayJob: Job? = null
+    /** The glue's seek provider whenever no trickplay one is installed: a
+     *  scrub with no provider seeks at every step (SeekPositionsProvider). */
+    private val seekPositions = SeekPositionsProvider { glue?.playerAdapter?.duration ?: -1L }
     /** True for the first source emission after a parked-player
      *  re-take, so we don't restart playback when the user comes
      *  back to a track that's already playing in the service. */
@@ -168,6 +182,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  onDestroyView leaves the service owning it. Distinguishes the
      *  "handed off, may come back" state from a fresh foreground player. */
     private var parkedToService: Boolean = false
+
+    /** onStart found nothing to take back from the background service: it
+     *  let the player go (the queue ended, or it sat paused past
+     *  BackgroundPause's hold). This screen has nothing left to play. */
+    private var parkedPlayerLost: Boolean = false
 
     /** The Settings switch for display frame-rate matching, read at start. */
     private var matchFrameRateEnabled: Boolean = true
@@ -191,6 +210,25 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  403 (see stopForRefusedPlayback). Keeps the stopped player out of the
      *  background-audio handoff. */
     private var playbackRefused: Boolean = false
+
+    /** An error dialog was shown since the current source started (see
+     *  playFromKey); cleared by playSource. */
+    private var errorShownForSource: Boolean = false
+
+    /** Where a video stood (content time) when onStop tore its player down,
+     *  for [resumeAfterScreensaver] to reopen it there if this screen comes
+     *  back; null for audio, a finished or refused video, and once used. */
+    private var videoStoppedAtMs: Long? = null
+
+    /** The next source loads paused: the first, when [ARG_START_PAUSED] asks
+     *  (a video reopened after the screensaver, as the user left it), and a
+     *  fallback transcode replacing a paused direct play. Other loads (an
+     *  audio switch, a subtitle download) play as ever. */
+    private var startPaused: Boolean = false
+
+    /** [startPaused] was set because the screen stopped with an audio player
+     *  the background service refused (see onStop); undone by onStart. */
+    private var startPausedForStop: Boolean = false
 
     /** Skip-intro / skip-credits overlay button. Inflated lazily on
      *  first marker hit, then shown/hidden as the player crosses
@@ -258,6 +296,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         private const val ARG_START_MS = "start_ms"
         private const val ARG_SPEED_BOOK_ID = "speed_book_id"
         private const val ARG_SPEED_RATE = "speed_rate"
+        private const val ARG_START_PAUSED = "start_paused"
         private const val UPDATE_PERIOD_MS = 1000
 
         /** Fraction of view height to keep clear beneath subtitle cues.
@@ -278,9 +317,19 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         private const val UP_NEXT_COUNTDOWN_SEC = 10
         private const val UP_NEXT_LEAD_SEC = 25
 
+        /** Load tries for a side-loaded subtitle (see playSource). */
+        private const val SUBTITLE_LOAD_TRIES = 8
+
         /** [bookSpeed]: set when chaining from one chapter of a book to the
-         *  next — the speed the book was playing at (see goToNextEpisode). */
-        fun newInstance(itemId: String, startMs: Long = 0, bookSpeed: BookSpeed? = null): PlaybackFragment {
+         *  next — the speed the book was playing at (see goToNextEpisode).
+         *  [startPaused]: open at [startMs] without playing (see
+         *  resumeAfterScreensaver). */
+        fun newInstance(
+            itemId: String,
+            startMs: Long = 0,
+            bookSpeed: BookSpeed? = null,
+            startPaused: Boolean = false,
+        ): PlaybackFragment {
             return PlaybackFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_ITEM_ID, itemId)
@@ -289,6 +338,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                         putString(ARG_SPEED_BOOK_ID, bookSpeed.bookId)
                         putFloat(ARG_SPEED_RATE, bookSpeed.rate)
                     }
+                    if (startPaused) putBoolean(ARG_START_PAUSED, true)
                 }
             }
         }
@@ -343,6 +393,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val bookSpeed = arguments?.let { args ->
             args.getString(ARG_SPEED_BOOK_ID)?.let { BookSpeed(it, args.getFloat(ARG_SPEED_RATE, AudiobookSpeed.NORMAL)) }
         }
+        startPaused = arguments?.getBoolean(ARG_START_PAUSED, false) ?: false
 
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first() ?: ""
@@ -403,9 +454,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 when {
                     !sourceChanged && subsChanged && !playerWasReused &&
                         source != null && player != null -> {
-                        val pos = player?.currentPosition ?: 0L
-                        playSource(source)
-                        if (pos > 0) player?.seekTo(pos)
+                        playSource(source, atMs = player?.currentPosition ?: 0L)
                     }
                     playerWasReused -> {
                         playerWasReused = false
@@ -463,7 +512,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // service's: onStart restarts these when it takes it back.
                 if (!parkedToService) startPlayerWatchers(itemId)
                 installTrickplaySeekProvider(itemId)
-                bindAudioBackdrop(state.item)
+                bindAudioBackdrop(state.item, state.parentPosterPath)
             }
         }
     }
@@ -484,20 +533,30 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  full-bleed blurred album fanart layer plus a centered cover-art
      *  card. Video items keep the surface view as-is (the album-art
      *  layer is removed). The Leanback transport controls overlay both
-     *  cases the same way; this is purely visual.
+     *  cases the same way, and fade the same way (syncControlsAutoHide);
+     *  this is purely visual. An audio item that shows a picture of its
+     *  own keeps the surface uncovered: see [syncAudioBackdrop].
      *
-     *  We attach the overlay as a sibling of the existing
-     *  VideoSupportFragment view — the surface view sits at the
-     *  bottom of the z-order and our album-cover ImageView paints on
-     *  top of it. Controls draw above both. */
-    private fun bindAudioBackdrop(item: tv.onscreen.android.data.model.ItemDetail?) {
+     *  The backdrop goes in the fragment's root view right ABOVE
+     *  VideoSupportFragment's full-screen SurfaceView (the root's first
+     *  child), under Leanback's background dim and controls dock, which
+     *  fade off together and leave the cover clear. It used to go in as
+     *  the first child, below the SurfaceView, and a SurfaceView punches
+     *  a hole through whatever is drawn beneath it to show its own
+     *  surface, empty for audio: the now-playing screen was black, and
+     *  stayed black after the screensaver. */
+    private fun bindAudioBackdrop(item: tv.onscreen.android.data.model.ItemDetail?, parentPosterPath: String?) {
         val root = view as? android.view.ViewGroup ?: return
         val existing = root.findViewWithTag<android.view.View>("audio_backdrop")
         if (!isAudioItem() || item == null) {
             if (existing != null) root.removeView(existing)
             return
         }
-        val artPath = item.poster_path ?: item.fanart_path
+        // A track or chapter often has no art of its own: its album's or
+        // book's cover then (PlaybackUiState.parentPosterPath).
+        val artPath = item.poster_path?.takeIf { it.isNotBlank() }
+            ?: item.fanart_path?.takeIf { it.isNotBlank() }
+            ?: parentPosterPath
         if (artPath.isNullOrEmpty()) {
             if (existing != null) root.removeView(existing)
             return
@@ -538,9 +597,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 elevation = 12f * density
                 frame.addView(this)
             }
-            // Insert the backdrop as the first child so the existing
-            // surface + transport stay on top in the z-order.
-            root.addView(frame, 0)
+            // Just above the video surface (see above), so the background
+            // dim and the transport stay on top in the z-order. No surface
+            // (indexOfChild -1): the first child, under everything else.
+            root.addView(frame, root.indexOfChild(surfaceView) + 1)
             frame
         }
 
@@ -549,6 +609,25 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val url = tv.onscreen.android.data.artworkUrl(serverUrl, artPath, width = 800)
         bg?.let { coil.Coil.imageLoader(ctx).enqueue(coil.request.ImageRequest.Builder(ctx).data(url).target(it).build()) }
         cover?.let { coil.Coil.imageLoader(ctx).enqueue(coil.request.ImageRequest.Builder(ctx).data(url).target(it).build()) }
+        // A player taken back from the background service has its tracks
+        // already: no onTracksChanged comes to settle this.
+        player?.let { syncAudioBackdrop(it.currentTracks) }
+    }
+
+    /**
+     * Show the audio backdrop only while the player renders no picture. It
+     * is opaque and sits above the video surface, so it hid what an audio
+     * item with a real video stream shows there: an illustrated audiobook's
+     * slideshow, a music video filed in a music library. From the tracks
+     * the player selected rather than the file's probed video codec: they
+     * are what reaches the screen, whatever the source (the file, or a
+     * server stream of it), and a video stream the device can't decode
+     * (never selected) leaves the cover up. Called again on every change of
+     * the tracks (onTracksChanged): no tracks yet, or audio only, shows it.
+     */
+    private fun syncAudioBackdrop(tracks: androidx.media3.common.Tracks) {
+        val frame = view?.findViewWithTag<View>("audio_backdrop") ?: return
+        frame.isVisible = !tracks.isTypeSelected(C.TRACK_TYPE_VIDEO)
     }
 
     private fun installTrickplaySeekProvider(itemId: String) {
@@ -559,6 +638,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // released — so an audio switch or subtitle reload silently orphaned a
         // full sheet cache's worth of native bitmap memory on a 1 GB TV box.
         (glue?.seekProvider as? TrickplaySeekProvider)?.release()
+        // Until the cues are in, and for good on a title without them, the
+        // glue keeps what playSource set: the positions-only provider for a
+        // server session (never none: see SeekPositionsProvider), none for
+        // direct play.
         trickplayJob = viewLifecycleOwner.lifecycleScope.launch {
             val status = trickplayRepo.status(itemId)
             if (status.status != "done") return@launch
@@ -625,14 +708,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     /** The player to read this item's position from, with the offset of
-     *  the session it reads: this screen's own, or the parked one
+     *  the session it reads and whether that is a server session (not
+     *  direct play): this screen's own, or the parked one
      *  ([parkedPlayerOfThisItem]). Read only: the service drives a parked
      *  player. */
-    private fun positionSource(): Pair<ExoPlayer, Long>? {
-        player?.let { return it to viewModel.hlsOffsetMs }
+    private fun positionSource(): Triple<ExoPlayer, Long, Boolean>? {
+        player?.let { return Triple(it, viewModel.hlsOffsetMs, playsServerSession) }
         val parked = parkedPlayerOfThisItem() ?: return null
-        val offsetMs = tv.onscreen.android.playback.AudioHandoff.peekMetadata()?.hlsOffsetMs ?: return null
-        return parked to offsetMs
+        val meta = tv.onscreen.android.playback.AudioHandoff.peekMetadata() ?: return null
+        return Triple(parked, meta.hlsOffsetMs, meta.session != null)
     }
 
     /**
@@ -668,14 +752,14 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val item = currentItem
                 val source = positionSource()
                 if (item != null && source != null) {
-                    val (exo, offsetMs) = source
+                    val (exo, offsetMs, hlsSession) = source
                     val pos = exo.currentPosition + offsetMs
                     // Content-time duration — see contentDurationMs(). Using
                     // the player's session-relative duration here made pos/dur
                     // cross the manager's 0.9 "finished" threshold almost
                     // immediately on any resumed HLS session, so the launcher's
                     // Continue Watching row was deleted mid-movie.
-                    val dur = contentDurationMs(exo, offsetMs)
+                    val dur = contentDurationMs(exo, offsetMs, hlsSession)
                     if (dur > 0L && pos > 0L) {
                         // Off the main thread: publishContinueWatching does a
                         // full ContentResolver query plus an insert/update —
@@ -805,16 +889,45 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      * never arms the auto-hide timer — startFadeTimer is only reached from
      * setFadingEnabled, onResume and tickle() — so the bar it raised sat there
      * permanently over the picture. tickle() is stopFadeTimer + showControlsOverlay
-     * + startFadeTimer, and is what leanback itself calls on user input.
+     * + startFadeTimer, and is what leanback itself calls on user input. (The
+     * last only with a tickle timeout, which leanback 1.0.0 leaves at 0: the
+     * theme sets one, themes.xml.)
      */
     private fun restoreFocusFromOverlay(showBar: Boolean) {
         if (!isAdded) return
-        val dock = view?.findViewById<View>(androidx.leanback.R.id.playback_controls_dock)
-        val took = dock?.requestFocus() == true
+        val took = focusControlsDock()
         // Fall back to tickle() when the dock refused focus, so the D-pad can
         // never end up stranded on a hidden overlay.
         if (showBar || !took) tickle()
     }
+
+    /** Screen-on while a picture plays: a video, or an audio item that shows
+     *  one (an illustrated audiobook, a music video; see syncAudioBackdrop).
+     *  Not for a still cover, so music lets the screensaver start (TV-BA). */
+    private fun syncKeepScreenOn(isPlaying: Boolean) {
+        val window = activity?.window ?: return
+        val picture = !isAudioItem() || player?.currentTracks?.isTypeSelected(C.TRACK_TYPE_VIDEO) == true
+        if (isPlaying && picture) {
+            window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        } else {
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // A player taken over already playing (the background service's, or a
+        // track re-entered while it plays) never changes isPlaying here, so
+        // syncControlsAutoHide doesn't run, and leanback's own resume fade
+        // starts with nothing focused on some TVs (the Hisense), where OK can't
+        // bring the controls back.
+        if (player?.isPlaying == true && view?.hasFocus() == false) focusControlsDock()
+    }
+
+    /** Move focus into leanback's controls dock (see restoreFocusFromOverlay
+     *  for why the dock). True when it took it. */
+    private fun focusControlsDock(): Boolean =
+        view?.findViewById<View>(androidx.leanback.R.id.playback_controls_dock)?.requestFocus() == true
 
     /** Show/hide a centered indeterminate spinner while the player buffers — the
      *  transcode warm-up on a cold start would otherwise be a black screen with
@@ -1040,6 +1153,17 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             offsetMs = { viewModel.hlsOffsetMs },
             contentDurationMs = { contentDurationMs() },
             onSeekOutsideWindow = { target -> viewModel.reissueAt(target) },
+            // A server session stopped by an error loads again on a new
+            // source where it stopped (ContentTimeForwardingPlayer.prepare).
+            reloadStopped = {
+                val source = currentSource
+                if (source is PlaybackSource.Hls && player === exo) {
+                    playSource(source, atMs = exo.currentPosition)
+                    true
+                } else {
+                    false
+                }
+            },
         )
         val adapter = LeanbackPlayerAdapter(requireContext(), glueFacingPlayer, UPDATE_PERIOD_MS)
         val host = VideoSupportFragmentGlueHost(this)
@@ -1102,6 +1226,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }.apply {
             this.host = host
             isSeekEnabled = true
+            // The seek provider is per source: playSource sets it.
         }
 
         val listener = createPlayerListener()
@@ -1126,6 +1251,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // included): the hold is over, and its end mustn't restart a
             // pause that follows.
             if (playWhenReady) heldForFrameRate = false
+            // Paused (or played) mid-rebuffer: isPlaying was false already,
+            // so onIsPlayingChanged won't follow this change (the rebuffer
+            // only held the heartbeat).
+            val exo = player ?: return
+            if (exo.playbackState == Player.STATE_BUFFERING) followHeartbeat(exo)
+        }
+
+        override fun onPlaybackSuppressionReasonChanged(playbackSuppressionReason: Int) {
+            syncControlsAutoHide()
         }
 
         override fun onTracksChanged(tracks: androidx.media3.common.Tracks) {
@@ -1148,6 +1282,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     frameRates()?.releaseNow()
                 }
             }
+            syncAudioBackdrop(tracks)
+            syncKeepScreenOn(player?.isPlaying == true)
         }
 
         override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -1162,17 +1298,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // long as they played (Play's TV app quality guideline
             // TV-BA). The audio carries on under the screensaver: onStop
             // parks it in the background service as for HOME.
-            val window = activity?.window
-            if (isPlaying && !isAudioItem()) {
-                window?.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            } else {
-                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-            }
-            if (isPlaying) {
-                progressTracker?.start(arguments?.getString(ARG_ITEM_ID) ?: return, viewModel.hlsOffsetMs)
-            } else {
-                progressTracker?.onPause()
-            }
+            syncKeepScreenOn(isPlaying)
+            player?.let { followHeartbeat(it, isPlaying) }
+            syncControlsAutoHide()
         }
 
         override fun onPlaybackStateChanged(state: Int) {
@@ -1196,7 +1324,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val next = nextEpisode
                 when {
                     // Includes a book's last chapter: the book ends there.
-                    next == null -> parentFragmentManager.popBackStack()
+                    next == null -> leavePlayback()
                     // Audio: chain to the next track, or the book's next
                     // chapter, silently. The Up Next overlay (with title +
                     // countdown) makes sense between episodes — between
@@ -1205,7 +1333,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     isAudioItem() -> goToNextEpisode(next)
                     // The user already declined. Leave playback rather than
                     // re-offering — this is the whole point of Cancel.
-                    upNextDeclined -> parentFragmentManager.popBackStack()
+                    upNextDeclined -> leavePlayback()
                     else -> showUpNextOverlay(immediate = true)
                 }
             }
@@ -1232,6 +1360,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     "direct play failed (${error.errorCodeName}); falling back to server transcode",
                     error,
                 )
+                // Paused stays paused (a video reopened after the
+                // screensaver fails here, before anyone pressed play); the
+                // display-switch hold is no pause of the user's.
+                startPaused = player?.playWhenReady == false && !heldForFrameRate
                 viewModel.fallbackFromDirectPlay(pos)
                 return
             }
@@ -1271,6 +1403,56 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 return
             }
             showErrorDialog(msg)
+        }
+    }
+
+    /** Run, hold or pause the progress heartbeat for [exo] as it now stands
+     *  (see ProgressTracker.heartbeatFor). */
+    private fun followHeartbeat(exo: ExoPlayer, isPlaying: Boolean = exo.isPlaying) {
+        val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
+        val heartbeat = ProgressTracker.heartbeatFor(isPlaying, exo.playWhenReady, exo.playbackState, heldForFrameRate)
+        progressTracker?.follow(heartbeat, itemId, viewModel.hlsOffsetMs)
+    }
+
+    /**
+     * Keep the controls' auto-hide in step with the player. The glue turns
+     * it on and off from the adapter's isPlaying, but the adapter only tells
+     * the glue when play/pause or the playback state changes, while its
+     * isPlaying also counts a playback suppression (another app holding the
+     * audio a moment): one lifting later went unnoticed, and the controls
+     * stayed up over the picture for the rest of the video. And once turned
+     * on, the fade only starts when the player's view has focus, which on
+     * some TVs (the Hisense) it doesn't at the start. So: tell the glue again
+     * when its auto-hide disagrees with the adapter, then restart the fade
+     * of controls that are up over playback. Music and books fade the same
+     * way, down to their cover (bindAudioBackdrop), and with the controls
+     * down LEFT / RIGHT skip through them (onActivityKeyEvent).
+     *
+     * The restart is tickle(), which re-arms the fade for the theme's
+     * playbackControlsAutoHideTickleTimeout (5 s, themes.xml) whatever has
+     * focus. Leanback 1.0.0's default for it is 0, and then tickle() only
+     * CANCELS the fade: this call undid the one the glue had just started
+     * (Play from pause, a start with no key pressed, Up Next's next
+     * episode), and the controls stayed up over the picture for good.
+     *
+     * Not from the player's own isPlaying: that is false during a rebuffer,
+     * and turning auto-hide off brings the controls up.
+     */
+    private fun syncControlsAutoHide() {
+        val exo = player ?: return
+        val adapter = glue?.playerAdapter ?: return
+        if (isControlsOverlayAutoHideEnabled != adapter.isPlaying) {
+            adapter.callback?.onPlayStateChanged(adapter)
+        }
+        if (exo.isPlaying && isResumed && isControlsOverlayVisible && isControlsOverlayAutoHideEnabled) {
+            // Nothing in the player focused (the Hisense, at the start): the
+            // fade below runs all the same, and then nothing took OK to bring
+            // the controls back, leanback's only key interceptor being on the
+            // controls' own grid. Focus goes there first, as after a Skip or
+            // Up Next card (restoreFocusFromOverlay). Never away from those
+            // cards: they are in this view, so it has focus while they do.
+            if (view?.hasFocus() == false) focusControlsDock()
+            tickle()
         }
     }
 
@@ -1336,8 +1518,26 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun frameRates(): FrameRateSwitcher? =
         (activity as? tv.onscreen.android.ui.MainActivity)?.frameRates
 
-    private fun playSource(source: PlaybackSource) {
+    /** Load [source] into the player, at its own start, or at [atMs] (player
+     *  time) instead: a re-attach of the same source keeps its place, with the
+     *  one seek. */
+    private fun playSource(source: PlaybackSource, atMs: Long? = null) {
         val exo = player ?: return
+        errorShownForSource = false
+        // A server session scrubs through the positions-only provider until
+        // (unless) its trickplay loads: with none, Leanback seeks at every
+        // step and a resumed session re-issued itself mid-scrub (see
+        // SeekPositionsProvider). Direct play keeps Leanback's per-step seek,
+        // which shows the frame under the bar as the user scrubs.
+        if (glue?.seekProvider !is TrickplaySeekProvider) {
+            glue?.seekProvider = if (source is PlaybackSource.Hls) seekPositions else null
+        }
+        // Paused only when [startPaused] asks (reopened after the screensaver,
+        // or a fallback for a paused direct play): it shows the frame it
+        // stopped on, and the play control starts it.
+        val play = !startPaused
+        startPaused = false
+        startPausedForStop = false
         when (source) {
             is PlaybackSource.DirectPlay -> {
                 // Container subtitle tracks come from ExoPlayer's own
@@ -1356,8 +1556,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                         .build(),
                 )
                 exo.prepare()
-                if (source.startMs > 0) exo.seekTo(source.startMs)
-                exo.playWhenReady = true
+                val startMs = atMs ?: source.startMs
+                if (startMs > 0) exo.seekTo(startMs)
+                exo.playWhenReady = play
             }
             is PlaybackSource.Hls -> {
                 // playlistUrl is clean (see StreamTokenVault); the resolver puts
@@ -1367,9 +1568,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 val factory = tv.onscreen.android.playback.StreamTokenVault.resolverFactory(
                     tv.onscreen.android.playback.TranscodeHls.httpFactory(),
                 )
+                // The item pins a start at 0 to the playlist's head (see
+                // TranscodeHls.mediaItem).
                 val hlsSource = HlsMediaSource.Factory(factory)
                     .setLoadErrorHandlingPolicy(tv.onscreen.android.playback.TranscodeHls.errorPolicy())
-                    .createMediaSource(MediaItem.fromUri(Uri.parse(source.playlistUrl)))
+                    .createMediaSource(tv.onscreen.android.playback.TranscodeHls.mediaItem(source.playlistUrl))
                 // Side-load the subtitle tracks. A server HLS session carries
                 // NO text streams (it maps only video + one audio; subtitles
                 // are emitted as separate .vtt files), so without this the
@@ -1397,12 +1600,23 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // SingleSampleMediaSource is deprecated in Media3 (it hands the
                 // text renderer raw WebVTT); the player keeps render-time
                 // decoding on for it. See subtitleRenderersFactory.
+                //
+                // Eight tries, not Media3's three: the server extracts an
+                // embedded subtitle from the whole file on its first request
+                // (25–60 s for a 4K remux, longer queued behind another), and
+                // a try that times out doesn't stop it, so a later one finds
+                // it cached. Three ran out on a large remux (the Hisense).
+                val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
                 @Suppress("DEPRECATION")
                 val subtitleSources = subtitleConfigurations().map { cfg ->
                     androidx.media3.exoplayer.source.SingleSampleMediaSource
                         .Factory(subFactory)
                         .setTreatLoadErrorsAsEndOfStream(true)
+                        .setLoadErrorHandlingPolicy(
+                            androidx.media3.exoplayer.upstream.DefaultLoadErrorHandlingPolicy(SUBTITLE_LOAD_TRIES),
+                        )
                         .createMediaSource(cfg, C.TIME_UNSET)
+                        .apply { addEventListener(mainHandler, SideLoadFailureListener(this@PlaybackFragment, cfg.id)) }
                 }
                 val mediaSource = if (subtitleSources.isEmpty()) {
                     hlsSource
@@ -1414,21 +1628,58 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 }
                 exo.setMediaSource(mediaSource)
                 exo.prepare()
-                // seg0AudioGapSec compensation. After a mid-stream
-                // resume with AC3 → AAC re-encode, the first audible
-                // AAC frame lands a few seconds into segment 0. Seek
-                // there before play starts so the user sees the first
-                // video frame and hears the first audio frame at the
-                // same instant — without this, the screen shows
-                // silent video while the audio pipeline warms up.
-                // Zero on the legacy / direct-resume path; the seek
-                // is a no-op there.
-                if (source.initialSeekMs > 0) {
-                    exo.seekTo(source.initialSeekMs)
-                }
-                exo.playWhenReady = true
+                // Start where the view model worked out (initialSeekMs): on
+                // the requested content position inside the stream, not the
+                // keyframe the session opened on (or 0:00 of a stream that
+                // covers the whole file), and past seg 0's silent head after
+                // a mid-stream AC3 → AAC start. A start at 0 is the stream's
+                // head only through the item's live target offset
+                // (TranscodeHls.mediaItem): until its ENDLIST the playlist is
+                // live, and a seek to 0 before it loads counts as "the
+                // default position", which is otherwise near the live edge.
+                exo.seekTo(atMs ?: source.initialSeekMs)
+                exo.playWhenReady = play
             }
         }
+    }
+
+    /**
+     * Says so when the side-loaded subtitle [trackId] gives up loading: Media3
+     * reports a load error that ends the tries (wasCanceled), then plays on
+     * with the track empty, so a picked subtitle just never showed. A
+     * side-load only starts loading while its track is selected, so it was
+     * one the viewer picked (or their saved preference did). Holds the
+     * fragment weakly: the media source lives as long as the player, which
+     * can outlive the screen.
+     */
+    @UnstableApi
+    private class SideLoadFailureListener(
+        fragment: PlaybackFragment,
+        private val trackId: String?,
+    ) : MediaSourceEventListener {
+        private val fragment = java.lang.ref.WeakReference(fragment)
+
+        override fun onLoadError(
+            windowIndex: Int,
+            mediaPeriodId: MediaSource.MediaPeriodId?,
+            loadEventInfo: LoadEventInfo,
+            mediaLoadData: MediaLoadData,
+            error: java.io.IOException,
+            wasCanceled: Boolean,
+        ) {
+            if (wasCanceled) fragment.get()?.onSubtitleUnavailable(trackId)
+        }
+    }
+
+    /** The side-loaded subtitle [trackId] gave up loading
+     *  ([SideLoadFailureListener]). Said only while it is still the one
+     *  selected: turning a track off doesn't stop its load, which keeps
+     *  trying (a minute and more on a large remux), and the message then
+     *  came long after the viewer had moved on to another track or to Off. */
+    private fun onSubtitleUnavailable(trackId: String?) {
+        if (!isAdded) return
+        if (trackId != null && sideLoadedTextGroup(trackId)?.isSelected != true) return
+        Toast.makeText(requireContext(), R.string.subtitles_unavailable, Toast.LENGTH_LONG).show()
     }
 
     /**
@@ -1466,11 +1717,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         //   (Previous `> 1` gate hid the button on files with a single
         //   audio track, which is most modern movies — surprising for
         //   users who came from another player.)
-        // - Subtitles: always shown. Even when the file has zero
+        // - Subtitles: always shown for video. Even when the file has zero
         //   embedded streams, the picker still offers "Off" and
         //   "Find more online…" (OpenSubtitles search) — both of
         //   those are useful surfaces a user expects to reach from
-        //   playback regardless of what the file ships with.
+        //   playback regardless of what the file ships with. Never for
+        //   music and books, which have nothing to caption.
         // - Chapters: ≥ 2 (single chapter == the whole movie, useless).
         // - Speed: audiobooks and their chapter files only (a 2× movie is
         //   rarely what users want, and music stays at 1×).
@@ -1491,7 +1743,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             ?: return
         secondary.clear()
         if (audioStreams.isNotEmpty()) secondary.add(aa)
-        secondary.add(sa) // always — picker has "Off" + "Find more online…" entries
+        if (!isAudioItem()) secondary.add(sa) // picker has "Off" + "Find more online…" entries
         if (chapters.size >= 2) secondary.add(ca)
         if (AudiobookSpeed.hasSpeed(currentItemType)) secondary.add(sp)
 
@@ -1513,9 +1765,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // is not in this session's window at all, so seekTo could only clamp
         // to the resume point — "rewind" appeared to do nothing at the exact
         // moment a user wants it (they resumed too far in). Re-issue the
-        // session at the content target instead. Leanback's scrub bar is only
-        // focusable when a trickplay provider exists, so on most titles these
-        // keys are the ONLY seek affordance.
+        // session at the content target instead. With the overlay hidden,
+        // these keys are the only seek affordance.
         if (rawTarget < 0 && offset > 0) {
             viewModel.reissueAt((offset + rawTarget).coerceAtLeast(0L))
             return
@@ -1531,7 +1782,17 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun togglePlayPause() {
         val exo = player ?: return
         heldForFrameRate = false
-        if (exo.isPlaying) exo.pause() else exo.play()
+        if (exo.isPlaying) exo.pause() else playFromKey(exo)
+    }
+
+    /** The remote's Play: after an error, the transport bar's Play (see
+     *  PlaybackHelper.playFromKey). Only once the error was shown for the
+     *  current source: an IDLE direct play with an error and no dialog is a
+     *  fallback transcode still starting, and preparing the failed source
+     *  again would race it. Never once the server refused playback, which
+     *  that would load again. */
+    private fun playFromKey(exo: Player) {
+        PlaybackHelper.playFromKey(exo, glue?.playerAdapter?.takeUnless { playbackRefused || !errorShownForSource })
     }
 
     /**
@@ -1555,7 +1816,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // that's their contract on every TV platform.
         when (event.keyCode) {
             KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> { togglePlayPause(); return true }
-            KeyEvent.KEYCODE_MEDIA_PLAY -> { heldForFrameRate = false; player?.play(); return true }
+            KeyEvent.KEYCODE_MEDIA_PLAY -> { heldForFrameRate = false; player?.let(::playFromKey); return true }
             KeyEvent.KEYCODE_MEDIA_PAUSE -> { heldForFrameRate = false; player?.pause(); return true }
             KeyEvent.KEYCODE_MEDIA_STOP -> { heldForFrameRate = false; player?.pause(); return true }
             KeyEvent.KEYCODE_MEDIA_FAST_FORWARD -> { seekRelative(SKIP_FORWARD_MS); return true }
@@ -1563,9 +1824,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // Track skip for music, chapter skip for a multi-file book (the
             // NEXT/PREV keys on most remotes). NEXT advances to the resolved
             // next sibling; PREVIOUS restarts the current track (no
-            // previous-sibling resolver yet).
+            // previous-sibling resolver yet), through the transport bar's
+            // content-time seek: the raw player's 0 is a resumed session's
+            // resume point, and 0:00 before its window re-issues it there.
             KeyEvent.KEYCODE_MEDIA_NEXT -> { nextEpisode?.let { goToNextEpisode(it) }; return true }
-            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { player?.seekTo(0); return true }
+            KeyEvent.KEYCODE_MEDIA_PREVIOUS -> { if (player != null) glue?.playerAdapter?.seekTo(0L); return true }
         }
         if (isControlsOverlayVisible) return false
         // The Skip (intro/credits) and Up Next overlays own focus while visible but
@@ -1583,18 +1846,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     /** Build the ExoPlayer with a buffer profile chosen by the
-     *  device's available RAM. Low-RAM Fire TV / Android TV devices
-     *  (1 GB and similar — `ActivityManager.isLowRamDevice()` true)
-     *  get tighter LoadControl bounds: ~halved buffer durations and
-     *  a lower target byte cap. Without this, the default 50 s
-     *  buffer pulls 30-60 MB of decoded video per session, which on
-     *  a 1 GB box leaves the rest of the app fighting the OOM
-     *  killer for what's left. Matches Google's TV-ME quality
-     *  guideline for memory limits on low-RAM devices. */
+     *  device's available RAM, and Media3 1.3.1's start thresholds
+     *  (see BufferProfile). */
     private fun buildExoPlayer(): ExoPlayer {
         val ctx = requireContext()
-        val am = ctx.getSystemService(android.content.Context.ACTIVITY_SERVICE)
-            as? android.app.ActivityManager
         // Same stack ExoPlayer.Builder builds by default (DefaultMediaSourceFactory
         // over DefaultDataSource over DefaultHttpDataSource), wrapped in the
         // StreamTokenVault resolver: direct-play MediaItems carry CLEAN urls so
@@ -1607,23 +1862,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         )
         val builder = ExoPlayer.Builder(ctx)
             .withoutStuckDetection()
+            .withBufferProfile(ctx)
             .setRenderersFactory(subtitleRenderersFactory(ctx))
             .setMediaSourceFactory(
                 androidx.media3.exoplayer.source.DefaultMediaSourceFactory(dsFactory),
             )
-        if (am?.isLowRamDevice == true) {
-            val loadControl = androidx.media3.exoplayer.DefaultLoadControl.Builder()
-                .setBufferDurationsMs(
-                    /* minBufferMs */ 15_000,
-                    /* maxBufferMs */ 30_000,
-                    /* bufferForPlaybackMs */ 1_500,
-                    /* bufferForPlaybackAfterRebufferMs */ 3_000,
-                )
-                .setTargetBufferBytes(16 * 1024 * 1024) // 16 MB cap (default ~64 MB)
-                .setPrioritizeTimeOverSizeThresholds(true)
-                .build()
-            builder.setLoadControl(loadControl)
-        }
         return builder.build().apply {
             // Debug builds: Media3's stock event log (track groups, selection
             // changes, load errors) — the only practical way to diagnose
@@ -1843,27 +2086,22 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun subtitleRows(): List<SubtitleRow> {
         val sources = viewModel.uiState.value.subtitleSources
         val isHls = viewModel.uiState.value.source is PlaybackSource.Hls
-        fun decorate(name: String, forced: Boolean, sdh: Boolean, external: Boolean) = buildString {
-            append(name)
-            if (forced) append(" (forced)")
-            if (sdh) append(" (SDH)")
-            if (external) append(" (downloaded)")
-        }
+        // Side-loads carry their picker label (SubtitleLabel) already.
         return if (isHls) {
             // Every renderable track is a side-load (the session playlist
             // carries no text streams). Image-based tracks are already
             // filtered out — the server can't serve them as VTT.
-            sources.map { s ->
-                SubtitleRow(decorate(s.label, s.forced, s.sdh, s.embeddedIndex == null), s.trackId, -1)
-            }
+            sources.map { s -> SubtitleRow(s.label, s.trackId, -1) }
         } else {
             // Direct play: container tracks render natively (PGS included) in
             // container order, plus any external side-loads on the end.
             subtitleStreams.mapIndexed { ord, s ->
-                val name = s.title.ifBlank { s.language.ifBlank { "Track ${s.index}" } }
-                SubtitleRow(decorate(name, s.forced, s.sdh, false), null, ord)
+                val label = SubtitleLabel.of(
+                    s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = "Track ${s.index}",
+                )
+                SubtitleRow(label, null, ord)
             } + sources.filter { it.embeddedIndex == null }.map { s ->
-                SubtitleRow(decorate(s.label, s.forced, s.sdh, true), s.trackId, -1)
+                SubtitleRow(s.label, s.trackId, -1)
             }
         }
     }
@@ -2126,14 +2364,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // still popped the overlay and auto-started the next episode
                 // while the user was out of the room.
                 if (!exo.isPlaying) continue
-                val pos = exo.currentPosition
-                val dur = exo.duration
-                if (dur > 0 && dur != Long.MAX_VALUE) {
-                    val remaining = dur - pos
-                    if (remaining in 0..(UP_NEXT_LEAD_SEC * 1000L) && !upNextShown) {
-                        showUpNextOverlay(immediate = false)
-                    }
-                }
+                // Content time on both sides: a remux's player duration is
+                // only the playlist written so far, which put the card up
+                // mid-film on a resumed session.
+                val due = PlaybackHelper.upNextDue(
+                    contentPositionMs = exo.currentPosition + viewModel.hlsOffsetMs,
+                    contentDurationMs = contentDurationMs(),
+                    leadMs = UP_NEXT_LEAD_SEC * 1000L,
+                )
+                if (due && !upNextShown) showUpNextOverlay(immediate = false)
             }
         }
     }
@@ -2193,8 +2432,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 delay(1000)
                 if (!isActive) return@launch
                 // Hold the countdown while paused — the user who catches the
-                // card and hits pause has explicitly asked to stay.
-                if (player?.isPlaying != false) sec--
+                // card and hits pause has explicitly asked to stay. It runs
+                // at the end of the stream too (see upNextCountdownTicks).
+                val ticks = player?.let {
+                    PlaybackHelper.upNextCountdownTicks(it.isPlaying, it.playbackState, it.playWhenReady)
+                } != false
+                if (ticks) sec--
             }
             goToNextEpisode(next)
         }
@@ -2232,13 +2475,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         //
         // This is the single choke point for every advance (countdown, Play
         // Now, end-of-stream, MEDIA_NEXT), so guarding here covers them all.
-        val fm = parentFragmentManager
-        if (fm.isStateSaved || !isAdded) return
+        if (!isAdded || parentFragmentManager.isStateSaved) return
 
         navigatedToNext = true
         countdownJob?.cancel()
         upNextJob?.cancel()
         progressTracker?.onStop()
+        // This item is done. The replace below pauses and stops this screen,
+        // whose 'paused' after the 'stopped' put the item back in Now Playing.
+        retireProgressTracker()
 
         // The book's next chapter plays at the speed this one was at: the
         // next fragment builds a fresh player, which would otherwise start at
@@ -2253,23 +2498,28 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             )
         }
 
-        // Pop this fragment's own back-stack entry before pushing the next
-        // episode's, so the container keeps exactly one recorded owner.
-        // Previously the advance replaced the fragment WITHOUT adding to the
-        // back stack, while the entry that brought us here still recorded
-        // "remove DetailFragment, add PlaybackFragment#1" — so BACK from
-        // episode 2 re-added the detail screen over a still-playing episode 2
-        // rather than leaving playback.
-        fm.popBackStack()
-        fm.beginTransaction()
-            .replace(R.id.main_container, newInstance(ep.id, 0, bookSpeed))
-            .addToBackStack(null)
-            .commit()
+        // The next item's player takes this one's place in the back stack
+        // (replaceSelfWith): BACK from it returns to the screen before this
+        // one, or leaves the app from a root player. Always popping and
+        // pushing gave a root player (a Watch Next tile, a transfer) an entry
+        // to come back to, so BACK from episode 2 played episode 1 again.
+        replaceSelfWith(newInstance(ep.id, 0, bookSpeed))
+    }
+
+    /** Leave the player screen at the end of playback (nothing next, Up
+     *  Next turned down, an error dialog closed), as BACK from it does
+     *  ([PlayerStack.leave]). A pop alone did nothing on a root player, and
+     *  the ended player stayed on screen. Not once stopped: a pop would
+     *  throw, and the way back in resets to Home anyway (MainActivity). */
+    private fun leavePlayback() {
+        if (!isAdded || parentFragmentManager.isStateSaved) return
+        PlayerStack.leave(screens())
     }
 
     /** [leaveOnCancel]: BACK on the dialog also leaves playback, instead of
      *  dropping the user back onto a player whose controls still work. */
     private fun showErrorDialog(message: String, leaveOnCancel: Boolean = false) {
+        errorShownForSource = true
         val (title, body) = when {
             message == "content_restricted" ->
                 getString(R.string.content_restricted) to ""
@@ -2302,15 +2552,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             .setMessage(body)
             .setPositiveButton(android.R.string.ok) { d, _ ->
                 d.dismiss()
-                // Guard the detached case: onDestroyView dismisses tracked
-                // dialogs, but a dismiss already in flight can still deliver
-                // this callback, and popBackStack on a detached fragment
-                // throws IllegalStateException.
-                if (isAdded) parentFragmentManager.popBackStack()
+                // Guarded for the detached case (leavePlayback): onDestroyView
+                // dismisses tracked dialogs, but a dismiss already in flight
+                // can still deliver this callback, and popBackStack on a
+                // detached fragment throws IllegalStateException.
+                leavePlayback()
             }
             .apply {
                 if (leaveOnCancel) {
-                    setOnCancelListener { if (isAdded) parentFragmentManager.popBackStack() }
+                    setOnCancelListener { leavePlayback() }
                 }
             }
             .create()
@@ -2328,24 +2578,108 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     /** Content-time duration for progress reports + completion ratios. The
      *  arithmetic lives in [PlaybackHelper.contentDurationMs] so it is unit
      *  testable; this just feeds it the live player/item state. */
-    private fun contentDurationMs(): Long = contentDurationMs(player, viewModel.hlsOffsetMs)
+    private fun contentDurationMs(): Long = contentDurationMs(player, viewModel.hlsOffsetMs, playsServerSession)
+
+    /** [player] reads a server session (remux / transcode), not the file:
+     *  the current source's kind, or before the first source, whether the
+     *  player taken back from the background service came with a session. */
+    private val playsServerSession: Boolean
+        get() = currentSource?.let { it is PlaybackSource.Hls } ?: (resumedSession != null)
 
     /** [contentDurationMs] for [exo] reading a session that starts at
-     *  [hlsOffsetMs]: a parked player, whose session left the view model. */
-    private fun contentDurationMs(exo: ExoPlayer?, hlsOffsetMs: Long): Long = PlaybackHelper.contentDurationMs(
-        itemDurationMs = currentItem?.duration_ms ?: currentItem?.files?.firstOrNull()?.duration_ms,
-        playerDurationMs = exo?.duration ?: 0L,
-        hlsOffsetMs = hlsOffsetMs,
-    )
+     *  [hlsOffsetMs] ([hlsSession]: a server session, not direct play): a
+     *  parked player, whose session left the view model. */
+    private fun contentDurationMs(exo: ExoPlayer?, hlsOffsetMs: Long, hlsSession: Boolean): Long =
+        PlaybackHelper.contentDurationMs(
+            listedDurationMs = listedDurationMs(currentItem),
+            playerDurationMs = exo?.duration ?: 0L,
+            hlsOffsetMs = hlsOffsetMs,
+            hlsSession = hlsSession,
+            playerWindowDynamic = exo?.isCurrentMediaItemDynamic ?: false,
+        )
+
+    /** [PlaybackHelper.listedDurationMs] for [item] played from its first
+     *  file, the one PlaybackViewModel.prepare plays. */
+    private fun listedDurationMs(item: tv.onscreen.android.data.model.ItemDetail?): Long? =
+        PlaybackHelper.listedDurationMs(item?.files?.firstOrNull()?.duration_ms, item?.duration_ms)
 
     override fun onStart() {
         super.onStart()
+        if (startPausedForStop) {
+            startPaused = false
+            startPausedForStop = false
+        }
         // Returning to the foreground after the app was backgrounded
         // (HOME) while audio kept playing in the service. Take the
         // player back so the transport controls drive the same instance
         // again and the service drops its foreground notification.
         if (parkedToService) {
             reclaimAudioPlayerFromService()
+        }
+    }
+
+    /**
+     * MainActivity kept this screen up through the screensaver instead of
+     * resetting to Home (see ScreensaverStop). Music has already taken its
+     * player back from the background service (onStart). A video's player
+     * went in onStop — the decoder and the server session aren't held for as
+     * long as a screensaver may run — which would leave a dead player on
+     * screen: reopen the video where it stopped, paused, as it was left.
+     *
+     * False when there is nothing to come back to: music whose background
+     * player was let go while the screensaver ran, or a video that had
+     * ended (the viewer turned the Up Next card down, or its countdown was
+     * cut short by the stop). The caller resets to Home then, as after any
+     * other stop: kept, the wake landed on a released player under a frozen
+     * Up Next card.
+     */
+    fun resumeAfterScreensaver(): Boolean {
+        if (parkedPlayerLost) return false
+        if (playbackEnded && !isAudioItem()) return false
+        val resumeMs = videoStoppedAtMs ?: return true
+        val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
+        // Stopped again meanwhile: kept for the next wake.
+        if (!isAdded || parentFragmentManager.isStateSaved) return true
+        videoStoppedAtMs = null
+        replaceSelfWith(newInstance(itemId, resumeMs, startPaused = true))
+        return true
+    }
+
+    /**
+     * Swap this player screen for [next] as the one record of it
+     * ([PlayerStack.replaceSelf]): the next item (goToNextEpisode), the
+     * track the background service moved on to, the video reopened after the
+     * screensaver. This screen's own back-stack entry is popped and [next]
+     * pushed in its place, so BACK from [next] returns to the screen before.
+     * A plain replace left this screen's entry behind, and BACK then re-added
+     * the previous screen OVER [next], still playing underneath. A player
+     * that is the root screen (a Watch Next link, a transfer:
+     * MainActivity.showPlayback) has no entry, and [next] stays the root.
+     */
+    private fun replaceSelfWith(next: PlaybackFragment) {
+        PlayerStack.replaceSelf(screens(), next)
+    }
+
+    /** The activity's back stack, for [PlayerStack]. */
+    private fun screens(): PlayerStack.Screens<PlaybackFragment> {
+        val fm = parentFragmentManager
+        return object : PlayerStack.Screens<PlaybackFragment> {
+            override val entryCount: Int get() = fm.backStackEntryCount
+
+            override fun pop() = fm.popBackStack()
+
+            override fun replace(next: PlaybackFragment, record: Boolean) {
+                fm.beginTransaction()
+                    .replace(R.id.main_container, next)
+                    .apply { if (record) addToBackStack(null) }
+                    .commit()
+            }
+
+            // Out to the launcher, as BACK from the root screen goes: up to
+            // Android 11 that finishes the activity too (from 12 a task the
+            // launcher started only moves to the back). Either way the next
+            // start is on Home.
+            override fun leaveApp() = requireActivity().finish()
         }
     }
 
@@ -2372,12 +2706,31 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         publishProgressResult()
 
         if (!isAudioItem()) {
+            // Where the video stood, for this screen coming back without a
+            // reset to Home (the wake from the screensaver:
+            // resumeAfterScreensaver). A player with nothing loaded yet
+            // stands at the start it was opened with; one already torn down
+            // by an earlier stop, where that stop left it.
+            videoStoppedAtMs = if (playbackEnded || playbackRefused || navigatedToNext) {
+                null
+            } else {
+                player?.takeIf { it.currentMediaItem != null }
+                    ?.let { it.currentPosition + viewModel.hlsOffsetMs }
+                    ?: videoStoppedAtMs
+                    ?: arguments?.getLong(ARG_START_MS, 0L)
+            }
             // Tear down video playback as soon as the activity stops so
             // backing out of an episode kills the decoder immediately.
             // On some Google TV builds onDestroyView fires late enough
             // that the user is already on the previous screen with the
             // decoder still running.
             progressTracker?.onStop()
+            // The final report is out; retire the tracker before the player
+            // goes. Its position reads 0 once the player is gone, and this
+            // screen can still pause and stop again (the wake from the
+            // screensaver replaces it): those reported the video paused and
+            // stopped at 0 over the resume point just sent.
+            retireProgressTracker()
             player?.run { stop(); release() }
             player = null
             releaseFrameRate()
@@ -2400,21 +2753,35 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // player is done — goToNextEpisode already reported it stopped — and
         // parking it only for the next fragment to release it again sent a
         // second 'stopped' for it.
-        if (!parkedToService && !playbackEnded && !navigatedToNext && handOffAudioPlayerToService()) {
-            parkedToService = true
-            // The service drives progress reporting from here; stop the
-            // fragment-side ticker without emitting a spurious "stopped"
-            // (the track is still playing).
-            progressTracker?.stop()
-            // It drives the player too, until onStart takes it back
-            // (reclaimAudioPlayerFromService): nothing here may seek it
-            // meanwhile. The service can also release it (end of the queue,
-            // a long pause), and a reference kept here reached a dead
-            // player. What still needs it looks it up while it plays this
-            // item (parkedPlayerOfThisItem).
-            stopPlayerWatchers()
-            player = null
+        if (parkedToService || playbackEnded || navigatedToNext) return
+        if (!handOffAudioPlayerToService()) {
+            // Refused (a failed player waiting on its fallback transcode, or
+            // one not started yet): this screen keeps it, and a source that
+            // arrives while it is stopped would start the music behind the
+            // launcher with no service, notification or system controls. It
+            // loads paused instead; coming back first undoes that.
+            if (player?.isPlaying != true && !startPaused) {
+                startPaused = true
+                startPausedForStop = true
+            }
+            return
         }
+        parkedToService = true
+        // The service drives progress reporting from here; stop the
+        // fragment-side ticker without emitting a spurious "stopped"
+        // (the track is still playing). Refusals are the service's too:
+        // a beat of the ticker's still out that the server refuses, its
+        // own next beat meets as well.
+        progressTracker?.onBlocked = null
+        progressTracker?.stop()
+        // It drives the player too, until onStart takes it back
+        // (reclaimAudioPlayerFromService): nothing here may seek it
+        // meanwhile. The service can also release it (end of the queue,
+        // a long pause), and a reference kept here reached a dead
+        // player. What still needs it looks it up while it plays this
+        // item (parkedPlayerOfThisItem).
+        stopPlayerWatchers()
+        player = null
     }
 
     override fun onDestroyView() {
@@ -2441,8 +2808,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         trickplayJob = null
         watchNextJob?.cancel()
         watchNextJob = null
-        progressTracker?.stop()
-        progressTracker = null
+        retireProgressTracker()
         releaseFrameRate()
 
         // Recycle the trickplay sprite-sheet bitmaps (~30 MB for a feature film)
@@ -2496,16 +2862,22 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  return-to-foreground. Reads currentItem for the duration
      *  fallback, which is populated by the time the reporter fires. */
     private fun installProgressTracker(itemId: String) {
-        // Stop any prior tracker before replacing the field — otherwise the old
-        // one's 10 s heartbeat coroutine keeps running and we double-report.
-        progressTracker?.stop()
-        val tracker = ProgressTracker(viewLifecycleOwner.lifecycleScope, itemRepo)
+        // Retire any prior tracker before replacing the field — otherwise the
+        // old one's 10 s heartbeat coroutine keeps running and we
+        // double-report, and a refusal of a beat it still has out reaches
+        // this screen through its onBlocked.
+        retireProgressTracker()
+        val tracker = ProgressTracker(viewLifecycleOwner.lifecycleScope, itemRepo, reports = progressReports)
         tracker.positionProvider = { player?.currentPosition ?: 0L }
         tracker.durationProvider = { contentDurationMs() }
         tracker.updateOffset(viewModel.hlsOffsetMs)
         // The server refused a 'playing' heartbeat (403): watch cap / allowed
-        // hours, or the item left this profile's reach mid-session.
-        tracker.onBlocked = { sentinel -> stopForRefusedPlayback(sentinel) }
+        // hours, or the item left this profile's reach mid-session. Only
+        // while this screen is still up: the refusal arrives after a round
+        // trip, and the dialog needs an attached fragment (getString).
+        tracker.onBlocked = { sentinel ->
+            if (isAdded && view != null) stopForRefusedPlayback(sentinel)
+        }
         // Bound to the item now; the 10 s heartbeat starts when the player
         // actually plays (onIsPlayingChanged). Starting it here reported
         // "playing" at position 0 while a session was still buffering its
@@ -2514,6 +2886,21 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         tracker.bind(itemId, viewModel.hlsOffsetMs)
         if (player?.isPlaying == true) tracker.start(itemId, viewModel.hlsOffsetMs)
         progressTracker = tracker
+    }
+
+    /** Stop the progress reporter for good, without a report of its own:
+     *  this screen's playback of the item is over, or a new reporter takes
+     *  its place (installProgressTracker). A heartbeat already out still
+     *  lands (it runs on the screen's report lane, progressReports), ahead
+     *  of what the next reporter sends, whose pause or stop waits for it
+     *  as for a beat of its own. A refusal of it is left to whatever
+     *  reports next: the new reporter's own beat, or the next start of the
+     *  item. Heard here, it put up a dialog on a stopped screen, or on one
+     *  already gone (a crash). */
+    private fun retireProgressTracker() {
+        progressTracker?.onBlocked = null
+        progressTracker?.stop()
+        progressTracker = null
     }
 
     /** Tear playback down after the server refused a mid-session heartbeat
@@ -2597,9 +2984,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             player = null
             view?.post {
                 if (isAdded && !parentFragmentManager.isStateSaved) {
-                    parentFragmentManager.beginTransaction()
-                        .replace(R.id.main_container, newInstance(parkedId))
-                        .commit()
+                    replaceSelfWith(newInstance(parkedId))
                 }
             }
             return
@@ -2613,6 +2998,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // replaying the track took back a dead player and landed on Home.
             playerListener = null
             player = null
+            parkedPlayerLost = true
             return
         }
         try {
@@ -2652,14 +3038,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun handOffAudioPlayerToService(): Boolean {
         val exo = player ?: return false
         if (!isAudioItem()) return false
-        // A finished player must never be parked: ExoPlayer keeps
-        // playWhenReady == true at STATE_ENDED, so the playWhenReady gate
-        // below cannot catch end-of-stream on its own.
-        if (exo.playbackState == Player.STATE_ENDED) return false
+        // Finished, failed (the error dialog's OK leaves playback with the
+        // player still in it), never loaded, or paused before it began:
+        // nothing for the service to play (AudioHandoff.parkable).
+        if (!tv.onscreen.android.playback.AudioHandoff.parkable(exo)) return false
         // The server refused this playback mid-session (stopForRefusedPlayback):
         // never hand it to the background service to be resumed from there.
         if (playbackRefused) return false
-        if (!exo.playWhenReady && exo.currentPosition == 0L) return false
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return false
         val ctx = activity?.applicationContext ?: return false
         val item = viewModel.uiState.value.item
@@ -2681,9 +3066,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // The service reporter needs this to absolutise duration the
                 // same way we do — a resumed HLS player only knows its
                 // REMAINING time. See AudioHandoff.Metadata.itemDurationMs.
-                // Chapters and books carry their length on the file, as
-                // contentDurationMs() reads it.
-                itemDurationMs = item?.duration_ms ?: item?.files?.firstOrNull()?.duration_ms,
+                // The file's length first, as contentDurationMs() reads it.
+                itemDurationMs = listedDurationMs(item),
                 session = stream,
                 nowPlaying = viewModel.uiState.value.nowPlaying
                     ?: item?.let { tv.onscreen.android.playback.NowPlaying.of(it) },
@@ -2718,32 +3102,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 }
 
-// Minimal ISO 639-2/B (and a couple of 639-2/T) → 639-1 map, mirroring the
-// web client's normalizeLang. ffprobe usually reports 3-letter codes ("eng",
-// "spa") while the saved subtitle preference is a 2-letter 639-1 code ("en",
-// "es"); the forced-only gate must treat those as equal. Anything not here
-// falls back to a primary-subtag comparison, so an unknown code simply won't
-// false-match.
-private val ISO6392_TO_1: Map<String, String> = mapOf(
-    "eng" to "en", "spa" to "es", "fre" to "fr", "fra" to "fr", "ger" to "de",
-    "deu" to "de", "ita" to "it", "por" to "pt", "rus" to "ru", "jpn" to "ja",
-    "chi" to "zh", "zho" to "zh", "kor" to "ko", "ara" to "ar", "dut" to "nl",
-    "nld" to "nl", "swe" to "sv", "nor" to "no", "dan" to "da", "fin" to "fi",
-    "pol" to "pl", "tur" to "tr", "heb" to "he", "hin" to "hi", "tha" to "th",
-    "vie" to "vi", "ces" to "cs", "cze" to "cs", "gre" to "el", "ell" to "el",
-    "hun" to "hu", "ron" to "ro", "rum" to "ro", "ukr" to "uk", "ind" to "id",
-)
-
-/** Reduce a language tag to a canonical 639-1 primary subtag (lowercased).
- *  "ENG" → "en", "en-US" → "en", "xyz" → "xyz". */
-private fun normalizeSubtitleLang(code: String?): String {
-    if (code.isNullOrEmpty()) return ""
-    val primary = code.lowercase().split('-', '_').first()
-    return ISO6392_TO_1[primary] ?: primary
-}
-
-/** True when two language tags resolve to the same 639-1 primary subtag. */
+/** True when two language tags resolve to the same 639-1 primary subtag
+ *  (SubtitleLabel.normalizeLanguage): ffprobe's "eng" and a saved "en" are
+ *  the same language to the forced-only gate. */
 private fun langMatchesSubtitle(a: String?, b: String?): Boolean {
-    val na = normalizeSubtitleLang(a)
-    return na.isNotEmpty() && na == normalizeSubtitleLang(b)
+    val na = SubtitleLabel.normalizeLanguage(a)
+    return na.isNotEmpty() && na == SubtitleLabel.normalizeLanguage(b)
 }

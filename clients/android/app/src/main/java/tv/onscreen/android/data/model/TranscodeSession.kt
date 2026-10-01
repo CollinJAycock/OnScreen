@@ -12,9 +12,12 @@ data class TranscodeSession(
      *  being stream-copied — input-side -ss snaps back to the previous
      *  keyframe. Use this for the scrubber-time mapping so the seek bar
      *  matches what's on screen instead of advertising an exact resume
-     *  the codec can't honor. Servers older than v2.1 omit this; the
-     *  default 0.0 means "start at session start". */
-    val start_offset_sec: Double = 0.0,
+     *  the codec can't honor. A real 0 is kept: the nearest keyframe is the
+     *  file's first, or the stream covers the whole file (a pre-encoded
+     *  ladder), and the player seeks to the resume point inside it. Null
+     *  (absent) only from a server older than v2.1. See
+     *  StreamSession.opened. */
+    val start_offset_sec: Double? = null,
     /** Skip this many seconds of segment 0 on startup. With AC3 → AAC
      *  re-encode after a mid-stream seek, the AAC encoder's first valid
      *  frame lands a few seconds after video's first packet — starting

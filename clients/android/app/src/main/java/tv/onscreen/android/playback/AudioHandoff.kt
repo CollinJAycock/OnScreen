@@ -42,8 +42,9 @@ object AudioHandoff {
         val parentId: String?,
         val index: Int?,
         val hlsOffsetMs: Long,
-        /** The item's authoritative duration, carried so the service's
-         *  progress reporter can absolutise like the fragment does.
+        /** The length listed for the item (the file's, else the item's
+         *  runtime: PlaybackHelper.listedDurationMs), carried so the
+         *  service's progress reporter can absolutise like the fragment does.
          *  A resumed HLS session's player.duration is only the REMAINING
          *  time, so pairing it with an offset-corrected position reported
          *  e.g. 3 h against a 5 h-remaining duration — crossing the
@@ -96,7 +97,13 @@ object AudioHandoff {
             runCatching {
                 if (player.playbackState != Player.STATE_ENDED) {
                     val pos = player.currentPosition + meta.hlsOffsetMs
-                    val dur = PlaybackHelper.contentDurationMs(meta.itemDurationMs, player.duration, meta.hlsOffsetMs)
+                    val dur = PlaybackHelper.contentDurationMs(
+                        listedDurationMs = meta.itemDurationMs,
+                        playerDurationMs = player.duration,
+                        hlsOffsetMs = meta.hlsOffsetMs,
+                        hlsSession = meta.session != null,
+                        playerWindowDynamic = player.isCurrentMediaItemDynamic,
+                    )
                     if (pos > 0L && dur > 0L) releaseReporter?.invoke(meta, pos.coerceAtMost(dur), dur)
                 }
             }
@@ -106,6 +113,22 @@ object AudioHandoff {
             player.release()
         }
         end(meta?.session)
+    }
+
+    /**
+     * Whether [player] has anything for the service to play, so is worth
+     * parking at all. Not when it finished: ExoPlayer keeps playWhenReady
+     * at STATE_ENDED, so the pause test below can't catch the end of a
+     * stream. Not when an error stopped it or it never loaded (STATE_IDLE,
+     * playWhenReady often still true): parked, the service put up a
+     * "playing" notification and sent heartbeats for audio that wasn't
+     * playing. Not when paused before it ever began.
+     */
+    fun parkable(player: Player): Boolean = when {
+        player.playbackState == Player.STATE_ENDED -> false
+        player.playbackState == Player.STATE_IDLE || player.playerError != null -> false
+        !player.playWhenReady && player.currentPosition == 0L -> false
+        else -> true
     }
 
     /** Park a player for pickup by the MediaSessionService and return this
