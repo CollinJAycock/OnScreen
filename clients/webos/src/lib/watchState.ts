@@ -65,14 +65,6 @@ export function upNextLabel(u: UpNext | null | undefined): string | null {
   }
 }
 
-/** Where the up-next episode starts: its resume point for "resume", the
- *  top otherwise ("Watch again" must not pick up a stale 95% offset). */
-export function upNextStartMs(u: UpNext | null | undefined): number {
-  if (!u?.episode || u.mode !== 'resume') return 0;
-  const off = u.episode.view_offset_ms ?? 0;
-  return Number.isFinite(off) && off > 0 ? off : 0;
-}
-
 /** Which "Mark all …" buttons a show / season offers, from its up-next
  *  state: nothing watched → only "watched"; everything watched → only
  *  "unwatched"; no episodes → neither; part-watched → both. */

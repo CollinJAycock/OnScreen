@@ -14,7 +14,13 @@
     onclick?: () => void;
     /** Holding OK opens this card's options (short press still clicks). */
     onlongpress?: () => void;
+    /** The D-pad focus landed on this card (paged grids load the next page
+     *  as focus nears the end). */
+    onfocus?: () => void;
     autofocus?: boolean;
+    /** Stable identity on the page (data-focus-key): Back to the page puts
+     *  focus on this card again (lib/focus/memory). Unique per page. */
+    focusKey?: string;
   }
   let {
     title,
@@ -25,7 +31,9 @@
     unwatchedCount = null,
     onclick,
     onlongpress,
+    onfocus,
     autofocus,
+    focusKey,
   }: Props = $props();
 
   // api.assetUrl handles origin + `?token=<paseto>` for the
@@ -35,7 +43,12 @@
   const posterUrl = $derived(posterPath ? api.assetUrl(`/artwork/${posterPath}?w=400`) : '');
 </script>
 
-<button use:focusable={{ autofocus, onLongPress: onlongpress }} class="card" {onclick}>
+<button
+  use:focusable={{ autofocus, onLongPress: onlongpress, onFocus: onfocus }}
+  class="card"
+  data-focus-key={focusKey}
+  {onclick}
+>
   <div class="art">
     {#if posterUrl}
       <img src={posterUrl} alt="" loading="lazy" />

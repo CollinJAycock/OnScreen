@@ -11,6 +11,12 @@ export type RemoteKey =
   | 'stop'
   | 'forward'
   | 'rewind'
+  // The channel rocker (CH ▲ / CH ▼). Every LG remote has it, the Magic
+  // Remote included, which has no ◀◀ ▶▶ (the C1's MR21 doesn't): it is the
+  // remote's next / previous. The player steps tracks or chapters with it,
+  // Live TV zaps channels.
+  | 'channelUp'
+  | 'channelDown'
   | 'home'
   | 'red'
   | 'green'
@@ -33,6 +39,9 @@ const BY_KEY: Record<string, RemoteKey> = {
   MediaTrackPrevious: 'rewind',
   MediaFastForward: 'forward',
   MediaRewind: 'rewind',
+  // What webOS's Chromium names the CH rocker's key codes (33 / 34).
+  PageUp: 'channelUp',
+  PageDown: 'channelDown',
   Home: 'home'
 };
 
@@ -49,6 +58,8 @@ const BY_CODE: Record<number, RemoteKey> = {
   413: 'stop',
   417: 'forward',
   412: 'rewind',
+  33: 'channelUp',
+  34: 'channelDown',
   403: 'red',
   404: 'green',
   405: 'yellow',

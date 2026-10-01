@@ -9,12 +9,16 @@
   // work like any other library item. Scheduled / failed rows are
   // informational — there's no admin action surface on the TV
   // (cancel / reschedule lives in the web settings UI).
+  //
+  // Back from a recording puts focus on its row again (lib/focus/memory),
+  // as Android's RecordingsFragment keeps its grid position.
 
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { endpoints, Unauthorized, type Recording } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import { focusFirstOf, restoreGuard, restoreKeyed, takeFocusMemo } from '$lib/focus/memory';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
   import { pushTo } from '$lib/nav';
@@ -22,6 +26,9 @@
   let recordings = $state<Recording[]>([]);
   let loading = $state(true);
   let error = $state('');
+  // Back from a recording: the first row holds its autofocus and the one
+  // the user opened takes focus again.
+  let restoring = $state(false);
 
   // Group order matters — "recording now" is the most actionable
   // surface (in-progress shows you might want to start watching
@@ -49,21 +56,48 @@
   });
 
   onMount(() => {
-    void load();
-    return focusManager.pushBack(() => {
+    const memo = takeFocusMemo();
+    restoring = !!memo?.focusedId;
+    // Ends the restore when the page goes away or the user moves focus
+    // while the list is still loading (lib/focus/memory).
+    const guard = restoreGuard();
+    (async () => {
+      const loaded = await load();
+      // Signed out: on the way to the sign-in page.
+      if (!loaded && !error) return;
+      await tick();
+      // Found in whichever group it is in now (a recording that finished
+      // moves from "Recording now" to "Ready to watch").
+      if (restoring && restoreKeyed(memo, guard)) return;
+      // Gone from the list meanwhile: the first row instead, whose autofocus
+      // the restore held back. With no row at all (no recordings, or the
+      // list failed) there's none, and focusFirstOf hands focus to the focus
+      // manager, which places it on the top nav, rather than leave it on
+      // nothing with the first press spent finding it.
+      if (restoring || recordings.length === 0) focusFirstOf('.rows [data-focusable]', guard);
+    })();
+
+    const offBack = focusManager.pushBack(() => {
       goto('#/hub');
       return true;
     });
+    return () => {
+      guard.end();
+      offBack();
+    };
   });
 
-  async function load() {
+  /** True when the list came in. */
+  async function load(): Promise<boolean> {
     loading = true;
     error = '';
     try {
       recordings = await endpoints.livetv.recordings();
+      return true;
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
       else error = (e as Error).message ?? 'Could not load recordings';
+      return false;
     } finally {
       loading = false;
     }
@@ -85,8 +119,9 @@
     }
   }
 
-  // The first focusable card grabs focus on mount — track which
-  // group runs first to assign autofocus only on its lead card.
+  // The first focusable card grabs focus on mount (unless a restore
+  // holds it back) — track which group runs first to assign autofocus
+  // only on its lead card.
   const firstNonEmptyGroup = $derived(
     order.find((g) => grouped[g.key]?.length > 0)?.key ?? null,
   );
@@ -115,9 +150,10 @@
             {#each items as r, i (r.id)}
               <button
                 use:focusable={{
-                  autofocus: group.key === firstNonEmptyGroup && i === 0,
+                  autofocus: group.key === firstNonEmptyGroup && i === 0 && !restoring,
                 }}
                 class="row row-{r.status}"
+                data-focus-key={r.id}
                 disabled={!r.item_id}
                 onclick={() => open(r)}
               >
@@ -183,15 +219,22 @@
     letter-spacing: 0.15em;
     margin-bottom: 12px;
   }
+  /* Rows and meta items are spaced with margins, not flexbox `gap`
+     (Chrome 84): webOS 6 runs Chromium 79. Flex items' margins don't
+     collapse, so the spacing is the same. A row is flex as well, not the
+     80px | 1fr | 200px grid it reads as: Chromium 79 can't make a <button>
+     a grid container (it computes display: grid, then stacks the children
+     as blocks), so the columns are fixed and growing flex items and margins
+     stand in for the 24px gaps. */
   .rows {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+  }
+  .row + .row {
+    margin-top: 8px;
   }
   .row {
-    display: grid;
-    grid-template-columns: 80px 1fr 200px;
-    gap: 24px;
+    display: flex;
     align-items: center;
     padding: 14px 20px;
     background: rgba(255, 255, 255, 0.03);
@@ -220,6 +263,10 @@
     background: rgba(124, 106, 247, 0.06);
   }
   .logo {
+    /* The 60px logo sat at the start of an 80px column: the 20px left over
+       plus the 24px gap keep the text where it was. */
+    flex: 0 0 auto;
+    margin-right: 44px;
     width: 60px;
     height: 45px;
     object-fit: contain;
@@ -227,7 +274,11 @@
     border-radius: 4px;
   }
   .logo.placeholder { display: block; }
-  .row-body { min-width: 0; }
+  .row-body {
+    flex: 1 1 0%;
+    min-width: 0;
+    margin-right: 24px;
+  }
   .row-title {
     font-size: var(--font-md);
     font-weight: 600;
@@ -235,16 +286,22 @@
   }
   .row-meta {
     display: flex;
-    gap: 16px;
     font-size: var(--font-sm);
     color: var(--text-secondary);
+  }
+  .row-meta > span + span {
+    margin-left: 16px;
   }
   .row-error {
     margin-top: 4px;
     font-size: var(--font-sm);
     color: #fca5a5;
   }
-  .row-action { text-align: right; font-size: var(--font-md); }
+  .row-action {
+    flex: 0 0 200px;
+    text-align: right;
+    font-size: var(--font-md);
+  }
   .action-play { color: var(--accent); font-weight: 600; }
   .action-rec { color: #f87171; font-weight: 600; }
   .action-sched { color: var(--text-secondary); }

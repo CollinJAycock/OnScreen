@@ -73,3 +73,14 @@ a {
 [data-focused="false"] {
   transition: transform 0.18s ease, box-shadow 0.18s ease;
 }
+
+/* The page's scroll box (+layout's <main>). The focus manager scrolls the
+   focused element in with scrollIntoView, which aligns its unscaled box
+   with the edge of the scroll box less this padding (Chromium 69+): without
+   it the 1.06 scale, the ring and the glow spilled off the bottom edge, and
+   a hub row reached by Up had its heading above the top one. 110 px on top
+   keeps that heading (about 86 px over the cards) on screen. Unscoped here
+   so the rule reaches the layout's element. */
+.tv-root {
+  scroll-padding: 110px 0 64px;
+}

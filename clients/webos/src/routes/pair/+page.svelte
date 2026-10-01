@@ -146,16 +146,20 @@
 </div>
 
 <style>
+  /* A one-column grid rather than a flex column: grid `gap` works on
+     webOS 6's Chromium 79, flexbox `gap` needs Chrome 84. justify-items /
+     align-content centre it the way align-items / justify-content did, and
+     grid items' margins add to the gap as flex items' did. */
   .page {
     padding: var(--page-pad);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    align-content: center;
     text-align: center;
-    gap: 18px;
+    row-gap: 18px;
     min-height: 100vh;
     box-sizing: border-box;
-    justify-content: center;
   }
   h1 {
     font-size: var(--font-2xl);
