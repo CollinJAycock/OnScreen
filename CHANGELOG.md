@@ -391,11 +391,15 @@ Roku channel (no request features, as on Android):
   length, and a book or album paused by a phone call longer than 10
   minutes. A paused TV book stays resumable in the background. The phone
   shows no notification for a stopped player, and swiping the app away
-  pauses and stops its audio. The TV app's subtitles for HLS streams use
+  with nothing playing still ends its session (audio that is playing
+  carries on with its notification, as before). The TV app's subtitles for HLS streams use
   Media3's legacy decoding, which 1.4 and later need for subtitles loaded
-  beside the stream. Upstream's retuned buffering (playback starts after
-  1 s buffered instead of 2.5 s) is taken as is, except on low-memory TVs,
-  which keep their own.
+  beside the stream. Upstream's retuned buffering (start after 1 s
+  buffered instead of 2.5 s, resume after a stall at 2 s instead of 5 s) is
+  undone for server streams in both apps: a remux or transcode only grows as
+  fast as the server writes it, and the thinner start flipped between
+  buffering and playing after a stall. Downloads, live TV and low-memory TVs
+  keep their own values.
 - **Android TV on NVIDIA SHIELD.** SHIELD shows HDR10 but sends HLG flagged
   as SDR, and hardware-decodes 8-bit VP9 but not 10-bit. The TV app now
   sends `hlg=1` only for a screen that lists HLG, and never from an NVIDIA
@@ -441,7 +445,7 @@ Roku channel (no request features, as on Android):
 - **`GET /api/v1/collections` omits franchise collections** unless called
   with `?include=franchise` (the web client asks for them), so native
   clients see the list they saw before.
-- **Migrations 00020–00029** — applied on startup with `AUTO_MIGRATE=true`,
+- **Migrations 00020–00035** — applied on startup with `AUTO_MIGRATE=true`,
   otherwise by the usual migrate step before starting the new binary
   (`/health/ready` stays unready until they are applied).
 
@@ -640,6 +644,92 @@ Roku channel (no request features, as on Android):
   season or album, as the TV app's already did.
 - **Web home tiles wider than their posters** when a title or Next Up
   subtitle was long.
+- **Android TV / Fire TV playback fixes from the 1.4.0 device test.**
+  - Waking the TV from the screensaver returns to the screen you were on:
+    music comes back on its now-playing screen, still playing, and a paused
+    video reopens paused where it was (after an episode has ended, Home as
+    before). This follows from 1.4.0 letting the screensaver start during
+    music.
+  - The sign-in code screen keeps the screen on while it waits (up to 30
+    minutes), and the code survives HOME and the screensaver; the Hisense's
+    5-minute screensaver used to throw it away.
+  - Server streams (remux / transcode) start where they should: at 0:00 from
+    the beginning, at the exact resume point (not the keyframe before it or
+    several seconds past it), and in place on a pre-encoded ladder; the
+    transport bar's scrubs on a resumed stream land where you stop (Back
+    cancels one without moving playback), Play after the end and the remote's
+    Previous restart from 0:00, Play (on screen or on the remote) after a
+    playback error picks up where it stopped, and the system media controls
+    no longer offer a Next that jumped inside the same stream.
+  - Watched percentage and Up Next go by the file's real length, never by a
+    stream the server is still writing: a resumed remux no longer shows Up
+    Next mid-film, and the end-of-episode card counts down on its own.
+  - Progress keeps reaching the server during a stall (no false 'paused'),
+    and the final pause/stop reports can no longer be overtaken by an older
+    one.
+  - Subtitles: slow first extractions of a large file are retried (with
+    "Subtitles unavailable" if they still fail), downloaded subtitles load
+    (they were sent with a token the server refuses), cues after a resume no
+    longer carry stray lines, and the picker names tracks as "Language ·
+    title".
+  - The transport controls fade again a few seconds after the last key
+    press (Leanback's tickle timeout defaulted to 0, so any D-pad press kept
+    them up for good), video and music alike, and OK brings them back even
+    on a TV where nothing had focus (the Hisense). Music and audiobooks show
+    the album or book cover (it was drawn under the video surface, so the
+    screen stayed black) and no subtitles button; an audio item that really
+    carries video (an illustrated audiobook) shows its picture and keeps the
+    screen on.
+  - Back after Up Next or a queue moved on by itself leaves playback; it
+    used to reopen and replay the first item (and, for an episode, its
+    credits and Up Next again). A finished or declined Up Next, or a
+    dismissed playback error, leaves the player when it was opened from a
+    Watch Next tile too.
+- **Phone playback fixes from the 0.3.0 device test.**
+  - Swiping the app away from Recents with the full player open crashed it.
+  - Subtitles now work on remuxed and transcoded video (they are loaded
+    beside the stream, as on the TV), stay in sync after a resume, and are
+    retried while the server extracts them from a large file. The picker
+    shows the track that is on, can pick one of several tracks in the same
+    language, lists "Find more online…" downloads at once, and its dialogs
+    scroll in landscape.
+  - Resuming a remuxed or transcoded movie no longer marks it Watched and
+    clears its resume point after a few minutes (the app took the growing
+    stream's length for the film's), and progress from Play on a show or
+    season is saved on the episode that plays.
+  - Resume starts at the exact point, switching audio track no longer ends
+    or jumps the stream, Up Next goes by the file's length, and Next is
+    disabled on a single server stream (it jumped inside the same video).
+  - Picking an audio track on a remuxed or transcoded stream plays that
+    track: the app sent the file's stream number where the server expects
+    the audio track's, so picks were off by one and the last one failed.
+    The picker marks the track playing, and a failed start shows the
+    server's own message with a Close button instead of a bare "HTTP 422".
+- **A file that is slow to open is no longer called corrupt.** The
+  transcode-start pre-flight gives ffprobe 5 s, and running out of time was
+  answered 422 SOURCE_UNREADABLE ("appears to be corrupt"): on QA a 1080p
+  remux in an MP4 (whose index sits at the end of the file) never played,
+  and a WEB-DL MKV failed once while its disk spun up. A pre-flight that
+  times out now lets the transcode start (ffmpeg opens the file itself and a
+  broken one still fails); missing, unsafe and genuinely unreadable files are
+  refused as before.
+- **A remux plays the audio track that was picked.** Whether audio could be
+  copied untouched was decided from the file's first track, not the selected
+  one: picking a DTS track behind an AC3 first track passed DTS through to a
+  client that can't decode it (silence). An `audio_stream_index` past the
+  file's last audio track now gets a 400 instead of an ffmpeg that never
+  writes a playlist. (Tizen, webOS and Roku still send the file's stream
+  number there; their last-track pick now gets that 400.)
+- **A progress report without a duration no longer erases the stored one.**
+  The watch rollup copied the latest report's duration over the stored one,
+  so a player that couldn't tell a title's length made it look unwatched and
+  dropped it from Continue Watching. Migration 00035 keeps the stored
+  duration in that case (a report without one can never mark a title
+  watched), and the server fills a missing duration from the version being
+  played (`file_id`, else the live session's file). It advertises this as
+  `features.progress_without_duration` in `/api/v1/system/capabilities`,
+  only once 00035 is applied (re-checked every minute); the phone leaves the
+  duration out only on servers that say so.
 - **The privacy page names the third parties a client can reach.** It said
   no library in the clients sends data off the device, but the web player
   loads Google's Cast sender script, the phone app's Cast framework reports

@@ -19,6 +19,7 @@ Under Play's 500-character limit.
 • Audiobooks: per-book speed, bookmarks, and a sleep timer that stops at
   the chapter's end.
 • Next Up, Plan to Watch, mark watched, and Report a problem.
+• Subtitles on transcoded video; exact resume; a crash fix.
 • Headset keys control the video you're watching.
 • Faster player, and smoother returns to book and album pages.
 ```
@@ -47,9 +48,20 @@ only public-domain and Creative Commons titles.
 Relative to 0.1.2 (1003):
 
 **This release (1007)**
+- **Device-test fixes** (Galaxy S24 FE): no crash when the app is swiped
+  away with the full player open; subtitles on remuxed/transcoded video
+  (side-loaded as on the TV, shifted after a resume, retried while the server
+  extracts them); a subtitle picker that shows the current track and can pick
+  same-language tracks; resuming a remux/transcode no longer marks it Watched
+  (the growing stream's length was taken for the film's); exact resume point;
+  audio-track switches keep playing; Up Next by the file's length; Next
+  disabled on a single server stream; 1.3.1 rebuffer thresholds for server
+  streams; progress without a duration only to servers advertising
+  `progress_without_duration`.
 - **Media3 1.3.1 → 1.11.1.** Kept the old behaviour where 1.11 changed
-  defaults: no notification for a stopped player, swipe-away pauses and
-  stops the service, the media-key backstop judges key-downs only (1.9
+  defaults: no notification for a stopped player, swipe-away with nothing
+  playing still ends the session (playing audio carries on, as before),
+  the media-key backstop judges key-downs only (1.9
   also delivers key-ups), and every controller keeps full command access
   (1.11 would limit ones it can't verify, which risked locking out
   Bluetooth, watch and car controls). Media3 1.9's stuck-player detectors

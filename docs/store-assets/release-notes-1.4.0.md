@@ -22,7 +22,7 @@ Under Play's 500-character limit; works for Amazon too.
 • Music and audiobooks keep playing in the background; book speed,
   bookmarks and a sleep timer that stops at the chapter's end.
 • Next Up, Plan to Watch, mark watched, and Report a problem.
-• Better NVIDIA SHIELD support.
+• Better NVIDIA SHIELD support; resume and subtitle fixes.
 ```
 
 ---
@@ -61,6 +61,16 @@ only public-domain and Creative Commons titles.
 Relative to 1.1.0 (14):
 
 **This release (22)**
+- **Device-test fixes** (Fire TV Stick 4K Max, Hisense Google TV): the
+  screensaver returns to the screen it covered (it can now start during
+  music); the sign-in code screen stays on; server streams start at 0:00 /
+  the exact resume point (Media3 treated a 0 start on a growing playlist as
+  "live edge"), seek correctly on a resumed stream and replay from the start;
+  watched % and Up Next use the file's length, never a growing stream's;
+  progress survives stalls and stays in order; slow subtitle extractions are
+  retried, downloaded subtitles load, labels read "Language · title";
+  controls fade on the Hisense; album/book art on now-playing. Server
+  streams keep 1.3.1's rebuffer thresholds (2.5 s / 5 s).
 - **Media3 1.3.1 → 1.11.1.** Needed a notification-hold fix so a book
   paused and parked keeps its foreground service, and legacy subtitle
   decoding for the HLS side-loaded subtitles (Media3 1.4+ would have
