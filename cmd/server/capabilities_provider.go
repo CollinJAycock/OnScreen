@@ -70,9 +70,10 @@ type capabilitiesProvider struct {
 }
 
 // configFlagTTL is how long a database-backed capability flag is reused.
-// The capabilities endpoint is anonymous, so a caller must not be able to
-// turn every request into a query; half a minute of lag after an admin
-// adds a tuner or an *arr service only delays a nav link.
+// The capabilities endpoint is anonymous and already reads a few settings
+// rows per request; caching keeps these two list queries off that path,
+// and half a minute of lag after an admin adds a tuner or an *arr service
+// only delays a nav link.
 const configFlagTTL = 30 * time.Second
 
 // configFlagTimeout bounds one probe, so a stalled database can't hold the
