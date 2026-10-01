@@ -171,6 +171,36 @@ before their row limit.
 user's identity, so they refuse as they would for that user; they used to
 re-read the real admin's session.
 
+**Native-app CORS allowance** (`isNativeAppOrigin` in
+`internal/api/middleware/cors.go`)
+
+- Besides the origins configured in Settings → General, CORS always allows
+  the first-party apps' webview origins: the TV apps' `null` and `file://…`,
+  and, new in v2.5, the desktop app's `http://tauri.localhost` (Windows),
+  `https://tauri.localhost` (a build with `useHttpsScheme`) and
+  `tauri://localhost` (macOS, Linux). The desktop origins match exactly: no
+  port (Tauri never adds one), no prefix or suffix
+  (`http://tauri.localhost.evil.com` is a public DNS name).
+- The allowance is not a security boundary. `null` can come from a sandboxed
+  iframe on any site. An ordinary website can't send the Tauri origins:
+  `tauri:` is a custom scheme only a Tauri app registers, and `.localhost`
+  is a reserved name (RFC 6761) that public DNS never delegates and the
+  major browsers resolve to loopback. That is defence in depth only (an
+  engine that asks a hostile resolver for the name could load a page
+  there), and every Tauri app shares these origins.
+- It is safe because CORS never sends `Access-Control-Allow-Credentials`:
+  an allowed page can act only with a token it already holds, never with
+  the user's cookie. The TV and desktop apps authenticate with Bearer tokens
+  (the desktop fetches with `credentials: 'omit'`).
+- The CSRF guard (item 9 and the cookie-write check) gives these origins no
+  exemption; they count as foreign origins there. The apps send JSON bodies
+  and Bearer tokens, so nothing they send is refused.
+- A server without this change refuses the desktop app ("Failed to fetch";
+  the preflight answers 405). Workaround until it is updated: add
+  `http://tauri.localhost, tauri://localhost` under Settings → General →
+  CORS allowed origins and restart the server (the list is read at
+  startup). The entries can stay after updating.
+
 ## Deployment, packaging & supply-chain hardening
 
 Changes to the shipped compose files, reverse-proxy sample, installers and CI.

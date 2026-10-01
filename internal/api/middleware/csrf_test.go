@@ -182,3 +182,85 @@ func TestCSRF_OriginFallbackHonoursForwardedHost(t *testing.T) {
 		t.Errorf("foreign origin: got %d, want 403", got)
 	}
 }
+
+// nativeAppOriginShapes are the provenance headers a native app's webview
+// sends: WebView2 / Chromium set Sec-Fetch-Site (always cross-site from the
+// app's own origin to the server); an older WebKit / WebKitGTK may send
+// Origin alone.
+func nativeAppOriginShapes(origin string) []map[string]string {
+	return []map[string]string{
+		{"Sec-Fetch-Site": "cross-site", "Origin": origin},
+		{"Origin": origin},
+	}
+}
+
+// runCSRFStock runs the guard as a stock server builds it: no configured
+// origins.
+func runCSRFStock(r *http.Request) int {
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
+	rec := httptest.NewRecorder()
+	CSRFGuard(nil)(next).ServeHTTP(rec, r)
+	return rec.Code
+}
+
+// The desktop app's state-changing requests pass the guard on a stock server,
+// exactly as the TV apps' do: they send JSON bodies, fetch with
+// `credentials: 'omit'` (no cookie) and carry a Bearer once signed in.
+func TestCSRF_DesktopAppRequestsPassOnStockServer(t *testing.T) {
+	origins := append([]string{"null", "file://com.onscreen.tv-webos"}, desktopOrigins...)
+	for _, origin := range origins {
+		for _, hdr := range nativeAppOriginShapes(origin) {
+			// Sign-in and the second factor (no session yet, JSON body).
+			for path := range credentialPaths {
+				if got := runCSRFStock(loginReq(path, "application/json", hdr)); got != http.StatusOK {
+					t.Errorf("%v: JSON POST %s = %d, want 200", hdr, path, got)
+				}
+			}
+			// Refresh with the refresh token in the JSON body, with and without
+			// the expired access token as Bearer.
+			r := loginReq("/api/v1/auth/refresh", "application/json", hdr)
+			if got := runCSRFStock(r); got != http.StatusOK {
+				t.Errorf("%v: JSON refresh = %d, want 200", hdr, got)
+			}
+			r = loginReq("/api/v1/auth/refresh", "application/json", hdr)
+			r.Header.Set("Authorization", "Bearer expired")
+			if got := runCSRFStock(r); got != http.StatusOK {
+				t.Errorf("%v: Bearer refresh = %d, want 200", hdr, got)
+			}
+			// Bearer-authenticated writes (progress, logout, a delete), with
+			// no cookie (the apps' real shape) and with a stray auth cookie
+			// too: the cookie case pins the Bearer exemption itself, which the
+			// no-cookie case passes before ever reaching it.
+			for _, m := range []string{http.MethodPut, http.MethodPost, http.MethodDelete} {
+				for _, withCookie := range []bool{false, true} {
+					r := csrfReq(m, hdr, withCookie)
+					r.Header.Set("Authorization", "Bearer tok")
+					r.Header.Set("Content-Type", "application/json")
+					if got := runCSRFStock(r); got != http.StatusOK {
+						t.Errorf("%v: Bearer %s (cookie=%v) = %d, want 200", hdr, m, withCookie, got)
+					}
+				}
+			}
+		}
+	}
+}
+
+// The guard does not share CORS's native-app allowance: a native-app origin is
+// a foreign origin here, for the desktop exactly as for the TVs. So a
+// form-type body to a credential endpoint, or a cookie-authenticated write
+// without a Bearer, is refused from those origins too (no real native client
+// sends either). `null` in particular must never be trusted here — a sandboxed
+// iframe on any website can send it.
+func TestCSRF_NativeAppOriginsGetNoExemption(t *testing.T) {
+	origins := append([]string{"null", "file://com.onscreen.tv-webos"}, desktopOrigins...)
+	for _, origin := range origins {
+		for _, hdr := range nativeAppOriginShapes(origin) {
+			if got := runCSRFStock(loginReq("/api/v1/auth/login", "text/plain", hdr)); got != http.StatusForbidden {
+				t.Errorf("%v: text/plain login = %d, want 403", hdr, got)
+			}
+			if got := runCSRFStock(csrfReq(http.MethodPost, hdr, true)); got != http.StatusForbidden {
+				t.Errorf("%v: cookie write without Bearer = %d, want 403", hdr, got)
+			}
+		}
+	}
+}

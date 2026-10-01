@@ -138,8 +138,10 @@ type Handlers struct {
 	// works, just without a paper trail (acceptable in dev, not in prod).
 	ViewAsAuditor middleware.ViewAsAuditor
 	RateLimiter   *valkey.RateLimiter
-	// CORSAllowedOrigins enables cross-origin API access (TV app, third-party
-	// native clients). Empty disables CORS — same-origin only.
+	// CORSAllowedOrigins enables cross-origin API access for further origins
+	// (third-party web front-ends). The first-party TV and desktop apps'
+	// webview origins are always allowed (middleware.CORS); empty allows
+	// nothing beyond them.
 	CORSAllowedOrigins []string
 	// DevFrontendURL, when set in a `-tags dev` build, makes the server proxy
 	// all non-API/non-asset requests to the Vite dev server so the whole app
