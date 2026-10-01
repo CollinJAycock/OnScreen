@@ -1,6 +1,6 @@
 {
   "name": "onscreen-webos",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "build": "vite build && node scripts/rewrite-file-paths.mjs && node scripts/assemble-package.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 5174",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+    "test": "vitest run",
     "package": "npm run build && ares-package build",
     "install-tv": "node scripts/install.mjs --tv",
     "launch-tv": "ares-launch --device tv com.onscreen.tv",
@@ -27,6 +28,7 @@
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "^5.0.0",
-    "vite": "^5.0.0"
+    "vite": "^5.0.0",
+    "vitest": "^3.2.7"
   }
 }

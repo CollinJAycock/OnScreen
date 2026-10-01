@@ -1,7 +1,8 @@
 <script lang="ts">
   // Full-screen photo viewer with D-pad sibling navigation. Mirrors
   // the Android PhotoViewFragment: left/right cycles through siblings
-  // with wrap-around, back exits.
+  // with wrap-around, back exits, and OK (or Play/Pause) runs a
+  // slideshow (lib/slideshow).
   //
   // Sibling resolve runs on entry — siblings come from the photo's
   // parent album when there is one, otherwise the entire library
@@ -16,6 +17,7 @@
   import { focusManager } from '$lib/focus/manager';
   import { toRemoteKey } from '$lib/focus/keys';
   import { goBack } from '$lib/nav';
+  import { SLIDESHOW_HINT_MS, Slideshow, photoCommand } from '$lib/slideshow';
 
   const initialId = $derived(page.params.id!);
 
@@ -32,6 +34,29 @@
   let positionLabel = $derived(
     siblings.length >= 2 ? `${currentIndex + 1} / ${siblings.length}` : ''
   );
+
+  // Slideshow: "▶ Slideshow" bottom-left while it runs (Android's
+  // slideshow_on), and once per visit, when there are photos to cycle
+  // through, a hint that OK starts one. The two share the corner; the
+  // indicator wins.
+  let slideshowOn = $state(false);
+  let hintVisible = $state(false);
+  let hintShown = false;
+  let hintTimer: ReturnType<typeof setTimeout> | null = null;
+  const slideshow = new Slideshow(
+    () => advance(1),
+    (on) => {
+      slideshowOn = on;
+      if (on) hintVisible = false;
+    },
+  );
+
+  function maybeShowHint() {
+    if (hintShown || siblings.length < 2 || slideshow.running) return;
+    hintShown = true;
+    hintVisible = true;
+    hintTimer = setTimeout(() => (hintVisible = false), SLIDESHOW_HINT_MS);
+  }
 
   // In-memory cache of fetched blob URLs keyed by sibling id, plus
   // prev/next prefetch so left/right navigation is instant after the
@@ -98,6 +123,10 @@
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
       else if (currentSibling?.id === sib.id) {
+        // Blank the previous photo, as Android does: left up, it would hide
+        // the failure (the error only shows with no photo up), and OK, which
+        // retries a failed photo, would seem to do nothing.
+        imageBlobUrl = '';
         imageError = (e as Error).message ?? 'Image load failed';
       }
     }
@@ -133,11 +162,40 @@
   // Photo viewer has no focusable elements, so we hook the focus
   // manager's keyHandler stack directly. Returning true swallows
   // the event and prevents the manager's direction-recovery path
-  // from incorrectly handling left/right.
+  // from incorrectly handling left/right (or OK clicking nothing).
   function handleKey(k: ReturnType<typeof toRemoteKey>): boolean {
-    if (k === 'left' || k === 'rewind') { advance(-1); return true; }
-    if (k === 'right' || k === 'forward') { advance(1); return true; }
-    return false;
+    switch (photoCommand(k)) {
+      case 'prev':
+        advance(-1);
+        slideshow.stepped();
+        return true;
+      case 'next':
+        advance(1);
+        slideshow.stepped();
+        return true;
+      case 'toggle':
+        // OK on a photo that failed to load retries it (Android does the
+        // same); otherwise it toggles the slideshow. Only while the failure
+        // is on screen, so OK never does something the user can't see.
+        if (k === 'enter' && imageError && !imageBlobUrl) void loadCurrentImage();
+        else slideshow.toggle(siblings.length);
+        return true;
+      case 'start':
+        slideshow.start(siblings.length);
+        return true;
+      case 'stop':
+        slideshow.stop();
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  // Stop when the app goes to the background (Home, another input): left
+  // running it would fetch and decode a full-size photo every 4 s behind
+  // the launcher. Play starts it again on return, as on Android.
+  function onVisibility() {
+    if (document.hidden) slideshow.stop();
   }
 
   onMount(() => {
@@ -147,13 +205,17 @@
       goBack();
       return true;
     });
+    document.addEventListener('visibilitychange', onVisibility);
     return () => {
       offKey();
       offBack();
+      document.removeEventListener('visibilitychange', onVisibility);
     };
   });
 
   onDestroy(() => {
+    slideshow.stop();
+    if (hintTimer) clearTimeout(hintTimer);
     for (const url of blobCache.values()) URL.revokeObjectURL(url);
     blobCache.clear();
     inFlight.clear();
@@ -197,6 +259,7 @@
       siblings = photos;
       currentIndex = Math.max(0, photos.findIndex((p) => p.id === initialId));
       currentSibling = photos[currentIndex];
+      maybeShowHint();
     } catch (e) {
       if (e instanceof Unauthorized) goto('#/login');
     }
@@ -227,9 +290,14 @@
   {#if imageBlobUrl}
     <img class="photo" src={imageBlobUrl} alt="" />
   {:else if imageError}
-    <div class="status">Couldn’t load photo: {imageError}</div>
+    <div class="status">Couldn’t load photo: {imageError}<br />Press OK to retry, or arrow to the next one.</div>
   {:else}
     <div class="status">Loading…</div>
+  {/if}
+  {#if slideshowOn}
+    <div class="corner-status" role="status">▶ Slideshow</div>
+  {:else if hintVisible}
+    <div class="corner-status" role="status">Press OK to start a slideshow</div>
   {/if}
   {#if positionLabel}
     <div class="position">{positionLabel}</div>
@@ -254,6 +322,16 @@
     position: absolute;
     bottom: 60px;
     right: 60px;
+    padding: 14px 28px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    font-size: var(--font-sm);
+  }
+  /* Bottom-LEFT, so it can't collide with the position counter. */
+  .corner-status {
+    position: absolute;
+    bottom: 60px;
+    left: 60px;
     padding: 14px 28px;
     background: rgba(0, 0, 0, 0.55);
     color: #fff;

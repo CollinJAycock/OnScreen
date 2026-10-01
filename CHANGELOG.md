@@ -356,6 +356,32 @@ Roku channel (no request features, as on Android):
 
 ### Changed
 
+- **webOS app 0.2.0: parity with the Android TV app**, run on an LG
+  OLED77C1PUB (webOS 6, Chromium 79).
+  - Server sessions play on the content timeline: an exact start at the
+    resume point, a seek outside the produced window re-opens the stream
+    there, and audio tracks switch by their 0-based ordinal.
+  - Subtitles render (embedded and downloaded tracks, kept in step across
+    re-issues); the preferred audio and subtitle languages apply at start;
+    an on-screen Audio / Subtitles / Chapters row and a chapter list.
+  - Up Next and auto-advance as on Android TV (into the next season or the
+    artist's next album; a declined card stays declined), one `stopped`
+    report per item with the TV's client name, bounded error recovery with
+    an error overlay, and Back returning to the launching screen.
+  - "Play on this TV" from any screen through one app-wide event stream,
+    which refreshes the sign-in only for an asset token of unknown age or
+    near its expiry, never while offline.
+  - Browsing: Favorite, "Resume from" + "Play from Beginning", artist
+    pages, library paging / sort / genre, Trending and Collections rows,
+    the saved home layout, a search library scope, a photo slideshow, and
+    Back returning focus to the card that was opened.
+  - The remote: a held OK counts as one press; CH ▲▼ skip tracks, step
+    chapters and change channels; Up shows the controls.
+  - Chromium 79: the build rewrites Svelte's `:where()` selectors and
+    lowers `inset`, and layouts no longer use flexbox `gap` or grid on a
+    `<button>`, all of which webOS 6 ignored. The capability header reports
+    the panel's real size and HDR support (from LG's config service) and
+    claims VP9 only when the media stack takes it.
 - **Android TV claims AV1 only with a hardware decoder.** Android 10 and
   later ship a software AV1 decoder on every device, and counting it made
   boxes without AV1 hardware (the Tegra X1 Nvidia Shields among them) get

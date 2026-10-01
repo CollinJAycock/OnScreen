@@ -62,13 +62,15 @@
     <OnScreenKeyboard bind:value={username} onchange={(v) => (username = v)} onsubmit={submit} />
   {:else if step === 'totp'}
     <div class="label">Enter the code from your authenticator app (or a recovery code)</div>
-    <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} />
+    <!-- Masked like the password (Android masks this step too): a code
+         read off the TV by the room is good for the rest of its window. -->
+    <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} masked />
     <button use:focusable class="back-btn" onclick={() => { step = 'password'; totpCode = ''; error = ''; }}>
       back
     </button>
   {:else}
     <div class="label">Password for <strong>{username}</strong></div>
-    <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} />
+    <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} masked />
     <button use:focusable class="back-btn" onclick={() => (step = 'username')}>
       change user
     </button>
@@ -90,11 +92,15 @@
 </div>
 
 <style>
+  /* A one-column grid rather than a flex column: grid `gap` works on
+     webOS 6's Chromium 79, flexbox `gap` needs Chrome 84. Buttons keep
+     their own width (justify-self) as align-self did in the flex column. */
   .page {
     padding: var(--page-pad);
-    display: flex;
-    flex-direction: column;
-    gap: 24px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    row-gap: 24px;
   }
 
   h1 {
@@ -112,7 +118,7 @@
   }
 
   .back-btn {
-    align-self: flex-start;
+    justify-self: start;
     margin-top: 12px;
     padding: 12px 24px;
     font-size: var(--font-sm);
@@ -128,7 +134,7 @@
   .error { color: #fca5a5; }
 
   .pair-btn {
-    align-self: flex-start;
+    justify-self: start;
     margin-top: 32px;
     padding: 14px 28px;
     font-size: var(--font-sm);

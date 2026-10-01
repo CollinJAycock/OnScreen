@@ -1,13 +1,106 @@
 <script lang="ts">
   import '../app.css';
   import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { page } from '$app/state';
   import { focusManager } from '$lib/focus/manager';
+  import { api, type NotificationEvent, type SignOutReason } from '$lib/api';
+  import { clientName } from '$lib/device';
+  import {
+    PLAYBACK_TRANSFER_EVENT,
+    events,
+    isTransferForMe,
+    parseTransfer,
+    shouldRedialAfterHidden,
+    streamWanted,
+  } from '$lib/events';
+  import { forgetHistory, playItem, resetStack } from '$lib/nav';
+  import { forgetSearch } from '$lib/searchMemory';
 
   let { children } = $props();
 
+  // The app's one event stream ($lib/events) follows the route: open on every
+  // signed-in screen, closed on login / setup / pairing, where sign-out,
+  // forgetting the server and every Unauthorized in the app end up. It used
+  // to be the player's, so "play on this TV" sent to a TV on the hub (the
+  // usual case) went nowhere.
+  $effect(() => {
+    if (streamWanted(page.route.id, !!api.getToken())) events.start();
+    else events.stop();
+  });
+
+  // "Play on this TV" from another of the user's devices (POST
+  // /playback/transfer). The event reaches every app of the user; this TV
+  // acts only when it is the one named (isTransferForMe). Like Android's
+  // showPlayback: the back stack starts over at the hub, and the item plays
+  // from the sender's position, from anywhere in the app. An open player
+  // gives way to it (another item's route remounts the player, and its
+  // cleanup reports and ends the old session; the same item gets a fresh
+  // player through playerEpoch). Not into a TV in the background (Home, or
+  // another app up): it would start a stream nobody sees, as Android's
+  // stopped activity drops it too.
+  function onTransfer(evt: NotificationEvent) {
+    if (document.hidden || !isTransferForMe(evt, clientName())) return;
+    const t = parseTransfer(evt);
+    if (!t) return;
+    resetStack('#/hub');
+    playItem(t.itemId, t.positionMs, { push: false });
+  }
+
+  // Back from standby or another app after a while, or the network back:
+  // the connection from before may be half-open and silent for good, so
+  // dial a fresh one (see REDIAL_AFTER_HIDDEN_MS).
+  let hiddenAt = 0;
+  function onVisibilityChange() {
+    if (document.hidden) {
+      hiddenAt = Date.now();
+      return;
+    }
+    if (hiddenAt && shouldRedialAfterHidden(Date.now() - hiddenAt)) events.restart();
+    hiddenAt = 0;
+  }
+  function onOnline() {
+    events.restart();
+  }
+
+  // A refresh came back as the server's verdict that this sign-in is dead
+  // (revoked, expired, signed out everywhere): to sign-in, where every
+  // Unauthorized in the app goes. Whoever found out: the stream's reconnect
+  // on a TV idle on the hub, or a heartbeat mid-film, whose failures the
+  // player otherwise swallows while the film plays on unsaved. Not over a
+  // sign-in made since (its tokens replaced the dead ones), nor from a
+  // signed-out screen.
+  function onSessionRejected() {
+    if (!api.getToken() && streamWanted(page.route.id, true)) goto('#/login');
+  }
+
+  // The stored sign-in was cleared, however: close the stream at once,
+  // before the route even changes, and drop what belonged to that user
+  // (Back history, focus notes, the last search; after Change server those
+  // would also point into the old server).
+  function onSignedOut(reason: SignOutReason) {
+    events.stop();
+    forgetHistory();
+    forgetSearch();
+    if (reason === 'rejected') onSessionRejected();
+  }
+
   onMount(() => {
     focusManager.init();
-    return () => focusManager.destroy();
+    const offTransfer = events.subscribe(PLAYBACK_TRANSFER_EVENT, onTransfer);
+    const offSignedOut = api.onSignedOut(onSignedOut);
+    const offRejected = events.onRejected(onSessionRejected);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    window.addEventListener('online', onOnline);
+    return () => {
+      offTransfer();
+      offSignedOut();
+      offRejected();
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      window.removeEventListener('online', onOnline);
+      events.stop();
+      focusManager.destroy();
+    };
   });
 </script>
 

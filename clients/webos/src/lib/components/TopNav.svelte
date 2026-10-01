@@ -33,14 +33,19 @@
   }
 </script>
 
+<!-- data-focus-row: Left / Right stay in the bar (the focus manager), so
+     Left on Home and Right on Settings stop there. aria-current marks this
+     page's pill, where the focus manager goes when a page has nothing of
+     its own focused. -->
 <header class="topnav">
   <a class="brand" href="#/hub/" data-sveltekit-preload-data="false">OnScreen</a>
-  <nav>
+  <nav data-focus-row>
     {#each items as it (it.href)}
       <a
         use:focusable
         class="link"
         class:active={isActive(it.href)}
+        aria-current={isActive(it.href) ? 'page' : undefined}
         href={it.href}
         data-sveltekit-preload-data="false"
       >
@@ -51,15 +56,22 @@
 </header>
 
 <style>
+  /* Spacing here is margins, not flexbox `gap` (Chrome 84): webOS 6 runs
+     Chromium 79, where the brand would butt up against the pills and the
+     pills against each other. */
+  /* No side padding: every page already pads by --page-pad, and the bar
+     padding by it again put it 80 px further in than on the hub (whose rows
+     run full-bleed, so it insets the bar itself). */
   .topnav {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding: 32px var(--page-pad);
-    gap: 48px;
+    padding: 32px 0;
   }
 
   .brand {
+    /* The bar's old 48px gap: space-between spreads what's left over. */
+    margin-right: 48px;
     /* Hard-override the user-agent <a> defaults — webOS Chromium 79
        sometimes wins before scoped CSS applies. */
     color: var(--accent);
@@ -74,7 +86,10 @@
     display: flex;
     flex-wrap: nowrap;
     align-items: center;
-    gap: 12px;
+  }
+
+  .link + .link {
+    margin-left: 12px;
   }
 
   .link {

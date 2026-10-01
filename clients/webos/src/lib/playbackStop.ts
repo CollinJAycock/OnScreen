@@ -8,9 +8,11 @@
 //       { item_id, session_id?, client_name?, decision?, message? }
 //     The channel is per USER, so each of the user's players decides whether
 //     it is the target (isStopForPlayer). client_name is the name the
-//     stopped player reports in its progress heartbeats; the TV apps report
-//     none, so a stop aimed at a TV stream carries only its session_id (a
-//     transcode / remux) or nothing (direct play: untargeted).
+//     stopped player reports in its progress heartbeats. This app reports
+//     'LG webOS TV — <model> #<tag>' (clientName() in device.ts, unique per
+//     TV), so a stop aimed at this TV names it, and a direct play (which
+//     has no session) is targeted by that name rather than stopping every
+//     player of the item. The player passes the same clientName() here.
 //  2. For direct play / remux it refuses that (user, item, client IP) for
 //     ~2 minutes: the 'playing' progress beacon, media bytes and transcode
 //     start answer 403 {"error":{"code":"PLAYBACK_STOPPED","message":…}},
@@ -51,8 +53,12 @@ export interface PlayerIdentity {
   itemId: string | null;
   /** This player's transcode session id, when it has one. */
   sessionId: string | null;
-  /** The name this player reports in its heartbeats ('' for the TV apps,
-   *  which report none — so a stop naming another device never matches). */
+  /** The name this player reports in its heartbeats (device.ts
+   *  clientName(): 'LG webOS TV — <model> #<tag>'). It must be the exact
+   *  string the heartbeats carry, or a stop the admin aimed at this TV
+   *  (always by name for a direct play) is taken for another device's. ''
+   *  only for a player that reports none: then a stop naming any device
+   *  never matches. */
   clientName: string;
 }
 

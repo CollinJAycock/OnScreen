@@ -34,6 +34,9 @@
     switch (t) {
       case 'movie': return 'Movies';
       case 'show': return 'TV Shows';
+      case 'anime': return 'Anime';
+      case 'cartoons': return 'Cartoons';
+      case 'dvr': return 'DVR Recordings';
       case 'music': return 'Music';
       case 'photo': return 'Photos';
       case 'audiobook': return 'Audiobooks';
@@ -102,7 +105,6 @@
     text-align: left;
     display: flex;
     flex-direction: column;
-    gap: 10px;
     cursor: pointer;
     min-height: 140px;
   }
@@ -114,6 +116,8 @@
   }
 
   .lib-type {
+    /* Not flexbox `gap` (Chrome 84; webOS 6 runs Chromium 79). */
+    margin-top: 10px;
     font-size: var(--font-sm);
     color: var(--text-secondary);
     text-transform: uppercase;

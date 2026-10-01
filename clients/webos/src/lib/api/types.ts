@@ -30,6 +30,9 @@ export interface HubData {
   // have them — absent means an older server.
   next_up?: HubItem[];
   plan_to_watch?: HubItem[];
+  /** Most-watched titles across the server this week. Absent on older
+   *  servers; the hub renders it as the "Trending" row. */
+  trending?: HubItem[];
   recently_added: HubItem[];
   // Per-library "Recently added to <Library>" strips. Each entry is
   // one library's slice; the hub page renders one row per entry,
@@ -43,6 +46,19 @@ export interface HubLibraryRow {
   library_name: string;
   library_type: string;
   items: HubItem[];
+}
+
+/** One entry of the saved home layout (users/me/preferences hub_layout):
+ *  a row key and whether that row is shown. See lib/hubLayout.ts. */
+export interface HubRowPref {
+  key: string;
+  enabled: boolean;
+}
+
+/** One row of GET /libraries/{id}/genres. */
+export interface GenreCount {
+  name: string;
+  count: number;
 }
 
 export interface Library {
@@ -108,6 +124,24 @@ export interface Chapter {
   end_ms: number;
 }
 
+/** A subtitle file attached to a media file (downloaded from OpenSubtitles,
+ *  or OCR'd from an image track), served as WebVTT at `url`
+ *  (/media/external-subtitles/{id}, asset token). */
+export interface ExternalSubtitle {
+  id: string;
+  file_id: string;
+  language: string;
+  title?: string | null;
+  forced: boolean;
+  sdh: boolean;
+  /** 'opensubtitles' | 'ocr' | … */
+  source: string;
+  /** The provider's id: the OpenSubtitles file id for a download (the
+   *  search result's provider_file_id, as a string), 'stream_N' for OCR. */
+  source_id?: string | null;
+  url: string;
+}
+
 export interface ItemFile {
   id: string;
   stream_url: string;
@@ -118,10 +152,19 @@ export interface ItemFile {
   resolution_h?: number;
   bitrate?: number;
   hdr_type?: string;
+  /** Frame rate as probed (e.g. 23.976). Absent on older servers. */
+  frame_rate?: number;
   duration_ms?: number;
+  /** A 24 h token scoped to this file's stream / subtitle routes, so a
+   *  long play outlives the 1 h access token. Empty or absent on older
+   *  servers. The player still signs URLs with the asset token
+   *  (api.assetUrl); typed for parity with the other clients. */
+  stream_token?: string;
   faststart: boolean;
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
+  /** Absent when the file has none (the server omits an empty list). */
+  external_subtitles?: ExternalSubtitle[];
   chapters: Chapter[];
 }
 
@@ -139,6 +182,8 @@ export interface ItemDetail {
   content_rating?: string;
   genres: string[];
   parent_id?: string;
+  /** The parent's parent: an episode's show (episode → season → show). */
+  grandparent_id?: string;
   index?: number;
   view_offset_ms: number;
   /** Playable videos (v2.5): the caller's watch state. Absent on other
@@ -274,6 +319,16 @@ export interface TranscodeSession {
   session_id: string;
   playlist_url: string;
   token: string;
+  /** Content position (seconds) the stream begins at: stream time 0 is this
+   *  far into the item. Keyframe-aligned, so a remux (video_copy) can open
+   *  several seconds before the requested position; 0 for a stream that
+   *  covers the whole file. A real 0 is a value, not "absent" (see
+   *  sessionOffsetMs in player/session.ts). */
+  start_offset_sec?: number;
+  /** How far into the stream (seconds) seg 0's audio starts: an AAC
+   *  re-encode after a mid-stream -ss warms up over a moment of silent
+   *  video, and playback starts here instead. 0 = no measurable gap. */
+  seg0_audio_gap_sec?: number;
 }
 
 // ── Device pairing ──────────────────────────────────────────────────────────
