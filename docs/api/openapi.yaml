@@ -297,7 +297,22 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/TokenPairEnvelope'
-        '401': { $ref: '#/components/responses/Unauthorized' }
+        '401':
+          description: |
+            The refresh token is invalid — unknown, expired, or already spent
+            (reuse, which also signs the user out on every device). Auth
+            cookies are cleared; the client should discard its tokens.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '503':
+          description: |
+            The server could not check the token (e.g. the database is
+            unreachable). Not a verdict on it: cookies are left alone and the
+            client should keep its tokens and retry later.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   /api/v1/auth/logout:
     post:
@@ -6008,7 +6023,7 @@ components:
           type: string
           description: |
             Stable action code. Known values:
-              - `auth.login_success`, `auth.login_failed`
+              - `auth.login_success`, `auth.login_failed`, `auth.sessions_revoked`
               - `user.create`, `user.delete`, `user.role_change`, `user.password_reset`
               - `invite.create`
               - `library.create`, `library.delete`, `library.scan`

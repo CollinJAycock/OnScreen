@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/pquerna/otp/totp"
 	"golang.org/x/crypto/bcrypt"
 
@@ -30,14 +34,33 @@ type stepUpFakeDB struct {
 	users       map[uuid.UUID]gen.User
 	totpOff     bool
 	sessionRow  gen.GetSessionByAnyTokenHashRow
+	sessionErr  error // GetSessionByAnyTokenHash failure (pgx.ErrNoRows = unknown / expired token)
+	userErr     error // GetUser failure, when set
 	sessionByTH gen.Session
 	familyBurns []uuid.UUID
 	epochBumps  []uuid.UUID
+	// deleteErr / bumpErr fail DeleteSessionsForUser / BumpSessionEpoch (the
+	// attempt is still recorded).
+	deleteErr error
+	bumpErr   error
+	// rotateRows is what RotateSessionConditional reports: 1 = rotated,
+	// 0 = someone rotated the token first (the CAS-miss reuse branch).
+	// rotateErr fails it instead.
+	rotateRows int64
+	rotateErr  error
+	// rotatedHash is the new hash RotateSessionConditional was asked to
+	// write; rotateLanded says whether that write committed despite
+	// rotateErr, which is what a lookup by rotatedHash then reports.
+	rotatedHash  string
+	rotateLanded bool
 }
 
 func (f *stepUpFakeDB) GetUser(_ context.Context, id uuid.UUID) (gen.User, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.userErr != nil {
+		return gen.User{}, f.userErr
+	}
 	u, ok := f.users[id]
 	if !ok {
 		return gen.User{}, errors.New("no such user")
@@ -54,8 +77,23 @@ func (f *stepUpFakeDB) DisableUserTOTP(context.Context, uuid.UUID) error {
 	return nil
 }
 func (f *stepUpFakeDB) DeleteTOTPRecoveryCodes(context.Context, uuid.UUID) error { return nil }
-func (f *stepUpFakeDB) GetSessionByAnyTokenHash(context.Context, string) (gen.GetSessionByAnyTokenHashRow, error) {
+func (f *stepUpFakeDB) GetSessionByAnyTokenHash(_ context.Context, hash string) (gen.GetSessionByAnyTokenHashRow, error) {
+	if f.rotatedHash != "" && hash == f.rotatedHash {
+		if !f.rotateLanded {
+			return gen.GetSessionByAnyTokenHashRow{}, pgx.ErrNoRows
+		}
+		row := f.sessionRow
+		row.IsCurrent = true
+		return row, nil
+	}
+	if f.sessionErr != nil {
+		return gen.GetSessionByAnyTokenHashRow{}, f.sessionErr
+	}
 	return f.sessionRow, nil
+}
+func (f *stepUpFakeDB) RotateSessionConditional(_ context.Context, arg gen.RotateSessionConditionalParams) (int64, error) {
+	f.rotatedHash = arg.TokenHash
+	return f.rotateRows, f.rotateErr
 }
 func (f *stepUpFakeDB) GetSessionByTokenHash(context.Context, string) (gen.Session, error) {
 	return f.sessionByTH, nil
@@ -63,11 +101,11 @@ func (f *stepUpFakeDB) GetSessionByTokenHash(context.Context, string) (gen.Sessi
 func (f *stepUpFakeDB) DeleteSession(context.Context, uuid.UUID) error { return nil }
 func (f *stepUpFakeDB) DeleteSessionsForUser(_ context.Context, id uuid.UUID) error {
 	f.familyBurns = append(f.familyBurns, id)
-	return nil
+	return f.deleteErr
 }
 func (f *stepUpFakeDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
 	f.epochBumps = append(f.epochBumps, id)
-	return nil
+	return f.bumpErr
 }
 
 type fakeSegRevoker struct{ revoked []uuid.UUID }
@@ -310,6 +348,218 @@ func TestRefreshReuse_RevokesSegmentTokens(t *testing.T) {
 	}
 	if len(rev.revoked) != 1 || rev.revoked[0] != f.userID {
 		t.Fatalf("segment tokens revoked for %v, want [%s]", rev.revoked, f.userID)
+	}
+}
+
+// Both reuse branches must hand the handler a *v1.RefreshReuseError naming the
+// user, the session and which check fired — that is all AuthHandler.Refresh
+// has to write the auth.sessions_revoked audit entry from. Before, both
+// returned a bare fmt.Errorf and the wipe never reached the audit log.
+func TestRefreshReuse_ReturnsTypedError(t *testing.T) {
+	cases := []struct {
+		name        string
+		isCurrent   bool
+		wantTrigger string
+	}{
+		// The victim's client (or the thief) presents a token that was
+		// already rotated away.
+		{"superseded token", false, v1.RefreshReuseSuperseded},
+		// The token was current at lookup, but another request rotated it
+		// before this one's compare-and-swap landed (rotateRows stays 0).
+		{"rotation race", true, v1.RefreshReuseRotationRace},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newStepUpFixture(t)
+			sid := uuid.New()
+			client, platform := "OnScreen TV", "android_tv"
+			f.db.sessionRow = gen.GetSessionByAnyTokenHashRow{
+				ID: sid, UserID: f.userID, IsCurrent: c.isCurrent,
+				TokenHash: "current-hash", ClientName: &client, Platform: &platform,
+				LastSeen: pgtype.Timestamptz{Time: f.clock.Add(-95 * time.Second), Valid: true},
+			}
+
+			_, err := f.svc.Refresh(context.Background(), "spent-token")
+			var reuse *v1.RefreshReuseError
+			if !errors.As(err, &reuse) {
+				t.Fatalf("err = %v (%T), want *v1.RefreshReuseError", err, err)
+			}
+			if reuse.UserID != f.userID || reuse.SessionID != sid || reuse.Trigger != c.wantTrigger {
+				t.Errorf("reuse error = %+v, want user %s session %s trigger %q",
+					*reuse, f.userID, sid, c.wantTrigger)
+			}
+			if !reuse.SessionsDeleted || !reuse.EpochBumped {
+				t.Errorf("SessionsDeleted=%v EpochBumped=%v, want both true — both writes succeeded",
+					reuse.SessionsDeleted, reuse.EpochBumped)
+			}
+			// Forensics from the row, idle time measured on the service clock.
+			if reuse.ClientName != client || reuse.Platform != platform {
+				t.Errorf("client/platform = %q/%q, want %q/%q", reuse.ClientName, reuse.Platform, client, platform)
+			}
+			if reuse.SecondsSinceLastSeen == nil || *reuse.SecondsSinceLastSeen != 95 {
+				t.Errorf("SecondsSinceLastSeen = %v, want 95", reuse.SecondsSinceLastSeen)
+			}
+			if strings.Contains(fmt.Sprintf("%+v", *reuse), "current-hash") {
+				t.Error("the session's token hash was copied into the reuse error")
+			}
+			// The typed error must not change what the branch does: the
+			// family is still burned.
+			if len(f.db.familyBurns) != 1 || len(f.db.epochBumps) != 1 {
+				t.Errorf("family burns = %v, epoch bumps = %v, want one each",
+					f.db.familyBurns, f.db.epochBumps)
+			}
+		})
+	}
+}
+
+// A wipe that failed must say so: the handler records SessionsDeleted /
+// EpochBumped in the audit entry, which otherwise claimed a revocation that
+// never happened. Both branches, each write failing on its own.
+func TestRefreshReuse_ReportsFailedWipe(t *testing.T) {
+	cases := []struct {
+		name                  string
+		isCurrent             bool
+		deleteErr, bumpErr    error
+		wantDeleted, wantBump bool
+	}{
+		{"superseded, delete fails", false, errors.New("db down"), nil, false, true},
+		{"superseded, bump fails", false, nil, errors.New("db down"), true, false},
+		// One write failing on its own in the CAS-miss branch too, so the two
+		// flags can't be swapped there without a failure.
+		{"rotation race, delete fails", true, errors.New("db down"), nil, false, true},
+		{"rotation race, bump fails", true, nil, errors.New("db down"), true, false},
+		{"rotation race, both fail", true, errors.New("db down"), errors.New("db down"), false, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newStepUpFixture(t)
+			f.db.deleteErr, f.db.bumpErr = c.deleteErr, c.bumpErr
+			// No last_seen on the row: the idle time is unknown, not zero.
+			f.db.sessionRow = gen.GetSessionByAnyTokenHashRow{ID: uuid.New(), UserID: f.userID, IsCurrent: c.isCurrent}
+
+			_, err := f.svc.Refresh(context.Background(), "spent-token")
+			var reuse *v1.RefreshReuseError
+			if !errors.As(err, &reuse) {
+				t.Fatalf("err = %v (%T), want *v1.RefreshReuseError", err, err)
+			}
+			if reuse.SessionsDeleted != c.wantDeleted || reuse.EpochBumped != c.wantBump {
+				t.Errorf("SessionsDeleted=%v EpochBumped=%v, want %v/%v",
+					reuse.SessionsDeleted, reuse.EpochBumped, c.wantDeleted, c.wantBump)
+			}
+			if reuse.SecondsSinceLastSeen != nil {
+				t.Errorf("SecondsSinceLastSeen = %d with no last_seen on the row, want nil", *reuse.SecondsSinceLastSeen)
+			}
+			// A failing first write must not skip the second.
+			if len(f.db.familyBurns) != 1 || len(f.db.epochBumps) != 1 {
+				t.Errorf("family burns = %v, epoch bumps = %v, want one attempt each",
+					f.db.familyBurns, f.db.epochBumps)
+			}
+		})
+	}
+}
+
+// Only a verdict on the token may come back as v1.ErrRefreshInvalid: the
+// handler answers it with 401, which native clients take as "signed out" and
+// wipe their stored sign-in. A database that could not answer must come back as
+// any other error (503) — mapping it to "not found" signed out every client
+// that refreshed through a DB blip or a restart. Neither is reuse (which would
+// audit a wipe that never happened), and neither burns anything.
+func TestRefresh_InvalidVersusUnavailable(t *testing.T) {
+	dbDown := errors.New("read tcp 10.0.0.5:5432: connection reset by peer")
+	cases := []struct {
+		name        string
+		setup       func(f *stepUpFixture)
+		wantInvalid bool
+	}{
+		// The query filters expired rows, so no row = unknown or expired.
+		{"unknown or expired token", func(f *stepUpFixture) { f.db.sessionErr = pgx.ErrNoRows }, true},
+		// Sessions cascade with their user: a delete racing the refresh.
+		{"user deleted mid-refresh", func(f *stepUpFixture) { f.db.userErr = pgx.ErrNoRows }, true},
+		{"session lookup fails", func(f *stepUpFixture) { f.db.sessionErr = dbDown }, false},
+		{"session lookup cancelled", func(f *stepUpFixture) { f.db.sessionErr = context.Canceled }, false},
+		{"user lookup fails", func(f *stepUpFixture) { f.db.userErr = dbDown }, false},
+		{"rotation fails", func(f *stepUpFixture) { f.db.rotateErr = dbDown }, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newStepUpFixture(t)
+			f.db.sessionRow = gen.GetSessionByAnyTokenHashRow{ID: uuid.New(), UserID: f.userID, IsCurrent: true}
+			f.db.rotateRows = 1
+			c.setup(f)
+
+			pair, err := f.svc.Refresh(context.Background(), "tok")
+			if err == nil {
+				t.Fatalf("refresh succeeded: %+v", pair)
+			}
+			if got := errors.Is(err, v1.ErrRefreshInvalid); got != c.wantInvalid {
+				t.Errorf("errors.Is(err, ErrRefreshInvalid) = %v, want %v (err: %v)", got, c.wantInvalid, err)
+			}
+			var reuse *v1.RefreshReuseError
+			if errors.As(err, &reuse) {
+				t.Fatalf("reported as reuse: %+v", *reuse)
+			}
+			if len(f.db.familyBurns) != 0 || len(f.db.epochBumps) != 0 {
+				t.Errorf("burned sessions: burns=%v bumps=%v", f.db.familyBurns, f.db.epochBumps)
+			}
+		})
+	}
+}
+
+// A rotation that reports an error may still have committed (a connection
+// lost after the UPDATE). The service then checks the new hash: if the row
+// carries it, the pair minted before the swap is handed back, because a 503
+// there would make the client retry a retired token and trip reuse detection.
+// If the write did not land it stays a 503 (not a verdict on the token).
+func TestRefresh_RotationErrorButCommitted(t *testing.T) {
+	connLost := errors.New("unexpected EOF")
+	for _, landed := range []bool{true, false} {
+		t.Run(fmt.Sprintf("landed=%v", landed), func(t *testing.T) {
+			f := newStepUpFixture(t)
+			sessionID := uuid.New()
+			f.db.sessionRow = gen.GetSessionByAnyTokenHashRow{ID: sessionID, UserID: f.userID, IsCurrent: true}
+			f.db.rotateErr = connLost
+			f.db.rotateLanded = landed
+
+			pair, err := f.svc.Refresh(context.Background(), "tok")
+			if landed {
+				if err != nil {
+					t.Fatalf("refresh failed although the rotation committed: %v", err)
+				}
+				if pair.RefreshToken == "" || pair.AccessToken == "" || auth.HashToken(pair.RefreshToken) != f.db.rotatedHash {
+					t.Errorf("pair does not carry the committed refresh token: %+v", pair)
+				}
+			} else {
+				if err == nil {
+					t.Fatalf("refresh succeeded although the rotation did not land: %+v", pair)
+				}
+				if errors.Is(err, v1.ErrRefreshInvalid) {
+					t.Errorf("a failed rotation was reported as an invalid token: %v", err)
+				}
+			}
+			if len(f.db.familyBurns) != 0 || len(f.db.epochBumps) != 0 {
+				t.Errorf("burned sessions: burns=%v bumps=%v", f.db.familyBurns, f.db.epochBumps)
+			}
+		})
+	}
+}
+
+// The happy path still rotates and mints a full pair now that the tokens are
+// minted before the compare-and-swap rather than after it.
+func TestRefresh_RotatesAndMints(t *testing.T) {
+	f := newStepUpFixture(t)
+	f.db.sessionRow = gen.GetSessionByAnyTokenHashRow{ID: uuid.New(), UserID: f.userID, IsCurrent: true}
+	f.db.rotateRows = 1
+
+	pair, err := f.svc.Refresh(context.Background(), "tok")
+	if err != nil {
+		t.Fatalf("Refresh: %v", err)
+	}
+	if pair.AccessToken == "" || pair.AssetToken == "" || pair.RefreshToken == "" || pair.RefreshToken == "tok" {
+		t.Errorf("incomplete pair: access=%t asset=%t refresh=%q",
+			pair.AccessToken != "", pair.AssetToken != "", pair.RefreshToken)
+	}
+	if pair.UserID != f.userID || pair.Username != "alice" {
+		t.Errorf("pair user = %s/%q, want %s/alice", pair.UserID, pair.Username, f.userID)
 	}
 }
 

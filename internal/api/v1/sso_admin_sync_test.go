@@ -20,6 +20,10 @@ type syncDB struct {
 	setErr   error
 	getErr   error
 	getCalls int
+	// bumpErr / deleteErr fail the revocation writes (the attempt is still
+	// recorded).
+	bumpErr   error
+	deleteErr error
 }
 
 func (d *syncDB) SetUserAdmin(_ context.Context, arg gen.SetUserAdminParams) error {
@@ -34,6 +38,9 @@ func (d *syncDB) SetUserAdmin(_ context.Context, arg gen.SetUserAdminParams) err
 }
 func (d *syncDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
 	d.bumps = append(d.bumps, id)
+	if d.bumpErr != nil {
+		return d.bumpErr
+	}
 	u := d.users[id]
 	u.SessionEpoch++
 	d.users[id] = u
@@ -41,7 +48,7 @@ func (d *syncDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
 }
 func (d *syncDB) DeleteSessionsForUser(_ context.Context, id uuid.UUID) error {
 	d.deletes = append(d.deletes, id)
-	return nil
+	return d.deleteErr
 }
 func (d *syncDB) GetUser(_ context.Context, id uuid.UUID) (gen.User, error) {
 	d.getCalls++
