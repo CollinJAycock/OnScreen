@@ -188,7 +188,15 @@ function credentialsMode(): RequestCredentials {
  *  Fire-and-forget — failure to persist is non-fatal because the
  *  in-memory bearer is already updated. */
 async function persistTokensIfTauri(access: string, refresh: string, asset: string = ''): Promise<void> {
-  setBearerToken(access, refresh, asset || null);
+  // Same-origin browser: the httpOnly cookies set by this same response ARE
+  // the credentials, shared by every tab. A per-tab in-memory copy goes stale
+  // the moment another tab rotates the pair, and the server prefers a body
+  // refresh_token / Authorization header over the cookies — so this tab would
+  // later spend the superseded refresh token: reuse, which deletes every
+  // session of the user. Cache only where cookies can't reach the server
+  // (Tauri, cross-origin embeds); browser builds keep the cache null, as
+  // getBearerToken/getAssetToken document.
+  if (!apiBase.startsWith('/')) setBearerToken(access, refresh, asset || null);
   try {
     const { isTauri, setStoredTokens } = await import('./native');
     if (isTauri()) await setStoredTokens(access, refresh, asset);
@@ -196,6 +204,356 @@ async function persistTokensIfTauri(access: string, refresh: string, asset: stri
     // Tauri not present or store IPC unavailable — in-memory tokens
     // still work for this session.
   }
+}
+
+// ── Cross-tab refresh serialization ───────────────────────────────────────────
+//
+// Refresh tokens are one-shot: /auth/refresh rotates the token, and the server
+// treats a superseded token coming back as theft and deletes EVERY session of
+// the user (web, phone, TVs). In browser mode the refresh token is an httpOnly
+// cookie shared by every tab of the origin, while ApiClient.refreshPromise only
+// dedupes within one tab — so two tabs whose access tokens expire together
+// would both POST the same cookie, and the second POST is "reuse" that signs
+// the user out everywhere. The helpers below make the refresh a cross-tab
+// critical section.
+//
+// Primary: the Web Locks API. Fallback, because navigator.locks exists only in
+// secure contexts (self-hosters commonly open http://<LAN-IP>:7070) and not in
+// older browsers: a best-effort localStorage lease.
+//
+// A tab never POSTs merely because it got tired of waiting. The holder's POST
+// is capped at REFRESH_POST_TIMEOUT_MS — a hung one fails like a network
+// error, which frees the lock for the next tab — and waiters wait longer than
+// that. A wait that still runs out means the holder may be mid-POST with the
+// very cookie this tab would send, so the waiter takes a refresh that landed
+// meanwhile or else fails its own: the request that needed it fails, the tab
+// stays signed in and the cookies are untouched. One failed request beats a
+// reuse that signs the user out on every device.
+//
+// Cookie-mode sign-out runs in the same critical section (logoutAcrossTabs):
+// a logout that overtakes another tab's refresh would revoke nothing and be
+// undone by that refresh's Set-Cookie. It leaves a sign-out marker, so tabs
+// queued behind it don't mistake an earlier refresh for a jar that still
+// holds cookies (see REFRESHED_AT_KEY).
+//
+// What no ordering between tabs can prevent: a POST the server processed but
+// whose response never arrived (a dropped connection, a tab closed mid-POST,
+// or the timeout above) leaves the jar holding the superseded cookie, so the
+// next refresh from any tab is reuse. That exposure is the same with or
+// without these helpers.
+
+const REFRESH_LOCK_NAME = 'onscreen-auth-refresh';
+/** Rewritten by every successful refresh in any tab. A tab that queued behind
+ *  another and sees it changed knows the cookie jar already holds a fresh pair
+ *  and skips its own POST. That saves a rotation; it is not what prevents
+ *  reuse (the lock is) — a second refresh after the first one sends the
+ *  already-ROTATED cookie, which the server accepts.
+ *  A cookie-mode sign-out writes it too, with a LOGOUT_MARKER_PREFIX value
+ *  that says the opposite: the jar is being emptied. A waiter that finds one
+ *  POSTs after all, and the server's 401 to the empty jar signs that tab out
+ *  as well. Without it, a queue of refresh (tab C), sign-out (tab A), refresh
+ *  (tab B) would show B the marker C changed; B would skip its POST, retry
+ *  against the jar A just emptied, get a plain 401 and stay looking signed
+ *  in. A marker that vanished (site data cleared) is no refresh either. */
+const REFRESHED_AT_KEY = 'onscreen_auth_refreshed_at';
+const LOGOUT_MARKER_PREFIX = 'logout:';
+const REFRESH_LEASE_KEY = 'onscreen_auth_refresh_lease';
+/** Cap on the POST made inside the critical section. Only a live tab can hold
+ *  a Web Lock (closing or crashing the tab releases it), so a holder whose
+ *  fetch hangs would otherwise keep every other tab waiting; the abort makes
+ *  it fail like a network error, which releases the lock.
+ *  The abort is itself a way to end up presenting a superseded cookie, and
+ *  nothing client-side can prevent that: it ends this tab's fetch, not the
+ *  server's work. If the server still processes the refresh, it rotates the
+ *  token, the Set-Cookie carrying the new one is dropped with the aborted
+ *  response, the jar keeps the old cookie, and the next refresh from any tab
+ *  presents it — reuse. The cap trades that (a server more than 20 s late
+ *  with a refresh) for never wedging every tab behind one hung fetch. */
+const REFRESH_POST_TIMEOUT_MS = 20_000;
+/** Fallback lease lifetime. Outlives the POST timeout, so a holder's POST has
+ *  ended before its lease can lapse (see REFRESH_LEASE_MARGIN_MS); also how
+ *  long a tab closed mid-refresh, which never releases its lease, blocks the
+ *  others. */
+const REFRESH_LEASE_MS = 30_000;
+/** A lease claim is acted on only while it has at least the POST timeout plus
+ *  this much life left. The settle below can stretch to seconds in a
+ *  timer-throttled background tab, and a claim that aged meanwhile could lapse
+ *  mid-POST — letting another tab claim the lease and POST the same cookie. */
+const REFRESH_LEASE_MARGIN_MS = 5_000;
+/** A real claim never expires more than REFRESH_LEASE_MS from now, while the
+ *  clock holds still. A lease whose exp lies further ahead than that by more
+ *  than this slack was left under a clock that has since been set back a long
+ *  way, or is corrupt, and counts as lapsed: honouring it would wedge every
+ *  tab's refresh until its bogus exp.
+ *  A whole lease lifetime of slack, because a small step back (an NTP
+ *  correction, a manual adjustment) during a live holder's POST pushes its
+ *  lease just as far ahead — and a waiter that took that for bogus would
+ *  claim the lease and POST the same cookie: reuse, which signs the user out
+ *  on every device. The price is that a bogus lease inside the window is
+ *  honoured until it lapses, at most REFRESH_LEASE_MS + this (~60 s), and
+ *  waiters meanwhile time out and fail their request without posting
+ *  (REFRESH_WAIT_MS). A step back of more than this during a POST still
+ *  reads as bogus. */
+const REFRESH_LEASE_CLOCK_SLACK_MS = REFRESH_LEASE_MS;
+/** How long a tab waits for its turn: longer than a live holder can take (the
+ *  POST timeout) and than a dead holder's lease lasts (unless a clock set back
+ *  stretched it; see REFRESH_LEASE_CLOCK_SLACK_MS). A wait that runs out
+ *  anyway never ends in a refresh POST — see refreshAcrossTabs. */
+const REFRESH_WAIT_MS = 35_000;
+const REFRESH_LEASE_POLL_MS = 100;
+/** Pause between claiming the lease and reading it back (see
+ *  acquireRefreshLease). */
+const REFRESH_LEASE_SETTLE_MS = 50;
+
+// localStorage can be missing (SSR) or throw on access (storage blocked,
+// Safari private-mode quota). Coordination then degrades to "none" — the
+// pre-lock behaviour — rather than crashing the refresh.
+function storageGet(key: string): string | null {
+  try {
+    return typeof localStorage === 'undefined' ? null : localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+/** False when the write didn't happen (no storage, or it threw). */
+function storageSet(key: string, value: string): boolean {
+  try {
+    if (typeof localStorage === 'undefined') return false;
+    localStorage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function storageRemove(key: string): void {
+  try {
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(key);
+  } catch { /* best-effort */ }
+}
+
+/** Unique-enough id for the marker and the lease owner. Not
+ *  crypto.randomUUID: that is secure-context-only too, and the fallback exists
+ *  precisely for insecure contexts. Uniqueness is all that's needed here. */
+function uniqueToken(): string {
+  return Date.now().toString(36) + Math.random().toString(36).slice(2);
+}
+
+const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** What a caller brings to the cross-tab critical section. */
+interface AuthCriticalSection<T> {
+  /** The work, run while this tab holds the lock. Its signal aborts after
+   *  REFRESH_POST_TIMEOUT_MS. */
+  run: (signal: AbortSignal) => Promise<T>;
+  /** Runs instead of `run` when this tab's wait for its turn ran out. */
+  onWaitTimeout: () => Promise<T>;
+  /** Lease fallback only: stop waiting as soon as this holds, then `run`
+   *  (which checks for itself what that means). A queued Web Lock request
+   *  simply waits for its grant. */
+  stopWaiting?: () => boolean;
+}
+
+/** Run `cs` as the cross-tab auth critical section: under the Web Lock, or
+ *  under the localStorage lease where the Locks API is missing. */
+async function withAuthLock<T>(cs: AuthCriticalSection<T>): Promise<T> {
+  const locks = typeof navigator === 'undefined' ? undefined : navigator.locks;
+  if (locks && typeof locks.request === 'function') return withAuthWebLock(locks, cs);
+  return withAuthLease(cs);
+}
+
+/** Run `post` with a signal that aborts after REFRESH_POST_TIMEOUT_MS. */
+async function withPostTimeout<T>(post: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), REFRESH_POST_TIMEOUT_MS);
+  try {
+    return await post(abort.signal);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Run `refresh` as the cross-tab critical section, handing it a signal that
+ *  aborts after REFRESH_POST_TIMEOUT_MS. Resolves true WITHOUT calling it when
+ *  another tab completed a refresh while this one queued (and no sign-out
+ *  came after it); rejects without calling it when this tab's wait ran out
+ *  and no such refresh landed; otherwise resolves or rejects exactly as
+ *  `refresh` does. */
+async function refreshAcrossTabs(refresh: (signal: AbortSignal) => Promise<boolean>): Promise<boolean> {
+  // Snapshot BEFORE queueing: a change seen once we hold the lock means some
+  // tab refreshed in the meantime, and its Set-Cookie is already in the jar
+  // (cookies are stored before that tab's fetch even resolved) — unless the
+  // latest change is a sign-out's, which empties the jar (REFRESHED_AT_KEY).
+  // Posting when unsure is safe: under the lock, the cookie sent is current.
+  const markerBefore = storageGet(REFRESHED_AT_KEY);
+  const refreshedMeanwhile = () => {
+    const marker = storageGet(REFRESHED_AT_KEY);
+    return marker !== null && marker !== markerBefore && !marker.startsWith(LOGOUT_MARKER_PREFIX);
+  };
+  return withAuthLock({
+    run: async (signal) => {
+      if (refreshedMeanwhile()) return true;
+      const ok = await refresh(signal);
+      // Published while still holding the lock, so the next tab in line sees it.
+      if (ok) storageSet(REFRESHED_AT_KEY, uniqueToken());
+      return ok;
+    },
+    // The wait for another tab's refresh ran out. That tab may still be
+    // mid-POST with the cookie this one would send, and a second POST of it
+    // is reuse — so never go ahead: take its refresh if one landed meanwhile,
+    // otherwise fail like a network error does.
+    onWaitTimeout: async () => {
+      if (refreshedMeanwhile()) return true;
+      throw new Error('auth refresh: timed out waiting for another tab');
+    },
+    stopWaiting: refreshedMeanwhile,
+  });
+}
+
+/** Cookie-mode sign-out as the same critical section. A logout that overtakes
+ *  another tab's refresh of the same cookie sends the pre-rotation cookie: the
+ *  server finds nothing to delete under it, and the refresh's response then
+ *  lands its Set-Cookie and signs the browser back in. Holding the lock, the
+ *  logout carries whatever the last refresh left in the jar.
+ *  No marker shortcut for the logout itself: a refresh that landed while this
+ *  queued is exactly the session to revoke. And it publishes a sign-out
+ *  marker, never a refresh's, so a tab queued behind it POSTs its refresh,
+ *  finds the cleared jar and fails it — which signs that tab out too — even
+ *  when another tab's refresh changed the marker while it queued. The marker
+ *  goes out before the POST, so a lease-fallback waiter polling meanwhile
+ *  keeps waiting (one that polls between the earlier refresh's release and
+ *  this claim still takes that refresh, and its retry races the logout), and
+ *  whether or not the POST works: all it can cost a waiter is a rotation.
+ *  A wait that runs out POSTs anyway: a logout can't trip reuse detection (a
+ *  superseded cookie just finds nothing to delete), and a sign-out that never
+ *  reaches the server leaves the session alive. */
+async function logoutAcrossTabs(logout: (signal: AbortSignal) => Promise<void>): Promise<void> {
+  const run = (signal: AbortSignal) => {
+    storageSet(REFRESHED_AT_KEY, LOGOUT_MARKER_PREFIX + uniqueToken());
+    return logout(signal);
+  };
+  return withAuthLock({ run, onWaitTimeout: () => withPostTimeout(run) });
+}
+
+async function withAuthWebLock<T>(locks: LockManager, cs: AuthCriticalSection<T>): Promise<T> {
+  // A Web Lock is released when the callback settles (throws included) and
+  // when the holding tab closes or crashes, so a dead tab cannot keep it; a
+  // live one is bounded by the POST timeout around cs.run. The abort here
+  // only cancels a still-queued request, never a lock already granted.
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), REFRESH_WAIT_MS);
+  let granted = false;
+  try {
+    return await locks.request(REFRESH_LOCK_NAME, { signal: abort.signal }, () => {
+      granted = true;
+      clearTimeout(timer);
+      return withPostTimeout(cs.run);
+    });
+  } catch (e) {
+    // The work itself failed (network error, POST timeout) — propagate.
+    if (granted) throw e;
+    if (abort.signal.aborted) return await cs.onWaitTimeout();
+    // The Locks API refused the request (e.g. an opaque origin): coordinate
+    // through the lease instead, which in turn goes uncoordinated only where
+    // storage is unusable too.
+    return await withAuthLease(cs);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Fallback when navigator.locks is unavailable. BEST-EFFORT: localStorage has
+ *  no atomic compare-and-set, so two tabs that both read "no lease" before
+ *  either one's claim is visible to the other both claim it. The read-back
+ *  after a settle in acquireRefreshLease resolves those (last writer wins,
+ *  the other goes back to waiting) unless a claim reaches the other tab more
+ *  slowly than the settle. Lease expiry and the POST timeout run on timers
+ *  and the tab's clock, so a heavily throttled background tab can still
+ *  outrun them; the margin check narrows that, it cannot close it. */
+async function withAuthLease<T>(cs: AuthCriticalSection<T>): Promise<T> {
+  const owner = uniqueToken();
+  const lease = await acquireRefreshLease(owner, cs.stopWaiting);
+  if (lease === 'timeout') return await cs.onWaitTimeout();
+  try {
+    // 'stopped' (another tab's refresh landed): cs.run sees that too and
+    // skips its POST.
+    return await withPostTimeout(cs.run);
+  } finally {
+    if (lease === 'held') releaseRefreshLease(owner);
+  }
+}
+
+/** Remove the lease if it is still this owner's claim. One that lapsed and
+ *  was taken over by another tab is not ours to remove. */
+function releaseRefreshLease(owner: string): void {
+  if (readRefreshLease()?.owner === owner) storageRemove(REFRESH_LEASE_KEY);
+}
+
+function readRefreshLease(): { owner: string; exp: number } | null {
+  const raw = storageGet(REFRESH_LEASE_KEY);
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as { owner?: unknown; exp?: unknown };
+    return typeof v.owner === 'string' && typeof v.exp === 'number' ? { owner: v.owner, exp: v.exp } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Whether another tab's lease still holds: not yet expired, and no further
+ *  ahead than a real claim can be (see REFRESH_LEASE_CLOCK_SLACK_MS). */
+function refreshLeaseLive(lease: { exp: number }): boolean {
+  const now = Date.now();
+  return lease.exp > now && lease.exp <= now + REFRESH_LEASE_MS + REFRESH_LEASE_CLOCK_SLACK_MS;
+}
+
+/** Waits, at most REFRESH_WAIT_MS, until this tab holds the lease ('held').
+ *  Stops early when stopWaiting() holds ('stopped': another tab's refresh
+ *  landed) or when storage won't hold a lease ('uncoordinated': every tab of
+ *  the origin is in the same spot, so there is nothing to coordinate with —
+ *  the pre-lease behaviour). 'timeout' means another tab kept the lease the
+ *  whole time. Every exit but 'held' withdraws this tab's claim if one from a
+ *  round that didn't take is still standing: left behind, it would hold off
+ *  every other tab until it lapsed. */
+async function acquireRefreshLease(
+  owner: string,
+  stopWaiting?: () => boolean,
+): Promise<'held' | 'stopped' | 'uncoordinated' | 'timeout'> {
+  const deadline = Date.now() + REFRESH_WAIT_MS;
+  let outcome: 'stopped' | 'uncoordinated' | 'timeout' = 'timeout';
+  while (Date.now() < deadline) {
+    if (stopWaiting?.()) {
+      outcome = 'stopped';
+      break;
+    }
+    const lease = readRefreshLease();
+    if (lease && lease.owner !== owner && refreshLeaseLive(lease)) {
+      await sleep(REFRESH_LEASE_POLL_MS);
+      continue;
+    }
+    // Free, lapsed because its tab died mid-refresh, bogus, or our own claim
+    // from a round that didn't take: claim it, then read it back after a
+    // beat. A tab that claimed in the same instant overwrote one of the two
+    // writes; only the surviving owner proceeds.
+    if (!storageSet(REFRESH_LEASE_KEY, JSON.stringify({ owner, exp: Date.now() + REFRESH_LEASE_MS }))) {
+      outcome = 'uncoordinated';
+      break;
+    }
+    await sleep(REFRESH_LEASE_SETTLE_MS);
+    const now = readRefreshLease();
+    // Proceed only on our own claim with life left for the whole POST.
+    // Otherwise go round again: another tab's claim won; the lease vanished
+    // (a finishing holder's release raced our claim — the stopWaiting check
+    // at the top sees its refresh); or the beat stretched in a throttled tab
+    // and our claim aged — claim afresh (if it lapsed meanwhile, the new
+    // claim races any other tab's through this same read-back).
+    if (now?.owner === owner && now.exp - Date.now() >= REFRESH_POST_TIMEOUT_MS + REFRESH_LEASE_MARGIN_MS) {
+      return 'held';
+    }
+  }
+  releaseRefreshLease(owner);
+  return outcome;
 }
 
 interface ApiResponse<T> {
@@ -231,6 +589,12 @@ export class ApiRequestError extends Error {
   }
 }
 
+/** ApiRequestError code (status 401) for a request that hit a 401 and could
+ *  not get the session renewed for a reason that says nothing about the
+ *  tokens — the server unreachable or failing, or another tab's refresh
+ *  taking too long. The user stays signed in; retrying later can succeed. */
+export const REFRESH_UNAVAILABLE_CODE = 'REFRESH_UNAVAILABLE';
+
 export interface UserMeta {
   user_id: string;
   username: string;
@@ -238,6 +602,8 @@ export interface UserMeta {
 }
 
 export class ApiClient {
+  // Dedupes refreshes within this tab (refreshSession); tryRefresh serializes
+  // across tabs.
   private refreshPromise: Promise<boolean> | null = null;
 
   /** Store non-secret user metadata for UI routing. */
@@ -274,7 +640,8 @@ export class ApiClient {
   /**
    * Shared 401-retry wrapper.  Calls `doFetch` to get the response, then
    * `parseResponse` to turn it into the caller's desired shape.  On a 401
-   * it attempts a single silent token refresh before redirecting to login.
+   * it attempts a single silent token refresh; only a refresh the server
+   * rejected redirects to login.
    */
   private async requestWithRetry<T>(
     path: string,
@@ -287,19 +654,25 @@ export class ApiClient {
     if (resp.status === 401 && retry) {
       let refreshed: boolean;
       try {
-        if (!this.refreshPromise) {
-          this.refreshPromise = this.tryRefresh().finally(() => {
-            this.refreshPromise = null;
-          });
-        }
-        refreshed = await this.refreshPromise;
+        refreshed = await this.refreshSession();
       } catch {
-        refreshed = false;
+        // The refresh got no verdict on the tokens: a network error, the
+        // POST timeout, a timed-out wait for another tab's refresh, or the
+        // server answering 5xx/429 (see postRefresh). They may well be fine,
+        // so fail just this request — as the ApiRequestError pages already
+        // show as an error — and keep the user signed in: no teardown, no
+        // redirect. The teardown below would also clear the shared
+        // onscreen_user under every other tab of the origin.
+        throw new ApiRequestError(
+          'Could not renew your session. Check your connection and try again.',
+          401,
+          REFRESH_UNAVAILABLE_CODE,
+        );
       }
       if (refreshed) {
         return this.requestWithRetry(path, doFetch, parseResponse, false);
       }
-      // Refresh failed → tokens are dead (server-side session purge,
+      // Refresh rejected → tokens are dead (server-side session purge,
       // logout-on-another-device bumped session_epoch, refresh token
       // expiry, or the keychain hydrated with values from a server
       // that no longer recognises them). Tear everything down so the
@@ -336,6 +709,7 @@ export class ApiClient {
     path: string,
     body?: unknown,
     retry = true,
+    signal?: AbortSignal,
   ): Promise<T> {
     const finalPath = this.withViewAs(method, path);
     return this.requestWithRetry(
@@ -344,7 +718,8 @@ export class ApiClient {
         method,
         headers: authHeaders(),
         credentials: credentialsMode(),
-        body: body ? JSON.stringify(body) : undefined
+        body: body ? JSON.stringify(body) : undefined,
+        signal,
       }),
       async (resp) => {
         if (resp.status === 204) return undefined as T;
@@ -388,13 +763,51 @@ export class ApiClient {
     );
   }
 
-  private async tryRefresh(): Promise<boolean> {
-    // Network-level failure → throw so the caller's catch keeps
-    // tokens around for the next retry. Server-rejection (4xx) →
-    // return false; the caller treats that as "tokens are dead"
-    // and tears down. Without this distinction a flaky LAN would
-    // log a user out after one failed refresh, even though their
-    // tokens are perfectly valid.
+  /** Refresh the session outside the 401 path — the SSO-callback bootstrap
+   *  uses it to learn who just signed in. Same route as the 401 retry: joins
+   *  a refresh already running in this tab, and in cookie mode runs as the
+   *  cross-tab critical section. Resolves true once the session is fresh
+   *  (refreshed here, or by another tab while this one queued — either way
+   *  getUser() now holds the refreshed user), false only when the server
+   *  rejected the tokens (401/403: they are dead); throws when the refresh
+   *  got no verdict on them — a network error, a POST timeout, a timed-out
+   *  wait for another tab, or a 5xx/429 answer. Never tears down or
+   *  redirects: that is the caller's call.
+   *  `signal` (a bearer-mode sign-out's POST cap) aborts the bearer-mode
+   *  POST this call starts. A refresh this tab already had running is joined
+   *  as it is: it wasn't begun with the signal, and giving up on it could
+   *  let it land after the sign-out and store its pair and user again. */
+  refreshSession(signal?: AbortSignal): Promise<boolean> {
+    if (!this.refreshPromise) {
+      this.refreshPromise = this.tryRefresh(signal).finally(() => {
+        this.refreshPromise = null;
+      });
+    }
+    return this.refreshPromise;
+  }
+
+  private tryRefresh(signal?: AbortSignal): Promise<boolean> {
+    // Bearer (native) mode posts THIS window's in-memory refresh token, so
+    // there is no shared credential to serialize — and another window's
+    // refresh wouldn't have updated our copy, which makes the "another tab
+    // already refreshed" shortcut wrong there. Cookie mode shares one refresh
+    // cookie across every tab of the origin: cross-tab critical section, which
+    // also caps the POST (REFRESH_POST_TIMEOUT_MS) so it can't hold the lock
+    // forever.
+    if (refreshTokenStore) return this.postRefresh(signal);
+    return refreshAcrossTabs((postSignal) => this.postRefresh(postSignal));
+  }
+
+  private async postRefresh(signal?: AbortSignal): Promise<boolean> {
+    // Only the server rejecting the tokens (401, or 403) returns false;
+    // the caller treats that as "tokens are dead" and tears down.
+    // Everything that says nothing about the tokens throws, so the
+    // caller fails just the request at hand and keeps them for the
+    // next try: a network error or abort, a 5xx (the server couldn't
+    // check the token, and leaves the cookies alone when it says so),
+    // a 429, or any other unexpected answer. Without this distinction
+    // a flaky LAN or a restarting server would log a user out after
+    // one failed refresh, even though their tokens are perfectly valid.
     let resp: Response;
     try {
       // Browser path: refresh token is in an httpOnly cookie scoped
@@ -411,6 +824,11 @@ export class ApiClient {
         headers: authHeaders(),
         credentials: credentialsMode(),
         body: refreshTokenStore ? JSON.stringify(body) : undefined,
+        // The POST timeout (see REFRESH_POST_TIMEOUT_MS): every cookie-mode
+        // refresh, and a bearer-mode sign-out's rotation (revokeSession).
+        // Also bounds the body read below: aborted there, it lands in the
+        // unreadable-body branch.
+        signal,
       });
     } catch (e) {
       // Network error / DNS failure / fetch aborted — propagate so
@@ -419,14 +837,14 @@ export class ApiClient {
       // when the network comes back.
       throw e;
     }
-    if (!resp.ok) {
-      // 401 (refresh token rejected) or 5xx (server temporarily
-      // sad) — both surface as "refresh failed, tokens dead" today.
-      // Distinguishing 5xx as recoverable would need a queue; for
-      // now we treat all non-2xx as terminal and let the user
-      // re-login. The keychain clear in the caller means they
-      // start clean rather than re-loading a stale token.
+    if (resp.status === 401 || resp.status === 403) {
+      // Refresh token rejected: tokens dead. The keychain clear in
+      // the caller means the user starts clean at /login rather than
+      // re-loading a stale token.
       return false;
+    }
+    if (!resp.ok) {
+      throw new ApiRequestError(`auth refresh: HTTP ${resp.status}`, resp.status, REFRESH_UNAVAILABLE_CODE);
     }
     try {
       const json = (await resp.json()) as ApiResponse<TokenPair>;
@@ -437,40 +855,62 @@ export class ApiClient {
       this.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
       void persistTokensIfTauri(pair.access_token, pair.refresh_token, pair.asset_token ?? '');
       return true;
-    } catch {
-      // Malformed body — server returned 2xx but we can't parse it.
-      // Treat as failed refresh; the caller's tear-down path runs.
-      return false;
+    } catch (e) {
+      // A 2xx whose body didn't arrive whole or didn't parse (the POST
+      // timeout firing mid-read included). The server most likely
+      // rotated the token. Cookie mode: its Set-Cookie already put the
+      // new pair in the jar, so the session is probably fine — no
+      // verdict, throw. Bearer mode: the new pair was only in this
+      // body, and the refresh token we hold is superseded; sending it
+      // again would be reuse, which signs the user out everywhere. To
+      // us it is dead: false, and the caller's tear-down path runs.
+      if (refreshTokenStore) return false;
+      throw e;
     }
   }
 
-  /** Revoke the current session on the server (best-effort; throws on
-   *  network error). Cookie (browser) mode: the refresh cookie rides the
-   *  POST. Bearer (native) mode has no cookie, so the refresh token must go
-   *  in the body. Current servers revoke a body token even when the bearer
-   *  has expired; older ones only honoured it alongside a VALID bearer (an
-   *  expired one was treated as anonymous: still 204, nothing revoked), so
-   *  bearer mode rotates first to guarantee a fresh bearer, then revokes the
-   *  rotated refresh token. Sent to the current apiBase, i.e. the server
-   *  that issued the token — callers must run this BEFORE changing or
-   *  clearing the server URL. */
+  /** Revoke the current session on the server (best-effort; throws when the
+   *  server can't be reached or, in bearer mode, can't rotate the token
+   *  first). Cookie (browser) mode: the refresh cookie rides the POST, sent
+   *  inside the cross-tab critical section refreshes run in (see
+   *  logoutAcrossTabs). Bearer (native) mode has no cookie, so the refresh
+   *  token must go in the body. Current servers revoke a body token even
+   *  when the bearer has expired; older ones only honoured it alongside a
+   *  VALID bearer (an expired one was treated as anonymous: still 204,
+   *  nothing revoked), so bearer mode rotates first to guarantee a fresh
+   *  bearer, then revokes the rotated refresh token — unless the server
+   *  rejects the rotation, which means the token is dead already. Sent to
+   *  the current apiBase, i.e. the server that issued the token — callers
+   *  must run this BEFORE changing or clearing the server URL.
+   *  Every POST this starts is capped at REFRESH_POST_TIMEOUT_MS, as the
+   *  cookie-mode one is inside the critical section: a hung one fails like a
+   *  network error instead of holding the sign-out forever. An abort can't
+   *  cost a reuse here — authApi.logout discards the tokens right after —
+   *  only the revocation. The one wait it doesn't cap is on a refresh this
+   *  window already had running (see refreshSession); the layout's sign-out
+   *  bounds that. */
   async revokeSession(): Promise<void> {
-    if (!refreshTokenStore || credentialsMode() !== 'omit') {
-      await this.request('POST', '/auth/logout', undefined, false);
+    if (!refreshTokenStore) {
+      await logoutAcrossTabs((signal) => this.request('POST', '/auth/logout', undefined, false, signal));
       return;
     }
-    if (!this.refreshPromise) {
-      this.refreshPromise = this.tryRefresh().finally(() => {
-        this.refreshPromise = null;
-      });
+    if (credentialsMode() !== 'omit') {
+      // A cross-origin browser embed holding its own token copy: its
+      // refreshes don't take the cross-tab lock (tryRefresh), so there is
+      // nothing for the logout to wait out.
+      await withPostTimeout((signal) => this.request('POST', '/auth/logout', undefined, false, signal));
+      return;
     }
-    if (!(await this.refreshPromise) || !refreshTokenStore) return;
-    await fetch(apiBase + '/auth/logout', {
+    // Joins a refresh this window already has running rather than spending
+    // the same refresh token twice (reuse).
+    if (!(await withPostTimeout((signal) => this.refreshSession(signal))) || !refreshTokenStore) return;
+    await withPostTimeout((signal) => fetch(apiBase + '/auth/logout', {
       method: 'POST',
       headers: authHeaders(),
       credentials: credentialsMode(),
       body: JSON.stringify({ refresh_token: refreshTokenStore }),
-    });
+      signal,
+    }));
   }
 
   get = <T>(path: string) => this.request<T>('GET', path);
@@ -512,6 +952,60 @@ export class ApiClient {
 }
 
 export const api = new ApiClient();
+
+// ── SSO-callback bootstrap ────────────────────────────────────────────────────
+//
+// Every SSO/SAML/OIDC callback lands on "/?<x>_auth=1" holding fresh auth
+// cookies but no onscreen_user (a server response can't write localStorage).
+// The root layout refreshes to learn who signed in (api.refreshSession), and
+// the home page's auth gate must not bounce to /login before that settles.
+// The refresh can take a while — queued behind another tab's for up to
+// REFRESH_WAIT_MS, then its own capped POST — so the gate waits on the
+// layout's actual promise rather than a fixed window.
+
+let authBootstrap: Promise<void> | null = null;
+
+/** Longest the gate waits on a registered bootstrap. A cookie-mode refresh
+ *  ends on its own before this (a bounded wait, then a capped POST); the
+ *  bound is for whatever else might hang. */
+const AUTH_BOOTSTRAP_MAX_WAIT_MS = REFRESH_WAIT_MS + REFRESH_POST_TIMEOUT_MS + 5_000;
+/** How long the gate waits for a bootstrap to register at all — the fixed
+ *  window it used to give the layout. */
+const AUTH_BOOTSTRAP_START_WAIT_MS = 3_000;
+const AUTH_BOOTSTRAP_POLL_MS = 100;
+
+/** The layout registers its SSO-callback refresh here as it starts it, and
+ *  gets `refresh` back to await. */
+export function trackAuthBootstrap<T>(refresh: Promise<T>): Promise<T> {
+  authBootstrap = refresh.then(() => undefined, () => undefined);
+  return refresh;
+}
+
+/** For the home page's auth gate on an SSO-callback landing: resolves once
+ *  the layout's bootstrap refresh has settled — onscreen_user then holds the
+ *  signed-in user, unless the refresh failed — or after
+ *  AUTH_BOOTSTRAP_MAX_WAIT_MS. With no bootstrap registered yet it polls for
+ *  up to AUTH_BOOTSTRAP_START_WAIT_MS, returning early once `ready()` holds
+ *  and moving on to wait for a bootstrap that registers meanwhile. */
+export async function waitForAuthBootstrap(ready: () => boolean): Promise<void> {
+  const startBy = Date.now() + AUTH_BOOTSTRAP_START_WAIT_MS;
+  while (!authBootstrap) {
+    if (ready() || Date.now() >= startBy) return;
+    await sleep(AUTH_BOOTSTRAP_POLL_MS);
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const cap = new Promise<void>((resolve) => { timer = setTimeout(resolve, AUTH_BOOTSTRAP_MAX_WAIT_MS); });
+  try {
+    await Promise.race([authBootstrap, cap]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Forget the registered bootstrap (tests only). */
+export function resetAuthBootstrap(): void {
+  authBootstrap = null;
+}
 
 /** Fire-and-forget JSON request that survives page unmount. Uses
  *  `keepalive: true` so the browser keeps the request inflight after

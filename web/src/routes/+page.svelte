@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { libraryApi, hubApi, userApi, itemApi, assetUrl, type Library, type HubItem, type HubData, type HubLibraryRow, type HubRowPref } from '$lib/api';
+  import { libraryApi, hubApi, userApi, itemApi, assetUrl, waitForAuthBootstrap, type Library, type HubItem, type HubData, type HubLibraryRow, type HubRowPref } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
   import { nextUpSubtitle, removeById, restoreAt } from '$lib/watchState';
@@ -130,16 +130,14 @@
   onMount(async () => {
     // SSO/SAML/OIDC callback redirects land here with a marker query
     // param. The layout's onMount races this gate to bootstrap the
-    // user from /api/v1/auth/refresh — wait briefly so we don't bounce
-    // a freshly signed-in user back to /login. Other pages don't need
-    // this because every SSO callback redirects to / (this file).
+    // user from /api/v1/auth/refresh — wait for that refresh to settle
+    // (it can queue behind another tab's for a while) so we don't
+    // bounce a freshly signed-in user back to /login. Other pages don't
+    // need this because every SSO callback redirects to / (this file).
     if (!localStorage.getItem('onscreen_user')) {
       const hasAuthMarker = /(google|oidc|saml)_auth=1/.test(window.location.search);
       if (hasAuthMarker) {
-        for (let i = 0; i < 30; i++) {
-          await new Promise((r) => setTimeout(r, 100));
-          if (localStorage.getItem('onscreen_user')) break;
-        }
+        await waitForAuthBootstrap(() => !!localStorage.getItem('onscreen_user'));
       }
       if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
     }

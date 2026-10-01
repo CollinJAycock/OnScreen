@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { api, authApi, userApi, setApiBase, setBearerToken } from '$lib/api';
+  import { api, authApi, userApi, setApiBase, setBearerToken, trackAuthBootstrap } from '$lib/api';
   import type { SwitchableUser } from '$lib/api';
   import { isTauri, getServerUrl, setServerUrl, getStoredTokens } from '$lib/native';
   import { derived } from 'svelte/store';
@@ -126,27 +126,21 @@
     // which validates the cookie and returns the user info we need.
     // Without this, the user signs in upstream, lands on /, the gate
     // sees no localStorage user, and bounces to /login — silent loop.
+    // Through api.refreshSession, never a raw fetch: the refresh cookie is
+    // shared by every tab, and a refresh racing another tab's is reuse,
+    // which signs the user out on every device. A successful refresh stores
+    // the user (api.setUser) — here or in the tab that beat us to it — and
+    // the "Load current user info" step below picks it up. Registered with
+    // trackAuthBootstrap so the home page's gate waits for exactly this
+    // refresh, however long it queues behind another tab's.
     const authCallbackMarker =
       $page.url.searchParams.get('google_auth') === '1' ||
       $page.url.searchParams.get('oidc_auth') === '1' ||
       $page.url.searchParams.get('saml_auth') === '1';
     if (authCallbackMarker) {
       try {
-        const resp = await fetch('/api/v1/auth/refresh', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin'
-        });
-        if (resp.ok) {
-          const json = await resp.json();
-          const pair = json.data;
-          api.setUser({ user_id: pair.user_id, username: pair.username, is_admin: pair.is_admin });
-          currentUsername = pair.username;
-          isAdmin = pair.is_admin;
-          initNotifications();
-          startJobsPolling();
-        }
-      } catch {}
+        await trackAuthBootstrap(api.refreshSession());
+      } catch { /* no verdict on the cookies: the gate sends the user to /login */ }
       // Strip every known marker so refresh doesn't re-trigger the loop.
       const url = new URL(window.location.href);
       url.searchParams.delete('google_auth');
@@ -155,7 +149,8 @@
       window.history.replaceState({}, '', url.pathname + (url.search ? url.search : ''));
     }
 
-    // Load current user info
+    // Load current user info (after an SSO landing: whoever the refresh
+    // above stored)
     const user = api.getUser();
     if (user) {
       currentUsername = user.username;
@@ -255,13 +250,41 @@
     }
   }
 
+  // A browser sign-out waits its turn behind any other tab's session refresh
+  // (api.revokeSession), which can take a while. Show that it's under way
+  // and ignore repeat clicks, but go to /login only once it finishes: a page
+  // that looks signed out invites closing or reloading it, and unloading the
+  // page aborts the logout request, leaving the session alive on the server.
+  let signingOut = false;
+
+  // A backstop, not the usual bound: api.revokeSession caps its own waits
+  // and POSTs (cookie mode: at most a 35 s wait for its turn, then a 20 s
+  // POST; bearer mode: 20 s per POST). Past this, something else hangs (a
+  // refresh the window already had running, the native token store), and
+  // the local sign-out goes ahead rather than leaving the button stuck on
+  // "Signing out…" until a reload.
+  const LOGOUT_SETTLE_CAP_MS = 60_000;
+
   async function logout() {
+    if (signingOut) return;
+    signingOut = true;
     stopNotifications();
     stopJobsPolling();
     resetPendingRequests();
-    try { await authApi.logout(); } catch { /* ignore */ }
+    let capTimer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      (async () => { try { await authApi.logout(); } catch { /* ignore */ } })(),
+      new Promise<void>((resolve) => { capTimer = setTimeout(resolve, LOGOUT_SETTLE_CAP_MS); }),
+    ]);
+    clearTimeout(capTimer);
     api.setUser(null);
-    goto('/login');
+    try {
+      await goto('/login');
+    } finally {
+      // The layout outlives the sign-out: after the next sign-in the button
+      // must work again.
+      signingOut = false;
+    }
   }
 
   // Click-outside to close the notification panel. Must ignore clicks inside
@@ -476,12 +499,18 @@
             <path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd"/>
           </svg>
         </button>
-        <button class="signout" aria-label="Sign out" on:click={logout}>
+        <button
+          class="signout"
+          aria-label={signingOut ? 'Signing out…' : 'Sign out'}
+          aria-busy={signingOut}
+          disabled={signingOut}
+          on:click={logout}
+        >
           <svg viewBox="0 0 20 20" fill="currentColor" width="15" height="15">
             <path fill-rule="evenodd" d="M3 4.25A2.25 2.25 0 015.25 2h5.5A2.25 2.25 0 0113 4.25v2a.75.75 0 01-1.5 0v-2a.75.75 0 00-.75-.75h-5.5a.75.75 0 00-.75.75v11.5c0 .414.336.75.75.75h5.5a.75.75 0 00.75-.75v-2a.75.75 0 011.5 0v2A2.25 2.25 0 0110.75 18h-5.5A2.25 2.25 0 013 15.75V4.25z" clip-rule="evenodd"/>
             <path fill-rule="evenodd" d="M6 10a.75.75 0 01.75-.75h9.546l-1.048-.943a.75.75 0 111.004-1.114l2.5 2.25a.75.75 0 010 1.114l-2.5 2.25a.75.75 0 11-1.004-1.114l1.048-.943H6.75A.75.75 0 016 10z" clip-rule="evenodd"/>
           </svg>
-          Sign out
+          {signingOut ? 'Signing out…' : 'Sign out'}
         </button>
       </div>
     </aside>
@@ -794,7 +823,8 @@
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
-  .signout:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .signout:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-secondary); }
+  .signout:disabled { cursor: progress; opacity: 0.7; }
 
   .notif-wrapper {
     position: relative;

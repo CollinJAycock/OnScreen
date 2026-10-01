@@ -1,4 +1,5 @@
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
+import { trackAuthBootstrap, resetAuthBootstrap } from '$lib/api';
 import Page from './+page.svelte';
 
 const mockGoto = vi.hoisted(() => vi.fn());
@@ -13,17 +14,25 @@ const mockToastError = vi.hoisted(() => vi.fn());
 const mockDismissCW = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
-vi.mock('$lib/api', () => ({
-  libraryApi: {
-    list: mockListLibraries,
-    scan: mockScan,
-    del: mockDel,
-  },
-  hubApi: { get: mockHubGet },
-  userApi: { getPreferences: mockGetPreferences, setHubLayout: mockSetHubLayout },
-  itemApi: { dismissContinueWatching: mockDismissCW },
-  assetUrl: (p: string) => p,
-}));
+vi.mock('$lib/api', async (importOriginal) => {
+  // The SSO-bootstrap handshake between layout and gate is the real one.
+  const { trackAuthBootstrap, waitForAuthBootstrap, resetAuthBootstrap } =
+    await importOriginal<typeof import('$lib/api')>();
+  return {
+    libraryApi: {
+      list: mockListLibraries,
+      scan: mockScan,
+      del: mockDel,
+    },
+    hubApi: { get: mockHubGet },
+    userApi: { getPreferences: mockGetPreferences, setHubLayout: mockSetHubLayout },
+    itemApi: { dismissContinueWatching: mockDismissCW },
+    assetUrl: (p: string) => p,
+    trackAuthBootstrap,
+    waitForAuthBootstrap,
+    resetAuthBootstrap,
+  };
+});
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
 }));
@@ -89,6 +98,65 @@ describe('Home page', () => {
         window.history.replaceState({}, '', url.pathname);
       }
     }, 7000);
+
+    // The layout registers its bootstrap refresh (trackAuthBootstrap), which
+    // can queue behind another tab's refresh for far longer than 3 s.
+    describe('with the layout\'s bootstrap refresh registered', () => {
+      let url: URL;
+      beforeEach(() => {
+        vi.useFakeTimers();
+        url = new URL(window.location.href);
+        url.searchParams.set('oidc_auth', '1');
+        window.history.replaceState({}, '', url.toString());
+      });
+      afterEach(() => {
+        vi.useRealTimers();
+        resetAuthBootstrap();
+        url.searchParams.delete('oidc_auth');
+        window.history.replaceState({}, '', url.pathname);
+      });
+
+      it('waits for it however long it queues, then loads', async () => {
+        mockListLibraries.mockResolvedValue([]);
+        mockHubGet.mockResolvedValue({ continue_watching: [], recently_added: [] });
+        let finish!: (ok: boolean) => void;
+        trackAuthBootstrap(new Promise<boolean>((resolve) => { finish = resolve; }));
+
+        render(Page);
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(mockGoto).not.toHaveBeenCalled();
+
+        localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'sso-user' }));
+        finish(true);
+        await vi.advanceTimersByTimeAsync(0);
+
+        expect(mockListLibraries).toHaveBeenCalled();
+        expect(mockGoto).not.toHaveBeenCalledWith('/login');
+      });
+
+      it('goes to /login as soon as it settles without a user', async () => {
+        let finish!: (ok: boolean) => void;
+        trackAuthBootstrap(new Promise<boolean>((resolve) => { finish = resolve; }));
+
+        render(Page);
+        await vi.advanceTimersByTimeAsync(500);
+        expect(mockGoto).not.toHaveBeenCalled();
+
+        finish(false);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(mockGoto).toHaveBeenCalledWith('/login');
+      });
+
+      it('gives up after a minute on one that never settles', async () => {
+        trackAuthBootstrap(new Promise(() => {}));
+
+        render(Page);
+        await vi.advanceTimersByTimeAsync(59_000);
+        expect(mockGoto).not.toHaveBeenCalled();
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(mockGoto).toHaveBeenCalledWith('/login');
+      });
+    });
   });
 
   describe('authenticated', () => {
