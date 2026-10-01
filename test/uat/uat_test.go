@@ -85,7 +85,9 @@ func (s *stubAuthService) LoginLocal(_ context.Context, username, password strin
 func (s *stubAuthService) Refresh(_ context.Context, refreshToken string) (*v1.TokenPair, error) {
 	username, ok := s.tokens[refreshToken]
 	if !ok {
-		return nil, fmt.Errorf("invalid refresh token")
+		// ErrRefreshInvalid is what the handler answers with 401 and cleared
+		// cookies; any other error reads as "server unavailable" (503).
+		return nil, fmt.Errorf("invalid refresh token: %w", v1.ErrRefreshInvalid)
 	}
 	u := s.users[username]
 	newTok := "refresh-" + uuid.New().String()
@@ -1358,6 +1360,21 @@ func TestAuth_Refresh_RotatesCookie(t *testing.T) {
 	defer staleResp.Body.Close()
 	if staleResp.StatusCode == http.StatusOK {
 		t.Error("pre-rotation refresh cookie still works — rotation did not invalidate the old token")
+	}
+	// A dead token is a 401 that clears the auth cookies, not the 503 a
+	// server that could not check it answers (clients keep their tokens on
+	// a 503 and sign out on a 401).
+	if staleResp.StatusCode != http.StatusUnauthorized {
+		t.Errorf("stale refresh status = %d, want 401", staleResp.StatusCode)
+	}
+	cleared := false
+	for _, c := range staleResp.Cookies() {
+		if c.Name == "onscreen_rt" && c.MaxAge < 0 {
+			cleared = true
+		}
+	}
+	if !cleared {
+		t.Error("stale refresh did not clear the onscreen_rt cookie")
 	}
 }
 

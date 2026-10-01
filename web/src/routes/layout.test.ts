@@ -1,12 +1,20 @@
-import { render, screen, waitFor } from '@testing-library/svelte';
-import { writable } from 'svelte/store';
+import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { writable, type Writable } from 'svelte/store';
+import { page } from '$app/stores';
+import { api, authApi, type UserMeta } from '$lib/api';
 import { audio } from '$lib/stores/audio';
-import { playbackTransfers } from '$lib/stores/notifications';
+import { initNotifications, playbackTransfers, stopNotifications } from '$lib/stores/notifications';
+import { startJobsPolling } from '$lib/stores/jobs';
 import Layout from './+layout.svelte';
+
+const ALICE: UserMeta = { user_id: 'u1', username: 'alice', is_admin: false };
 
 const mockGoto = vi.hoisted(() => vi.fn());
 const mockItemGet = vi.hoisted(() => vi.fn());
 const mockIsTauri = vi.hoisted(() => vi.fn(() => false));
+const mockGetUser = vi.hoisted(() => vi.fn());
+const mockRefreshSession = vi.hoisted(() => vi.fn());
+const mockTrackAuthBootstrap = vi.hoisted(() => vi.fn(<T>(refresh: Promise<T>) => refresh));
 
 // Svelte 5 components are plain functions; a no-op one stands in for the
 // heavy children (player, notification bell, jobs banner) this test doesn't
@@ -14,17 +22,28 @@ const mockIsTauri = vi.hoisted(() => vi.fn(() => false));
 const Stub = vi.hoisted(() => () => {});
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
+// Writable, so a test can land the layout on an SSO-callback URL.
+vi.mock('$app/stores', async () => {
+  const { writable } = await import('svelte/store');
+  return {
+    page: writable({ url: new URL('http://localhost/'), params: {}, route: { id: null }, status: 200, error: null, data: {}, form: null, state: {} }),
+    navigating: writable(null),
+    updated: { subscribe: writable(false).subscribe, check: () => Promise.resolve(false) },
+  };
+});
 vi.mock('$lib/api', () => ({
   api: {
-    getUser: () => ({ user_id: 'u1', username: 'alice', is_admin: false }),
+    getUser: mockGetUser,
     setUser: vi.fn(),
     getViewAs: () => null,
     setViewAs: vi.fn(),
+    refreshSession: mockRefreshSession,
   },
   authApi: { setupStatus: vi.fn().mockResolvedValue({ setup_required: false }), logout: vi.fn() },
   userApi: { listSwitchable: vi.fn().mockResolvedValue([]), pinSwitch: vi.fn() },
   setApiBase: vi.fn(),
   setBearerToken: vi.fn(),
+  trackAuthBootstrap: mockTrackAuthBootstrap,
   itemApi: { get: mockItemGet },
   getClientName: () => 'This Browser',
 }));
@@ -57,6 +76,8 @@ vi.mock('$lib/components/JobsBanner.svelte', () => ({ default: Stub }));
 beforeEach(() => {
   vi.clearAllMocks();
   mockIsTauri.mockReturnValue(false);
+  mockGetUser.mockImplementation(() => ALICE);
+  mockRefreshSession.mockReset();
   playbackTransfers.set(null);
 });
 
@@ -109,5 +130,152 @@ describe('"Play on…" receiver', () => {
     playbackTransfers.set({ itemId: 'm1', positionMs: 5, targetClientName: 'Living Room TV' });
     await new Promise((r) => setTimeout(r, 20));
     expect(mockItemGet).not.toHaveBeenCalled();
+  });
+});
+
+// SSO/SAML/OIDC callbacks land on "/?<x>_auth=1" with fresh cookies but no
+// stored user; the layout learns who signed in through api.refreshSession
+// (never a raw fetch — see +layout.svelte).
+describe('SSO-callback bootstrap', () => {
+  function land(search: string) {
+    window.history.replaceState({}, '', '/' + search);
+    (page as unknown as Writable<{ url: URL }>).update((p) => ({ ...p, url: new URL('http://localhost/' + search) }));
+  }
+
+  afterEach(() => land(''));
+
+  const switchUserButton = () => screen.getByRole('button', { name: 'Switch user' });
+
+  it('refreshes once, registers it for the home gate, and shows whoever it stored', async () => {
+    land('?oidc_auth=1&keep=1');
+    let stored: UserMeta | null = null;
+    mockGetUser.mockImplementation(() => stored);
+    mockRefreshSession.mockImplementation(async () => {
+      stored = { user_id: 'u2', username: 'carol', is_admin: true };
+      return true;
+    });
+
+    render(Layout);
+
+    await waitFor(() => expect(switchUserButton().textContent).toContain('carol'));
+    expect(screen.getByRole('link', { name: 'Settings' })).toBeTruthy();
+    expect(mockRefreshSession).toHaveBeenCalledTimes(1);
+    expect(mockTrackAuthBootstrap).toHaveBeenCalledWith(mockRefreshSession.mock.results[0].value);
+    expect(initNotifications).toHaveBeenCalledTimes(1);
+    expect(startJobsPolling).toHaveBeenCalledTimes(1);
+    // Markers stripped (so a reload doesn't bootstrap again); the rest kept.
+    expect(window.location.search).toBe('?keep=1');
+  });
+
+  it.each([
+    ['resolves false', () => mockRefreshSession.mockResolvedValue(false)],
+    ['rejects', () => mockRefreshSession.mockRejectedValue(new Error('auth refresh: timed out waiting for another tab'))],
+  ])('sets nothing when the refresh %s, and still strips the markers', async (_name, arrange) => {
+    land('?saml_auth=1&google_auth=1');
+    mockGetUser.mockReturnValue(null);
+    arrange();
+
+    render(Layout);
+
+    await waitFor(() => expect(window.location.search).toBe(''));
+    expect(mockRefreshSession).toHaveBeenCalledTimes(1);
+    expect(switchUserButton().textContent?.trim()).toBe('User');
+    expect(screen.queryByRole('link', { name: 'Settings' })).toBeNull();
+    expect(initNotifications).not.toHaveBeenCalled();
+    expect(startJobsPolling).not.toHaveBeenCalled();
+  });
+
+  it('does not refresh on an ordinary load', async () => {
+    await renderShell();
+    expect(mockRefreshSession).not.toHaveBeenCalled();
+    expect(mockTrackAuthBootstrap).not.toHaveBeenCalled();
+  });
+});
+
+// A browser sign-out queues behind other tabs' session refreshes
+// (api.revokeSession) and can take a while.
+describe('Sign out', () => {
+  it('shows "Signing out…" and ignores repeat clicks until the logout finishes, then goes to /login', async () => {
+    let finish!: () => void;
+    vi.mocked(authApi.logout).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await renderShell();
+    const button = screen.getByRole('button', { name: 'Sign out' }) as HTMLButtonElement;
+
+    // A second click straight after the first. Svelte has disabled the button
+    // by then, and the DOM drops a click on a disabled button — that, not the
+    // handler's `signingOut` guard, is what ignores it (the guard has its own
+    // test below).
+    void fireEvent.click(button);
+    await fireEvent.click(button);
+
+    expect(button.textContent?.trim()).toBe('Signing out…');
+    expect(button.getAttribute('aria-label')).toBe('Signing out…');
+    expect(button.disabled).toBe(true);
+    expect(authApi.logout).toHaveBeenCalledTimes(1);
+    expect(stopNotifications).toHaveBeenCalledTimes(1);
+    // Still on the page, still signed in locally, while the logout runs.
+    expect(mockGoto).not.toHaveBeenCalled();
+    expect(api.setUser).not.toHaveBeenCalled();
+
+    finish();
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith('/login'));
+    expect(api.setUser).toHaveBeenCalledWith(null);
+    // Usable again for the next session (the layout outlives the sign-out).
+    await waitFor(() => expect(button.disabled).toBe(false));
+    expect(button.textContent?.trim()).toBe('Sign out');
+  });
+
+  it('a click that gets past the disabled button anyway is ignored while the logout runs', async () => {
+    let finish!: () => void;
+    vi.mocked(authApi.logout).mockImplementationOnce(() => new Promise<void>((resolve) => { finish = resolve; }));
+    await renderShell();
+    const button = screen.getByRole('button', { name: 'Sign out' }) as HTMLButtonElement;
+
+    await fireEvent.click(button);
+    expect(button.disabled).toBe(true);
+    // The attribute stripped behind Svelte's back (devtools, an extension):
+    // the click now reaches the handler, and its own guard must hold.
+    button.disabled = false;
+    await fireEvent.click(button);
+
+    expect(authApi.logout).toHaveBeenCalledTimes(1);
+    expect(stopNotifications).toHaveBeenCalledTimes(1);
+    expect(mockGoto).not.toHaveBeenCalled();
+
+    finish();
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledTimes(1));
+  });
+
+  it('a logout that fails still signs out locally and goes to /login', async () => {
+    vi.mocked(authApi.logout).mockRejectedValueOnce(new Error('Failed to fetch'));
+    await renderShell();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+
+    await waitFor(() => expect(mockGoto).toHaveBeenCalledWith('/login'));
+    expect(api.setUser).toHaveBeenCalledWith(null);
+    expect(authApi.logout).toHaveBeenCalledTimes(1);
+  });
+
+  it('a logout that never settles is given up after 60 s: signs out locally, goes to /login, button usable again', async () => {
+    vi.mocked(authApi.logout).mockImplementationOnce(() => new Promise<void>(() => {}));
+    await renderShell();
+    const button = screen.getByRole('button', { name: 'Sign out' }) as HTMLButtonElement;
+    vi.useFakeTimers();
+    try {
+      await fireEvent.click(button);
+      await vi.advanceTimersByTimeAsync(59_000);
+      expect(button.disabled).toBe(true);
+      expect(api.setUser).not.toHaveBeenCalled();
+      expect(mockGoto).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(api.setUser).toHaveBeenCalledWith(null);
+      expect(mockGoto).toHaveBeenCalledWith('/login');
+      expect(button.disabled).toBe(false);
+      expect(button.textContent?.trim()).toBe('Sign out');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

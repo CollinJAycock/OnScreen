@@ -240,7 +240,9 @@ func (h *SAMLHandler) ACS(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokens, err := h.svc.LoginOrCreateSAMLUser(r.Context(), profile)
+	// withSSOAudit: if the IdP changed the user's admin flag, the service wipes
+	// their sessions and audits that from inside syncAdminFromIdP.
+	tokens, err := h.svc.LoginOrCreateSAMLUser(withSSOAudit(r.Context(), h.audit, r), profile)
 	if err != nil {
 		if errors.Is(err, ErrSSOAccountConflict) {
 			respond.Error(w, r, http.StatusConflict, "SSO_ACCOUNT_CONFLICT",

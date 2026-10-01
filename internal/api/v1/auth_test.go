@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -149,7 +150,7 @@ func TestRefresh_Success(t *testing.T) {
 }
 
 func TestRefresh_Invalid(t *testing.T) {
-	svc := &mockAuthService{refreshErr: errors.New("expired")}
+	svc := &mockAuthService{refreshErr: ErrRefreshInvalid}
 	h := newAuthHandler(svc)
 
 	rec := httptest.NewRecorder()
@@ -525,7 +526,8 @@ func TestRefresh_FromCookie(t *testing.T) {
 }
 
 func TestRefresh_ExpiredToken(t *testing.T) {
-	svc := &mockAuthService{refreshErr: errors.New("token expired")}
+	// Wrapped, as the service returns it for a user deleted mid-refresh.
+	svc := &mockAuthService{refreshErr: fmt.Errorf("refresh: user gone: %w", ErrRefreshInvalid)}
 	h := newAuthHandler(svc)
 
 	rec := httptest.NewRecorder()
@@ -546,6 +548,52 @@ func TestRefresh_ExpiredToken(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected auth cookies to be cleared on expired refresh token")
+	}
+}
+
+// A refresh the server could not check is not a verdict on the token. Native
+// clients wipe their stored sign-in on a 401/403 from /auth/refresh, so a DB
+// outage (or a restart window) answered with 401 signed out every client that
+// refreshed through it. It must be a 5xx, logged, with the cookies left alone.
+func TestRefresh_ServerErrorKeepsSession(t *testing.T) {
+	cases := []struct {
+		name      string
+		cancelled bool
+		wantLog   bool
+	}{
+		{"database down", false, true},
+		// The request's own context was cancelled: the client left, so the
+		// error is only that and is not worth an ERROR line.
+		{"request cancelled", true, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := &mockAuthService{refreshErr: fmt.Errorf("refresh: look up session: %w",
+				errors.New("read tcp 10.0.0.5:5432: connection reset by peer"))}
+			var logs strings.Builder
+			h := NewAuthHandler(svc, slog.New(slog.NewTextHandler(&logs, nil)))
+
+			req := httptest.NewRequest("POST", "/api/v1/auth/refresh",
+				strings.NewReader(`{"refresh_token":"still-valid"}`))
+			req.AddCookie(&http.Cookie{Name: cookieRefreshToken, Value: "still-valid"})
+			if c.cancelled {
+				ctx, cancel := context.WithCancel(req.Context())
+				cancel()
+				req = req.WithContext(ctx)
+			}
+			rec := httptest.NewRecorder()
+			h.Refresh(rec, req)
+
+			if rec.Code != http.StatusServiceUnavailable {
+				t.Fatalf("status: got %d, want 503", rec.Code)
+			}
+			if cookies := rec.Result().Cookies(); len(cookies) != 0 {
+				t.Errorf("cookies touched on a server-side failure: %v", cookies)
+			}
+			if logged := strings.Contains(logs.String(), "could not validate refresh token"); logged != c.wantLog {
+				t.Errorf("logged = %v, want %v; log: %s", logged, c.wantLog, logs.String())
+			}
+		})
 	}
 }
 

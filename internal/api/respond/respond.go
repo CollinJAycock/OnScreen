@@ -91,7 +91,9 @@ func Forbidden(w http.ResponseWriter, r *http.Request) {
 // ServiceUnavailable writes a 503 — the node can't serve the request right now
 // (e.g. a write reached a read-only standby during a failover; a dependency is
 // down). Distinct from a 500 so clients/proxies know to retry, possibly against
-// another site. No production caller yet — see [IsReadOnlyError].
+// another site. Used by /auth/refresh when the token could not be checked, so a
+// DB blip doesn't read as "signed out"; the read-only-standby mapping is not
+// wired yet — see [IsReadOnlyError].
 func ServiceUnavailable(w http.ResponseWriter, r *http.Request, message string) {
 	if message == "" {
 		message = "service temporarily unavailable"

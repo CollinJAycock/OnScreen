@@ -96,6 +96,17 @@ const (
 	// without any forensic record. Logged once per (admin, target, request)
 	// tuple by the ViewAs middleware.
 	ActionImpersonateBegin = "admin.impersonate"
+
+	// ActionSessionsRevoked records the server itself wiping a user's whole
+	// session family — every refresh session deleted and the session epoch
+	// bumped, i.e. signed out on every device — with detail.reason saying why
+	// (refresh_token_reuse, idp_admin_sync) and detail.sessions_deleted /
+	// detail.epoch_bumped whether each half actually landed (false = a failed
+	// revocation, also logged by the server). Both wipes used to leave only a
+	// server-log line, so an operator asked "why was I logged out everywhere?"
+	// found nothing on the audit page to answer with. user_id and target are
+	// the affected user, not an actor: no admin did this.
+	ActionSessionsRevoked = "auth.sessions_revoked"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

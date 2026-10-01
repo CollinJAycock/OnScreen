@@ -111,6 +111,68 @@ var ErrUserExists = errors.New("user already exists")
 // clear message instead of a misleading 500.
 var ErrNotFirstUser = errors.New("users already exist")
 
+// ErrRefreshInvalid is returned (possibly wrapped) by AuthService.Refresh when
+// the presented refresh token is not valid: no live session matches it (unknown
+// or expired) or its user is gone. AuthHandler.Refresh answers it — like
+// RefreshReuseError — with 401 and cleared cookies, which native clients take
+// as definitive and wipe their stored sign-in. Any OTHER Refresh error means
+// the server could not answer (database outage, connection reset, a failed
+// token mint) and is not a verdict on the token: the handler answers 503 and
+// leaves the cookies alone so the client retries instead of signing out.
+var ErrRefreshInvalid = errors.New("refresh: session not found or expired")
+
+// RefreshReuseError is returned by AuthService.Refresh when refresh-token reuse
+// detection fires: the presented token had already been spent, so the service
+// burned the user's whole session family (signed out on every device). To the
+// client it is an ordinary refresh failure — 401, cookies cleared — but it is
+// typed so the handler can audit it: the service has neither the audit logger
+// nor the request (client IP, User-Agent) that make the entry useful.
+type RefreshReuseError struct {
+	UserID    uuid.UUID
+	SessionID uuid.UUID
+	// Trigger is which reuse check fired: RefreshReuseSuperseded or
+	// RefreshReuseRotationRace.
+	Trigger string
+	// SessionsDeleted and EpochBumped say whether each half of the wipe —
+	// DeleteSessionsForUser, BumpSessionEpoch — actually landed. The service
+	// logs a failure at ERROR; these carry it into the audit entry, which must
+	// not claim a revocation that did not happen.
+	SessionsDeleted bool
+	EpochBumped     bool
+	// Forensics from the session row the spent token resolved to, to help tell
+	// a benign replay (one of the user's own clients re-sending a refresh whose
+	// response it lost — seconds after the rotation) from theft (a copy
+	// presented long after the owner moved on). Empty / nil when the row did
+	// not have them. Never the token or its hash.
+	//
+	// ClientName / Platform copy sessions.client_name / platform, which no
+	// sign-in path records yet (issueTokenPair's CreateSession leaves both
+	// null), so today they are empty. SecondsSinceLastSeen, next to the
+	// request's User-Agent that the handler adds, is the clue that works now.
+	ClientName string
+	Platform   string
+	// SecondsSinceLastSeen is how long before detection the session was last
+	// rotated or touched (sessions.last_seen), nil when last_seen was null.
+	// For RefreshReuseRotationRace it is the value read before the competing
+	// rotation, i.e. how long the chain sat idle before two requests raced.
+	SecondsSinceLastSeen *int64
+}
+
+func (e *RefreshReuseError) Error() string {
+	return "refresh: token already used; session invalidated"
+}
+
+// Refresh-reuse triggers, recorded as the audit entry's detail.trigger.
+const (
+	// RefreshReuseSuperseded: a retired token was presented. The legitimate
+	// client always holds the newest one, so this is the usual theft shape —
+	// or a client that lost the response carrying its rotated token.
+	RefreshReuseSuperseded = "superseded_token"
+	// RefreshReuseRotationRace: the token was current at lookup, but another
+	// request rotated it before this one's compare-and-swap landed.
+	RefreshReuseRotationRace = "rotation_race"
+)
+
 // AuthService defines the domain interface for authentication.
 type AuthService interface {
 	LoginLocal(ctx context.Context, username, password string) (*TokenPair, error)
@@ -243,12 +305,65 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 
 	pair, err := h.svc.Refresh(r.Context(), refreshToken)
 	if err != nil {
+		var reuse *RefreshReuseError
+		if !errors.As(err, &reuse) && !errors.Is(err, ErrRefreshInvalid) {
+			// The server could not check the token (DB outage, connection
+			// reset, restart window) — not a verdict on it. Answering 401 here
+			// signed out every client that refreshed through the blip: native
+			// clients treat 401/403 from this route as definitive and wipe
+			// their stored sign-in. 503 with the cookies untouched lets them
+			// retry with the same, still-valid token. Not logged when the
+			// request itself was cancelled — the client left.
+			if h.logger != nil && r.Context().Err() == nil {
+				h.logger.ErrorContext(r.Context(), "refresh: could not validate refresh token; answered 503, client stays signed in",
+					"err", err)
+			}
+			respond.ServiceUnavailable(w, r, "")
+			return
+		}
+		// Only reuse is audited: it just signed the user out everywhere. A
+		// plain expired / unknown token is routine and stays out of the log.
+		if reuse != nil && h.audit != nil {
+			h.auditRefreshReuse(r, reuse)
+		}
 		clearAuthCookies(w, r)
 		respond.Unauthorized(w, r)
 		return
 	}
 	setAuthCookies(w, r, pair)
 	respond.Success(w, r, pair)
+}
+
+// auditRefreshReuse records a reuse-triggered session-family wipe.
+// sessions_deleted / epoch_bumped record whether each half of it landed — a
+// false is a failed revocation (the service also logged it at ERROR), not a
+// completed one. The User-Agent is the best clue to WHICH client re-presented
+// the spent token: attacker tooling, or one of the user's own clients retrying
+// after it lost a response; how long the session had been idle
+// (seconds_since_last_seen) is what to weigh it against. client_name /
+// platform are added only when the session row has them, which no sign-in path
+// records yet (see RefreshReuseError). Client-supplied strings are bounded.
+// The token and its hash are deliberately not recorded.
+func (h *AuthHandler) auditRefreshReuse(r *http.Request, e *RefreshReuseError) {
+	uid := e.UserID
+	detail := map[string]any{
+		"reason":           "refresh_token_reuse",
+		"trigger":          e.Trigger,
+		"session_id":       e.SessionID.String(),
+		"sessions_deleted": e.SessionsDeleted,
+		"epoch_bumped":     e.EpochBumped,
+		"user_agent":       truncate(r.UserAgent(), 200),
+	}
+	if e.ClientName != "" {
+		detail["client_name"] = truncate(e.ClientName, 200)
+	}
+	if e.Platform != "" {
+		detail["platform"] = truncate(e.Platform, 200)
+	}
+	if e.SecondsSinceLastSeen != nil {
+		detail["seconds_since_last_seen"] = *e.SecondsSinceLastSeen
+	}
+	h.audit.Log(r.Context(), &uid, audit.ActionSessionsRevoked, uid.String(), detail, audit.ClientIP(r))
 }
 
 // Logout handles POST /api/v1/auth/logout.

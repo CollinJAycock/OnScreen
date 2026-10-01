@@ -95,7 +95,8 @@ type authService struct {
 	// Used on the refresh-reuse (theft) path, which burns the whole session
 	// family. Optional — nil leaves segment tokens to their idle TTL.
 	segTokens segmentTokenRevoker
-	// now is the clock for TOTP step matching; nil = time.Now (tests pin it).
+	// now is the clock for TOTP step matching and the refresh-reuse idle time;
+	// nil = time.Now (tests pin it).
 	now func() time.Time
 	// reqDefaults seeds a new account's media-request auto-approval toggles
 	// from Settings ▸ Requests. Optional — nil creates accounts with both off.
@@ -443,9 +444,19 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 	// bare 401 and left the attacker's chain untouched, so the compromise was
 	// both permanent and invisible. Matching the previous hash is what makes
 	// the theft branch below reachable outside a sub-millisecond race.
+	//
+	// Only "no row" (the query filters expired sessions, so: unknown or
+	// expired) is a verdict on the token — v1.ErrRefreshInvalid, which the
+	// handler answers with 401 and native clients take as "signed out". Any
+	// other error means the database could not answer and is returned as-is
+	// (503): mapping an outage to "not found" signed out every client that
+	// refreshed through it.
 	found, err := s.db.GetSessionByAnyTokenHash(ctx, hash)
 	if err != nil {
-		return nil, fmt.Errorf("refresh: session not found or expired")
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, v1.ErrRefreshInvalid
+		}
+		return nil, fmt.Errorf("refresh: look up session: %w", err)
 	}
 	if !found.IsCurrent {
 		// A retired token was presented. The legitimate client always holds
@@ -453,77 +464,35 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		// CAS-miss branch below does.
 		s.logger.WarnContext(ctx, "refresh token reuse detected (superseded hash presented); invalidating session family",
 			"user_id", found.UserID, "session_id", found.ID)
-		if derr := s.db.DeleteSessionsForUser(ctx, found.UserID); derr != nil {
+		derr := s.db.DeleteSessionsForUser(ctx, found.UserID)
+		if derr != nil {
 			s.logger.ErrorContext(ctx, "refresh reuse: failed to delete session family; thief may retain refresh access",
 				"user_id", found.UserID, "err", derr)
 		}
-		if berr := s.db.BumpSessionEpoch(ctx, found.UserID); berr != nil {
+		berr := s.db.BumpSessionEpoch(ctx, found.UserID)
+		if berr != nil {
 			s.logger.ErrorContext(ctx, "refresh reuse: failed to bump session epoch; outstanding access tokens not invalidated",
 				"user_id", found.UserID, "err", berr)
 		}
 		s.revokeSegmentTokens(ctx, found.UserID)
-		return nil, fmt.Errorf("refresh: token already used; session invalidated")
+		return nil, s.refreshReuseError(found, v1.RefreshReuseSuperseded, derr == nil, berr == nil)
 	}
 	session := found
 	user, err := s.db.GetUser(ctx, session.UserID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			// Sessions cascade-delete with their user, so this is a user
+			// deletion racing the refresh: the token is dead.
+			return nil, fmt.Errorf("refresh: user gone: %w", v1.ErrRefreshInvalid)
+		}
 		return nil, fmt.Errorf("refresh: get user: %w", err)
 	}
 
-	raw, newHash, err := auth.IssueRefreshToken()
-	if err != nil {
-		return nil, fmt.Errorf("refresh: issue token: %w", err)
-	}
-	expiry := time.Now().Add(auth.RefreshTokenTTL)
-
-	// Compare-and-swap rotation: rotate ONLY if the row's current
-	// token_hash still matches the one the caller presented. Refresh
-	// tokens are one-shot; if the same token has already been rotated
-	// (i.e. somebody else used it before us), the row count is 0 and
-	// we treat this as theft.
-	//
-	// Reuse-detection response: invalidate the entire session family for
-	// the user (DeleteSessionsForUser + BumpSessionEpoch). The legitimate
-	// owner gets logged out on every device; better than a silent leak
-	// where attacker + victim share refresh access. Audit log lets ops
-	// see why every device suddenly logged out.
-	rows, err := s.db.RotateSessionConditional(ctx, gen.RotateSessionConditionalParams{
-		ID:        session.ID,
-		TokenHash: newHash,
-		ExpiresAt: pgtype.Timestamptz{Time: expiry, Valid: true},
-		// gen.RotateSessionConditionalParams's 4th param is the previous
-		// token_hash to compare against. sqlc names it after the column;
-		// we send the hash we just looked up by.
-		TokenHash_2: hash,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("refresh: rotate session: %w", err)
-	}
-	if rows == 0 {
-		// Theft path: the token we just verified got rotated by someone
-		// between our lookup and our rotate. Burn the whole session
-		// family so the thief and the legitimate owner BOTH get logged
-		// out — neither side can keep refreshing from this point.
-		s.logger.WarnContext(ctx, "refresh token reuse detected; invalidating session family",
-			"user_id", session.UserID, "session_id", session.ID)
-		// These two steps ARE the theft response: DeleteSessionsForUser kills
-		// every refresh session, BumpSessionEpoch invalidates already-issued
-		// access tokens. If either fails the family is NOT fully revoked and a
-		// thief may retain access — that's a security incident, not a swallow-
-		// and-move-on, so log each at ERROR so monitoring can page ops. The
-		// reused token is rejected regardless via the error return below.
-		if derr := s.db.DeleteSessionsForUser(ctx, session.UserID); derr != nil {
-			s.logger.ErrorContext(ctx, "refresh reuse: failed to delete session family; thief may retain refresh access",
-				"user_id", session.UserID, "err", derr)
-		}
-		if berr := s.db.BumpSessionEpoch(ctx, session.UserID); berr != nil {
-			s.logger.ErrorContext(ctx, "refresh reuse: failed to bump session epoch; outstanding access tokens not invalidated",
-				"user_id", session.UserID, "err", berr)
-		}
-		s.revokeSegmentTokens(ctx, session.UserID)
-		return nil, fmt.Errorf("refresh: token already used; session invalidated")
-	}
-
+	// Mint everything the response needs BEFORE the rotation commits (as
+	// issueTokenPair does before CreateSession). A failure after the commit
+	// would answer 503 while the presented token was already retired, and the
+	// client's retry with it would then trip reuse detection and sign the user
+	// out everywhere. After the rotation below, nothing can fail.
 	refreshClaims := auth.Claims{
 		UserID:       user.ID,
 		Username:     user.Username,
@@ -541,7 +510,12 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 	if err != nil {
 		return nil, fmt.Errorf("refresh: issue asset token: %w", err)
 	}
-	return &v1.TokenPair{
+	raw, newHash, err := auth.IssueRefreshToken()
+	if err != nil {
+		return nil, fmt.Errorf("refresh: issue token: %w", err)
+	}
+	expiry := time.Now().Add(auth.RefreshTokenTTL)
+	pair := &v1.TokenPair{
 		AccessToken:  accessToken,
 		RefreshToken: raw,
 		AssetToken:   assetToken,
@@ -549,7 +523,77 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		UserID:       user.ID,
 		Username:     user.Username,
 		IsAdmin:      user.IsAdmin,
-	}, nil
+	}
+
+	// Compare-and-swap rotation: rotate ONLY if the row's current
+	// token_hash still matches the one the caller presented. Refresh
+	// tokens are one-shot; if the same token has already been rotated
+	// (i.e. somebody else used it before us), the row count is 0 and
+	// we treat this as theft.
+	//
+	// Reuse-detection response: invalidate the entire session family for
+	// the user (DeleteSessionsForUser + BumpSessionEpoch). The legitimate
+	// owner gets logged out on every device; better than a silent leak
+	// where attacker + victim share refresh access. Both reuse branches
+	// return a *v1.RefreshReuseError, which AuthHandler.Refresh records as
+	// auth.sessions_revoked so ops can see why every device suddenly logged
+	// out.
+	rows, err := s.db.RotateSessionConditional(ctx, gen.RotateSessionConditionalParams{
+		ID:        session.ID,
+		TokenHash: newHash,
+		ExpiresAt: pgtype.Timestamptz{Time: expiry, Valid: true},
+		// gen.RotateSessionConditionalParams's 4th param is the previous
+		// token_hash to compare against. sqlc names it after the column;
+		// we send the hash we just looked up by.
+		TokenHash_2: hash,
+	})
+	if err != nil {
+		// The UPDATE may have committed before the error reached us (a
+		// connection lost after the commit). Answering 503 then would have
+		// the client retry with a token that is already retired, which reads
+		// as reuse and signs the user out everywhere. So look the session up
+		// by the new hash: if the rotation landed, the pair minted above is
+		// valid and goes back as usual. Otherwise it is not a verdict on the
+		// token (503, the client retries). A response lost after this point
+		// is still the same as any response lost in transit.
+		landed, lerr := s.db.GetSessionByAnyTokenHash(ctx, newHash)
+		if lerr == nil && landed.IsCurrent && landed.ID == session.ID {
+			s.logger.WarnContext(ctx, "refresh: rotation reported an error but committed; returning the new pair",
+				"session_id", session.ID, "err", err)
+			return pair, nil
+		}
+		return nil, fmt.Errorf("refresh: rotate session: %w", err)
+	}
+	if rows == 0 {
+		// Theft path: the token we just verified got rotated by someone
+		// between our lookup and our rotate. Burn the whole session
+		// family so the thief and the legitimate owner BOTH get logged
+		// out — neither side can keep refreshing from this point.
+		s.logger.WarnContext(ctx, "refresh token reuse detected; invalidating session family",
+			"user_id", session.UserID, "session_id", session.ID)
+		// These two steps ARE the theft response: DeleteSessionsForUser kills
+		// every refresh session, BumpSessionEpoch invalidates already-issued
+		// access tokens. If either fails the family is NOT fully revoked and a
+		// thief may retain access — that's a security incident, not a swallow-
+		// and-move-on, so log each at ERROR so monitoring can page ops, and
+		// report each outcome in the returned error so the audit entry says
+		// whether the revocation actually landed. The reused token is rejected
+		// regardless via the error return below.
+		derr := s.db.DeleteSessionsForUser(ctx, session.UserID)
+		if derr != nil {
+			s.logger.ErrorContext(ctx, "refresh reuse: failed to delete session family; thief may retain refresh access",
+				"user_id", session.UserID, "err", derr)
+		}
+		berr := s.db.BumpSessionEpoch(ctx, session.UserID)
+		if berr != nil {
+			s.logger.ErrorContext(ctx, "refresh reuse: failed to bump session epoch; outstanding access tokens not invalidated",
+				"user_id", session.UserID, "err", berr)
+		}
+		s.revokeSegmentTokens(ctx, session.UserID)
+		return nil, s.refreshReuseError(session, v1.RefreshReuseRotationRace, derr == nil, berr == nil)
+	}
+
+	return pair, nil
 }
 
 func (s *authService) Logout(ctx context.Context, refreshToken string) error {
@@ -595,6 +639,33 @@ func (s *authService) revokeSegmentTokens(ctx context.Context, userID uuid.UUID)
 		s.logger.ErrorContext(ctx, "revoke segment tokens after session family burn",
 			"user_id", userID, "err", err)
 	}
+}
+
+// refreshReuseError describes a reuse-triggered session-family burn for
+// AuthHandler.Refresh to audit. row is the session the spent token resolved
+// to; deleted / bumped are whether DeleteSessionsForUser / BumpSessionEpoch
+// succeeded. The idle time is computed here, at detection, from the row's
+// last_seen (rotation sets it to NOW()); client_name / platform are copied
+// when set, which issueTokenPair does not do yet (see v1.RefreshReuseError);
+// the token hashes on the row are deliberately not copied.
+func (s *authService) refreshReuseError(row gen.GetSessionByAnyTokenHashRow, trigger string, deleted, bumped bool) *v1.RefreshReuseError {
+	e := &v1.RefreshReuseError{
+		UserID: row.UserID, SessionID: row.ID, Trigger: trigger,
+		SessionsDeleted: deleted, EpochBumped: bumped,
+	}
+	if row.ClientName != nil {
+		e.ClientName = *row.ClientName
+	}
+	if row.Platform != nil {
+		e.Platform = *row.Platform
+	}
+	if row.LastSeen.Valid {
+		// Clamped: a database clock slightly ahead of ours means "just now",
+		// not a negative idle time.
+		secs := max(int64(s.clock().Sub(row.LastSeen.Time)/time.Second), 0)
+		e.SecondsSinceLastSeen = &secs
+	}
+	return e
 }
 
 // ── TOTP / 2FA ──────────────────────────────────────────────────────────────

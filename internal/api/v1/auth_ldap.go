@@ -113,7 +113,9 @@ func (h *LDAPHandler) Login(w http.ResponseWriter, r *http.Request) {
 		respond.BadRequest(w, r, "username and password are required")
 		return
 	}
-	pair, err := h.svc.LoginLDAP(r.Context(), body.Username, body.Password)
+	// withSSOAudit: if the IdP changed the user's admin flag, the service wipes
+	// their sessions and audits that from inside syncAdminFromIdP.
+	pair, err := h.svc.LoginLDAP(withSSOAudit(r.Context(), h.audit, r), body.Username, body.Password)
 	if err != nil {
 		if errors.Is(err, ErrLDAPDisabled) {
 			respond.JSON(w, r, http.StatusServiceUnavailable, map[string]string{"error": "ldap not configured"})

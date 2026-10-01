@@ -451,6 +451,37 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **Two open browser tabs signed the user out everywhere.** Every web tab
+  kept its own copy of the tokens in memory after signing in or refreshing,
+  and sent that copy (the server prefers it over the shared cookie). Once
+  another tab had rotated the refresh token, the next refresh from the first
+  tab presented a retired token, which the server treats as theft: it
+  deleted every session of the user, so the web, the phone and the TVs were
+  all signed out, roughly once an hour with two tabs open. Browser tabs now
+  use the cookie alone (the desktop app and cross-origin setups keep their
+  tokens), and a refresh runs in one tab at a time across the browser (Web
+  Locks, or a best-effort localStorage lease where Web Locks are unavailable,
+  e.g. plain http on a LAN address); a tab that waited while another
+  refreshed reuses that result. Sign-out takes the same lock, and the first
+  refresh after an OIDC/SAML sign-in goes through it too.
+- **A server hiccup no longer signs clients out.** A refresh the server could
+  not check (a database error, a restart) was answered 401, which the TV and
+  phone apps take as "signed out" (the phone also deletes its downloads).
+  `POST /api/v1/auth/refresh` now answers 503 and keeps the cookies in that
+  case; only an unknown, expired, reused or deleted-user token is a 401. A
+  rotation that committed although the database connection then dropped
+  returns the new tokens instead of a 503 whose retry would read as reuse.
+  The web app treats a 5xx or a network failure during refresh as a failed
+  request, not a sign-out, and no longer clears the other tabs' sign-in
+  state when one tab's refresh fails.
+- **Every "signed out on all devices" is now in the audit log.** Refresh-token
+  reuse and an identity-provider admin-role change both delete all of a
+  user's sessions, but only logged to the server log. They now write an
+  `auth.sessions_revoked` entry with the user, the reason
+  (`refresh_token_reuse` with how it was detected, or `idp_admin_sync` with
+  the provider), whether the wipe actually succeeded, the client's IP and
+  User-Agent, and (for reuse) how long after the session's last rotation the
+  retired token came back, which separates a lost response from theft.
 - **Multi-disc albums an older scan folded now split on the next scan.** A
   scanner that matched tracks by number alone hung disc 2's track 1 on disc
   1's (The Beatles' "The Beatles" came out as 17 tracks, Piggies playing

@@ -331,7 +331,9 @@ func (h *OIDCHandler) Callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pair, err := h.svc.LoginOrCreateOIDCUser(r.Context(), profile)
+	// withSSOAudit: if the IdP changed the user's admin flag, the service wipes
+	// their sessions and audits that from inside syncAdminFromIdP.
+	pair, err := h.svc.LoginOrCreateOIDCUser(withSSOAudit(r.Context(), h.audit, r), profile)
 	if err != nil {
 		if errors.Is(err, ErrSSOAccountConflict) {
 			h.logger.WarnContext(r.Context(), "oidc: account conflict on auto-link", "username", profile.Username)
