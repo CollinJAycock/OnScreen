@@ -1,4 +1,4 @@
-# Release notes — TV client 1.4.0 (versionCode 22)
+# Release notes — TV client 1.4.0 (versionCode 23)
 
 Covers everything since 1.1.0 (14), the build live on the Amazon Appstore.
 Google Play has no production release yet (the closed test is still
@@ -60,7 +60,7 @@ only public-domain and Creative Commons titles.
 
 Relative to 1.1.0 (14):
 
-**This release (22)**
+**This release (23)**
 - **Device-test fixes** (Fire TV Stick 4K Max, Hisense Google TV): the
   screensaver returns to the screen it covered (it can now start during
   music); the sign-in code screen stays on; server streams start at 0:00 /
@@ -112,5 +112,6 @@ Relative to 1.1.0 (14):
 - Search focus fix (82d967d0); pairing screen shows the https origin
   (8619ce9d).
 
-versionCode 22 is the next clean code: 19–21 were built and may or may
-not have been uploaded, and a code only has to increase.
+versionCode 23: Google Play already holds a build with code 22 (19–21
+were built and may or may not have been uploaded), and a code only has to
+increase. Both flavors use 23, so the Amazon APK matches.

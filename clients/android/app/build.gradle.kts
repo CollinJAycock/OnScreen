@@ -105,7 +105,12 @@ android {
         // links from the background), and NVIDIA SHIELD support (no HLG or
         // 10-bit VP9 claims, the app's own mode switch). A minor version:
         // the new claims change what the server sends to every device.
-        versionCode = 22
+        //
+        // 23 / 1.4.0: the same release plus the fixes from its device test
+        // (Fire TV Stick 4K Max, Hisense Google TV). Google Play already holds
+        // a build with code 22, so the release goes out as 23; the name stays
+        // 1.4.0, since no 22 reached users.
+        versionCode = 23
         versionName = "1.4.0"
     }
 
