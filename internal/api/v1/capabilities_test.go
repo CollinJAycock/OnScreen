@@ -58,3 +58,24 @@ func TestCapabilities_ReturnsProviderResponse(t *testing.T) {
 		t.Errorf("discovery port not preserved: %+v", env.Data.Discovery)
 	}
 }
+
+// Clients look for features.progress_without_duration by name before omitting
+// duration_ms from progress reports, so the wire name is part of the contract.
+func TestCapabilities_ProgressWithoutDurationWireName(t *testing.T) {
+	h := NewCapabilitiesHandler(&fakeCapsProvider{resp: CapabilitiesResponse{
+		Features: CapabilitiesFeatures{ProgressWithoutDuration: true},
+	}})
+	rec := httptest.NewRecorder()
+	h.Get(rec, httptest.NewRequest("GET", "/api/v1/system/capabilities", nil))
+	var env struct {
+		Data struct {
+			Features map[string]any `json:"features"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got := env.Data.Features["progress_without_duration"]; got != true {
+		t.Errorf("features.progress_without_duration: got %v, want true", got)
+	}
+}

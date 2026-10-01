@@ -619,8 +619,10 @@ func sessionOutput(s *transcode.Session, src *media.File, bitrateKbps *int) *str
 	case "":
 		// Sessions created before attribution didn't record it.
 	case "copy":
+		// The track the session maps, which need not be the first one
+		// src.AudioCodec describes (an older session reads 0: the first).
 		if src != nil {
-			out.AudioCodec = derefStr(src.AudioCodec)
+			out.AudioCodec = transcode.SourceAudioCodec(src, s.AudioStreamIndex)
 		}
 	default:
 		out.AudioCodec = s.OutputAudioCodec

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -153,6 +154,34 @@ func TestStart_SourceUnreadableReturns422(t *testing.T) {
 	}
 }
 
+func TestStart_SourceUnverifiedStartsAnyway(t *testing.T) {
+	// ffprobe ran out of time (a large MP4 with its index at the end, a disk
+	// spinning up): no verdict, so the handler must not answer 422
+	// SOURCE_UNREADABLE. It carries on to the supersede/dispatch steps (which
+	// fail later in this harness for want of workers: not the point here).
+	h, _ := newTestHandler(t)
+	called := false
+	h.verifySource = func(context.Context, string) (scanner.SourceStatus, error) {
+		called = true
+		return scanner.SourceUnverified, errors.New("ffprobe verify: no answer within 5s: signal: killed")
+	}
+	body, _ := json.Marshal(transcodeStartRequest{Height: 1080})
+
+	req := httptest.NewRequest("POST", "/api/v1/items/"+uuid.New().String()+"/transcode", bytes.NewReader(body))
+	req = withChiParam(req, "id", uuid.New().String())
+	req = withClaims(req)
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, req)
+
+	if !called {
+		t.Fatal("verifySource was not consulted")
+	}
+	if rec.Code == http.StatusUnprocessableEntity || bytes.Contains(rec.Body.Bytes(), []byte(`"SOURCE_UNREADABLE"`)) {
+		t.Fatalf("a timed-out pre-flight must not refuse the file; got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestStart_DamagedFileReturns422(t *testing.T) {
 	// The integrity probe marked this file damaged → Start must refuse with
 	// FILE_DAMAGED, mirroring the DecisionDamaged verdict the
@@ -189,6 +218,84 @@ func TestStart_DamagedFileReturns422(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte(`"FILE_DAMAGED"`)) {
 		t.Errorf("response should carry code=FILE_DAMAGED; got %s", rec.Body.String())
+	}
+}
+
+// ── Start: audio track selection ─────────────────────────────────────────────
+
+// A remux decides audio passthrough on the track ffmpeg actually maps
+// (`-map 0:a:N`). It used to read the file's top-level audio_codec — the
+// FIRST track — so picking the DTS track of an AC3-first file copied DTS
+// straight through to a client that can't decode it: no sound. An index past
+// the last track is refused with 400 before anything runs, instead of
+// starting an ffmpeg that dies on the map and never writes a playlist.
+func TestStart_RemuxAudioCopyFollowsSelectedTrack(t *testing.T) {
+	// [0] AC3 5.1, [1] DTS-HD MA 5.1, [2] E-AC3 5.1; the client decodes
+	// AAC/AC3/E-AC3 but not DTS.
+	streams := []byte(`[{"index":1,"codec":"ac3","channels":6},` +
+		`{"index":2,"codec":"dts","channels":6},` +
+		`{"index":3,"codec":"eac3","channels":6}]`)
+	const caps = "videoDecoder=h264,audioDecoder=aac:ac3:eac3"
+	cases := []struct {
+		name     string
+		streams  []byte // the file's audio_streams; nil = row scanned before the column
+		idx      *int   // audio_stream_index; nil = default track
+		status   int
+		jobCodec string // the worker job's AudioCodec: "copy" or "aac"
+		jobIdx   int
+		shown    string // Now Playing's output audio codec
+	}{
+		{"default track (AC3) copies", streams, nil, http.StatusOK, "copy", -1, "ac3"},
+		{"selected copyable track (E-AC3) copies", streams, ip(2), http.StatusOK, "copy", 2, "eac3"},
+		{"selected DTS track behind AC3 re-encodes", streams, ip(1), http.StatusOK, "aac", 1, "aac"},
+		{"out of range refused", streams, ip(3), http.StatusBadRequest, "", 0, ""},
+		{"unknown track on a row with no stream list re-encodes", nil, ip(1), http.StatusOK, "aac", 1, "aac"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			itemID, user := uuid.New(), uuid.New()
+			file := media.File{ID: uuid.New(), MediaItemID: itemID, FilePath: "/media/x.mkv",
+				VideoCodec: strPtr("h264"), AudioCodec: strPtr("ac3"), AudioStreams: tc.streams,
+				ResolutionW: ip(1920), ResolutionH: ip(1080)}
+			h, store := newStartHandler(t, file)
+			// The session the viewer is watching: a refused switch must
+			// leave it alone (a successful one supersedes it).
+			prior := transcode.Session{ID: transcode.NewSessionID(), UserID: user,
+				MediaItemID: itemID, FileID: file.ID, Decision: "remux", CreatedAt: time.Now().UTC()}
+			if err := store.Create(ctx, prior); err != nil {
+				t.Fatalf("seed prior session: %v", err)
+			}
+
+			rec := startAs(t, h, itemID, user, "192.0.2.10:1", caps,
+				transcodeStartRequest{VideoCopy: true, AudioStreamIndex: tc.idx})
+			if rec.Code != tc.status {
+				t.Fatalf("status: got %d, want %d (%s)", rec.Code, tc.status, rec.Body.String())
+			}
+
+			if tc.status != http.StatusOK {
+				if code, _ := errorCode(t, rec); code != "BAD_REQUEST" {
+					t.Errorf("code: got %q, want BAD_REQUEST", code)
+				}
+				if _, err := store.Get(ctx, prior.ID); err != nil {
+					t.Errorf("a refused Start must not supersede the playing session: %v", err)
+				}
+				if job, _ := store.DequeueJob(ctx, "", 100*time.Millisecond); job != nil {
+					t.Errorf("a refused Start dispatched a job: %+v", job)
+				}
+				return
+			}
+
+			job := drainJob(t, store)
+			if job.AudioCodec != tc.jobCodec || job.AudioStreamIndex != tc.jobIdx {
+				t.Errorf("job audio: got codec=%q idx=%d, want codec=%q idx=%d",
+					job.AudioCodec, job.AudioStreamIndex, tc.jobCodec, tc.jobIdx)
+			}
+			s := onlySession(t, store)
+			if got := sessionOutput(&s, &file, nil).AudioCodec; got != tc.shown {
+				t.Errorf("Now Playing audio codec: got %q, want %q", got, tc.shown)
+			}
+		})
 	}
 }
 

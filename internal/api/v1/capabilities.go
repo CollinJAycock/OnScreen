@@ -65,6 +65,15 @@ type CapabilitiesFeatures struct {
 	// here so the web client can hide the button without a separate
 	// admin-only fetch.
 	WebDownloads bool `json:"web_downloads"`
+	// ProgressWithoutDuration says PUT /items/{id}/progress may omit
+	// duration_ms: the server fills it from the file being played when it
+	// knows it, and otherwise keeps the duration already stored. Clients
+	// that can't tell the whole length (an HLS player sees only its
+	// playlist window) omit it only when this is true — an older server
+	// cleared the stored duration, which read the item as unwatched.
+	// True once the database has migration 00035 applied — before it this
+	// server's own rollup still clears the duration.
+	ProgressWithoutDuration bool `json:"progress_without_duration"`
 }
 
 // CapabilitiesCodecs advertises which codecs this server can transcode

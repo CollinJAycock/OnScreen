@@ -1,6 +1,10 @@
 package transcode
 
-import "encoding/json"
+import (
+	"encoding/json"
+
+	"github.com/onscreen/onscreen/internal/domain/media"
+)
 
 // maxAACChannels caps transcoded AAC output at 5.1 (6ch). The encoder
 // (libfdk_aac) handles 7.1 fine, but most CLIENTS can't DECODE 7.1 AAC —
@@ -17,23 +21,74 @@ const maxAACChannels = 6
 // audio_streams JSONB. Returns 0 when the array is missing, unparseable, or
 // the index is out of range — callers treat 0 as "unknown".
 func SourceAudioChannels(audioStreamsJSON []byte, audioStreamIdx int) int {
-	if len(audioStreamsJSON) == 0 {
-		return 0
-	}
-	var streams []struct {
-		Channels int `json:"channels"`
-	}
-	if err := json.Unmarshal(audioStreamsJSON, &streams); err != nil {
-		return 0
-	}
+	streams := parseSourceAudioStreams(audioStreamsJSON)
 	i := audioStreamIdx
 	if i < 0 {
 		i = 0 // default stream is the first audio stream
 	}
-	if i < 0 || i >= len(streams) {
+	if i >= len(streams) {
 		return 0
 	}
 	return streams[i].Channels
+}
+
+// SourceAudioStreamCount returns how many audio streams a file's
+// audio_streams JSONB lists: the valid audio_stream_index values are
+// 0..count-1. Returns 0 when the array is missing or unparseable (a row
+// scanned before the column existed) — callers treat 0 as "unknown", not as
+// "no audio".
+func SourceAudioStreamCount(audioStreamsJSON []byte) int {
+	return len(parseSourceAudioStreams(audioStreamsJSON))
+}
+
+// SourceAudioCodec returns the codec of the audio stream a session maps
+// (audioStreamIdx; -1 = the default stream). The default reads the file's
+// top-level audio_codec, which the scanner takes from the first audio stream:
+// the one `-map 0:a:0` picks. A requested stream reads its own audio_streams
+// entry instead, since that array is in ffprobe order, the order `0:a:N`
+// counts in. Gating a remux's audio copy on the top-level codec copied a
+// selected DTS track behind an AC3 first track straight through to a client
+// that can't decode it.
+//
+// Returns "" when the stream can't be identified (an index past the end, or
+// past the first stream on a row with no audio_streams). Callers treat "" as
+// "unknown": never copyable.
+func SourceAudioCodec(file *media.File, audioStreamIdx int) string {
+	first := ""
+	if file.AudioCodec != nil {
+		first = *file.AudioCodec
+	}
+	if audioStreamIdx < 0 {
+		return first
+	}
+	streams := parseSourceAudioStreams(file.AudioStreams)
+	switch {
+	case audioStreamIdx < len(streams):
+		return streams[audioStreamIdx].Codec
+	case audioStreamIdx == 0 && len(streams) == 0:
+		return first // no stream list: stream 0 is still the first stream
+	}
+	return ""
+}
+
+// sourceAudioStream is the slice of an audio_streams JSONB entry the
+// transcode path decides on.
+type sourceAudioStream struct {
+	Codec    string `json:"codec"`
+	Channels int    `json:"channels"`
+}
+
+// parseSourceAudioStreams decodes a file's audio_streams JSONB; nil when the
+// array is missing or unparseable.
+func parseSourceAudioStreams(audioStreamsJSON []byte) []sourceAudioStream {
+	if len(audioStreamsJSON) == 0 {
+		return nil
+	}
+	var streams []sourceAudioStream
+	if err := json.Unmarshal(audioStreamsJSON, &streams); err != nil {
+		return nil
+	}
+	return streams
 }
 
 // TargetAudioChannels picks the AAC output channel count when audio is being

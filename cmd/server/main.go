@@ -1561,6 +1561,10 @@ func run() error {
 	// so an operator who runs `docker exec ... goose up` sees the gate clear
 	// without a container restart. Failures (e.g. goose_db_version missing on
 	// a fresh DB) are reported as "unknown" rather than blocking readiness.
+	// Both checks also hand the applied version to the capabilities provider,
+	// whose schema-gated flags follow it (a failed check leaves it as it was);
+	// followSchemaVersion re-runs migrationStatusFn every minute as well, for
+	// deployments whose probes only hit /health/live.
 	versionQuerier := &db.PingablePool{Pool: rwPool}
 	migrationStatusFn := func() (expected, applied, pending int64, ok bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
@@ -1569,15 +1573,19 @@ func run() error {
 		if err != nil {
 			return 0, 0, 0, false
 		}
+		capsProvider.setSchemaVersion(st.Applied)
 		return st.Expected, st.Applied, st.Pending, true
 	}
 	if st, err := observability.CheckMigrations(context.Background(), versionQuerier, dbmigrations.FS); err != nil {
 		logger.Warn("could not check migration status at startup", "err", err)
-	} else if st.Pending > 0 {
-		logger.Error("schema is behind code — run `goose up` against the DB before serving traffic",
-			"applied", st.Applied, "expected", st.Expected, "pending", st.Pending)
 	} else {
-		logger.Info("migration status", "applied", st.Applied, "expected", st.Expected)
+		capsProvider.setSchemaVersion(st.Applied)
+		if st.Pending > 0 {
+			logger.Error("schema is behind code — run `goose up` against the DB before serving traffic",
+				"applied", st.Applied, "expected", st.Expected, "pending", st.Pending)
+		} else {
+			logger.Info("migration status", "applied", st.Applied, "expected", st.Expected)
+		}
 	}
 
 	liveH, readyH := observability.HealthHandler(
@@ -1738,6 +1746,13 @@ func run() error {
 	// worker_fleet_down alerts: one node watches the transcode worker registry.
 	g.Go(func() error {
 		masterLock.RunIfMaster(gCtx, fleetMonitor.Run)
+		return nil
+	})
+
+	// Keeps the schema-gated capability flags current when nothing polls
+	// /health/ready. Runs on every instance: each has its own provider.
+	g.Go(func() error {
+		followSchemaVersion(gCtx, schemaVersionRefreshInterval, migrationStatusFn)
 		return nil
 	})
 

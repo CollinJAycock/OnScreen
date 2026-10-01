@@ -463,6 +463,23 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		file = &files[0] // already sorted best quality first
 	}
 
+	// Audio track selection. audio_stream_index counts AUDIO streams
+	// (`-map 0:a:N`), so past the file's last one ffmpeg dies at "Stream map
+	// matches no streams" before writing a playlist, and the client spins until
+	// the playlist deadline. Refuse it here, before supersede kills the
+	// session the viewer is still watching. Only a known stream list can be
+	// judged: a row scanned before audio_streams existed keeps the old
+	// behaviour, and an audio-less video drops the audio map (NoAudio) anyway.
+	audioStreamIdx := -1 // -1 = default (let FFmpeg pick)
+	if body.AudioStreamIndex != nil && *body.AudioStreamIndex >= 0 {
+		audioStreamIdx = *body.AudioStreamIndex
+		if n := transcode.SourceAudioStreamCount(file.AudioStreams); n > 0 && audioStreamIdx >= n {
+			respond.BadRequest(w, r, fmt.Sprintf(
+				"audio_stream_index %d is out of range: this file has %d audio tracks", audioStreamIdx, n))
+			return
+		}
+	}
+
 	// Integrity gate: the opt-in deep-decode probe (integrity_probe task)
 	// marked this file damaged — its bitstream fails software decode
 	// mid-stream even though the header parses, so a transcode would only
@@ -528,6 +545,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_UNREADABLE",
 				"This file appears to be corrupt — the server couldn't read its container. Re-encode or replace the file.")
 			return
+		case scanner.SourceUnverified:
+			// ffprobe ran out of time: no verdict, so start anyway. ffmpeg
+			// opens the file itself, and a file that really is broken fails
+			// there (the player shows its error) instead of a healthy but
+			// slow-to-open one being called corrupt.
+			h.logger.WarnContext(ctx, "transcode: source pre-flight timed out; starting anyway",
+				"file_id", file.ID, "path", file.FilePath, "err", verr)
 		case scanner.SourceOK:
 			// Caught by the outer `!= SourceOK` guard already; the case
 			// label keeps exhaustive lint happy.
@@ -739,12 +763,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		decision = "remux"
 	}
 
-	audioStreamIdx := -1 // -1 = default (let FFmpeg pick)
-	if body.AudioStreamIndex != nil && *body.AudioStreamIndex >= 0 {
-		audioStreamIdx = *body.AudioStreamIndex
-	}
-
-	// (Client capabilities were resolved above, before quality selection.)
+	// (audioStreamIdx was resolved and range-checked right after file
+	// selection; client capabilities above, before quality selection.)
 
 	// AAC output channel count: preserve the source layout (5.1/7.1) instead of
 	// always downmixing to stereo, capped by the client's declared maximum (5.1
@@ -794,9 +814,15 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// CONTAINER (the client decodes the source audio, within its channel cap,
 	// and the codec is HLS-carriable), copy the audio instead of degrading it
 	// through a forced AAC re-encode.
+	//
+	// Judged on the stream ffmpeg actually maps (audioStreamIdx), codec AND
+	// channels: the file's top-level audio_codec describes only the first
+	// track, so picking a DTS track behind an AC3 one used to pass the DTS
+	// through untouched to a client that can't decode it — no sound. An
+	// unidentifiable stream ("") is never copied.
 	audioCopy := false
-	if body.VideoCopy && file.AudioCodec != nil {
-		alias := transcode.CanonicalAudioCodec(*file.AudioCodec)
+	if selCodec := transcode.SourceAudioCodec(file, audioStreamIdx); body.VideoCopy && selCodec != "" {
+		alias := transcode.CanonicalAudioCodec(selCodec)
 		srcCh := transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx)
 		chFit := caps.MaxAudioChannels <= 0 || srcCh <= 0 || srcCh <= caps.MaxAudioChannels
 		switch alias {
@@ -936,6 +962,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		BitrateKbps: sessionBitrate,
 		HEVCOutput:  sessVout.HEVC,
 		AV1Output:   sessVout.AV1,
+		// Display only here (ABR children read it from their parent): Now
+		// Playing names the copied track's codec, not the first track's.
+		AudioStreamIndex: audioStreamIdx,
 	}
 	playMeta.apply(&sess)
 	if h.audit != nil {

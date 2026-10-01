@@ -3,11 +3,14 @@ package main
 import (
 	"context"
 	"os/exec"
+	"sync/atomic"
+	"time"
 
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/dbtools"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/observability"
 )
 
 // capabilitiesProvider builds a CapabilitiesResponse on demand. We rebuild
@@ -41,6 +44,60 @@ type capabilitiesProvider struct {
 	hasTesseract bool // OCR subtitle path
 	hasFPCalc    bool // intro-marker AcoustID detector
 	hasPGDump    bool // backup endpoint + scheduled backup task
+
+	// schemaVersion is the highest applied migration, as last read by the
+	// boot migration check, followSchemaVersion or a /health/ready probe
+	// (setSchemaVersion). Atomic because those store it while
+	// Capabilities() reads it. 0 until the first successful read, which
+	// keeps the schema-gated flags off rather than guessing.
+	schemaVersion atomic.Int64
+}
+
+// progressKeepsDurationVersion is migration 00035_watch_progress_keep_duration:
+// from it on, a watch event without a duration keeps the stored one. The
+// rollup before it clears the stored duration on such an event, so
+// features.progress_without_duration stays false until it is applied —
+// AUTO_MIGRATE=false and a binary started before `goose up` would otherwise
+// invite duration-less reports into the very wipe the flag exists to avoid.
+const progressKeepsDurationVersion = 35
+
+// setSchemaVersion records the applied schema version. main.go feeds it the
+// boot migration check and, through its migrationStatusFn, every readiness
+// probe and followSchemaVersion tick, so a `goose up` against a running
+// server lifts the schema-gated flags within a minute without a restart,
+// and a capabilities request never pays for a query of its own.
+func (p *capabilitiesProvider) setSchemaVersion(applied int64) {
+	p.schemaVersion.Store(applied)
+}
+
+// schemaVersionRefreshInterval is how often followSchemaVersion re-reads the
+// applied schema version.
+const schemaVersionRefreshInterval = time.Minute
+
+// followSchemaVersion runs status — main.go's migrationStatusFn, which hands
+// the applied version to setSchemaVersion — every interval until ctx is done.
+// The readiness probe runs the same check, but only when something polls
+// /health/ready, and the shipped compose healthchecks and the documented
+// load-balancer probe poll /health/live instead; without this tick a
+// `goose up` against a running server would leave the schema-gated flags
+// off until a restart. One MAX over goose_db_version a minute.
+func followSchemaVersion(ctx context.Context, interval time.Duration, status observability.MigrationStatusFn) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			status()
+		}
+	}
+}
+
+// progressWithoutDuration is features.progress_without_duration; see
+// progressKeepsDurationVersion.
+func (p *capabilitiesProvider) progressWithoutDuration() bool {
+	return p.schemaVersion.Load() >= progressKeepsDurationVersion
 }
 
 // setRuntimeDetected populates the runtime-sensed fields. Called from
@@ -133,6 +190,10 @@ func (p *capabilitiesProvider) Capabilities() v1.CapabilitiesResponse {
 			// Built-in local-account 2FA — no external tool to probe.
 			TOTP:         true,
 			WebDownloads: p.settings.WebDownloadsEnabled(ctx),
+			// Duration-less progress reports keep the stored duration
+			// (Progress handler + migration 00035) — once that migration
+			// is applied.
+			ProgressWithoutDuration: p.progressWithoutDuration(),
 		},
 		Codecs: v1.CapabilitiesCodecs{
 			Video:      []string{"h264", "hevc"},

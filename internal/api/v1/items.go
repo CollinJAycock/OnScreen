@@ -1630,8 +1630,10 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Kept for the duration fill below, which would otherwise fetch it again.
+	var item *media.Item
 	if h.access != nil || claims.MaxContentRating != "" {
-		item, err := h.media.GetItem(r.Context(), id)
+		item, err = h.media.GetItem(r.Context(), id)
 		if err != nil {
 			if errors.Is(err, media.ErrNotFound) {
 				respond.NotFound(w, r)
@@ -1673,6 +1675,9 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		// feeds the analytics direct-vs-transcode split. Clients that
 		// predate the field simply omit it (recorded as NULL/unknown).
 		Decision string `json:"decision,omitempty"`
+		// Optional id of the file (version) being played. Only consulted to
+		// fill a missing duration_ms; see progressDurationMS.
+		FileID string `json:"file_id,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -1680,10 +1685,6 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	eventType := itemStateToEventType(body.State)
-	var durPtr *int64
-	if body.DurationMS > 0 {
-		durPtr = &body.DurationMS
-	}
 	var clientNamePtr *string
 	if body.ClientName != "" {
 		// Cap at 64 chars so a deliberately-long client_name from a
@@ -1745,6 +1746,12 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	if decisionPtr == nil {
 		decisionPtr = h.inferPlayDecision(r.Context(), claims.UserID, id)
 	}
+
+	// A report with no duration (omitted or 0 — a player that doesn't know the
+	// whole length, such as an HLS one that sees only its playlist window) gets
+	// one filled server-side when the server knows it. Resolved here for the
+	// same reason as the decision: a refused heartbeat doesn't pay for it.
+	durPtr := h.progressDurationMS(r.Context(), claims.UserID, id, item, body.DurationMS, body.FileID)
 
 	if err := h.watch.Record(r.Context(), watchevent.RecordParams{
 		UserID:     claims.UserID,
@@ -1861,6 +1868,117 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	respond.NoContent(w)
+}
+
+// progressDurationMS is the duration a progress report records. A positive
+// reported duration is the player's own measurement and is used unchanged.
+// A missing or 0 one is filled from the first of:
+//
+//   - the file being played: fileID when it names one of the item's files,
+//     else the file of the user's newest live transcode session for the item;
+//   - the item's primary file (GetFiles lists the best version first, the one
+//     players pick by default), but only when the version being played isn't
+//     known: when it is and has no duration, another cut's length could mark
+//     the item watched early (and scrobble it), so the fill skips to
+//   - the item's own duration_ms, which for a movie or episode is the
+//     metadata runtime (TMDB or NFO, in whole minutes), usually the
+//     theatrical cut's. So when the version being played is known it stands
+//     in only for the item's sole active file: beside other versions it may
+//     be another cut's length, with the same early-watched risk.
+//
+// nil (NULL) when none is known; the watch_progress rollup then keeps the
+// duration it already has (migration 00035) and the event completes nothing.
+// That stored duration is deliberately not filled in here: it is whatever a
+// client last reported, and the rollup judges completion against the event's
+// own duration, so filling it would let a beat mark the item watched (and
+// scrobble it) against a length the server never checked. item may be nil;
+// it is then fetched here if needed. Every fill is the length of the whole
+// content — the timeline of the content-absolute position clients report —
+// so a filled beat reaches the 90% watched threshold no earlier than a
+// reported one.
+func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uuid.UUID, item *media.Item, reportedMS int64, fileID string) *int64 {
+	if reportedMS > 0 {
+		return &reportedMS
+	}
+	known := func(d *int64) *int64 {
+		if d == nil || *d <= 0 {
+			return nil
+		}
+		v := *d
+		return &v
+	}
+
+	files, err := h.media.GetFiles(ctx, itemID)
+	if err != nil {
+		h.logger.WarnContext(ctx, "progress: get files for duration", "id", itemID, "err", err)
+	}
+	if len(files) > 0 {
+		indexOf := func(id uuid.UUID) int {
+			for i := range files {
+				if id != uuid.Nil && files[i].ID == id {
+					return i
+				}
+			}
+			return -1
+		}
+		// A file_id that is malformed or names none of the item's files (a
+		// stale one, say) identifies nothing; the live session may still.
+		playing := -1
+		if id, perr := uuid.Parse(fileID); perr == nil {
+			playing = indexOf(id)
+		}
+		if playing < 0 {
+			playing = indexOf(h.activeSessionFileID(ctx, userID, itemID))
+		}
+		if playing >= 0 {
+			if d := known(files[playing].DurationMS); d != nil {
+				return d
+			}
+			// GetFiles lists only active files: more than one means other
+			// versions, and the item's runtime may be one of theirs.
+			if len(files) > 1 {
+				return nil
+			}
+		} else if d := known(files[0].DurationMS); d != nil {
+			return d
+		}
+	}
+
+	if item == nil {
+		if it, gerr := h.media.GetItem(ctx, itemID); gerr == nil {
+			item = it
+		}
+	}
+	if item != nil {
+		return known(item.DurationMS)
+	}
+	return nil
+}
+
+// activeSessionFileID is the file of the newest live transcode session userID
+// has for itemID — the version an HLS player is playing — or uuid.Nil.
+func (h *ItemHandler) activeSessionFileID(ctx context.Context, userID, itemID uuid.UUID) uuid.UUID {
+	lister, ok := h.sessions.(itemSessionLister)
+	if !ok {
+		return uuid.Nil
+	}
+	sessions, err := lister.ListByUserItem(ctx, userID, itemID)
+	if err != nil {
+		return uuid.Nil
+	}
+	var newest *transcode.Session
+	for i := range sessions {
+		if sessions[i].FileID == uuid.Nil {
+			continue
+		}
+		if newest == nil || sessions[i].CreatedAt.After(newest.CreatedAt) {
+			newest = &sessions[i]
+		}
+	}
+	if newest == nil {
+		return uuid.Nil
+	}
+	return newest.FileID
 }
 
 // Enrich handles POST /api/v1/items/{id}/enrich.

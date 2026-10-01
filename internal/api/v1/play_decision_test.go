@@ -28,11 +28,15 @@ import (
 // ── mocks ────────────────────────────────────────────────────────────────────
 
 // captureWatch records the params of every watch event so a test can assert
-// the decision Progress attributed.
-type captureWatch struct{ events []watchevent.RecordParams }
+// the decision (or duration) Progress attributed. state is what GetState
+// returns.
+type captureWatch struct {
+	events []watchevent.RecordParams
+	state  watchevent.WatchState
+}
 
 func (m *captureWatch) GetState(_ context.Context, _, _ uuid.UUID) (watchevent.WatchState, error) {
-	return watchevent.WatchState{}, nil
+	return m.state, nil
 }
 func (m *captureWatch) GetStates(_ context.Context, _ uuid.UUID, _ []uuid.UUID) (map[uuid.UUID]watchevent.WatchState, error) {
 	return map[uuid.UUID]watchevent.WatchState{}, nil

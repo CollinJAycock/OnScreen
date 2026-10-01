@@ -1009,13 +1009,27 @@ paths:
           application/json:
             schema:
               type: object
-              required: [position_ms]
+              required: [view_offset_ms]
               properties:
-                position_ms: { type: integer, format: int64 }
-                duration_ms: { type: integer, format: int64 }
-                file_id:     { type: string, format: uuid }
-                client_name: { type: string }
-                event:       { type: string, enum: [play, pause, stop, scrub] }
+                view_offset_ms: { type: integer, format: int64, description: 'Position in the content, ms.' }
+                duration_ms:
+                  type: integer
+                  format: int64
+                  description: |
+                    Length of the whole content, ms. May be omitted (or 0) when
+                    `features.progress_without_duration` is true: the server
+                    then fills it from the file being played (`file_id`, else
+                    the newest live transcode session's file, else the primary
+                    file) or the item. When the version being played is known
+                    but has no probed length, the item's runtime is used only
+                    if the item has no other active version (the runtime may be
+                    another cut's length); otherwise nothing is filled. When
+                    nothing is filled, the duration already stored is kept and
+                    the report can't mark the item watched.
+                file_id:     { type: string, format: uuid, description: 'File (version) being played; only consulted to fill a missing duration_ms.' }
+                state:       { type: string, enum: [playing, paused, stopped], description: 'Anything else is recorded as playing.' }
+                client_name: { type: string, description: 'Truncated to 64 characters.' }
+                decision:    { type: string, enum: [directPlay, directStream, remux, transcode], description: 'Playback decision in use; inferred server-side when omitted.' }
       responses:
         '204': { description: Recorded. }
 
@@ -1816,6 +1830,8 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/TranscodeStartResponse' }
+        '400':
+          description: 'Malformed request (`code: BAD_REQUEST`): a negative `height` or one over the server maximum, an invalid `file_id`, or an `audio_stream_index` past the last audio track of the file.'
         '404':
           description: 'Item not found, or item type is not transcodable (e.g. audiobook / book / photo).'
         '422':
@@ -5022,6 +5038,7 @@ components:
                 intro_markers:      { type: boolean, description: 'AcoustID intro detection + ffmpeg blackdetect credits; needs fpcalc + ffmpeg.' }
                 chapters:           { type: boolean }
                 web_downloads:      { type: boolean, description: 'Server-wide admin toggle for the watch-page Download button. Default false; admin opt-in via Settings → General → Sharing.' }
+                progress_without_duration: { type: boolean, description: 'PUT /items/{id}/progress may omit duration_ms: the server fills it from the file when it knows it and otherwise keeps the stored duration. False until the database has migration 00035_watch_progress_keep_duration applied (re-read every minute and at each /health/ready probe); clients omit duration_ms only when it is true.' }
             codecs:
               type: object
               properties:
@@ -5597,7 +5614,7 @@ components:
             + `.m4s` segment shape.
         audio_stream_index:
           type: integer
-          description: 'Source audio stream index. nil/omitted = default (first) audio stream. Re-issuing the session with a different index drives the in-player audio picker.'
+          description: 'Audio track to play, counted among audio streams only: its position in the file''s `audio_streams` array (0 = first), not that entry''s absolute `index`. nil/omitted = default (first) audio stream. Past the last audio track: 400. On a remux (`video_copy`) this track is passed through untouched only when it is AAC, AC3, E-AC3 or MP3, the client declares that codec, and its channels fit the client''s maximum; otherwise it is re-encoded to AAC. Re-issuing the session with a different index drives the in-player audio picker.'
         supports_hevc:
           type: boolean
           description: 'Client can decode HEVC (H.265). Server uses this to pick HEVC output when transcoding (saves bandwidth) and to enable the HEVC-source remux path.'

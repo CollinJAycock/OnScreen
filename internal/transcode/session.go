@@ -74,7 +74,7 @@ type Session struct {
 	ABR              bool        `json:"abr,omitempty"`
 	ABRRenditions    []Rendition `json:"abr_renditions,omitempty"`
 	DurationMS       int64       `json:"duration_ms,omitempty"`
-	AudioStreamIndex int         `json:"audio_stream_index,omitempty"`
+	AudioStreamIndex int         `json:"audio_stream_index,omitempty"` // audio-relative track mapped (-1 = default); set on EVERY session — Now Playing names a copied track from it
 	// AudioChannels is the AAC output channel count for the ABR ladder's
 	// children (preserves the source 5.1/7.1 instead of downmixing to stereo).
 	AudioChannels int  `json:"audio_channels,omitempty"`

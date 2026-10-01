@@ -110,7 +110,16 @@ const (
 	// at the header level). This is the fast path that replaces "spinner
 	// forever" when ffmpeg would otherwise hang on a bad input.
 	SourceUnreadable SourceStatus = "unreadable"
+	// SourceUnverified — ffprobe gave no answer within the time budget: no
+	// verdict on the file. A large MP4 whose index (moov) sits at the end, or
+	// a disk spinning up, can take longer than the budget to open; callers
+	// proceed (ffmpeg reads the file itself and fails loudly if it really is
+	// broken) instead of calling a healthy file corrupt.
+	SourceUnverified SourceStatus = "unverified"
 )
+
+// verifyBudget bounds VerifySource's ffprobe.
+const verifyBudget = 5 * time.Second
 
 // VerifySource runs a fast ffprobe against path with a 5 s budget and
 // returns whether the source is playable. Used as a pre-flight gate by
@@ -139,7 +148,7 @@ func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 	if looksLikeReferenceContainer(path) {
 		return SourceUnreadable, ErrUnsafeContainer
 	}
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	probeCtx, cancel := context.WithTimeout(ctx, verifyBudget)
 	defer cancel()
 	args := []string{
 		"-v", "error",
@@ -152,15 +161,28 @@ func VerifySource(ctx context.Context, path string) (SourceStatus, error) {
 		"-protocol_whitelist", ffsafe.Whitelist(path),
 		path,
 	}
-	out, err := exec.CommandContext(ctx, "ffprobe", args...).Output()
+	out, err := exec.CommandContext(probeCtx, "ffprobe", args...).Output()
 	if err != nil {
-		// Context-deadline-exceeded surfaces here as an exec error.
+		// Running out of time is no verdict on the file. It used to come back
+		// as SourceUnreadable ("signal: killed"), and every such title got a
+		// 422 "appears to be corrupt": on QA (2026-09-30) a 1080p remux in an
+		// MP4 and, once, a WEB-DL MKV on a disk that was spinning up.
+		if verifyTimedOut(ctx, probeCtx) {
+			return SourceUnverified, fmt.Errorf("ffprobe verify: no answer within %s: %w", verifyBudget, err)
+		}
 		return SourceUnreadable, fmt.Errorf("ffprobe verify: %w", err)
 	}
 	if len(strings.TrimSpace(string(out))) == 0 {
 		return SourceUnreadable, fmt.Errorf("ffprobe verify: no streams detected")
 	}
 	return SourceOK, nil
+}
+
+// verifyTimedOut reports whether VerifySource's own budget ran out (probeCtx's
+// deadline) while the caller's context was still live: a timeout, not a
+// request the client abandoned.
+func verifyTimedOut(parent, probeCtx context.Context) bool {
+	return parent.Err() == nil && errors.Is(probeCtx.Err(), context.DeadlineExceeded)
 }
 
 // ErrUnsafeContainer is returned by ProbeFile for a file whose container is a
