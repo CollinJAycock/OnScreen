@@ -80,6 +80,36 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   run, and there is no auto-updater yet. macOS is left out until the client
   compiles there. Linux installers also build locally in Docker
   (`clients/desktop/linux-build`); see the desktop client's README.
+- **Desktop client: setting and changing the server** — the installed
+  desktop app couldn't be pointed at a working server.
+  - **Bare addresses work.** `192.168.1.50:7070`, `nas.local:7070` or
+    `onscreen.example.com` are accepted. Without a scheme `https://` is tried
+    first, then `http://`, as on the TV apps. Before, the field's URL
+    validation blocked them with "Please enter a URL."
+  - **LAN servers over plain `http://` are allowed.** Release builds refused
+    `http://` to everything but loopback, including the setup screen's own
+    `http://192.168.1.50:7070` example. Plain `http://` is now accepted for
+    local-network hosts, using the same rules as the TV apps, and the sign-in
+    screen and the Server page flag it as not encrypted. It is still refused
+    for public hosts.
+  - **The server is tested before it is saved,** and the error says what's
+    wrong: no answer, a bad certificate, not an OnScreen server, or a server
+    whose CORS policy refuses the app (naming the origin to allow). Before,
+    any well-formed URL was saved and the app opened a sign-in page that
+    could never work.
+  - **The server can be changed.** Use **Change server** on the sign-in
+    screen, **Server** in the sidebar (for every user) or the tray icon's
+    **Change server…**. When the saved server doesn't answer at startup, a
+    **Can't connect** screen offers **Try again** and **Change server**.
+    Before, nothing linked the server page; the only way out was deleting
+    `settings.json` by hand. Disconnect now asks for confirmation in the page
+    itself: in the desktop webview, `window.confirm` never blocked, so the
+    confirmation was skipped.
+  - **Needs a server that allows the app's origin.** Servers with the CORS
+    fix (see "The desktop app couldn't reach a server" under Fixed) allow
+    it automatically; on an older one an admin adds `http://tauri.localhost`
+    (Windows) or `tauri://localhost` (Linux) to the CORS allowed origins and
+    restarts the server. The setup screen says when that's the problem.
 
 The additions below are server + web client unless marked otherwise; the
 Android apps', the Tizen / webOS TV apps' and the Roku channel's shares

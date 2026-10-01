@@ -65,6 +65,14 @@ export async function clearServerUrl(): Promise<void> {
   await invoke('clear_server_url');
 }
 
+/** Full reload at the app root after the server changed: api.ts rebinds
+ *  its base URL, every module holding the old server's state starts over,
+ *  and the root route sends the user to sign-in (or the setup screen)
+ *  instead of reloading whatever settings page they changed it on. */
+export function reloadApp(): void {
+  window.location.replace('/');
+}
+
 /**
  * Tokens persisted by the Tauri shell. Both fields are present
  * after a successful login or refresh; both are null when the user
@@ -329,6 +337,15 @@ export async function onMediaKey(
     handler(e.payload);
   });
   return unlisten;
+}
+
+/** Subscribe to the tray menu's "Change server…" item — an escape hatch
+ *  that works from any screen, even one without the sidebar's Server link
+ *  (the setup wizard, a page that failed to load). No-op in the browser. */
+export async function onOpenServerSettings(handler: () => void): Promise<() => void> {
+  if (!isTauri()) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return await listen('open-server-settings', () => handler());
 }
 
 /** ReplayGain mode for the native audio engine. The Rust side multiplies

@@ -15,6 +15,11 @@ const mockIsTauri = vi.hoisted(() => vi.fn(() => false));
 const mockGetUser = vi.hoisted(() => vi.fn());
 const mockRefreshSession = vi.hoisted(() => vi.fn());
 const mockTrackAuthBootstrap = vi.hoisted(() => vi.fn(<T>(refresh: Promise<T>) => refresh));
+const mockGetServerUrl = vi.hoisted(() => vi.fn());
+const mockSetServerUrl = vi.hoisted(() => vi.fn());
+const mockReloadApp = vi.hoisted(() => vi.fn());
+const mockConnect = vi.hoisted(() => vi.fn());
+const mockOnOpenServerSettings = vi.hoisted(() => vi.fn());
 
 // Svelte 5 components are plain functions; a no-op one stands in for the
 // heavy children (player, notification bell, jobs banner) this test doesn't
@@ -49,10 +54,17 @@ vi.mock('$lib/api', () => ({
 }));
 vi.mock('$lib/native', () => ({
   isTauri: mockIsTauri,
-  getServerUrl: vi.fn(),
-  setServerUrl: vi.fn(),
+  getServerUrl: mockGetServerUrl,
+  setServerUrl: mockSetServerUrl,
   getStoredTokens: vi.fn().mockResolvedValue({}),
+  reloadApp: mockReloadApp,
+  onOpenServerSettings: mockOnOpenServerSettings,
 }));
+// The probing itself is covered by $lib/serverConnect's own suite.
+vi.mock('$lib/serverConnect', async () => {
+  const actual = await vi.importActual<typeof import('$lib/serverConnect')>('$lib/serverConnect');
+  return { ...actual, connectToServer: mockConnect };
+});
 vi.mock('$lib/stores/notifications', () => ({
   initNotifications: vi.fn(),
   stopNotifications: vi.fn(),
@@ -277,5 +289,108 @@ describe('Sign out', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+// Desktop (Tauri) client: choosing the server, and getting out of a server
+// that doesn't work. Before, a bare host was blocked by type="url"
+// validation, a saved server that never answered dropped the user on a
+// sign-in page with no way back, and nothing linked the server page.
+describe('desktop server setup', () => {
+  // The tray menu's "Change server…" handler the layout registered.
+  let trayChangeServer: (() => void) | undefined;
+
+  beforeEach(() => {
+    mockIsTauri.mockReturnValue(true);
+    trayChangeServer = undefined;
+    mockOnOpenServerSettings.mockImplementation(async (h: () => void) => {
+      trayChangeServer = h;
+      return () => {};
+    });
+    mockGetServerUrl.mockResolvedValue(null);
+    mockSetServerUrl.mockResolvedValue(undefined);
+    mockConnect.mockReset();
+  });
+
+  it('first run takes a bare address, tests it, saves what answered and restarts the app', async () => {
+    mockConnect.mockResolvedValue({ url: 'http://10.0.0.66:7070', cleartext: true });
+    render(Layout);
+
+    expect(await screen.findByRole('heading', { name: 'Connect to your OnScreen server' })).toBeTruthy();
+    const field = screen.getByRole('textbox', { name: 'Server address' }) as HTMLInputElement;
+    // A text field: type="url" refused "10.0.0.66:7070" before any code ran.
+    expect(field.type).toBe('text');
+    await fireEvent.input(field, { target: { value: '10.0.0.66:7070' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+    await waitFor(() => expect(mockReloadApp).toHaveBeenCalled());
+    expect(mockConnect).toHaveBeenCalledWith('10.0.0.66:7070', expect.anything());
+    expect(mockSetServerUrl).toHaveBeenCalledWith('http://10.0.0.66:7070');
+  });
+
+  it('first run shows why a server was refused and saves nothing', async () => {
+    mockConnect.mockRejectedValue(
+      "OnScreen only connects over plain http:// to servers on your local network, and example.com isn't one",
+    );
+    render(Layout);
+
+    await fireEvent.input(await screen.findByRole('textbox', { name: 'Server address' }), {
+      target: { value: 'http://example.com' },
+    });
+    await fireEvent.click(screen.getByRole('button', { name: 'Connect' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent(/only connects over plain http:\/\/ to servers on your local network/);
+    expect(mockSetServerUrl).not.toHaveBeenCalled();
+    expect(mockReloadApp).not.toHaveBeenCalled();
+  });
+
+  it("a saved server that doesn't answer says why, with Try again and Change server", async () => {
+    mockGetServerUrl.mockResolvedValue('https://onscreen.example.com');
+    vi.mocked(authApi.setupStatus).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    mockConnect.mockRejectedValue(new Error('The OnScreen server at https://onscreen.example.com is running, but … CORS …'));
+    render(Layout);
+
+    expect(await screen.findByRole('heading', { name: "Can't connect to your server" })).toBeTruthy();
+    expect(screen.getByText(/is running, but … CORS/)).toBeTruthy();
+    expect(mockConnect).toHaveBeenCalledWith('https://onscreen.example.com');
+    expect(screen.queryByRole('link', { name: /Audio/ })).toBeNull();
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Change server' }));
+    const field = screen.getByRole('textbox', { name: 'Server address' }) as HTMLInputElement;
+    expect(field.value).toBe('https://onscreen.example.com');
+    expect(screen.getByRole('heading', { name: 'Change server' })).toBeTruthy();
+  });
+
+  it('a saved server that answers loads the app, with a Server link in the sidebar', async () => {
+    mockGetServerUrl.mockResolvedValue('http://10.0.0.66:7070');
+    await renderShell();
+
+    expect(screen.getByRole('link', { name: 'Server' }).getAttribute('href')).toBe('/native/server');
+    expect(mockConnect).not.toHaveBeenCalled();
+  });
+
+  it("the tray's Change server… opens the server page, or the address field when the server is down", async () => {
+    mockGetServerUrl.mockResolvedValue('http://10.0.0.66:7070');
+    await renderShell();
+    trayChangeServer!();
+    expect(mockGoto).toHaveBeenCalledWith('/native/server');
+  });
+
+  it("the tray's Change server… on the can't-connect screen shows the address field", async () => {
+    mockGetServerUrl.mockResolvedValue('http://10.0.0.66:7070');
+    vi.mocked(authApi.setupStatus).mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    mockConnect.mockRejectedValue(new Error("Couldn't connect to the server."));
+    render(Layout);
+    await screen.findByRole('heading', { name: "Can't connect to your server" });
+
+    trayChangeServer!();
+    expect(await screen.findByRole('heading', { name: 'Change server' })).toBeTruthy();
+    expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it('browsers get no Server link', async () => {
+    mockIsTauri.mockReturnValue(false);
+    await renderShell();
+    expect(screen.queryByRole('link', { name: 'Server' })).toBeNull();
   });
 });

@@ -389,8 +389,8 @@ transparently — same-origin from the webview's POV, no CORS in
 play.
 
 **In the setup screen, enter:** `http://localhost:5173`
-(NOT `http://localhost:7070` — that bypasses the proxy and forces
-the server-side CORS dance below for no reason.)
+(NOT `http://localhost:7070` — that bypasses the proxy and makes
+every request cross-origin for no reason.)
 
 ### Production / installer (`build.ps1` / `make client-build`)
 
@@ -398,22 +398,52 @@ The bundled webview loads from the embedded frontend, presenting
 its own origin to your server. No proxy — every API call is
 genuinely cross-origin.
 
-**In the setup screen, enter your real server URL:**
-`https://onscreen.example.com` or `http://192.168.1.50:7070`.
+**In the setup screen, enter the address you open OnScreen with in a
+browser** — the same rules as the TV and Android apps:
 
-**On the server, add the Tauri webview origin to CORS** via the
-web UI's **Settings → General → CORS Allowed Origins**:
+- **A bare host or IP works**: `192.168.1.50:7070`, `nas.local:7070`,
+  `onscreen.example.com`. Without a scheme, `https://` is tried first,
+  then `http://` (for local-network hosts only).
+- **Plain `http://` is accepted for local-network hosts only** —
+  loopback, `10.x`, `172.16–31.x`, `192.168.x`, `100.64–127.x`
+  (Tailscale), `169.254.x`, IPv6 ULA / link-local, `*.local`, `*.lan`,
+  `*.home.arpa`, `*.internal`, `*.localhost` and single-label names such
+  as `nas`. The sign-in screen and the Server page then flag the
+  connection as **not encrypted**.
+- **Plain `http://` to anything else is refused** (the password and the
+  30-day refresh token would cross the internet in cleartext): use the
+  server's `https://` address, or its LAN IP.
 
-| Platform | Webview origin to add |
+The address is tested before it's saved (`GET /api/v1/system/capabilities`
+from the webview — the path every later request takes). When the webview
+can't reach it, a Rust-side probe tells "server down / wrong address / bad
+certificate" apart from "server up but its CORS policy refuses the app",
+and the setup screen says which. The rules are enforced in Rust
+(`resolve_server_input`, `set_server_url` in `src-tauri/src/lib.rs`); the
+webview has no store permission, so it can't write `settings.json`
+around them.
+
+**Changing it later:** **Change server** on the sign-in screen,
+**Server** in the sidebar (every user, not just admins), the tray
+icon's **Change server…** item (works from any screen), or — when the
+saved server stops answering — the **Can't connect to your server**
+screen the app opens on, with **Try again** and **Change server**.
+Switching to another server signs out of the old one first.
+
+**CORS.** OnScreen servers from 2.5.0 allow the desktop app's webview
+origins automatically (as they do the TV apps' `null` / `file://`). An
+older server needs them added under **Settings → General → CORS Allowed
+Origins**; the setup screen names the exact origin when this is the
+problem:
+
+| Platform | Webview origin |
 |---|---|
 | Windows (WebView2) | `http://tauri.localhost` |
 | macOS (WKWebView)  | `tauri://localhost` |
 | Linux (WebKitGTK)  | `tauri://localhost` |
 
-The middleware re-reads on the next request — no server restart
-needed. If unsure of the exact origin, hit **F12** in the Tauri
-client, retry the failing request, copy the `Origin` header
-verbatim.
+The list is read at startup, so restart the server after changing
+it.
 
 ### Auth model
 
@@ -426,8 +456,11 @@ SameSite=None dance cookies would require.
 ## What's done
 
 - **Project skeleton**: Tauri 2 + plugins + capabilities + icons.
-- **Server URL config**: first-run picker + `tauri-plugin-store`
-  persistence + `set_server_url` URL validation.
+- **Server URL config**: first-run picker (bare host or URL, tested
+  before saving) + `tauri-plugin-store` persistence + Rust-side
+  validation (`resolve_server_input` / `probe_server_url` /
+  `set_server_url`); change it from the sign-in screen, the sidebar's
+  Server page or the can't-connect screen.
 - **Bearer-token auth**: `get_tokens` / `set_tokens` /
   `clear_tokens` IPC; `api.ts` carries `Authorization: Bearer` on
   every request natively, refresh path posts the stored

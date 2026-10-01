@@ -4,7 +4,11 @@
   import { page } from '$app/stores';
   import { api, authApi, userApi, setApiBase, setBearerToken, trackAuthBootstrap } from '$lib/api';
   import type { SwitchableUser } from '$lib/api';
-  import { isTauri, getServerUrl, setServerUrl, getStoredTokens } from '$lib/native';
+  import {
+    isTauri, getServerUrl, setServerUrl, getStoredTokens, reloadApp, onOpenServerSettings,
+  } from '$lib/native';
+  import { connectToServer, errorText, type ConnectResult } from '$lib/serverConnect';
+  import ServerConnectForm from '$lib/components/ServerConnectForm.svelte';
   import { derived } from 'svelte/store';
   import Logo from '$lib/components/Logo.svelte';
   import ToastContainer from '$lib/components/ToastContainer.svelte';
@@ -40,19 +44,29 @@
 
   let checking = true;
 
-  // Tauri-only first-run state. Stays false in the browser since
-  // isTauri() short-circuits on module load. When true the layout
-  // renders the server-URL setup screen instead of the auth flow.
+  // Desktop (Tauri) server state. All of it stays at its default in the
+  // browser, where isTauri() is false.
+  const desktop = isTauri();
+  // No server saved yet: render the first-run "connect to your server"
+  // screen instead of the app.
   let needsServerUrl = false;
-  let serverUrlInput = '';
-  let serverUrlError = '';
-  let serverUrlSaving = false;
+  // The saved server didn't answer at startup: render a "can't connect"
+  // screen (retry / change server) instead of a sign-in page whose every
+  // request would fail. serverUrlForm swaps that screen for the address
+  // field.
+  let storedServerUrl: string | null = null;
+  let serverUnreachable = '';
+  let serverUrlForm = false;
+  let retrying = false;
 
   const isAuthPage = derived(page, $p =>
     $p.url.pathname === '/login' ||
     $p.url.pathname.startsWith('/setup') ||
     $p.url.pathname === '/privacy' ||
-    $p.url.pathname === '/account-deletion'
+    $p.url.pathname === '/account-deletion' ||
+    // The desktop server page is where a signed-out user changes the
+    // server; signed out, it renders without the app's navigation.
+    ($p.url.pathname.startsWith('/native/server') && !api.getUser())
   );
 
   // Admin "view as" impersonation state — per-tab via sessionStorage.
@@ -81,22 +95,31 @@
 
   onMount(async () => {
     theme.init();
-    // Capabilities is public — kick off the fetch as soon as we know
-    // the API base, so feature-gated UI (Download button, etc.) has
-    // a value by the time it renders. Non-blocking.
-    void loadCapabilities();
 
     // Tauri first-run gate: every API call needs a server URL. If
     // the user hasn't picked one, render the setup screen and skip
     // the rest of bootstrap until they do. Same-origin browser
     // builds skip this entirely (isTauri() returns false).
-    if (isTauri()) {
-      const stored = await getServerUrl();
+    if (desktop) {
+      // Tray menu "Change server…": reachable from any screen.
+      void onOpenServerSettings(() => {
+        if (needsServerUrl) return; // the address field is already showing
+        if (serverUnreachable) { serverUrlForm = true; return; }
+        goto('/native/server');
+      });
+      let stored: string | null = null;
+      try {
+        stored = await getServerUrl();
+      } catch (e) {
+        // An unreadable settings file must not leave the splash up forever.
+        console.warn('reading the saved server URL failed', e);
+      }
       if (!stored) {
         needsServerUrl = true;
         checking = false;
         return;
       }
+      storedServerUrl = stored;
       setApiBase(stored.replace(/\/$/, '') + '/api/v1');
       // Hydrate the bearer cache so the very first authed request
       // (setupStatus / refresh / etc.) carries Authorization. If the
@@ -109,6 +132,12 @@
       }
     }
 
+    // Capabilities is public — kick off the fetch as soon as the API base
+    // is known (in the desktop client that is only after the block above),
+    // so feature-gated UI (Download button, etc.) has a value by the time it
+    // renders. Non-blocking.
+    void loadCapabilities();
+
     try {
       const status = await authApi.setupStatus();
       if (status.setup_required && !$page.url.pathname.startsWith('/setup')) {
@@ -116,7 +145,21 @@
         goto('/setup');
         return;
       }
-    } catch (e) { console.warn('setup status check failed', e); }
+    } catch (e) {
+      console.warn('setup status check failed', e);
+      // Desktop: the saved server didn't answer. Find out why (down, wrong
+      // address, CORS) and say so, rather than falling through to a sign-in
+      // page that can never work and has no way back to the server setting.
+      if (desktop && storedServerUrl) {
+        try {
+          await connectToServer(storedServerUrl);
+        } catch (why) {
+          serverUnreachable = errorText(why);
+          checking = false;
+          return;
+        }
+      }
+    }
     checking = false;
 
     // Auth-callback bootstrap: every SSO/SAML/OIDC handler sets httpOnly
@@ -298,24 +341,19 @@
     notifOpen = false;
   }
 
-  async function saveServerUrl() {
-    serverUrlError = '';
-    if (!serverUrlInput.trim()) {
-      serverUrlError = 'Enter your OnScreen server URL';
-      return;
-    }
-    serverUrlSaving = true;
-    try {
-      await setServerUrl(serverUrlInput.trim());
-      // Hard reload — the cached fetch wrapper has already pointed
-      // at the wrong base; reloading is cheaper than re-wiring every
-      // module and clears any half-cached state from the no-server
-      // pre-setup state.
-      window.location.reload();
-    } catch (e: unknown) {
-      serverUrlError = e instanceof Error ? e.message : String(e);
-      serverUrlSaving = false;
-    }
+  // First-run / can't-connect screens: save the tested server and start the
+  // app over against it. Reloading is cheaper than re-wiring every module
+  // that cached the old (or missing) API base. On a change of server Rust
+  // drops the stored tokens before saving, so nothing the old server issued
+  // is sent to the new one.
+  async function saveServerUrl(result: ConnectResult) {
+    await setServerUrl(result.url);
+    reloadApp();
+  }
+
+  function retryServer() {
+    retrying = true;
+    window.location.reload();
   }
 
   $: path = $page.url.pathname;
@@ -347,35 +385,54 @@
   <div class="splash">
     <Logo size="lg" wordmark={false} />
   </div>
-{:else if needsServerUrl}
-  <!-- Tauri first-run: pick the OnScreen server URL before anything else. -->
+{:else if needsServerUrl || (serverUnreachable && serverUrlForm)}
+  <!-- Desktop: pick the OnScreen server before anything else (first run),
+       or change it when the saved one can't be reached. -->
   <div class="server-setup">
     <div class="server-setup-card">
       <Logo size="lg" />
-      <h1>Connect to your OnScreen server</h1>
+      <h1>{needsServerUrl ? 'Connect to your OnScreen server' : 'Change server'}</h1>
       <p class="server-setup-help">
-        Enter the URL of your OnScreen server (the one you reach from a browser).
-        Examples: <code>https://onscreen.example.com</code>,
-        <code>http://192.168.1.50:7070</code>, <code>http://localhost:7070</code>.
+        Enter the address you use to open OnScreen in a browser, for example
+        <code>192.168.1.50:7070</code>, <code>nas.local:7070</code> or
+        <code>https://onscreen.example.com</code>. Without <code>https://</code> or
+        <code>http://</code>, a secure connection is tried first. Plain
+        <code>http://</code> is only used for servers on your local network.
       </p>
-      <form on:submit|preventDefault={saveServerUrl}>
-        <input
-          type="url"
-          bind:value={serverUrlInput}
-          placeholder="https://onscreen.example.com"
-          autocomplete="off"
-          required
-        />
-        {#if serverUrlError}
-          <div class="server-setup-error">{serverUrlError}</div>
-        {/if}
-        <button type="submit" disabled={serverUrlSaving}>
-          {serverUrlSaving ? 'Connecting…' : 'Connect'}
+      <ServerConnectForm
+        initial={needsServerUrl ? '' : (storedServerUrl ?? '')}
+        autofocus
+        onConnected={saveServerUrl}
+      />
+      {#if serverUnreachable}
+        <button type="button" class="server-setup-link" on:click={() => { serverUrlForm = false; }}>
+          Back
         </button>
-      </form>
+      {/if}
       <p class="server-setup-note">
-        Stored locally on this device. You can change it later in Settings.
+        Saved on this device only. To change it later, use <strong>Change server</strong> on the
+        sign-in screen or <strong>Server</strong> in the sidebar.
       </p>
+    </div>
+  </div>
+{:else if serverUnreachable}
+  <!-- Desktop: the saved server didn't answer at startup. -->
+  <div class="server-setup">
+    <div class="server-setup-card" role="alert">
+      <Logo size="lg" />
+      <h1>Can't connect to your server</h1>
+      <p class="server-setup-help">
+        <code>{storedServerUrl}</code>
+      </p>
+      <div class="server-setup-error">{serverUnreachable}</div>
+      <div class="server-setup-actions">
+        <button type="button" class="server-setup-primary" disabled={retrying} on:click={retryServer}>
+          {retrying ? 'Retrying…' : 'Try again'}
+        </button>
+        <button type="button" class="server-setup-secondary" on:click={() => { serverUrlForm = true; }}>
+          Change server
+        </button>
+      </div>
     </div>
   </div>
 {:else if $isAuthPage}
@@ -464,6 +521,18 @@
           </svg>
           Audio
         </a>
+        <!-- Desktop only: which OnScreen server this device talks to — change
+             it or disconnect. Every user, not just admins: it's a setting
+             of this device, not of the server. -->
+        {#if desktop}
+          <a href="/native/server" class="nav-link" class:active={path.startsWith('/native/server')}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path d="M4.632 3.533A2 2 0 016.577 2h6.846a2 2 0 011.945 1.533l1.976 8.234A3.489 3.489 0 0016 11.5H4c-.476 0-.93.095-1.344.267l1.976-8.234z"/>
+              <path fill-rule="evenodd" d="M4 13a2 2 0 100 4h12a2 2 0 100-4H4zm11.24 2a.75.75 0 01.75-.75H16a.75.75 0 01.75.75v.01a.75.75 0 01-.75.75h-.01a.75.75 0 01-.75-.75V15zm-2.25-.75a.75.75 0 00-.75.75v.01c0 .414.336.75.75.75H13a.75.75 0 00.75-.75V15a.75.75 0 00-.75-.75h-.01z" clip-rule="evenodd"/>
+            </svg>
+            Server
+          </a>
+        {/if}
         {#if isAdmin}
           <a href="/settings" class="nav-link" class:active={path.startsWith('/settings')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
@@ -730,26 +799,30 @@
   }
   .server-setup-help code {
     background: var(--bg-hover); padding: 0.1rem 0.35rem; border-radius: 4px; font-size: 0.78rem;
+    overflow-wrap: anywhere;
   }
-  .server-setup-card form { display: flex; flex-direction: column; gap: 0.75rem; }
-  .server-setup-card input {
-    padding: 0.6rem 0.85rem; background: var(--bg-hover);
-    border: 1px solid var(--border-strong); border-radius: 8px;
-    color: var(--text-primary); font-size: 0.92rem;
-  }
-  .server-setup-card input:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   .server-setup-error {
     background: var(--error-bg); color: var(--error);
     border: 1px solid var(--error-bg);
     padding: 0.55rem 0.8rem; border-radius: 7px; font-size: 0.8rem;
+    line-height: 1.5; overflow-wrap: anywhere;
   }
-  .server-setup-card button[type="submit"] {
-    padding: 0.6rem 1rem; background: var(--accent); border: none;
-    border-radius: 8px; color: #fff; font-size: 0.9rem; font-weight: 600; cursor: pointer;
-    transition: background 0.15s;
+  .server-setup-actions { display: flex; gap: 0.6rem; flex-wrap: wrap; }
+  .server-setup-primary, .server-setup-secondary {
+    flex: 1 1 10rem; padding: 0.6rem 1rem; border-radius: 8px;
+    font-size: 0.9rem; font-weight: 600; cursor: pointer; transition: background 0.15s;
   }
-  .server-setup-card button[type="submit"]:hover { background: var(--accent-hover); }
-  .server-setup-card button[type="submit"]:disabled { opacity: 0.55; cursor: not-allowed; }
+  .server-setup-primary { background: var(--accent); border: none; color: #fff; }
+  .server-setup-primary:hover { background: var(--accent-hover); }
+  .server-setup-primary:disabled { opacity: 0.55; cursor: not-allowed; }
+  .server-setup-secondary {
+    background: transparent; border: 1px solid var(--border-strong); color: var(--text-primary);
+  }
+  .server-setup-secondary:hover { background: var(--bg-hover); }
+  .server-setup-link {
+    align-self: flex-start; background: none; border: none; padding: 0;
+    color: var(--text-secondary); font-size: 0.82rem; cursor: pointer; text-decoration: underline;
+  }
 
   .shell { display: flex; height: 100vh; overflow: hidden; }
 
