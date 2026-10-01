@@ -110,16 +110,43 @@ android {
         // (Fire TV Stick 4K Max, Hisense Google TV). Google Play already holds
         // a build with code 22, so the release goes out as 23; the name stays
         // 1.4.0, since no 22 reached users.
-        versionCode = 23
-        versionName = "1.4.0"
+        //
+        // 24 / 1.4.1: the Fire TV build drops Live TV, Recordings and the
+        // player's online subtitle search (ONLINE_SUBTITLE_SEARCH / LIVE_TV
+        // below) after Amazon rejected 1.4.0 (23) on 2026-10-01. Both flavors
+        // move to 24 so the codes stay in step; the Google TV build is
+        // unchanged in behaviour.
+        versionCode = 24
+        versionName = "1.4.1"
     }
 
-    // Per-store flavor split. Both stores ship the same app and code; they
-    // differ only in the Watch Next / EPG permissions. Requesting
-    // WRITE_EPG_DATA makes the Amazon Appstore require an EPG-capable Fire
-    // device and filters the app off most Fire TV hardware, so the `firetv`
-    // flavor strips those permissions (src/firetv/AndroidManifest.xml) while
-    // `googletv` keeps them for the Google TV Continue-Watching row.
+    // Per-store flavor split. Both stores ship from the same code. They
+    // differ in the Watch Next / EPG permissions and, since 1.4.1, in two
+    // features the Fire TV build leaves out.
+    //
+    // Permissions: requesting WRITE_EPG_DATA makes the Amazon Appstore
+    // require an EPG-capable Fire device and filters the app off most Fire
+    // TV hardware, so the `firetv` flavor strips those permissions
+    // (src/firetv/AndroidManifest.xml) while `googletv` keeps them for the
+    // Google TV Continue-Watching row.
+    //
+    // Features: the Amazon Appstore rejected 1.4.0 (and 1.1.0-1.1.2) under its
+    // Deceptive and Malicious Behavior policy, citing apps that "save,
+    // convert, stream or download media from third-party sources". Two
+    // features match that wording: the player's "Find more online…" subtitle
+    // search (the server downloads subtitle files from OpenSubtitles.com) and
+    // Live TV / Recordings (the server streams and records tuner or IPTV
+    // channels). The `firetv` flavor turns both off through two BuildConfig
+    // booleans, ONLINE_SUBTITLE_SEARCH and LIVE_TV; `googletv` keeps both.
+    // They are compile-time constants, so R8 drops the gated code and the
+    // resource shrinker drops its strings and icons from the Fire TV APK
+    // (proguard-rules.pro leaves the Live TV screens out of its blanket
+    // keeps and lets R8 drop Retrofit API methods nothing calls;
+    // googletv's proguard-googletv.pro puts those rules back). Fire
+    // TV users can still add subtitles and watch Live TV from the server's
+    // web app; recordings saved to a library still play as library items.
+    // Keep the two flavors' flags in step with clients/firetv/README.md.
+    //
     // googletv is the default — it's the Play / direct-build variant, so
     // unflavored habits map to it (assembleGoogletvRelease, etc.).
     //
@@ -141,6 +168,14 @@ android {
             // Android TV / Google TV device reports leanback, so this costs no
             // coverage.
             manifestPlaceholders["leanbackRequired"] = "true"
+            // Both features stay on Google TV (see the flavor comment above).
+            buildConfigField("boolean", "ONLINE_SUBTITLE_SEARCH", "true")
+            buildConfigField("boolean", "LIVE_TV", "true")
+            // Puts back the keep rules proguard-rules.pro relaxes so R8 can
+            // drop firetv's unused code (the Live TV screens, Retrofit
+            // service methods nothing calls), so googletv's R8 keep set is
+            // unchanged.
+            proguardFile("proguard-googletv.pro")
         }
         create("firetv") {
             dimension = "store"
@@ -148,6 +183,12 @@ android {
             // report leanback, so requiring it lets the Appstore filter the app
             // off them and can block sideload.
             manifestPlaceholders["leanbackRequired"] = "false"
+            // Off for the Amazon Appstore's "save, convert, stream or download
+            // media from third-party sources" policy (see the flavor comment
+            // above): no OpenSubtitles search in the player, no Live TV or
+            // Recordings screens.
+            buildConfigField("boolean", "ONLINE_SUBTITLE_SEARCH", "false")
+            buildConfigField("boolean", "LIVE_TV", "false")
         }
     }
 

@@ -43,6 +43,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.R
 import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.model.AudioStream
@@ -1717,12 +1718,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         //   (Previous `> 1` gate hid the button on files with a single
         //   audio track, which is most modern movies — surprising for
         //   users who came from another player.)
-        // - Subtitles: always shown for video. Even when the file has zero
-        //   embedded streams, the picker still offers "Off" and
-        //   "Find more online…" (OpenSubtitles search) — both of
-        //   those are useful surfaces a user expects to reach from
-        //   playback regardless of what the file ships with. Never for
-        //   music and books, which have nothing to caption.
+        // - Subtitles: video only (music and books have nothing to
+        //   caption). With BuildConfig.ONLINE_SUBTITLE_SEARCH (googletv)
+        //   always shown: even when the file has zero subtitle tracks the
+        //   picker still offers "Off" and "Find more online…"
+        //   (OpenSubtitles search), a surface a user expects to reach from
+        //   playback regardless of what the file ships with. Without it
+        //   (the Fire TV build; see the flavor comment in
+        //   app/build.gradle.kts) the picker has no "Find more online…",
+        //   so the button shows only when the item has a track to pick: a
+        //   picker holding nothing but "Off" would look broken.
         // - Chapters: ≥ 2 (single chapter == the whole movie, useless).
         // - Speed: audiobooks and their chapter files only (a 2× movie is
         //   rarely what users want, and music stays at 1×).
@@ -1743,7 +1748,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             ?: return
         secondary.clear()
         if (audioStreams.isNotEmpty()) secondary.add(aa)
-        if (!isAudioItem()) secondary.add(sa) // picker has "Off" + "Find more online…" entries
+        // googletv: "Off" + "Find more online…" are always there; firetv:
+        // only when there is a track (subtitleStreams and the view model's
+        // subtitleSources are already current for this emission).
+        if (!isAudioItem() && (BuildConfig.ONLINE_SUBTITLE_SEARCH || subtitleRows().isNotEmpty())) {
+            secondary.add(sa)
+        }
         if (chapters.size >= 2) secondary.add(ca)
         if (AudiobookSpeed.hasSpeed(currentItemType)) secondary.add(sp)
 
@@ -2113,9 +2123,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // "Find more online…" entry tacks an OpenSubtitles search on
         // the end of the picker. Index = labels.size — beyond every
         // track row — so the radio-row indices for real tracks don't
-        // shift around.
-        val findMoreIdx = labels.size
-        labels.add(getString(R.string.subtitles_find_more))
+        // shift around. Not in the Fire TV build
+        // (BuildConfig.ONLINE_SUBTITLE_SEARCH; see the flavor comment in
+        // app/build.gradle.kts): there the index is -1, which no row
+        // matches, and the picker lists only the item's own tracks.
+        val findMoreIdx = if (BuildConfig.ONLINE_SUBTITLE_SEARCH) labels.size else -1
+        if (BuildConfig.ONLINE_SUBTITLE_SEARCH) labels.add(getString(R.string.subtitles_find_more))
 
         // Active-row detection from the player's ACTUAL selection state
         // (Tracks.Group.isSelected), not from preferred-language params —
@@ -2143,6 +2156,11 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  open. Keeps the standard track flow above untouched and uses
      *  the same dialog style. */
     private fun showOnlineSubtitleSearch() {
+        // The picker never offers this on Fire TV; the guard also empties
+        // the method there, because proguard-rules.pro keeps every Fragment
+        // member, so R8 can't drop the method itself and would otherwise
+        // keep its OpenSubtitles strings in the APK.
+        if (!BuildConfig.ONLINE_SUBTITLE_SEARCH) return
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
         val fileId = viewModel.uiState.value.item?.files?.firstOrNull()?.id ?: return
         val ctx = requireContext()

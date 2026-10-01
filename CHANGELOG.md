@@ -382,6 +382,26 @@ Roku channel (no request features, as on Android):
     `<button>`, all of which webOS 6 ignored. The capability header reports
     the panel's real size and HDR support (from LG's config service) and
     claims VP9 only when the media stack takes it.
+- **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
+  search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
+  its Deceptive and Malicious Behavior policy, which names apps that "save,
+  convert, stream or download media from third-party sources" (the wording
+  it also used for 1.1.0–1.1.2). The Fire TV build now leaves out the two
+  features that match it: the player's "Find more online…" subtitle entry
+  (the server searches OpenSubtitles.com and downloads the chosen file), and
+  the Live TV and Recordings cards on Home with the screens behind them
+  (channel guide, live channel player, recordings list). Two BuildConfig
+  flags, `ONLINE_SUBTITLE_SEARCH` and `LIVE_TV`, are off for the `firetv`
+  flavor and on for `googletv`; R8 and the resource shrinker take the
+  screens, their strings and icons out of the Fire TV APK. The Google TV
+  build is unchanged apart from its version (same R8 keep set, same
+  resources). Fire TV users keep both features in the web app, subtitles
+  added there still show in the Fire TV picker, and recordings saved to a
+  library still play as library items. With no search to come from, the
+  Fire TV picker no longer tags attached subtitles "downloaded", and the
+  player's Subtitles button shows only when the item has a subtitle track
+  (a picker holding just "Off" looked broken). Both flavors move to
+  versionCode 24 / 1.4.1.
 - **Android TV claims AV1 only with a hardware decoder.** Android 10 and
   later ship a software AV1 decoder on every device, and counting it made
   boxes without AV1 hardware (the Tegra X1 Nvidia Shields among them) get
