@@ -548,7 +548,7 @@ type upcomingViewer struct {
 	admin   bool
 	ceiling string                 // max content rating; "" = unrestricted
 	allowed map[uuid.UUID]struct{} // nil = every library
-	acl     *upcomingACL           // nil = no library is hidden from the caller
+	acl     *upcomingACL           // nil only for admins
 }
 
 // viewer resolves the caller's grants once per request. Admins skip every
@@ -562,9 +562,6 @@ func (h *UpcomingHandler) viewer(ctx context.Context, claims *auth.Claims) (upco
 	if err != nil {
 		return v, fmt.Errorf("allowed libraries: %w", err)
 	}
-	if allowed == nil {
-		return v, nil
-	}
 	v.allowed = allowed
 	libs, err := h.libs.List(ctx)
 	if err != nil {
@@ -577,8 +574,8 @@ func (h *UpcomingHandler) viewer(ctx context.Context, claims *auth.Claims) (upco
 // visible drops what the caller may not see: entries above their rating
 // ceiling (an empty or unknown certification is most restrictive, so a
 // capped profile never sees unrated titles) and entries whose *arr folder
-// lies in a library they have no grant on. The response says nothing about
-// how many entries were dropped.
+// doesn't lie in a library they have a grant on. The response says nothing
+// about how many entries were dropped.
 func (v upcomingViewer) visible(entries []upcomingEntry) []upcomingEntry {
 	if v.admin {
 		return entries
@@ -588,7 +585,7 @@ func (v upcomingViewer) visible(entries []upcomingEntry) []upcomingEntry {
 		if !contentrating.IsAllowed(e.item.Certification, v.ceiling) {
 			continue
 		}
-		if v.acl != nil && v.acl.denies(e.arrPath) {
+		if !v.acl.permits(e.arrPath) {
 			continue
 		}
 		out = append(out, e)
@@ -599,8 +596,8 @@ func (v upcomingViewer) visible(entries []upcomingEntry) []upcomingEntry {
 // upcomingACL attributes *arr folders to OnScreen libraries.
 type upcomingACL struct {
 	mappings map[string]string
-	roots    []upcomingRoot // longest path first, so nested roots win
-	allowed  map[uuid.UUID]struct{}
+	roots    []upcomingRoot         // longest path first, so nested roots win
+	allowed  map[uuid.UUID]struct{} // nil = every library
 }
 
 type upcomingRoot struct {
@@ -608,40 +605,40 @@ type upcomingRoot struct {
 	libraryID uuid.UUID
 }
 
-// newUpcomingACL returns nil when the caller can see every library — the
-// common case, which then skips path mapping entirely.
 func newUpcomingACL(libs []library.Library, allowed map[uuid.UUID]struct{}, mappings map[string]string) *upcomingACL {
 	a := &upcomingACL{mappings: mappings, allowed: allowed}
-	hidden := false
 	for _, lib := range libs {
-		if _, ok := allowed[lib.ID]; !ok {
-			hidden = true
-		}
 		for _, p := range lib.Paths {
 			if p = normUpcomingPath(p); p != "" {
 				a.roots = append(a.roots, upcomingRoot{path: p, libraryID: lib.ID})
 			}
 		}
 	}
-	if !hidden {
-		return nil
-	}
 	slices.SortFunc(a.roots, func(x, y upcomingRoot) int { return cmp.Compare(len(y.path), len(x.path)) })
 	return a
 }
 
-// denies reports whether arrPath maps into a library the caller has no
-// grant on. A folder no library claims (not imported yet, or outside every
-// scan path) is allowed: there is nothing to protect.
-func (a *upcomingACL) denies(arrPath string) bool {
+// permits reports whether arrPath maps into a library the caller has a
+// grant on. It fails closed: an entry with no folder, or one no library
+// claims (not imported yet, outside every scan path, or arr_path_mappings
+// missing so the *arr layout never lines up with the scan paths), can't be
+// shown to be in a library the caller may see, so it is hidden. Only admins
+// see the whole calendar.
+func (a *upcomingACL) permits(arrPath string) bool {
+	if a == nil {
+		return false
+	}
 	local := mapUpcomingPath(arrPath, a.mappings)
 	if local == "" {
 		return false
 	}
 	for _, root := range a.roots {
 		if pathWithin(local, root.path) {
+			if a.allowed == nil {
+				return true
+			}
 			_, ok := a.allowed[root.libraryID]
-			return !ok
+			return ok
 		}
 	}
 	return false

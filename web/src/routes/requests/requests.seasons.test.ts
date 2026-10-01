@@ -18,6 +18,21 @@ vi.mock('$lib/api', () => ({
 }));
 vi.mock('$lib/stores/pendingRequests', () => ({ refreshPendingRequests: vi.fn() }));
 vi.mock('$lib/stores/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// Requests on, and the account may request.
+vi.mock('$lib/stores/capabilities', async () => {
+  const { writable } = await import('svelte/store');
+  return {
+    capabilities: writable({ features: { requests: true, upcoming: true } }),
+    ensureCapabilities: vi.fn().mockResolvedValue(undefined),
+  };
+});
+vi.mock('$lib/stores/requestAccess', async () => {
+  const { writable } = await import('svelte/store');
+  return {
+    requestQuota: writable({ can_request: true, window_days: 7, movies: { limit: 0, used: 0, remaining: null }, tv: { limit: 0, used: 0, remaining: null } }),
+    loadRequestQuota: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 function req(over: Partial<MediaRequest> & Pick<MediaRequest, 'id' | 'title'>): MediaRequest {
   return {

@@ -261,15 +261,32 @@ func (a *Authenticator) epochValid(ctx context.Context, claims *auth.Claims) boo
 }
 
 // AdminRequired rejects non-admin users with 403.
+//
+// Mounted inside the authenticated group, it checks the claims already on
+// the context — those Required admitted, or the target's that ViewAs
+// substituted — instead of authenticating the request a second time. It
+// used to re-run Required, which re-read the cookie and replaced a view_as
+// identity with the real admin's, so "view as" a non-admin still opened
+// every admin-only route. Only a general-purpose session's claims are
+// reused (a purpose-scoped ?token= asset or stream token is never an admin
+// credential); with none on the context it authenticates itself as before.
 func (a *Authenticator) AdminRequired(next http.Handler) http.Handler {
-	return a.Required(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	check := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims := ClaimsFromContext(r.Context())
 		if claims == nil || !claims.IsAdmin {
 			respond.Forbidden(w, r)
 			return
 		}
 		next.ServeHTTP(w, r)
-	}))
+	})
+	required := a.Required(check)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if c := ClaimsFromContext(r.Context()); c != nil && c.Purpose == "" {
+			check.ServeHTTP(w, r)
+			return
+		}
+		required.ServeHTTP(w, r)
+	})
 }
 
 // ClaimsFromContext returns the auth claims stored in ctx, or nil if not present.

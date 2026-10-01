@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -12,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/onscreen/onscreen/internal/db/gen"
 	dbmigrations "github.com/onscreen/onscreen/internal/db/migrations"
+	"github.com/onscreen/onscreen/internal/domain/settings"
 )
 
 // features.progress_without_duration follows the applied schema: before
@@ -235,4 +238,180 @@ func selectorNames(n ast.Node) string {
 		return true
 	})
 	return b.String()
+}
+
+// ── configuration flags ─────────────────────────────────────────────────────
+
+type fakeConfigDB struct {
+	arr    []gen.ArrService
+	tuners []gen.TunerDevice
+	err    error
+}
+
+func (f *fakeConfigDB) ListArrServices(context.Context) ([]gen.ArrService, error) {
+	return f.arr, f.err
+}
+
+func (f *fakeConfigDB) ListTunerDevices(context.Context) ([]gen.TunerDevice, error) {
+	return f.tuners, f.err
+}
+
+// features.upcoming: only an enabled Radarr or Sonarr feeds the calendar.
+func TestHasCalendarArrService(t *testing.T) {
+	cases := []struct {
+		name string
+		arr  []gen.ArrService
+		want bool
+	}{
+		{"none", nil, false},
+		{"disabled radarr", []gen.ArrService{{Kind: "radarr", Enabled: false}}, false},
+		{"lidarr only", []gen.ArrService{{Kind: "lidarr", Enabled: true}}, false},
+		{"enabled sonarr", []gen.ArrService{{Kind: "lidarr", Enabled: true}, {Kind: "sonarr", Enabled: true}}, true},
+		{"enabled radarr", []gen.ArrService{{Kind: "radarr", Enabled: true}}, true},
+	}
+	for _, c := range cases {
+		got, err := hasCalendarArrService(context.Background(), &fakeConfigDB{arr: c.arr})
+		if err != nil || got != c.want {
+			t.Errorf("%s: got %v, %v; want %v", c.name, got, err, c.want)
+		}
+	}
+	if _, err := hasCalendarArrService(context.Background(), &fakeConfigDB{err: errors.New("db down")}); err == nil {
+		t.Error("a failed query must surface as an error, not as false")
+	}
+}
+
+// features.live_tv_configured: only an enabled tuner's channels are listed.
+func TestHasEnabledTuner(t *testing.T) {
+	cases := []struct {
+		name   string
+		tuners []gen.TunerDevice
+		want   bool
+	}{
+		{"none", nil, false},
+		{"disabled only", []gen.TunerDevice{{Enabled: false}}, false},
+		{"one enabled", []gen.TunerDevice{{Enabled: false}, {Enabled: true}}, true},
+	}
+	for _, c := range cases {
+		got, err := hasEnabledTuner(context.Background(), &fakeConfigDB{tuners: c.tuners})
+		if err != nil || got != c.want {
+			t.Errorf("%s: got %v, %v; want %v", c.name, got, err, c.want)
+		}
+	}
+}
+
+// The capabilities endpoint is anonymous: a database-backed flag is probed
+// at most once per ttl, a failed probe keeps the last answer and isn't
+// retried within the ttl, and a nil flag (not wired) reads false.
+func TestCachedFlag_TTLAndFailure(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	var calls int
+	val, fail := true, false
+	f := &cachedFlag{
+		probe: func(context.Context) (bool, error) {
+			calls++
+			if fail {
+				return false, errors.New("db down")
+			}
+			return val, nil
+		},
+		ttl: configFlagTTL,
+		now: func() time.Time { return now },
+	}
+	ctx := context.Background()
+
+	if !f.get(ctx) || calls != 1 {
+		t.Fatalf("first read: calls = %d", calls)
+	}
+	val = false
+	now = now.Add(configFlagTTL - time.Second)
+	if !f.get(ctx) || calls != 1 {
+		t.Errorf("within ttl: probed again (calls = %d) or lost the cached true", calls)
+	}
+	now = now.Add(2 * time.Second)
+	if f.get(ctx) || calls != 2 {
+		t.Errorf("after ttl: want a fresh probe reading false (calls = %d)", calls)
+	}
+
+	val = true
+	now = now.Add(configFlagTTL)
+	if !f.get(ctx) {
+		t.Fatal("expected a fresh true")
+	}
+	fail = true
+	now = now.Add(configFlagTTL)
+	if !f.get(ctx) {
+		t.Error("failed probe dropped the last good answer")
+	}
+	before := calls
+	f.get(ctx)
+	if calls != before {
+		t.Error("failed probe retried within the ttl")
+	}
+
+	var unwired *cachedFlag
+	if unwired.get(ctx) {
+		t.Error("nil flag must read false")
+	}
+}
+
+// features.requests / people_credits follow agentFn's key resolution, so a
+// key stored in Settings (the usual way) counts — not only TMDB_API_KEY.
+func TestTMDBConfigured(t *testing.T) {
+	cases := []struct {
+		stored, env string
+		bundled     bool
+		want        bool
+	}{
+		{"", "", false, false},
+		{"stored", "", false, true},
+		{"", "env", false, true},
+		{"", "", true, true},
+	}
+	for _, c := range cases {
+		if got := tmdbConfigured(c.stored, c.env, c.bundled); got != c.want {
+			t.Errorf("tmdbConfigured(%q, %q, %v) = %v, want %v", c.stored, c.env, c.bundled, got, c.want)
+		}
+	}
+}
+
+// features.subtitles_external is false exactly when the subtitle provider
+// would answer "not configured": it needs the operator's opt-in and a key.
+func TestSubtitlesExternalConfigured(t *testing.T) {
+	cases := []struct {
+		cfg     settings.OpenSubtitlesConfig
+		bundled bool
+		want    bool
+	}{
+		{settings.OpenSubtitlesConfig{}, false, false},
+		{settings.OpenSubtitlesConfig{APIKey: "k"}, false, false}, // key, not enabled
+		{settings.OpenSubtitlesConfig{Enabled: true}, false, false},
+		{settings.OpenSubtitlesConfig{Enabled: true}, true, true}, // bundled key
+		{settings.OpenSubtitlesConfig{Enabled: true, APIKey: "k"}, false, true},
+	}
+	for _, c := range cases {
+		if got := subtitlesExternalConfigured(c.cfg, c.bundled); got != c.want {
+			t.Errorf("subtitlesExternalConfigured(%+v, %v) = %v, want %v", c.cfg, c.bundled, got, c.want)
+		}
+	}
+}
+
+// run() is not unit-runnable: pin that main.go wires the configuration
+// flags, or features.upcoming and live_tv_configured would always be false.
+func TestCapabilities_ConfigProbesWired(t *testing.T) {
+	f, err := parser.ParseFile(token.NewFileSet(), "main.go", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	ast.Inspect(f, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			if sel, ok := call.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "setConfigProbes" && isIdent(sel.X, "capsProvider") {
+				found = true
+			}
+		}
+		return !found
+	})
+	if !found {
+		t.Error("main.go never calls capsProvider.setConfigProbes")
+	}
 }

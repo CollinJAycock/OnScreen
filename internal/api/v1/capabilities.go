@@ -35,8 +35,10 @@ type CapabilitiesFeatures struct {
 	// rendition master playlist). Clients can rely on the player's own
 	// ABR switching when true; when false the server emits a single
 	// rendition. Operator-gated via TRANSCODE_ABR.
-	ABRLadder         bool `json:"abr_ladder"`
-	Trickplay         bool `json:"trickplay"`
+	ABRLadder bool `json:"abr_ladder"`
+	Trickplay bool `json:"trickplay"`
+	// SubtitlesExternal: online subtitle search (OpenSubtitles) is enabled
+	// and has a key, so GET /items/{id}/subtitles/search can answer.
 	SubtitlesExternal bool `json:"subtitles_external"`
 	SubtitlesOCR      bool `json:"subtitles_ocr"`
 	OIDC              bool `json:"oidc"`
@@ -49,12 +51,26 @@ type CapabilitiesFeatures struct {
 	Music             bool `json:"music"`
 	Webhooks          bool `json:"webhooks"`
 	Notifications     bool `json:"notifications"`
-	Requests          bool `json:"requests"`
-	LiveTV            bool `json:"live_tv"`
-	DVR               bool `json:"dvr"`
-	Lyrics            bool `json:"lyrics"`
-	IntroMarkers      bool `json:"intro_markers"`
-	Chapters          bool `json:"chapters"`
+	// Requests: a TMDB key is configured (stored setting, TMDB_API_KEY or
+	// a bundled key), so Discover and request creation work. Whether the
+	// signed-in account may request is per user: GET /requests/quota.
+	Requests bool `json:"requests"`
+	// Upcoming: at least one enabled Radarr or Sonarr service feeds the
+	// Upcoming calendar (GET /upcoming). Follows admin configuration with
+	// up to half a minute's lag.
+	Upcoming bool `json:"upcoming"`
+	// LiveTV / DVR: the Live TV subsystem is built in and wired. They say
+	// nothing about whether any tuner exists — see LiveTVConfigured.
+	LiveTV bool `json:"live_tv"`
+	DVR    bool `json:"dvr"`
+	// LiveTVConfigured: LiveTV, and at least one enabled tuner is set up.
+	// When it's false a client can hide its Live TV / DVR entry points (the
+	// web app does, for non-admins). Follows admin configuration with up to
+	// half a minute's lag. Absent on servers older than this field.
+	LiveTVConfigured bool `json:"live_tv_configured"`
+	Lyrics           bool `json:"lyrics"`
+	IntroMarkers     bool `json:"intro_markers"`
+	Chapters         bool `json:"chapters"`
 	// TOTP advertises local-account two-factor auth so clients can show
 	// the Settings → Security "Enable 2FA" flow and handle the
 	// totp_required login step. Always true — it's built-in, no external

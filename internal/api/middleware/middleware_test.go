@@ -965,6 +965,72 @@ func TestViewAs_NonGETIsForbidden(t *testing.T) {
 	}
 }
 
+// AdminRequired mounted under Required + ViewAs (the router's shape) must
+// judge the view_as identity. It used to re-authenticate from the cookie /
+// Bearer and run as the real admin, so "view as" a non-admin still opened
+// every admin-only route and misreported what that user can reach.
+func TestViewAs_AdminRequiredJudgesTheTarget(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	adminToken := issueTestToken(t, tm, true)
+
+	cases := []struct {
+		name   string
+		target ImpersonatedUser
+		query  bool
+		want   int
+	}{
+		{"non-admin target is refused", ImpersonatedUser{ID: uuid.New(), Username: "kid"}, true, http.StatusForbidden},
+		{"admin target passes", ImpersonatedUser{ID: uuid.New(), Username: "other-admin", IsAdmin: true}, true, http.StatusOK},
+		{"no view_as: the admin passes", ImpersonatedUser{ID: uuid.New(), Username: "kid"}, false, http.StatusOK},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var seen *auth.Claims
+			admin := a.AdminRequired(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				seen = ClaimsFromContext(r.Context())
+				w.WriteHeader(http.StatusOK)
+			}))
+			handler := a.Required(a.ViewAs(stubImpersonationLookup{user: c.target}, nil)(admin))
+
+			path := "/api/v1/tv/tuners"
+			if c.query {
+				path += "?view_as=" + c.target.ID.String()
+			}
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest("GET", path, nil)
+			req.Header.Set("Authorization", "Bearer "+adminToken)
+			handler.ServeHTTP(rec, req)
+
+			if rec.Code != c.want {
+				t.Fatalf("status = %d, want %d", rec.Code, c.want)
+			}
+			if c.want == http.StatusOK && c.query && (seen == nil || seen.UserID != c.target.ID) {
+				t.Errorf("handler ran as %v, want the view_as target %s", seen, c.target.ID)
+			}
+		})
+	}
+}
+
+// Standalone (no claims on the context yet) AdminRequired still
+// authenticates the request itself, and a purpose-scoped claim on the
+// context (an asset token admitted by RequiredAllowQueryToken) is never
+// taken as an admin session.
+func TestAdminRequired_DoesNotTrustScopedClaims(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	handler := a.AdminRequired(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Fatal("handler should not run for an asset-token claim")
+	}))
+	req := httptest.NewRequest("GET", "/admin", nil)
+	req = req.WithContext(WithClaims(req.Context(), &auth.Claims{UserID: uuid.New(), IsAdmin: true, Purpose: "asset"}))
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401 (re-authenticated; no session on the request)", rec.Code)
+	}
+}
+
 func TestViewAs_UnknownTargetIs404(t *testing.T) {
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)

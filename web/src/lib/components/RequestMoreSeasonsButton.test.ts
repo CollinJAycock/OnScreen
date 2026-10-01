@@ -14,6 +14,13 @@ vi.mock('$lib/api', () => ({
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, info: mockToastInfo, error: vi.fn() },
 }));
+const capsStore = vi.hoisted(() => ({}) as { set: (v: unknown) => void });
+vi.mock('$lib/stores/capabilities', async () => {
+  const { writable } = await import('svelte/store');
+  const capabilities = writable<unknown>(null);
+  capsStore.set = capabilities.set;
+  return { capabilities, ensureCapabilities: vi.fn().mockResolvedValue(undefined) };
+});
 
 const S = (n: number, over: Record<string, unknown> = {}) => ({
   season_number: n,
@@ -31,6 +38,7 @@ const canRequest = { can_request: true, window_days: 7, movies: { limit: 0, used
 beforeEach(() => {
   vi.clearAllMocks();
   mockQuota.mockResolvedValue(canRequest);
+  capsStore.set({ features: { requests: true } });
 });
 
 const trigger = () => screen.queryByRole('button', { name: /Request more seasons/ });
@@ -51,6 +59,16 @@ describe('RequestMoreSeasonsButton', () => {
     await waitFor(() => expect(mockQuota).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 0));
     expect(trigger()).toBeNull();
+    expect(mockSeasons).not.toHaveBeenCalled();
+  });
+
+  it('stays hidden, asking nothing, when the server has requests off', async () => {
+    capsStore.set({ features: { requests: false } });
+    mockSeasons.mockResolvedValue([S(1, { owned_episodes: 10 }), S(2)]);
+    render(RequestMoreSeasonsButton, { tmdbId: 1399, title: 'Show' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(trigger()).toBeNull();
+    expect(mockQuota).not.toHaveBeenCalled();
     expect(mockSeasons).not.toHaveBeenCalled();
   });
 

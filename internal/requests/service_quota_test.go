@@ -373,6 +373,32 @@ func TestQuota_UnlimitedAdminAndBlocked(t *testing.T) {
 	}
 }
 
+// CanRequest gates Discover: it follows the users row (admins always), not
+// the token claims.
+func TestCanRequest(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	cases := []struct {
+		name string
+		row  gen.GetUserRequestPermissionsRow
+		want bool
+	}{
+		{"allowed", gen.GetUserRequestPermissionsRow{CanRequest: true}, true},
+		{"switched off", gen.GetUserRequestPermissionsRow{CanRequest: false}, false},
+		{"admin regardless", gen.GetUserRequestPermissionsRow{IsAdmin: true, CanRequest: false}, true},
+	}
+	for _, c := range cases {
+		uid := h.userRow(c.row)
+		got, err := h.svc.CanRequest(ctx, uid)
+		if err != nil || got != c.want {
+			t.Errorf("%s: CanRequest = %v, %v; want %v", c.name, got, err, c.want)
+		}
+	}
+	if _, err := h.svc.CanRequest(ctx, uuid.New()); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown user: err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestCountPending(t *testing.T) {
 	h := newHarness(t)
 	uid := h.user(gen.GetUserRequestPermissionsRow{})

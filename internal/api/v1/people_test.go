@@ -31,6 +31,7 @@ type fakePeopleService struct {
 	gotItemID   uuid.UUID
 	gotItemType string
 	gotTMDB     *int
+	gotScope    *people.SearchScope
 }
 
 func (f *fakePeopleService) GetCredits(_ context.Context, itemID uuid.UUID, itemType string, tmdbID *int) ([]people.Credit, error) {
@@ -45,7 +46,8 @@ func (f *fakePeopleService) GetPerson(_ context.Context, _ uuid.UUID) (people.Pe
 func (f *fakePeopleService) GetFilmography(_ context.Context, _ uuid.UUID) ([]people.FilmographyEntry, error) {
 	return f.films, f.filmsErr
 }
-func (f *fakePeopleService) Search(_ context.Context, _ string, _ int32) ([]people.Summary, error) {
+func (f *fakePeopleService) Search(_ context.Context, _ string, _ int32, scope people.SearchScope) ([]people.Summary, error) {
+	f.gotScope = &scope
 	return f.search, f.searchErr
 }
 
@@ -389,6 +391,47 @@ func TestPeople_Search_EmptyResultIsEmptyArray(t *testing.T) {
 	// `make([]X, 0)` for empty slice path.
 	if env.Data == nil || len(env.Data) != 0 {
 		t.Errorf("got %v, want empty array", env.Data)
+	}
+}
+
+// The people table spans every library, so a restricted caller's search is
+// scoped to their grants and rating ceiling (the SQL then only returns people
+// credited on an item inside that scope); an admin's is not.
+func TestPeople_Search_ScopedToCaller(t *testing.T) {
+	lib := uuid.New()
+	access := fakePeopleAccess{allowed: map[uuid.UUID]struct{}{lib: {}}}
+	cases := []struct {
+		name     string
+		claims   *auth.Claims
+		access   LibraryAccessChecker
+		wantLibs []uuid.UUID // nil = unrestricted
+		wantRank bool
+	}{
+		{"admin", &auth.Claims{UserID: uuid.New(), IsAdmin: true}, access, nil, false},
+		{"user", &auth.Claims{UserID: uuid.New()}, access, []uuid.UUID{lib}, false},
+		{"kid profile", &auth.Claims{UserID: uuid.New(), MaxContentRating: "PG"}, access, []uuid.UUID{lib}, true},
+		{"no grants", &auth.Claims{UserID: uuid.New()}, fakePeopleAccess{allowed: map[uuid.UUID]struct{}{}}, []uuid.UUID{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			svc := &fakePeopleService{}
+			h := NewPeopleHandler(svc, &fakePeopleItems{}, slog.Default()).WithLibraryAccess(c.access)
+			rec := httptest.NewRecorder()
+			h.Search(rec, withRatingClaims(httptest.NewRequest(http.MethodGet, "/people?q=a", nil), c.claims))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d", rec.Code)
+			}
+			got := svc.gotScope
+			if got == nil {
+				t.Fatal("search not called")
+			}
+			if (got.LibraryIDs == nil) != (c.wantLibs == nil) || len(got.LibraryIDs) != len(c.wantLibs) {
+				t.Errorf("library scope = %v, want %v", got.LibraryIDs, c.wantLibs)
+			}
+			if (got.MaxRatingRank != nil) != c.wantRank {
+				t.Errorf("rating rank = %v, want set=%v", got.MaxRatingRank, c.wantRank)
+			}
+		})
 	}
 }
 

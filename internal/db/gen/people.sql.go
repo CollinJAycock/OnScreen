@@ -212,16 +212,32 @@ func (q *Queries) ListFilmographyForPerson(ctx context.Context, personID uuid.UU
 }
 
 const searchPeople = `-- name: SearchPeople :many
-SELECT id, tmdb_id, name, profile_path
-FROM people
-WHERE LOWER(name) LIKE LOWER($1::text) || '%'
-ORDER BY name
-LIMIT $2::int
+SELECT p.id, p.tmdb_id, p.name, p.profile_path
+FROM people p
+WHERE LOWER(p.name) LIKE LOWER($1::text) || '%'
+  AND (
+        ($2::uuid[] IS NULL AND $3::int IS NULL)
+     OR EXISTS (
+            SELECT 1
+            FROM media_credits mc
+            JOIN media_items mi ON mi.id = mc.media_item_id
+            WHERE mc.person_id = p.id
+              AND mi.deleted_at IS NULL
+              AND ($2::uuid[] IS NULL
+                   OR mi.library_id = ANY($2::uuid[]))
+              AND ($3::int IS NULL
+                   OR content_rating_rank(mi.content_rating) <= $3::int)
+        )
+  )
+ORDER BY p.name
+LIMIT $4::int
 `
 
 type SearchPeopleParams struct {
-	Prefix string `json:"prefix"`
-	LimitN int32  `json:"limit_n"`
+	Prefix        string      `json:"prefix"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	LimitN        int32       `json:"limit_n"`
 }
 
 type SearchPeopleRow struct {
@@ -231,8 +247,19 @@ type SearchPeopleRow struct {
 	ProfilePath *string   `json:"profile_path"`
 }
 
+// People whose name starts with the prefix. A restricted caller (non-NULL
+// library_ids and/or max_rating_rank) only finds people credited on at least
+// one item they could open — a library they have a grant on, within their
+// rating ceiling — the same scope /people/{id}/filmography applies to its
+// rows. Without it the directory listed the cast and crew of every library
+// by name and photo. Both NULL = admin: the whole table, as before.
 func (q *Queries) SearchPeople(ctx context.Context, arg SearchPeopleParams) ([]SearchPeopleRow, error) {
-	rows, err := q.db.Query(ctx, searchPeople, arg.Prefix, arg.LimitN)
+	rows, err := q.db.Query(ctx, searchPeople,
+		arg.Prefix,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.LimitN,
+	)
 	if err != nil {
 		return nil, err
 	}

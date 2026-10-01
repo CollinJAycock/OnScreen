@@ -11,6 +11,10 @@
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
   import { refreshPendingRequests } from '$lib/stores/pendingRequests';
+  import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
+  import { requestQuota, loadRequestQuota } from '$lib/stores/requestAccess';
+  import { requestsUsable, upcomingTabVisible } from '$lib/featureGates';
+  import { REQUESTS_DISABLED_MESSAGE } from '../search/quota';
   import Upcoming from './Upcoming.svelte';
   import ApproveDialog from './ApproveDialog.svelte';
   import DownloadStatus from './DownloadStatus.svelte';
@@ -23,13 +27,23 @@
   // Discover used to live here as a third tab; it's now folded into /search
   // (search results show library hits + a "Request" section for TMDB
   // matches in one pass), so this page is for managing existing requests,
-  // seeing what Radarr / Sonarr expect to arrive (Upcoming, everyone) and
-  // the admin approval queue.
+  // seeing what Radarr / Sonarr expect to arrive (Upcoming) and the admin
+  // approval queue.
+  //
+  // Admins always get every tab. Everyone else gets My Requests and Upcoming
+  // only when the server has requests on and their account may request, and
+  // Upcoming only with an enabled Radarr or Sonarr (lib/featureGates); with
+  // neither, the page just says requests aren't available — the sidebar
+  // doesn't link here then, but the URL still works.
   type Tab = 'mine' | 'upcoming' | 'queue';
 
   let ready = false;
   let isAdmin = false;
   let activeTab: Tab = 'mine';
+
+  $: canRequest = requestsUsable($capabilities, $requestQuota, isAdmin);
+  $: showMine = isAdmin || canRequest;
+  $: showUpcoming = upcomingTabVisible($capabilities, $requestQuota, isAdmin);
 
   // My Requests state
   let mineLoading = true;
@@ -92,8 +106,11 @@
     const user = api.getUser();
     if (!user) { goto('/login'); return; }
     isAdmin = user.is_admin;
+    // A non-admin's tabs depend on the server's flags and their allowance;
+    // settle both before drawing anything, so no tab flashes up and goes.
+    if (!isAdmin) await Promise.all([ensureCapabilities(), loadRequestQuota()]);
     ready = true;
-    await loadMine();
+    if (isAdmin || requestsUsable($capabilities, $requestQuota, false)) await loadMine();
     if (isAdmin) await loadQueue();
   });
 
@@ -264,24 +281,38 @@
 <div class="page">
   <h1 class="page-title">Requests</h1>
 
-  <div class="tabs">
-    <button class="tab" class:active={activeTab === 'mine'} on:click={() => { activeTab = 'mine'; loadMine(); }}>
-      My Requests
-    </button>
-    <button class="tab" class:active={activeTab === 'upcoming'} on:click={() => { activeTab = 'upcoming'; }}>
-      Upcoming
-    </button>
-    {#if isAdmin}
-      <button class="tab" class:active={activeTab === 'queue'} on:click={() => { activeTab = 'queue'; loadQueue(); }}>
-        Queue
+  {#if !showMine}
+    <div class="empty" data-testid="requests-unavailable">
+      <p>
+        {$capabilities?.features?.requests === true
+          ? REQUESTS_DISABLED_MESSAGE
+          : "Requests aren't available on this server."}
+      </p>
+    </div>
+  {:else}
+    <div class="tabs">
+      <button class="tab" class:active={activeTab === 'mine'} on:click={() => { activeTab = 'mine'; loadMine(); }}>
+        My Requests
       </button>
-    {/if}
-    <span class="hint">
-      To request something new, use <a href="/search">Search</a>.
-    </span>
-  </div>
+      {#if showUpcoming}
+        <button class="tab" class:active={activeTab === 'upcoming'} on:click={() => { activeTab = 'upcoming'; }}>
+          Upcoming
+        </button>
+      {/if}
+      {#if isAdmin}
+        <button class="tab" class:active={activeTab === 'queue'} on:click={() => { activeTab = 'queue'; loadQueue(); }}>
+          Queue
+        </button>
+      {/if}
+      {#if canRequest}
+        <span class="hint">
+          To request something new, use <a href="/search">Search</a>.
+        </span>
+      {/if}
+    </div>
+  {/if}
 
-  {#if activeTab === 'mine'}
+  {#if activeTab === 'mine' && showMine}
     <div class="filter-row">
       <select value={mineFilter} on:change={onMineFilter} aria-label="Filter my requests by status">
         <option value="all">All</option>
@@ -346,7 +377,7 @@
     {/if}
   {/if}
 
-  {#if activeTab === 'upcoming'}
+  {#if activeTab === 'upcoming' && showUpcoming}
     <Upcoming {isAdmin} />
   {/if}
 

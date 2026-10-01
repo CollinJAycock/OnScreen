@@ -35,7 +35,8 @@ type DiscoverSeasonDB interface {
 
 // ErrSeasonsTMDBUnavailable is what a DiscoverSeasonTMDB returns (wrapped)
 // when no TMDB agent is configured; the seasons endpoint answers 503 for it.
-var ErrSeasonsTMDBUnavailable = errors.New("discover: tmdb is not configured")
+// The same sentinel as ErrDiscoverTMDBUnavailable.
+var ErrSeasonsTMDBUnavailable = ErrDiscoverTMDBUnavailable
 
 // maxDiscoverSeasonLookups caps how many in-library shows in one search get
 // their season list read from TMDB (each is a TMDB call on a cold cache).
@@ -72,16 +73,20 @@ type SeasonInfo struct {
 // Seasons handles GET /api/v1/discover/tv/{tmdb_id}/seasons: the show's
 // seasons from TMDB, specials (season 0) last, each with how much of it the
 // caller's library holds and whether the caller has already requested it.
-// 503 when TMDB isn't configured, 404 when TMDB has no such show.
+// 503 when TMDB isn't configured, 403 REQUESTS_DISABLED for an account that
+// may not request, 404 when TMDB has no such show.
 func (h *DiscoverHandler) Seasons(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Unauthorized(w, r)
 		return
 	}
+	const unavailable = "TMDB API key is not configured — season requests need TMDB"
 	if h.seasons == nil {
-		respond.Error(w, r, http.StatusServiceUnavailable, "TMDB_UNAVAILABLE",
-			"TMDB API key is not configured — season requests need TMDB")
+		writeTMDBUnavailable(w, r, unavailable)
+		return
+	}
+	if !h.requestsAllowed(w, r, claims) {
 		return
 	}
 	tmdbID, err := strconv.Atoi(chi.URLParam(r, "tmdb_id"))
@@ -99,8 +104,7 @@ func (h *DiscoverHandler) Seasons(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if errors.Is(err, ErrSeasonsTMDBUnavailable) {
-			respond.Error(w, r, http.StatusServiceUnavailable, "TMDB_UNAVAILABLE",
-				"TMDB API key is not configured — season requests need TMDB")
+			writeTMDBUnavailable(w, r, unavailable)
 			return
 		}
 		h.logger.WarnContext(r.Context(), "discover: tmdb season list", "tmdb_id", tmdbID, "err", err)

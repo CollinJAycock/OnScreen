@@ -3,7 +3,10 @@
   // greyed with a Request button (or their open request's status). Missing
   // parts only reach the client for profiles without a rating ceiling — the
   // server filters them — so there's no client-side gate to get wrong.
+  // The Request button itself only shows to an account that may request on
+  // a server with requests on; otherwise missing films are just greyed out.
   import { onMount } from 'svelte';
+  import { capabilities } from '$lib/stores/capabilities';
   import {
     requestsApi,
     assetUrl,
@@ -32,10 +35,11 @@
   let requesting = $state<Set<number>>(new Set());
   let message = $state('');
   let error = $state('');
-  // null = unknown (older server / lookup failed): buttons stay enabled and
-  // the server has the final word.
+  // null = unknown (older server / lookup failed): buttons stay and the
+  // server has the final word. An explicit "no" — from the account's
+  // allowance or the server's requests flag — removes them.
   let quota = $state<RequestQuota | null>(null);
-  let canRequest = $derived(quota?.can_request !== false);
+  let canRequest = $derived(quota?.can_request !== false && $capabilities?.features?.requests !== false);
 
   $effect(() => {
     rows = collectionRows(parts, items);
@@ -89,9 +93,6 @@
 
 {#if message}<p class="msg" role="status">{message}</p>{/if}
 {#if error}<p class="err" role="alert">{error}</p>{/if}
-{#if hasMissing && !canRequest}
-  <p class="hint" data-testid="requests-disabled">{REQUESTS_DISABLED_MESSAGE}</p>
-{/if}
 
 <div class="grid">
   {#each rows as p (p.item_id ?? `tmdb-${p.tmdb_id}`)}
@@ -123,12 +124,12 @@
           {#if p.year}<div class="sub">{p.year}</div>{/if}
           {#if ps === 'requested'}
             <span class="req-status">{requestStatusLabel(p.request_status)}</span>
-          {:else}
+          {:else if canRequest}
             <button
               type="button"
               class="req-btn"
-              disabled={!canRequest || requesting.has(p.tmdb_id)}
-              title={canRequest ? `Ask for ${p.title} to be added` : REQUESTS_DISABLED_MESSAGE}
+              disabled={requesting.has(p.tmdb_id)}
+              title={`Ask for ${p.title} to be added`}
               onclick={() => request(p)}
             >
               {requesting.has(p.tmdb_id) ? 'Requesting…' : 'Request'}
@@ -147,7 +148,6 @@
     background: var(--error-bg); color: var(--error); padding: 0.55rem 0.85rem;
     border-radius: 8px; font-size: 0.8rem; margin-bottom: 1rem;
   }
-  .hint { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 1rem; }
   .grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));

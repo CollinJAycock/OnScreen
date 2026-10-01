@@ -138,8 +138,13 @@ func (a *peopleAdapter) UpsertPersonByTMDB(ctx context.Context, p people.Person)
 	return genPersonToDomain(r), nil
 }
 
-func (a *peopleAdapter) SearchPeople(ctx context.Context, prefix string, limit int32) ([]people.Summary, error) {
-	rows, err := a.q.SearchPeople(ctx, gen.SearchPeopleParams{Prefix: prefix, LimitN: limit})
+func (a *peopleAdapter) SearchPeople(ctx context.Context, prefix string, limit int32, scope people.SearchScope) ([]people.Summary, error) {
+	rows, err := a.q.SearchPeople(ctx, gen.SearchPeopleParams{
+		Prefix:        prefix,
+		LibraryIds:    scope.LibraryIDs,
+		MaxRatingRank: scope.MaxRatingRank,
+		LimitN:        limit,
+	})
 	if err != nil {
 		return nil, err
 	}

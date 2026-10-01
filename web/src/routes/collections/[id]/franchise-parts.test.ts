@@ -9,6 +9,13 @@ vi.mock('$lib/api', () => ({
   requestsApi: { create: mockCreate, quota: mockQuota },
   assetUrl: (p: string) => `http://srv${p}`,
 }));
+const capsStore = vi.hoisted(() => ({}) as { set: (v: unknown) => void });
+vi.mock('$lib/stores/capabilities', async () => {
+  const { writable } = await import('svelte/store');
+  const capabilities = writable<unknown>(null);
+  capsStore.set = capabilities.set;
+  return { capabilities };
+});
 
 const parts: FranchisePart[] = [
   { tmdb_id: 348, title: 'Alien', year: 1979, item_id: 'i-1', request_status: null },
@@ -28,6 +35,7 @@ function card(title: string): HTMLElement {
 beforeEach(() => {
   vi.clearAllMocks();
   mockQuota.mockResolvedValue(quota);
+  capsStore.set({ features: { requests: true } });
 });
 
 describe('FranchiseParts', () => {
@@ -81,19 +89,27 @@ describe('FranchiseParts', () => {
     expect(card('Aliens').querySelector('button')?.hasAttribute('disabled')).toBe(false);
   });
 
-  it('disables Request when requesting is turned off for the account', async () => {
+  it('drops Request when requesting is turned off for the account', async () => {
     mockQuota.mockResolvedValue({ ...quota, can_request: false });
     render(FranchiseParts, { parts, items });
-    await waitFor(() => expect(card('Aliens').querySelector('button')?.hasAttribute('disabled')).toBe(true));
-    expect(screen.getByTestId('requests-disabled')).toBeTruthy();
+    await waitFor(() => expect(card('Aliens').querySelector('button')).toBeNull());
+    // Still listed, greyed out — just nothing to press.
+    expect(card('Aliens').classList.contains('missing')).toBe(true);
+    expect(screen.queryByText(/turned off/)).toBeNull();
   });
 
-  it('disables Request after a REQUESTS_DISABLED refusal', async () => {
+  it('drops Request when the server has requests off', async () => {
+    capsStore.set({ features: { requests: false } });
+    render(FranchiseParts, { parts, items });
+    expect(card('Aliens').querySelector('button')).toBeNull();
+  });
+
+  it('drops Request after a REQUESTS_DISABLED refusal', async () => {
     mockCreate.mockRejectedValue(Object.assign(new Error('requests disabled'), { status: 403, code: 'REQUESTS_DISABLED' }));
     render(FranchiseParts, { parts, items });
     await waitFor(() => expect(mockQuota).toHaveBeenCalled());
     await fireEvent.click(screen.getByRole('button', { name: 'Request' }));
-    await waitFor(() => expect(card('Aliens').querySelector('button')?.hasAttribute('disabled')).toBe(true));
+    await waitFor(() => expect(card('Aliens').querySelector('button')).toBeNull());
     expect((await screen.findByRole('alert')).textContent).toContain('Requesting is turned off');
   });
 

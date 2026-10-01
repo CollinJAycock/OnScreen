@@ -12,6 +12,7 @@
   import { parseAtParam } from '$lib/playback-transfer';
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
   import { capabilities } from '$lib/stores/capabilities';
+  import { onlineSubtitlesVisible } from '$lib/featureGates';
   import { isTauri, nativeDownload } from '$lib/native';
   import {
     sleepTimer,
@@ -450,7 +451,10 @@
       subtitleSearchResults = items;
     } catch (e: unknown) {
       const msg = e instanceof Error ? e.message : 'Search failed';
-      subtitleSearchError = msg.toLowerCase().includes('not configured')
+      const notConfigured =
+        (e instanceof ApiRequestError && e.code === 'SUBTITLES_NOT_CONFIGURED') ||
+        msg.toLowerCase().includes('not configured');
+      subtitleSearchError = notConfigured
         ? 'OpenSubtitles is not configured. Ask an admin to set the API key.'
         : msg;
     } finally {
@@ -3709,11 +3713,15 @@
                     {#if ocrError}
                       <div class="subtitle-size-row" style="color: var(--accent-text)">{ocrError}</div>
                     {/if}
-                    <button
-                      class="quality-option search-online-option"
-                      on:click={() => { showSubtitleMenu = false; openSubtitleSearch(); }}
-                      role="menuitem"
-                    >Search online…</button>
+                    <!-- Only when the server has OpenSubtitles set up: there is
+                         nothing to search otherwise. -->
+                    {#if onlineSubtitlesVisible($capabilities)}
+                      <button
+                        class="quality-option search-online-option"
+                        on:click={() => { showSubtitleMenu = false; openSubtitleSearch(); }}
+                        role="menuitem"
+                      >Search online…</button>
+                    {/if}
                     {#if selectedSubtitle}
                       <div class="subtitle-size-row">
                         <span class="subtitle-size-label">Size</span>
@@ -4069,10 +4077,12 @@
                 {#if sub.origin === 'external'} · online{/if}
               </button>
             {/each}
-            <button
-              class="bottom-sheet-option search-online-option"
-              on:click={() => { showBottomSheet = ''; openSubtitleSearch(); }}
-            >Search online…</button>
+            {#if onlineSubtitlesVisible($capabilities)}
+              <button
+                class="bottom-sheet-option search-online-option"
+                on:click={() => { showBottomSheet = ''; openSubtitleSearch(); }}
+              >Search online…</button>
+            {/if}
             {#if selectedSubtitle}
               <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
                 <span class="subtitle-size-label">Size</span>

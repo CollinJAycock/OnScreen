@@ -9,10 +9,30 @@ FROM people
 WHERE tmdb_id = $1;
 
 -- name: SearchPeople :many
-SELECT id, tmdb_id, name, profile_path
-FROM people
-WHERE LOWER(name) LIKE LOWER(@prefix::text) || '%'
-ORDER BY name
+-- People whose name starts with the prefix. A restricted caller (non-NULL
+-- library_ids and/or max_rating_rank) only finds people credited on at least
+-- one item they could open — a library they have a grant on, within their
+-- rating ceiling — the same scope /people/{id}/filmography applies to its
+-- rows. Without it the directory listed the cast and crew of every library
+-- by name and photo. Both NULL = admin: the whole table, as before.
+SELECT p.id, p.tmdb_id, p.name, p.profile_path
+FROM people p
+WHERE LOWER(p.name) LIKE LOWER(@prefix::text) || '%'
+  AND (
+        (sqlc.narg('library_ids')::uuid[] IS NULL AND sqlc.narg('max_rating_rank')::int IS NULL)
+     OR EXISTS (
+            SELECT 1
+            FROM media_credits mc
+            JOIN media_items mi ON mi.id = mc.media_item_id
+            WHERE mc.person_id = p.id
+              AND mi.deleted_at IS NULL
+              AND (sqlc.narg('library_ids')::uuid[] IS NULL
+                   OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
+              AND (sqlc.narg('max_rating_rank')::int IS NULL
+                   OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+        )
+  )
+ORDER BY p.name
 LIMIT @limit_n::int;
 
 -- name: UpsertPersonByTMDB :one

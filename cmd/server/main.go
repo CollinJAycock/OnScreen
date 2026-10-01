@@ -751,11 +751,16 @@ func run() error {
 	// found the server via discovery. Reads settings on each call so toggling
 	// OIDC in the admin UI takes effect immediately.
 	capsProvider := &capabilitiesProvider{
-		cfg:       cfg,
-		version:   version,
-		machineID: machineID,
-		settings:  settingsSvc,
+		cfg:                     cfg,
+		version:                 version,
+		machineID:               machineID,
+		settings:                settingsSvc,
+		bundledTMDBKey:          defaultTMDBAPIKey != "",
+		bundledOpenSubtitlesKey: defaultOpenSubtitlesAPIKey != "",
 	}
+	// features.upcoming / live_tv_configured follow the arr_services and
+	// tuner_devices rows (cached briefly — the endpoint is anonymous).
+	capsProvider.setConfigProbes(gen.New(roPool))
 	capabilitiesHandler := v1.NewCapabilitiesHandler(capsProvider)
 
 	pluginRegistry := plugin.NewRegistry(gen.New(rwPool))
@@ -1256,10 +1261,14 @@ func run() error {
 		// so Discover can't answer "does this title exist on the server" for
 		// content the caller has no other way to see.
 		WithAccess(libSvc).
+		// The TMDB catalogue is for picking something to request: an account
+		// with requesting switched off gets 403 REQUESTS_DISABLED instead.
+		WithRequestGate(requestsSvc).
 		// Season-level requests: the season picker and missing_seasons.
 		WithSeasons(requestsTMDB, gen.New(roPool))
 	// Upcoming calendar: fans out to the same arr_services, filtered per
-	// caller by rating ceiling and by the library each *arr folder maps into.
+	// caller by rating ceiling and by the library each *arr folder maps into
+	// (non-admins see only entries attributable to a library they can see).
 	upcomingHandler := v1.NewUpcomingHandler(gen.New(roPool), libSvc, libSvc, settingsSvc, logger).
 		WithEncryptor(encryptor)
 	// "Report a problem" + admin Library health / re-grab. A report notifies

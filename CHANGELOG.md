@@ -353,6 +353,12 @@ Roku channel (no request features, as on Android):
   exactly as before. The grammar is in
   [docs/capability-profiles.md](docs/capability-profiles.md) §5.1, and Now
   Playing shows both reasons.
+- **`features.upcoming` and `features.live_tv_configured`.** Two capability
+  flags that follow the server's configuration: an enabled Radarr or Sonarr
+  feeds the Upcoming calendar, and at least one enabled tuner is set up.
+  `live_tv` and `dvr` keep meaning "the Live TV subsystem is wired" (they
+  are true with no tuner, and existing clients read them that way). Both
+  new flags are cached for 30 seconds, since the endpoint is anonymous.
 
 ### Changed
 
@@ -402,6 +408,23 @@ Roku channel (no request features, as on Android):
   player's Subtitles button shows only when the item has a subtitle track
   (a picker holding just "Off" looked broken). Both flavors move to
   versionCode 24 / 1.4.1.
+- **The web app hides what doesn't apply to the signed-in account.** For
+  non-admins, the Requests link, the Requests page's tabs, Search's "Ask
+  your admin to add" section (its TMDB results, posters and Request
+  buttons) and the Request buttons on franchise collections and "Request
+  more seasons" appear only when the server has requests on (a TMDB key)
+  and the account may request; Upcoming also needs an enabled Radarr or
+  Sonarr. Search doesn't ask TMDB at all otherwise. Live TV needs a
+  configured tuner. The player's "Search online…" subtitle entry (menu and
+  mobile sheet) needs OpenSubtitles set up. Links appear once the server
+  has answered, so nothing flashes up and disappears. Admins keep every
+  link.
+- **Capabilities `requests` and `people_credits` follow the TMDB key in
+  Settings.** They read only `TMDB_API_KEY`, so a key entered in Settings,
+  the usual way, reported both off while Discover worked. They now follow
+  the same key the server uses (Settings, env, or a bundled key).
+  `subtitles_external` likewise now needs OpenSubtitles enabled, not only
+  a key, which is when search can actually answer.
 - **Android TV claims AV1 only with a hardware decoder.** Android 10 and
   later ship a software AV1 decoder on every device, and counting it made
   boxes without AV1 hardware (the Tegra X1 Nvidia Shields among them) get
@@ -497,6 +520,39 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **The Upcoming calendar showed restricted users titles from libraries
+  they can't see.** An entry was hidden only when its Radarr/Sonarr folder
+  mapped into a library the user has no grant on; a folder no library
+  claims (most often because `arr_path_mappings` was unset and the *arr
+  root never lined up with the scan paths) was shown to everyone, so a
+  restricted account saw the whole calendar. For non-admins it now fails
+  closed: an entry appears only when its folder, after the mappings, lies
+  in a library they can see. Admins still see everything.
+- **Discover ignored "Can request".** Switching an account's requests off
+  only disabled the Request buttons; `GET /api/v1/discover/search` and the
+  season list still returned the TMDB catalogue. Both now answer `403
+  REQUESTS_DISABLED` for such an account (read from the account itself,
+  like `POST /requests`), before TMDB is asked.
+- **Discover answered 500 without a TMDB key,** which the web Search page
+  showed as a red error. It now answers the documented `503
+  TMDB_UNAVAILABLE`.
+- **Online subtitle search answered "HTTP 503" without OpenSubtitles.**
+  The 503 had no readable message; search and download now answer `503
+  SUBTITLES_NOT_CONFIGURED` with one, in the standard error format.
+- **Search found nothing for restricted users on common words.** The
+  cross-library search took the top results across every library and only
+  then dropped the ones the user can't see, so a word like "night" could
+  leave nothing. The user's libraries are now part of the query. The home
+  page's mixed Recently Added row had the same flaw (an empty row for a
+  restricted user when other libraries had newer items) and the same fix.
+- **People search listed everyone.** `GET /api/v1/people?q=` returned the
+  cast and crew of every library, names and photos included. A non-admin
+  now only finds people credited on something they could open (a library
+  they can see, within their rating ceiling).
+- **"View as" a user still opened admin-only pages.** Under `?view_as=`,
+  admin-only routes checked the real admin's session again instead of the
+  viewed user's identity, so an admin viewing as a regular user saw what
+  the admin can reach. They now refuse as they would for that user.
 - **Two open browser tabs signed the user out everywhere.** Every web tab
   kept its own copy of the tokens in memory after signing in or refreshing,
   and sent that copy (the server prefers it over the shared cookie). Once

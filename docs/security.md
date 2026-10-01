@@ -143,7 +143,9 @@ These differ from prior behavior; operators upgrading should be aware:
 - **Request quotas** are an approval gate, not a creation limit: an
   over-quota request is still created but waits for an admin. The existing
   cap of 25 pending requests per user (item 14) still bounds the queue, and
-  `can_request=false` refuses creation (`403 REQUESTS_DISABLED`). Quota,
+  `can_request=false` refuses creation (`403 REQUESTS_DISABLED`), and the
+  TMDB catalogue behind it too: Discover search and the season list answer
+  the same 403 to such an account before TMDB is called. Quota,
   can-request and auto-approve are read from the `users` row at request
   time, never from token claims, so an admin's change applies immediately.
   A profile with a rating ceiling is never auto-approved.
@@ -157,7 +159,17 @@ These differ from prior behavior; operators upgrading should be aware:
 library watch filter and "Surprise me", franchise collections, the Upcoming
 calendar and problem reports apply the library ACL and the content-rating
 ceiling. Franchise films the server doesn't have (no rating to check) are
-listed only for profiles without a ceiling.
+listed only for profiles without a ceiling. The Upcoming calendar fails
+closed for non-admins: an entry is listed only when its Radarr/Sonarr folder,
+after `arr_path_mappings`, lies in a library the user can see — an entry no
+library claims is hidden, not shown. People search (`GET /people?q=`) only
+finds, for a non-admin, people credited on an item they could open. Global
+search and the home page's mixed Recently Added row apply the ACL in SQL,
+before their row limit.
+
+**Admin impersonation (`?view_as=`):** admin-only routes judge the viewed
+user's identity, so they refuse as they would for that user; they used to
+re-read the real admin's session.
 
 ## Deployment, packaging & supply-chain hardening
 

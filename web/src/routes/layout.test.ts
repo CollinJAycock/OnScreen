@@ -1,7 +1,8 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte';
+import { tick } from 'svelte';
 import { writable, type Writable } from 'svelte/store';
 import { page } from '$app/stores';
-import { api, authApi, type UserMeta } from '$lib/api';
+import { api, authApi, type CapabilitiesResponse, type RequestQuota, type UserMeta } from '$lib/api';
 import { audio } from '$lib/stores/audio';
 import { initNotifications, playbackTransfers, stopNotifications } from '$lib/stores/notifications';
 import { startJobsPolling } from '$lib/stores/jobs';
@@ -67,7 +68,22 @@ vi.mock('$lib/stores/pendingRequests', () => ({
   pendingBadgeText: (n: number) => String(n),
 }));
 vi.mock('$lib/stores/jobs', () => ({ startJobsPolling: vi.fn(), stopJobsPolling: vi.fn() }));
-vi.mock('$lib/stores/capabilities', () => ({ loadCapabilities: vi.fn().mockResolvedValue(undefined) }));
+// Writable, so a test can set what the server advertises / allows.
+const gateStores = vi.hoisted(() => ({}) as {
+  capabilities: Writable<CapabilitiesResponse | null>;
+  requestQuota: Writable<RequestQuota | null | undefined>;
+});
+vi.mock('$lib/stores/capabilities', async () => {
+  const { writable } = await import('svelte/store');
+  gateStores.capabilities = writable(null);
+  return { capabilities: gateStores.capabilities, loadCapabilities: vi.fn().mockResolvedValue(undefined) };
+});
+const mockLoadQuota = vi.hoisted(() => vi.fn());
+vi.mock('$lib/stores/requestAccess', async () => {
+  const { writable } = await import('svelte/store');
+  gateStores.requestQuota = writable(undefined);
+  return { requestQuota: gateStores.requestQuota, loadRequestQuota: mockLoadQuota, resetRequestQuota: vi.fn() };
+});
 vi.mock('$lib/components/AudioPlayer.svelte', () => ({ default: Stub }));
 vi.mock('$lib/components/NotificationBell.svelte', () => ({ default: Stub }));
 vi.mock('$lib/components/NotificationPanel.svelte', () => ({ default: Stub }));
@@ -79,6 +95,8 @@ beforeEach(() => {
   mockGetUser.mockImplementation(() => ALICE);
   mockRefreshSession.mockReset();
   playbackTransfers.set(null);
+  gateStores.capabilities.set(null);
+  gateStores.requestQuota.set(undefined);
 });
 
 async function renderShell() {
@@ -87,10 +105,59 @@ async function renderShell() {
   return screen.findByRole('link', { name: /Audio/ });
 }
 
+const caps = (features: Partial<CapabilitiesResponse['features']>) =>
+  ({ features: { requests: false, live_tv: true, dvr: true, ...features } }) as CapabilitiesResponse;
+const quota = (can_request: boolean): RequestQuota => ({
+  can_request,
+  window_days: 7,
+  movies: { limit: 0, used: 0, remaining: null },
+  tv: { limit: 0, used: 0, remaining: null },
+});
+
 describe('layout sidebar', () => {
   it('links the Audio settings page in browsers, not only the desktop app', async () => {
     const link = await renderShell();
     expect(link.getAttribute('href')).toBe('/native/audio');
+  });
+
+  // The store-review server: no TMDB key, no tuners, a reviewer that can't
+  // request. Neither link may show, nor flash up while things load.
+  it('hides Requests and Live TV from a non-admin until the server says they apply', async () => {
+    await renderShell();
+    expect(screen.queryByRole('link', { name: /Requests/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Live TV/ })).toBeNull();
+    expect(mockLoadQuota).toHaveBeenCalled();
+
+    gateStores.capabilities.set(caps({ requests: false, live_tv_configured: false }));
+    gateStores.requestQuota.set(quota(false));
+    await tick();
+    expect(screen.queryByRole('link', { name: /Requests/ })).toBeNull();
+    expect(screen.queryByRole('link', { name: /Live TV/ })).toBeNull();
+
+    // Requests on, but this account may not request: still hidden.
+    gateStores.capabilities.set(caps({ requests: true, live_tv_configured: false }));
+    await tick();
+    expect(screen.queryByRole('link', { name: /Requests/ })).toBeNull();
+
+    gateStores.requestQuota.set(quota(true));
+    gateStores.capabilities.set(caps({ requests: true, live_tv_configured: true }));
+    await tick();
+    expect(screen.getByRole('link', { name: /Requests/ }).getAttribute('href')).toBe('/requests');
+    expect(screen.getByRole('link', { name: /Live TV/ }).getAttribute('href')).toBe('/tv/guide');
+  });
+
+  it('falls back to live_tv on a server older than live_tv_configured', async () => {
+    gateStores.capabilities.set(caps({ live_tv: true }));
+    await renderShell();
+    expect(screen.getByRole('link', { name: /Live TV/ })).toBeTruthy();
+  });
+
+  it('keeps both links for an admin', async () => {
+    mockGetUser.mockImplementation(() => ({ ...ALICE, is_admin: true }));
+    gateStores.capabilities.set(caps({ requests: false, live_tv_configured: false }));
+    await renderShell();
+    expect(screen.getByRole('link', { name: /Requests/ })).toBeTruthy();
+    expect(screen.getByRole('link', { name: /Live TV/ })).toBeTruthy();
   });
 });
 

@@ -134,6 +134,16 @@ type upcomingFixture struct {
 	clock  *time.Time
 }
 
+// grantLibrary adds a library with the given scan paths and grants it to
+// every non-admin, so entries whose *arr folder lies under one of them are
+// attributable — and therefore visible — to restricted callers.
+func (f *upcomingFixture) grantLibrary(paths ...string) uuid.UUID {
+	id := uuid.New()
+	f.libs.libs = append(f.libs.libs, library.Library{ID: id, Paths: paths})
+	f.access.allowed = append(f.access.allowed, id)
+	return id
+}
+
 func newUpcomingFixture(services ...gen.ArrService) *upcomingFixture {
 	f := &upcomingFixture{
 		db:     &fakeUpcomingDB{services: services},
@@ -405,8 +415,9 @@ func TestUpcoming_SortedByDateThenTitleAcrossServices(t *testing.T) {
 // ── cache ─────────────────────────────────────────────────────────────────
 
 func TestUpcoming_CacheSharedAcrossUsersUntilExpiry(t *testing.T) {
-	radarr := newFakeArr(t, `[{"id": 1, "title": "Film", "certification": "PG", "digitalRelease": "2026-10-20T00:00:00Z"}]`)
+	radarr := newFakeArr(t, `[{"id": 1, "title": "Film", "certification": "PG", "path": "/movies/Film (2026)", "digitalRelease": "2026-10-20T00:00:00Z"}]`)
 	f := newUpcomingFixture(arrSvc("Radarr", "radarr", radarr.srv.URL))
+	f.grantLibrary("/movies")
 
 	q := "?from=2026-10-01&to=2026-10-31"
 	f.get(t, upcomingAdmin, q)
@@ -527,7 +538,7 @@ func TestUpcoming_PartialServiceFailure(t *testing.T) {
 	downURL := down.srv.URL
 	down.srv.Close()
 	sonarr := newFakeArr(t, `[{"id": 7, "seasonNumber": 1, "episodeNumber": 2, "airDateUtc": "2026-10-12T02:00:00Z",
-		"series": {"title": "Still Works", "certification": "TV-PG"}}]`)
+		"series": {"title": "Still Works", "certification": "TV-PG", "path": "/tv/Still Works"}}]`)
 
 	f := newUpcomingFixture(
 		arrSvc("Radarr", "radarr", badKey.srv.URL),
@@ -535,6 +546,7 @@ func TestUpcoming_PartialServiceFailure(t *testing.T) {
 		arrSvc("Radarr Down", "radarr", downURL),
 		arrSvc("Sonarr", "sonarr", sonarr.srv.URL),
 	)
+	f.grantLibrary("/tv")
 	status, env, body := f.get(t, upcomingUser, "?from=2026-10-01&to=2026-10-31")
 	if status != 200 {
 		t.Fatalf("status = %d: %s", status, body)
@@ -590,18 +602,19 @@ func TestUpcoming_SealedKeyWithoutEncryptorIsMisconfigured(t *testing.T) {
 
 func TestUpcoming_ContentRatingCeiling(t *testing.T) {
 	radarr := newFakeArr(t, `[
-		{"id": 1, "title": "Kids", "certification": "PG", "digitalRelease": "2026-10-05T00:00:00Z"},
-		{"id": 2, "title": "Teen", "certification": "PG-13", "digitalRelease": "2026-10-06T00:00:00Z"},
-		{"id": 3, "title": "Adult", "certification": "R", "digitalRelease": "2026-10-07T00:00:00Z"},
-		{"id": 4, "title": "Unrated", "certification": "", "digitalRelease": "2026-10-08T00:00:00Z"}
+		{"id": 1, "title": "Kids", "certification": "PG", "path": "/movies/Kids", "digitalRelease": "2026-10-05T00:00:00Z"},
+		{"id": 2, "title": "Teen", "certification": "PG-13", "path": "/movies/Teen", "digitalRelease": "2026-10-06T00:00:00Z"},
+		{"id": 3, "title": "Adult", "certification": "R", "path": "/movies/Adult", "digitalRelease": "2026-10-07T00:00:00Z"},
+		{"id": 4, "title": "Unrated", "certification": "", "path": "/movies/Unrated", "digitalRelease": "2026-10-08T00:00:00Z"}
 	]`)
 	sonarr := newFakeArr(t, `[
 		{"id": 5, "seasonNumber": 1, "episodeNumber": 1, "airDateUtc": "2026-10-09T01:00:00Z",
-		 "series": {"title": "Mature Show", "certification": "TV-MA"}},
+		 "series": {"title": "Mature Show", "certification": "TV-MA", "path": "/tv/Mature Show"}},
 		{"id": 6, "seasonNumber": 1, "episodeNumber": 1, "airDateUtc": "2026-10-09T02:00:00Z",
-		 "series": {"title": "Family Show", "certification": "TV-PG"}}
+		 "series": {"title": "Family Show", "certification": "TV-PG", "path": "/tv/Family Show"}}
 	]`)
 	f := newUpcomingFixture(arrSvc("Radarr", "radarr", radarr.srv.URL), arrSvc("Sonarr", "sonarr", sonarr.srv.URL))
+	f.grantLibrary("/movies", "/tv")
 	q := "?from=2026-10-01&to=2026-10-31"
 
 	all := []string{"Kids/digital", "Teen/digital", "Adult/digital", "Unrated/digital", "Mature Show", "Family Show"}
@@ -656,7 +669,11 @@ func TestUpcoming_LibraryACLViaPathMapping(t *testing.T) {
 	_, env, _ := f.get(t, upcomingUser, q)
 	got := itemTitles(env.Data.Items)
 	slices.Sort(got)
-	want := []string{"Nested/digital", "Open/digital", "Sibling/digital", "Unmapped/digital"}
+	// "Sibling" maps to /mnt/media/privateish, which no library claims (the
+	// private root isn't its prefix on a path boundary), and "Unmapped" lies
+	// outside every scan path: neither can be attributed to a granted
+	// library, so both are hidden.
+	want := []string{"Nested/digital", "Open/digital"}
 	if !slices.Equal(got, want) {
 		t.Errorf("user items = %v, want %v", got, want)
 	}
@@ -666,11 +683,67 @@ func TestUpcoming_LibraryACLViaPathMapping(t *testing.T) {
 		t.Errorf("admin items = %v, want all 7", itemTitles(env.Data.Items))
 	}
 
-	// With every library granted, nothing is hidden.
+	// With every library granted, everything attributable is visible; the
+	// two unattributable entries stay hidden from a non-admin.
 	f.access.allowed = []uuid.UUID{movies, private, shelf, tv}
 	_, env, _ = f.get(t, upcomingUser, q)
-	if len(env.Data.Items) != 7 {
-		t.Errorf("fully granted user items = %v, want all 7", itemTitles(env.Data.Items))
+	got = itemTitles(env.Data.Items)
+	slices.Sort(got)
+	want = []string{"Nested/digital", "Open/digital", "Private Show", "Private/digital", "Windows/digital"}
+	if !slices.Equal(got, want) {
+		t.Errorf("fully granted user items = %v, want %v", got, want)
+	}
+}
+
+// The QA leak: the Radarr/Sonarr roots (/Media/...) never line up with the
+// scan paths (/media/Media/...) because arr_path_mappings is unset, so no
+// entry can be attributed to a library. A restricted user then sees nothing
+// rather than the whole calendar; an admin still sees everything.
+func TestUpcoming_UnattributableEntriesHiddenFromNonAdmins(t *testing.T) {
+	radarr := newFakeArr(t, `[
+		{"id": 1, "title": "Downloaded", "path": "/Media/Movies/Downloaded (2026)", "hasFile": true, "digitalRelease": "2026-10-05T00:00:00Z"},
+		{"id": 2, "title": "No Folder", "digitalRelease": "2026-10-06T00:00:00Z"}
+	]`)
+	sonarr := newFakeArr(t, `[
+		{"id": 3, "seasonNumber": 2, "episodeNumber": 1, "airDateUtc": "2026-10-07T01:00:00Z",
+		 "series": {"title": "Some Show", "path": "/Media/TV Shows/Some Show"}}
+	]`)
+	f := newUpcomingFixture(arrSvc("Radarr", "radarr", radarr.srv.URL), arrSvc("Sonarr", "sonarr", sonarr.srv.URL))
+	f.grantLibrary("/media/Media/Demo/Movies")
+	f.libs.libs = append(f.libs.libs,
+		library.Library{ID: uuid.New(), Paths: []string{"/media/Media/Movies"}},
+		library.Library{ID: uuid.New(), Paths: []string{"/media/Media/TV Shows"}})
+	q := "?from=2026-10-01&to=2026-10-31"
+
+	for _, c := range []struct {
+		name   string
+		claims *auth.Claims
+	}{{"user", upcomingUser}, {"PG-13 profile", upcomingKid}} {
+		_, env, body := f.get(t, c.claims, q)
+		if len(env.Data.Items) != 0 {
+			t.Errorf("%s items = %v, want none", c.name, itemTitles(env.Data.Items))
+		}
+		if strings.Contains(body, "Downloaded") || strings.Contains(body, "Some Show") {
+			t.Errorf("%s response names a hidden title: %s", c.name, body)
+		}
+	}
+	_, env, _ := f.get(t, upcomingAdmin, q)
+	if len(env.Data.Items) != 3 {
+		t.Errorf("admin items = %v, want all 3", itemTitles(env.Data.Items))
+	}
+
+	// With the mapping set, the private libraries claim the folders: the
+	// user still sees nothing, now because the entries are attributed.
+	f.paths["/Media"] = "/media/Media"
+	_, env, _ = f.get(t, upcomingUser, q)
+	if len(env.Data.Items) != 0 {
+		t.Errorf("mapped user items = %v, want none (private libraries)", itemTitles(env.Data.Items))
+	}
+	// A title filed under a granted library shows up.
+	f.libs.libs[0].Paths = append(f.libs.libs[0].Paths, "/media/Media/Movies/Downloaded (2026)")
+	_, env, _ = f.get(t, upcomingUser, q)
+	if got := itemTitles(env.Data.Items); !slices.Equal(got, []string{"Downloaded/digital"}) {
+		t.Errorf("user items = %v, want the granted title only", got)
 	}
 }
 
@@ -704,17 +777,19 @@ func TestMapUpcomingPath(t *testing.T) {
 // ── item linking ──────────────────────────────────────────────────────────
 
 func TestUpcoming_ItemLinkingRespectsAccess(t *testing.T) {
+	// Every *arr folder lies in the open library, so the entries themselves
+	// are visible; what's under test is which of them get linked.
 	radarr := newFakeArr(t, `[
-		{"id": 1, "title": "Owned", "tmdbId": 100, "certification": "PG", "digitalRelease": "2026-10-05T00:00:00Z"},
-		{"id": 2, "title": "Owned", "tmdbId": 100, "certification": "PG", "physicalRelease": "2026-10-06T00:00:00Z"},
-		{"id": 3, "title": "Hidden Copy", "tmdbId": 200, "certification": "PG", "digitalRelease": "2026-10-07T00:00:00Z"},
-		{"id": 4, "title": "Not Owned", "tmdbId": 999, "certification": "PG", "digitalRelease": "2026-10-08T00:00:00Z"}
+		{"id": 1, "title": "Owned", "tmdbId": 100, "certification": "PG", "path": "/lib/open/Owned", "digitalRelease": "2026-10-05T00:00:00Z"},
+		{"id": 2, "title": "Owned", "tmdbId": 100, "certification": "PG", "path": "/lib/open/Owned", "physicalRelease": "2026-10-06T00:00:00Z"},
+		{"id": 3, "title": "Hidden Copy", "tmdbId": 200, "certification": "PG", "path": "/lib/open/Hidden Copy", "digitalRelease": "2026-10-07T00:00:00Z"},
+		{"id": 4, "title": "Not Owned", "tmdbId": 999, "certification": "PG", "path": "/lib/open/Not Owned", "digitalRelease": "2026-10-08T00:00:00Z"}
 	]`)
 	sonarr := newFakeArr(t, `[
 		{"id": 5, "seasonNumber": 3, "episodeNumber": 1, "airDateUtc": "2026-10-09T01:00:00Z",
-		 "series": {"title": "Linked Show", "tmdbId": 300, "certification": "TV-PG"}},
+		 "series": {"title": "Linked Show", "tmdbId": 300, "certification": "TV-PG", "path": "/lib/open/Linked Show"}},
 		{"id": 6, "seasonNumber": 1, "episodeNumber": 1, "airDateUtc": "2026-10-09T02:00:00Z",
-		 "series": {"title": "Over Ceiling In Library", "tmdbId": 400, "certification": "TV-PG"}}
+		 "series": {"title": "Over Ceiling In Library", "tmdbId": 400, "certification": "TV-PG", "path": "/lib/open/Over"}}
 	]`)
 	f := newUpcomingFixture(arrSvc("Radarr", "radarr", radarr.srv.URL), arrSvc("Sonarr", "sonarr", sonarr.srv.URL))
 

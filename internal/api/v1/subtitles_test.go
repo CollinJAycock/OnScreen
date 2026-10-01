@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -226,6 +227,30 @@ func TestSubtitles_Search_NoProviderReturns503(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
+	assertSubtitlesNotConfigured(t, rec)
+}
+
+// assertSubtitlesNotConfigured checks the feature-off body is the standard
+// error envelope: a code clients can branch on and a message they can show
+// (the old bare {"error": "..."} body surfaced in the web player as "HTTP 503").
+func assertSubtitlesNotConfigured(t *testing.T, rec *httptest.ResponseRecorder) {
+	t.Helper()
+	var env struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+		t.Fatalf("decode %q: %v", rec.Body.String(), err)
+	}
+	if env.Error.Code != "SUBTITLES_NOT_CONFIGURED" {
+		t.Errorf("code = %q, want SUBTITLES_NOT_CONFIGURED", env.Error.Code)
+	}
+	// The web player maps "not configured" to its own hint.
+	if !strings.Contains(env.Error.Message, "not configured") {
+		t.Errorf("message = %q, want it to say not configured", env.Error.Message)
+	}
 }
 
 func TestSubtitles_Search_OtherProviderErrReturns502(t *testing.T) {
@@ -432,6 +457,7 @@ func TestSubtitles_Download_NoProviderReturns503(t *testing.T) {
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("expected 503, got %d", rec.Code)
 	}
+	assertSubtitlesNotConfigured(t, rec)
 }
 
 // ── OCR ─────────────────────────────────────────────────────────────────────

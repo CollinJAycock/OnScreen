@@ -59,6 +59,20 @@ type SearchResult struct {
 	ThumbPath  *string `json:"thumb_path,omitempty"`
 }
 
+// allowedLibraryList turns an AllowedLibraryIDs set into the slice form a
+// `library_ids` query argument takes: nil stays nil (admin — no filter), a
+// non-nil set becomes a non-nil slice, empty when the caller has no grants.
+func allowedLibraryList(allowed map[uuid.UUID]struct{}) []uuid.UUID {
+	if allowed == nil {
+		return nil
+	}
+	out := make([]uuid.UUID, 0, len(allowed))
+	for id := range allowed {
+		out = append(out, id)
+	}
+	return out
+}
+
 // maxSearchQueryLen caps the `q` parameter at the typical UI length.
 // Postgres `websearch_to_tsquery` is robust against syntax abuse, but a
 // 50 KB query string still has to be parsed and tokenized per request,
@@ -137,15 +151,25 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 	} else {
+		// The caller's grant set goes into the SQL so the LIMIT counts only
+		// rows they can see: filtered afterwards, the top `limit` matches
+		// across every library could all be hidden ones and a restricted
+		// user's own matches never came back.
+		libIDs := allowedLibraryList(allowed)
+		if libIDs != nil && len(libIDs) == 0 {
+			respond.Success(w, r, []SearchResult{}) // no library to search
+			return
+		}
 		rows, qErr := h.db.SearchMediaItemsGlobal(r.Context(), gen.SearchMediaItemsGlobalParams{
 			WebsearchToTsquery: query,
 			Limit:              limit,
+			LibraryIds:         libIDs,
 			MaxRatingRank:      maxRank,
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))
 		for _, row := range rows {
-			if !libAllowed(row.LibraryID) {
+			if !libAllowed(row.LibraryID) { // defence in depth; the SQL already scoped
 				continue
 			}
 			results = append(results, SearchResult{

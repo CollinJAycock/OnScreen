@@ -1158,9 +1158,17 @@ export interface CapabilitiesFeatures {
   music: boolean;
   webhooks: boolean;
   notifications: boolean;
+  /** A TMDB key is configured, so Discover and requests work. Whether the
+   *  signed-in account may request is per user (requestsApi.quota). */
   requests: boolean;
+  /** An enabled Radarr or Sonarr feeds the Upcoming calendar. Absent on
+   *  older servers. */
+  upcoming?: boolean;
+  /** The Live TV subsystem is wired — not that any tuner exists. */
   live_tv: boolean;
   dvr: boolean;
+  /** live_tv, and at least one enabled tuner. Absent on older servers. */
+  live_tv_configured?: boolean;
   lyrics: boolean;
   intro_markers: boolean;
   chapters: boolean;
