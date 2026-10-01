@@ -1,6 +1,7 @@
-# Rust build output
+# Rust build output. Cargo.lock is committed: CI and the Docker recipe in
+# linux-build/ build with --locked, so every installer comes from the same
+# dependency set (Dependabot's cargo entry keeps it current).
 src-tauri/target/
-src-tauri/Cargo.lock
 
 # Tauri-generated artefacts
 src-tauri/gen/

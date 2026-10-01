@@ -16,7 +16,7 @@ DEFAULT_TMDB_KEY          ?=
 DEFAULT_OPENSUBTITLES_KEY ?=
 LDFLAGS      := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.defaultTMDBAPIKey=$(DEFAULT_TMDB_KEY) -X main.defaultOpenSubtitlesAPIKey=$(DEFAULT_OPENSUBTITLES_KEY)
 
-.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build installer-windows installer-windows-msi installer-linux
+.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build client-build-linux installer-windows installer-windows-msi installer-linux
 
 ## all: build everything (frontend + server + worker)
 all: build
@@ -235,17 +235,20 @@ clean:
 # present.
 
 CLIENT_DESKTOP_DIR := clients/desktop/src-tauri
+# Same pin as .github/workflows/desktop-client.yml, linux-build/Dockerfile
+# and clients/desktop/build.ps1.
+TAURI_CLI_VERSION  := 2.12.1
 
 ## client-deps: install the Tauri 2 CLI globally (one-time per dev box)
 client-deps:
-	cargo install tauri-cli --locked --version "^2.0"
+	cargo install tauri-cli --locked --version "$(TAURI_CLI_VERSION)"
 
 ## client-check: cargo check the desktop client (~30s after first cache fill)
 ## Fast smoke test that proves the Rust + cpal + claxon + ureq stack
 ## compiles without going through a full bundle. Run this first when
 ## you don't trust a Rust change.
 client-check:
-	cd $(CLIENT_DESKTOP_DIR) && cargo check
+	cd $(CLIENT_DESKTOP_DIR) && cargo check --locked
 
 ## client-dev: launch the desktop client pointing at the Vite dev server
 ## Starts Vite in the background (web/dev mode at :5173) and runs
@@ -262,8 +265,23 @@ client-dev:
 ## On first run after a clean checkout the cargo step downloads ~300+
 ## crates and takes 5-10 minutes; subsequent builds with a warm cache
 ## land in 30-90 seconds. Output paths printed by tauri at the end.
+## --locked: the committed Cargo.lock, as CI builds it.
 client-build: frontend
-	cd $(CLIENT_DESKTOP_DIR) && cargo tauri build
+	cd $(CLIENT_DESKTOP_DIR) && cargo tauri build -- --locked
+
+## client-build-linux: Linux desktop installers (.deb/.rpm/.AppImage) in Docker -> dist/desktop-linux
+## Needs only Docker (no Rust or GTK headers on the host): the image in
+## clients/desktop/linux-build matches CI's Linux leg. The named volumes keep
+## cargo's target dir and registry between runs. DESKTOP_VERSION=X.Y.Z stamps
+## that version instead of tauri.conf.json's, as CI does from a v* tag.
+client-build-linux: frontend
+	docker build -t onscreen-desktop-linux clients/desktop/linux-build
+	mkdir -p dist/desktop-linux
+	docker run --rm -v "$(CURDIR):/src:ro" -v "$(CURDIR)/dist/desktop-linux:/out" \
+		-v onscreen-desktop-target:/target \
+		-v onscreen-desktop-cargo:/usr/local/cargo/registry \
+		$(if $(DESKTOP_VERSION),-e DESKTOP_VERSION=$(DESKTOP_VERSION)) \
+		onscreen-desktop-linux
 
 ## help: display this help
 help:

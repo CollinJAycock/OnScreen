@@ -1,10 +1,10 @@
 [package]
 name = "onscreen-desktop"
-version = "0.1.0"
+version = "2.5.0"
 description = "OnScreen desktop client"
 authors = ["OnScreen contributors"]
 edition = "2021"
-rust-version = "1.75"
+rust-version = "1.90"
 license = "AGPL-3.0"
 
 # Library crate so the Tauri runner can pick it up; main.rs is just

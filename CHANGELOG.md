@@ -39,6 +39,47 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
   H.264); Tizen, whose AVPlay claims are static, records a persistent
   demotion on NOT_SUPPORTED-class errors so overclaimed panels self-correct
   on the next attempt.
+- **Desktop installers for Windows and Linux** — a `v*` tag now attaches the
+  desktop client's installers to its GitHub release: an MSI and an NSIS
+  setup `.exe` for Windows x64, and a `.deb`, an `.rpm` and an `.AppImage`
+  for Linux x86_64 (glibc 2.39+: Ubuntu 24.04, Debian 13, Fedora 40 or
+  newer), with `onscreen-desktop-checksums.txt`. No release carried them
+  before: the Desktop client workflow failed on every tag (its Windows
+  upload pattern used `{msi,nsis}`, which upload-artifact doesn't expand,
+  and the Linux build had no ALSA headers). The `.deb` and `.rpm` declare
+  ALSA and D-Bus, which Tauri's defaults leave out (on a minimal Ubuntu the
+  app couldn't start).
+  - **Versions follow the tag.** `v2.5.0` builds `OnScreen_2.5.0_*`
+    installers, so a newer `.deb`/`.rpm` upgrades an installed one (the
+    desktop client was versioned 0.1.0 until now). WiX takes numeric
+    versions only, so a pre-release tag such as `v2.5.0-rc1` builds 2.5.0
+    installers. The MSI upgrade code is pinned in `tauri.conf.json`, so
+    each MSI replaces any earlier one.
+  - **Video in the AppImage.** The AppImage carries GStreamer and the
+    plugins WebKitGTK plays video with (gst-libav for H.264, HEVC, AAC,
+    AC-3 and E-AC-3, plus VP9, Opus and the MP4/Matroska/WebM demuxers, and
+    `autovideoflip` so rotated phone clips play upright), so
+    it no longer depends on the host's plugins, which its GStreamer
+    couldn't find outside Debian-family distros. The `.deb` recommends
+    `gstreamer1.0-libav` and `gstreamer1.0-plugins-bad`, which Ubuntu
+    leaves out by default.
+  - **Icons.** App icons are generated from the 1024 px master (new:
+    `docs/store-assets/master/icon-1024.png`) instead of resized favicons:
+    a Windows icon up to 256 px and standard Linux icon sizes. Linux menus
+    list the client under Audio/Video.
+  - **Repeatable builds.** The desktop `Cargo.lock` is committed and
+    release builds use `--locked`; CI and the Docker recipe pin Rust 1.93.0
+    and tauri-cli 2.12.1, and PRs that touch the desktop client (including
+    Dependabot's `Cargo.lock` bumps) run `cargo check --locked` with that
+    Rust. When a tag is moved, the newer run cancels the superseded one,
+    and `publish` uploads only if the tag still points at the commit it
+    built. A manual run of the workflow on a tag (re)publishes that tag's
+    installers.
+
+  The installers are not code-signed, so Windows SmartScreen warns on first
+  run, and there is no auto-updater yet. macOS is left out until the client
+  compiles there. Linux installers also build locally in Docker
+  (`clients/desktop/linux-build`); see the desktop client's README.
 
 The additions below are server + web client unless marked otherwise; the
 Android apps', the Tizen / webOS TV apps' and the Roku channel's shares
