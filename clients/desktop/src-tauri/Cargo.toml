@@ -74,7 +74,7 @@ cpal = "0.16"
 # content (claxon's drink-and-discard takes seconds at 24/192).
 # Default features off so we pull in only the codec + container
 # modules we actually use.
-symphonia = { version = "0.5", default-features = false, features = ["alac", "isomp4", "wav", "aiff", "pcm", "flac"] }
+symphonia = { version = "0.6", default-features = false, features = ["alac", "isomp4", "wav", "aiff", "pcm", "flac"] }
 # Lock-free single-producer single-consumer ring buffer. The
 # realtime audio callback can't take a Mutex (blocking inside
 # the callback drops samples = audible glitch) — ringbuf's
