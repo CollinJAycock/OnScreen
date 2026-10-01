@@ -13,7 +13,7 @@
 
   <main class="content">
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated: 2026-09-30</p>
+    <p class="updated">Last updated: 2026-10-01</p>
 
     <p>
       OnScreen is an open-source, self-hosted media server. This policy
@@ -48,11 +48,10 @@
       <li>
         <strong>Watch progress, library queries, and playback events.</strong>
         Sent to the OnScreen server you configured, never to any third
-        party. The apps do not call TMDB, OpenSubtitles, or any other
-        external service directly. Metadata enrichment and subtitle
-        searches you trigger from the client are forwarded to your
-        server, which makes those calls on your behalf using credentials
-        you provided in the server's settings.
+        party. The apps do not call any external service directly. If
+        your server's administrator has set up metadata or subtitle
+        services in the server's settings, the server makes those calls
+        itself. The Fire TV app has no subtitle search.
       </li>
       <li>
         <strong>Image and trickplay cache.</strong> Posters, fanart, and
@@ -105,9 +104,18 @@
         playback so the stream does not stutter.
       </li>
       <li>
-        <strong>Read/Write EPG data</strong> — to publish "Continue
-        Watching" tiles to your TV launcher's system row, so you can
-        resume an episode from the launcher home screen.
+        <strong>Network state</strong> — to detect when the network
+        connection changes.
+      </li>
+      <li>
+        <strong>Foreground service (media playback) and
+        notifications</strong> — to keep music and audiobooks playing in
+        the background, with a playback notification.
+      </li>
+      <li>
+        <strong>Read/Write EPG data (Google Play build only)</strong> — to
+        publish "Continue Watching" tiles to the TV launcher. The Fire TV
+        build does not request it.
       </li>
     </ul>
 
@@ -148,6 +156,18 @@
         Privacy Policy</a>.
       </li>
     </ul>
+
+    <p>
+      <strong>ListenBrainz (optional).</strong> If you link your own
+      ListenBrainz account under <strong>Settings → Scrobbling</strong>,
+      your OnScreen server, not the app, sends the music you play to that
+      account: a "now playing" notice when a track starts, and a listen
+      once you've played half the track or four minutes. Each submission
+      carries only the track's title, artist, album and MusicBrainz IDs
+      and the time you listened. It is play history only, and it goes
+      from your server to your ListenBrainz account; the developer
+      receives none of it. Unlink the account in the same place to stop.
+    </p>
 
     <p>
       The full list of dependencies is visible in the project's source

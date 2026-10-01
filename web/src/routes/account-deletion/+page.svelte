@@ -13,7 +13,7 @@
 
   <main class="content">
     <h1>Account &amp; Data Deletion</h1>
-    <p class="updated">Last updated: 2026-05-04</p>
+    <p class="updated">Last updated: 2026-10-01</p>
 
     <p>
       OnScreen is a self-hosted media server. Where your account data
@@ -37,12 +37,12 @@
       sessions, and pairing tokens from their server.
     </p>
 
-    <h2>If you're using the OnScreen public beta</h2>
+    <h2>If you have an account on a server the OnScreen developer runs</h2>
 
     <p>
-      The public beta runs at
+      This includes
       <a href="https://onscreen.wolverscreen.com" rel="noopener">onscreen.wolverscreen.com</a>.
-      To delete an account on the beta, email
+      To delete an account on one of these servers, email
       <a href="mailto:collin.j.aycock@gmail.com?subject=OnScreen%20account%20deletion%20request">collin.j.aycock@gmail.com</a>
       with the username (and, if known, the email address) of the
       account to delete.
