@@ -16,7 +16,7 @@ real differences relevant to OnScreen:
 | Difference | Impact on us |
 |---|---|
 | No Google Play Services | None — we don't use GMS |
-| Amazon Appstore (not Play Store) | Different submission process; APK is the same |
+| Amazon Appstore (not Play Store) | Different submission process; same code, built as the `firetv` flavor, which drops the EPG permissions and (since 1.4.1) Live TV and online subtitle search — see [Project layout](#project-layout) |
 | Alexa instead of Google Assistant | Voice search isn't wired in our app yet |
 | Fire TV remote (no colored buttons on most models) | Our skip-intro / skip-credits use OK; no colored-button dependency |
 | Different banner / icon size requirements for the Amazon storefront | Just additional submission assets |
@@ -117,10 +117,34 @@ firetv/
 The Android codebase under [`../android/`](../android/) is the
 source of truth. Fire TV-specific differences live as the `firetv`
 Gradle product flavor inside that project, not as a duplicate
-codebase here. Today that flavor strips the TV-provider EPG
-permissions (`WRITE_EPG_DATA` / `READ_EPG_DATA`) — requesting them
-makes the Amazon Appstore require an EPG-capable device and filter
-the app off most Fire TV hardware — via
-[`../android/app/src/firetv/AndroidManifest.xml`](../android/app/src/firetv/AndroidManifest.xml).
+codebase here. Today that flavor:
+
+- strips the TV-provider EPG permissions (`WRITE_EPG_DATA` /
+  `READ_EPG_DATA`) — requesting them makes the Amazon Appstore require
+  an EPG-capable device and filter the app off most Fire TV hardware —
+  via
+  [`../android/app/src/firetv/AndroidManifest.xml`](../android/app/src/firetv/AndroidManifest.xml);
+- since 1.4.1 (versionCode 24), leaves out two features the Google TV
+  build keeps, through BuildConfig flags set in `productFlavors`
+  ([`../android/app/build.gradle.kts`](../android/app/build.gradle.kts)):
+
+  | Flag | googletv | firetv | What Fire TV loses |
+  |---|---|---|---|
+  | `ONLINE_SUBTITLE_SEARCH` | `true` | `false` | The player's "Find more online…" subtitle entry (an OpenSubtitles search and download through the server). The picker lists only the item's own tracks, with no "· downloaded" tag; subtitles added from the web app still show up. The Subtitles button appears only when the item has a subtitle track. |
+  | `LIVE_TV` | `true` | `false` | The Live TV and Recordings cards on Home and the screens behind them (channel guide, live channel player, recordings list). Recordings saved to a library still play as library items. |
+
+  The Amazon Appstore rejected 1.4.0 (and earlier 1.1.0–1.1.2) under its
+  Deceptive and Malicious Behavior policy, which names apps that "save,
+  convert, stream or download media from third-party sources"; these are
+  the two features that match that wording. Fire TV users still have both
+  in the server's web app. The flags are compile-time constants, and
+  `proguard-rules.pro` leaves the Live TV screens out of its blanket Hilt
+  entry-point and Fragment keeps and lets R8 drop Retrofit API methods
+  nothing calls (`proguard-googletv.pro` puts the original rules back for
+  googletv), so R8 and the resource shrinker take the screens, their
+  strings and icons, and the online subtitle search and download
+  endpoints out of the Fire TV APK. `FlavorFeaturesTest` in
+  `src/testFiretv` and `src/testGoogletv` pins the values.
+
 Anything else (e.g., Alexa voice, Fire-specific Amazon SSO) belongs
 in that same flavor.

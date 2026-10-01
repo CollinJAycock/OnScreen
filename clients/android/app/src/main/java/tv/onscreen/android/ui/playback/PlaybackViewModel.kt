@@ -6,6 +6,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
@@ -492,7 +493,14 @@ class PlaybackViewModel @Inject constructor(
             SubtitleTrackSource(
                 url = "$serverUrl${e.url}?token=$asset",
                 language = e.language,
-                label = SubtitleLabel.of(e.language, e.title, e.forced, e.sdh, downloaded = true, fallback = "External"),
+                // "· downloaded" marks the tracks OpenSubtitles search adds.
+                // The Fire TV build has no such search
+                // (BuildConfig.ONLINE_SUBTITLE_SEARCH; see the flavor comment
+                // in app/build.gradle.kts), so it doesn't call any track that.
+                label = SubtitleLabel.of(
+                    e.language, e.title, e.forced, e.sdh,
+                    downloaded = BuildConfig.ONLINE_SUBTITLE_SEARCH, fallback = "External",
+                ),
                 forced = e.forced,
                 sdh = e.sdh,
                 trackId = "sub:ext:${e.id}",

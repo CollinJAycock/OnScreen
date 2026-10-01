@@ -14,6 +14,7 @@ import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.*
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -277,8 +278,12 @@ class HomeFragment : BrowseSupportFragment() {
                     val fragment = when (item.id) {
                         NAV_FAVORITES -> FavoritesFragment()
                         NAV_HISTORY -> HistoryFragment()
-                        NAV_LIVE_TV -> LiveTVFragment()
-                        NAV_RECORDINGS -> RecordingsFragment()
+                        // Gated as well as the cards themselves, so the
+                        // firetv flavor has no path to the Live TV screens
+                        // and R8 can drop them (see the flavor comment in
+                        // app/build.gradle.kts).
+                        NAV_LIVE_TV -> if (BuildConfig.LIVE_TV) LiveTVFragment() else null
+                        NAV_RECORDINGS -> if (BuildConfig.LIVE_TV) RecordingsFragment() else null
                         NAV_SETTINGS -> SettingsFragment()
                         else -> null
                     }
@@ -448,12 +453,16 @@ class HomeFragment : BrowseSupportFragment() {
             )
         }
 
-        // Browse row: Favorites / History / Settings.
+        // Browse row: Favorites / History / [Live TV / Recordings] / Settings.
+        // The Fire TV build has no Live TV or Recordings (BuildConfig.LIVE_TV;
+        // see the flavor comment in app/build.gradle.kts).
         val navAdapter = ArrayObjectAdapter(navPresenter)
         navAdapter.add(NavCard(NAV_FAVORITES, getString(R.string.favorites), R.drawable.ic_heart_filled))
         navAdapter.add(NavCard(NAV_HISTORY, getString(R.string.history), R.drawable.ic_history))
-        navAdapter.add(NavCard(NAV_LIVE_TV, getString(R.string.live_tv), R.drawable.ic_live_tv))
-        navAdapter.add(NavCard(NAV_RECORDINGS, getString(R.string.recordings), R.drawable.ic_recordings))
+        if (BuildConfig.LIVE_TV) {
+            navAdapter.add(NavCard(NAV_LIVE_TV, getString(R.string.live_tv), R.drawable.ic_live_tv))
+            navAdapter.add(NavCard(NAV_RECORDINGS, getString(R.string.recordings), R.drawable.ic_recordings))
+        }
         navAdapter.add(NavCard(NAV_SETTINGS, getString(R.string.settings), R.drawable.ic_settings))
         rowsAdapter.add(ListRow(HeaderItem(headerId++, getString(R.string.browse)), navAdapter))
 

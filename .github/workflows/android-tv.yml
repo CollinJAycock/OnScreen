@@ -69,9 +69,16 @@ jobs:
         # this keeps CI green if the bit is ever lost on a Windows-authored commit.
         run: |
           chmod +x gradlew
-          # Tests are flavor-independent (the firetv flavor only overlays a
-          # manifest); run the default googletv variant's unit tests.
-          ./gradlew :app:testGoogletvDebugUnitTest --no-daemon --console=plain
+          # The shared tests run on the default googletv variant. The flavors
+          # differ only in the firetv manifest overlay, two BuildConfig
+          # feature flags and R8 keep rules (proguard-googletv.pro, which
+          # release builds use and unit tests don't; see productFlavors in
+          # app/build.gradle.kts), so firetv runs just its own flag test
+          # rather than the whole suite again (--tests applies to the task
+          # it follows).
+          ./gradlew :app:testGoogletvDebugUnitTest \
+            :app:testFiretvDebugUnitTest --tests 'tv.onscreen.android.FlavorFeaturesTest' \
+            --no-daemon --console=plain
 
       - name: Run Android lint
         # This job used to run unit tests ONLY, so lint never gated the module
