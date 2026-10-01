@@ -13,6 +13,7 @@ const mockToastError = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/api', () => ({
+  api: { getUser: () => JSON.parse(localStorage.getItem('onscreen_user') ?? 'null') },
   searchApi: { search: mockSearch },
   discoverApi: { search: mockDiscover, seasons: mockSeasons },
   requestsApi: { create: mockCreate, quota: mockQuota },
@@ -20,6 +21,14 @@ vi.mock('$lib/api', () => ({
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, error: mockToastError, info: mockToastInfo },
 }));
+// What the server advertises; a test flips features.requests.
+const capsStore = vi.hoisted(() => ({}) as { set: (v: unknown) => void });
+vi.mock('$lib/stores/capabilities', async () => {
+  const { writable } = await import('svelte/store');
+  const capabilities = writable<unknown>(null);
+  capsStore.set = capabilities.set;
+  return { capabilities, ensureCapabilities: vi.fn().mockResolvedValue(undefined) };
+});
 
 const unlimited = {
   can_request: true,
@@ -33,6 +42,7 @@ beforeEach(() => {
   localStorage.clear();
   vi.useFakeTimers();
   mockQuota.mockResolvedValue(unlimited);
+  capsStore.set({ features: { requests: true } });
 });
 
 afterEach(() => {
@@ -216,31 +226,69 @@ describe('Search page', () => {
         expect(screen.queryByTestId('request-quota')).toBeNull();
       });
 
-      it('disables Request with an explanation when requesting is turned off', async () => {
+      // A library search only: no TMDB results, posters or "ask your admin"
+      // copy for an account that may not request — and TMDB isn't asked.
+      async function searchWithoutRequests() {
+        mockSearch.mockResolvedValue([{ id: 'item-1', title: 'Sintel', type: 'movie', year: 2010 }]);
+        mockDiscover.mockResolvedValue([dune]);
+        render(Page);
+        await fireEvent.input(screen.getByRole('textbox'), { target: { value: 'sintel' } });
+        await vi.advanceTimersByTimeAsync(350);
+        await waitFor(() => expect(screen.getByText('Sintel')).toBeTruthy());
+        await vi.advanceTimersByTimeAsync(0);
+      }
+
+      it('shows no request section when requesting is turned off for the account', async () => {
         mockQuota.mockResolvedValue({ ...unlimited, can_request: false });
-        await searchDune();
-        await waitFor(() => expect(screen.getByText('Requests turned off')).toBeTruthy());
-        const btn = screen.getByRole('button', { name: /requests turned off/i }) as HTMLButtonElement;
-        expect(btn.disabled).toBe(true);
-        expect(btn.title).toMatch(/turned off for your account/);
-        expect(screen.getByText(/Requesting is turned off for your account/)).toBeTruthy();
+        await searchWithoutRequests();
+        expect(mockDiscover).not.toHaveBeenCalled();
+        expect(screen.queryByTestId('discover-section')).toBeNull();
+        expect(screen.queryByText('Ask your admin to add')).toBeNull();
+        expect(screen.queryByText('Dune')).toBeNull();
+        expect((screen.getByRole('textbox') as HTMLInputElement).placeholder).toBe('Search your library…');
       });
 
-      it('handles a REQUESTS_DISABLED refusal from the server', async () => {
+      it('shows no request section when the server has requests off (no TMDB key)', async () => {
+        capsStore.set({ features: { requests: false } });
+        await searchWithoutRequests();
+        expect(mockDiscover).not.toHaveBeenCalled();
+        expect(screen.queryByTestId('discover-section')).toBeNull();
+      });
+
+      it('drops the request section after a REQUESTS_DISABLED refusal', async () => {
         mockCreate.mockRejectedValue(Object.assign(new Error('requesting is turned off'), { code: 'REQUESTS_DISABLED', status: 403 }));
         mockQuota.mockResolvedValueOnce(unlimited).mockResolvedValue({ ...unlimited, can_request: false });
         await searchDune();
         await fireEvent.click(screen.getByRole('button', { name: /request/i }));
         await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
         expect(mockToastError.mock.calls[0][0]).toMatch(/turned off for your account/);
-        await waitFor(() => expect(screen.getByText('Requests turned off')).toBeTruthy());
+        await waitFor(() => expect(screen.queryByTestId('discover-section')).toBeNull());
       });
 
-      it('still offers Request when the quota endpoint is unavailable', async () => {
+      it('drops the request section when the server refuses the search itself', async () => {
+        mockSearch.mockResolvedValue([]);
+        mockDiscover.mockRejectedValue(Object.assign(new Error('requesting is turned off'), { code: 'REQUESTS_DISABLED', status: 403 }));
+        render(Page);
+        await fireEvent.input(screen.getByRole('textbox'), { target: { value: 'dune' } });
+        await vi.advanceTimersByTimeAsync(350);
+        await waitFor(() => expect(mockDiscover).toHaveBeenCalled());
+        await waitFor(() => expect(screen.queryByTestId('discover-section')).toBeNull());
+        expect(screen.queryByText(/turned off/)).toBeNull();
+      });
+
+      it('keeps Request for an admin when the quota endpoint is unavailable', async () => {
+        localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'admin', is_admin: true }));
         mockQuota.mockRejectedValue(new Error('404'));
         await searchDune();
         expect((screen.getByRole('button', { name: /request/i }) as HTMLButtonElement).disabled).toBe(false);
         expect(screen.queryByTestId('request-quota')).toBeNull();
+      });
+
+      it('fails closed for a non-admin whose allowance could not be read', async () => {
+        mockQuota.mockRejectedValue(new Error('500'));
+        await searchWithoutRequests();
+        expect(mockDiscover).not.toHaveBeenCalled();
+        expect(screen.queryByTestId('discover-section')).toBeNull();
       });
     });
 

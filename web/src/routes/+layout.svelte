@@ -26,7 +26,9 @@
     pendingBadgeText,
   } from '$lib/stores/pendingRequests';
   import { startJobsPolling, stopJobsPolling } from '$lib/stores/jobs';
-  import { loadCapabilities } from '$lib/stores/capabilities';
+  import { capabilities, loadCapabilities } from '$lib/stores/capabilities';
+  import { requestQuota, loadRequestQuota, resetRequestQuota } from '$lib/stores/requestAccess';
+  import { liveTVNavVisible, requestsNavVisible } from '$lib/featureGates';
   import JobsBanner from '$lib/components/JobsBanner.svelte';
   import { itemApi, getClientName } from '$lib/api';
   import { audio } from '$lib/stores/audio';
@@ -238,6 +240,7 @@
       stopNotifications();
       stopJobsPolling();
       resetPendingRequests();
+      resetRequestQuota();
       initNotifications();
       startJobsPolling();
       closeSwitcher();
@@ -271,6 +274,7 @@
     stopNotifications();
     stopJobsPolling();
     resetPendingRequests();
+    resetRequestQuota();
     let capTimer: ReturnType<typeof setTimeout> | undefined;
     await Promise.race([
       (async () => { try { await authApi.logout(); } catch { /* ignore */ } })(),
@@ -321,15 +325,29 @@
   $: path = $page.url.pathname;
 
   // Re-read user info on every navigation so isAdmin updates after login.
+  let signedIn = false;
   $: if (path) {
     const u = api.getUser();
     if (u) {
       currentUsername = u.username;
       isAdmin = u.is_admin;
+      signedIn = true;
     } else {
       isAdmin = false;
+      signedIn = false;
     }
   }
+
+  // The account's request allowance gates the Requests link: loaded once
+  // signed in, and retried on a later navigation if it failed (null).
+  $: if (!checking && path && signedIn && !$requestQuota) loadRequestQuota();
+
+  // Optional sections only appear once the server says they apply (see
+  // lib/featureGates): no Requests link for an account that can't request or
+  // on a server without requests, no Live TV link without a tuner. Admins
+  // keep both.
+  $: showRequestsNav = requestsNavVisible($capabilities, $requestQuota, isAdmin);
+  $: showLiveTVNav = liveTVNavVisible($capabilities, isAdmin);
 
   // Keep the admin's pending-requests badge fresh on load and on every
   // navigation (throttled in the store); clear it for non-admins.
@@ -420,31 +438,35 @@
           </svg>
           History
         </a>
-        <a href="/requests" class="nav-link" class:active={path.startsWith('/requests')}>
-          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 7a1 1 0 011 1v2h2a1 1 0 110 2h-2v2a1 1 0 11-2 0v-2H7a1 1 0 110-2h2V8a1 1 0 011-1z" clip-rule="evenodd"/>
-          </svg>
-          Requests
-          {#if isAdmin && $pendingRequestCount > 0}
-            <span
-              class="nav-badge"
-              title="{$pendingRequestCount} request{$pendingRequestCount === 1 ? '' : 's'} waiting for approval"
-              aria-label="{$pendingRequestCount} pending"
-            >{pendingBadgeText($pendingRequestCount)}</span>
-          {/if}
-        </a>
+        {#if showRequestsNav}
+          <a href="/requests" class="nav-link" class:active={path.startsWith('/requests')}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM10 7a1 1 0 011 1v2h2a1 1 0 110 2h-2v2a1 1 0 11-2 0v-2H7a1 1 0 110-2h2V8a1 1 0 011-1z" clip-rule="evenodd"/>
+            </svg>
+            Requests
+            {#if isAdmin && $pendingRequestCount > 0}
+              <span
+                class="nav-badge"
+                title="{$pendingRequestCount} request{$pendingRequestCount === 1 ? '' : 's'} waiting for approval"
+                aria-label="{$pendingRequestCount} pending"
+              >{pendingBadgeText($pendingRequestCount)}</span>
+            {/if}
+          </a>
+        {/if}
         <a href="/favorites" class="nav-link" class:active={path.startsWith('/favorites')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M9.653 16.915l-.005-.003-.019-.01a20.759 20.759 0 01-1.162-.682 22.045 22.045 0 01-2.582-1.9C4.045 12.733 2 10.352 2 7.5a4.5 4.5 0 018-2.828A4.5 4.5 0 0118 7.5c0 2.852-2.044 5.233-3.885 6.82a22.049 22.049 0 01-3.744 2.582l-.019.01-.005.003h-.002a.739.739 0 01-.69.001l-.002-.001z"/>
           </svg>
           Favorites
         </a>
-        <a href="/tv/guide" class="nav-link" class:active={path.startsWith('/tv')}>
-          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-            <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 001.1 1.677A.75.75 0 0113.26 18H6.74a.75.75 0 01-.484-1.323A3.501 3.501 0 007.355 15H4.25A2.25 2.25 0 012 12.75v-8.5z" clip-rule="evenodd"/>
-          </svg>
-          Live TV
-        </a>
+        {#if showLiveTVNav}
+          <a href="/tv/guide" class="nav-link" class:active={path.startsWith('/tv')}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path fill-rule="evenodd" d="M2 4.25A2.25 2.25 0 014.25 2h11.5A2.25 2.25 0 0118 4.25v8.5A2.25 2.25 0 0115.75 15h-3.105a3.501 3.501 0 001.1 1.677A.75.75 0 0113.26 18H6.74a.75.75 0 01-.484-1.323A3.501 3.501 0 007.355 15H4.25A2.25 2.25 0 012 12.75v-8.5z" clip-rule="evenodd"/>
+            </svg>
+            Live TV
+          </a>
+        {/if}
         {#if isAdmin}
           <a href="/profiles" class="nav-link" class:active={path.startsWith('/profiles')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">

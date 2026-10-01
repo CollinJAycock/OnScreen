@@ -21,6 +21,24 @@ vi.mock('$lib/api', () => ({
   requestsApi: { list: mockMine, cancel: vi.fn() },
   requestsAdminApi: { list: mockQueue, approve: vi.fn(), decline: vi.fn(), del: vi.fn() },
 }));
+// What the server advertises and the account may do; tests flip them.
+const gates = vi.hoisted(() => ({}) as { caps: (v: unknown) => void; quota: (v: unknown) => void });
+vi.mock('$lib/stores/capabilities', async () => {
+  const { writable } = await import('svelte/store');
+  const capabilities = writable<unknown>(null);
+  gates.caps = capabilities.set;
+  return { capabilities, ensureCapabilities: vi.fn().mockResolvedValue(undefined) };
+});
+vi.mock('$lib/stores/requestAccess', async () => {
+  const { writable } = await import('svelte/store');
+  const requestQuota = writable<unknown>(undefined);
+  gates.quota = requestQuota.set;
+  return { requestQuota, loadRequestQuota: vi.fn().mockResolvedValue(undefined) };
+});
+const allowance = (can_request: boolean) => ({
+  can_request, window_days: 7,
+  movies: { limit: 0, used: 0, remaining: null }, tv: { limit: 0, used: 0, remaining: null },
+});
 
 function entry(over: Partial<UpcomingItem> & Pick<UpcomingItem, 'id' | 'title' | 'date'>): UpcomingItem {
   return {
@@ -462,15 +480,18 @@ describe('Upcoming tab', () => {
 });
 
 describe('Requests page', () => {
+  const kid = { user_id: 'u1', username: 'kid', is_admin: false };
   beforeEach(() => {
     vi.clearAllMocks();
     mockMine.mockResolvedValue({ items: [], total: 0 });
     mockQueue.mockResolvedValue({ items: [], total: 0 });
     mockUpcoming.mockResolvedValue(response([]));
+    gates.caps({ features: { requests: true, upcoming: true } });
+    gates.quota(allowance(true));
   });
 
-  it('gives everyone an Upcoming tab, but only admins the Queue', async () => {
-    mockGetUser.mockReturnValue({ user_id: 'u1', username: 'kid', is_admin: false });
+  it('gives a user who can request an Upcoming tab, but only admins the Queue', async () => {
+    mockGetUser.mockReturnValue(kid);
     render(Page);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Upcoming' })).toBeTruthy());
     expect(screen.queryByRole('button', { name: 'Queue' })).toBeNull();
@@ -481,10 +502,53 @@ describe('Requests page', () => {
     expect(screen.getByRole('group', { name: 'Calendar view' })).toBeTruthy();
   });
 
+  it('has no Upcoming tab for a non-admin when no Radarr or Sonarr is set up', async () => {
+    mockGetUser.mockReturnValue(kid);
+    gates.caps({ features: { requests: true, upcoming: false } });
+    render(Page);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'My Requests' })).toBeTruthy());
+    expect(screen.queryByRole('button', { name: 'Upcoming' })).toBeNull();
+    expect(screen.queryByText(/No Radarr or Sonarr connected/)).toBeNull();
+  });
+
+  // The store-review server: no TMDB key, a reviewer that can't request.
+  it('shows a non-admin no tabs when the server has requests off', async () => {
+    mockGetUser.mockReturnValue(kid);
+    gates.caps({ features: { requests: false, upcoming: false } });
+    render(Page);
+    await waitFor(() => expect(screen.getByTestId('requests-unavailable')).toBeTruthy());
+    expect(screen.getByText("Requests aren't available on this server.")).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'My Requests' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Upcoming' })).toBeNull();
+    expect(screen.queryByText(/No Radarr or Sonarr connected/)).toBeNull();
+    expect(mockMine).not.toHaveBeenCalled();
+    expect(mockUpcoming).not.toHaveBeenCalled();
+  });
+
+  it('shows a non-admin no tabs when requesting is off for the account', async () => {
+    mockGetUser.mockReturnValue(kid);
+    gates.quota(allowance(false));
+    render(Page);
+    await waitFor(() => expect(screen.getByTestId('requests-unavailable')).toBeTruthy());
+    expect(screen.getByText(/Requesting is turned off for your account/)).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Upcoming' })).toBeNull();
+    expect(mockMine).not.toHaveBeenCalled();
+  });
+
   it('keeps the Queue tab for admins alongside Upcoming', async () => {
     mockGetUser.mockReturnValue({ user_id: 'u1', username: 'admin', is_admin: true });
     render(Page);
     await waitFor(() => expect(screen.getByRole('button', { name: 'Queue' })).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'Upcoming' })).toBeTruthy();
+  });
+
+  it('keeps every tab for an admin even with requests off and no *arr', async () => {
+    mockGetUser.mockReturnValue({ user_id: 'u1', username: 'admin', is_admin: true });
+    gates.caps({ features: { requests: false, upcoming: false } });
+    gates.quota(undefined);
+    render(Page);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Queue' })).toBeTruthy());
+    expect(screen.getByRole('button', { name: 'My Requests' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Upcoming' })).toBeTruthy();
   });
 });

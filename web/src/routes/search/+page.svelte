@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import { goto } from '$app/navigation';
   import {
+    api,
     searchApi,
     discoverApi,
     requestsApi,
@@ -13,6 +15,8 @@
   } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
+  import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
+  import { requestsUsable } from '$lib/featureGates';
   import SeasonPicker from '$lib/components/SeasonPicker.svelte';
   import { OVER_QUOTA_MESSAGE, REQUESTS_DISABLED_MESSAGE, quotaLines, isRequestsDisabledError } from './quota';
 
@@ -44,11 +48,20 @@
   let creatingFor = new Set<number>(); // tmdb_ids of in-flight Request clicks
 
   // The caller's request allowance (GET /requests/quota). null = unknown
-  // (older server, or the call failed) — the Request buttons then behave as
-  // before and the server stays the authority.
+  // (older server, or the call failed).
   let quota: RequestQuota | null = null;
   $: canRequest = quota?.can_request !== false;
   $: quotaHints = quotaLines(quota);
+
+  // The TMDB half of the page ("Ask your admin to add" and its Request
+  // buttons) exists only when the server has requests on and the account
+  // may request (lib/featureGates). Otherwise TMDB isn't even asked: a
+  // reviewer or a no-requests account sees a library search, nothing else.
+  let isAdmin = false;
+  $: requestsOn = requestsUsable($capabilities, quota, isAdmin);
+  // Settles once capabilities and the allowance are known; a search waits
+  // for it before deciding whether to ask TMDB.
+  let accessReady: Promise<unknown> = Promise.resolve();
 
   async function loadQuota() {
     try {
@@ -60,6 +73,7 @@
 
   onMount(() => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    isAdmin = api.getUser()?.is_admin === true;
     try {
       const saved = localStorage.getItem('onscreen_search_filters');
       if (saved) {
@@ -67,7 +81,7 @@
         libraryFilters = { ...defaultFilters, ...parsed };
       }
     } catch { /* corrupt storage — fall back to defaults */ }
-    loadQuota();
+    accessReady = Promise.all([ensureCapabilities(), loadQuota()]);
   });
 
   $: {
@@ -167,25 +181,44 @@
       .catch(e => { console.warn('library search failed', e); libraryResults = []; })
       .finally(() => libraryLoading = false);
 
-    const discoverPromise = discoverApi.search(q, 12)
-      .then(r => {
-        // Drop in-library entries — they're already in libraryResults
-        // above, so the side-by-side rendering would dupe them — except
-        // shows with seasons still to request.
-        discoverResults = (r ?? []).filter(it => !it.in_library || isPartialShow(it));
-        discoverError = '';
-      })
-      .catch(e => {
-        const msg = e instanceof Error ? e.message : 'Discover failed';
-        // 404 / 503 = TMDB key not configured; that's the operator's
-        // setup, not a user-facing error worth shouting about.
-        discoverError = /not configured|tmdb/i.test(msg) ? '' : msg;
-        discoverResults = [];
-      })
-      .finally(() => discoverLoading = false);
+    const discoverPromise = runDiscover(q);
 
     await Promise.allSettled([libraryPromise, discoverPromise]);
     searched = true;
+  }
+
+  async function runDiscover(q: string) {
+    await accessReady;
+    // Read fresh: the reactive requestsOn may not have caught up yet.
+    if (!requestsUsable(get(capabilities), quota, isAdmin)) {
+      discoverResults = [];
+      discoverError = '';
+      discoverLoading = false;
+      return;
+    }
+    try {
+      const r = await discoverApi.search(q, 12);
+      // Drop in-library entries — they're already in libraryResults
+      // above, so the side-by-side rendering would dupe them — except
+      // shows with seasons still to request.
+      discoverResults = (r ?? []).filter(it => !it.in_library || isPartialShow(it));
+      discoverError = '';
+    } catch (e) {
+      discoverResults = [];
+      if (isRequestsDisabledError(e)) {
+        // Requesting was switched off since the page loaded: the whole
+        // section goes, not just its buttons.
+        quota = quota ? { ...quota, can_request: false } : quota;
+        discoverError = '';
+      } else {
+        const msg = e instanceof Error ? e.message : 'Discover failed';
+        // 503 TMDB_UNAVAILABLE = no TMDB key; that's the operator's setup,
+        // not a user-facing error worth shouting about.
+        discoverError = /not configured|tmdb/i.test(msg) ? '' : msg;
+      }
+    } finally {
+      discoverLoading = false;
+    }
   }
 
   function navigate(item: SearchResult) {
@@ -289,7 +322,7 @@
       type="text"
       bind:value={query}
       on:input={onInput}
-      placeholder="Search your library, or anything to request…"
+      placeholder={requestsOn ? 'Search your library, or anything to request…' : 'Search your library…'}
       autofocus
     />
     {#if query}
@@ -310,7 +343,9 @@
         </svg>
       </div>
       <p class="empty-title">Search your library</p>
-      <p class="empty-sub">Type above to find something in your library. If it's not there, you can ask your server's administrator to acquire it.</p>
+      <p class="empty-sub">
+        Type above to find something in your library.{#if requestsOn}{' '}If it's not there, you can ask your server's administrator to acquire it.{/if}
+      </p>
     </div>
   {:else}
     <!-- ── In your library ─────────────────────────────────────────────── -->
@@ -380,7 +415,10 @@
     </section>
 
     <!-- ── Request from outside library ────────────────────────────────── -->
-    <section class="result-section">
+    <!-- Only with requests on and an account allowed to request: no TMDB
+         results, posters or "ask your admin" copy otherwise. -->
+    {#if requestsOn}
+    <section class="result-section" data-testid="discover-section">
       <h2 class="section-title">Ask your admin to add</h2>
       {#if quotaHints.length > 0}
         <div class="quota-hints" class:disabled={!canRequest} data-testid="request-quota">
@@ -446,6 +484,7 @@
         </div>
       {/if}
     </section>
+    {/if}
 
     {#if pickerFor}
       {@const target = pickerFor}

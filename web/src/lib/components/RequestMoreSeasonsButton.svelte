@@ -3,7 +3,9 @@
   // seasons the library doesn't (fully) hold that the user hasn't requested
   // yet, and the user may request. Opens the season picker; the request goes
   // through POST /requests with the picked seasons like any other.
+  import { get } from 'svelte/store';
   import { discoverApi, requestsApi, type SeasonInfo } from '$lib/api';
+  import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
   import { toast } from '$lib/stores/toast';
   import { hasRequestableMissing } from '$lib/seasonPicker';
   import { createdRequestToast } from '$lib/requestToast';
@@ -46,8 +48,14 @@
   }
 
   // The season list costs a TMDB lookup, so it's only read for a user who
-  // may request.
+  // may request, on a server with requests on (no TMDB key: no button, and
+  // no call that can only fail).
   async function load(id: number) {
+    await ensureCapabilities();
+    if (get(capabilities)?.features?.requests === false) {
+      canRequest = false;
+      return;
+    }
     canRequest = await loadQuota();
     if (canRequest) await loadSeasons(id);
   }
