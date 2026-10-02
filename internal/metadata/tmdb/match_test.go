@@ -63,6 +63,7 @@ var fixtureSearches = map[string][]int{
 	"Hero|primary_release_year=2018":        {1070322, 615324, 665974, 1759847, 505262, 614603},
 	"Singularity|year=2026":                 {1735105, 1687677, 1750174},
 	"Singularity|primary_release_year=2026": {1735105, 1687677, 1750174},
+
 	"Harry Potter and the Sorcerer's Stone|primary_release_year=2001": {671},
 }
 
