@@ -84,7 +84,9 @@ describe('Settings > About', () => {
   // and scrobble rows then load in above it and can push it off the screen. Each load puts it back in view while the
   // restore still holds (lib/focus/memory restoreAgain).
   it('brings the restored row back into view after each late load', () => {
-    const source = readFileSync(new URL('./+page.svelte', import.meta.url), 'utf8');
+    // LF line ends, whatever the checkout (a Windows one has CRLF): the
+    // snippet below spans two lines.
+    const source = readFileSync(new URL('./+page.svelte', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
     expect(source).toContain('const guard = backMemo?.focusedId ? restoreGuard() : null;');
     expect(source).toContain('restoreKeyed(backMemo, guard)');
     const loads = source.split('await tick();\n      restoreAgain(backMemo, guard);').length - 1;
