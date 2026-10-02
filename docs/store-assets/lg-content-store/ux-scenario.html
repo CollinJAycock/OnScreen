@@ -1,0 +1,141 @@
+<!doctype html>
+<!-- LG Seller Lounge "UX Scenario File" for OnScreen for LG webOS TV.
+     Rendered to PDF for upload (A4). The test account's password is the
+     placeholder below, filled in only in the uploaded PDF; it is never
+     committed. Keep every statement in step with clients/webos. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OnScreen for LG webOS TV - UX Scenario</title>
+<style>
+  @page { size: A4; margin: 13mm 14mm; }
+  body { font-family: "Segoe UI", "DejaVu Sans", Arial, sans-serif; font-size: 10pt; line-height: 1.4; color: #111; }
+  h1 { font-size: 20pt; margin: 0 0 2mm; }
+  .sub { color: #555; margin: 0 0 6mm; }
+  h2 { font-size: 13pt; border-bottom: 1.5px solid #6b5bd6; padding-bottom: 1mm; margin: 7mm 0 3mm; }
+  h3 { font-size: 11pt; margin: 4mm 0 2mm; }
+  table { border-collapse: collapse; width: 100%; margin: 2mm 0 3mm; }
+  th, td { border: 1px solid #bbb; padding: 1.6mm 2.2mm; text-align: left; vertical-align: top; }
+  th { background: #efedfb; }
+  .box { border: 2px solid #6b5bd6; background: #f6f5fd; padding: 3mm 4mm; margin: 2mm 0 4mm; }
+  .box td, .box th { border: none; padding: 0.8mm 3mm 0.8mm 0; }
+  code { font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 9.5pt; }
+  ol, ul { margin: 1mm 0 2mm; padding-left: 6mm; }
+  li { margin: 0.6mm 0; }
+  .flow { font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 9pt; background: #fafafa; border: 1px solid #ddd; padding: 3mm; white-space: pre; }
+  .page-break { page-break-before: always; }
+  .muted { color: #555; }
+</style>
+</head>
+<body>
+
+<h1>OnScreen for LG webOS TV</h1>
+<p class="sub">UX scenario &middot; app ID <code>com.onscreen.tv</code> &middot; version 0.2.1 &middot; developer: Collin Aycock (collin.j.aycock@gmail.com)</p>
+
+<h2>1. What the app is</h2>
+<p>OnScreen is the TV client for <b>OnScreen Media Server</b>, free open-source software that people install on their own computer or NAS. The app plays the movies, TV shows, music, audiobooks and photos the user has added to <b>their own</b> server. The app itself contains no content and does not provide, sell or link to any. It has no web browser, no add-ons and no way to open stream links or playlists.</p>
+<table>
+  <tr><th style="width:32%">Log-in function</th><td><b>Yes.</b> The user enters their server's address, then signs in with that server's username and password. A test account is given below.</td></tr>
+  <tr><th>In-app purchase</th><td><b>None.</b> The app is free and sells nothing.</td></tr>
+  <tr><th>In-app advertising</th><td><b>None.</b> No ads, no analytics, no tracking.</td></tr>
+  <tr><th>Privacy policy / terms</th><td>Shown in the app under Settings &gt; About (text and QR code) and Settings &gt; About &gt; Licence &amp; terms. Online: https://onscreen.wolverscreen.com/privacy</td></tr>
+</table>
+
+<h2>2. Test account</h2>
+<div class="box">
+<table>
+  <tr><th>Server address</th><td><code>onscreen-beta.wolverscreen.com</code></td></tr>
+  <tr><th>Username</th><td><code>reviewer</code></td></tr>
+  <tr><th>Password</th><td><code>{{REVIEWER_PASSWORD}}</code></td></tr>
+</table>
+</div>
+<p>This is a test server run by the developer. The account sees five libraries, all openly licensed (Creative Commons or public domain):</p>
+<ul>
+  <li><b>Movies</b>: Blender Foundation open movies (Sintel, Big Buck Bunny, Tears of Steel and others)</li>
+  <li><b>TV Shows</b>: Caminandes (season 1)</li>
+  <li><b>Music</b>: three albums by Kevin MacLeod</li>
+  <li><b>Audiobooks</b>: five LibriVox recordings</li>
+  <li><b>Photos</b>: NASA images</li>
+</ul>
+
+<h3>How to sign in</h3>
+<ol>
+  <li>Launch the app. The first screen is <b>Add your OnScreen server</b> with an on-screen keyboard.</li>
+  <li>Type <code>onscreen-beta.wolverscreen.com</code> with the keyboard (D-pad and OK, or point and click with the Magic Remote) and select <b>done</b>. The app tests the connection (https:// is tried first).</li>
+  <li>The <b>Sign in</b> screen opens. Type the username <code>reviewer</code> and select <b>done</b>.</li>
+  <li>Type the password and select <b>done</b>. The <b>Home</b> screen opens.</li>
+</ol>
+<p class="muted">Alternatives on the Sign in screen: <b>Sign in with another device</b> shows a PIN to enter on a phone or computer (not needed for testing); <b>Change server</b> returns to the address screen. Back on the username step returns to the address screen when that screen opened Sign in. The sign-in is remembered: later launches open on Home.</p>
+
+<h2>3. Screen flow</h2>
+<div class="flow">Launch
+ ├─ no server saved ──► Add your OnScreen server ──► Sign in ──► Home
+ ├─ not signed in ────► Sign in ──► Home
+ └─ signed in ────────► Home
+
+Home ── top menu: Home · Libraries · Search · Favorites · History · Settings
+ │        (Discover, Live TV and Recordings appear only on servers that
+ │         offer them to the account; they are hidden for the test account)
+ ├─ card ──► Detail page (film / show / season / album / book)
+ │             └─ Play / Resume ──► Player (video)  or  Now playing (music, audiobook)
+ ├─ Libraries ──► Library grid ──► Detail page
+ ├─ Photos library ──► Photo viewer ──► Slideshow
+ └─ Settings ──► Playback preferences · Scrobbling · Sign out · Forget server
+                 About ──► Privacy policy (text + QR) · Licence &amp; terms</div>
+
+<h3>Main screens</h3>
+<table>
+  <tr><th style="width:22%">Screen</th><th>What it shows and does</th></tr>
+  <tr><td>Home</td><td>Rows of cards: Continue Watching, Next Up and Recently Added per library. Holding OK on a Continue Watching card opens its options: Remove from Continue Watching, or Open.</td></tr>
+  <tr><td>Libraries</td><td>The user's libraries. Each opens a grid of posters with sort and filter chips.</td></tr>
+  <tr><td>Search</td><td>On-screen keyboard; results by type (films, shows, albums, books...).</td></tr>
+  <tr><td>Favorites / History</td><td>Items the user marked as favourite, and what they played recently.</td></tr>
+  <tr><td>Detail page</td><td>Artwork, description and buttons: Play or Resume, Play from Beginning, Mark watched / unwatched, Favorite, Report a problem. Shows list seasons and episodes; albums list tracks (Play All, Shuffle).</td></tr>
+  <tr><td>Player (video)</td><td>Full-screen video with a progress bar, Skip Intro / Skip Credits where the server has marked them, and buttons for Audio, Subtitles and Chapters. Up Next offers the next episode near the end.</td></tr>
+  <tr><td>Now playing</td><td>Music and audiobooks: cover art, title, progress; audiobooks have a playback-speed picker.</td></tr>
+  <tr><td>Settings</td><td>Audio and subtitle language preferences, scrobbling links, Sign out, Forget server, About (version, privacy policy with QR code, Licence &amp; terms).</td></tr>
+</table>
+
+<h2>4. Remote control</h2>
+<p>Every screen works with both the Magic Remote's pointer and its D-pad. Pointing at an item highlights it; OK or a click selects it; the wheel scrolls lists and pages.</p>
+<table>
+  <tr><th style="width:26%">Key</th><th>Outside the player</th><th>In the player (video)</th></tr>
+  <tr><td>Arrow keys</td><td>Move the highlight</td><td>&larr; / &rarr; seek 10 s; &uarr; / &darr; show the controls; &darr; again moves to the Audio / Subtitles / Chapters buttons</td></tr>
+  <tr><td>OK</td><td>Select (hold OK on a Continue Watching card for options)</td><td>Play / pause; Skip Intro or Skip Credits when shown</td></tr>
+  <tr><td>Back</td><td>Previous screen; on the first screen, see below</td><td>Closes an open menu, Skip Intro or Up Next card; otherwise leaves the player</td></tr>
+  <tr><td>Play, Pause, Stop</td><td>-</td><td>Play, pause; Stop pauses (Back leaves)</td></tr>
+  <tr><td>&#9664;&#9664; / &#9654;&#9654;</td><td>-</td><td>Seek 30 s (music: previous / next track)</td></tr>
+  <tr><td>CH &#9650; / &#9660;</td><td>-</td><td>Next / previous episode or track; chapters in a film with chapters</td></tr>
+  <tr><td>Red / Green</td><td>-</td><td>Previous / next chapter</td></tr>
+  <tr><td>Yellow / Blue</td><td>-</td><td>Audio track picker / subtitle picker</td></tr>
+  <tr><td>Pointer</td><td>Highlight and click</td><td>While the pointer is on screen: buttons for previous, -10 s, play / pause, +10 s, next; click the progress bar to seek</td></tr>
+</table>
+<h3>Back on the first screen and leaving the app</h3>
+<ul>
+  <li>On Home (or on the address / Sign in screens when the app opened there), Back opens an <b>Exit OnScreen?</b> popup with <b>Exit</b> and <b>Cancel</b>; it starts on Cancel. Exit closes the app.</li>
+  <li>On webOS TV 23 and later, Back on that screen shows the TV's Home screen instead, as LG's checklist asks.</li>
+</ul>
+
+<h2>5. Test scenarios</h2>
+<table>
+  <tr><th style="width:4%">#</th><th style="width:44%">Steps</th><th>Expected result</th></tr>
+  <tr><td>1</td><td>First launch; enter the server address and sign in with the test account (section 2).</td><td>Home opens with rows of the test libraries.</td></tr>
+  <tr><td>2</td><td>Libraries &gt; Movies.</td><td>A grid of film posters; the pointer and the D-pad both move the highlight; the wheel scrolls.</td></tr>
+  <tr><td>3</td><td>Open <b>Sintel</b>, select <b>Play</b>.</td><td>The film plays full screen. OK pauses and resumes; &larr; / &rarr; seek 10 s.</td></tr>
+  <tr><td>4</td><td>During Sintel press &darr; twice, select <b>Subtitles</b> (or press Blue), pick a language.</td><td>Subtitles appear. Off removes them.</td></tr>
+  <tr><td>5</td><td>Play <b>Big Buck Bunny</b>, press Yellow (or &darr;&darr; &gt; Audio).</td><td>The audio track picker lists the film's tracks; choosing one switches the sound.</td></tr>
+  <tr><td>6</td><td>Press Back to leave the player, then go Home.</td><td>The film is in Continue Watching. Hold OK on its card: Remove from Continue Watching / Open. Open, then Resume, continues where it stopped.</td></tr>
+  <tr><td>7</td><td>TV Shows &gt; Caminandes &gt; play episode 1, let it reach the end (or press CH &#9650;).</td><td>Up Next / the next episode starts.</td></tr>
+  <tr><td>8</td><td>Music &gt; a Kevin MacLeod album &gt; Play All.</td><td>The now-playing screen shows; &#9654;&#9654; and CH &#9650; go to the next track.</td></tr>
+  <tr><td>9</td><td>Audiobooks &gt; a book &gt; Play, press &uarr; / &darr;.</td><td>The book plays; the speed picker changes the playback speed.</td></tr>
+  <tr><td>10</td><td>Photos &gt; open a photo; &larr; / &rarr; move between photos; press OK.</td><td>OK starts a slideshow (&#9654; Slideshow shows in the corner); OK again stops it; Back leaves.</td></tr>
+  <tr><td>11</td><td>Search &gt; type <code>Sintel</code>.</td><td>Sintel is found. A title not in the test libraries finds nothing.</td></tr>
+  <tr><td>12</td><td>Settings &gt; About &gt; Privacy policy, then Licence &amp; terms.</td><td>The policy address and a QR code; the terms of use, licence and third-party notices. Back returns to Settings.</td></tr>
+  <tr><td>13</td><td>Settings &gt; Sign out, confirm.</td><td>The Sign in screen opens; sign in again to continue.</td></tr>
+  <tr><td>14</td><td>On Home press Back.</td><td>webOS TV 6.0&ndash;22: the Exit OnScreen? popup (Cancel stays, Exit closes the app). webOS TV 23 and later: the TV's Home screen.</td></tr>
+</table>
+
+<p class="muted">Network: the app connects only to the server address entered (port 443 for the test server) and loads the images that server points to, such as film posters from TMDB (image.tmdb.org). It uses one TV permission, <code>systemconfig.query</code>, to read whether the screen supports HDR and 4K.</p>
+
+</body>
+</html>
