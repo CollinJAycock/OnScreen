@@ -64,6 +64,15 @@ which has the same text shape used for Amazon's long description.
 (Different stores ask for the same content under different field
 names; one source file works for all of them.)
 
+### `lg-content-store/` — LG webOS TV (Seller Lounge)
+
+| File | Field in Seller Lounge |
+|---|---|
+| `description-en.txt` | English (Default) App Description (50 to 4,000 bytes; plain ASCII) |
+| `screenshots/0[1-5]-*.png` | Screenshots (1920×1080), from `clients/webos`'s `npm run screenshots` (`scripts/screenshots.mjs`): the built app in desktop Chrome, signed in as `reviewer` on the review server |
+
+App icons: `clients/webos/icon.png` (80×80) and `largeIcon.png` (130×130).
+
 ### `samsung-appstore/` — Samsung TV (Tizen)
 
 | File | Slide / field in Samsung Seller Office |

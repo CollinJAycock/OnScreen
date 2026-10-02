@@ -1,0 +1,20 @@
+OnScreen plays the media library on your own OnScreen Media Server, free open-source software you install on your own computer or NAS. The app includes no movies, shows, music or channels: connect it to your server to browse and play the videos, music, audiobooks and photos you have added there.
+
+To use this app you need your own OnScreen Media Server set up and running, with media you have added to it. OnScreen does not provide, sell, host or link to any movies, shows, music or TV channels. It has no web browser, no add-ons and no way to open stream links or playlists; it works only with your OnScreen server. Please add only media you own or have the right to use.
+
+Features:
+- Home screen with Continue Watching, Next Up and recently added items from your libraries
+- Movies, TV shows, music, audiobooks and photos, with posters, descriptions and search
+- Resume where you left off, with watch progress shared with your other OnScreen apps
+- Audio track, subtitle and chapter choices, and Skip Intro / Skip Credits where your server has marked them
+- HDR and 4K on TVs that support them; when your TV can't play a file's format, your server adapts it as it plays
+- Music and audiobooks with a now-playing screen, and photo slideshows
+- Full Magic Remote support: point and click, scroll with the wheel, or use the arrow keys
+- Sign in with your username and password, or from your phone or computer with a PIN
+
+Getting started:
+1. Install OnScreen Media Server on a computer or NAS on your network (see github.com/CollinJAycock/OnScreen).
+2. Add your own media to it.
+3. Open this app, enter your server's address, and sign in.
+
+No ads, no analytics and no tracking. The app talks only to the server you choose, and loads the images it points to (such as film posters). Privacy policy: https://onscreen.wolverscreen.com/privacy
