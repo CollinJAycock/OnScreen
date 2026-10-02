@@ -461,6 +461,14 @@ Roku channel (no request features, as on Android):
     `Object.fromEntries`; a test fails on CSS Chromium 69 drops.
   - config.xml asks for the productinfo privilege (the model name); the
     version is 1.1.0 in config.xml, package.json and Settings > About.
+  - Posters no longer all break on a TV signed in more than a day ago. Every
+    image URL carries the 24-hour asset token, and nothing renewed it before
+    the first screen rendered (the event stream renewed it only after its
+    own failed dial, too late for the images already requested). The app
+    now renews a stale token, or one of unknown age, before showing
+    anything (waiting at most 4 s) and again on return from the
+    background. The webOS app had the same bug and gets the same fix (found
+    on the Q80B, whose sign-in dated from the old Tizen build).
 - **webOS app 0.2.0: parity with the Android TV app**, run on an LG
   OLED77C1PUB (webOS 6, Chromium 79).
   - Server sessions play on the content timeline: an exact start at the
