@@ -114,8 +114,15 @@ export class RestoreGuard<E> {
   private readonly startedOn: E | null;
   private placed: E | null = null;
 
-  /** @param focused the element that has focus now, null when none. */
-  constructor(private readonly focused: () => E | null) {
+  /** @param focused the element that has focus now, null when none.
+   *  @param inModal whether `el` is in a modal over the page (the exit
+   *  popup): focus there, and its going when the popup closes, isn't the
+   *  user moving off the restore, which carries on behind the popup (the
+   *  focus manager keeps where it lands for the popup's Cancel). */
+  constructor(
+    private readonly focused: () => E | null,
+    private readonly inModal: (el: E) => boolean = () => false,
+  ) {
     // As a rule nothing: the page's first card holds its autofocus back for
     // the restore, and the last page's card is gone.
     this.startedOn = focused();
@@ -134,7 +141,8 @@ export class RestoreGuard<E> {
   /** True while the page is up and focus is where the restore left it. */
   get active(): boolean {
     if (this.stopped) return false;
-    const now = this.focused();
+    let now = this.focused();
+    if (now !== null && this.inModal(now)) now = null;
     if (now !== null && now !== this.startedOn && now !== this.placed) this.stopped = true;
     return !this.stopped;
   }
@@ -142,7 +150,10 @@ export class RestoreGuard<E> {
 
 /** A guard over the focus manager's focus, for a page about to restore. */
 export function restoreGuard(): RestoreGuard<HTMLElement> {
-  return new RestoreGuard(() => focusManager.currentElement());
+  return new RestoreGuard(
+    () => focusManager.currentElement(),
+    (el) => !!el.closest('[data-focus-modal]'),
+  );
 }
 
 /**
@@ -177,7 +188,7 @@ export function findKeyed(key: string, root: ParentNode = document): HTMLElement
  * glide down to the card (and leave it on the bottom edge). Nothing happens
  * (false) once `guard` says the restore is over.
  */
-export function restoreFocusTo(el: HTMLElement, guard?: RestoreGuard<HTMLElement>): boolean {
+export function restoreFocusTo(el: HTMLElement, guard?: RestoreGuard<HTMLElement> | null): boolean {
   if (guard && !guard.active) return false;
   el.scrollIntoView({ block: 'center', inline: 'nearest' });
   focusManager.focus(el);
@@ -187,17 +198,38 @@ export function restoreFocusTo(el: HTMLElement, guard?: RestoreGuard<HTMLElement
 
 /** Back on a page: focuses the remembered card when it's on the page. True
  *  when it was. */
-export function restoreKeyed(memo: FocusMemo | null, guard?: RestoreGuard<HTMLElement>): boolean {
+export function restoreKeyed(memo: FocusMemo | null, guard?: RestoreGuard<HTMLElement> | null): boolean {
   const el = memo?.focusedId ? findKeyed(memo.focusedId) : null;
   if (!el) return false;
   return restoreFocusTo(el, guard);
+}
+
+/**
+ * A restored row again, after content loaded in above it (Settings: Back
+ * from Licence & terms lands on the last row, then the preferences and
+ * scrobble rows arrive and push it off the screen): scrolled back to the
+ * middle, while `guard` says the restore still holds. False when it didn't.
+ */
+export function restoreAgain(memo: FocusMemo | null, guard: RestoreGuard<HTMLElement> | null): boolean {
+  if (!memo || !guard || !guard.active) return false;
+  return restoreKeyed(memo, guard);
+}
+
+/** The app's page box (the root layout's main.tv-root) back to the top. It
+ *  outlives the routes in it, scroll and all, so a page opened from far down
+ *  another (Licence & terms, from the bottom of Settings) would start part
+ *  way down itself. */
+export function scrollPageToTop(): void {
+  if (typeof document === 'undefined') return;
+  const root = document.querySelector<HTMLElement>('main.tv-root');
+  if (root) root.scrollTop = 0;
 }
 
 /** The first element matching `selector` takes focus (a page's first card,
  *  whose autofocus was held back for a restore that found nothing), else
  *  whatever the focus manager picks. Nothing once `guard` says the restore
  *  is over. */
-export function focusFirstOf(selector: string, guard?: RestoreGuard<HTMLElement>): void {
+export function focusFirstOf(selector: string, guard?: RestoreGuard<HTMLElement> | null): void {
   if (guard && !guard.active) return;
   const el = document.querySelector<HTMLElement>(selector);
   if (el) {

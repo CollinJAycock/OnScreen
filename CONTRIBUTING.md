@@ -122,4 +122,4 @@ At minimum, PRs should not break existing unit tests. Adding tests for new behav
 
 ## License
 
-OnScreen is licensed under **AGPLv3**. By contributing, you agree that your contributions will be licensed under the same terms. See [LICENSE](LICENSE) for the full text.
+OnScreen is licensed under **AGPLv3**, with one exception: the LG webOS TV client in [`clients/webos`](clients/webos) is licensed under the **Apache License 2.0** (see [clients/webos/LICENSE](clients/webos/LICENSE)). The server and every other client remain AGPLv3. By contributing, you agree that your contributions will be licensed under the same terms as the part of the repository they change: Apache-2.0 under `clients/webos`, AGPLv3 everywhere else. See [LICENSE](LICENSE) for the full AGPLv3 text.

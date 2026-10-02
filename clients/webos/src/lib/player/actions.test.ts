@@ -1,22 +1,132 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FIND_ONLINE_LABEL,
   actionRowKey,
+  barSeekMs,
   chapterAt,
   chapterRowLabel,
   formatClock,
   pickerWindow,
   playerActions,
+  subtitlePickerRows,
+  transportButtons,
+  transportSteps,
+  transportLabel,
 } from './actions';
 
 describe('playerActions', () => {
-  it('offers Audio (≥ 1 track), Subtitles always, Chapters (≥ 2) for video', () => {
-    expect(playerActions({ video: true, switchableAudioTracks: 1, chapters: 2 })).toEqual(['audio', 'subtitles', 'chapters']);
-    expect(playerActions({ video: true, switchableAudioTracks: 0, chapters: 1 })).toEqual(['subtitles']);
-    expect(playerActions({ video: true, switchableAudioTracks: 3, chapters: 0 })).toEqual(['audio', 'subtitles']);
+  const video = { video: true, subtitleTracks: 2, onlineSubtitles: false };
+
+  it('offers Audio (≥ 1 track), Subtitles, Chapters (≥ 2) for video', () => {
+    expect(playerActions({ ...video, switchableAudioTracks: 1, chapters: 2 })).toEqual(['audio', 'subtitles', 'chapters']);
+    expect(playerActions({ ...video, switchableAudioTracks: 0, chapters: 1 })).toEqual(['subtitles']);
+    expect(playerActions({ ...video, switchableAudioTracks: 3, chapters: 0 })).toEqual(['audio', 'subtitles']);
+  });
+
+  it('offers Subtitles for a file without tracks only with the online search', () => {
+    const none = { video: true, switchableAudioTracks: 1, chapters: 0, subtitleTracks: 0 };
+    expect(playerActions({ ...none, onlineSubtitles: false })).toEqual(['audio']);
+    expect(playerActions({ ...none, onlineSubtitles: true })).toEqual(['audio', 'subtitles']);
+    // A track is enough without it.
+    expect(playerActions({ ...none, subtitleTracks: 1, onlineSubtitles: false })).toEqual(['audio', 'subtitles']);
   });
 
   it('offers nothing for music / books (their own view)', () => {
-    expect(playerActions({ video: false, switchableAudioTracks: 2, chapters: 9 })).toEqual([]);
+    expect(playerActions({ video: false, switchableAudioTracks: 2, subtitleTracks: 3, onlineSubtitles: true, chapters: 9 })).toEqual([]);
+  });
+});
+
+describe('subtitlePickerRows', () => {
+  const tracks = [
+    { key: 'emb:2', label: 'English' },
+    { key: 'ext:7', label: 'French' },
+  ];
+
+  it('lists Off and the tracks, with no "Find more online…" on a server without the search', () => {
+    const rows = subtitlePickerRows(tracks, 'ext:7', false);
+    expect(rows.map((r) => r.label)).toEqual(['Off', 'English', 'French']);
+    expect(rows.some((r) => r.action)).toBe(false);
+    expect(rows.map((r) => r.current)).toEqual([false, false, true]);
+  });
+
+  it('ends with "Find more online…" (an action row) when the server has it', () => {
+    const rows = subtitlePickerRows(tracks, null, true);
+    expect(rows.map((r) => r.label)).toEqual(['Off', 'English', 'French', FIND_ONLINE_LABEL]);
+    expect(rows[3]).toEqual({ label: FIND_ONLINE_LABEL, current: false, action: true });
+    expect(rows[0].current).toBe(true);
+    // A file without tracks: Off and the search.
+    expect(subtitlePickerRows([], null, true).map((r) => r.label)).toEqual(['Off', FIND_ONLINE_LABEL]);
+  });
+
+  it("adds a track's status to its label", () => {
+    const rows = subtitlePickerRows(tracks, 'emb:2', false, (k) => (k === 'emb:2' ? ' · loading…' : ''));
+    expect(rows[1].label).toBe('English · loading…');
+    expect(rows[2].label).toBe('French');
+  });
+});
+
+describe("the pointer's playback controls", () => {
+  it('offers previous / next only where CH ▲▼ step somewhere', () => {
+    expect(transportButtons({ prev: true, next: true })).toEqual(['prev', 'back', 'playpause', 'forward', 'next']);
+    expect(transportButtons({ prev: false, next: false })).toEqual(['back', 'playpause', 'forward']);
+    // The first track of an album: no previous; the last: no next.
+    expect(transportButtons({ prev: false, next: true })).toEqual(['back', 'playpause', 'forward', 'next']);
+    expect(transportButtons({ prev: true, next: false })).toEqual(['prev', 'back', 'playpause', 'forward']);
+  });
+
+  describe('transportSteps', () => {
+    const base = { prevSibling: false, nextSibling: false, chapterStarts: [] as number[], positionMs: 0 };
+
+    it("a queue item steps to its siblings, and only where there's one", () => {
+      expect(transportSteps({ ...base, step: 'item' })).toEqual({ prev: false, next: false });
+      expect(transportSteps({ ...base, step: 'item', nextSibling: true })).toEqual({ prev: false, next: true });
+      expect(transportSteps({ ...base, step: 'item', prevSibling: true })).toEqual({ prev: true, next: false });
+    });
+
+    // jumpToChapter: back always lands somewhere (the chapter's start, or
+    // the one before); next has nowhere to go from the last chapter.
+    it('chapters step back always, and on only before the last one', () => {
+      const chapterStarts = [0, 60_000, 120_000];
+      expect(transportSteps({ ...base, step: 'chapter', chapterStarts, positionMs: 30_000 })).toEqual({
+        prev: true,
+        next: true,
+      });
+      expect(transportSteps({ ...base, step: 'chapter', chapterStarts, positionMs: 130_000 })).toEqual({
+        prev: true,
+        next: false,
+      });
+      // Within jumpToChapter's 2 s of the last start: that's on it already.
+      expect(transportSteps({ ...base, step: 'chapter', chapterStarts, positionMs: 119_000 })).toEqual({
+        prev: true,
+        next: false,
+      });
+    });
+
+    it('nothing steps where CH ▲▼ do nothing', () => {
+      expect(transportSteps({ ...base, step: 'none', prevSibling: true, nextSibling: true })).toEqual({
+        prev: false,
+        next: false,
+      });
+    });
+  });
+
+  it('labels play / pause by the state', () => {
+    expect(transportLabel('playpause', true)).toBe('▶');
+    expect(transportLabel('playpause', false)).toBe('❚❚');
+    expect(transportLabel('back', false)).toBe('-10s');
+    expect(transportLabel('forward', false)).toBe('+10s');
+  });
+
+  it('seeks to where the bar was clicked, clamped to the item', () => {
+    // A 1000 px bar from x 200 on a 100 s item.
+    expect(barSeekMs(200, 200, 1000, 100_000)).toBe(0);
+    expect(barSeekMs(450, 200, 1000, 100_000)).toBe(25_000);
+    expect(barSeekMs(1200, 200, 1000, 100_000)).toBe(100_000);
+    expect(barSeekMs(100, 200, 1000, 100_000)).toBe(0);
+    expect(barSeekMs(1500, 200, 1000, 100_000)).toBe(100_000);
+    // Nothing to seek in yet.
+    expect(barSeekMs(450, 200, 1000, 0)).toBeNull();
+    expect(barSeekMs(450, 200, 0, 100_000)).toBeNull();
   });
 });
 

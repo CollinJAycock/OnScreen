@@ -105,6 +105,16 @@
     });
   });
 
+  // Another server: as Sign in's and the hub's Change server (the address
+  // forgotten, then Setup). Signed out here, so nothing to confirm.
+  let changingServer = $state(false);
+  async function changeServer() {
+    if (changingServer) return;
+    changingServer = true;
+    await api.forgetServer();
+    goto('#/setup');
+  }
+
   onDestroy(() => {
     cancelled = true;
     if (pollTimer) clearTimeout(pollTimer);
@@ -142,6 +152,9 @@
 
   <button use:focusable class="cancel-btn" onclick={() => goto('#/login')}>
     Use password instead
+  </button>
+  <button use:focusable class="cancel-btn" onclick={() => void changeServer()}>
+    Change server
   </button>
 </div>
 

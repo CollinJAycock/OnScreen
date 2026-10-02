@@ -333,6 +333,31 @@ export const discover = {
     api.post<MediaRequest>('/api/v1/requests', { type, tmdb_id: tmdbID }),
 };
 
+/** One media type's request allowance. remaining is null when the limit is
+ *  0 (unlimited). */
+export interface RequestQuotaUsage {
+  limit: number;
+  used: number;
+  remaining: number | null;
+}
+
+/** GET /requests/quota: the signed-in account's own allowance. can_request
+ *  false means an admin turned requesting off for the account (Discover's
+ *  searches then only answer "ask an admin"); admins are always allowed. */
+export interface RequestQuota {
+  can_request: boolean;
+  window_days: number;
+  movies: RequestQuotaUsage;
+  tv: RequestQuotaUsage;
+}
+
+export const requests = {
+  /** v2.5. An older server has no such route: its /requests/{id} answers
+   *  "quota" with 400 (not a request id), or 404 without requests at all
+   *  (lib/navGates reads both as "no per-account allowance"). */
+  quota: () => api.get<RequestQuota>('/api/v1/requests/quota'),
+};
+
 // ── Online subtitle search (OpenSubtitles via server) ──────────────────────
 
 export const onlineSubtitles = {
@@ -391,13 +416,22 @@ export interface CapabilitiesFeatures {
   webhooks: boolean;
   notifications: boolean;
   // v2.2 additions — all default false on older servers.
+  /** A TMDB key is configured, so Discover can search. Whether this
+   *  account may request is per user: requests.quota(). */
   requests: boolean;
+  /** The Live TV subsystem is built in, not that any tuner exists. */
   live_tv: boolean;
+  /** Rides live_tv (the server sets both from one flag). */
   dvr: boolean;
   lyrics: boolean;
   intro_markers: boolean;
   chapters: boolean;
   web_downloads: boolean;
+  // v2.5 additions — absent on older servers.
+  /** live_tv, and at least one enabled tuner is set up. */
+  live_tv_configured?: boolean;
+  /** An enabled Radarr or Sonarr feeds the Upcoming calendar. */
+  upcoming?: boolean;
 }
 
 export interface CapabilitiesResponse {

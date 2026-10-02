@@ -6,7 +6,17 @@ import { get } from 'svelte/store';
 const { goto } = vi.hoisted(() => ({ goto: vi.fn() }));
 vi.mock('$app/navigation', () => ({ goto }));
 
-import { goBack, playItem, playerEpoch, replaceTo, resetStack, takeStartOverride } from './nav';
+import {
+  backTarget,
+  forgetHistory,
+  goBack,
+  playItem,
+  playerEpoch,
+  pushTo,
+  replaceTo,
+  resetStack,
+  takeStartOverride,
+} from './nav';
 
 const ITEM = 'a3c1';
 const NEXT = 'b7d2';
@@ -93,5 +103,25 @@ describe('playItem', () => {
     expect(goto).not.toHaveBeenCalled();
     expect(get(playerEpoch)).toBe(before + 1);
     expect(takeStartOverride(ITEM)).toBe(754_000);
+  });
+});
+
+// Sign in's Back on its first step (routes/login): to Setup when Setup
+// opened it this session, else the app's (the exit popup).
+describe('backTarget', () => {
+  it('names where Back would go, without going', () => {
+    expect(backTarget()).toBeNull();
+    at('#/setup');
+    pushTo('#/login');
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(backTarget()).toBe('#/setup');
+    expect(backTarget()).toBe('#/setup');
+  });
+
+  it('is empty again after a sign-out forgets the history', () => {
+    at('#/setup');
+    pushTo('#/login');
+    forgetHistory();
+    expect(backTarget()).toBeNull();
   });
 });

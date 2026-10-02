@@ -17,14 +17,14 @@ Plex, Jellyfin, and Emby are all great — OnScreen exists because we wanted som
 - **Live TV, DVR, and hardware transcoding ship in core**, no Plex Pass / Emby Premiere gate.
 - **OIDC, OAuth, SAML, and LDAP** are first-class auth providers, no plugin install.
 - A **native bit-perfect audio engine** (Windows WASAPI exclusive + DSD-via-DoP + ReplayGain enforcement) ships in the desktop client today.
-- Is **AGPLv3**. Forks and self-hosters get the same freedom the code was written with.
+- Is **AGPLv3**. Forks and self-hosters get the same freedom the code was written with. (The LG webOS TV client alone is Apache-2.0; see [License](#license).)
 
 For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Where OnScreen leads / trails"), see [docs/comparison-matrix.md](docs/comparison-matrix.md). Highlights:
 
 | | OnScreen | Plex | Jellyfin | Emby |
 |--|--|--|--|--|
 | Database | PostgreSQL | SQLite | SQLite | SQLite |
-| License | AGPLv3 | Proprietary | GPLv2 | GPLv2 + proprietary server |
+| License | AGPLv3 (LG webOS client: Apache-2.0) | Proprietary | GPLv2 | GPLv2 + proprietary server |
 | Live TV / DVR | ✅ core | 💎 paid | ✅ core | 💎 paid |
 | OIDC / SAML / LDAP | ✅ core | ❌ | 🧩 plugin | 💎 paid |
 | Hardware transcode | ✅ core | 💎 paid | ✅ core | 💎 paid |
@@ -208,4 +208,6 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for the full dev setup, code style, and P
 
 AGPLv3. See [LICENSE](LICENSE).
 
-By contributing, you agree your work will be licensed under the same terms.
+The one exception is the LG webOS TV client in [`clients/webos`](clients/webos), which is licensed under the Apache License 2.0 (see [clients/webos/LICENSE](clients/webos/LICENSE)). The server and every other client remain AGPLv3.
+
+By contributing, you agree your work will be licensed under the same terms as the part of the repository it changes: Apache-2.0 under `clients/webos`, AGPLv3 everywhere else.

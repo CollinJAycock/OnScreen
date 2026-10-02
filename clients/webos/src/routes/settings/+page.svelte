@@ -13,8 +13,11 @@
   import { api, endpoints, Unauthorized } from '$lib/api';
   import { focusable, focusScope } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
-  import { focusFirstOf } from '$lib/focus/memory';
+  import { focusFirstOf, restoreAgain, restoreGuard, restoreKeyed, takeFocusMemo } from '$lib/focus/memory';
+  import QrCode from '$lib/components/QrCode.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { PRIVACY_POLICY_URL } from '$lib/legal';
+  import { pushTo } from '$lib/nav';
   import { APP_VERSION } from '$lib/version';
   import { hasExtraScrobblers, scrobbleSummary } from '$lib/scrobbleLink';
   import {
@@ -30,6 +33,15 @@
 
   const username = $derived(api.getUser()?.username ?? '');
   const serverUrl = $derived(api.getOrigin() ?? '');
+
+  // Back from Licence & terms (lib/nav's goBack) puts focus back on its row
+  // (lib/focus/memory). Taken before the rows mount, so Sign out can hold
+  // its autofocus for it.
+  const backMemo = takeFocusMemo();
+  // The rows load in above that row after it has the ring (preferences,
+  // scrobbling) and push it off the screen: each load brings it back while
+  // the user hasn't moved on.
+  const guard = backMemo?.focusedId ? restoreGuard() : null;
 
   type Confirm = 'signOut' | 'forgetServer';
   let confirming = $state<Confirm | null>(null);
@@ -93,6 +105,8 @@
   }
 
   onMount(() => {
+    if (backMemo?.focusedId && !restoreKeyed(backMemo, guard)) focusFirstOf('.action-row', guard);
+
     (async () => {
       try {
         applyPrefs(await endpoints.users.preferences());
@@ -102,6 +116,8 @@
       } finally {
         prefsLoaded = true;
       }
+      await tick();
+      restoreAgain(backMemo, guard);
     })();
 
     (async () => {
@@ -110,9 +126,11 @@
       } catch {
         // Best-effort — the row falls back to "Off" if status can't load.
       }
+      await tick();
+      restoreAgain(backMemo, guard);
     })();
 
-    return focusManager.pushBack(() => {
+    const offBack = focusManager.pushBack(() => {
       if (confirming) {
         void closeConfirm();
         return true;
@@ -120,6 +138,10 @@
       goto('#/hub');
       return true;
     });
+    return () => {
+      offBack();
+      guard?.end();
+    };
   });
 
   // Saves the two languages (the endpoint answers 204 with no body, and
@@ -186,16 +208,6 @@
     }
   }
 
-  // The About section, read-only below the last row (see revealAbout).
-  let aboutEl: HTMLElement | undefined = $state();
-
-  // Runs once the focus manager has started its own scroll to the row (the
-  // focusable's onFocus comes after it); this later one takes over and
-  // brings the page's end into view, the row still on screen above it.
-  function revealAbout() {
-    aboutEl?.scrollIntoView({ block: 'end', behavior: 'smooth' });
-  }
-
   const audioLabel = $derived(langLabel(LANGUAGE_OPTIONS, audioLang));
   const subLabel = $derived(langLabel(SUBTITLE_LANGUAGE_OPTIONS, subLang));
 
@@ -242,7 +254,7 @@
     {/if}
 
     <button
-      use:focusable={{ autofocus: true }}
+      use:focusable={{ autofocus: !backMemo?.focusedId }}
       class="action-row"
       data-confirm="signOut"
       onclick={() => (confirming = 'signOut')}
@@ -302,15 +314,7 @@
 
   <section>
     <div class="section-title">Scrobbling</div>
-    <!-- The last row: its focus scrolls the page to its end, or About (the
-         app version, the account, the server) would never come into view;
-         the page only scrolls as focus moves, and nothing below is
-         focusable. -->
-    <button
-      use:focusable={{ onFocus: revealAbout }}
-      class="action-row"
-      onclick={() => goto('#/settings/scrobble')}
-    >
+    <button use:focusable class="action-row" onclick={() => goto('#/settings/scrobble')}>
       <div class="action-title">
         {scrobbleExtras ? 'ListenBrainz, Last.fm and Trakt' : 'ListenBrainz'}
         <span class="badge {scrobbleBadge.on ? 'on' : 'off'}">{scrobbleBadge.label}</span>
@@ -325,7 +329,9 @@
     </button>
   </section>
 
-  <section bind:this={aboutEl}>
+  <!-- The page only scrolls as focus moves: the two rows at the end bring
+       About (version, account, server) into view on their way down. -->
+  <section>
     <div class="section-title">About</div>
     <div class="info-row">
       <div class="info-label">Version</div>
@@ -343,6 +349,33 @@
         <div class="info-value mono">{serverUrl}</div>
       </div>
     {/if}
+
+    <!-- LG: "Provide Privacy Policy within your app". The TV has no browser
+         to open it in, so the address shows as text and as a QR code for a
+         phone. Focusable so the D-pad reaches it (OK does nothing). Both
+         rows are keyed for lib/focus/memory: Back from Licence & terms
+         lands on the row that opened it. -->
+    <div use:focusable class="link-row" data-focus-key="settings:privacy" data-focus-control>
+      <div class="link-text">
+        <div class="action-title">Privacy policy</div>
+        <div class="action-desc">Scan the code with your phone, or open this address on a phone or computer:</div>
+        <div class="link-url">{PRIVACY_POLICY_URL}</div>
+      </div>
+      <div class="link-qr">
+        <QrCode text={PRIVACY_POLICY_URL} size={200} label="Privacy policy address" />
+      </div>
+    </div>
+
+    <button
+      use:focusable
+      class="action-row"
+      data-focus-key="settings:legal"
+      data-focus-control
+      onclick={() => pushTo('#/settings/legal')}
+    >
+      <div class="action-title">Licence &amp; terms</div>
+      <div class="action-desc">Terms of use, the app's Apache 2.0 licence and third-party notices.</div>
+    </button>
   </section>
 </div>
 
@@ -473,6 +506,29 @@
   .action-desc {
     font-size: var(--font-sm);
     color: var(--text-secondary);
+  }
+
+  /* Privacy policy: lined up with the action rows, the code on the right
+     (a margin, not flexbox `gap`: Chromium 79). */
+  .link-row {
+    display: flex;
+    align-items: center;
+    padding: 16px 20px;
+    margin: 16px 0 8px;
+    border: 2px solid transparent;
+    border-radius: 8px;
+  }
+  .link-text {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .link-url {
+    margin-top: 8px;
+    font-family: monospace;
+    font-size: var(--font-md);
+  }
+  .link-qr {
+    margin-left: 32px;
   }
 
   .badge {

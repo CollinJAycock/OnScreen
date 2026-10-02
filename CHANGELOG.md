@@ -459,6 +459,127 @@ Roku channel (no request features, as on Android):
     `<button>`, all of which webOS 6 ignored. The capability header reports
     the panel's real size and HDR support (from LG's config service) and
     claims VP9 only when the media stack takes it.
+- **webOS app 0.2.1, for the first LG Content Store submission.**
+  - `appinfo.json` declares `requiredACG: ["systemconfig.query"]`, the
+    group of the app's one Luna call (`com.webos.service.config/getConfigs`,
+    the HDR / UHD panel probe). webOS TV 26 enforces the list for an app
+    that declares it, and from webOS TV 27 (March 2027) `ares-package` and
+    Seller Lounge refuse an app without the field. A test fails when a
+    `luna://` or `palm://` URI in the app has no group declared; the
+    README's "Luna permissions (ACG)" section says how to look one up.
+  - The top nav shows Discover only when the server has requests on (a
+    TMDB key) and the account may request (`GET /requests/quota`), and Live
+    TV and Recordings only with a configured tuner
+    (`features.live_tv_configured`; `live_tv` on a server older than that
+    field). They led to screens that only said "requesting is turned off
+    for your account" or "No channels configured". The pills appear once
+    the server has answered, so nothing flashes up and disappears, and
+    stay hidden if the answer can't be loaded. A failed or 10-minute-old
+    answer is asked again by the next page, after the hub's Retry, and
+    when the app comes back to the front or the network returns (the pills
+    stay as they are until the new answer is in); sign-out and Change
+    server drop them. Unlike the web app, admins get no
+    exception: the TV can't set either feature up. On a server without the
+    quota endpoint (v2.4 and earlier, whose `requests` flag was off for a
+    TMDB key set in Settings), Discover shows as in 0.2.0.
+  - The package icons are LG's sizes, `icon.png` 80x80 and `largeIcon.png`
+    130x130 (they were 192 and 512), with the artwork inside LG's padding,
+    and the launcher tile colour (`iconColor`) is the icons' black
+    background instead of the accent purple: Seller Lounge QA rejects a tile
+    that doesn't match the icon. A test checks both.
+  - Back is the app's own (`disableBackHistoryAPI: true`). With the
+    flag off, webOS answered the remote's Back with `history.back()`, so
+    pickers, dialogs and the player's Back never saw the key, and nothing
+    offered to leave the app. Each screen's own Back comes first; one that
+    nothing takes goes to the previous page, and on a first screen (Home,
+    Sign in, Setup) opens an "Exit OnScreen?" popup, Exit
+    (`window.close()`) or Cancel, which starts on Cancel so a stray second
+    press doesn't end the app. On webOS TV 23 and later, where LG's
+    checklist wants Back on the entry page to show the TV's Home screen,
+    the app calls `platformBack()` instead; LG's guide doesn't say what
+    that does from 23 on, so it is still to be checked in LG's Cloud Test
+    Lab. The splash redirects in place (no history entry leads back to
+    it), a held Back is one press, and Sign in's steps go back as their
+    on-screen buttons do, except while a sign-in is on its way.
+  - The Magic Remote: the pointer moves the focus ring to what it is over
+    (a card in a row scrolls fully into view, so the pointer works along a
+    row past the screen's edge). OK in pointer mode acts once on what the
+    cursor is on, whichever of its click and its Enter comes first; over
+    empty space it presses nothing but the page's own OK (the player's
+    play / pause). A wheel notch is a ↑ / ↓ step, so rows, grids and pages
+    move the way the D-pad moves them (a long text with nothing to focus
+    scrolls itself). When webOS hides the cursor, the D-pad goes on from
+    the ring. In the player, while the pointer is on screen, the controls
+    add |◀, -10s, play / pause, +10s and ▶| buttons (previous / next where
+    CH ▲▼ step something) and a click on the bar seeks there; the speed
+    picker, the online subtitle results, Skip Intro / Credits and the
+    error overlay's Try again / Exit take clicks too. The keys do the same
+    as before (OK, ← →, CH ▲▼).
+  - Subtitles > "Find more online…" shows only when the server has an
+    online subtitle search (`features.subtitles_external`), and stays
+    hidden while that answer loads or if it fails: elsewhere the search
+    only ever answered "not configured". The Subtitles button now needs a
+    track or that search (its only row would otherwise be Off).
+  - Screensaver type 2 (`screenSaverProperties.preferredType`: dimming
+    of the on-screen display, after 30 minutes), so the OLED screensaver no
+    longer cuts music, audiobooks or the photo slideshow (only full-screen
+    video was exempt). Not type 3, which switches the picture to Gallery
+    mode.
+  - Settings > About shows the privacy policy
+    (`https://onscreen.wolverscreen.com/privacy`) as text and as a QR code,
+    as LG asks every app to; the TV has no browser to open it in. The
+    policy page now covers the LG app: its storage, the device name and
+    playback capabilities it sends the server, and the images it loads
+    from where the server points (TMDB posters in Discover, channel logos
+    in Live TV and Recordings).
+  - Settings > About > Licence & terms: the end-user terms LG's Seller
+    Lounge terms (§7.1) ask every app to carry (the app comes from its
+    developer, not LG; LG and its affiliates have no liability for it and
+    are third-party beneficiaries; it may not be available in every
+    country), the app's Apache-2.0 notice, and the notices of the
+    open-source code in the bundle with the MIT and Apache licence texts.
+    Up / Down read it a block at a time, chips jump to a section, and Back
+    returns to the row that opened it. `clients/webos/THIRD_PARTY_NOTICES.md`
+    carries the same list; tests check both against the installed
+    packages, hls.js's own LICENSE included.
+  - `clients/webos` is relicensed under the Apache License 2.0
+    (`clients/webos/LICENSE`, `package.json`); the server and every other
+    client stay AGPL-3.0. LG's Seller Lounge terms (§16.1(k)) refuse an
+    app derived from software that requires its source to be disclosed.
+    Contributions under `clients/webos` are Apache-2.0 (README,
+    CONTRIBUTING).
+  - Sign in no longer traps a wrong but reachable server. Back on its
+    username step returns to Setup when Setup opened it this session (the
+    exit popup stays for a Sign in the app launched on), and the username
+    step and Pair have a Change server button, which forgets the address and
+    opens Setup as the home screen's does.
+  - The Magic Remote's OK keeps the hold it has with the D-pad. Holding OK
+    with the cursor on a Continue Watching card opens its options instead of
+    the item, and the click its release sends is dropped. A held OK on the
+    on-screen keyboard's delete key goes on deleting. A short press still
+    acts once.
+  - Cancelling the exit popup while the home screen is still putting focus
+    back after a Back no longer lands on the Home pill. The card that restore
+    finds behind the popup gets the ring.
+  - Skip Intro / Skip Credits takes the pointer's click again. The player's
+    full-width action and transport rows covered it; now only their buttons
+    take the pointer. The pointer's |◀ and ▶| buttons show only where they
+    go somewhere (no previous on the first track, no next in the last
+    chapter).
+  - Back from Licence & terms keeps its Settings row on screen after the
+    preferences and scrobbling rows load in above it. Licence & terms opens
+    at its title instead of part way down, where Settings' scroll had left
+    it.
+  - The third-party notices add the code the hls.js build carries from
+    other projects: dash.js's CEA-608 parser (BSD 3-Clause, with its licence
+    text), vtt.js and the Common Media Library (Apache-2.0), and
+    structured-field-values (MIT). They also add Project Nayuki's QR Code
+    generator (MIT), which `src/lib/qr.ts` is ported from; the file's header
+    now carries its notice. A test fails on any copyright line in the
+    bundled hls.js that the list doesn't carry.
+  - The privacy policy covers Last.fm and Trakt next to ListenBrainz: what
+    the server sends each linked account, and that the developer receives
+    none of it.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
   search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
   its Deceptive and Malicious Behavior policy, which names apps that "save,

@@ -131,12 +131,21 @@ export function takeStartOverride(id: string): number | undefined {
 
 /** Detail-page back handler. Pops the stack; falls back to `fallback`
  *  (the hub unless the caller has a better parent) when empty, e.g. a
- *  cold-launch deep link. */
+ *  cold-launch deep link. Also where a Back no screen took goes, off the
+ *  first screens (lib/appExit): the app owns Back (disableBackHistoryAPI),
+ *  so the webview's history never moves on its own. */
 export function goBack(fallback = '#/hub') {
   const dest = backStack.pop() ?? fallback;
   // The page Back lands on may put focus back where it was (focus/memory).
   focusMemory.back(dest);
   goto(dest);
+}
+
+/** Where goBack would go now, without going: null when the stack is empty
+ *  (goBack's fallback then). Sign in asks it, to tell a Sign in that Setup
+ *  opened (Back returns there) from one the app launched on. */
+export function backTarget(): string | null {
+  return backStack.length > 0 ? backStack[backStack.length - 1] : null;
 }
 
 function pushHere() {

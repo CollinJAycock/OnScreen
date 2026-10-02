@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation'; // navigation to pairing screen
   import { api, ApiError } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import { focusable } from '$lib/focus/focusable';
+  import { focusManager } from '$lib/focus/manager';
+  import { backTarget, goBack } from '$lib/nav';
 
   let step = $state<'username' | 'password' | 'totp'>('username');
   let username = $state('');
@@ -11,6 +14,53 @@
   let challengeToken = $state('');
   let error = $state('');
   let submitting = $state(false);
+
+  // The on-screen "back" / "change user" buttons, as the steps' own Back
+  // (LG: a UI back button acts as the remote's). On the first step Back
+  // returns to Setup when Setup opened Sign in this session (it pushes its
+  // route, lib/nav: a wrong but reachable server otherwise left the user
+  // stuck here), and is otherwise the app's (lib/appExit): Sign in as the
+  // launch screen offers to exit. Mid sign-in neither moves (Back is still
+  // taken): the reply picks the step, the code step or the hub, and would
+  // overtake one changed under it. A different user starts without the
+  // last one's password.
+  function backToTotpStep() {
+    if (submitting) return;
+    step = 'password';
+    totpCode = '';
+    error = '';
+  }
+  function backToUsernameStep() {
+    if (submitting) return;
+    step = 'username';
+    password = '';
+    error = '';
+  }
+  onMount(() =>
+    focusManager.pushBack(() => {
+      if (step === 'totp') backToTotpStep();
+      else if (step === 'password') backToUsernameStep();
+      else {
+        if (backTarget() === '#/setup') {
+          goBack('#/setup');
+          return true;
+        }
+        return false;
+      }
+      return true;
+    }),
+  );
+
+  // Another server, from the first step: as the hub's Change server (the
+  // address forgotten, then Setup), with no confirm, since there's no
+  // sign-in to lose. Whether or not Setup opened this screen.
+  let changingServer = $state(false);
+  async function changeServer() {
+    if (changingServer || submitting) return;
+    changingServer = true;
+    await api.forgetServer();
+    goto('#/setup');
+  }
 
   async function submit() {
     if (step === 'username') {
@@ -60,18 +110,21 @@
   {#if step === 'username'}
     <div class="label">Username</div>
     <OnScreenKeyboard bind:value={username} onchange={(v) => (username = v)} onsubmit={submit} />
+    <button use:focusable class="back-btn" onclick={() => void changeServer()}>
+      Change server
+    </button>
   {:else if step === 'totp'}
     <div class="label">Enter the code from your authenticator app (or a recovery code)</div>
     <!-- Masked like the password (Android masks this step too): a code
          read off the TV by the room is good for the rest of its window. -->
     <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} masked />
-    <button use:focusable class="back-btn" onclick={() => { step = 'password'; totpCode = ''; error = ''; }}>
+    <button use:focusable class="back-btn" onclick={backToTotpStep}>
       back
     </button>
   {:else}
     <div class="label">Password for <strong>{username}</strong></div>
     <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} masked />
-    <button use:focusable class="back-btn" onclick={() => (step = 'username')}>
+    <button use:focusable class="back-btn" onclick={backToUsernameStep}>
       change user
     </button>
   {/if}

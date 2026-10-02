@@ -59,3 +59,15 @@ export function focusScope(node: HTMLElement) {
     }
   };
 }
+
+/** A popup over the whole app (the exit popup): while it's mounted the ring
+ *  goes nowhere outside it, whatever autofocuses or is hovered behind it.
+ *  Its own focusScope still keeps the D-pad in. */
+export function focusModal(node: HTMLElement) {
+  node.setAttribute('data-focus-modal', 'true');
+  return {
+    destroy() {
+      node.removeAttribute('data-focus-modal');
+    }
+  };
+}
