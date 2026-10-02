@@ -1,16 +1,12 @@
-// Tizen TV remote → semantic key mapping. Same exported shape as
-// the webOS scaffold so the focus manager + spatial-nav code is
-// drop-in identical; only the underlying keyCode integers differ.
+// Samsung TV remote → semantic keys. The same RemoteKey names as the webOS
+// app, so the focus manager, the player and every page are shared; only the
+// codes differ (Samsung's TV Web App guide, "Remote Control": the VK_*
+// values tizen.tvinputdevice reports).
 //
-// Values come from Samsung's TV Web App Programming Guide
-// (developer.samsung.com → "TV remote control"). Tizen forwards
-// remote presses as KeyboardEvents on the document; .key is set
-// to a stringy name on most keys, .keyCode is set to the VK_*
-// integer for the rest.
-//
-// The hardware-key forwarding requires `hwkey-event="enable"` in
-// config.xml — without it, Back/Exit go straight to the launcher
-// and the app never sees them.
+// Return (Back) reaches the app only with `hwkey-event="enable"` in
+// config.xml; the media keys, the colour keys and the channel rocker only
+// once registered (registerTizenKeys, at boot). Exit and Smart Hub stay the
+// system's: Exit closes the app, Smart Hub sends it to the background.
 
 export type RemoteKey =
   | 'up'
@@ -25,6 +21,11 @@ export type RemoteKey =
   | 'stop'
   | 'forward'
   | 'rewind'
+  // The channel rocker (CH ▲ / CH ▼). Samsung's Smart Remote has one but no
+  // ◀◀ ▶▶ and no colour keys: it is the remote's next / previous. The player
+  // steps tracks or chapters with it, Live TV zaps channels.
+  | 'channelUp'
+  | 'channelDown'
   | 'home'
   | 'red'
   | 'green'
@@ -37,8 +38,10 @@ const BY_KEY: Record<string, RemoteKey> = {
   ArrowLeft: 'left',
   ArrowRight: 'right',
   Enter: 'enter',
+  // A desktop browser's keys for Back (vite dev, the emulator).
   Backspace: 'back',
   Escape: 'back',
+  XF86Back: 'back',
   MediaPlay: 'play',
   MediaPause: 'pause',
   MediaPlayPause: 'playpause',
@@ -46,80 +49,84 @@ const BY_KEY: Record<string, RemoteKey> = {
   MediaTrackNext: 'forward',
   MediaTrackPrevious: 'rewind',
   MediaFastForward: 'forward',
-  MediaRewind: 'rewind'
+  MediaRewind: 'rewind',
+  ChannelUp: 'channelUp',
+  ChannelDown: 'channelDown',
+  // A desktop keyboard's stand-ins for the rocker.
+  PageUp: 'channelUp',
+  PageDown: 'channelDown'
 };
 
-// Tizen TV VK_* keycode constants. Samsung publishes these as
-// `tizen.tvinputdevice.*` integers; the values are stable across
-// firmware revisions.
 const BY_CODE: Record<number, RemoteKey> = {
-  // D-pad
-  37: 'left', // VK_LEFT
-  38: 'up', // VK_UP
-  39: 'right', // VK_RIGHT
-  40: 'down', // VK_DOWN
-  13: 'enter', // VK_ENTER
-  10009: 'back', // VK_BACK / Return key on Samsung remotes
-
-  // Media transport
-  415: 'play', // VK_MEDIA_PLAY
-  19: 'pause', // VK_MEDIA_PAUSE
-  10252: 'playpause', // VK_MEDIA_PLAY_PAUSE
-  413: 'stop', // VK_MEDIA_STOP
-  417: 'forward', // VK_MEDIA_FAST_FORWARD
-  412: 'rewind', // VK_MEDIA_REWIND
-
-  // Coloured A/B/C/D buttons (some remotes label them ABCD, some
-  // RGBY — same scancodes either way).
-  403: 'red', // VK_COLOR_F0_RED
-  404: 'green', // VK_COLOR_F1_GREEN
-  405: 'yellow', // VK_COLOR_F2_YELLOW
-  406: 'blue', // VK_COLOR_F3_BLUE
-
-  // VK_HOME doesn't reach the app on Tizen — the launcher
-  // intercepts it. Listed here for documentation; will never fire.
-  10071: 'home'
+  10009: 'back', // Return
+  13: 'enter',
+  37: 'left',
+  38: 'up',
+  39: 'right',
+  40: 'down',
+  415: 'play',
+  19: 'pause',
+  10252: 'playpause',
+  413: 'stop',
+  417: 'forward',
+  412: 'rewind',
+  427: 'channelUp',
+  428: 'channelDown',
+  33: 'channelUp',
+  34: 'channelDown',
+  403: 'red',
+  404: 'green',
+  405: 'yellow',
+  406: 'blue'
 };
 
 export function toRemoteKey(e: KeyboardEvent): RemoteKey | null {
   return BY_KEY[e.key] ?? BY_CODE[e.keyCode] ?? null;
 }
 
-/** Register the extra Tizen remote keys we want to receive
- *  (Back, MediaPlay, MediaPause, etc.) with the firmware so they
- *  forward into the webview as KeyboardEvents. Without this only
- *  the always-on D-pad + Enter come through.
- *
- *  Call once at app boot (root layout's onMount). No-op outside
- *  the Tizen webview. */
-export function registerTizenKeys(): void {
-  if (typeof window === 'undefined') return;
-  const tizen = (window as Window & { tizen?: { tvinputdevice?: TvInputDevice } }).tizen;
-  if (!tizen?.tvinputdevice) return;
-  const wanted = [
-    'MediaPlay',
-    'MediaPause',
-    'MediaPlayPause',
-    'MediaStop',
-    'MediaFastForward',
-    'MediaRewind',
-    'ColorF0Red',
-    'ColorF1Green',
-    'ColorF2Yellow',
-    'ColorF3Blue'
-  ];
-  try {
-    tizen.tvinputdevice.registerKeyBatch(wanted);
-  } catch {
-    // Older firmware may not have all keys; ignore — registered
-    // ones still take effect.
-  }
+/** The keys the app asks the TV for: without registering them they never
+ *  reach the page (the TV keeps the channel rocker for its tuner, for one).
+ *  The arrows, OK and Return always come. */
+export const TIZEN_KEYS = [
+  'MediaPlay',
+  'MediaPause',
+  'MediaPlayPause',
+  'MediaStop',
+  'MediaFastForward',
+  'MediaRewind',
+  'ChannelUp',
+  'ChannelDown',
+  'ColorF0Red',
+  'ColorF1Green',
+  'ColorF2Yellow',
+  'ColorF3Blue'
+] as const;
+
+interface TvInputDevice {
+  registerKeyBatch?(keys: string[]): void;
+  registerKey?(key: string): void;
 }
 
-/** Minimal type for the Tizen keys we actually call. The full
- *  surface lives in @types/samsung-tizen-tv but we don't need
- *  the dependency for one method. */
-interface TvInputDevice {
-  registerKeyBatch(keys: string[]): void;
-  unregisterKey?(key: string): void;
+/** Register TIZEN_KEYS with the TV (once, at boot). A key this model's
+ *  remote lacks fails alone: the batch call throws on the first unknown
+ *  name on some firmware, so each is registered by itself when it does.
+ *  No-op outside a Tizen webview (vite dev). */
+export function registerTizenKeys(
+  device: TvInputDevice | undefined = (globalThis as { tizen?: { tvinputdevice?: TvInputDevice } }).tizen
+    ?.tvinputdevice,
+): void {
+  if (!device) return;
+  try {
+    device.registerKeyBatch?.([...TIZEN_KEYS]);
+    if (device.registerKeyBatch) return;
+  } catch {
+    // One by one below.
+  }
+  for (const k of TIZEN_KEYS) {
+    try {
+      device.registerKey?.(k);
+    } catch {
+      // Not on this remote.
+    }
+  }
 }

@@ -1,7 +1,6 @@
-// App version surfaced on the Settings/About screen. Kept in a small
-// dedicated file so a release bump is a one-line change with a
-// predictable git diff. Mirrors `package.json#version` and the
-// `<widget version=...>` attribute in config.xml — keep all three in
-// sync. (Could resolve at build time via Vite's `define` but the
-// extra config + define magic isn't worth saving one bump.)
-export const APP_VERSION = '0.1.0';
+// App version surfaced on the Settings/About screen. Mirrors
+// `package.json#version` and config.xml's `<widget version>` (and the two
+// root version fields in package-lock.json) — keep them in sync on each
+// release; version.test.ts fails when they drift. (Could resolve via
+// Vite's `define` but the extra config isn't worth saving one bump.)
+export const APP_VERSION = '1.1.0';

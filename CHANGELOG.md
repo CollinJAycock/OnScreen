@@ -433,6 +433,34 @@ Roku channel (no request features, as on Android):
 
 ### Changed
 
+- **Tizen app 1.1.0: parity with the Android TV app**, by moving the Samsung
+  app onto the webOS app's code (which reached parity in 0.2.0) with
+  Samsung's own platform layer. Not yet run on a Samsung panel: covered by
+  the shared tests (686) and an AVPlay simulation in Chromium.
+  - Everything webOS 0.2.0 and 0.2.1 list, on Samsung TVs: server sessions
+    on the content timeline with re-issues past the produced window,
+    subtitles drawn by the app, the Audio / Subtitles / Chapters row, Up
+    Next and auto-advance, one `stopped` report per item under the TV's
+    name ("Samsung TV — <model> #<tag>"), "play on this TV" from any screen,
+    favorites, artist pages, library paging / sort / genre, the saved home
+    layout, Trending and Collections rows, the photo slideshow, Back
+    returning focus to the card that was opened, and Sign in's Change
+    server.
+  - The player runs on AVPlay through an adapter that gives it a media
+    element's surface; AVPlay's growing-session length is read from the
+    HLS playlist, and a stream AVPlay refuses demotes the HEVC claim once
+    and restarts as H.264. hls.js is not bundled (400 KB, against 940 KB on
+    webOS).
+  - The remote: the channel rocker is registered (CH ▲▼ step tracks,
+    chapters and channels), Return on Home, Setup or Sign in closes the app
+    to Smart Hub as Samsung's checklist asks, and a held key is one press.
+  - Tizen 5.5's Chromium 69: the build rewrites Svelte's `:where()`
+    selectors (which even the 2022 Q80B's Chromium 85 dropped, so every
+    scoped descendant rule had done nothing), writes CSS for Chrome 69, and
+    the page shell polyfills `globalThis`, `queueMicrotask` and
+    `Object.fromEntries`; a test fails on CSS Chromium 69 drops.
+  - config.xml asks for the productinfo privilege (the model name); the
+    version is 1.1.0 in config.xml, package.json and Settings > About.
 - **webOS app 0.2.0: parity with the Android TV app**, run on an LG
   OLED77C1PUB (webOS 6, Chromium 79).
   - Server sessions play on the content timeline: an exact start at the

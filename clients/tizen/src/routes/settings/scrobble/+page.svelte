@@ -309,7 +309,9 @@
         <li>Enter it below and link.</li>
       </ol>
 
-      <OnScreenKeyboard bind:value={token} onchange={(v) => (token = v)} onsubmit={link} />
+      <!-- Masked: the token is a credential for the user's ListenBrainz
+           account (Android masks it too). -->
+      <OnScreenKeyboard bind:value={token} onchange={(v) => (token = v)} onsubmit={link} masked />
 
       <div class="actions">
         <button use:focusable class="btn primary" onclick={link} disabled={busy || !token.trim()}>
@@ -472,10 +474,16 @@
     padding: 24px 32px;
     margin-bottom: 24px;
   }
+  /* Spacing here uses margins and spelled-out offsets, not flexbox `gap`
+     (Chrome 84) or `inset` (Chrome 87): webOS 6 runs Chromium 79. */
   .card-head {
     display: flex;
     align-items: center;
-    gap: 16px;
+  }
+  /* :global() on inner parts throughout: Svelte 5 would scope them as
+     :where(), which Chromium 79 doesn't know, and drop the rule there. */
+  .card-head > :global(.badge) {
+    margin-left: 16px;
   }
   .card-title {
     font-size: var(--font-lg);
@@ -528,7 +536,7 @@
     font-size: var(--font-md);
     line-height: 1.6;
   }
-  .steps li {
+  .steps > :global(li) {
     margin-bottom: 8px;
   }
   .mono {
@@ -549,11 +557,15 @@
     color: #fca5a5;
   }
 
+  /* Wrapping row: each button carries a top + right margin and the row
+     pulls itself up and right by the same, like a flex `gap: 12px`. */
   .actions {
     display: flex;
-    gap: 12px;
     flex-wrap: wrap;
-    margin-top: 20px;
+    margin: 8px -12px 0 0;
+  }
+  .actions > :global(*) {
+    margin: 12px 12px 0 0;
   }
   .btn {
     padding: 14px 28px;
@@ -565,8 +577,7 @@
     color: var(--text-primary);
     border: 2px solid transparent;
   }
-  .btn:focus,
-  .btn:focus-visible {
+  .btn:focus {
     border-color: var(--accent);
     outline: none;
   }
@@ -577,8 +588,7 @@
   .btn.danger {
     color: #fca5a5;
   }
-  .btn.danger:focus,
-  .btn.danger:focus-visible {
+  .btn.danger:focus {
     border-color: #fca5a5;
   }
   .btn:disabled {
@@ -588,7 +598,10 @@
 
   .modal-backdrop {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     background: rgba(0, 0, 0, 0.78);
     display: flex;
     align-items: center;
@@ -610,19 +623,19 @@
   }
   .link-body {
     display: flex;
-    gap: 48px;
     align-items: center;
   }
   .link-text {
+    margin-left: 48px;
     flex: 1;
     min-width: 0;
     font-size: var(--font-md);
     line-height: 1.45;
   }
-  .link-text p {
+  .link-text > :global(p) {
     margin: 0 0 12px;
   }
-  .link-text .small {
+  .link-text > :global(.small) {
     font-size: var(--font-sm);
     color: var(--text-secondary);
     margin-top: 20px;

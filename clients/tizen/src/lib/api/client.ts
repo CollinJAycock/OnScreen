@@ -13,7 +13,14 @@ const REFRESH_KEY = 'onscreen.refresh_token';
 // purpose=asset token. Goes in `?token=` on asset URLs instead of the
 // general access token — the server rejects a general token in a URL.
 const ASSET_KEY = 'onscreen.asset_token';
+// When the stored asset token was minted, by this TV's clock (ms). The event
+// stream ($lib/events) refreshes ahead of the token's expiry by it.
+const ASSET_AT_KEY = 'onscreen.asset_token_at';
 const USER_KEY = 'onscreen.user';
+// Wall-clock ceiling on a single API request. Long enough for a cold
+// transcode-start on a slow box, short enough that a dead connection
+// surfaces an error instead of hanging the UI indefinitely.
+const REQUEST_TIMEOUT_MS = 20_000;
 
 export interface UserMeta {
   user_id: string;
@@ -82,6 +89,13 @@ export function isCleartextRemote(origin: string): boolean {
   }
 }
 
+/** A list response as the server sends it: the rows plus meta (total =
+ *  every row the caller can see, across all pages). */
+export interface ListEnvelope<T> {
+  data?: T;
+  meta?: { total?: number; cursor?: string };
+}
+
 export class ApiError extends Error {
   status: number;
   code: string;
@@ -98,8 +112,25 @@ export class Unauthorized extends ApiError {
   }
 }
 
+/** How a token refresh ended. 'rejected' is the server's verdict that the
+ *  refresh token is dead (401: expired, unknown, revoked, or a retired one
+ *  replayed, which has just signed the user out everywhere); the stored
+ *  sign-in is dropped. 'failed' is no verdict at all (offline, a timeout,
+ *  503 while the server can't check the token, 429): the stored tokens stay,
+ *  good for a later retry. */
+export type RefreshOutcome = 'ok' | 'rejected' | 'failed';
+
+/** Why the stored sign-in was cleared: the user signed out (Settings, Change
+ *  server), or a refresh got the server's verdict that it is dead (revoked,
+ *  expired, signed out everywhere), from whichever caller found out. */
+export type SignOutReason = 'signedOut' | 'rejected';
+
 export class ApiClient {
-  private refreshing: Promise<boolean> | null = null;
+  private refreshing: Promise<RefreshOutcome> | null = null;
+  private signedOutListeners = new Set<(reason: SignOutReason) => void>();
+  // logout() rotates before it revokes; a 401 on that rotation is part of
+  // signing out, not news for the app.
+  private loggingOut = false;
 
   getOrigin(): string | null {
     return localStorage.getItem(ORIGIN_KEY);
@@ -109,6 +140,17 @@ export class ApiClient {
     localStorage.setItem(ORIGIN_KEY, origin.replace(/\/$/, ''));
   }
 
+  /** Sign out and forget the server, so the next launch starts at Setup
+   *  (Settings' "Forget server", the home screen's "Change server"). The
+   *  revoke goes out first, to the server that issued the token (logout). */
+  async forgetServer(): Promise<void> {
+    try {
+      await this.logout();
+    } finally {
+      localStorage.removeItem(ORIGIN_KEY);
+    }
+  }
+
   getToken(): string | null {
     return localStorage.getItem(TOKEN_KEY);
   }
@@ -116,6 +158,13 @@ export class ApiClient {
   /** The purpose=asset token used for `?token=` on asset URLs. */
   getAssetToken(): string | null {
     return localStorage.getItem(ASSET_KEY);
+  }
+
+  /** When the stored asset token was minted (this TV's clock, ms), or null
+   *  when unknown (none stored, or stored by a build that didn't record it). */
+  getAssetTokenIssuedAt(): number | null {
+    const at = Number(localStorage.getItem(ASSET_AT_KEY));
+    return at > 0 && Number.isFinite(at) ? at : null;
   }
 
   getUser(): UserMeta | null {
@@ -133,8 +182,10 @@ export class ApiClient {
     localStorage.setItem(REFRESH_KEY, pair.refresh_token);
     if (pair.asset_token) {
       localStorage.setItem(ASSET_KEY, pair.asset_token);
+      localStorage.setItem(ASSET_AT_KEY, String(Date.now()));
     } else {
       localStorage.removeItem(ASSET_KEY);
+      localStorage.removeItem(ASSET_AT_KEY);
     }
     localStorage.setItem(
       USER_KEY,
@@ -146,11 +197,32 @@ export class ApiClient {
     );
   }
 
-  clearTokens() {
+  clearTokens(reason: SignOutReason = 'signedOut') {
     localStorage.removeItem(TOKEN_KEY);
     localStorage.removeItem(REFRESH_KEY);
     localStorage.removeItem(ASSET_KEY);
+    localStorage.removeItem(ASSET_AT_KEY);
     localStorage.removeItem(USER_KEY);
+    for (const fn of [...this.signedOutListeners]) {
+      try {
+        fn(reason);
+      } catch {
+        /* one listener can't keep the sign-out from the others */
+      }
+    }
+  }
+
+  /** Told when the stored sign-in is cleared (sign-out, forget server, or a
+   *  refresh rejected by the server): app-wide connections that authenticate
+   *  as the user, like the event stream ($lib/events), close then rather
+   *  than outlive it, and a rejection sends the app to sign-in even when the
+   *  caller that found out (a heartbeat mid-film) has no way to. Returns the
+   *  unsubscribe. */
+  onSignedOut(fn: (reason: SignOutReason) => void): () => void {
+    this.signedOutListeners.add(fn);
+    return () => {
+      this.signedOutListeners.delete(fn);
+    };
   }
 
   async login(username: string, password: string): Promise<TokenPair> {
@@ -184,12 +256,13 @@ export class ApiClient {
    *  Must run BEFORE the caller clears/changes the origin so the revoke
    *  goes to the server that issued the token. */
   async logout(): Promise<void> {
+    this.loggingOut = true;
     try {
       // Share an in-flight refresh so we don't double-rotate the token.
-      if (localStorage.getItem(REFRESH_KEY) && !this.refreshing) {
-        this.refreshing = this.tryRefresh().finally(() => (this.refreshing = null));
-      }
-      if (this.refreshing && (await this.refreshing)) {
+      if (
+        (localStorage.getItem(REFRESH_KEY) || this.refreshing) &&
+        (await this.refreshTokensOutcome()) === 'ok'
+      ) {
         const refresh = localStorage.getItem(REFRESH_KEY);
         if (refresh) {
           await this.raw('POST', '/api/v1/auth/logout', { refresh_token: refresh }, true);
@@ -198,22 +271,52 @@ export class ApiClient {
     } catch {
       // Unreachable server / network error — still sign out locally.
     } finally {
+      this.loggingOut = false;
       this.clearTokens();
     }
   }
 
-  private async tryRefresh(): Promise<boolean> {
+  private async tryRefresh(): Promise<RefreshOutcome> {
     const refresh = localStorage.getItem(REFRESH_KEY);
-    if (!refresh) return false;
+    // Nothing to refresh with: no request can bring the sign-in back.
+    if (!refresh) return 'rejected';
     try {
       const pair = await this.raw<TokenPair>('POST', '/api/v1/auth/refresh', {
         refresh_token: refresh
       });
       this.setTokens(pair);
-      return true;
-    } catch {
-      return false;
+      return 'ok';
+    } catch (e) {
+      // Only a 401 is a verdict on the token (server: AuthHandler.Refresh).
+      // A 503 there means it couldn't check it, and must not sign anyone out.
+      if (!(e instanceof Unauthorized)) return 'failed';
+      // Drop the dead sign-in, as the native clients do: presenting it again
+      // can't succeed. Unless a new sign-in replaced it while this was out.
+      if (localStorage.getItem(REFRESH_KEY) === refresh) {
+        this.clearTokens(this.loggingOut ? 'signedOut' : 'rejected');
+      }
+      return 'rejected';
     }
+  }
+
+  /** Force a token refresh and report success. Used by long-lived
+   *  out-of-band connections (the EventSource sync stream) that carry a
+   *  `?token=` asset token which can expire mid-movie — they refresh,
+   *  then reconnect with the freshly-minted asset token. Shares the
+   *  in-flight refresh so a concurrent API 401 doesn't double-refresh. */
+  async refreshTokens(): Promise<boolean> {
+    return (await this.refreshTokensOutcome()) === 'ok';
+  }
+
+  /** refreshTokens, saying why a refresh didn't land (see RefreshOutcome).
+   *  The app's ONE refresh in flight, shared by every caller: every refresh
+   *  rotates the refresh token, and two rotations of the same token read as
+   *  reuse, which signs the user out on every device. */
+  refreshTokensOutcome(): Promise<RefreshOutcome> {
+    if (!this.refreshing) {
+      this.refreshing = this.tryRefresh().finally(() => (this.refreshing = null));
+    }
+    return this.refreshing;
   }
 
   async get<T>(path: string): Promise<T> {
@@ -228,6 +331,12 @@ export class ApiClient {
   async del<T>(path: string): Promise<T> {
     return this.authed<T>('DELETE', path);
   }
+  /** GET that keeps the response envelope ({ data, meta }) instead of
+   *  unwrapping `data`, for list endpoints whose meta.total the caller needs
+   *  (collection paging stops on it). Otherwise exactly get(). */
+  async getEnvelope<T>(path: string): Promise<ListEnvelope<T>> {
+    return this.authed<ListEnvelope<T>>('GET', path, undefined, true, true);
+  }
 
   mediaUrl(path: string): string {
     const origin = this.getOrigin();
@@ -237,11 +346,22 @@ export class ApiClient {
 
   /**
    * URL for an asset endpoint (artwork, media stream, subtitles)
-   * that `<img>` / `<video>` / `<track>` can load directly. Browsers
-   * can't attach Authorization headers to those element fetches, so
-   * we put the purpose=asset token in `?token=<paseto>` — the server
-   * rejects the general access token in a URL. See the webOS sibling
-   * for the full rationale.
+   * that `<img>` / `<video>` / `<track>` can load directly.
+   *
+   * Browsers can't attach Authorization headers to those element
+   * fetches, so we put the purpose=asset token in `?token=<paseto>` —
+   * the server's RequiredAllowQueryToken middleware accepts asset (and
+   * file-bound stream) tokens there but REJECTS the general access
+   * token in a URL. The asset token can't be replayed as a Bearer, so
+   * a leak (logs, Referer) doesn't grant general API access.
+   *
+   * Returns the path unchanged when no asset token is cached (caller
+   * gets a clean URL that'll 401, surface that, and trigger
+   * re-auth instead of silently swapping in a stale token).
+   *
+   * If the path already has a `?token=` (e.g. an HLS playlist with a
+   * pre-baked transcode token, or a file-bound stream token), the
+   * existing one wins — we don't overwrite.
    */
   assetUrl(path: string): string {
     const origin = this.getOrigin();
@@ -253,16 +373,64 @@ export class ApiClient {
     return url + (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(tok);
   }
 
-  private async authed<T>(method: string, path: string, body?: unknown, retry = true): Promise<T> {
+  /**
+   * Refresh-aware fetch for endpoints that return non-JSON bodies
+   * (image blobs, raw text) which can't go through `get`/`post`. Adds the
+   * Bearer header, applies the same request timeout, and on a 401
+   * refreshes the token once and retries — so a token that expired mid-
+   * session recovers instead of dead-ending on the bare access token.
+   *
+   * `path` may be an absolute URL or an origin-relative path; either way
+   * the caller gets the raw Response back to consume as `.blob()` /
+   * `.text()` / `.json()`. An absolute URL must be on the configured server
+   * origin — the general access token is never sent to another host (e.g. a
+   * third-party metadata/poster URL handed in by a future caller).
+   */
+  async authedFetch(path: string, retry = true): Promise<Response> {
+    const origin = this.getOrigin();
+    if (!origin) throw new Error('API origin not configured');
+    const url = /^https?:\/\//i.test(path) ? path : `${origin}${path}`;
+    let sameOrigin = false;
     try {
-      return await this.raw<T>(method, path, body, true);
+      sameOrigin = new URL(url).origin === new URL(origin).origin;
+    } catch {
+      sameOrigin = false;
+    }
+    if (!sameOrigin) throw new Error('authedFetch: refusing to send credentials off the server origin');
+    const tok = this.getToken();
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch(url, {
+        headers: tok ? { Authorization: `Bearer ${tok}` } : {},
+        signal: controller.signal
+      });
     } catch (e) {
-      if (e instanceof Unauthorized && retry) {
-        if (!this.refreshing) {
-          this.refreshing = this.tryRefresh().finally(() => (this.refreshing = null));
-        }
-        const ok = await this.refreshing;
-        if (ok) return this.authed<T>(method, path, body, false);
+      if (controller.signal.aborted) throw new Error(`Request timed out: ${url}`);
+      throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
+    } finally {
+      clearTimeout(timer);
+    }
+    if (resp.status === 401) {
+      if (retry && (await this.refreshTokens())) return this.authedFetch(path, false);
+      throw new Unauthorized();
+    }
+    return resp;
+  }
+
+  private async authed<T>(
+    method: string,
+    path: string,
+    body?: unknown,
+    retry = true,
+    envelope = false
+  ): Promise<T> {
+    try {
+      return await this.raw<T>(method, path, body, true, false, envelope);
+    } catch (e) {
+      if (e instanceof Unauthorized && retry && (await this.refreshTokens())) {
+        return this.authed<T>(method, path, body, false, envelope);
       }
       throw e;
     }
@@ -304,7 +472,8 @@ export class ApiClient {
     path: string,
     body?: unknown,
     auth = false,
-    upgraded = false
+    upgraded = false,
+    envelope = false
   ): Promise<T> {
     const origin = this.getOrigin();
     if (!origin) throw new Error('API origin not configured');
@@ -319,18 +488,35 @@ export class ApiClient {
       if (tok) headers['Authorization'] = `Bearer ${tok}`;
     }
 
-    // redirect:'manual' — every raw() call carries a credential (password,
-    // refresh token, or Bearer). Following a 307/308 would replay the body
-    // (and, on the old TV Chromium, possibly the Authorization header) to
-    // wherever the Location points, including another host. The JSON API
-    // never redirects, so a redirect here is either a stale http origin
-    // (heal below) or something we must not follow.
-    const resp = await fetch(`${origin}${path}`, {
-      method,
-      headers,
-      body: body === undefined ? undefined : JSON.stringify(body),
-      redirect: 'manual'
-    });
+    // Abort a hung request so a stalled TCP connection (TV dropped Wi-Fi,
+    // server wedged) doesn't leave the caller waiting forever. A timeout
+    // and a transport failure both surface as a clean Error the caller
+    // can catch and retry, rather than a never-settling promise.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let resp: Response;
+    try {
+      resp = await fetch(`${origin}${path}`, {
+        method,
+        headers,
+        body: body === undefined ? undefined : JSON.stringify(body),
+        signal: controller.signal,
+        // Every raw() call carries a credential (password, refresh token or
+        // Bearer). Following a 307/308 would replay the body (and on the old
+        // TV Chromium possibly the Authorization header) to wherever the
+        // Location points, including another host. The JSON API never
+        // redirects; a stale http origin is healed below via a probe.
+        redirect: 'manual'
+      });
+    } catch (e) {
+      if (controller.signal.aborted) {
+        throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`);
+      }
+      // DNS / TLS / connection-refused — normalise to a readable message.
+      throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
+    } finally {
+      clearTimeout(timer);
+    }
 
     if (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400)) {
       // Stale http:// origin for a server that now answers on https (the
@@ -338,7 +524,7 @@ export class ApiClient {
       // with an unauthenticated probe, adopt the same-host https origin and
       // replay once against it — credentials never ride a redirect.
       if (!upgraded && (await this.probeTlsUpgrade(origin))) {
-        return this.raw<T>(method, path, body, auth, true);
+        return this.raw<T>(method, path, body, auth, true, envelope);
       }
       throw new ApiError(resp.status, 'REDIRECT', 'server redirected the request; not following it with credentials');
     }
@@ -362,8 +548,9 @@ export class ApiClient {
 
     if (resp.status === 204) return undefined as T;
     const j = await resp.json();
-    // API shape: { data: ... } for success; unwrap for caller convenience.
-    return (j?.data ?? j) as T;
+    // API shape: { data: ... } for success; unwrap for caller convenience
+    // (getEnvelope keeps the whole body for its meta).
+    return (envelope ? j : (j?.data ?? j)) as T;
   }
 }
 

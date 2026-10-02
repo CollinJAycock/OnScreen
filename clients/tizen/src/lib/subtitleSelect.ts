@@ -1,7 +1,7 @@
 // Preferred-subtitle auto-selection logic, ported from the web client's
 // web/src/routes/watch/[id]/subtitle-select.ts so the language-matching +
-// forced-only rules are unit-testable without mounting the AVPlay / HTML5
-// player. The contract must stay in lock-step with the web helper.
+// forced-only rules are unit-testable without mounting the HTML5 player. The
+// contract must stay in lock-step with the web helper.
 //
 // Two real-world matching problems this solves that a naive
 // `stream.language === pref` misses:
@@ -61,4 +61,24 @@ export function pickPreferredSubtitle<T extends SelectableSubtitle>(
   const forced = inLang.find((s) => s.forced);
   if (forcedOnly) return forced ?? null;
   return forced ?? inLang[0];
+}
+
+// pickPreferredAudio resolves preferred_audio_lang to the audio track the
+// first start should map: the 0-based ORDINAL of the first track in that
+// language (what the server's audio_stream_index takes, `-map 0:a:N`), or
+// null to leave the track to the server's default. Rules (Android's
+// applyPreferredTracks):
+//   - No preferred language → null.
+//   - The first track whose language matches (normalized as above, so a
+//     preference of "fr" or "fre" finds an ffprobe "fra" track); among
+//     same-language tracks (5.1 + stereo, commentary) the file's order wins.
+//   - No track in the language → null: the server's default track, never an
+//     arbitrary other one.
+export function pickPreferredAudio(
+  streams: readonly { language: string }[],
+  preferredLang: string | null | undefined,
+): number | null {
+  if (!preferredLang) return null;
+  const i = streams.findIndex((s) => langMatches(s.language, preferredLang));
+  return i >= 0 ? i : null;
 }

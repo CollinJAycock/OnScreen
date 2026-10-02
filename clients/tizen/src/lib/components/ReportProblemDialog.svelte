@@ -233,11 +233,16 @@
     font-size: var(--font-md);
     margin: 24px 0 16px;
   }
+  /* Buttons are spaced with a margin, not flexbox `gap` (Chrome 84): webOS
+     6 runs Chromium 79. Flex items' margins don't collapse: still 12px. */
   .kinds,
   .actions {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+  }
+  .kinds > .dialog-btn + .dialog-btn,
+  .actions > .dialog-btn + .dialog-btn {
+    margin-top: 12px;
   }
   .actions {
     margin-top: 20px;

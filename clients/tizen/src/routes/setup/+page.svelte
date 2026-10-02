@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { api, isCleartextRemote } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
+  import { pushTo } from '$lib/nav';
 
   // Empty by default: a bare host is tried over https:// first (see submit).
   let url = $state('');
@@ -81,7 +81,9 @@
         return;
       }
       api.setOrigin(origin);
-      goto('#/login');
+      // Pushed, so Sign in's Back comes back here (a wrong but reachable
+      // server) rather than offering to exit.
+      pushTo('#/login');
     } catch (e) {
       error = `Could not reach server: ${(e as Error).message}`;
     } finally {
@@ -106,11 +108,14 @@
 </div>
 
 <style>
+  /* A one-column grid rather than a flex column: grid `gap` works on
+     webOS 6's Chromium 79, flexbox `gap` needs Chrome 84. */
   .page {
     padding: var(--page-pad);
-    display: flex;
-    flex-direction: column;
-    gap: 32px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    align-content: start;
+    row-gap: 32px;
   }
 
   h1 {

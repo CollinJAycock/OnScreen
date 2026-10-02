@@ -5,9 +5,12 @@ import type {
   ChildItem,
   CollectionItem,
   DiscoverItem,
+  ExternalSubtitle,
   FavoriteItem,
+  GenreCount,
   HistoryItem,
   HubData,
+  HubRowPref,
   IssueKind,
   ItemDetail,
   LastFMLinkStart,
@@ -32,6 +35,7 @@ import type {
   WatchFilter
 } from './types';
 import { watchQuery } from '$lib/watchState';
+import type { PageResult } from '$lib/paging';
 
 // Response shape for list endpoints that wrap data in { data, meta }.
 // The client unwraps `data` already, so these pull the array directly.
@@ -42,18 +46,35 @@ export const hub = {
 
 export const libraries = {
   list: () => api.get<Library[]>('/api/v1/libraries'),
-  /** `watch` narrows by the caller's watch state (v2.5; older servers
-   *  ignore it — the library page only offers the filter to newer ones). */
-  listItems: (libraryID: string, sort = 'title', dir: 'asc' | 'desc' = 'asc', watch: WatchFilter | '' = '') =>
+  /** One page of a library. `watch` narrows by the caller's watch state
+   *  (v2.5; older servers ignore it — the library page only offers the
+   *  filter to newer ones); `genre` by genre name. The server caps `limit`
+   *  at 200 and pages with `offset`. */
+  listItems: (
+    libraryID: string,
+    sort = 'title',
+    dir: 'asc' | 'desc' = 'asc',
+    watch: WatchFilter | '' = '',
+    genre = '',
+    limit = 100,
+    offset = 0
+  ) =>
     api.get<MediaItem[]>(
-      `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=200${watchQuery(watch)}`
+      `/api/v1/libraries/${libraryID}/items?sort=${sort}&sort_dir=${dir}&limit=${limit}&offset=${offset}` +
+        `${watchQuery(watch)}${genre ? `&genre=${encodeURIComponent(genre)}` : ''}`
     ),
-  /** "Surprise me" (v2.5): one random item matching the filter. 404 when
+  /** The library's genres with item counts (the genre filter's choices). */
+  genres: (libraryID: string) => api.get<GenreCount[]>(`/api/v1/libraries/${libraryID}/genres`),
+  /** "Surprise me" (v2.5): one random item matching the filters. 404 when
    *  nothing matches. */
-  random: (libraryID: string, watch: WatchFilter | '' = '') =>
-    api.get<{ id: string; type: string }>(
-      `/api/v1/libraries/${libraryID}/random${watch ? `?watch=${watch}` : ''}`
-    )
+  random: (libraryID: string, watch: WatchFilter | '' = '', genre = '') => {
+    const params: string[] = [];
+    if (watch) params.push(`watch=${watch}`);
+    if (genre) params.push(`genre=${encodeURIComponent(genre)}`);
+    return api.get<{ id: string; type: string }>(
+      `/api/v1/libraries/${libraryID}/random${params.length ? `?${params.join('&')}` : ''}`
+    );
+  }
 };
 
 export const items = {
@@ -63,12 +84,11 @@ export const items = {
   // for movies + non-episode types — the server returns [] rather
   // than 404 so callers can fire-and-forget without branching.
   markers: (id: string) => api.get<Marker[]>(`/api/v1/items/${id}/markers`),
-  // Trickplay WebVTT index. Returns the raw text so the caller
-  // can run it through the parser; keeping unwrapping client-side
-  // means the same parser works against test fixtures, the
-  // browser, and (in principle) any other transport. 404 / 204
-  // are normal — items without sprite sheets just don't surface
-  // a scrub preview, which is non-fatal.
+  // Trickplay WebVTT index. Returns the raw text so the caller can
+  // run it through the parser; keeping unwrapping client-side means
+  // the same parser works against test fixtures and the browser.
+  // 404 / 204 are normal — items without sprite sheets just don't
+  // surface a scrub preview, which is non-fatal.
   trickplayVtt: async (id: string): Promise<string | null> => {
     const origin = api.getOrigin();
     if (!origin) return null;
@@ -82,31 +102,37 @@ export const items = {
     if (!resp.ok) return null;
     return await resp.text();
   },
-  /** Build a fully-qualified URL to a trickplay sprite. Sprites
-   *  are auth-via-query-token so the browser can `<img>`-load
-   *  them without an Authorization header. */
+  /** Build a fully-qualified URL to a trickplay sprite. Sprites are
+   *  auth-via-query-token so the browser can `<img>`-load them
+   *  without an Authorization header. */
   trickplaySpriteUrl: (id: string, spritePath: string): string => {
     const origin = api.getOrigin();
     const tok = api.getAssetToken();
     if (!origin || !tok) return '';
-    // Cues sometimes carry a relative path (`sprite_0.jpg`),
-    // sometimes a server-rooted one. Detect and route both.
     const base = spritePath.startsWith('/')
       ? `${origin}${spritePath}`
       : `${origin}/api/v1/items/${id}/trickplay/${spritePath}`;
     const sep = base.includes('?') ? '&' : '?';
     return `${base}${sep}token=${encodeURIComponent(tok)}`;
   },
+  /** `extra` (all optional, omitted when empty): client_name names this TV
+   *  in the device list / Now Playing / an admin stop; decision feeds the
+   *  direct-vs-transcode analytics; file_id picks the version for a
+   *  server-filled duration. */
   progress: (
     id: string,
     viewOffsetMs: number,
     durationMs: number,
-    state: 'playing' | 'paused' | 'stopped'
+    state: 'playing' | 'paused' | 'stopped',
+    extra: { clientName?: string; decision?: string; fileId?: string } = {}
   ) =>
     api.put<void>(`/api/v1/items/${id}/progress`, {
       view_offset_ms: viewOffsetMs,
       duration_ms: durationMs,
-      state
+      state,
+      ...(extra.clientName ? { client_name: extra.clientName } : {}),
+      ...(extra.decision ? { decision: extra.decision } : {}),
+      ...(extra.fileId ? { file_id: extra.fileId } : {})
     }),
   addFavorite: (id: string) => api.post<void>(`/api/v1/items/${id}/favorite`, {}),
   removeFavorite: (id: string) => api.del<void>(`/api/v1/items/${id}/favorite`),
@@ -142,21 +168,25 @@ export const issues = {
 };
 
 export const search = {
-  query: (q: string, limit = 30) =>
-    api.get<SearchResult[]>(`/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}`)
+  /** `libraryId` narrows the search to one library (the server's
+   *  `library_id`; Android's "Search in" chip). */
+  query: (q: string, limit = 30, libraryId?: string) =>
+    api.get<SearchResult[]>(
+      `/api/v1/search?q=${encodeURIComponent(q)}&limit=${limit}` +
+        (libraryId ? `&library_id=${encodeURIComponent(libraryId)}` : '')
+    )
 };
 
 export const profiles = {
   list: () => api.get<ManagedProfile[]>('/api/v1/profiles')
 };
 
-// Auth-provider discovery. The TV pair flow works against any auth
-// backend, but a laptop user opening /pair on the server is more
-// likely to find the right "Sign in with X" button if we hint them
-// at it on the TV. Returns the names of OIDC + SAML providers that
-// are configured on this server. LDAP is intentionally omitted —
-// the LDAP path uses the same username/password form as local auth,
-// so naming it as a separate "provider" is just noise on the TV.
+// Auth-provider discovery for the Pair screen's SSO hint. The TV
+// pair flow works against any auth backend (PIN claim is auth-
+// agnostic), but a laptop user is more likely to find the right
+// "Sign in with X" button on the web pair page if we name the
+// configured providers up front. LDAP is intentionally omitted —
+// its UX is the same username/password form local auth uses.
 export interface EnabledProvider {
   kind: 'oidc' | 'saml';
   display_name: string;
@@ -164,11 +194,6 @@ export interface EnabledProvider {
 export const auth = {
   providers: async (): Promise<EnabledProvider[]> => {
     const out: EnabledProvider[] = [];
-    // The /enabled endpoints are unauthenticated and cheap; fire in
-    // parallel and tolerate failures (a misconfigured server might
-    // 500 on the OIDC probe but still have SAML working). Empty
-    // result on either error path → the Pair screen just doesn't
-    // render the hint, which matches the pre-feature behaviour.
     type Probe = { enabled: boolean; display_name: string };
     const safe = async (path: string): Promise<Probe | null> => {
       try {
@@ -193,8 +218,17 @@ export interface TranscodeStartOpts {
   positionMs: number;
   fileId?: string;
   videoCopy?: boolean;
+  /** The 0-based ORDINAL of the track within file.audio_streams: the server
+   *  maps `-map 0:a:N` and refuses N past the last audio track (400). Never
+   *  AudioStream.index, the absolute ffprobe index that also counts the
+   *  video and subtitle streams. Omitted = the server default (0:a:0). */
   audioStreamIndex?: number;
   supportsHEVC?: boolean;
+  /** Sent as an explicit bool on every start (Android parity). The
+   *  server's field is tri-state and an absent value defers to the
+   *  capability header; an explicit one says the same thing (including a
+   *  runtime demotion's false) without depending on the header. */
+  supportsAV1?: boolean;
 }
 
 export const transcode = {
@@ -205,7 +239,8 @@ export const transcode = {
       position_ms: opts.positionMs,
       video_copy: opts.videoCopy ?? false,
       audio_stream_index: opts.audioStreamIndex ?? null,
-      supports_hevc: opts.supportsHEVC ?? false
+      supports_hevc: opts.supportsHEVC ?? false,
+      supports_av1: opts.supportsAV1 ?? false
     }),
   // Server-authoritative play decision (capability profiles). Returns
   // "directPlay" | "directStream" | "transcode". The capability profile rides
@@ -260,8 +295,21 @@ export const pair = {
 export const collections = {
   list: () => api.get<MediaCollection[]>('/api/v1/collections'),
   get: (id: string) => api.get<MediaCollection>(`/api/v1/collections/${id}`),
-  items: (id: string, limit = 200) =>
-    api.get<CollectionItem[]>(`/api/v1/collections/${id}/items?limit=${limit}`)
+  /** One page of a collection's items (the collection page pages 100 at a
+   *  time, like the library grid) with meta.total: the rows the caller can
+   *  see. A playlist pages in SQL and only then drops rows from libraries the
+   *  caller can't access, so a page can come back short or empty mid-list;
+   *  the page pages on the total instead (lib/paging). */
+  items: async (id: string, limit = 100, offset = 0): Promise<PageResult<CollectionItem>> => {
+    const env = await api.getEnvelope<CollectionItem[]>(
+      `/api/v1/collections/${id}/items?limit=${limit}&offset=${offset}`
+    );
+    const total = env?.meta?.total;
+    return {
+      items: Array.isArray(env?.data) ? env.data : [],
+      total: typeof total === 'number' && Number.isFinite(total) ? total : null
+    };
+  }
 };
 
 // ── Favorites + History ─────────────────────────────────────────────────────
@@ -285,6 +333,31 @@ export const discover = {
     api.post<MediaRequest>('/api/v1/requests', { type, tmdb_id: tmdbID }),
 };
 
+/** One media type's request allowance. remaining is null when the limit is
+ *  0 (unlimited). */
+export interface RequestQuotaUsage {
+  limit: number;
+  used: number;
+  remaining: number | null;
+}
+
+/** GET /requests/quota: the signed-in account's own allowance. can_request
+ *  false means an admin turned requesting off for the account (Discover's
+ *  searches then only answer "ask an admin"); admins are always allowed. */
+export interface RequestQuota {
+  can_request: boolean;
+  window_days: number;
+  movies: RequestQuotaUsage;
+  tv: RequestQuotaUsage;
+}
+
+export const requests = {
+  /** v2.5. An older server has no such route: its /requests/{id} answers
+   *  "quota" with 400 (not a request id), or 404 without requests at all
+   *  (lib/navGates reads both as "no per-account allowance"). */
+  quota: () => api.get<RequestQuota>('/api/v1/requests/quota'),
+};
+
 // ── Online subtitle search (OpenSubtitles via server) ──────────────────────
 
 export const onlineSubtitles = {
@@ -297,12 +370,9 @@ export const onlineSubtitles = {
       `/api/v1/items/${itemID}/subtitles/search${qs ? `?${qs}` : ''}`,
     );
   },
-  /** Download a search result onto the named file. Server fetches
-   *  the .srt from OpenSubtitles, persists it next to the media
-   *  file, and emits a new external_subtitle row that the next
-   *  item-fetch surfaces in subtitle_streams. */
+  /** 201 with the attached row (it lands in files[].external_subtitles). */
   download: (itemID: string, fileID: string, candidate: OnlineSubtitle) =>
-    api.post<void>(`/api/v1/items/${itemID}/subtitles/download`, {
+    api.post<ExternalSubtitle | undefined>(`/api/v1/items/${itemID}/subtitles/download`, {
       file_id: fileID,
       provider_file_id: candidate.provider_file_id,
       language: candidate.language,
@@ -316,15 +386,8 @@ export const onlineSubtitles = {
 // ── Live TV / DVR ──────────────────────────────────────────────────────────
 
 export const livetv = {
-  /** Enabled-only by default; the disabled-channel curation lives in
-   *  the web settings UI and the TV client wants to match what the
-   *  user expects to see. */
   channels: () => api.get<Channel[]>('/api/v1/tv/channels?enabled_only=true'),
-  /** Up to two rows per channel (current + next). Channels missing
-   *  from the response have no EPG data — caller renders "no guide
-   *  data" rather than dropping the row. */
   nowNext: () => api.get<NowNext[]>('/api/v1/tv/channels/now-next'),
-  /** Recordings filtered by status. status=undefined = all. */
   recordings: (status?: string) => {
     const qs = status ? `?status=${encodeURIComponent(status)}&limit=100` : '?limit=100';
     return api.get<Recording[]>(`/api/v1/tv/recordings${qs}`);
@@ -334,8 +397,8 @@ export const livetv = {
 // ── System (v2.2) ──────────────────────────────────────────────────────────
 // Public capabilities feed — no auth needed. TV uses it to gate UI for
 // optional features (live_tv, dvr, requests, lyrics) that the operator
-// may not have configured. Server promises forward-compat: new fields
-// land in v2.x without breaking older clients.
+// may not have configured. Server promises forward-compat on the shape:
+// new fields land in v2.x without breaking older clients.
 
 export interface CapabilitiesFeatures {
   transcode: boolean;
@@ -353,17 +416,28 @@ export interface CapabilitiesFeatures {
   webhooks: boolean;
   notifications: boolean;
   // v2.2 additions — all default false on older servers.
+  /** A TMDB key is configured, so Discover can search. Whether this
+   *  account may request is per user: requests.quota(). */
   requests: boolean;
+  /** The Live TV subsystem is built in, not that any tuner exists. */
   live_tv: boolean;
+  /** Rides live_tv (the server sets both from one flag). */
   dvr: boolean;
   lyrics: boolean;
   intro_markers: boolean;
   chapters: boolean;
   web_downloads: boolean;
+  // v2.5 additions — absent on older servers.
+  /** live_tv, and at least one enabled tuner is set up. */
+  live_tv_configured?: boolean;
+  /** An enabled Radarr or Sonarr feeds the Upcoming calendar. */
+  upcoming?: boolean;
 }
 
 export interface CapabilitiesResponse {
   features: CapabilitiesFeatures;
+  // server / codecs / limits / discovery exist on the wire but the TV
+  // doesn't currently consume them — picking them up is additive.
 }
 
 export const system = {
@@ -414,10 +488,6 @@ export const playback = {
 };
 
 // ── User preferences ─────────────────────────────────────────────
-// Server-side per-user defaults: audio + subtitle languages, forced-
-// subtitles-only, max-quality caps. Settings page surfaces the audio
-// + subtitle language fields; the rest are admin-only or future
-// surface.
 export interface UserPreferences {
   preferred_audio_lang?: string | null;
   preferred_subtitle_lang?: string | null;
@@ -428,12 +498,28 @@ export interface UserPreferences {
   preferred_video_codec?: string | null;
   forced_subtitles_only: boolean;
   episode_use_show_poster: boolean;
+  /** Saved home row order + visibility (set on the web home page); absent
+   *  until the user customizes it. The hub applies it via lib/hubLayout. */
+  hub_layout?: HubRowPref[] | null;
 }
 
+// PUT /users/me/preferences takes the two languages (a null clears one) and
+// episode_use_show_poster. It ignores forced_subtitles_only: that one is
+// part of the quality profile below.
 export interface PreferencesUpdate {
   preferred_audio_lang?: string | null;
   preferred_subtitle_lang?: string | null;
-  forced_subtitles_only?: boolean;
+}
+
+// PUT /users/me/quality-profile replaces the whole profile: every field is
+// written, a null clears that cap. Changing one field means echoing the
+// others from a fresh GET /users/me/preferences (lib/settingsPrefs builds it).
+export interface QualityProfileUpdate {
+  max_video_bitrate_kbps: number | null;
+  max_audio_bitrate_kbps: number | null;
+  max_video_height: number | null;
+  preferred_video_codec: string | null;
+  forced_subtitles_only: boolean;
 }
 
 // A user's parental watch policy plus today's usage and whether playback
@@ -452,8 +538,12 @@ export interface WatchLimitInfo {
 
 export const users = {
   preferences: () => api.get<UserPreferences>('/api/v1/users/me/preferences'),
+  /** 204, no body: re-read preferences() for the stored values. */
   setPreferences: (body: PreferencesUpdate) =>
-    api.put<UserPreferences>('/api/v1/users/me/preferences', body),
+    api.put<void>('/api/v1/users/me/preferences', body),
+  /** 204, no body. Full-object semantics, see QualityProfileUpdate. */
+  setQualityProfile: (body: QualityProfileUpdate) =>
+    api.put<void>('/api/v1/users/me/quality-profile', body),
   /** The caller's own watch policy + today's usage + whether playback is
    *  allowed right now. The player uses it to block a restricted user before
    *  a stream starts (the transcode-start / progress 403 catches the rest). */

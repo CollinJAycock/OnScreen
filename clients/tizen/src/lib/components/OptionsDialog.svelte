@@ -20,8 +20,15 @@
     oncancel: () => void;
     /** Start on Cancel instead of the first option (destructive confirms). */
     focusCancel?: boolean;
+    /** The option to start on: a menu's current choice (the checked sort,
+     *  genre or scope), so OK alone keeps it and the D-pad starts from it.
+     *  Out of range falls back to the first. */
+    initialIndex?: number;
   }
-  let { title, message, options, oncancel, focusCancel = false }: Props = $props();
+  let { title, message, options, oncancel, focusCancel = false, initialIndex = 0 }: Props = $props();
+
+  // Applies as the rows mount (focusable's autofocus), like option 0 did.
+  const startAt = $derived(initialIndex >= 0 && initialIndex < options.length ? initialIndex : 0);
 
   onMount(() =>
     focusManager.pushBack(() => {
@@ -35,10 +42,12 @@
   <div class="dialog">
     <div class="dialog-title" id="options-dialog-title">{title}</div>
     {#if message}<div class="dialog-body">{message}</div>{/if}
-    <div class="dialog-actions">
+    <!-- A long list (a library's genres) scrolls inside the dialog: the
+         focus manager's scrollIntoView keeps the focused row in view. -->
+    <div class="dialog-actions" class:scroll={options.length > 8}>
       {#each options as opt, i (opt.label)}
         <button
-          use:focusable={{ autofocus: !focusCancel && i === 0 }}
+          use:focusable={{ autofocus: !focusCancel && i === startAt }}
           class="dialog-btn"
           class:danger={opt.danger}
           onclick={opt.onselect}
@@ -54,9 +63,14 @@
 </div>
 
 <style>
+  /* Spelled-out offsets and sibling margins instead of `inset` (Chrome 87)
+     and flexbox `gap` (Chrome 84): webOS 6 runs Chromium 79. */
   .dialog-backdrop {
     position: fixed;
-    inset: 0;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    left: 0;
     background: rgba(0, 0, 0, 0.72);
     display: flex;
     align-items: center;
@@ -88,8 +102,31 @@
   .dialog-actions {
     display: flex;
     flex-direction: column;
-    gap: 14px;
     margin-top: 24px;
+  }
+  /* :global() on the second part: Svelte 5 would scope it as :where(),
+     which Chromium 79 doesn't know, and drop the rule there. */
+  .dialog-btn + :global(.dialog-btn) {
+    margin-top: 14px;
+  }
+  /* Room around the rows (padding, cancelled by the negative margin) so the
+     focus ring and its 1.06 scale aren't clipped by the scroll box at the
+     ends of the list; scroll-padding keeps the same room around a row the
+     focus manager scrolls in mid-list (scrollIntoView aligns it with the
+     scroll box's edge less the padding), which sat flush with the edge,
+     its ring cut. */
+  .dialog-actions.scroll {
+    max-height: 640px;
+    overflow-y: auto;
+    padding: 12px 28px;
+    margin: 12px -28px 0;
+    scroll-padding: 24px 0;
+  }
+  .dialog-actions.scroll::-webkit-scrollbar {
+    display: none;
+  }
+  .dialog-actions.scroll > :global(.dialog-btn) {
+    flex-shrink: 0;
   }
   .dialog-btn {
     font-family: inherit;

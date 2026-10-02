@@ -21,7 +21,7 @@
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-interface AvPlayApi {
+export interface AvPlayApi {
   open(url: string): void;
   setListener(listener: AvPlayListener): void;
   setStreamingProperty(name: string, value: string): void;
@@ -45,13 +45,13 @@ interface AvPlayApi {
   setSelectTrack?(type: 'TEXT' | 'AUDIO' | 'VIDEO', index: number): void;
 }
 
-interface AvTrackInfo {
+export interface AvTrackInfo {
   type: string;
   index: number;
   extra_info?: string;
 }
 
-interface AvPlayListener {
+export interface AvPlayListener {
   onbufferingstart?: () => void;
   onbufferingprogress?: (percent: number) => void;
   onbufferingcomplete?: () => void;
