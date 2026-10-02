@@ -361,7 +361,7 @@
     color: #fff;
     border-color: var(--accent, #7c6af7);
   }
-  .chip:focus-visible {
+  .chip:focus {
     outline: none;
     border-color: #fff;
     transform: scale(1.05);

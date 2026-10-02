@@ -186,7 +186,6 @@
   }
   .card {
     display: flex;
-    gap: 20px;
     background: rgba(255, 255, 255, 0.03);
     border-radius: 8px;
     padding: 20px;
@@ -199,11 +198,15 @@
     background: rgba(255, 255, 255, 0.05);
   }
   .poster.placeholder { display: block; }
+  /* Spacing by margins, not flexbox gap (Chrome 84): webOS 6 runs
+     Chromium 79. */
+  .poster { margin-right: 20px; flex: 0 0 auto; }
+  .card-body > * + * { margin-top: 8px; }
+  .card-meta > * + * { margin-left: 16px; }
   .card-body {
     flex: 1;
     display: flex;
     flex-direction: column;
-    gap: 8px;
     min-width: 0;
   }
   .card-title {
@@ -212,7 +215,6 @@
   }
   .card-meta {
     display: flex;
-    gap: 16px;
     font-size: var(--font-sm);
     color: var(--text-secondary);
   }
@@ -251,13 +253,11 @@
     color: var(--text-primary);
     font-family: inherit;
   }
-  .card-actions button:focus,
-  .card-actions button:focus-visible {
+  .card-actions button:focus {
     border-color: var(--accent);
     outline: none;
   }
-  .card-actions .btn-primary:focus,
-  .card-actions .btn-primary:focus-visible {
+  .card-actions .btn-primary:focus {
     background: var(--accent);
     color: white;
   }

@@ -245,8 +245,7 @@
     cursor: pointer;
     font-family: inherit;
   }
-  .row:focus,
-  .row:focus-visible {
+  .row:focus {
     border-color: var(--accent);
     outline: none;
     background: rgba(124, 106, 247, 0.12);
@@ -255,8 +254,7 @@
     cursor: not-allowed;
     opacity: 0.85;
   }
-  .row[disabled]:focus,
-  .row[disabled]:focus-visible {
+  .row[disabled]:focus {
     /* still receive visual focus so D-pad navigation works, just
        not a "click ready" affordance */
     border-color: var(--accent);

@@ -527,8 +527,7 @@
     cursor: pointer;
     font-family: inherit;
   }
-  .channel-row:focus,
-  .channel-row:focus-visible {
+  .channel-row:focus {
     border-color: var(--accent);
     outline: none;
     background: rgba(124, 106, 247, 0.12);

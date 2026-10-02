@@ -577,8 +577,7 @@
     color: var(--text-primary);
     border: 2px solid transparent;
   }
-  .btn:focus,
-  .btn:focus-visible {
+  .btn:focus {
     border-color: var(--accent);
     outline: none;
   }
@@ -589,8 +588,7 @@
   .btn.danger {
     color: #fca5a5;
   }
-  .btn.danger:focus,
-  .btn.danger:focus-visible {
+  .btn.danger:focus {
     border-color: #fca5a5;
   }
   .btn:disabled {

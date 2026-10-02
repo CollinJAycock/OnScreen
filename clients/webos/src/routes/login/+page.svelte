@@ -198,7 +198,7 @@
     border-radius: 8px;
     cursor: pointer;
   }
-  .pair-btn:focus-visible {
+  .pair-btn:focus {
     border-color: var(--accent, #7c6af7);
     outline: none;
   }

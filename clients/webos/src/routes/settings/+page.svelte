@@ -494,8 +494,7 @@
     cursor: pointer;
     font-family: inherit;
   }
-  .action-row:focus,
-  .action-row:focus-visible {
+  .action-row:focus {
     border-color: var(--accent);
     outline: none;
   }
@@ -629,8 +628,7 @@
     color: var(--text-primary);
     font-family: inherit;
   }
-  .modal-actions > :global(button:focus),
-  .modal-actions > :global(button:focus-visible) {
+  .modal-actions > :global(button:focus) {
     border-color: var(--accent);
     outline: none;
   }
@@ -642,8 +640,7 @@
   .modal-actions > :global(button:disabled:not([data-focused='true'])) {
     opacity: 0.5;
   }
-  .btn-confirm:focus,
-  .btn-confirm:focus-visible {
+  .btn-confirm:focus {
     background: var(--accent);
     color: white;
   }

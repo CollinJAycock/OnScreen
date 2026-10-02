@@ -580,6 +580,13 @@ Roku channel (no request features, as on Android):
   - The privacy policy covers Last.fm and Trakt next to ListenBrainz: what
     the server sends each linked account, and that the developer receives
     none of it.
+  - Styles webOS TV 6 (Chromium 79) dropped or ignored: Discover's cards
+    spaced their poster, text and tags with flexbox `gap` (Chrome 84), and
+    the focus styles of Settings, Scrobbling, Discover, Search, Live TV,
+    Recordings and Sign in sat in rules with `:focus-visible` (Chrome 86),
+    which Chromium 79 drops whole. Margins and `:focus` now; a test fails on
+    either, or on `:is` / `:where` / `:has` and `aspect-ratio`, in any
+    component.
   - The privacy policy has a section on what the LG app uses on the TV:
     the one permission it declares (`systemconfig.query`, to read whether
     the screen shows HDR and whether it is 4K), the model name in its device name, the Magic
