@@ -69,6 +69,7 @@ names; one source file works for all of them.)
 | File | Field in Seller Lounge |
 |---|---|
 | `app-icon-512.png` | App Icon Image (square, 400×400 or larger, no gradient background): `master/icon-512.png` flattened to RGB |
+| `splash-1920x1080.png` | Splash Screen Background Image (for webOS), 1920×1080: `master/icon-1024.png` and the "OnScreen" wordmark from `amazon-appstore/featured-1920x1080.png` (without its tagline) on solid black |
 | `description-en.txt` | English (Default) App Description (50 to 4,000 bytes; plain ASCII) |
 | `screenshots/0[1-5]-*.png` | Screenshots (1920×1080), from `clients/webos`'s `npm run screenshots` (`scripts/screenshots.mjs`): the built app in desktop Chrome, signed in as `reviewer` on the review server |
 
