@@ -3,6 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
+  import { confirmAction } from '$lib/native';
+  import { toast } from '$lib/stores/toast';
 
   let series: ItemDetail | null = null;
   let books: ChildItem[] = [];
@@ -22,7 +24,7 @@
 
   async function removeItem() {
     if (!series) return;
-    const confirmed = confirm(
+    const confirmed = await confirmAction(
       `Soft-delete the series "${series.title}" and all ${books.length} book(s) in it?\n\n` +
       `This hides the series and every book under it from the library. ` +
       `On-disk files are not touched.`
@@ -33,7 +35,7 @@
       if (author) goto(`/authors/${author.id}`);
       else goto(`/libraries/${series.library_id}`);
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : 'Remove failed');
     }
   }
 

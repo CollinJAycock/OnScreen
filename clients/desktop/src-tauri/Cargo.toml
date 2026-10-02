@@ -39,7 +39,8 @@ tauri-plugin-notification = "2"
 # in the Tauri webview navigates inside the webview instead of
 # triggering the OS save flow; we hand the URL to Rust, ureq
 # streams the response, and tauri-plugin-dialog asks the user where
-# to put it.
+# to put it. Also backs the confirm_dialog command (window.confirm
+# doesn't block in the webview — see confirm_dialog in lib.rs).
 tauri-plugin-dialog = "2"
 
 # OS keychain. Refresh tokens move out of the plaintext appdata

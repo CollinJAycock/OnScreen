@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { liveTvApi, type LiveTVRecording, type LiveTVSchedule } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
 
   let recordings: LiveTVRecording[] = [];
@@ -55,7 +56,7 @@
   })();
 
   async function cancel(r: LiveTVRecording) {
-    if (!confirm(`Cancel recording "${r.title}"?`)) return;
+    if (!(await confirmAction(`Cancel recording "${r.title}"?`))) return;
     busyId = r.id;
     try {
       await liveTvApi.cancelRecording(r.id);
@@ -67,7 +68,7 @@
   }
 
   async function deleteSchedule(s: LiveTVSchedule) {
-    if (!confirm('Delete this schedule? In-flight recordings it already queued will continue.')) return;
+    if (!(await confirmAction('Delete this schedule? In-flight recordings it already queued will continue.'))) return;
     busyId = s.id;
     try {
       await liveTvApi.deleteSchedule(s.id);

@@ -65,6 +65,28 @@ export async function clearServerUrl(): Promise<void> {
   await invoke('clear_server_url');
 }
 
+/**
+ * OK/Cancel confirmation that waits for the answer in both shells. Use
+ * this instead of window.confirm for every guarded action.
+ *
+ * Inside the desktop webview window.confirm can't be trusted:
+ * tauri-plugin-dialog's init script replaces it with an async invoke, so
+ * it returns a Promise (always truthy) and `if (!confirm(…)) return`
+ * never stops anything. There the shell's `confirm_dialog` command shows
+ * a native dialog instead. Fails closed: if that dialog can't be shown,
+ * resolves false so the guarded action doesn't run.
+ */
+export async function confirmAction(message: string): Promise<boolean> {
+  if (!isTauri()) return window.confirm(message);
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    return (await invoke<boolean>('confirm_dialog', { message })) === true;
+  } catch (e) {
+    console.error('confirm dialog failed:', e);
+    return false;
+  }
+}
+
 /** Full reload at the app root after the server changed: api.ts rebinds
  *  its base URL, every module holding the old server's state starts over,
  *  and the root route sends the user to sign-in (or the setup screen)

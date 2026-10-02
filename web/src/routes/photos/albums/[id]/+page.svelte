@@ -8,6 +8,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { photoAlbumApi, assetUrl, type PhotoAlbum, type PhotoAlbumItem } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import {
     ALBUM_PAGE_LIMIT,
@@ -107,7 +108,7 @@
 
   async function deleteAlbum() {
     if (!album) return;
-    if (!confirm(`Delete the album "${album.name}"? The photos stay in your library.`)) return;
+    if (!(await confirmAction(`Delete the album "${album.name}"? The photos stay in your library.`))) return;
     try {
       await photoAlbumApi.delete(album.id);
       toast.success(`Deleted "${album.name}"`);

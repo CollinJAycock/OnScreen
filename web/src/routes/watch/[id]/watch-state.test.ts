@@ -10,6 +10,7 @@ const mockChildren = vi.hoisted(() => vi.fn());
 const mockUpNext = vi.hoisted(() => vi.fn());
 const mockMarkWatched = vi.hoisted(() => vi.fn());
 const mockMarkUnwatched = vi.hoisted(() => vi.fn());
+const mockRemove = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 const pageId = vi.hoisted(() => ({ id: 'show-1', search: '' }));
 
@@ -27,6 +28,7 @@ vi.mock('$lib/api', () => ({
     upNext: mockUpNext,
     markWatched: mockMarkWatched,
     markUnwatched: mockMarkUnwatched,
+    remove: mockRemove,
     getWatchStatus: vi.fn().mockRejectedValue(new Error('404')),
   },
   peopleApi: { credits: vi.fn().mockResolvedValue([]) },
@@ -44,6 +46,11 @@ vi.mock('$lib/api', () => ({
 }));
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: vi.fn(), error: mockToastError },
+}));
+const mockConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/native', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/native')>()),
+  confirmAction: mockConfirm,
 }));
 
 import Page from './+page.svelte';
@@ -86,10 +93,6 @@ beforeEach(() => {
   pageId.search = '';
   mockGet.mockResolvedValue(show);
   mockChildren.mockImplementation(childrenImpl);
-});
-
-afterEach(() => {
-  vi.unstubAllGlobals();
 });
 
 describe('show page up-next', () => {
@@ -155,16 +158,15 @@ describe('show page watched marks', () => {
   });
 
   it('confirms before marking a whole show unwatched, then refreshes', async () => {
-    const confirmSpy = vi.fn(() => false);
-    vi.stubGlobal('confirm', confirmSpy);
+    mockConfirm.mockResolvedValue(false);
     mockMarkUnwatched.mockResolvedValue(undefined);
     render(Page);
     const btn = await screen.findByRole('button', { name: /Mark all unwatched/ });
     await fireEvent.click(btn);
-    expect(confirmSpy).toHaveBeenCalled();
+    await waitFor(() => expect(mockConfirm).toHaveBeenCalled());
     expect(mockMarkUnwatched).not.toHaveBeenCalled();
 
-    confirmSpy.mockReturnValue(true);
+    mockConfirm.mockResolvedValue(true);
     const upNextCalls = mockUpNext.mock.calls.length;
     await fireEvent.click(btn);
     await waitFor(() => expect(mockMarkUnwatched).toHaveBeenCalledWith('show-1'));
@@ -174,13 +176,11 @@ describe('show page watched marks', () => {
   });
 
   it('marks all watched without confirming', async () => {
-    const confirmSpy = vi.fn(() => true);
-    vi.stubGlobal('confirm', confirmSpy);
     mockMarkWatched.mockResolvedValue(undefined);
     render(Page);
     await fireEvent.click(await screen.findByRole('button', { name: /Mark all watched/ }));
     await waitFor(() => expect(mockMarkWatched).toHaveBeenCalledWith('show-1'));
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 
   it('toggles one episode from its row, rolling back on failure', async () => {
@@ -215,14 +215,12 @@ describe('season page', () => {
       episode: { id: 'e22', title: 'Adrift', season_id: 's2', season_number: 2, episode_number: 2 },
     });
     mockMarkUnwatched.mockResolvedValue(undefined);
-    const confirmSpy = vi.fn(() => true);
-    vi.stubGlobal('confirm', confirmSpy);
     render(Page);
     expect(await screen.findByRole('button', { name: /Play S2 · E2/ })).toBeTruthy();
     expect(mockUpNext).toHaveBeenCalledWith('s2');
     await fireEvent.click(screen.getByRole('button', { name: /Mark all unwatched/ }));
     await waitFor(() => expect(mockMarkUnwatched).toHaveBeenCalledWith('s2'));
-    expect(confirmSpy).not.toHaveBeenCalled();
+    expect(mockConfirm).not.toHaveBeenCalled();
   });
 });
 
@@ -254,5 +252,22 @@ describe('movie page', () => {
     });
     render(Page);
     expect(await screen.findByRole('button', { name: 'Resume · 1:01' })).toBeTruthy();
+  });
+
+  // window.alert shows nothing in the desktop app, so failures go to a toast.
+  it('reports a failed Remove with a toast', async () => {
+    localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'u', is_admin: true }));
+    pageId.id = 'm1';
+    mockGet.mockResolvedValue({
+      ...show, id: 'm1', title: 'Alien', type: 'movie',
+      files: [{ id: 'f1', stream_url: '/s', container: 'mkv' }],
+    });
+    mockConfirm.mockResolvedValue(true);
+    mockRemove.mockRejectedValue(new Error('Item is locked'));
+    render(Page);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('Item is locked'));
+    expect(mockRemove).toHaveBeenCalledWith('m1');
+    expect(mockGoto).not.toHaveBeenCalled();
   });
 });

@@ -822,6 +822,38 @@ async fn download_to_file(
     Ok(Some(dst_path.to_string_lossy().into_owned()))
 }
 
+/// Native OK/Cancel confirmation for the webview's guarded actions
+/// (deletes, revokes, …). Resolves `true` only when the user pressed OK.
+///
+/// The webview can't use window.confirm: tauri-plugin-dialog's init
+/// script replaces it with an async invoke of `plugin:dialog|confirm`,
+/// so it returns a Promise (always truthy) and `if (!confirm(…)) return`
+/// never stops anything — and the webview isn't granted that plugin
+/// command anyway. This app command shows the dialog through the
+/// plugin's Rust API instead, which needs no capability.
+///
+/// Parented to the calling window so it is modal: the page can't be
+/// clicked again while the question is up.
+#[tauri::command]
+async fn confirm_dialog(window: tauri::WebviewWindow, message: String) -> bool {
+    use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
+
+    // Callback-based like the save dialog above. If the dialog never
+    // shows, the sender is dropped and recv() yields None: fail closed.
+    let (tx, mut rx) = tauri::async_runtime::channel::<bool>(1);
+    window
+        .dialog()
+        .message(message)
+        .title("OnScreen")
+        .kind(MessageDialogKind::Warning)
+        .buttons(MessageDialogButtons::OkCancel)
+        .parent(&window)
+        .show(move |ok| {
+            let _ = tx.blocking_send(ok);
+        });
+    rx.recv().await.unwrap_or(false)
+}
+
 /// Brings the main window forward — used by both the tray icon's
 /// left-click and the "Show OnScreen" menu item. Unminimises before
 /// focusing so a tray click recovers from a minimized state too.
@@ -849,10 +881,10 @@ pub fn run() {
         // gates this behind a user pref so it doesn't spam during
         // album playback.
         .plugin(tauri_plugin_notification::init())
-        // Native save-as dialog. Used by the Download button on the
-        // watch page so the user picks where to drop the media file
-        // on their disk; the webview's <a download> doesn't fire the
-        // OS save flow on its own.
+        // Native dialogs, driven from Rust only: the save-as dialog
+        // behind the watch page's Download button (the webview's
+        // <a download> doesn't fire the OS save flow on its own) and
+        // the OK/Cancel box behind `confirm_dialog`.
         .plugin(tauri_plugin_dialog::init())
         // Global keyboard shortcuts — registers the OS media keys
         // (Play/Pause, Next, Previous, Stop) so transport works
@@ -987,6 +1019,7 @@ pub fn run() {
             set_tokens,
             clear_tokens,
             download_to_file,
+            confirm_dialog,
             audio::list_audio_devices,
             audio::play_test_tone,
             audio::stop_audio,

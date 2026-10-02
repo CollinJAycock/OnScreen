@@ -24,6 +24,11 @@ vi.mock('$lib/api', () => ({
 }));
 vi.mock('$lib/stores/pendingRequests', () => ({ refreshPendingRequests: mockRefreshPending }));
 vi.mock('$lib/stores/toast', () => ({ toast: mockToast }));
+const mockConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/native', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/native')>()),
+  confirmAction: mockConfirm,
+}));
 // Requests on, and the account may request (the gates themselves are
 // covered in upcoming.test.ts).
 vi.mock('$lib/stores/capabilities', async () => {
@@ -243,12 +248,11 @@ describe('Admin nav badge', () => {
   });
 
   it('refreshes the pending count after a delete', async () => {
-    vi.stubGlobal('confirm', vi.fn(() => true));
+    mockConfirm.mockResolvedValue(true);
     await openQueueRows();
     await fireEvent.click(within(rowOf('Dune')).getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(mockDelete).toHaveBeenCalledWith('p2'));
     await waitFor(() => expect(mockRefreshPending).toHaveBeenCalledWith(true));
-    vi.unstubAllGlobals();
   });
 
   it('does not refresh when the approval fails', async () => {

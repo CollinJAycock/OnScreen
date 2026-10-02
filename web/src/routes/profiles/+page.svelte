@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { api, profileApi, userApi, libraryApi, type ManagedProfile, type Library } from '$lib/api';
+  import { confirmAction } from '$lib/native';
 
   let profiles: ManagedProfile[] = [];
   let loading = true;
@@ -130,7 +131,7 @@
   }
 
   async function deleteProfile(id: string) {
-    if (!confirm('Delete this profile? Watch history and progress will be lost.')) return;
+    if (!(await confirmAction('Delete this profile? Watch history and progress will be lost.'))) return;
     try {
       await profileApi.delete(id);
       profiles = profiles.filter(p => p.id !== id);

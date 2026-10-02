@@ -3,6 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, assetUrl, getBearerToken, type ItemDetail } from '$lib/api';
+  import { confirmAction } from '$lib/native';
+  import { toast } from '$lib/stores/toast';
   import {
     effectiveLayout as computeEffectiveLayout,
     pageStep as computePageStep,
@@ -76,7 +78,7 @@
 
   async function removeItem() {
     if (!book) return;
-    const confirmed = confirm(
+    const confirmed = await confirmAction(
       `Soft-delete "${book.title}"?\n\n` +
       `This hides the book from the library. The on-disk file is not touched.`
     );
@@ -85,7 +87,7 @@
       await itemApi.remove(book.id);
       goto(`/libraries/${book.library_id}`);
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : 'Remove failed');
     }
   }
 

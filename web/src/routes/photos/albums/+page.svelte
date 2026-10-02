@@ -7,6 +7,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { photoAlbumApi, assetUrl, type PhotoAlbum } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import CardMenu from '$lib/components/CardMenu.svelte';
   import {
@@ -94,7 +95,7 @@
 
   async function remove(a: PhotoAlbum) {
     // The photos stay in their libraries; only the album goes.
-    if (!confirm(`Delete the album "${a.name}"? The photos stay in your library.`)) return;
+    if (!(await confirmAction(`Delete the album "${a.name}"? The photos stay in your library.`))) return;
     try {
       await photoAlbumApi.delete(a.id);
       albums = withoutAlbum(albums, a.id);

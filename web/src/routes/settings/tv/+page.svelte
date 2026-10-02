@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { liveTvApi, type LiveTVTuner, type LiveTVEPGSource, type LiveTVChannel, type LiveTVBroadcast } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
 
   let tuners: LiveTVTuner[] = [];
@@ -88,7 +89,7 @@
   }
 
   async function removeBroadcast(b: LiveTVBroadcast) {
-    if (!confirm(`Delete broadcast "${b.name}"? Any active stream will be cut off.`)) return;
+    if (!(await confirmAction(`Delete broadcast "${b.name}"? Any active stream will be cut off.`))) return;
     busyBroadcastId = b.tuner_id;
     try {
       await liveTvApi.deleteTuner(b.tuner_id);
@@ -205,7 +206,7 @@
   }
 
   async function removeEPG(s: LiveTVEPGSource) {
-    if (!confirm(`Delete EPG source "${s.name}"? Already-ingested programs stay until they expire.`)) return;
+    if (!(await confirmAction(`Delete EPG source "${s.name}"? Already-ingested programs stay until they expire.`))) return;
     busyEPGId = s.id;
     try {
       await liveTvApi.deleteEPGSource(s.id);
@@ -293,7 +294,7 @@
   }
 
   async function remove(t: LiveTVTuner) {
-    if (!confirm(`Delete tuner "${t.name}"? This removes all its channels and EPG data.`)) return;
+    if (!(await confirmAction(`Delete tuner "${t.name}"? This removes all its channels and EPG data.`))) return;
     busyId = t.id;
     try {
       await liveTvApi.deleteTuner(t.id);

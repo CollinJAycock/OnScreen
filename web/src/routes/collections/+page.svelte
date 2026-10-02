@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { collectionApi, type Collection } from '$lib/api';
+  import { confirmAction } from '$lib/native';
 
   let collections: Collection[] = [];
   let loading = true;
@@ -39,7 +40,7 @@
   }
 
   async function deleteCollection(id: string) {
-    if (!confirm('Delete this collection? This cannot be undone.')) return;
+    if (!(await confirmAction('Delete this collection? This cannot be undone.'))) return;
     try {
       await collectionApi.delete(id);
       collections = collections.filter(c => c.id !== id);

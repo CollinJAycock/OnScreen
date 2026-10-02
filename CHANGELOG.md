@@ -605,6 +605,21 @@ Roku channel (no request features, as on Android):
   its bearer token, as before. The CSRF checks are unchanged. Until a
   server is updated, add `http://tauri.localhost, tauri://localhost` under
   Settings → General → CORS allowed origins and restart it.
+- **Confirmations never stopped anything in the desktop app.** Deleting a
+  playlist, collection, photo album, profile, request, tuner, broadcast,
+  EPG source or recording schedule, cancelling a recording, removing a
+  node's saved config, removing an item from the library and marking a
+  whole show unwatched all ask first. In the desktop webview
+  `window.confirm` returned straight away: the dialog plugin replaces it
+  with an asynchronous call (which the webview isn't even allowed to
+  make), so each of these went ahead without asking. They now ask through
+  a native OK/Cancel dialog that is modal to the app window, and Cancel
+  stops the action. Browsers still show their own confirmation.
+- **Some errors were silent in the desktop app.** A failure to remove an
+  item from the library, refresh its metadata or change its watch status
+  was reported with the browser's alert box, which the dialog plugin also
+  replaces in the desktop webview, so nothing appeared. These failures now
+  show as an error toast, like the app's other errors, in browsers too.
 - **The Upcoming calendar showed restricted users titles from libraries
   they can't see.** An entry was hidden only when its Radarr/Sonarr folder
   mapped into a library the user has no grant on; a folder no library

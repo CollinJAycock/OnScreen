@@ -3,6 +3,8 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
+  import { confirmAction } from '$lib/native';
+  import { toast } from '$lib/stores/toast';
 
   let author: ItemDetail | null = null;
   let series: ChildItem[] = [];
@@ -23,7 +25,7 @@
   async function removeItem() {
     if (!author) return;
     const childCount = series.length + standaloneBooks.length;
-    const confirmed = confirm(
+    const confirmed = await confirmAction(
       `Soft-delete "${author.title}" and all ${childCount} of their books/series?\n\n` +
       `This hides the author tile and every descendant from the library. ` +
       `On-disk files are not touched. Use this to clear ghost rows from ` +
@@ -35,7 +37,7 @@
       await itemApi.remove(author.id);
       goto(`/libraries/${author.library_id}`);
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : 'Remove failed');
     }
   }
 

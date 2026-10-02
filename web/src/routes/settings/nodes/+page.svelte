@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { settingsApi } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import type { NodeSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
@@ -67,7 +68,7 @@
 
   async function removeNode() {
     if (!selected || selected === currentNodeId) return;
-    if (!confirm(`Remove saved config for "${selected}"? It reverts to env defaults; an online node stays in the list.`)) return;
+    if (!(await confirmAction(`Remove saved config for "${selected}"? It reverts to env defaults; an online node stays in the list.`))) return;
     saving = true;
     try {
       await settingsApi.deleteNode(selected);

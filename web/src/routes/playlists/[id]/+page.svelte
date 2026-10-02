@@ -3,6 +3,7 @@
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
   import { playlistApi, assetUrl, type Playlist, type PlaylistItem } from '$lib/api';
+  import { confirmAction } from '$lib/native';
 
   let playlist: Playlist | null = null;
   let items: PlaylistItem[] = [];
@@ -62,7 +63,7 @@
   }
 
   async function deletePlaylist() {
-    if (!confirm('Delete this playlist? This cannot be undone.')) return;
+    if (!(await confirmAction('Delete this playlist? This cannot be undone.'))) return;
     try {
       await playlistApi.delete(id);
       goto('/playlists');

@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { playlistApi, type Playlist, type SmartPlaylistRules } from '$lib/api';
+  import { confirmAction } from '$lib/native';
 
   let playlists: Playlist[] = [];
   let loading = true;
@@ -55,7 +56,7 @@
   }
 
   async function deletePlaylist(id: string) {
-    if (!confirm('Delete this playlist? This cannot be undone.')) return;
+    if (!(await confirmAction('Delete this playlist? This cannot be undone.'))) return;
     try {
       await playlistApi.delete(id);
       playlists = playlists.filter(p => p.id !== id);

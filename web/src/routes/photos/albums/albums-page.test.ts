@@ -16,6 +16,11 @@ vi.mock('$lib/api', () => ({
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
 }));
+const mockConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/native', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/native')>()),
+  confirmAction: mockConfirm,
+}));
 
 import Page from './+page.svelte';
 
@@ -116,8 +121,7 @@ describe('Photo albums page', () => {
 
   it('deletes after confirming', async () => {
     mockDelete.mockResolvedValue(undefined);
-    const confirmSpy = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
-    vi.stubGlobal('confirm', confirmSpy);
+    mockConfirm.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
     render(Page);
 
     await openMenu('Beach');
@@ -129,8 +133,8 @@ describe('Photo albums page', () => {
     await waitFor(() => expect(mockDelete).toHaveBeenCalledWith('a-2'));
     await waitFor(() => expect(screen.queryByRole('link', { name: 'Beach, 1 photo' })).toBeNull());
     expect(mockToastSuccess).toHaveBeenCalledWith('Deleted "Beach"');
-    expect(confirmSpy).toHaveBeenCalledTimes(2);
-    vi.unstubAllGlobals();
+    expect(mockConfirm).toHaveBeenCalledTimes(2);
+    expect(mockConfirm).toHaveBeenCalledWith('Delete the album "Beach"? The photos stay in your library.');
   });
 
   it('shows a load failure with retry', async () => {
