@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, assetUrl, type ItemDetail, type ChildItem, type Bookmark } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import { audio, currentTrack, type AudioTrack } from '$lib/stores/audio';
   import { bookmarkAdded } from '$lib/stores/bookmarks';
   import { toast } from '$lib/stores/toast';
@@ -64,7 +65,7 @@
 
   async function removeItem() {
     if (!book) return;
-    const confirmed = confirm(
+    const confirmed = await confirmAction(
       `Soft-delete "${book.title}" and all its chapters?\n\n` +
       `This hides the book from the library. The on-disk files are not touched. ` +
       `Use this to clear ghost rows from misorganised content.`
@@ -76,7 +77,7 @@
       else if (author) goto(`/authors/${author.id}`);
       else goto(`/libraries/${book.library_id}`);
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : 'Remove failed');
     }
   }
 

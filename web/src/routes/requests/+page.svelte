@@ -9,6 +9,7 @@
     type MediaRequest,
     type RequestStatus,
   } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import { refreshPendingRequests } from '$lib/stores/pendingRequests';
   import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
@@ -244,7 +245,7 @@
 
   async function adminDelete(req: MediaRequest) {
     if (processing.has(req.id)) return;
-    if (!confirm(`Delete request for "${req.title}"? This does not affect the upstream arr instance.`)) return;
+    if (!(await confirmAction(`Delete request for "${req.title}"? This does not affect the upstream arr instance.`))) return;
     markProcessing(req.id, true);
     try {
       await requestsAdminApi.del(req.id);

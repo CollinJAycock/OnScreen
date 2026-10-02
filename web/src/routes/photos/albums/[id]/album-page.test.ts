@@ -30,6 +30,11 @@ vi.mock('$lib/api', () => ({
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
 }));
+const mockConfirm = vi.hoisted(() => vi.fn());
+vi.mock('$lib/native', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/native')>()),
+  confirmAction: mockConfirm,
+}));
 
 import Page from './+page.svelte';
 
@@ -133,12 +138,11 @@ describe('Photo album page', () => {
 
   it('deletes the album after confirming and goes back to the list', async () => {
     mockDelete.mockResolvedValue(undefined);
-    vi.stubGlobal('confirm', vi.fn(() => true));
+    mockConfirm.mockResolvedValue(true);
     render(Page);
     await screen.findByRole('heading', { name: 'Alps' });
     await fireEvent.click(screen.getByRole('button', { name: 'Delete' }));
     await waitFor(() => expect(mockDelete).toHaveBeenCalledWith('a-1'));
     expect(mockGoto).toHaveBeenCalledWith('/photos/albums');
-    vi.unstubAllGlobals();
   });
 });

@@ -13,7 +13,7 @@
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
   import { capabilities } from '$lib/stores/capabilities';
   import { onlineSubtitlesVisible } from '$lib/featureGates';
-  import { isTauri, nativeDownload } from '$lib/native';
+  import { confirmAction, isTauri, nativeDownload } from '$lib/native';
   import {
     sleepTimer,
     startSleepTimer,
@@ -1529,7 +1529,7 @@
         }
       }
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Refresh failed');
+      toast.error(e instanceof Error ? e.message : 'Refresh failed');
     } finally {
       refreshing = false;
     }
@@ -1575,7 +1575,7 @@
         watchStatus = r.status;
       }
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Failed to update status');
+      toast.error(e instanceof Error ? e.message : 'Failed to update status');
     } finally {
       watchStatusLoading = false;
     }
@@ -1658,10 +1658,10 @@
   // Show / season: every episode underneath (the server applies it).
   async function markAllEpisodes(watched: boolean) {
     if (!item || markBusy) return;
-    if (!watched && item.type === 'show' && !confirm(
+    if (!watched && item.type === 'show' && !(await confirmAction(
       `Mark every episode of "${item.title}" as unwatched?\n\n` +
       `This clears your watched marks and resume points for the whole show.`
-    )) return;
+    ))) return;
     markBusy = true;
     try {
       if (watched) await itemApi.markWatched(item.id);
@@ -1698,7 +1698,7 @@
   // ── Remove (admin) ─────────────────────────────────────────────────────────
   async function removeItem() {
     if (!item) return;
-    const confirmed = confirm(
+    const confirmed = await confirmAction(
       `Soft-delete "${item.title}" and all its descendants?\n\n` +
       `This hides the item from the library. The on-disk files are not touched. ` +
       `Use this to clear ghost rows from misorganised content (e.g. two shows ` +
@@ -1710,7 +1710,7 @@
       // Bounce back to the library listing — the item no longer exists.
       goto('/');
     } catch (e: unknown) {
-      alert(e instanceof Error ? e.message : 'Remove failed');
+      toast.error(e instanceof Error ? e.message : 'Remove failed');
     }
   }
 
