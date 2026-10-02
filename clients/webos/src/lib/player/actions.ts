@@ -9,6 +9,7 @@
 // these decide.
 
 import type { RemoteKey } from '../focus/keys';
+import type { ChannelStep } from './chrome';
 
 export type PlayerAction = 'audio' | 'subtitles' | 'chapters';
 
@@ -85,10 +86,38 @@ export type TransportButton = 'prev' | 'back' | 'playpause' | 'forward' | 'next'
 /** Skip size of the back / forward buttons: the ← → keys'. */
 export const TRANSPORT_SKIP_MS = 10_000;
 
-/** The buttons, left to right: previous / next only when CH ▲▼ step
- *  something here (chrome.channelStep: a queue's items or the chapters). */
-export function transportButtons(canStep: boolean): TransportButton[] {
-  return canStep ? ['prev', 'back', 'playpause', 'forward', 'next'] : ['back', 'playpause', 'forward'];
+/** The buttons, left to right: previous / next each only when CH ▼ / ▲
+ *  would go somewhere from here (transportSteps). A dead one did nothing
+ *  but bring the controls up. */
+export function transportButtons(steps: { prev: boolean; next: boolean }): TransportButton[] {
+  const out: TransportButton[] = [];
+  if (steps.prev) out.push('prev');
+  out.push('back', 'playpause', 'forward');
+  if (steps.next) out.push('next');
+  return out;
+}
+
+/**
+ * Where CH ▼ / ▲ (the page's channelSkip) go from here: a queue item to
+ * the sibling before / after it, when there is one; chapters back always
+ * (the chapter's start, or the one before: jumpToChapter) and on unless
+ * the last one has started (within jumpToChapter's 2 s); nothing else.
+ */
+export function transportSteps(o: {
+  step: ChannelStep;
+  prevSibling: boolean;
+  nextSibling: boolean;
+  chapterStarts: readonly number[];
+  positionMs: number;
+}): { prev: boolean; next: boolean } {
+  switch (o.step) {
+    case 'item':
+      return { prev: o.prevSibling, next: o.nextSibling };
+    case 'chapter':
+      return { prev: o.chapterStarts.length > 0, next: o.chapterStarts.some((s) => s > o.positionMs + 2000) };
+    default:
+      return { prev: false, next: false };
+  }
 }
 
 export function transportLabel(b: TransportButton, paused: boolean): string {

@@ -92,6 +92,19 @@ describe('Settings > About', () => {
     }
   });
 
+  // Back from Licence & terms puts the ring on its row (last on the page);
+  // the preferences and scrobble rows then load in above it and push it
+  // ~384px down, off the screen. Each load puts it back in view while the
+  // restore still holds (lib/focus/memory restoreAgain).
+  it('brings the restored row back into view after each late load', () => {
+    const source = readFileSync(new URL('./+page.svelte', import.meta.url), 'utf8');
+    expect(source).toContain('const guard = backMemo?.focusedId ? restoreGuard() : null;');
+    expect(source).toContain('restoreKeyed(backMemo, guard)');
+    const loads = source.split('await tick();\n      restoreAgain(backMemo, guard);').length - 1;
+    expect(loads).toBe(2);
+    expect(source).toContain('guard?.end()');
+  });
+
   it('still shows the version', () => {
     expect(about()).toContain('Version');
   });

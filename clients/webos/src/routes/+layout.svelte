@@ -46,7 +46,16 @@
     const back = exitReturn;
     exitReturn = null;
     await tick();
+    // What the page put the ring on behind the popup (a Back restore of the
+    // hub that finished while it was up) when nothing had it before.
+    const behind = focusManager.takeBehindModal();
     if (back && document.body.contains(back)) focusManager.focus(back);
+    else if (behind) focusManager.focus(behind);
+    // Nothing had the ring when the popup opened: the page is still placing
+    // it (the hub restoring after a Back). refocus() would put it on the
+    // Home pill and end that restore (RestoreGuard); the D-pad brings the
+    // ring up meanwhile.
+    else if (!back) return;
     else focusManager.refocus();
   }
 

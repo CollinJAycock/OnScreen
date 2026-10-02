@@ -13,7 +13,7 @@
   import { api, endpoints, Unauthorized } from '$lib/api';
   import { focusable, focusScope } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
-  import { focusFirstOf, restoreKeyed, takeFocusMemo } from '$lib/focus/memory';
+  import { focusFirstOf, restoreAgain, restoreGuard, restoreKeyed, takeFocusMemo } from '$lib/focus/memory';
   import QrCode from '$lib/components/QrCode.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
   import { PRIVACY_POLICY_URL } from '$lib/legal';
@@ -38,6 +38,10 @@
   // (lib/focus/memory). Taken before the rows mount, so Sign out can hold
   // its autofocus for it.
   const backMemo = takeFocusMemo();
+  // The rows load in above that row after it has the ring (preferences,
+  // scrobbling) and push it off the screen: each load brings it back while
+  // the user hasn't moved on.
+  const guard = backMemo?.focusedId ? restoreGuard() : null;
 
   type Confirm = 'signOut' | 'forgetServer';
   let confirming = $state<Confirm | null>(null);
@@ -101,7 +105,7 @@
   }
 
   onMount(() => {
-    if (backMemo?.focusedId && !restoreKeyed(backMemo)) focusFirstOf('.action-row');
+    if (backMemo?.focusedId && !restoreKeyed(backMemo, guard)) focusFirstOf('.action-row', guard);
 
     (async () => {
       try {
@@ -112,6 +116,8 @@
       } finally {
         prefsLoaded = true;
       }
+      await tick();
+      restoreAgain(backMemo, guard);
     })();
 
     (async () => {
@@ -120,9 +126,11 @@
       } catch {
         // Best-effort — the row falls back to "Off" if status can't load.
       }
+      await tick();
+      restoreAgain(backMemo, guard);
     })();
 
-    return focusManager.pushBack(() => {
+    const offBack = focusManager.pushBack(() => {
       if (confirming) {
         void closeConfirm();
         return true;
@@ -130,6 +138,10 @@
       goto('#/hub');
       return true;
     });
+    return () => {
+      offBack();
+      guard?.end();
+    };
   });
 
   // Saves the two languages (the endpoint answers 204 with no body, and

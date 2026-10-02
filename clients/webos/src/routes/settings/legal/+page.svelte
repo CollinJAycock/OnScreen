@@ -14,9 +14,11 @@
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import TopNav from '$lib/components/TopNav.svelte';
+  import { scrollPageToTop } from '$lib/focus/memory';
   import { goBack } from '$lib/nav';
   import {
     APP_LICENCE,
+    BSD_3_LICENCE,
     LICENCE_NAMES,
     MIT_LICENCE,
     NOTICES,
@@ -34,6 +36,7 @@
 
   const apache = apacheTerms();
   const mitUsers = usedUnder('MIT').join(', ');
+  const bsdUsers = usedUnder('BSD-3-Clause').join(', ');
   const apacheUsers = ['this app', ...usedUnder('Apache-2.0')].join(', ');
 
   // A chip's section to the top of the screen, its heading and first blocks
@@ -46,12 +49,17 @@
     focusManager.focus(first);
   }
 
-  onMount(() =>
-    focusManager.pushBack(() => {
+  // Opened from the bottom of Settings, whose scroll the app's page box
+  // keeps: back to the top before the first block's autofocus (queued as a
+  // microtask by the focusable action) scrolls to it, so the page opens at
+  // its title.
+  onMount(() => {
+    scrollPageToTop();
+    return focusManager.pushBack(() => {
       goBack('#/settings');
       return true;
-    }),
-  );
+    });
+  });
 </script>
 
 <div class="page">
@@ -109,6 +117,10 @@
     <h2>Licence texts</h2>
     <h3>MIT License <span class="used-by">({mitUsers})</span></h3>
     {#each MIT_LICENCE as text}
+      <p use:focusable class="block">{text}</p>
+    {/each}
+    <h3>BSD 3-Clause License <span class="used-by">({bsdUsers})</span></h3>
+    {#each BSD_3_LICENCE as text}
       <p use:focusable class="block">{text}</p>
     {/each}
     <h3>Apache License 2.0 <span class="used-by">({apacheUsers})</span></h3>

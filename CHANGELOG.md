@@ -548,6 +548,38 @@ Roku channel (no request features, as on Android):
     app derived from software that requires its source to be disclosed.
     Contributions under `clients/webos` are Apache-2.0 (README,
     CONTRIBUTING).
+  - Sign in no longer traps a wrong but reachable server. Back on its
+    username step returns to Setup when Setup opened it this session (the
+    exit popup stays for a Sign in the app launched on), and the username
+    step and Pair have a Change server button, which forgets the address and
+    opens Setup as the home screen's does.
+  - The Magic Remote's OK keeps the hold it has with the D-pad. Holding OK
+    with the cursor on a Continue Watching card opens its options instead of
+    the item, and the click its release sends is dropped. A held OK on the
+    on-screen keyboard's delete key goes on deleting. A short press still
+    acts once.
+  - Cancelling the exit popup while the home screen is still putting focus
+    back after a Back no longer lands on the Home pill. The card that restore
+    finds behind the popup gets the ring.
+  - Skip Intro / Skip Credits takes the pointer's click again. The player's
+    full-width action and transport rows covered it; now only their buttons
+    take the pointer. The pointer's |◀ and ▶| buttons show only where they
+    go somewhere (no previous on the first track, no next in the last
+    chapter).
+  - Back from Licence & terms keeps its Settings row on screen after the
+    preferences and scrobbling rows load in above it. Licence & terms opens
+    at its title instead of part way down, where Settings' scroll had left
+    it.
+  - The third-party notices add the code the hls.js build carries from
+    other projects: dash.js's CEA-608 parser (BSD 3-Clause, with its licence
+    text), vtt.js and the Common Media Library (Apache-2.0), and
+    structured-field-values (MIT). They also add Project Nayuki's QR Code
+    generator (MIT), which `src/lib/qr.ts` is ported from; the file's header
+    now carries its notice. A test fails on any copyright line in the
+    bundled hls.js that the list doesn't carry.
+  - The privacy policy covers Last.fm and Trakt next to ListenBrainz: what
+    the server sends each linked account, and that the developer receives
+    none of it.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
   search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
   its Deceptive and Malicious Behavior policy, which names apps that "save,

@@ -195,6 +195,38 @@
     </p>
 
     <p>
+      <strong>Last.fm (optional).</strong> If you link your own Last.fm
+      account under <strong>Settings → Scrobbling</strong> (you approve
+      the link on Last.fm's website), your OnScreen server, not the app,
+      sends the music you play to that account the same way: a "now
+      playing" notice when a track starts, and a scrobble once you've
+      played half the track or four minutes. Each submission carries only
+      the track's title, artist, album, track number, length and
+      MusicBrainz ID, and the time you started it. It goes from your
+      server to Last.fm under your server operator's Last.fm API account;
+      the developer receives none of it. Unlink the account in the same
+      place to stop. See
+      <a href="https://www.last.fm/legal/privacy" target="_blank" rel="noopener noreferrer">Last.fm's
+      privacy policy</a>.
+    </p>
+
+    <p>
+      <strong>Trakt (optional).</strong> If you link your own Trakt
+      account under <strong>Settings → Scrobbling</strong> (you approve
+      the link with a code on Trakt's website), your OnScreen server, not
+      the app, tells that account what films and episodes you watch: when
+      you start, pause and stop one, with how far into it you are, and,
+      when you mark it watched by hand, that you watched it and when.
+      Each message carries only the film's or show's title, year and
+      TMDB, TVDB or IMDb IDs, and an episode's season and number. It goes
+      from your server to Trakt under your server operator's Trakt API
+      application; the developer receives none of it. Unlink the account
+      in the same place to stop. See
+      <a href="https://trakt.tv/privacy" target="_blank" rel="noopener noreferrer">Trakt's
+      privacy policy</a>.
+    </p>
+
+    <p>
       The full list of dependencies is visible in the project's source
       code.
     </p>

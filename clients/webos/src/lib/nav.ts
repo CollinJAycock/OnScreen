@@ -141,6 +141,13 @@ export function goBack(fallback = '#/hub') {
   goto(dest);
 }
 
+/** Where goBack would go now, without going: null when the stack is empty
+ *  (goBack's fallback then). Sign in asks it, to tell a Sign in that Setup
+ *  opened (Back returns there) from one the app launched on. */
+export function backTarget(): string | null {
+  return backStack.length > 0 ? backStack[backStack.length - 1] : null;
+}
+
 function pushHere() {
   const h = currentHash();
   // Note the focused card (and how many the page had loaded) for when

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import pkg from '../../package.json';
 import {
   APP_LICENCE,
+  BSD_3_LICENCE,
   LICENCE_FILE,
   MIT_LICENCE,
   NOTICES,
@@ -169,6 +170,63 @@ describe('third-party notices', () => {
     for (const line of lines) expect(listed, `${line}: add it to hls.js's includes`).toContain(line);
   });
 
+  // hls.js's dist build inlines code from other projects, some of it with
+  // its copyright line in a comment: each such line is a notice to carry.
+  it("carry every copyright line in hls.js's bundled build", () => {
+    const hls = NOTICES.find((n) => n.pkg === 'hls.js');
+    const listed = hls ? [hls, ...(hls.includes ?? [])].map((n) => n.notice) : [];
+    const bundle = read('node_modules/hls.js/dist/hls.mjs');
+    const lines = bundle
+      .split('\n')
+      .map((l) => l.replace(/^\s*(\/\/|\/?\*+)?\s*/, '').trim())
+      .filter((l) => /^Copyright\b/.test(l))
+      .map((l) => l.replace(/\.$/, ''));
+    expect(lines).toContain('Copyright (c) 2015-2016, DASH Industry Forum');
+    expect(lines).toContain('Copyright 2013 vtt.js Contributors');
+    for (const line of new Set(lines)) expect(listed, `${line}: add it to hls.js's includes`).toContain(line);
+  });
+
+  // The Common Media Library (CMCD) comes in without a copyright comment:
+  // its NOTICE file carries the lines, its own and Jxck's for the structured
+  // field code it derives from structured-field-values.
+  it("carry the Common Media Library's notices when hls.js bundles it", () => {
+    const bundle = read('node_modules/hls.js/dist/hls.mjs');
+    expect(bundle).toContain('class SfItem');
+    const names = allNotices().map((n) => n.name);
+    expect(names).toContain('Common Media Library');
+    expect(names).toContain('structured-field-values');
+    const cml = allNotices().find((n) => n.name === 'Common Media Library');
+    expect(cml?.licence).toBe('Apache-2.0');
+    expect(cml?.notice).toBe('Copyright (c) 2023 Streaming Video Technology Alliance');
+    const sfv = allNotices().find((n) => n.name === 'structured-field-values');
+    expect(sfv?.licence).toBe('MIT');
+    expect(sfv?.notice).toBe('Copyright (c) 2020 Jxck');
+  });
+
+  it("carry the dash.js CEA-608 parser's BSD 3-Clause text", () => {
+    const dash = allNotices().find((n) => n.name === 'dash.js (CEA-608 parser)');
+    expect(dash?.licence).toBe('BSD-3-Clause');
+    expect(dash?.notice).toBe('Copyright (c) 2015-2016, DASH Industry Forum');
+    const bsd = BSD_3_LICENCE.join(' ');
+    expect(bsd).toContain('Redistributions of source code must retain the above copyright notice');
+    expect(bsd).toContain('Neither the name of Dash Industry Forum nor the names of its contributors');
+    expect(bsd).toContain('POSSIBILITY OF SUCH DAMAGE.');
+  });
+
+  // lib/qr.ts is the app's own code, ported from Project Nayuki's QR Code
+  // generator: its MIT notice travels with it.
+  it("carry Project Nayuki's notice for the QR encoder ported in lib/qr.ts", () => {
+    const qr = NOTICES.find((n) => n.name === 'QR Code generator library');
+    expect(qr?.pkg).toBeNull();
+    expect(qr?.licence).toBe('MIT');
+    expect(qr?.notice).toBe('Copyright (c) Project Nayuki');
+    expect(qr?.url).toBe('https://www.nayuki.io/page/qr-code-generator-library');
+    const source = read('src/lib/qr.ts');
+    const header = source.slice(0, source.indexOf('export '));
+    expect(header).toContain('Copyright (c) Project Nayuki');
+    expect(header).toContain('MIT License');
+  });
+
   it('are the same in THIRD_PARTY_NOTICES.md', () => {
     const md = read('THIRD_PARTY_NOTICES.md');
     // Each entry's own section: its heading to the next one.
@@ -186,8 +244,8 @@ describe('third-party notices', () => {
       expect(body).toContain(`- Used for: ${n.role}`);
       if (n.terms) expect(body).toContain(n.terms);
     }
-    expect(sections.size).toBe(allNotices().length + 3); // + the licence-text headings
-    for (const para of MIT_LICENCE) {
+    expect(sections.size).toBe(allNotices().length + 4); // + the licence-text headings
+    for (const para of [...MIT_LICENCE, ...BSD_3_LICENCE]) {
       expect(md.replace(/\s*\n\s*/g, ' ')).toContain(para);
     }
   });
@@ -195,11 +253,20 @@ describe('third-party notices', () => {
   it('name who each licence text covers', () => {
     expect(usedUnder('MIT')).toEqual([
       'eventemitter3',
+      'structured-field-values',
       'Svelte',
       'SvelteKit',
       'esm-env',
       'Vite (module preload helper)',
+      'QR Code generator library',
     ]);
-    expect(usedUnder('Apache-2.0')).toEqual(['hls.js', 'url-toolkit', 'videojs-contrib-hls']);
+    expect(usedUnder('Apache-2.0')).toEqual([
+      'hls.js',
+      'url-toolkit',
+      'videojs-contrib-hls',
+      'vtt.js',
+      'Common Media Library',
+    ]);
+    expect(usedUnder('BSD-3-Clause')).toEqual(['dash.js (CEA-608 parser)']);
   });
 });

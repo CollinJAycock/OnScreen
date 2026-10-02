@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { goto } from '$app/navigation';
   import { api, isCleartextRemote } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
+  import { pushTo } from '$lib/nav';
 
   // Empty by default: a bare host is tried over https:// first (see submit).
   let url = $state('');
@@ -81,7 +81,9 @@
         return;
       }
       api.setOrigin(origin);
-      goto('#/login');
+      // Pushed, so Sign in's Back comes back here (a wrong but reachable
+      // server) rather than offering to exit.
+      pushTo('#/login');
     } catch (e) {
       error = `Could not reach server: ${(e as Error).message}`;
     } finally {

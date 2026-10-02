@@ -1,7 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   FocusMemory,
   RestoreGuard,
+  restoreAgain,
+  scrollPageToTop,
   episodeFocusKey,
   seasonOfEpisodeKey,
   type FocusMemo,
@@ -99,7 +101,11 @@ describe('RestoreGuard', () => {
   // Focus as the focus manager reports it: an element id, or null for none.
   function setup(initial: string | null = null) {
     let focused: string | null = initial;
-    const guard = new RestoreGuard<string>(() => focused);
+    // The exit popup's buttons are inside the modal.
+    const guard = new RestoreGuard<string>(
+      () => focused,
+      (el) => el.startsWith('popup-'),
+    );
     return {
       guard,
       focus(el: string | null) {
@@ -151,6 +157,24 @@ describe('RestoreGuard', () => {
     expect(guard.active).toBe(false);
   });
 
+  // Back on the hub while it is still restoring opens the exit popup, which
+  // takes the ring; Cancel takes it away again. Neither is the user moving
+  // off the restore: the card it finds afterwards still gets the ring.
+  it('ignores focus inside the modal (the exit popup) and its going', () => {
+    const { guard, focus } = setup();
+    focus('popup-cancel');
+    expect(guard.active).toBe(true);
+    focus('popup-exit');
+    expect(guard.active).toBe(true);
+    focus(null); // cancelled: the button is gone
+    expect(guard.active).toBe(true);
+    guard.placedOn('card-42');
+    focus('card-42');
+    expect(guard.active).toBe(true);
+    focus('nav-home');
+    expect(guard.active).toBe(false);
+  });
+
   it('treats focus lost to a detached element (null) as no move', () => {
     const { guard, focus } = setup();
     guard.placedOn('card-1');
@@ -176,5 +200,75 @@ describe('episode focus keys', () => {
     expect(seasonOfEpisodeKey('season:season-2')).toBeNull();
     expect(seasonOfEpisodeKey('3f2c-album-id')).toBeNull();
     expect(seasonOfEpisodeKey(null)).toBeNull();
+  });
+});
+
+// A keyed row as the restore sees it: an attribute, a scroll, a focus.
+function keyedRow(key: string) {
+  const attrs = new Map<string, string>([['data-focus-key', key]]);
+  return {
+    scrolls: [] as unknown[],
+    getAttribute: (n: string) => attrs.get(n) ?? null,
+    setAttribute: (n: string, v: string) => void attrs.set(n, v),
+    scrollIntoView(opts: unknown) {
+      this.scrolls.push(opts);
+    },
+  };
+}
+
+describe('restoreAgain', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function page(row: ReturnType<typeof keyedRow>) {
+    vi.stubGlobal('document', {
+      body: { contains: () => true },
+      querySelector: () => null,
+      querySelectorAll: () => [row],
+    });
+  }
+
+  // Settings: Back from Licence & terms puts the ring on its row, then the
+  // preferences and scrobble rows load in above it and push it down off the
+  // screen. Each load brings the row back to the middle while the restore
+  // still holds.
+  it('scrolls the restored row back into view after content loads above it', () => {
+    const row = keyedRow('settings:legal');
+    page(row);
+    let focused: unknown = null;
+    const guard = new RestoreGuard<HTMLElement>(() => focused as HTMLElement | null);
+    guard.placedOn(row as unknown as HTMLElement);
+    focused = row;
+    expect(restoreAgain({ focusedId: 'settings:legal', loadedCount: 0 }, guard)).toBe(true);
+    expect(row.scrolls[0]).toEqual({ block: 'center', inline: 'nearest' });
+  });
+
+  it('does nothing once the user has moved on, or with no note', () => {
+    const row = keyedRow('settings:legal');
+    page(row);
+    let focused: unknown = null;
+    const moved = new RestoreGuard<HTMLElement>(() => focused as HTMLElement | null);
+    focused = { other: true };
+    expect(restoreAgain({ focusedId: 'settings:legal', loadedCount: 0 }, moved)).toBe(false);
+    expect(restoreAgain(null, new RestoreGuard<HTMLElement>(() => null))).toBe(false);
+    expect(restoreAgain({ focusedId: 'settings:legal', loadedCount: 0 }, null)).toBe(false);
+    expect(row.scrolls).toEqual([]);
+  });
+});
+
+describe('scrollPageToTop', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  // The page box (main.tv-root) outlives the routes in it, scrollTop and
+  // all: a page opened from far down another starts part way down itself.
+  it("sets the app's page box back to the top", () => {
+    const root = { scrollTop: 1400 };
+    vi.stubGlobal('document', { querySelector: (s: string) => (s === 'main.tv-root' ? root : null) });
+    scrollPageToTop();
+    expect(root.scrollTop).toBe(0);
+  });
+
+  it('does nothing without one', () => {
+    vi.stubGlobal('document', { querySelector: () => null });
+    expect(() => scrollPageToTop()).not.toThrow();
   });
 });

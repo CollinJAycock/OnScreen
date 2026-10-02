@@ -7,7 +7,7 @@ vi.mock('$app/navigation', () => ({ goto: vi.fn() }));
 vi.mock('$app/state', () => ({ page: { url: new URL('http://tv.local/') } }));
 
 import LegalPage from './+page.svelte';
-import { MIT_LICENCE, NOTICES, TERMS, apacheTerms } from '$lib/legal';
+import { BSD_3_LICENCE, MIT_LICENCE, NOTICES, TERMS, apacheTerms } from '$lib/legal';
 
 // The Licence & terms screen rendered on the server (no DOM: no focusable
 // action, no onMount), signed out, every request answered 404.
@@ -87,12 +87,18 @@ describe('Licence & terms', () => {
     }
   });
 
-  it('carries the MIT and Apache License texts in full', () => {
+  it('carries the MIT, BSD 3-Clause and Apache License texts in full', () => {
     const page = text();
     for (const para of MIT_LICENCE) expect(page).toContain(para);
+    for (const para of BSD_3_LICENCE) expect(page).toContain(para);
     for (const para of apacheTerms()) expect(page).toContain(para);
-    expect(page).toContain('MIT License (eventemitter3, Svelte, SvelteKit, esm-env, Vite (module preload helper))');
-    expect(page).toContain('Apache License 2.0 (this app, hls.js, url-toolkit, videojs-contrib-hls)');
+    expect(page).toContain(
+      'MIT License (eventemitter3, structured-field-values, Svelte, SvelteKit, esm-env, Vite (module preload helper), QR Code generator library)',
+    );
+    expect(page).toContain('BSD 3-Clause License (dash.js (CEA-608 parser))');
+    expect(page).toContain(
+      'Apache License 2.0 (this app, hls.js, url-toolkit, videojs-contrib-hls, vtt.js, Common Media Library)',
+    );
   });
 
   it('offers a chip per section', () => {
@@ -112,6 +118,15 @@ describe('Licence & terms', () => {
     for (const tag of blocks) expect(tag).toContain('use:focusable');
     expect(source).toContain('use:focusable={{ autofocus: i === 0 }}');
     expect(source).toContain("goBack('#/settings')");
+  });
+
+  // The app's page box keeps Settings' scroll (this page opens from the
+  // bottom of Settings): back to the top on mount, before the first block's
+  // autofocus (a microtask) scrolls it in from there.
+  it('opens at its title, not at Settings\' scroll', () => {
+    const source = readFileSync(new URL('./+page.svelte', import.meta.url), 'utf8');
+    const mount = source.slice(source.indexOf('onMount(() => {'));
+    expect(mount).toMatch(/^onMount\(\(\) => \{\s*scrollPageToTop\(\);/);
   });
 
   // webOS 6's Chromium 79 drops a whole rule over one selector it doesn't

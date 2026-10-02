@@ -65,6 +65,10 @@ export class FocusManager {
   // previous page, or the exit popup on a first screen; lib/appExit).
   private rootBack: BackHandler | null = null;
   private root: HTMLElement | null = null;
+  // What a page asked the ring onto while a modal kept it (a Back restore
+  // or an autofocus finishing behind the exit popup): where the popup's
+  // Cancel puts it when nothing had the ring before the popup opened.
+  private behindModal: HTMLElement | null = null;
 
   // The Magic Remote (./pointer): a hover moves the ring, OK in pointer
   // mode acts once (as its click, whichever of click and Enter comes
@@ -79,6 +83,17 @@ export class FocusManager {
   // doesn't come.
   private pointerPress: Element | null = null;
   private pointerPressTimer: ReturnType<typeof setTimeout> | null = null;
+  // The long press of an OK held back for its click: a hold past
+  // LONG_PRESS_MS opens the options (Continue Watching's "Hold OK for
+  // options") before the click, which comes with the release, can open the
+  // item.
+  private pointerLongTimer: ReturnType<typeof setTimeout> | null = null;
+  // That press already acted while held (its long press, or a repeatOk
+  // target's repeats): the click its release sends is the same press, so
+  // it's dropped while the key is down and POINTER_ECHO_MS after the keyup
+  // (dropClickUntil, on the events' clock).
+  private pointerHoldActed = false;
+  private dropClickUntil = -Infinity;
 
   // A held OK is one press: its repeats are dropped before any handler sees
   // them (see ./hold). The long press below still measures the hold.
@@ -159,6 +174,15 @@ export class FocusManager {
     this.enterHold.up();
     // The press is over: a pointer click on its heels is its release.
     this.echo.released(eventTime(e));
+    // Released before its long press: an ordinary press, left to its click.
+    if (this.pointerLongTimer) {
+      clearTimeout(this.pointerLongTimer);
+      this.pointerLongTimer = null;
+    }
+    if (this.pointerHoldActed) {
+      this.pointerHoldActed = false;
+      this.dropClickUntil = eventTime(e) + POINTER_ECHO_MS;
+    }
     // An OK held back for its click: the click comes with the release, or
     // it never will (pressPointerTarget).
     if (this.pointerPress && !this.pointerPressTimer) {
@@ -198,11 +222,35 @@ export class FocusManager {
   }
 
   /** Put the ring on `el`, scrolled into view unless `scroll` is false (the
-   *  pointer's hover outside a row: the page stays put under the cursor). */
+   *  pointer's hover outside a row: the page stays put under the cursor).
+   *  Behind a modal it doesn't move, and `el` is kept for takeBehindModal. */
   focus(el: HTMLElement | null, opts: { scroll?: boolean } = {}) {
-    if (!el || el === this.current) return;
+    if (el && this.blockedByModal(el)) {
+      this.behindModal = el;
+      return;
+    }
+    this.place(el, opts);
+  }
+
+  /** Once the modal is gone: what a page last asked the ring onto behind it
+   *  (focus), if it is still on the page. Taken once. */
+  takeBehindModal(): HTMLElement | null {
+    const el = this.behindModal;
+    if (document.querySelector(`[${MODAL_ATTR}]`)) return null;
+    this.behindModal = null;
+    return el && document.body.contains(el) ? el : null;
+  }
+
+  private blockedByModal(el: HTMLElement): boolean {
     const modal = document.querySelector(`[${MODAL_ATTR}]`);
-    if (modal && !modal.contains(el)) return;
+    return !!modal && !modal.contains(el);
+  }
+
+  // The ring's own moves (the D-pad, the pointer): behind a modal they go
+  // nowhere and aren't kept.
+  private place(el: HTMLElement | null, opts: { scroll?: boolean } = {}) {
+    if (!el || el === this.current) return;
+    if (this.blockedByModal(el)) return;
     if (this.current) this.current.setAttribute('data-focused', 'false');
     this.current = el;
     el.setAttribute('data-focused', 'true');
@@ -219,7 +267,7 @@ export class FocusManager {
       document.querySelector<HTMLElement>(CURRENT_PAGE_PILL) ??
       document.querySelector<HTMLElement>(`[${FOCUSABLE_ATTR}]`);
     if (first) {
-      this.focus(first);
+      this.place(first);
     } else {
       // No focusable elements on the current page (photo viewer,
       // pure-player route, splash). Clear stale references so the
@@ -302,6 +350,14 @@ export class FocusManager {
         ) {
           e.preventDefault();
           e.stopPropagation();
+          // An OK aimed with the pointer, still held back for its click:
+          // the hold is that press, which acts now (as the D-pad's did on
+          // its keydown), and the release's click is dropped.
+          if (this.pointerPress && focusableOf(this.pointerPress) === el) {
+            this.cancelPointerPress();
+            this.pointerHoldActed = true;
+            el.click();
+          }
           el.click();
           return;
         }
@@ -331,7 +387,30 @@ export class FocusManager {
       const aimed = this.clickableUnderPointer();
       if (aimed) {
         this.cancelPointerPress();
+        this.pointerHoldActed = false;
         this.pointerPress = aimed;
+        // A held OK is still a hold under the pointer: its repeats may click
+        // a repeatOk target (the keyboard's delete key), and an element
+        // with a long press opens it at LONG_PRESS_MS, unless the click
+        // came first (a short press: cancelPointerPress) or the key went up
+        // (onKeyUp).
+        const el = focusableOf(aimed);
+        this.enterPressed = el;
+        const onLong = el ? this.longPress.get(el) : undefined;
+        if (el && onLong) {
+          this.pointerLongTimer = setTimeout(() => {
+            this.pointerLongTimer = null;
+            if (this.pointerPress !== aimed) return;
+            this.cancelPointerPress();
+            if (!document.body.contains(el)) return;
+            this.pointerHoldActed = true;
+            // The hold's remaining repeats and its keyup, as after the
+            // D-pad's long press.
+            this.swallowingEnter = true;
+            this.swallowEnterUntil = now + LONG_PRESS_MS + 1000;
+            (this.longPress.get(el) ?? onLong)();
+          }, LONG_PRESS_MS);
+        }
         e.preventDefault();
         e.stopPropagation();
         return;
@@ -435,7 +514,7 @@ export class FocusManager {
         const next = pickNeighborNear(this.current, this.candidates(k), k);
         if (next) {
           e.preventDefault();
-          this.focus(next as HTMLElement);
+          this.place(next as HTMLElement);
         }
       }
     }
@@ -458,7 +537,7 @@ export class FocusManager {
     if (!this.track.moved(e.clientX, e.clientY)) return;
     this.setPointer(true);
     const el = focusableOf(e.target);
-    if (el) this.focus(el, { scroll: !!el.closest(`[${ROW_ATTR}]`) });
+    if (el) this.place(el, { scroll: !!el.closest(`[${ROW_ATTR}]`) });
   };
 
   // What a click would act on under the pointer, while it's on screen.
@@ -477,13 +556,15 @@ export class FocusManager {
     this.cancelPointerPress();
     if (!target || !document.body.contains(target) || target.hasAttribute(POINTER_TARGET_ATTR)) return;
     const el = focusableOf(target);
-    if (el) this.focus(el, { scroll: false });
+    if (el) this.place(el, { scroll: false });
     (target as HTMLElement).click();
   };
 
   private cancelPointerPress() {
     if (this.pointerPressTimer) clearTimeout(this.pointerPressTimer);
     this.pointerPressTimer = null;
+    if (this.pointerLongTimer) clearTimeout(this.pointerLongTimer);
+    this.pointerLongTimer = null;
     this.pointerPress = null;
   }
 
@@ -496,6 +577,12 @@ export class FocusManager {
   private onClick = (e: MouseEvent) => {
     if (!e.isTrusted) return;
     const at = eventTime(e);
+    // The release of an OK that already acted while held under the pointer.
+    if (this.pointerHoldActed || (at < this.dropClickUntil && at >= this.dropClickUntil - POINTER_ECHO_MS)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     if (this.echo.clickIsEcho(at)) {
       e.preventDefault();
       e.stopPropagation();
@@ -507,7 +594,7 @@ export class FocusManager {
     if (!clickableOf(e.target)) return;
     this.echo.clicked(at);
     const el = focusableOf(e.target);
-    if (el) this.focus(el, { scroll: false });
+    if (el) this.place(el, { scroll: false });
   };
 
   // A wheel notch is the D-pad's ↑ / ↓ (WheelSteps), through the same path

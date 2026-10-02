@@ -90,6 +90,7 @@
     playerActions,
     subtitlePickerRows,
     transportButtons,
+    transportSteps,
     transportLabel,
     type PickerRow,
     type PlayerAction,
@@ -484,8 +485,19 @@
   // queue item's chapters stay on red / green, which the hints then name.
   const channelSteps = $derived(channelStep(item?.type, chapters.length));
   // The pointer's playback buttons (only while the pointer is on screen):
-  // previous / next where CH ▲▼ step something.
-  const transport = $derived<TransportButton[]>(transportButtons(channelSteps !== 'none'));
+  // previous / next where CH ▲▼ would go somewhere (no previous on an
+  // album's first track, no next in a film's last chapter).
+  const transport = $derived<TransportButton[]>(
+    transportButtons(
+      transportSteps({
+        step: channelSteps,
+        prevSibling: !!prevSibling,
+        nextSibling: !!nextSibling,
+        chapterStarts: chapters.map((c) => c.start_ms),
+        positionMs: scrubTargetMs ?? position,
+      })
+    )
+  );
   const channelHint = $derived(
     channelSteps === 'item' ? `CH ▲▼ prev / next ${queueNoun(item?.type)}`
     : channelSteps === 'chapter' ? 'CH ▲▼ chapters'
@@ -3741,11 +3753,13 @@
   }
 
   /* On-screen actions under the bar. .controls passes the pointer through
-     (pointer-events: none) so the row takes it back for the Magic Remote. */
+     (pointer-events: none) and so does the row, which runs the controls'
+     width over Skip Intro (bottom right): its buttons take it back for the
+     Magic Remote. */
   .actions {
     display: flex;
     margin-top: 24px;
-    pointer-events: auto;
+    pointer-events: none;
   }
   .action {
     display: inline-block;
@@ -3758,6 +3772,7 @@
     font-size: var(--font-sm);
     line-height: 1.3;
     cursor: pointer;
+    pointer-events: auto;
   }
   .action + .action { margin-left: 16px; }
   .action.focused {
@@ -3782,13 +3797,14 @@
 
   /* The pointer's playback buttons, only while the pointer is on screen
      (centred on the now-playing view, under the bar on video). Like the
-     action row they take the pointer back from .controls; :hover is their
-     selection effect (the pointer is what reaches them). */
+     action row's, the buttons take the pointer back from .controls and the
+     row's empty width doesn't; :hover is their selection effect (the
+     pointer is what reaches them). */
   .transport {
     display: flex;
     justify-content: center;
     margin-top: 28px;
-    pointer-events: auto;
+    pointer-events: none;
   }
   .bottom .transport {
     justify-content: flex-start;
@@ -3807,6 +3823,7 @@
     line-height: 1.3;
     text-align: center;
     cursor: pointer;
+    pointer-events: auto;
   }
   .transport-button + .transport-button { margin-left: 16px; }
   .transport-button:hover,
@@ -3864,9 +3881,12 @@
     font-size: var(--font-md);
   }
 
-  /* A button for the pointer's click; the look of the old label. */
+  /* A button for the pointer's click; the look of the old label. Over the
+     controls, which come after it (their rows used to take its clicks),
+     under a picker (z-index 5). */
   .skip-marker {
     position: absolute;
+    z-index: 4;
     bottom: 80px;
     right: 60px;
     padding: 14px 26px;

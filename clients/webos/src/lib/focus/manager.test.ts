@@ -520,7 +520,9 @@ describe('Magic Remote pointer', () => {
     }
   });
 
-  it('holds no long press for the pointer: the release clicks once', () => {
+  // "Hold OK for options" on Continue Watching: with the cursor on the card
+  // the hold used to open the item on release.
+  it('opens a long press for the pointer too, and drops the release click', () => {
     vi.useFakeTimers();
     try {
       const { cards } = hubPage();
@@ -529,14 +531,112 @@ describe('Magic Remote pointer', () => {
       fm.setLongPress(cards[1] as unknown as HTMLElement, options);
       move(cards[1], 400, 220);
       key(13, 'Enter');
+      vi.advanceTimersByTime(700);
+      expect(options).toHaveBeenCalledTimes(1);
+      // The hold's repeats, then the release: its click, then the keyup.
+      clock += 600;
+      expect(key(13, 'Enter', { repeat: true }).stopped).toBe(true);
+      clock += 500;
+      expect(pointerClick(cards[1]).stopped).toBe(true);
+      keyUp(13, 'Enter');
       vi.advanceTimersByTime(1000);
-      expect(options).not.toHaveBeenCalled();
-      // The release: its click, then the keyup.
-      clock += 1100;
+      expect(cards[1].clicks).toBe(0);
+      expect(options).toHaveBeenCalledTimes(1);
+      // The next press is an ordinary click.
+      clock += 1000;
+      key(13, 'Enter');
+      clock += 80;
       pointerClick(cards[1]);
       keyUp(13, 'Enter');
       vi.advanceTimersByTime(1000);
       expect(cards[1].clicks).toBe(1);
+      expect(options).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('drops the release click after a long press that its keyup beats', () => {
+    vi.useFakeTimers();
+    try {
+      const { cards } = hubPage();
+      init();
+      const options = vi.fn();
+      fm.setLongPress(cards[1] as unknown as HTMLElement, options);
+      move(cards[1], 400, 220);
+      key(13, 'Enter');
+      vi.advanceTimersByTime(700);
+      clock += 5000;
+      keyUp(13, 'Enter');
+      clock += 50;
+      expect(pointerClick(cards[1]).stopped).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(cards[1].clicks).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a short press on a card with a long press clicks it once, at the release', () => {
+    vi.useFakeTimers();
+    try {
+      const { cards } = hubPage();
+      init();
+      const options = vi.fn();
+      fm.setLongPress(cards[1] as unknown as HTMLElement, options);
+      move(cards[1], 400, 220);
+      key(13, 'Enter');
+      vi.advanceTimersByTime(200);
+      clock += 200;
+      pointerClick(cards[1]);
+      keyUp(13, 'Enter');
+      vi.advanceTimersByTime(1000);
+      expect(cards[1].clicks).toBe(1);
+      expect(options).not.toHaveBeenCalled();
+      // A remote that sends only the Enter: pressed in the click's place.
+      clock += 1000;
+      key(13, 'Enter');
+      vi.advanceTimersByTime(200);
+      clock += 200;
+      keyUp(13, 'Enter');
+      vi.advanceTimersByTime(1000);
+      expect(cards[1].clicks).toBe(2);
+      expect(options).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // The on-screen keyboard's delete key under the cursor: a held OK goes on
+  // deleting, as it does with the D-pad (the press, then each repeat).
+  it("lets a held OK's repeats click a repeatOk target, and drops the release click", () => {
+    vi.useFakeTimers();
+    try {
+      hubPage();
+      const del = focusable('delete', 1200, 800, { 'data-repeat-ok': 'true' });
+      body.append(del);
+      init();
+      move(del, 1210, 810);
+      key(13, 'Enter');
+      for (let i = 0; i < 3; i++) {
+        clock += i === 0 ? 500 : 50;
+        key(13, 'Enter', { repeat: true });
+      }
+      // The press and its three repeats.
+      expect(del.clicks).toBe(4);
+      clock += 50;
+      expect(pointerClick(del).stopped).toBe(true);
+      keyUp(13, 'Enter');
+      vi.advanceTimersByTime(1000);
+      expect(del.clicks).toBe(4);
+      // A short press still deletes once.
+      clock += 1000;
+      key(13, 'Enter');
+      clock += 80;
+      pointerClick(del);
+      keyUp(13, 'Enter');
+      vi.advanceTimersByTime(1000);
+      expect(del.clicks).toBe(5);
     } finally {
       vi.useRealTimers();
     }
@@ -662,6 +762,43 @@ describe('a modal popup (the exit popup)', () => {
     fm.focus(cards[4] as unknown as HTMLElement);
     move(cards[5], 700, 520);
     expect(focused()).toBe('cancel');
+  });
+
+  // The hub restoring after a Back when the popup opened: the card the
+  // restore finds behind the popup is where Cancel puts the ring.
+  it('keeps what a page focused behind it, for when it closes', () => {
+    const { cards } = hubPage();
+    init();
+    const cancel = focusable('cancel', 900, 500);
+    const popup = new FakeEl('popup', { 'data-focus-modal': 'true', 'data-focus-scope': 'true' }).append(cancel);
+    body.append(popup);
+    fm.focus(cancel as unknown as HTMLElement);
+    fm.focus(cards[4] as unknown as HTMLElement);
+    // The pointer's hover behind it is no page asking for the ring.
+    move(cards[5], 700, 520);
+    expect(focused()).toBe('cancel');
+    // Still up: nothing to take yet.
+    expect(fm.takeBehindModal()).toBeNull();
+    body.children.splice(body.children.indexOf(popup), 1);
+    popup.parentElement = null;
+    expect((fm.takeBehindModal() as unknown as FakeEl | null)?.name).toBe('card11');
+    // Taken once.
+    expect(fm.takeBehindModal()).toBeNull();
+  });
+
+  it('forgets what was focused behind it once it is gone (removed, or unmounted)', () => {
+    const { cards } = hubPage();
+    init();
+    const cancel = focusable('cancel', 900, 500);
+    const popup = new FakeEl('popup', { 'data-focus-modal': 'true', 'data-focus-scope': 'true' }).append(cancel);
+    body.append(popup);
+    fm.focus(cancel as unknown as HTMLElement);
+    fm.focus(cards[4] as unknown as HTMLElement);
+    body.children.splice(body.children.indexOf(popup), 1);
+    popup.parentElement = null;
+    body.children.splice(body.children.indexOf(cards[4]), 1);
+    cards[4].parentElement = null;
+    expect(fm.takeBehindModal()).toBeNull();
   });
 
   it("doesn't press Exit with OK once the pointer has left it for the backdrop", () => {

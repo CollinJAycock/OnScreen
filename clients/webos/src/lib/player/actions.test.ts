@@ -10,6 +10,7 @@ import {
   playerActions,
   subtitlePickerRows,
   transportButtons,
+  transportSteps,
   transportLabel,
 } from './actions';
 
@@ -65,9 +66,48 @@ describe('subtitlePickerRows', () => {
 });
 
 describe("the pointer's playback controls", () => {
-  it('offers previous / next only where CH ▲▼ step something', () => {
-    expect(transportButtons(true)).toEqual(['prev', 'back', 'playpause', 'forward', 'next']);
-    expect(transportButtons(false)).toEqual(['back', 'playpause', 'forward']);
+  it('offers previous / next only where CH ▲▼ step somewhere', () => {
+    expect(transportButtons({ prev: true, next: true })).toEqual(['prev', 'back', 'playpause', 'forward', 'next']);
+    expect(transportButtons({ prev: false, next: false })).toEqual(['back', 'playpause', 'forward']);
+    // The first track of an album: no previous; the last: no next.
+    expect(transportButtons({ prev: false, next: true })).toEqual(['back', 'playpause', 'forward', 'next']);
+    expect(transportButtons({ prev: true, next: false })).toEqual(['prev', 'back', 'playpause', 'forward']);
+  });
+
+  describe('transportSteps', () => {
+    const base = { prevSibling: false, nextSibling: false, chapterStarts: [] as number[], positionMs: 0 };
+
+    it("a queue item steps to its siblings, and only where there's one", () => {
+      expect(transportSteps({ ...base, step: 'item' })).toEqual({ prev: false, next: false });
+      expect(transportSteps({ ...base, step: 'item', nextSibling: true })).toEqual({ prev: false, next: true });
+      expect(transportSteps({ ...base, step: 'item', prevSibling: true })).toEqual({ prev: true, next: false });
+    });
+
+    // jumpToChapter: back always lands somewhere (the chapter's start, or
+    // the one before); next has nowhere to go from the last chapter.
+    it('chapters step back always, and on only before the last one', () => {
+      const chapterStarts = [0, 60_000, 120_000];
+      expect(transportSteps({ ...base, step: 'chapter', chapterStarts, positionMs: 30_000 })).toEqual({
+        prev: true,
+        next: true,
+      });
+      expect(transportSteps({ ...base, step: 'chapter', chapterStarts, positionMs: 130_000 })).toEqual({
+        prev: true,
+        next: false,
+      });
+      // Within jumpToChapter's 2 s of the last start: that's on it already.
+      expect(transportSteps({ ...base, step: 'chapter', chapterStarts, positionMs: 119_000 })).toEqual({
+        prev: true,
+        next: false,
+      });
+    });
+
+    it('nothing steps where CH ▲▼ do nothing', () => {
+      expect(transportSteps({ ...base, step: 'none', prevSibling: true, nextSibling: true })).toEqual({
+        prev: false,
+        next: false,
+      });
+    });
   });
 
   it('labels play / pause by the state', () => {
