@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "vite dev --host 0.0.0.0 --port 5174",
     "build": "vite build && node scripts/rewrite-file-paths.mjs && node scripts/assemble-package.mjs",
+    "screenshots": "node scripts/screenshots.mjs",
     "preview": "vite preview --host 0.0.0.0 --port 5174",
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
@@ -26,6 +27,7 @@
     "@sveltejs/adapter-static": "^3.0.0",
     "@sveltejs/kit": "^2.0.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
+    "playwright-core": "^1.63.0",
     "svelte": "^5.0.0",
     "svelte-check": "^4.0.0",
     "typescript": "^5.0.0",
