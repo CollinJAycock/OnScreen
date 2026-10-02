@@ -27,10 +27,11 @@ correct that rather than repeat it.
 
 The review account also moves. 1.4.0 was reviewed as `testUser` on the QA
 server, which is to become production. 1.4.1 is reviewed as `reviewer` on
-https://onscreen-beta.wolverscreen.com, a server that exists only for store
-review: no outbound internet access, no metadata, subtitle, download-manager
-or TV-tuner service configured, and five libraries of openly licensed works
-(listed in the testing instructions below).
+https://onscreen-beta.wolverscreen.com, a separate server we run for testing
+and store review: it looks up artwork and descriptions for its files from
+TMDB and TheTVDB, has no subtitle, download-manager or TV-tuner service
+configured, and holds five libraries of openly licensed works (listed in the
+testing instructions below).
 
 Both flavors ship from this code. `googletv` (Google Play: Android TV,
 Google TV, NVIDIA SHIELD) keeps both features and behaves exactly as 1.4.0
@@ -79,11 +80,11 @@ The 1.4.0 text; nothing was removed from this build. 467 characters (limit
 
 ## Testing instructions (Amazon "Testing instructions")
 
-3,938 characters; check the console field's limit before pasting. If it
-is lower, drop the NEW IN 1.4.x paragraph (3,631), then if needed replace
+3,978 characters; check the console field's limit before pasting. If it
+is lower, drop the NEW IN 1.4.x paragraph (3,671), then if needed replace
 the Movies line with "- Movies: 11 Blender Foundation open movies, among
 them Big Buck Bunny, Sintel and Tears of Steel (© Blender Foundation, CC BY
-2.5, 3.0 or 4.0)." (3,391). Nothing to fill in. The password goes only in the
+2.5, 3.0 or 4.0)." (3,431). Nothing to fill in. The password goes only in the
 submission's sign-in fields (username `reviewer`), never in this text or
 any file. The content list must match what `reviewer` actually sees on the
 review server (checklist step 2).
@@ -101,7 +102,7 @@ WHAT IT DOES NOT DO
 OTHER THINGS YOU MAY NOTICE
 - If the Fire TV can't decode a file's format, the user's own server converts that file while it plays, as Plex and Jellyfin servers do. Nothing is saved on the device.
 - Artwork and descriptions for the user's files come from the user's server, not from the app.
-- Settings > Scrobbling can link the user's own ListenBrainz account so their server logs finished music tracks there (play history only; no media is fetched). The review server has no outbound internet access, so it sends nothing.
+- Settings > Scrobbling can link the user's own ListenBrainz account so their server logs finished music tracks there (play history only; no media is fetched). No ListenBrainz account is linked on the review server, so it sends nothing.
 - Report a problem sends a note to the server's administrator.
 
 HOW TO TEST
@@ -110,7 +111,7 @@ HOW TO TEST
 3. Home has a row for each of the five libraries: Movies, TV Shows, Music, Audiobooks, Photos. Play Sintel and open Subtitles: its 10 subtitle tracks are stored in the video file (titles without subtitle tracks show no Subtitles button). Play Big Buck Bunny and open Audio (it has two audio tracks). Also try a Music album, an audiobook and Settings > Playback.
 
 THE REVIEW SERVER
-https://onscreen-beta.wolverscreen.com is an OnScreen Media Server we run only for app-store review. It has no outbound internet access, and no metadata, subtitle, download-manager or TV-tuner service is configured on it. It holds only these openly licensed works:
+https://onscreen-beta.wolverscreen.com is an OnScreen Media Server we run for testing and app-store review. It looks up artwork and descriptions for its own files from TMDB and TheTVDB; no subtitle, download-manager or TV-tuner service is configured on it. It holds only these openly licensed works:
 - Movies: 11 Blender Foundation open movies (© Blender Foundation, Creative Commons Attribution; licence version in brackets): Big Buck Bunny (2008, 3.0), Charge (2022, 4.0), Coffee Run (2020, 4.0), Elephants Dream (2006, 2.5), Glass Half (2015, 3.0), Hero (2018, 4.0), Singularity (2026, 4.0), Sintel (2010, 3.0), Spring (2019, 4.0), Tears of Steel (2012, 3.0), Wing It! (2023, 4.0).
 - TV Shows: Caminandes, season 1: Llama Drama, Gran Dillama, Llamigos (Blender Foundation, CC BY).
 - Music: Kevin MacLeod, 3 albums: Serenity, Video Classica, Wonder (incompetech.com, CC BY 4.0).
@@ -183,17 +184,17 @@ Send the same day as the resubmission. Fill the placeholders; keep the
 >   It shows only subtitle tracks already stored with the user's files.
 > - The Live TV and Recordings screens (channel guide, live channel player,
 >   recordings list) are removed from the Fire TV app.
-> - The review account is now on a server we run only for store review
->   (below), instead of our test server.
+> - The review account is now on a separate server we run for testing and
+>   store review (below), which holds only openly licensed works.
 > - [IF DONE] Store screenshots are replaced with captures of that
 >   server's library of openly licensed works.
 > - The testing instructions now give a step-by-step test path.
 >
 > **Review account.** Username reviewer on
 > https://onscreen-beta.wolverscreen.com; the password is in the
-> submission's sign-in fields. The server has no outbound internet access,
-> and no metadata, subtitle, download-manager or TV-tuner service is
-> configured on it. It holds only openly licensed works:
+> submission's sign-in fields. The server looks up artwork and descriptions
+> for its files from TMDB and TheTVDB; no subtitle, download-manager or
+> TV-tuner service is configured on it. It holds only openly licensed works:
 > - 11 Blender Foundation open movies and the 3-episode Caminandes series
 >   (Creative Commons Attribution 2.5, 3.0 or 4.0; the testing instructions
 >   list each title)
@@ -278,16 +279,16 @@ advertises Radarr/Sonarr, requests and OpenSubtitles.
 2. **Stand up the review server** at https://onscreen-beta.wolverscreen.com
    per the review-server runbook, and pass its verification checklist
    before anything is submitted:
-   - no outbound internet: the server container's `wget` to
-     api.themoviedb.org fails, and its env has no `TMDB_` / `TVDB_`
-     variables;
-   - nothing configured: TMDB and TVDB keys, OpenSubtitles, Radarr / Sonarr
+   - metadata only: TMDB and TVDB keys in Settings (artwork and
+     descriptions); nothing else configured: OpenSubtitles, Radarr / Sonarr
      / Lidarr, tuners / M3U / XMLTV / Schedules Direct, SMTP; web downloads
      off; `/api/v1/admin/arr-services` and `/api/v1/tv/tuners` return `[]`;
    - five public libraries named Movies, TV Shows, Music, Audiobooks and
      Photos, holding exactly the works the testing instructions list (11
      films, Caminandes S1, three Kevin MacLeod albums, five LibriVox books,
-     12 NASA photos), with the artwork and metadata SQL applied. The
+     12 NASA photos), each matched to its own TMDB entry (Spring, Hero and
+     Singularity needed Fix Match: automatic matching picked other films,
+     Spring Breakers among them). The
      runbook's "13 posters" check is now 11 (Cosmos Laundromat and Sprite
      Fright were dropped);
    - trim the server's `NOTICE.txt` to the built content: it still credits
