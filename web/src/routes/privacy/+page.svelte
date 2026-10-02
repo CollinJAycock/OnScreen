@@ -67,7 +67,8 @@
         <strong>Image and trickplay cache.</strong> Posters, fanart, and
         seek-bar thumbnails downloaded from your server are cached on
         disk for performance. They live in the app's private cache
-        directory and are never shared with any other app or service.
+        directory (on LG webOS TV, the web view's own cache) and are never
+        shared with any other app or service.
       </li>
     </ul>
 
@@ -134,6 +135,42 @@
       The app does not request access to your contacts, location,
       microphone, camera, calendar, SMS, call logs, or any other device
       data.
+    </p>
+
+    <h2>What the LG webOS TV app uses on the TV</h2>
+
+    <ul>
+      <li>
+        <strong>Screen capabilities (<code>systemconfig.query</code>)</strong>
+        — the one TV permission the app declares. It reads whether the
+        screen shows HDR and whether it is 4K, once, and keeps the answer
+        on the TV, so your server can pick a stream that fits. The answer
+        goes only to your OnScreen server.
+      </li>
+      <li>
+        <strong>The TV's model name</strong> — read from the TV's own
+        device information, with no extra permission, to name the TV in
+        your server's device list (see above).
+      </li>
+      <li>
+        <strong>The Magic Remote</strong> — its buttons, pointer and wheel
+        move around the app on the TV. Nothing about how you use the remote
+        is recorded or sent anywhere.
+      </li>
+      <li>
+        <strong>Storage</strong> — your server address, sign-in tokens
+        and username, the random tag in the TV's name, a few view settings
+        and the screen answer above are kept in the TV web view's storage
+        for the app, and images in the web view's cache.
+        Other apps can't read them, and they are deleted when you
+        uninstall the app.
+      </li>
+    </ul>
+
+    <p>
+      The app does not use the camera, microphone, location, voice
+      recognition, viewing information from other apps or TV channels, or
+      any other TV data.
     </p>
 
     <h2 id="third-party-services">Third-party services</h2>

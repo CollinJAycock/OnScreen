@@ -580,6 +580,12 @@ Roku channel (no request features, as on Android):
   - The privacy policy covers Last.fm and Trakt next to ListenBrainz: what
     the server sends each linked account, and that the developer receives
     none of it.
+  - The privacy policy has a section on what the LG app uses on the TV:
+    the one permission it declares (`systemconfig.query`, to read whether
+    the screen shows HDR and whether it is 4K), the model name in its device name, the Magic
+    Remote, and what it stores in the web view (all deleted on uninstall).
+    It also says the app uses no camera, microphone, location or other TV
+    data.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
   search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
   its Deceptive and Malicious Behavior policy, which names apps that "save,
