@@ -215,3 +215,11 @@ type PosterLister interface {
 	ListMoviePostersForID(ctx context.Context, tmdbID int) ([]PosterCandidate, error)
 	ListTVPostersForID(ctx context.Context, tmdbID int) ([]PosterCandidate, error)
 }
+
+// RuntimeMovieSearcher is SearchMovie given the file's runtime too, which
+// tells apart films sharing a title and year ("Hero" 2018 is five films on
+// TMDB). Implemented by the TMDB client; the scanner uses it when the agent
+// has it and the file has a probed duration.
+type RuntimeMovieSearcher interface {
+	SearchMovieWithRuntime(ctx context.Context, title string, year int, runtime time.Duration) (*MovieResult, error)
+}

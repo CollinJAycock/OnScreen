@@ -677,7 +677,14 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		}
 	}
 	if result == nil {
-		result, err = agent.SearchMovie(ctx, searchTitle, year)
+		// The probed runtime tells apart films sharing a title and year
+		// ("Hero" 2018 is five films on TMDB) when the agent can use it.
+		if rs, ok := agent.(metadata.RuntimeMovieSearcher); ok && file.DurationMS != nil && *file.DurationMS > 0 {
+			runtime := time.Duration(*file.DurationMS) * time.Millisecond
+			result, err = rs.SearchMovieWithRuntime(ctx, searchTitle, year, runtime)
+		} else {
+			result, err = agent.SearchMovie(ctx, searchTitle, year)
+		}
 	}
 	if err != nil || result == nil {
 		// No result or API error — not a scan-blocking error.
