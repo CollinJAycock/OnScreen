@@ -81,13 +81,22 @@
   } from '$lib/player/subtitles';
   import {
     ACTION_LABELS,
+    TRANSPORT_SKIP_MS,
     actionRowKey,
+    barSeekMs,
     chapterAt,
     chapterRowLabel,
     pickerWindow,
     playerActions,
-    type PlayerAction
+    subtitlePickerRows,
+    transportButtons,
+    transportLabel,
+    type PickerRow,
+    type PlayerAction,
+    type TransportButton
   } from '$lib/player/actions';
+  import { POINTER_ECHO_MS, pointerShown } from '$lib/focus/pointer';
+  import { ensureNavGates, onlineSubtitlesGate } from '$lib/navGates';
   import {
     clearsSpinnerOnFragBuffered,
     directAudioFailure,
@@ -344,9 +353,9 @@
   // opened is up, so focus returns to the button when the picker closes.
   let actionFocus = $state(-1);
   // When a pointer click last landed: the Magic Remote's OK in pointer mode
-  // can also arrive as an Enter keydown, which must not act a second time.
+  // can also arrive as an Enter keydown, which must not act a second time
+  // (the focus manager drops it first: over a button, OK is its click).
   let lastClickAt = 0;
-  const POINTER_ECHO_MS = 400;
   // The pointer moved after the last key press: only then does hovering a
   // button or a picker row move the focus / cursor to it (a list scrolling
   // under a resting pointer must not drag the d-pad's cursor along).
@@ -453,12 +462,19 @@
 
   const speedAvailable = $derived(!!item && hasListeningSpeed(item.type) && !speedUnsupported);
 
+  // Whether the server has an online subtitle search set up (navGates; the
+  // player asks for the answer on mount). Closed until it says so.
+  const onlineSubsAvailable = $derived($onlineSubtitlesGate);
+
   // The action row's buttons. Audio needs a session to re-issue (not the
-  // file's direct stream); subtitles and chapters are for video only.
+  // file's direct stream); subtitles and chapters are for video only, and
+  // Subtitles needs a track or the online search.
   const actions = $derived<PlayerAction[]>(
     playerActions({
       video: !!item && !isAudioItem && !isAudioOnly,
       switchableAudioTracks: isAudioOnly ? 0 : audioStreams.length,
+      subtitleTracks: subtitleOptions.length,
+      onlineSubtitles: onlineSubsAvailable,
       chapters: chapters.length,
     })
   );
@@ -467,6 +483,9 @@
   // What CH ▲▼ do here (channelSkip), for the hints: '' when nothing. A
   // queue item's chapters stay on red / green, which the hints then name.
   const channelSteps = $derived(channelStep(item?.type, chapters.length));
+  // The pointer's playback buttons (only while the pointer is on screen):
+  // previous / next where CH ▲▼ step something.
+  const transport = $derived<TransportButton[]>(transportButtons(channelSteps !== 'none'));
   const channelHint = $derived(
     channelSteps === 'item' ? `CH ▲▼ prev / next ${queueNoun(item?.type)}`
     : channelSteps === 'chapter' ? 'CH ▲▼ chapters'
@@ -477,12 +496,8 @@
 
   // The open picker as rows (audio, subtitles or chapters; one at a time),
   // drawn a window at a time around the cursor so a long list stays on the
-  // panel. Subtitles: Off, the tracks, then "Find more online…".
-  interface PickerRow {
-    label: string;
-    current: boolean;
-    action?: boolean;
-  }
+  // panel. Subtitles: Off, the tracks, then "Find more online…" when the
+  // server has an online search (action: true marks that row).
   const pickerTitle = $derived(
     audioPickerOpen ? 'Audio' : subtitlePickerOpen ? 'Subtitles' : chapterPickerOpen ? 'Chapters' : ''
   );
@@ -499,11 +514,7 @@
         key === activeSubtitleKey && subtitleLoad === 'loading' ? ' · loading…'
         : key === subtitleFailedKey ? ' · unavailable'
         : '';
-      return [
-        { label: 'Off', current: activeSubtitleKey === null },
-        ...subtitleOptions.map((o) => ({ label: o.label + status(o.key), current: o.key === activeSubtitleKey })),
-        { label: 'Find more online…', current: false, action: true },
-      ];
+      return subtitlePickerRows(subtitleOptions, activeSubtitleKey, onlineSubsAvailable, status);
     }
     if (chapterPickerOpen) {
       return chapters.map((c, i) => ({ label: chapterRowLabel(c, i), current: i === chapterPickerCurrent }));
@@ -1657,7 +1668,8 @@
   function openSubtitlePicker() {
     closePickers();
     speedPickerOpen = false;
-    // Row 0 = "Off", rows 1..N = the options, then "Find more online…".
+    // Row 0 = "Off", rows 1..N = the options, then "Find more online…" when
+    // the server has it (subtitlePickerRows).
     const at = subtitleOptions.findIndex((o) => o.key === activeSubtitleKey);
     pickerCursor = at < 0 ? 0 : at + 1;
     subtitlePickerOpen = true;
@@ -1699,9 +1711,9 @@
       closePickerToRow();
       return true;
     }
-    // The subtitle picker doesn't gate "Find more online…" on the
-    // OpenSubtitles probe: `search` returns an empty list when the server
-    // isn't configured for it, falling through harmlessly.
+    // "Find more online…" is a row only on a server with an online subtitle
+    // search (features.subtitles_external, navGates): elsewhere the search
+    // answers 503 "not configured", so the row isn't offered there.
     const len = pickerRows.length;
     if (len === 0) return true;
     if (k === 'up') {
@@ -1725,8 +1737,10 @@
       // The row number IS the ordinal the server takes.
       if (i !== activeAudioIndex) switchAudioStream(i);
     } else if (subtitlePickerOpen) {
+      // Read before closing: the rows go with the picker.
+      const online = !!pickerRows[i]?.action;
       closePickerToRow();
-      if (i === subtitleOptions.length + 1) {
+      if (online) {
         void openOnlineSubtitleSearch();
         return;
       }
@@ -1843,6 +1857,114 @@
     showControls();
   }
 
+  // ── The pointer's playback controls ────────────────────────────────
+  //
+  // LG's checklist wants play, pause, seek and previous / next reachable
+  // with the screen cursor as well as the keys. While the pointer is on
+  // screen ($pointerShown) the controls carry buttons for them
+  // (actions.transportButtons) and a click on the bar seeks there; the
+  // online subtitle results, the speed picker and Skip Intro / Credits take
+  // clicks too. Each click is one press (lastClickAt: its Enter echo is
+  // dropped).
+
+  function clickTransport(b: TransportButton, e: MouseEvent) {
+    lastClickAt = Date.now();
+    unhover = null;
+    (e.currentTarget as HTMLElement | null)?.blur();
+    if (loading || error || refused || leaving) return;
+    switch (b) {
+      case 'prev':
+        channelSkip(-1);
+        return;
+      case 'back':
+        seek(-TRANSPORT_SKIP_MS);
+        return;
+      case 'playpause':
+        togglePlay();
+        return;
+      case 'forward':
+        seek(TRANSPORT_SKIP_MS);
+        return;
+      case 'next':
+        channelSkip(1);
+        return;
+    }
+  }
+
+  // A click on the bar: there, through seekToContent like a chapter pick
+  // (a point before a resumed session's head re-issues). Replaces a
+  // pending scrub.
+  function clickBar(e: MouseEvent) {
+    lastClickAt = Date.now();
+    if (loading || error || refused || leaving || !positionKnown) return;
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const target = barSeekMs(e.clientX, r.left, r.width, duration);
+    if (target === null) return;
+    scrub.cancel();
+    seekToContent(target);
+  }
+
+  function clickSkipMarker(e: MouseEvent) {
+    lastClickAt = Date.now();
+    (e.currentTarget as HTMLElement | null)?.blur();
+    if (activeMarker && !loading) skipMarker();
+  }
+
+  // An online subtitle result: the pointer's hover is the cursor, a click
+  // downloads it (as OK on it does).
+  function hoverOnlineSub(i: number) {
+    if (!pointerInUse() || onlineSubsLoading || onlineSubsDownloading) return;
+    if (i >= 0 && i < onlineSubsResults.length) onlineSubsCursor = i;
+  }
+
+  function clickOnlineSub(i: number, e: MouseEvent) {
+    lastClickAt = Date.now();
+    (e.currentTarget as HTMLElement | null)?.blur();
+    if (!onlineSubsOpen || onlineSubsLoading || onlineSubsDownloading) return;
+    const pick = onlineSubsResults[i];
+    if (!pick) return;
+    onlineSubsCursor = i;
+    void downloadOnlineSubtitle(pick);
+  }
+
+  // The audiobook speed: the now-playing view's Speed button opens the
+  // picker (↑ / ↓ do with the keys); a row is hovered and clicked like a
+  // picker row.
+  function clickSpeed(e: MouseEvent) {
+    lastClickAt = Date.now();
+    (e.currentTarget as HTMLElement | null)?.blur();
+    if (!speedAvailable || loading || error || refused || leaving) return;
+    if (speedPickerOpen) speedPickerOpen = false;
+    else openSpeedPicker();
+  }
+
+  function hoverSpeedRow(i: number) {
+    if (pointerInUse() && i >= 0 && i < RATE_PRESETS.length) speedCursor = i;
+  }
+
+  function clickSpeedRow(i: number, e: MouseEvent) {
+    lastClickAt = Date.now();
+    (e.currentTarget as HTMLElement | null)?.blur();
+    const rate = RATE_PRESETS[i];
+    if (!speedPickerOpen || rate === undefined) return;
+    speedCursor = i;
+    speedPickerOpen = false;
+    void chooseSpeed(rate);
+  }
+
+  // The error overlay's buttons: OK's retry and Back's exit.
+  function clickRetry(e: MouseEvent) {
+    lastClickAt = Date.now();
+    (e.currentTarget as HTMLElement | null)?.blur();
+    if (error && errorRetryable && !leaving) retryAfterError();
+  }
+
+  function clickLeave(e: MouseEvent) {
+    lastClickAt = Date.now();
+    (e.currentTarget as HTMLElement | null)?.blur();
+    void stopAndLeave();
+  }
+
   // The remote on the action row (see actionRowKey). Only on video with the
   // player up and no picker open (a picker takes the arrows itself).
   function onActionRowKey(k: RemoteKey): boolean {
@@ -1875,6 +1997,7 @@
   // ── Online subtitle search ─────────────────────────────────────────
 
   async function openOnlineSubtitleSearch() {
+    if (!onlineSubsAvailable) return;
     onlineSubsOpen = true;
     onlineSubsCursor = 0;
     onlineSubsError = '';
@@ -2907,6 +3030,10 @@
     // Sync and the admin stop, from the app's event stream. The handlers
     // wait for the item and a ready stream themselves.
     subscribeEvents();
+    // Whether the server has an online subtitle search (Subtitles > "Find
+    // more online…"); a no-op when the top nav already asked. A player
+    // opened straight from "play on this TV" may be the first to.
+    void ensureNavGates();
 
     void begin();
 
@@ -2970,7 +3097,8 @@
      to the .player overlay controls below. The art falls back to the
      parent's cover (an album's, a book's, a podcast's). -->
 {#if nowPlaying && !loading && !error && item}
-  <div class="music-view">
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="music-view" onmousemove={onPointerMove}>
     <div class="music-content">
       {#if nowPlayingArtPath}
         <img class="music-art" src={api.assetUrl(`/artwork/${nowPlayingArtPath}?w=720`)} alt="" />
@@ -3001,7 +3129,8 @@
       {/if}
       <div class="music-bar">
         <div class="music-elapsed" class:scrubbing={scrubTargetMs !== null}>{fmt(barMs)}</div>
-        <div class="music-track">
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div class="music-track" class:clickable={$pointerShown} data-pointer-target onclick={clickBar}>
           <div class="music-fill" style="width: {progressPct}%"></div>
           {#each chapters as ch (ch.start_ms)}
             {#if duration > 0}
@@ -3011,6 +3140,22 @@
         </div>
         <div class="music-remaining">-{fmt(duration - barMs)}</div>
       </div>
+      {#if $pointerShown}
+        <!-- The pointer's buttons (clickTransport): the keys' OK, ← →
+             and CH ▲▼, and the speed picker's ↑ ↓. -->
+        <div class="transport">
+          {#each transport as b (b)}
+            <button type="button" tabindex="-1" class="transport-button" onclick={(e) => clickTransport(b, e)}>
+              {transportLabel(b, paused)}
+            </button>
+          {/each}
+          {#if speedAvailable}
+            <button type="button" tabindex="-1" class="transport-button" class:active={speedPickerOpen} onclick={clickSpeed}>
+              Speed {formatRate(speed)}
+            </button>
+          {/if}
+        </div>
+      {/if}
       <div class="music-hints">
         {#if speedPickerOpen}
           <!-- The speed picker takes ↑ ↓ / OK / Back ahead of everything
@@ -3046,9 +3191,15 @@
       <div class="picker speed-picker">
         <div class="picker-title">Speed</div>
         {#each RATE_PRESETS as r, i (r)}
-          <div class="picker-row" class:active={i === speedCursor} class:current={sameRate(r, speed)}>
-            {#if sameRate(r, speed)}● {/if}{formatRate(r)}
-          </div>
+          <button
+            type="button"
+            tabindex="-1"
+            class="picker-button picker-row"
+            class:active={i === speedCursor}
+            class:current={sameRate(r, speed)}
+            onclick={(e) => clickSpeedRow(i, e)}
+            onmouseenter={() => hoverSpeedRow(i)}
+          >{#if sameRate(r, speed)}{'● '}{/if}{formatRate(r)}</button>
         {/each}
       </div>
     {/if}
@@ -3084,16 +3235,24 @@
     <div class="overlay center">
       <div class="title error">{error}</div>
       <div class="sub">{errorRetryable ? 'OK to try again · Back to exit' : 'Back to exit'}</div>
+      {#if $pointerShown}
+        <div class="transport overlay-buttons">
+          {#if errorRetryable}
+            <button type="button" tabindex="-1" class="transport-button" onclick={clickRetry}>Try again</button>
+          {/if}
+          <button type="button" tabindex="-1" class="transport-button" onclick={clickLeave}>Exit</button>
+        </div>
+      {/if}
     </div>
   {/if}
 
   <!-- Skip Intro / Skip Credits overlay. Shown while playhead is
        inside an active marker window; OK skips, Back dismisses
-       (key handling lives in onKey above). -->
+       (key handling lives in onKey above); the pointer clicks it. -->
   {#if activeMarker && !loading}
-    <div class="skip-marker">
+    <button type="button" tabindex="-1" class="skip-marker" onclick={clickSkipMarker}>
       Press OK to skip {activeMarker.kind === 'credits' ? 'Credits' : 'Intro'}
-    </div>
+    </button>
   {/if}
 
   <!-- The audio / subtitle / chapter picker: opened from the action row
@@ -3133,19 +3292,26 @@
         <div class="picker-row">No results — Back to close.</div>
       {:else}
         {#each onlineSubsResults as r, i (r.provider_file_id)}
-          <div class="picker-row" class:active={onlineSubsCursor === i}>
-            <div class="online-sub-line">
+          <button
+            type="button"
+            tabindex="-1"
+            class="picker-button picker-row"
+            class:active={onlineSubsCursor === i}
+            onclick={(e) => clickOnlineSub(i, e)}
+            onmouseenter={() => hoverOnlineSub(i)}
+          >
+            <span class="online-sub-line">
               <span class="online-sub-lang">{r.language || 'und'}</span>
               <span class="online-sub-name">{r.file_name}</span>
-            </div>
-            <div class="online-sub-meta">
+            </span>
+            <span class="online-sub-meta">
               {#if r.from_trusted}<span>trusted</span>{/if}
               {#if r.hd}<span>hd</span>{/if}
               {#if r.hearing_impaired}<span>SDH</span>{/if}
               {#if r.download_count}<span>{r.download_count.toLocaleString()} dl</span>{/if}
               {#if r.uploader_name}<span>by {r.uploader_name}</span>{/if}
-            </div>
-          </div>
+            </span>
+          </button>
         {/each}
       {/if}
       {#if onlineSubsDownloading}
@@ -3171,7 +3337,11 @@
         </div>
         <div class="bar">
           <div class="elapsed" class:scrubbing={scrubTargetMs !== null}>{fmt(barMs)}</div>
-          <div class="track">
+          <!-- With the pointer up, a click on the bar seeks there (clickBar);
+               data-pointer-target has the focus manager leave OK over it to
+               that click. -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div class="track" class:clickable={$pointerShown} data-pointer-target onclick={clickBar}>
             <div class="fill" style="width: {progressPct}%"></div>
             {#each chapters as ch (ch.start_ms)}
               {#if duration > 0}
@@ -3200,6 +3370,19 @@
           </div>
           <div class="remaining">{fmt(duration - barMs)}</div>
         </div>
+
+        {#if $pointerShown}
+          <!-- The pointer's buttons (clickTransport): the keys' OK, ← → and
+               CH ▲▼. Only while the pointer is on screen; the D-pad has
+               the keys. -->
+          <div class="transport">
+            {#each transport as b (b)}
+              <button type="button" tabindex="-1" class="transport-button" onclick={(e) => clickTransport(b, e)}>
+                {transportLabel(b, paused)}
+              </button>
+            {/each}
+          </div>
+        {/if}
 
         <!-- On-screen actions: Down focuses the row, ←/→ move, OK opens the
              picker; the pointer clicks them. The dot is the colour key that
@@ -3597,6 +3780,51 @@
   .key-yellow { background: #f5c518; }
   .key-blue { background: #3b82f6; }
 
+  /* The pointer's playback buttons, only while the pointer is on screen
+     (centred on the now-playing view, under the bar on video). Like the
+     action row they take the pointer back from .controls; :hover is their
+     selection effect (the pointer is what reaches them). */
+  .transport {
+    display: flex;
+    justify-content: center;
+    margin-top: 28px;
+    pointer-events: auto;
+  }
+  .bottom .transport {
+    justify-content: flex-start;
+    margin-top: 24px;
+  }
+  .transport-button {
+    display: inline-block;
+    min-width: 104px;
+    padding: 10px 24px;
+    border: 0;
+    border-radius: 26px;
+    background: rgba(255, 255, 255, 0.14);
+    color: white;
+    font-family: inherit;
+    font-size: var(--font-sm);
+    line-height: 1.3;
+    text-align: center;
+    cursor: pointer;
+  }
+  .transport-button + .transport-button { margin-left: 16px; }
+  .transport-button:hover,
+  .transport-button.active {
+    background: var(--accent);
+    box-shadow:
+      0 0 0 4px var(--focus-ring),
+      0 0 24px 6px rgba(124, 106, 247, 0.5);
+  }
+  /* The bar under the pointer: taller, and it takes clicks (seek there). */
+  .track.clickable,
+  .music-track.clickable {
+    pointer-events: auto;
+    cursor: pointer;
+  }
+  .track.clickable:hover { height: 14px; }
+  .music-track.clickable:hover { height: 16px; }
+
   /* Subtitles: outlined white text near the bottom, raised above the bar
      while the controls show. Lines are blocks (no flexbox gap). */
   .subtitle-overlay {
@@ -3636,16 +3864,26 @@
     font-size: var(--font-md);
   }
 
+  /* A button for the pointer's click; the look of the old label. */
   .skip-marker {
     position: absolute;
     bottom: 80px;
     right: 60px;
     padding: 14px 26px;
+    border: 0;
     background: var(--accent);
     color: #fff;
+    font-family: inherit;
     font-size: var(--font-md);
     font-weight: 600;
+    line-height: inherit;
     border-radius: 24px;
+    cursor: pointer;
+  }
+  .skip-marker:hover {
+    box-shadow:
+      0 0 0 4px #fff,
+      0 0 24px 6px rgba(124, 106, 247, 0.5);
   }
 
   .picker {

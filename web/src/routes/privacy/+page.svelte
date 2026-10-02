@@ -13,23 +13,25 @@
 
   <main class="content">
     <h1>Privacy Policy</h1>
-    <p class="updated">Last updated: 2026-10-01</p>
+    <p class="updated">Last updated: 2026-10-02</p>
 
     <p>
       OnScreen is an open-source, self-hosted media server. This policy
       covers the OnScreen Android TV app (<code>tv.onscreen.android</code>),
-      the OnScreen web client, and any first-party desktop or mobile
-      clients we publish. It does not cover third-party clients that may
-      connect to your OnScreen server.
+      the OnScreen app for LG webOS TV (<code>com.onscreen.tv</code>), the
+      OnScreen web client, and any first-party desktop or mobile clients
+      we publish. It does not cover third-party clients that may connect
+      to your OnScreen server.
     </p>
 
     <p>
       <strong>Short version:</strong> the apps do not collect, store, or
       share any data with us, the developers. Everything you do in an
-      OnScreen client talks only to the OnScreen server <em>you</em>
-      configure. We operate no servers that receive data from these apps.
-      There are no analytics, no advertising, and no third-party
-      trackers.
+      OnScreen client talks to the OnScreen server <em>you</em>
+      configure; the only other places the apps reach are listed under
+      <a href="#third-party-services">Third-party services</a>. We operate
+      no servers that receive data from these apps. There are no
+      analytics, no advertising, and no third-party trackers.
     </p>
 
     <h2>Data the apps handle</h2>
@@ -42,16 +44,24 @@
         OnScreen server, your account credentials when you sign in, and
         the authentication tokens the server returns. These are stored
         locally on your device in the application sandbox (AndroidX
-        DataStore on Android, browser storage on the web). They are not
-        readable by other apps and are removed when you uninstall.
+        DataStore on Android, browser storage on the web, and the TV web
+        view's storage for the app on LG webOS TV). They are not readable
+        by other apps and are removed when you uninstall.
       </li>
       <li>
         <strong>Watch progress, library queries, and playback events.</strong>
         Sent to the OnScreen server you configured, never to any third
-        party. The apps do not call any external service directly. If
-        your server's administrator has set up metadata or subtitle
-        services in the server's settings, the server makes those calls
-        itself. The Fire TV app has no subtitle search.
+        party. The TV apps also send that server a device name made of
+        the TV's model and a random tag, so the server can tell your
+        devices apart (for example in its device list and "play on"
+        menu); the LG TV app also sends what the TV can play (formats,
+        screen size, HDR), so the server can pick a stream that fits.
+        Apart from the images described under
+        <a href="#third-party-services">Third-party services</a>, the
+        apps do not call any external service directly. If your server's
+        administrator has set up metadata or subtitle services in the
+        server's settings, the server makes those calls itself. The Fire
+        TV app has no subtitle search.
       </li>
       <li>
         <strong>Image and trickplay cache.</strong> Posters, fanart, and
@@ -81,9 +91,10 @@
         "Continue Watching" row. This data stays on your device,
       </li>
       <li>
-        the two third-party services described under
+        the third-party services described under
         <a href="#third-party-services">Third-party services</a> below,
-        for Chromecast and for the photo map.
+        for Chromecast, for the photo map, and for images your server
+        links to.
       </li>
     </ul>
 
@@ -129,7 +140,7 @@
 
     <p>
       The clients contain no advertising, analytics or crash-reporting
-      SDKs. Two features reach services run by others:
+      SDKs. Three features reach services run by others:
     </p>
 
     <ul>
@@ -154,6 +165,20 @@
         locations. See the
         <a href="https://osmfoundation.org/wiki/Privacy_Policy" target="_blank" rel="noopener noreferrer">OSMF
         Privacy Policy</a>.
+      </li>
+      <li>
+        <strong>Images your server links to.</strong> A few screens show
+        images that your server names by address instead of serving
+        itself, and the apps load them from there: film and show posters
+        from TMDB's image server (<code>image.tmdb.org</code>), for
+        example in Discover, requests and franchise collections, and
+        channel logos in Live TV and Recordings from wherever your
+        server's channel list points. Those servers see the request as
+        any website would: your IP address, the image asked for, and the
+        usual browser request headers. No account details are sent to
+        them. See
+        <a href="https://www.themoviedb.org/privacy-policy" target="_blank" rel="noopener noreferrer">TMDB's
+        privacy policy</a>.
       </li>
     </ul>
 
@@ -197,7 +222,8 @@
       <a href="https://github.com/CollinJAycock/OnScreen" rel="noopener">
         github.com/CollinJAycock/OnScreen
       </a>
-      under the AGPLv3 license. You can audit exactly what data the
+      under the AGPLv3 license (the LG webOS TV app under the Apache
+      License 2.0). You can audit exactly what data the
       clients handle, and what the server does with the data they send,
       by reading the source.
     </p>

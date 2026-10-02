@@ -27,6 +27,7 @@
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
   import { openItem } from '$lib/nav';
+  import { ensureNavGates } from '$lib/navGates';
   import { orderRows } from '$lib/hubLayout';
   import {
     endpointMissing,
@@ -78,8 +79,8 @@
     const guard = restoreGuard();
     void load(takeFocusMemo(), guard);
 
-    // No Back handler here: the hub is the root, so Back falls through to
-    // webOS's platformBack (see the focus manager).
+    // No Back handler here: the hub is a first screen, so Back falls
+    // through to the layout's exit popup (lib/appExit).
     return () => {
       guard.end();
       if (noticeTimer) clearTimeout(noticeTimer);
@@ -105,6 +106,9 @@
       collections = Array.isArray(cols) ? cols : [];
       layout = prefs?.hub_layout ?? null;
       data = hub;
+      // The server answers now: Retry keeps the bar mounted, so a pill whose
+      // answer failed at launch (server or Wi-Fi not up yet) asks again here.
+      void ensureNavGates();
       await tick();
       if (memo && restoring && guard) restoreHubFocus(memo, guard);
       firstPaint = false;

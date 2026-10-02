@@ -5,10 +5,13 @@
   // D-pad navigates the bar.
   import { focusable } from '$lib/focus/focusable';
   import { page } from '$app/state';
+  import { ensureNavGates, navGates, type NavGates } from '$lib/navGates';
 
   interface Item {
     href: string;
     label: string;
+    /** Shown only while this gate is open (lib/navGates). */
+    gate?: keyof NavGates;
   }
 
   const items: Item[] = [
@@ -17,11 +20,24 @@
     { href: '#/search/',     label: 'Search' },
     { href: '#/favorites/',  label: 'Favorites' },
     { href: '#/history/',    label: 'History' },
-    { href: '#/discover/',   label: 'Discover' },
-    { href: '#/livetv/',     label: 'Live TV' },
-    { href: '#/recordings/', label: 'Recordings' },
+    { href: '#/discover/',   label: 'Discover',   gate: 'discover' },
+    { href: '#/livetv/',     label: 'Live TV',    gate: 'liveTv' },
+    { href: '#/recordings/', label: 'Recordings', gate: 'recordings' },
     { href: '#/settings/',   label: 'Settings' },
   ];
+
+  // Discover, Live TV and Recordings only once the server has said they
+  // apply to this account (closed while that loads). Keyed by href, so a
+  // pill popping in leaves the others, and the focus on one, in place; the
+  // focus manager moves by position, not by index, so fewer pills need
+  // nothing from it.
+  const shown = $derived(items.filter((it) => !it.gate || $navGates[it.gate]));
+
+  // Asked by each new bar (a no-op while known and fresh; a failed answer
+  // is asked again). At the top level rather than in onMount: once per
+  // instance all the same, and it also runs under svelte/server, which is
+  // how the tests render this.
+  void ensureNavGates();
 
   const currentHash = $derived(typeof location !== 'undefined' ? location.hash : '');
   $effect(() => { void page.url; });
@@ -40,7 +56,7 @@
 <header class="topnav">
   <a class="brand" href="#/hub/" data-sveltekit-preload-data="false">OnScreen</a>
   <nav data-focus-row>
-    {#each items as it (it.href)}
+    {#each shown as it (it.href)}
       <a
         use:focusable
         class="link"

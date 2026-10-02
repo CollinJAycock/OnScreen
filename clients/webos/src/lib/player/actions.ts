@@ -4,8 +4,9 @@
 // stepping), so on most LG TVs they were unreachable. Like Android's
 // secondary actions: with the controls up, Down focuses a row of buttons,
 // ←/→ move along it, OK opens the picker, ↑ or Back leaves it; the pointer
-// clicks them too. The colour keys keep working. Pure: the page keeps the
-// state, these decide.
+// clicks them too. The colour keys keep working. Also the pointer's own
+// playback buttons (transportButtons). Pure: the page keeps the state,
+// these decide.
 
 import type { RemoteKey } from '../focus/keys';
 
@@ -22,18 +23,95 @@ export const ACTION_LABELS: Record<PlayerAction, string> = {
  *  - Audio with any track the player can switch (≥ 1: "1 of 1" still says
  *    what is playing). Not for the file's direct stream, which has no
  *    session to re-issue.
- *  - Subtitles always for video: even a file with none offers Off and
- *    "Find more online…".
+ *  - Subtitles with a track to pick, or with the server's online search
+ *    (`onlineSubtitles`, navGates), which a file with none can still use:
+ *    its picker is Off plus "Find more online…". With neither, its only
+ *    row would be Off.
  *  - Chapters with ≥ 2 (a single chapter is the whole film).
  * None for music and audiobooks (their own now-playing view).
  */
-export function playerActions(o: { video: boolean; switchableAudioTracks: number; chapters: number }): PlayerAction[] {
+export function playerActions(o: {
+  video: boolean;
+  switchableAudioTracks: number;
+  subtitleTracks: number;
+  onlineSubtitles: boolean;
+  chapters: number;
+}): PlayerAction[] {
   if (!o.video) return [];
   const out: PlayerAction[] = [];
   if (o.switchableAudioTracks >= 1) out.push('audio');
-  out.push('subtitles');
+  if (o.subtitleTracks >= 1 || o.onlineSubtitles) out.push('subtitles');
   if (o.chapters >= 2) out.push('chapters');
   return out;
+}
+
+/** A picker row: its text, whether it's what plays now (●), and whether it
+ *  runs an action instead of picking (the online search). */
+export interface PickerRow {
+  label: string;
+  current: boolean;
+  action?: boolean;
+}
+
+/** The subtitle picker's last row, shown only with onlineSubtitles. */
+export const FIND_ONLINE_LABEL = 'Find more online…';
+
+/** The subtitle picker: Off, the tracks (`status` adds "· loading…" and
+ *  the like to a track's label), then "Find more online…" when the server
+ *  has an online search. Without it the row isn't there at all: on a server
+ *  without a provider it only ever answered "not configured". */
+export function subtitlePickerRows(
+  tracks: readonly { key: string; label: string }[],
+  activeKey: string | null,
+  onlineSubtitles: boolean,
+  status: (key: string) => string = () => '',
+): PickerRow[] {
+  return [
+    { label: 'Off', current: activeKey === null },
+    ...tracks.map((t) => ({ label: t.label + status(t.key), current: t.key === activeKey })),
+    ...(onlineSubtitles ? [{ label: FIND_ONLINE_LABEL, current: false, action: true }] : []),
+  ];
+}
+
+// ── The pointer's playback controls ─────────────────────────────────────
+//
+// LG's checklist wants play, pause, seek and previous / next reachable with
+// the screen cursor as well as the keys. The keys have them (OK, ← →,
+// CH ▲▼); while the pointer is on screen the controls add buttons for them,
+// and a click on the bar seeks there.
+
+export type TransportButton = 'prev' | 'back' | 'playpause' | 'forward' | 'next';
+
+/** Skip size of the back / forward buttons: the ← → keys'. */
+export const TRANSPORT_SKIP_MS = 10_000;
+
+/** The buttons, left to right: previous / next only when CH ▲▼ step
+ *  something here (chrome.channelStep: a queue's items or the chapters). */
+export function transportButtons(canStep: boolean): TransportButton[] {
+  return canStep ? ['prev', 'back', 'playpause', 'forward', 'next'] : ['back', 'playpause', 'forward'];
+}
+
+export function transportLabel(b: TransportButton, paused: boolean): string {
+  switch (b) {
+    case 'prev':
+      return '|◀';
+    case 'back':
+      return '-10s';
+    case 'playpause':
+      return paused ? '▶' : '❚❚';
+    case 'forward':
+      return '+10s';
+    case 'next':
+      return '▶|';
+  }
+}
+
+/** The content position a click at `x` on a bar spanning [left, left +
+ *  width) asks for, clamped to the item; null without a known length. */
+export function barSeekMs(x: number, left: number, width: number, durationMs: number): number | null {
+  if (!(width > 0) || !(durationMs > 0)) return null;
+  const f = Math.min(1, Math.max(0, (x - left) / width));
+  return Math.round(f * durationMs);
 }
 
 export type ActionRowStep =

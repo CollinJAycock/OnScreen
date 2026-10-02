@@ -1,5 +1,6 @@
 import { KeyHold, REPEAT_GAP_MS, eventTime, repeatActivates } from './hold';
 import { toRemoteKey, type RemoteKey } from './keys';
+import { POINTER_ECHO_MS, PointerEcho, PointerTrack, WheelSteps, pointerShown, scrollsNatively } from './pointer';
 import { isDirection, pickNeighborNear } from './spatial';
 
 const FOCUSABLE_ATTR = 'data-focusable';
@@ -17,18 +18,67 @@ const REPEAT_ATTR = 'data-repeat-ok';
 // The current page's own top-nav pill (TopNav marks it), where focus goes
 // when a page has nothing of its own to focus (an empty Recordings).
 const CURRENT_PAGE_PILL = `[${FOCUSABLE_ATTR}][aria-current="page"]`;
+// A popup over every page (focusable's focusModal: the exit popup) keeps
+// the ring while it's up: a page behind it that finishes loading can't
+// autofocus a card there, and the pointer can't hover one.
+const MODAL_ATTR = 'data-focus-modal';
 
 type BackHandler = () => boolean;
-type KeyHandler = (k: RemoteKey, e: KeyboardEvent) => boolean;
+/** What the key path reads of its event: a keydown, or the wheel event a
+ *  notch's D-pad step comes from (see onWheel). */
+export interface KeyEventLike {
+  repeat?: boolean;
+  timeStamp: number;
+  preventDefault(): void;
+  stopPropagation(): void;
+}
+type KeyHandler = (k: RemoteKey, e: KeyEventLike) => boolean;
+
+/** The use:focusable element an event happened in, if any. */
+function focusableOf(target: EventTarget | null): HTMLElement | null {
+  const el = target as Element | null;
+  if (!el || typeof el.closest !== 'function') return null;
+  return el.closest<HTMLElement>(`[${FOCUSABLE_ATTR}]`);
+}
+
+// What a pointer click acts on: the focusables, the player's own buttons
+// and anything marked for the pointer (POINTER_TARGET_ATTR: the player's
+// seek bar).
+const POINTER_TARGET_ATTR = 'data-pointer-target';
+const CLICKABLE = `[${FOCUSABLE_ATTR}], button, a[href], [role="button"], [${POINTER_TARGET_ATTR}]`;
+
+function clickableOf(target: EventTarget | null): Element | null {
+  const el = target as Element | null;
+  if (!el || typeof el.closest !== 'function') return null;
+  return el.closest(CLICKABLE);
+}
 
 // Holding OK this long on an element with a long-press handler opens its
 // options instead of activating it (Android's long-press timeout is ~500).
 const LONG_PRESS_MS = 600;
 
-class FocusManager {
+export class FocusManager {
   private current: HTMLElement | null = null;
   private backStack: BackHandler[] = [];
   private keyHandlers: KeyHandler[] = [];
+  // Back that nothing on the back stack took: the root layout's (the
+  // previous page, or the exit popup on a first screen; lib/appExit).
+  private rootBack: BackHandler | null = null;
+  private root: HTMLElement | null = null;
+
+  // The Magic Remote (./pointer): a hover moves the ring, OK in pointer
+  // mode acts once (as its click, whichever of click and Enter comes
+  // first), a wheel notch is a D-pad step.
+  private echo = new PointerEcho();
+  private track = new PointerTrack();
+  private wheel = new WheelSteps();
+  // Whether the pointer is on screen (pointerShown, kept here too).
+  private pointerOn = false;
+  // An OK pressed with the cursor on something clickable: its click acts,
+  // so the Enter is held back (with what the cursor was on) in case it
+  // doesn't come.
+  private pointerPress: Element | null = null;
+  private pointerPressTimer: ReturnType<typeof setTimeout> | null = null;
 
   // A held OK is one press: its repeats are dropped before any handler sees
   // them (see ./hold). The long press below still measures the hold.
@@ -55,15 +105,36 @@ class FocusManager {
   private swallowingEnter = false;
 
   init(root: HTMLElement = document.body) {
+    this.root = root;
     root.addEventListener('keydown', this.onKey, true);
     root.addEventListener('keyup', this.onKeyUp, true);
+    root.addEventListener('mousemove', this.onPointerMove, true);
+    root.addEventListener('click', this.onClick, true);
+    // Not passive: a wheel that moves the focus mustn't also scroll a box.
+    root.addEventListener('wheel', this.onWheel, { capture: true, passive: false });
+    document.addEventListener('cursorStateChange', this.onCursorState);
     this.focusFirst();
   }
 
   destroy(root: HTMLElement = document.body) {
     root.removeEventListener('keydown', this.onKey, true);
     root.removeEventListener('keyup', this.onKeyUp, true);
+    root.removeEventListener('mousemove', this.onPointerMove, true);
+    root.removeEventListener('click', this.onClick, true);
+    root.removeEventListener('wheel', this.onWheel, true);
+    document.removeEventListener('cursorStateChange', this.onCursorState);
+    if (this.root === root) this.root = null;
     this.cancelPress();
+    this.cancelPointerPress();
+  }
+
+  /** What Back does when no screen took it (the root layout's; one at a
+   *  time). Returns the unregister. */
+  setRootBack(handler: BackHandler) {
+    this.rootBack = handler;
+    return () => {
+      if (this.rootBack === handler) this.rootBack = null;
+    };
   }
 
   /** Register (or clear, with undefined) an element's long-press handler. */
@@ -86,6 +157,13 @@ class FocusManager {
   private onKeyUp = (e: KeyboardEvent) => {
     if (toRemoteKey(e) !== 'enter') return;
     this.enterHold.up();
+    // The press is over: a pointer click on its heels is its release.
+    this.echo.released(eventTime(e));
+    // An OK held back for its click: the click comes with the release, or
+    // it never will (pressPointerTarget).
+    if (this.pointerPress && !this.pointerPressTimer) {
+      this.pointerPressTimer = setTimeout(this.pressPointerTarget, POINTER_ECHO_MS);
+    }
     // The hold is over; don't keep the element (it may be unmounted next).
     this.enterPressed = null;
     if (this.swallowingEnter) {
@@ -119,12 +197,16 @@ class FocusManager {
     };
   }
 
-  focus(el: HTMLElement | null) {
+  /** Put the ring on `el`, scrolled into view unless `scroll` is false (the
+   *  pointer's hover outside a row: the page stays put under the cursor). */
+  focus(el: HTMLElement | null, opts: { scroll?: boolean } = {}) {
     if (!el || el === this.current) return;
+    const modal = document.querySelector(`[${MODAL_ATTR}]`);
+    if (modal && !modal.contains(el)) return;
     if (this.current) this.current.setAttribute('data-focused', 'false');
     this.current = el;
     el.setAttribute('data-focused', 'true');
-    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    if (opts.scroll !== false) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
   }
 
   focusFirst() {
@@ -166,15 +248,34 @@ class FocusManager {
   private onKey = (e: KeyboardEvent) => {
     const k = toRemoteKey(e);
     if (!k) return;
+    // A D-pad press: the remote is in 5-way mode (webOS hides the pointer,
+    // and says so with cursorStateChange too).
+    if (isDirection(k)) this.setPointer(false);
+    this.handle(k, e);
+  };
+
+  // A key, or a wheel notch's D-pad step (onWheel), through the page's key
+  // handlers, the back stack and the spatial focus moves.
+  private handle(k: RemoteKey, e: KeyEventLike) {
     // When the key went down: the event's own stamp, not Date.now(). A page
     // rendering between two of a hold's repeats delays their handling, and a
     // gap measured then reads as a release and a second press (eventTime).
     const now = eventTime(e);
 
-    // Any other key abandons a pending long press (no click, no options).
+    // A held Back is one press too. Its repeats would walk back a page
+    // each, and on a first screen open and cancel the exit popup in turn.
+    if (k === 'back' && e.repeat) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+
+    // Any other key abandons a pending long press (no click, no options),
+    // and an OK held back for its click.
     if (k !== 'enter' && this.pressTarget) this.cancelPress();
+    if (k !== 'enter') this.cancelPointerPress();
     if (k === 'enter') {
-      const fresh = this.enterHold.down(e.repeat, now);
+      const fresh = this.enterHold.down(!!e.repeat, now);
       if (this.swallowingEnter) {
         if (!fresh || now < this.swallowEnterUntil) {
           // Still the hold that fired the long press (the window also
@@ -213,6 +314,29 @@ class FocusManager {
         e.stopPropagation();
         return;
       }
+      // The Enter a pointer click sent after it: the click acted.
+      if (this.echo.enterIsEcho(now)) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      // In pointer mode OK is a click on what the cursor is on, and the
+      // click event carries it: an Enter sent along (before the click)
+      // would act a second time, on the ring, which a row scrolled under a
+      // still pointer may have left on another card. So it's held back for
+      // the click, and pressed in its place should none come (onKeyUp).
+      // Over nothing clickable OK stays a key (the player's play / pause,
+      // the photo viewer's slideshow): there the click does nothing, and
+      // so does the key if no page takes it (below).
+      const aimed = this.clickableUnderPointer();
+      if (aimed) {
+        this.cancelPointerPress();
+        this.pointerPress = aimed;
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      this.echo.entered(now);
       // A new press: what it clicks (below) is what its repeats may click.
       this.enterPressed = null;
     }
@@ -235,18 +359,25 @@ class FocusManager {
           return;
         }
       }
-      // Nothing in-app handled Back — hand it to the platform so webOS
-      // performs its native back / app-exit instead of swallowing the
-      // key (which would otherwise leave the user stuck at the root).
-      if (typeof window !== 'undefined' && window.webOS?.platformBack) {
-        e.preventDefault();
-        e.stopPropagation();
-        window.webOS.platformBack();
-      }
+      // Nothing on the screen took Back. The platform does nothing with it
+      // either (disableBackHistoryAPI, appinfo.json): the root handler goes
+      // to the previous page, or on a first screen offers to leave the app
+      // (lib/appExit).
+      e.preventDefault();
+      e.stopPropagation();
+      this.rootBack?.();
       return;
     }
 
     if (k === 'enter') {
+      // The pointer is on screen over nothing clickable, and no page took
+      // OK: nothing to press. The ring stays on the last thing hovered,
+      // which the cursor has left (a card, the exit popup's Exit with the
+      // cursor on its backdrop); the D-pad's OK presses it.
+      if (this.pointerOn && this.track.at()) {
+        e.preventDefault();
+        return;
+      }
       if (!this.current || !document.body.contains(this.current)) {
         // Nothing focused: like an arrow below, OK only brings the ring up.
         // Clicking what it lands on, unseen, would act on a control the
@@ -308,6 +439,126 @@ class FocusManager {
         }
       }
     }
+  }
+
+  // ── The Magic Remote's pointer and wheel (./pointer) ─────────────────
+
+  private setPointer(on: boolean) {
+    this.pointerOn = on;
+    pointerShown.set(on);
+  }
+
+  // The pointer over a focusable takes the ring there, the same selection
+  // effect the D-pad gives (OK is then the click on it). The ring stays on
+  // the last one when the pointer moves off, for the D-pad to go on from.
+  // A card or pill in a row (ROW_ATTR) is scrolled fully into view, so
+  // the pointer works its way along a hub row past the screen's edge;
+  // anything else stays put under the cursor (the wheel scrolls pages).
+  private onPointerMove = (e: MouseEvent) => {
+    if (!this.track.moved(e.clientX, e.clientY)) return;
+    this.setPointer(true);
+    const el = focusableOf(e.target);
+    if (el) this.focus(el, { scroll: !!el.closest(`[${ROW_ATTR}]`) });
+  };
+
+  // What a click would act on under the pointer, while it's on screen.
+  private clickableUnderPointer(): Element | null {
+    const at = this.pointerOn ? this.track.at() : null;
+    if (!at || typeof document.elementFromPoint !== 'function') return null;
+    return clickableOf(document.elementFromPoint(at.x, at.y));
+  }
+
+  // An OK held back for its click (pointerPress) that never came: a remote
+  // that sent only the Enter. POINTER_ECHO_MS after the key's release it
+  // presses what the cursor was on, as the click would have; not the seek
+  // bar, whose click needs the pointer's position.
+  private pressPointerTarget = () => {
+    const target = this.pointerPress;
+    this.cancelPointerPress();
+    if (!target || !document.body.contains(target) || target.hasAttribute(POINTER_TARGET_ATTR)) return;
+    const el = focusableOf(target);
+    if (el) this.focus(el, { scroll: false });
+    (target as HTMLElement).click();
+  };
+
+  private cancelPointerPress() {
+    if (this.pointerPressTimer) clearTimeout(this.pointerPressTimer);
+    this.pointerPressTimer = null;
+    this.pointerPress = null;
+  }
+
+  // A pointer click acts once (PointerEcho): dropped when it echoes an
+  // Enter that already acted (while that OK is down, a long press included,
+  // or just after), else, on something clickable, noted so the Enter after
+  // it is dropped. A click on nothing leaves its Enter to act as the key.
+  // Only real clicks: el.click() above (and any scripted click) isn't one.
+  // In the capture phase, so a dropped click never reaches the element.
+  private onClick = (e: MouseEvent) => {
+    if (!e.isTrusted) return;
+    const at = eventTime(e);
+    if (this.echo.clickIsEcho(at)) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    this.setPointer(true);
+    // The click an OK held back for (or any click since): it acts.
+    this.cancelPointerPress();
+    if (!clickableOf(e.target)) return;
+    this.echo.clicked(at);
+    const el = focusableOf(e.target);
+    if (el) this.focus(el, { scroll: false });
+  };
+
+  // A wheel notch is the D-pad's ↑ / ↓ (WheelSteps), through the same path
+  // as the key: the ring moves and scrolls the row, grid or page into view,
+  // a grid pages in more, a picker's cursor moves. A text box with nothing
+  // to focus scrolls natively instead.
+  private onWheel = (e: WheelEvent) => {
+    if (this.wheelScrollsBox(e)) return;
+    e.preventDefault();
+    const k = this.wheel.step(e.deltaX, e.deltaY, e.deltaMode, eventTime(e));
+    if (k) this.handle(k, e);
+  };
+
+  private wheelScrollsBox(e: WheelEvent): boolean {
+    if (typeof getComputedStyle !== 'function') return false;
+    for (let el = e.target as HTMLElement | null; el && el !== this.root; el = el.parentElement) {
+      if (el.nodeType !== 1) continue;
+      let overflowY: string;
+      try {
+        overflowY = getComputedStyle(el).overflowY;
+      } catch {
+        return false;
+      }
+      if (overflowY !== 'auto' && overflowY !== 'scroll') continue;
+      return scrollsNatively(
+        {
+          overflowY,
+          scrollTop: el.scrollTop,
+          scrollHeight: el.scrollHeight,
+          clientHeight: el.clientHeight,
+          hasFocusables: !!el.querySelector(`[${FOCUSABLE_ATTR}]`),
+        },
+        e.deltaY,
+      );
+    }
+    return false;
+  }
+
+  // webOS says when the pointer comes and goes (LG's System UI Visibility
+  // guide). When it goes, the D-pad takes over from the ring where the
+  // pointer left it, brought fully on screen; with no ring (its element
+  // gone), from the page's first focusable.
+  private onCursorState = (e: Event) => {
+    const v = (e as CustomEvent<{ visibility?: unknown } | null>).detail?.visibility;
+    const visible = v === true || v === 'true' ? true : v === false || v === 'false' ? false : null;
+    if (visible === null) return;
+    this.setPointer(visible);
+    if (visible) return;
+    const el = this.currentElement();
+    if (el) el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    else this.focusFirst();
   };
 }
 

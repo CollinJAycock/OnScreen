@@ -1,10 +1,12 @@
 <script lang="ts">
   import '../app.css';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { focusManager } from '$lib/focus/manager';
   import { api, type NotificationEvent, type SignOutReason } from '$lib/api';
+  import { closeApp, isEntryRoute, liveWebosVersion, platformBackFn, rootBackHandler } from '$lib/appExit';
+  import ExitPopup from '$lib/components/ExitPopup.svelte';
   import { clientName } from '$lib/device';
   import {
     PLAYBACK_TRANSFER_EVENT,
@@ -14,10 +16,55 @@
     shouldRedialAfterHidden,
     streamWanted,
   } from '$lib/events';
-  import { forgetHistory, playItem, resetStack } from '$lib/nav';
+  import { forgetHistory, goBack, playItem, resetStack } from '$lib/nav';
+  import { ensureNavGates } from '$lib/navGates';
   import { forgetSearch } from '$lib/searchMemory';
 
   let { children } = $props();
+
+  // Back that no screen took (lib/appExit): the previous page, or on a
+  // first screen (Home, Setup, Sign in) the exit popup, or on webOS TV 23
+  // and later platformBack() for the TV's Home (unverified there, see
+  // lib/appExit). The popup puts the ring back where it was when cancelled.
+  let exitOpen = $state(false);
+  let exitReturn: HTMLElement | null = null;
+
+  const onRootBack = rootBackHandler({
+    routeId: () => page.route.id,
+    version: () => liveWebosVersion(),
+    platformBack: () => platformBackFn(),
+    goBack: () => goBack(),
+    openExitPopup: () => {
+      if (exitOpen) return;
+      exitReturn = focusManager.currentElement();
+      exitOpen = true;
+    },
+  });
+
+  async function cancelExit() {
+    exitOpen = false;
+    const back = exitReturn;
+    exitReturn = null;
+    await tick();
+    if (back && document.body.contains(back)) focusManager.focus(back);
+    else focusManager.refocus();
+  }
+
+  // Exit: LG's window.close(). Where that does nothing (a desktop browser)
+  // the popup goes as Cancel would, rather than stay up on Exit.
+  function exitApp() {
+    closeApp();
+    void cancelExit();
+  }
+
+  // Off the first screens (a "play on this TV" opening the player under
+  // it), the popup goes: Back there is the page's again.
+  $effect(() => {
+    if (exitOpen && !isEntryRoute(page.route.id)) {
+      exitOpen = false;
+      exitReturn = null;
+    }
+  });
 
   // The app's one event stream ($lib/events) follows the route: open on every
   // signed-in screen, closed on login / setup / pairing, where sign-out,
@@ -49,7 +96,9 @@
 
   // Back from standby or another app after a while, or the network back:
   // the connection from before may be half-open and silent for good, so
-  // dial a fresh one (see REDIAL_AFTER_HIDDEN_MS).
+  // dial a fresh one (see REDIAL_AFTER_HIDDEN_MS). The top-nav pills are
+  // asked again too when their answers failed or have aged (a page's own
+  // bar asks only when it mounts).
   let hiddenAt = 0;
   function onVisibilityChange() {
     if (document.hidden) {
@@ -58,9 +107,11 @@
     }
     if (hiddenAt && shouldRedialAfterHidden(Date.now() - hiddenAt)) events.restart();
     hiddenAt = 0;
+    void ensureNavGates();
   }
   function onOnline() {
     events.restart();
+    void ensureNavGates();
   }
 
   // A refresh came back as the server's verdict that this sign-in is dead
@@ -77,7 +128,8 @@
   // The stored sign-in was cleared, however: close the stream at once,
   // before the route even changes, and drop what belonged to that user
   // (Back history, focus notes, the last search; after Change server those
-  // would also point into the old server).
+  // would also point into the old server). Which top-nav pills apply is
+  // dropped by lib/navGates itself, on the same signal.
   function onSignedOut(reason: SignOutReason) {
     events.stop();
     forgetHistory();
@@ -87,12 +139,14 @@
 
   onMount(() => {
     focusManager.init();
+    const offRootBack = focusManager.setRootBack(onRootBack);
     const offTransfer = events.subscribe(PLAYBACK_TRANSFER_EVENT, onTransfer);
     const offSignedOut = api.onSignedOut(onSignedOut);
     const offRejected = events.onRejected(onSessionRejected);
     document.addEventListener('visibilitychange', onVisibilityChange);
     window.addEventListener('online', onOnline);
     return () => {
+      offRootBack();
       offTransfer();
       offSignedOut();
       offRejected();
@@ -106,6 +160,9 @@
 
 <main class="tv-root">
   {@render children()}
+  {#if exitOpen}
+    <ExitPopup onexit={exitApp} oncancel={() => void cancelExit()} />
+  {/if}
 </main>
 
 <style>

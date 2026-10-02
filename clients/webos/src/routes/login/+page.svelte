@@ -1,8 +1,10 @@
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { goto } from '$app/navigation'; // navigation to pairing screen
   import { api, ApiError } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import { focusable } from '$lib/focus/focusable';
+  import { focusManager } from '$lib/focus/manager';
 
   let step = $state<'username' | 'password' | 'totp'>('username');
   let username = $state('');
@@ -11,6 +13,33 @@
   let challengeToken = $state('');
   let error = $state('');
   let submitting = $state(false);
+
+  // The on-screen "back" / "change user" buttons, as the steps' own Back
+  // (LG: a UI back button acts as the remote's). The first step leaves Back
+  // to the app (lib/appExit): Sign in is a first screen, so it offers to
+  // exit. Mid sign-in neither moves (Back is still taken): the reply picks
+  // the step, the code step or the hub, and would overtake one changed
+  // under it. A different user starts without the last one's password.
+  function backToTotpStep() {
+    if (submitting) return;
+    step = 'password';
+    totpCode = '';
+    error = '';
+  }
+  function backToUsernameStep() {
+    if (submitting) return;
+    step = 'username';
+    password = '';
+    error = '';
+  }
+  onMount(() =>
+    focusManager.pushBack(() => {
+      if (step === 'totp') backToTotpStep();
+      else if (step === 'password') backToUsernameStep();
+      else return false;
+      return true;
+    }),
+  );
 
   async function submit() {
     if (step === 'username') {
@@ -65,13 +94,13 @@
     <!-- Masked like the password (Android masks this step too): a code
          read off the TV by the room is good for the rest of its window. -->
     <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} masked />
-    <button use:focusable class="back-btn" onclick={() => { step = 'password'; totpCode = ''; error = ''; }}>
+    <button use:focusable class="back-btn" onclick={backToTotpStep}>
       back
     </button>
   {:else}
     <div class="label">Password for <strong>{username}</strong></div>
     <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} masked />
-    <button use:focusable class="back-btn" onclick={() => (step = 'username')}>
+    <button use:focusable class="back-btn" onclick={backToUsernameStep}>
       change user
     </button>
   {/if}
