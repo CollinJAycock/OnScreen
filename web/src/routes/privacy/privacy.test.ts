@@ -43,4 +43,25 @@ describe('privacy policy', () => {
     expect(trakt).toContain('mark it watched');
     expect(trakt).toContain('the developer receives none of it');
   });
+
+  // clients/webos: appinfo.json's requiredACG (systemconfig.query, for
+  // lib/platform's getConfigs probe), lib/device's model name from
+  // deviceInfo, and the web view's storage and cache.
+  it('has a section on what the LG webOS TV app uses on the TV', () => {
+    const at = text.indexOf('What the LG webOS TV app uses on the TV');
+    expect(at).toBeGreaterThan(-1);
+    const lg = text.slice(at, text.indexOf('Third-party services', at));
+    expect(lg).toContain('systemconfig.query');
+    expect(lg).toContain('whether the screen shows HDR and whether it is 4K');
+    expect(lg).toContain('model name');
+    expect(lg).toContain('Magic Remote');
+    expect(lg).toContain('web view');
+    expect(lg).toContain('deleted when you uninstall the app');
+    expect(lg).toContain('does not use the camera, microphone, location');
+  });
+
+  it("doesn't describe the image cache in Android terms only", () => {
+    const cache = text.slice(text.indexOf('Image and trickplay cache.'));
+    expect(cache.slice(0, 400)).toContain('on LG webOS TV, the web view');
+  });
 });
