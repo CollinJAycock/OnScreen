@@ -348,6 +348,54 @@ func TestEnrichMovie_SearchFails_NoError(t *testing.T) {
 	}
 }
 
+// runtimeAgent is a mockAgent that also takes the file's runtime, as the
+// TMDB client does.
+type runtimeAgent struct {
+	mockAgent
+	calls   int
+	runtime time.Duration
+}
+
+func (m *runtimeAgent) SearchMovieWithRuntime(_ context.Context, _ string, _ int, runtime time.Duration) (*metadata.MovieResult, error) {
+	m.calls++
+	m.runtime = runtime
+	return m.searchMovieResult, m.searchMovieErr
+}
+
+// TMDB has five films titled Hero from 2018; the probed runtime is what
+// tells Blender's 4-minute HERO apart, so it must reach the search.
+func TestEnrichMovie_PassesFileRuntimeToSearch(t *testing.T) {
+	year := 2018
+	agent := &runtimeAgent{mockAgent: mockAgent{
+		searchMovieResult: &metadata.MovieResult{TMDBID: 615324, Title: "HERO", Year: 2018},
+	}}
+	updater := newMockUpdater()
+	itemID := uuid.New()
+	updater.items[itemID] = &media.Item{ID: itemID, Type: "movie", Title: "Hero", Year: &year}
+	e := newTestEnricher(agent, updater, nil)
+
+	durationMS := int64(238_000)
+	file := &media.File{FilePath: "/media/Movies/Hero (2018)/Hero (2018).mp4", DurationMS: &durationMS}
+	if err := e.Enrich(context.Background(), updater.items[itemID], file); err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	if agent.calls != 1 || agent.runtime != 238*time.Second {
+		t.Fatalf("SearchMovieWithRuntime: %d calls, runtime %s; want 1 call with 3m58s", agent.calls, agent.runtime)
+	}
+	if len(updater.updateCalls) != 1 || updater.updateCalls[0].TMDBID == nil || *updater.updateCalls[0].TMDBID != 615324 {
+		t.Fatalf("update: %+v", updater.updateCalls)
+	}
+
+	// An unprobed file has no runtime to offer: plain SearchMovie.
+	agent.calls = 0
+	if err := e.Enrich(context.Background(), updater.items[itemID], &media.File{FilePath: file.FilePath}); err != nil {
+		t.Fatalf("enrich: %v", err)
+	}
+	if agent.calls != 0 {
+		t.Fatalf("SearchMovieWithRuntime called %d times without a duration", agent.calls)
+	}
+}
+
 // ── enrichShow ───────────────────────────────────────────────────────────────
 
 func TestEnrichShow_Success(t *testing.T) {

@@ -17,7 +17,9 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
+	"golang.org/x/text/unicode/norm"
 	"golang.org/x/time/rate"
 
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -161,39 +163,267 @@ func (c *Client) tripCircuit(status int) {
 	}
 }
 
-// SearchMovie implements metadata.Agent.
+// SearchMovie implements metadata.Agent: SearchMovieWithRuntime without a
+// runtime to compare.
 func (c *Client) SearchMovie(ctx context.Context, title string, year int) (*metadata.MovieResult, error) {
-	params := url.Values{}
-	params.Set("query", title)
-	params.Set("language", c.language)
-	if year > 0 {
-		params.Set("year", strconv.Itoa(year))
+	return c.SearchMovieWithRuntime(ctx, title, year, 0)
+}
+
+// SearchMovieWithRuntime implements metadata.RuntimeMovieSearcher. It is the
+// scanner's unattended auto-match, so it returns only a film it can vouch
+// for: one whose title, original title or alternative title is the query
+// once folded (foldTitle), released in the parsed year or a year either side
+// of it. Otherwise it errors and the item stays unmatched for Fix Match —
+// TMDB's top hit alone is not a match ("Spring" 2019 → Spring Breakers,
+// 2013; "Hero" 2018 → Chestnut: Hero of Central Park, 2004). runtime, when
+// known, picks between films sharing that title and year (pickByRuntime).
+func (c *Client) SearchMovieWithRuntime(ctx context.Context, title string, year int, runtime time.Duration) (*metadata.MovieResult, error) {
+	// primary_release_year first: it is the Fix Match query and ranks the
+	// film first released that year. year= matches a release in any
+	// country that year, so a popular film's late regional release
+	// outranks the one named; it still runs as the fallback, since it is
+	// how a film whose primary date is a year off the file's shows up.
+	rows, err := c.searchMovieRows(ctx, title, "primary_release_year", year)
+	if err != nil {
+		return nil, err
+	}
+	matches := matchByTitle(rows, title, year)
+	if len(matches) == 0 && year > 0 {
+		more, err := c.searchMovieRows(ctx, title, "year", year)
+		if err != nil {
+			return nil, err
+		}
+		rows = appendNewMovies(rows, more)
+		matches = matchByTitle(rows, title, year)
+	}
+	if len(matches) == 0 {
+		if r, ok := c.matchByAlternativeTitle(ctx, rows, title, year); ok {
+			matches = []tmdbMovie{r}
+		}
+	}
+	if len(matches) == 0 {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("tmdb search movie %q: %w", title, ctxErr)
+		}
+		if len(rows) == 0 {
+			return nil, fmt.Errorf("tmdb: no results for %q (%d)", title, year)
+		}
+		return nil, fmt.Errorf("tmdb: no confident match for %q (%d); top hit %q (%s)",
+			title, year, rows[0].Title, rows[0].ReleaseDate)
+	}
+	top, full := c.pickByRuntime(ctx, matches, runtime)
+	if full != nil {
+		return full, nil
 	}
 
-	var resp struct {
-		Results []tmdbMovie `json:"results"`
-	}
-	if err := c.get(ctx, "/search/movie", params, &resp); err != nil {
-		return nil, fmt.Errorf("tmdb search movie %q: %w", title, err)
-	}
-	if len(resp.Results) == 0 {
-		return nil, fmt.Errorf("tmdb: no results for %q (%d)", title, year)
-	}
-
-	// Upgrade the top hit to a full details response. Search rows carry no
+	// Upgrade the chosen hit to a full details response. Search rows carry no
 	// runtime, genres, tagline, IMDb id or belongs_to_collection, and the
 	// lite conversion would spend its second call on a standalone
 	// certification lookup anyway — the details call (release_dates appended)
 	// costs the same one request and answers all of it. It is also the exact
 	// request RefreshMovie makes, so the disk cache is shared with Fix Match
 	// and the franchise backfill. Falls back to the search row on any error.
-	top := resp.Results[0]
 	if full, err := c.RefreshMovie(ctx, top.ID); err == nil && full.TMDBID == top.ID {
 		return full, nil
 	} else if ctxErr := ctx.Err(); ctxErr != nil {
 		return nil, fmt.Errorf("tmdb search movie %q: %w", title, ctxErr)
 	}
 	return c.movieToResult(ctx, top)
+}
+
+// searchMovieRows runs one /search/movie query. yearParam names the TMDB
+// filter ("primary_release_year" or "year") applied when year > 0.
+func (c *Client) searchMovieRows(ctx context.Context, title, yearParam string, year int) ([]tmdbMovie, error) {
+	params := url.Values{}
+	params.Set("query", title)
+	params.Set("language", c.language)
+	if year > 0 {
+		params.Set(yearParam, strconv.Itoa(year))
+	}
+	var resp struct {
+		Results []tmdbMovie `json:"results"`
+	}
+	if err := c.get(ctx, "/search/movie", params, &resp); err != nil {
+		return nil, fmt.Errorf("tmdb search movie %q: %w", title, err)
+	}
+	return resp.Results, nil
+}
+
+// appendNewMovies appends the rows of more whose id rows doesn't hold yet.
+func appendNewMovies(rows, more []tmdbMovie) []tmdbMovie {
+	seen := make(map[int]bool, len(rows))
+	for _, r := range rows {
+		seen[r.ID] = true
+	}
+	for _, r := range more {
+		if !seen[r.ID] {
+			seen[r.ID] = true
+			rows = append(rows, r)
+		}
+	}
+	return rows
+}
+
+// matchByTitle returns the rows, in TMDB's order, whose title or original
+// title folds to the query and whose release year is closest to the parsed
+// one: the parsed year itself if any row has it, else a year either side
+// (see movieYearDistance). A row that only shares words with the query
+// ("Spring Breakers" for "Spring") never qualifies.
+func matchByTitle(rows []tmdbMovie, title string, year int) []tmdbMovie {
+	want := foldTitle(title)
+	if want == "" {
+		return nil
+	}
+	var exact, near []tmdbMovie
+	for _, r := range rows {
+		if foldTitle(r.Title) != want && foldTitle(r.OriginalTitle) != want {
+			continue
+		}
+		switch movieYearDistance(r, year) {
+		case 0:
+			exact = append(exact, r)
+		case 1:
+			near = append(near, r)
+		}
+	}
+	if len(exact) > 0 {
+		return exact
+	}
+	return near
+}
+
+// maxRuntimeLookups caps the details calls pickByRuntime spends on one
+// search. Each is the request the chosen film needs anyway, and the disk
+// cache keeps the rest for Fix Match.
+const maxRuntimeLookups = 5
+
+// pickByRuntime chooses among films that share the query's title and year
+// ("Hero" 2018: a 14-minute Danish drama, Blender's 4-minute HERO and three
+// more) the one whose TMDB runtime is closest to the file's. TMDB's order
+// stands when there is one film, no runtime to compare, or no film within a
+// few minutes of it — a cut or a multi-part file can be far off, and that
+// is no reason to drop a title-and-year match. The chosen film's details
+// come back too when they were fetched, so the caller needn't refetch.
+func (c *Client) pickByRuntime(ctx context.Context, matches []tmdbMovie, runtime time.Duration) (tmdbMovie, *metadata.MovieResult) {
+	if len(matches) < 2 || runtime <= 0 {
+		return matches[0], nil
+	}
+	tolerance := max(3*time.Minute, runtime/10)
+	var (
+		first          *metadata.MovieResult // matches[0]'s details
+		pick           tmdbMovie
+		pickFull       *metadata.MovieResult
+		pickDifference time.Duration
+	)
+	for i, m := range matches {
+		if i == maxRuntimeLookups || ctx.Err() != nil {
+			break
+		}
+		full, err := c.RefreshMovie(ctx, m.ID)
+		if err != nil || full.TMDBID != m.ID {
+			continue
+		}
+		if i == 0 {
+			first = full
+		}
+		if full.DurationMS == 0 {
+			continue
+		}
+		d := time.Duration(full.DurationMS)*time.Millisecond - runtime
+		if d < 0 {
+			d = -d
+		}
+		if d <= tolerance && (pickFull == nil || d < pickDifference) {
+			pick, pickFull, pickDifference = m, full, d
+		}
+	}
+	if pickFull == nil {
+		return matches[0], first
+	}
+	return pick, pickFull
+}
+
+// maxAltTitleLookups caps the /alternative_titles calls one search spends
+// when no row's own title matches. Only an unmatched search pays them, and
+// the right film, when TMDB found it by another title, ranks at the top.
+const maxAltTitleLookups = 3
+
+// matchByAlternativeTitle is matchByTitle's fallback for a file named by a
+// title TMDB only lists as an alternative: a regional release title ("Harry
+// Potter and the Sorcerer's Stone") or the short form of a long one
+// ("Borat"). It checks the year-compatible rows in TMDB's order. A failed
+// lookup skips the row; it never makes a match.
+func (c *Client) matchByAlternativeTitle(ctx context.Context, rows []tmdbMovie, title string, year int) (tmdbMovie, bool) {
+	want := foldTitle(title)
+	if want == "" {
+		return tmdbMovie{}, false
+	}
+	looked := 0
+	for _, r := range rows {
+		if movieYearDistance(r, year) > 1 {
+			continue
+		}
+		if looked == maxAltTitleLookups || ctx.Err() != nil {
+			break
+		}
+		looked++
+		var resp struct {
+			Titles []struct {
+				Title string `json:"title"`
+			} `json:"titles"`
+		}
+		if err := c.get(ctx, fmt.Sprintf("/movie/%d/alternative_titles", r.ID), nil, &resp); err != nil {
+			continue
+		}
+		for _, t := range resp.Titles {
+			if foldTitle(t.Title) == want {
+				return r, true
+			}
+		}
+	}
+	return tmdbMovie{}, false
+}
+
+// movieYearDistance is how many years row's release date lies from the
+// parsed year: 0 when no year was parsed (any year will do), and past the
+// one-year tolerance when the row has no release date to check.
+func movieYearDistance(row tmdbMovie, year int) int {
+	if year <= 0 {
+		return 0
+	}
+	release, err := time.Parse("2006-01-02", row.ReleaseDate)
+	if err != nil {
+		return 1 << 30
+	}
+	d := release.Year() - year
+	if d < 0 {
+		d = -d
+	}
+	return d
+}
+
+// foldTitle reduces a movie title to the form auto-match compares:
+// lowercase, diacritics stripped, "&" read as "and", a leading English
+// article dropped, then everything but letters and digits removed. So
+// "Spider-Man" and "Spiderman" fold alike, as do "S W A T" (cleaned from
+// "S.W.A.T.") and "S.W.A.T.", "Amélie" and "Amelie", "Wing It" and "Wing
+// It!". Letters of every script survive, so two different Japanese titles
+// don't both fold to "".
+func foldTitle(s string) string {
+	s = strings.ToLower(strings.TrimSpace(norm.NFKD.String(s)))
+	s = strings.ReplaceAll(s, "&", " and ")
+	for _, article := range []string{"the ", "a ", "an "} {
+		if strings.HasPrefix(s, article) {
+			s = s[len(article):]
+			break
+		}
+	}
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			return r
+		}
+		return -1
+	}, s)
 }
 
 // SearchTV implements metadata.Agent.

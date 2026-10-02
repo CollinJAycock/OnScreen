@@ -591,6 +591,17 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **Movies auto-matched the wrong film although the folder named the title
+  and year.** The scanner took TMDB's top search hit, and its year filter
+  counts a release in any country, so a popular near-miss won: "Spring
+  (2019)" became Spring Breakers (2013), "Hero (2018)" became Chestnut: Hero
+  of Central Park (2004). It now searches by first release year (the Fix
+  Match query) and accepts only a film whose title, original title or a
+  TMDB alternative title is the file's, ignoring case, punctuation and
+  accents, released within a year of the file's year. Films that share a
+  title and year ("Hero" 2018 is five) are told apart by the file's runtime.
+  Anything else is left unmatched for Fix Match rather than guessed. Items
+  already matched keep their match.
 - **The desktop app couldn't reach a server: every call failed with
   "Failed to fetch".** The installed app calls the server from its own
   webview origin (`http://tauri.localhost` on Windows, `tauri://localhost`
