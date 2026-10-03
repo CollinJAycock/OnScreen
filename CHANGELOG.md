@@ -637,9 +637,11 @@ Roku channel (no request features, as on Android):
   recognizer resolves (the manifest declares the `RECOGNIZE_SPEECH` intent
   query for Android 11+ package visibility), on Fire TV and Google TV
   alike, so devices where voice search worked keep it. Where it is hidden,
-  Leanback's automatic listening on open returns the bar to typing; a
-  launch that fails shows a message, and a cancelled one returns the bar to
-  typing too. Both flavors move to versionCode 25 / 1.4.2.
+  Leanback's automatic listening on open returns the bar to typing. A
+  launch that fails, or a recognizer that returns before anyone could speak
+  (one that resolves but never listens), shows "Voice search isn't
+  available"; one that listened but heard nothing says so; any result but a
+  query returns the bar to typing, so the orb is never left stuck. Both flavors move to versionCode 25 / 1.4.2.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
   search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
   its Deceptive and Malicious Behavior policy, which names apps that "save,

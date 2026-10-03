@@ -22,6 +22,31 @@ internal object VoiceSearch {
             putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         }
 
+    /** What came back from the recognizer. */
+    sealed interface Outcome {
+        data class Query(val text: String) : Outcome
+        /** Back before anyone could have spoken: a recognizer that resolves
+         *  but doesn't listen. Said out loud, or the orb looks dead. */
+        object Unavailable : Outcome
+        /** Listened, heard nothing usable. */
+        object NothingHeard : Outcome
+        /** The viewer backed out. */
+        object Cancelled : Outcome
+    }
+
+    /** Quicker than this and nobody spoke: the recognizer never listened. */
+    const val INSTANT_RETURN_MS = 1500L
+
+    fun outcome(ok: Boolean, matches: List<String>?, elapsedMs: Long): Outcome {
+        val text = matches?.firstOrNull { it.isNotBlank() }?.trim()
+        return when {
+            ok && text != null -> Outcome.Query(text)
+            elapsedMs < INSTANT_RETURN_MS -> Outcome.Unavailable
+            ok -> Outcome.NothingHeard
+            else -> Outcome.Cancelled
+        }
+    }
+
     /** An activity takes [recognizeIntent]. Needs the <queries> entry in the
      *  manifest: from Android 11 the lookup sees no other app without it. */
     fun recognizerInstalled(pm: PackageManager): Boolean =

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.speech.RecognizerIntent
 import android.view.KeyEvent
 import android.view.View
@@ -68,6 +69,10 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
      *  starts the recognizer. Decided once, in onCreate. */
     private var voiceEnabled = false
 
+    /** When the recognizer was started, to tell one that came straight
+     *  back (never listened) from a viewer backing out. */
+    private var speechStartedAt = 0L
+
     private fun scopeLabel(): String =
         "${getString(R.string.search_in)}: ${viewModel.scope.value?.name ?: getString(R.string.all_libraries)}"
 
@@ -90,6 +95,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                 // RecognizerIntent: the recognizer app owns the mic, so no
                 // RECORD_AUDIO here. Deprecated API, but the supported
                 // no-permission path on Leanback 1.0.0.
+                speechStartedAt = SystemClock.elapsedRealtime()
                 startActivityForResult(VoiceSearch.recognizeIntent(), REQUEST_SPEECH)
             } catch (e: Exception) {
                 // Installed but wouldn't start: say so, never a silent orb.
@@ -109,14 +115,23 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
 
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == REQUEST_SPEECH && resultCode == Activity.RESULT_OK) {
-            data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-                ?.let { setSearchQuery(it, true) }
+        if (requestCode == REQUEST_SPEECH) {
+            val outcome = VoiceSearch.outcome(
+                ok = resultCode == Activity.RESULT_OK,
+                matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS),
+                elapsedMs = SystemClock.elapsedRealtime() - speechStartedAt,
+            )
+            // Anything but a query puts the bar back to typing, and the two
+            // that look like a dead orb say why.
+            val message = when (outcome) {
+                is VoiceSearch.Outcome.Query -> null
+                VoiceSearch.Outcome.Unavailable -> R.string.voice_search_unavailable
+                VoiceSearch.Outcome.NothingHeard -> R.string.voice_search_nothing_heard
+                VoiceSearch.Outcome.Cancelled -> null
+            }
+            if (outcome is VoiceSearch.Outcome.Query) setSearchQuery(outcome.text, true) else endRecognitionUi()
+            if (message != null) context?.let { Toast.makeText(it, message, Toast.LENGTH_LONG).show() }
         }
-        // Cancelled, or the recognizer heard nothing: back to typing rather
-        // than an orb stuck listening.
-        if (requestCode == REQUEST_SPEECH && resultCode != Activity.RESULT_OK) endRecognitionUi()
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
     }

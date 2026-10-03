@@ -35,4 +35,30 @@ class VoiceSearchTest {
         }
         assertThat(VoiceSearch.recognizerInstalled(pm)).isFalse()
     }
+
+    @Test
+    fun `a heard query is searched`() {
+        assertThat(VoiceSearch.outcome(ok = true, matches = listOf("  sintel "), elapsedMs = 4000))
+            .isEqualTo(VoiceSearch.Outcome.Query("sintel"))
+    }
+
+    @Test
+    fun `a recognizer that comes straight back never listened, and says so`() {
+        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 300))
+            .isEqualTo(VoiceSearch.Outcome.Unavailable)
+        assertThat(VoiceSearch.outcome(ok = true, matches = emptyList(), elapsedMs = 300))
+            .isEqualTo(VoiceSearch.Outcome.Unavailable)
+    }
+
+    @Test
+    fun `listened but heard nothing`() {
+        assertThat(VoiceSearch.outcome(ok = true, matches = listOf(""), elapsedMs = 6000))
+            .isEqualTo(VoiceSearch.Outcome.NothingHeard)
+    }
+
+    @Test
+    fun `backing out after a while is just a cancel`() {
+        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 6000))
+            .isEqualTo(VoiceSearch.Outcome.Cancelled)
+    }
 }
