@@ -19,4 +19,9 @@ class FlavorFeaturesTest {
     fun `google tv keeps live tv and recordings`() {
         assertThat(BuildConfig.LIVE_TV).isTrue()
     }
+
+    @Test
+    fun `google tv offers the search microphone where a recognizer is installed`() {
+        assertThat(BuildConfig.VOICE_SEARCH).isTrue()
+    }
 }

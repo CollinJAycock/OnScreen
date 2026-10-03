@@ -9,6 +9,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
 import androidx.leanback.app.SearchSupportFragment
+import tv.onscreen.android.BuildConfig
 import androidx.leanback.widget.*
 import androidx.leanback.widget.FocusHighlight
 import androidx.lifecycle.ViewModelProvider
@@ -64,34 +65,50 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     private var scopeAdapter: ArrayObjectAdapter? = null
     private var chipAdapter: ArrayObjectAdapter? = null
 
+    /** Voice input is offered here (see [VoiceSearch]): the orb shows and
+     *  starts the recognizer. Decided once, in onCreate. */
+    private var voiceEnabled = false
+
     private fun scopeLabel(): String =
         "${getString(R.string.search_in)}: ${viewModel.scope.value?.name ?: getString(R.string.all_libraries)}"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setSearchResultProvider(this)
-        // Wire the mic orb to the system speech recognizer. Using the callback +
-        // RecognizerIntent means we DON'T need the RECORD_AUDIO permission (the
-        // recognizer app owns the mic) — and where no recognizer exists (some Fire
-        // remotes), the catch falls back to the on-screen keyboard instead of a
-        // dead orb. Deprecated API, but the supported no-permission path on
-        // Leanback 1.0.0.
+        voiceEnabled = VoiceSearch.enabled(
+            BuildConfig.VOICE_SEARCH,
+            VoiceSearch.recognizerInstalled(requireContext().packageManager),
+        )
+        // A callback is set either way. Without one Leanback makes its own
+        // SpeechRecognizer and asks for RECORD_AUDIO, which the app doesn't
+        // hold: the orb would be dead again. It also starts recognition by
+        // itself when the screen opens, so where voice isn't offered the
+        // callback only puts the search bar back to its typing state.
         @Suppress("DEPRECATION")
         setSpeechRecognitionCallback {
+            if (!voiceEnabled) {
+                endRecognitionUi()
+                return@setSpeechRecognitionCallback
+            }
             try {
-                startActivityForResult(
-                    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(
-                            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-                        )
-                    },
-                    REQUEST_SPEECH,
-                )
+                // RecognizerIntent: the recognizer app owns the mic, so no
+                // RECORD_AUDIO here. Deprecated API, but the supported
+                // no-permission path on Leanback 1.0.0.
+                startActivityForResult(VoiceSearch.recognizeIntent(), REQUEST_SPEECH)
             } catch (e: Exception) {
-                // No recognizer installed — leave the user on the keyboard.
+                // Installed but wouldn't start: say so, never a silent orb.
+                endRecognitionUi()
+                context?.let {
+                    Toast.makeText(it, R.string.voice_search_unavailable, Toast.LENGTH_SHORT).show()
+                }
             }
         }
+    }
+
+    /** The search bar out of its "listening" state (hint back, orb idle). */
+    private fun endRecognitionUi() {
+        val bar = view?.findViewById<SearchBar>(androidx.leanback.R.id.lb_search_bar) ?: return
+        bar.post { bar.stopRecognition() }
     }
 
     @Deprecated("Deprecated in Java")
@@ -107,6 +124,11 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        // No voice here (Fire TV, or no recognizer): no orb to press. The
+        // remote's own voice button (Alexa on Fire TV) is the system's.
+        if (!voiceEnabled) {
+            view.findViewById<View>(androidx.leanback.R.id.lb_search_bar_speech_orb)?.visibility = View.GONE
+        }
         viewModel = ViewModelProvider(this)[SearchViewModel::class.java]
         rowsAdapter = ArrayObjectAdapter(ListRowPresenter(FocusHighlight.ZOOM_FACTOR_NONE).apply {
             shadowEnabled = false
