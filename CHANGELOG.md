@@ -629,16 +629,17 @@ Roku channel (no request features, as on Android):
     Remote, and what it stores in the web view (all deleted on uninstall).
     It also says the app uses no camera, microphone, location or other TV
     data.
-- **Fire TV 1.4.2 (25) has no Search microphone.** The Amazon Appstore
-  rejected TV 1.4.1 (24) under Performance: the microphone button on Search
-  did not respond. Fire OS gives apps no speech recognizer (voice on Fire TV
-  is Alexa's), so the recognizer intent failed and the failure was
-  swallowed. A `VOICE_SEARCH` BuildConfig flag is off for `firetv`, which
-  hides the orb and stops Leanback's automatic listening on open; on
-  `googletv` the orb shows only when a recognizer resolves (the manifest
-  now declares the `RECOGNIZE_SPEECH` intent query for Android 11+ package
-  visibility), and a failed launch says so instead of doing nothing. Both
-  flavors move to versionCode 25 / 1.4.2.
+- **TV 1.4.2 (25): Search's microphone shows only where it works.** The
+  Amazon Appstore rejected TV 1.4.1 (24) under Performance: the microphone
+  button on Search did not respond. Its test Fire TV has no speech
+  recognizer for apps (voice there is Alexa's), so the recognizer intent
+  failed and the failure was swallowed. The orb now shows only when a
+  recognizer resolves (the manifest declares the `RECOGNIZE_SPEECH` intent
+  query for Android 11+ package visibility), on Fire TV and Google TV
+  alike, so devices where voice search worked keep it. Where it is hidden,
+  Leanback's automatic listening on open returns the bar to typing; a
+  launch that fails shows a message, and a cancelled one returns the bar to
+  typing too. Both flavors move to versionCode 25 / 1.4.2.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
   search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
   its Deceptive and Malicious Behavior policy, which names apps that "save,

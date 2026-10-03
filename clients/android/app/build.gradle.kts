@@ -116,10 +116,10 @@ android {
         // below) after Amazon rejected 1.4.0 (23) on 2026-10-01. Both flavors
         // move to 24 so the codes stay in step; the Google TV build is
         // unchanged in behaviour.
-        // 25 / 1.4.2: Search's microphone is hidden on Fire TV (VOICE_SEARCH
-        // below) after Amazon rejected 1.4.1 (24) on 2026-10-03: Fire OS has
-        // no speech recognizer for apps, so the orb did nothing. On Google
-        // TV it shows only when a recognizer is installed.
+        // 25 / 1.4.2: Search's microphone shows only on a device with a
+        // speech recognizer, after Amazon rejected 1.4.1 (24) on 2026-10-03
+        // because the orb did nothing on its test Fire TV, which has none.
+        // Fire TVs that have one keep voice search.
         versionCode = 25
         versionName = "1.4.2"
     }
@@ -175,9 +175,6 @@ android {
             // Both features stay on Google TV (see the flavor comment above).
             buildConfigField("boolean", "ONLINE_SUBTITLE_SEARCH", "true")
             buildConfigField("boolean", "LIVE_TV", "true")
-            // The Search screen's microphone, where a speech recognizer is
-            // installed (ui/search/VoiceSearch).
-            buildConfigField("boolean", "VOICE_SEARCH", "true")
             // Puts back the keep rules proguard-rules.pro relaxes so R8 can
             // drop firetv's unused code (the Live TV screens, Retrofit
             // service methods nothing calls), so googletv's R8 keep set is
@@ -196,10 +193,6 @@ android {
             // Recordings screens.
             buildConfigField("boolean", "ONLINE_SUBTITLE_SEARCH", "false")
             buildConfigField("boolean", "LIVE_TV", "false")
-            // No microphone on Search: Fire OS offers apps no speech
-            // recognizer (voice is Alexa's, on the remote), so the orb did
-            // nothing and the Appstore rejected the build for it.
-            buildConfigField("boolean", "VOICE_SEARCH", "false")
         }
     }
 

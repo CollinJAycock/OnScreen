@@ -1,28 +1,38 @@
 package tv.onscreen.android.ui.search
 
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import com.google.common.truth.Truth.assertThat
+import io.mockk.every
+import io.mockk.mockk
 import org.junit.Test
 
 /**
- * The Search screen's microphone shows only where it can work: the Amazon
- * Appstore rejected the Fire TV build because the orb did nothing there
- * (Fire OS offers apps no speech recognizer).
+ * The Search screen's microphone shows only where a speech recognizer is
+ * installed: the Amazon Appstore rejected the Fire TV build because the orb
+ * did nothing on a Fire TV without one.
  */
 class VoiceSearchTest {
 
+    private fun packageManager(recognizers: List<ResolveInfo>): PackageManager =
+        mockk { every { queryIntentActivities(any<Intent>(), any<Int>()) } returns recognizers }
+
     @Test
-    fun `offered when the build allows it and a recognizer is installed`() {
-        assertThat(VoiceSearch.enabled(buildAllows = true, recognizerInstalled = true)).isTrue()
+    fun `offered where a recognizer is installed, Fire TV or not`() {
+        assertThat(VoiceSearch.recognizerInstalled(packageManager(listOf(ResolveInfo())))).isTrue()
     }
 
     @Test
     fun `not offered without a recognizer, so the orb is never dead`() {
-        assertThat(VoiceSearch.enabled(buildAllows = true, recognizerInstalled = false)).isFalse()
+        assertThat(VoiceSearch.recognizerInstalled(packageManager(emptyList()))).isFalse()
     }
 
     @Test
-    fun `not offered where the build leaves it out, as on Fire TV, recognizer or not`() {
-        assertThat(VoiceSearch.enabled(buildAllows = false, recognizerInstalled = true)).isFalse()
-        assertThat(VoiceSearch.enabled(buildAllows = false, recognizerInstalled = false)).isFalse()
+    fun `not offered when the lookup fails`() {
+        val pm = mockk<PackageManager> {
+            every { queryIntentActivities(any<Intent>(), any<Int>()) } throws SecurityException()
+        }
+        assertThat(VoiceSearch.recognizerInstalled(pm)).isFalse()
     }
 }

@@ -9,7 +9,6 @@ import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
 import androidx.leanback.app.SearchSupportFragment
-import tv.onscreen.android.BuildConfig
 import androidx.leanback.widget.*
 import androidx.leanback.widget.FocusHighlight
 import androidx.lifecycle.ViewModelProvider
@@ -75,10 +74,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setSearchResultProvider(this)
-        voiceEnabled = VoiceSearch.enabled(
-            BuildConfig.VOICE_SEARCH,
-            VoiceSearch.recognizerInstalled(requireContext().packageManager),
-        )
+        voiceEnabled = VoiceSearch.recognizerInstalled(requireContext().packageManager)
         // A callback is set either way. Without one Leanback makes its own
         // SpeechRecognizer and asks for RECORD_AUDIO, which the app doesn't
         // hold: the orb would be dead again. It also starts recognition by
@@ -118,14 +114,17 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                 ?.firstOrNull()
                 ?.let { setSearchQuery(it, true) }
         }
+        // Cancelled, or the recognizer heard nothing: back to typing rather
+        // than an orb stuck listening.
+        if (requestCode == REQUEST_SPEECH && resultCode != Activity.RESULT_OK) endRecognitionUi()
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
     }
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-        // No voice here (Fire TV, or no recognizer): no orb to press. The
-        // remote's own voice button (Alexa on Fire TV) is the system's.
+        // No recognizer on this device: no orb to press. The remote's own
+        // voice button (Alexa on Fire TV) is the system's either way.
         if (!voiceEnabled) {
             view.findViewById<View>(androidx.leanback.R.id.lb_search_bar_speech_orb)?.visibility = View.GONE
         }

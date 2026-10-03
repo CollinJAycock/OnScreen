@@ -20,9 +20,4 @@ class FlavorFeaturesTest {
     fun `fire tv has no live tv or recordings`() {
         assertThat(BuildConfig.LIVE_TV).isFalse()
     }
-
-    @Test
-    fun `fire tv has no search microphone, Fire OS offers apps no speech recognizer`() {
-        assertThat(BuildConfig.VOICE_SEARCH).isFalse()
-    }
 }
