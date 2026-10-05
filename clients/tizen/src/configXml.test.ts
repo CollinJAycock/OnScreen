@@ -25,6 +25,9 @@ describe('config.xml', () => {
         'http://developer.samsung.com/privilege/productinfo',
         'http://tizen.org/privilege/avplay',
         'http://tizen.org/privilege/internet',
+      // tizen.tvinputdevice: without it every key registration answered
+      // SecurityError and the media / colour / channel keys never arrived.
+      'http://tizen.org/privilege/tv.inputdevice',
       ].sort(),
     );
   });

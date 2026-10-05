@@ -10,12 +10,13 @@
   // Locally, the "Already in library" rows route through the normal
   // /item/[id] detail flow, since the user has them already.
 
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { endpoints, type DiscoverItem, Unauthorized } from '$lib/api';
   import OnScreenKeyboard from '$lib/components/OnScreenKeyboard.svelte';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import { focusFirstOf, restoreGuard } from '$lib/focus/memory';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
   import { pushTo } from '$lib/nav';
@@ -38,6 +39,10 @@
   let searchSeq = 0;
 
   onMount(() => {
+    // Open on the keyboard, as Search does. With nothing focused the first
+    // press went to the top nav (Down landed on it, OK left the page).
+    const guard = restoreGuard();
+    void tick().then(() => focusFirstOf('.osk [data-focusable]', guard));
     const pop = focusManager.pushBack(() => {
       goto('#/hub');
       return true;

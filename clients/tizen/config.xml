@@ -38,6 +38,11 @@
          webapis.avplay and webapis.productinfo, and streams over HTTP.) -->
     <tizen:privilege name="http://tizen.org/privilege/internet" />
     <tizen:privilege name="http://tizen.org/privilege/avplay" />
+    <!-- tizen.tvinputdevice (lib/focus/keys): the media, colour and channel
+         keys reach the app only once registered, and every call on it
+         answers SecurityError without this (seen on the Q80B: play/pause,
+         FF/RW, CH+/- and the colour keys never arrived). -->
+    <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice" />
     <!-- The TV's model name, for the name the server lists this TV under
          ("Samsung TV — QN75Q80BAFXZA #a1b2", src/lib/device.ts). -->
     <tizen:privilege name="http://developer.samsung.com/privilege/productinfo" />

@@ -840,6 +840,11 @@ Roku channel (no request features, as on Android):
   per stored token and none offline (a retry with a rotated refresh token
   reads as reuse and signs every device out); Discover keeps only its newest
   search; an options list with two same-named entries no longer throws.
+  Found on the Q80B after that: the remote's media, colour and channel keys
+  never reached the Tizen app (config.xml lacked the tv.inputdevice
+  privilege, so every registration answered SecurityError); and Discover
+  opened with nothing focused, so the first press went to the top nav (both
+  TV apps now open it on the keyboard, as Search does).
 - **Movies auto-matched the wrong film although the folder named the title
   and year.** The scanner took TMDB's top search hit, and its year filter
   counts a release in any country, so a popular near-miss won: "Spring
