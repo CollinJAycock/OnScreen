@@ -4,6 +4,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.content.Intent
 import android.os.Bundle
+import android.os.SystemClock
 import android.speech.RecognizerIntent
 import android.view.KeyEvent
 import android.view.View
@@ -20,6 +21,7 @@ import kotlinx.coroutines.launch
 import tv.onscreen.android.R
 import tv.onscreen.android.data.model.SearchResult
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.ui.KeyEventHandler
 import tv.onscreen.android.ui.common.CardPresenter
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.focusableOnTv
@@ -41,7 +43,7 @@ import javax.inject.Inject
  * the results to that one library.
  */
 @AndroidEntryPoint
-class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResultProvider {
+class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResultProvider, KeyEventHandler {
 
     @Inject lateinit var prefs: ServerPrefs
 
@@ -58,11 +60,43 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
      *  screen where the D-pad was dead until they hunted for focus. */
     private var pendingFocusRow: Int = -1
 
+    /** The result opened, so focus comes back to that card rather than to
+     *  the first one in its row. */
+    private var pendingFocusItemId: String? = null
+
     /** Persistent top-row adapters, mutated in place across rebuilds so
      *  chip focus survives a filter toggle. Null until first build; reset
      *  in onDestroyView with the rows they live in. */
     private var scopeAdapter: ArrayObjectAdapter? = null
     private var chipAdapter: ArrayObjectAdapter? = null
+
+    /** Voice input is offered here (see [VoiceSearch]): the orb shows and
+     *  starts the recognizer. Decided once, in onCreate. */
+    private var voiceEnabled = false
+
+    /** When the recognizer was started, to tell one that came straight
+     *  back (never listened) from a viewer backing out. */
+    private var speechStartedAt = 0L
+
+    /** Leanback starts recognition by itself once, when the screen first
+     *  opens. That start wasn't the viewer's doing, so if it fails the orb
+     *  goes away without a message about it. */
+    private var autoStartPending = false
+    private var speechFromAutoStart = false
+
+    /** The query on screen when voice started. Leanback blanks the field
+     *  before calling us and its text watcher pushes that blank through
+     *  as a search, so a cancelled recognition would otherwise come back
+     *  to an empty field with the results gone. */
+    private var queryBeforeVoice = ""
+
+    /** When focus last left the search field. A BACK that closes the
+     *  keyboard also moves focus off the field (Leanback, before the key
+     *  reaches us); see [onActivityKeyEvent]. */
+    private var editorFocusLostAt = 0L
+    private val editorFocusWatcher = android.view.ViewTreeObserver.OnGlobalFocusChangeListener { old, _ ->
+        if (old?.id == androidx.leanback.R.id.lb_search_text_editor) editorFocusLostAt = SystemClock.uptimeMillis()
+    }
 
     private fun scopeLabel(): String =
         "${getString(R.string.search_in)}: ${viewModel.scope.value?.name ?: getString(R.string.all_libraries)}"
@@ -70,43 +104,154 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setSearchResultProvider(this)
-        // Wire the mic orb to the system speech recognizer. Using the callback +
-        // RecognizerIntent means we DON'T need the RECORD_AUDIO permission (the
-        // recognizer app owns the mic) — and where no recognizer exists (some Fire
-        // remotes), the catch falls back to the on-screen keyboard instead of a
-        // dead orb. Deprecated API, but the supported no-permission path on
-        // Leanback 1.0.0.
+        voiceEnabled = !VoiceSearch.provenUnavailable &&
+            VoiceSearch.recognizerInstalled(requireContext().packageManager)
+        autoStartPending = savedInstanceState == null
+        // A callback is set either way. Without one Leanback makes its own
+        // SpeechRecognizer and asks for RECORD_AUDIO, which the app doesn't
+        // hold: the orb would be dead again. It also starts recognition by
+        // itself when the screen opens, so where voice isn't offered the
+        // callback only puts the search bar back to its typing state.
         @Suppress("DEPRECATION")
         setSpeechRecognitionCallback {
+            val auto = autoStartPending
+            autoStartPending = false
+            // Leanback's delayed auto-start isn't cancelled when Search is
+            // left within its 300 ms. A screen that's gone has nothing to
+            // start, and its failure says nothing about the recognizer.
+            if (!isAdded || isRemoving || view == null) return@setSpeechRecognitionCallback
+            if (!voiceEnabled) {
+                endRecognitionUi()
+                return@setSpeechRecognitionCallback
+            }
+            queryBeforeVoice = lastQuery
+            speechFromAutoStart = auto
             try {
-                startActivityForResult(
-                    Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                        putExtra(
-                            RecognizerIntent.EXTRA_LANGUAGE_MODEL,
-                            RecognizerIntent.LANGUAGE_MODEL_FREE_FORM,
-                        )
-                    },
-                    REQUEST_SPEECH,
-                )
+                // RecognizerIntent: the recognizer app owns the mic, so no
+                // RECORD_AUDIO here. Deprecated API, but the supported
+                // no-permission path on Leanback 1.0.0.
+                speechStartedAt = SystemClock.elapsedRealtime()
+                startActivityForResult(VoiceSearch.recognizeIntent(), REQUEST_SPEECH)
+            } catch (e: android.content.ActivityNotFoundException) {
+                // Resolved but wouldn't start: never a silent orb.
+                voiceUnavailable(announce = !auto)
+            } catch (e: SecurityException) {
+                voiceUnavailable(announce = !auto)
             } catch (e: Exception) {
-                // No recognizer installed — leave the user on the keyboard.
+                // Anything else is about this screen's state, not the
+                // recognizer: back to typing, the orb stays.
+                endRecognitionUi()
             }
         }
     }
 
+    /** The search bar out of its "listening" state (hint back, orb idle),
+     *  with the query that was there before voice started put back. */
+    private fun endRecognitionUi() {
+        val restore = queryBeforeVoice
+        queryBeforeVoice = ""
+        if (restore.isNotBlank()) {
+            // Through the fragment, so the bar's text, its query and the
+            // results all come back (SearchBar.setSearchQuery also stops
+            // recognition). Posted: Leanback marks the bar "recognizing"
+            // only after our callback returns.
+            view?.post { if (isAdded) setSearchQuery(restore, false) }
+            return
+        }
+        val bar = view?.findViewById<SearchBar>(androidx.leanback.R.id.lb_search_bar) ?: return
+        bar.post { bar.stopRecognition() }
+    }
+
+    /** This device's recognizer doesn't work: back to typing, the orb gone
+     *  for good (the rest of the process), and, when the viewer pressed it,
+     *  a message saying why. */
+    private fun voiceUnavailable(announce: Boolean) {
+        VoiceSearch.provenUnavailable = true
+        voiceEnabled = false
+        endRecognitionUi()
+        hideOrb()
+        if (announce) context?.let {
+            Toast.makeText(it, R.string.voice_search_unavailable, Toast.LENGTH_LONG).show()
+        }
+    }
+
+    /** Takes the orb off screen. If it held focus, the search field takes
+     *  it (and with it the keyboard), so the press still leads somewhere. */
+    private fun hideOrb() {
+        val root = view ?: return
+        val orb = root.findViewById<View>(androidx.leanback.R.id.lb_search_bar_speech_orb) ?: return
+        val hadFocus = orb.hasFocus()
+        orb.visibility = View.GONE
+        if (hadFocus) root.findViewById<View>(androidx.leanback.R.id.lb_search_text_editor)?.requestFocus()
+    }
+
     @Deprecated("Deprecated in Java")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (requestCode == REQUEST_SPEECH && resultCode == Activity.RESULT_OK) {
-            data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
-                ?.firstOrNull()
-                ?.let { setSearchQuery(it, true) }
+        if (requestCode == REQUEST_SPEECH) {
+            val outcome = VoiceSearch.outcome(
+                ok = resultCode == Activity.RESULT_OK,
+                matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS),
+                elapsedMs = SystemClock.elapsedRealtime() - speechStartedAt,
+            )
+            // Anything but a query puts the bar back to typing; the
+            // outcomes that would look like a dead orb say why.
+            when (outcome) {
+                is VoiceSearch.Outcome.Query -> {
+                    queryBeforeVoice = ""
+                    setSearchQuery(outcome.text, true)
+                }
+                VoiceSearch.Outcome.Unavailable -> voiceUnavailable(announce = !speechFromAutoStart)
+                VoiceSearch.Outcome.NothingHeard -> {
+                    endRecognitionUi()
+                    context?.let {
+                        Toast.makeText(it, R.string.voice_search_nothing_heard, Toast.LENGTH_LONG).show()
+                    }
+                }
+                VoiceSearch.Outcome.Cancelled -> endRecognitionUi()
+            }
         }
         @Suppress("DEPRECATION")
         super.onActivityResult(requestCode, resultCode, data)
     }
 
+    /**
+     * BACK from the search field (keyboard up or not) leaves the field for
+     * the results and nothing else; BACK from the results leaves Search.
+     * The Fire TV keyboard hides itself on the key-down but lets the key
+     * through, so one press both closed the keyboard and left Search for
+     * Home. By the time the key reaches us, Leanback's pre-IME handling has
+     * already moved focus off the field, so "the field had focus at the
+     * moment of this press" is the test. The key-down is consumed here; with
+     * no tracked key-down, the key-up doesn't go back either.
+     */
+    override fun onActivityKeyEvent(event: KeyEvent): Boolean {
+        // MENU / Y opens the library picker from anywhere on the screen. It
+        // used to be an OnKeyListener on the root view, which only hears keys
+        // while the root itself has focus, and on Search a child always does.
+        if ((event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_BUTTON_Y) &&
+            event.repeatCount == 0) {
+            showScopeMenu()
+            return true
+        }
+        if (event.keyCode != KeyEvent.KEYCODE_BACK || event.repeatCount != 0) return false
+        val root = view ?: return false
+        val editor = root.findViewById<View>(androidx.leanback.R.id.lb_search_text_editor) ?: return false
+        val editorFocused = editor.hasFocus()
+        if (!editorFocused && editorFocusLostAt < event.downTime) return false
+        val imm = requireContext().getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        imm?.hideSoftInputFromWindow(editor.windowToken, 0)
+        // Still on the field: move to the results, so the next BACK leaves.
+        if (editor.hasFocus()) rowsSupportFragment?.view?.requestFocus()
+        return true
+    }
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        // No working recognizer on this device: no orb to press. The
+        // remote's own voice button (Alexa on Fire TV) is the system's
+        // either way.
+        if (!voiceEnabled) hideOrb()
+        view.viewTreeObserver.addOnGlobalFocusChangeListener(editorFocusWatcher)
         viewModel = ViewModelProvider(this)[SearchViewModel::class.java]
         rowsAdapter = ArrayObjectAdapter(ListRowPresenter(FocusHighlight.ZOOM_FACTOR_NONE).apply {
             shadowEnabled = false
@@ -158,19 +303,12 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                 if (hasFocus) rescueFocusFromFrame(0)
             }
 
-        view.isFocusableInTouchMode = true
-        view.setOnKeyListener { _, keyCode, event ->
-            if (event.action == KeyEvent.ACTION_DOWN &&
-                (keyCode == KeyEvent.KEYCODE_MENU || keyCode == KeyEvent.KEYCODE_BUTTON_Y)) {
-                showScopeMenu(); true
-            } else false
-        }
-
         setOnItemViewClickedListener { _, item, _, _ ->
             when (item) {
                 is SearchResult -> {
                     // Remember where we were BEFORE the view is torn down.
                     pendingFocusRow = rowsSupportFragment?.selectedPosition ?: -1
+                    pendingFocusItemId = item.id
                     Navigator.open(parentFragmentManager, item.id, item.type, 0)
                 }
                 is FilterChipPresenter.Chip ->
@@ -179,6 +317,11 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                     showScopeMenu()
             }
         }
+    }
+
+    override fun onDestroyView() {
+        view?.viewTreeObserver?.let { if (it.isAlive) it.removeOnGlobalFocusChangeListener(editorFocusWatcher) }
+        super.onDestroyView()
     }
 
     /** Retry loop for the frame backstop: the rows may still be binding
@@ -205,13 +348,23 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         if (pendingFocusRow < 0 || rowsAdapter.size() == 0) return
         val target = pendingFocusRow.coerceAtMost(rowsAdapter.size() - 1)
         pendingFocusRow = -1
+        val itemId = pendingFocusItemId
+        pendingFocusItemId = null
         val rowsFrag = rowsSupportFragment ?: return
+        // The opened card's place in the rebuilt row, if it is still there.
+        val itemIndex = ((rowsAdapter.get(target) as? ListRow)?.adapter as? ArrayObjectAdapter)
+            ?.let { a -> (0 until a.size()).firstOrNull { (a.get(it) as? SearchResult)?.id == itemId } }
+            ?: -1
         // The selection is a pending op Leanback honors at layout, but
         // requestFocus() needs an ALREADY-laid-out focusable child — called
         // synchronously here the rows exist only as adapter items, so the
         // request found nothing and focus stayed lost (the first fix's
         // mistake). Defer past the layout pass.
-        rowsFrag.setSelectedPosition(target, false)
+        if (itemIndex >= 0) {
+            rowsFrag.setSelectedPosition(target, false, ListRowPresenter.SelectItemViewHolderTask(itemIndex))
+        } else {
+            rowsFrag.setSelectedPosition(target, false)
+        }
         rowsFrag.view?.postDelayed({
             if (isAdded) rowsFrag.view?.requestFocus()
         }, 200)
@@ -245,8 +398,14 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         // whose checked state actually changed, preserving focus; the
         // result rows below are still rebuilt wholesale (their content
         // legitimately changed).
-        val libs = viewModel.libraries.value
-        if (scopeAdapter == null && libs.isNotEmpty()) {
+        // The scope row is built first, before the libraries arrive. It used
+        // to wait for them and was then inserted at row 0 on the first
+        // results, mid-typing. That shifted the grid's selected row from 0
+        // to 1, and Leanback hides the search bar whenever the selection is
+        // past row 0: the field lost focus and the keyboard closed under the
+        // viewer's typing, focus jumped to the Movies chip, and this row was
+        // drawn under the bar.
+        if (scopeAdapter == null) {
             val a = ArrayObjectAdapter(ScopeChipPresenter(requireContext()))
             a.add(ScopeChipPresenter.ScopeChip(scopeLabel()))
             scopeAdapter = a
@@ -335,8 +494,10 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     }
 
     private fun showScopeMenu() {
+        // Opens even before the libraries have loaded (just "All libraries"
+        // then): the chip is on screen from the start, so a press must
+        // always answer.
         val libs = viewModel.libraries.value
-        if (libs.isEmpty()) return
         val labels = listOf(getString(R.string.all_libraries)).plus(libs.map { it.name }).toTypedArray()
         val current = viewModel.scope.value
         val checked = if (current == null) 0 else libs.indexOfFirst { it.id == current.id } + 1

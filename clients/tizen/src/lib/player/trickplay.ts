@@ -6,24 +6,15 @@
 // the rectangular region inside that sprite that should be shown
 // for the cue's time range.
 //
-// This module ships:
-//   - parseVtt(text)  → array of cues with start/end ms + xywh + sprite path
-//   - findCue(cues, posMs) → cue covering posMs (or null)
-//
 // Render side: the watch screen wraps a `<div>` sized to (w, h)
 // with `background-image: url(spriteUrl)` and
 // `background-position: -x,-y` so only the cue's region is
 // visible. No client-side image manipulation, no canvas — the
-// browser's native sprite rendering does it. Tested in the parser
-// unit tests; the visual layer is small enough to live inline in
-// the watch screen.
+// browser's native sprite rendering does it.
 
 export interface TrickplayCue {
   startMs: number;
   endMs: number;
-  /** Sprite URL fragment from the VTT — usually a relative path like
-   *  `sprite_3.jpg`. The watch screen joins it against the trickplay
-   *  base URL when it's relative. */
   spritePath: string;
   x: number;
   y: number;
@@ -31,20 +22,11 @@ export interface TrickplayCue {
   h: number;
 }
 
-/** Parse a WebVTT-format trickplay index into cues. Robust to:
- *   - blank lines / spurious whitespace
- *   - cues missing the xywh fragment (skipped)
- *   - HH:MM:SS.mmm and MM:SS.mmm time forms
- *   - LF / CRLF line endings
- */
 export function parseVtt(text: string): TrickplayCue[] {
   if (!text) return [];
   const lines = text.replace(/\r/g, '').split('\n');
   const cues: TrickplayCue[] = [];
 
-  // Walk lines. State machine: looking_for_timing → looking_for_payload
-  // → emit cue → repeat. Skip the WEBVTT header, blank lines, and any
-  // cue identifier (a non-timing line preceding a timing line).
   let state: 'timing' | 'payload' = 'timing';
   let pendingStart = 0;
   let pendingEnd = 0;
@@ -77,11 +59,6 @@ export function parseVtt(text: string): TrickplayCue[] {
   return cues;
 }
 
-/** Find the cue covering posMs. Returns null when the array is
- *  empty or no cue brackets posMs (allowed: posMs is before the
- *  first cue or after the last). Linear scan — a 2-hour movie at
- *  10 s cadence is ~720 cues; per-frame lookup is well below the
- *  position-update budget. */
 export function findCue(cues: TrickplayCue[], posMs: number): TrickplayCue | null {
   for (const cue of cues) {
     if (posMs >= cue.startMs && posMs < cue.endMs) return cue;
@@ -89,10 +66,6 @@ export function findCue(cues: TrickplayCue[], posMs: number): TrickplayCue | nul
   return null;
 }
 
-// ── Internal helpers ──────────────────────────────────────────────
-
-/** Parse "HH:MM:SS.mmm" or "MM:SS.mmm" into total milliseconds.
- *  Returns -1 on parse failure so the caller can skip the cue. */
 function parseTimestampMs(s: string): number {
   if (!s) return -1;
   const dotAt = s.indexOf('.');
@@ -102,7 +75,6 @@ function parseTimestampMs(s: string): number {
     head = s.slice(0, dotAt);
     let tail = s.slice(dotAt + 1);
     if (tail.length > 0) {
-      // Pad to 3 digits for ms; trim if oversized.
       if (tail.length === 1) tail = tail + '00';
       else if (tail.length === 2) tail = tail + '0';
       else if (tail.length > 3) tail = tail.slice(0, 3);
@@ -128,10 +100,6 @@ function parseTimestampMs(s: string): number {
   return (h * 3600 + mn * 60 + sec) * 1000 + millis;
 }
 
-/** Parse a payload line like:
- *    sprite_0.jpg#xywh=0,0,160,90
- *    /api/v1/items/abc/trickplay/sprite_0.jpg#xywh=160,0,160,90
- *  Returns a cue or null when xywh is missing / malformed. */
 function parseCueLine(line: string, startMs: number, endMs: number): TrickplayCue | null {
   const hashAt = line.indexOf('#xywh=');
   if (hashAt < 0) return null;

@@ -71,3 +71,9 @@ export function clientCapabilitiesHeader(): string {
     'hdr=1',
   ].join(',');
 }
+
+/** The transcode-start supports_av1 flag. AV1 decode varies by Samsung
+ *  model and AVPlay has no probe for it, so it is never claimed. */
+export function supportsAV1(): boolean {
+  return false;
+}

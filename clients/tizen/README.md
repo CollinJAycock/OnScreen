@@ -42,6 +42,7 @@ npm install                          # one-time
 npm run dev                          # http://localhost:5175
 
 # Build + package + install + launch on the TV:
+npm run check && npm test            # svelte-check + the Vitest suite
 npm run build                        # SvelteKit → build/, copies config.xml + icon
 npm run package                      # tizen package -t wgt → dist/onscreen-tizen-<v>.wgt
 npm run install-tv                   # tizen install (over sdb)
@@ -62,11 +63,12 @@ pipeline. HTML5 `<video>` on Tizen tops out at 1080p SDR for
 compatibility-mode pages and falls back to software decoders on
 modern codecs — fine for short clips, painful for movies.
 
-The wrapper at [`src/lib/player/avplay.ts`](src/lib/player/avplay.ts)
-exposes a small typed surface and falls back to no-op stubs when
-running outside Tizen (so `vite dev` against a desktop browser
-loads cleanly — it just won't actually demux HLS there since
-we don't ship `hls.js` for the production bundle).
+The player reaches AVPlay through
+[`src/lib/player/avplayMedia.ts`](src/lib/player/avplayMedia.ts), which
+gives it a media element's surface (see "Shared with the webOS app"
+below). Outside Tizen it reports no AVPlay and the page falls back to its
+`<video>`, so `vite dev` against a desktop browser loads cleanly — it just
+won't play server sessions there, since `hls.js` isn't bundled.
 
 ## API endpoint
 
@@ -76,105 +78,58 @@ Bearer-token auth is the only path (cookies don't survive
 cross-origin from the Tizen webview to a plain-http server, same
 as Tauri / webOS / Android-TV).
 
-## Focus model
+## Shared with the webOS app
 
-Same as the webOS scaffold — `use:focusable` from
-`src/lib/focus/focusable.ts`, spatial navigation in
-`src/lib/focus/spatial.ts`. The Tizen-specific bit is
-[`src/lib/focus/keys.ts`](src/lib/focus/keys.ts) which maps the
-Samsung remote's `VK_*` keycodes (different integers from webOS)
-to the same semantic `RemoteKey` union.
+Most of `src/` is the webOS app's (`clients/webos`), which is at parity
+with the Android TV app: the hub and its saved layout, libraries (paging,
+sort, genre), detail pages (Resume / Play from Beginning, watch marks,
+Favorite, Report a problem), artist pages, search, Favorites / History,
+Discover, Live TV, Recordings, Settings, scrobbling, and the player (server
+sessions on the content timeline, re-issues past what the session has
+produced, audio-track switching, subtitles drawn by the app, chapters,
+Skip Intro / Credits, Up Next and auto-advance, audiobook speed, bounded
+error recovery, "play on this TV" from the app-wide event stream). Port a
+fix to both apps; comments in the shared code that name webOS or LG
+describe where it came from.
 
-`registerTizenKeys()` in the layout root tells the firmware to
-forward Back, Play/Pause/Stop, FF/RW, and the colored A/B/C/D
-buttons into the webview — without it only the always-on D-pad +
-Enter come through.
+What is Samsung's own:
 
-## Project structure
+| Module | What it does on Tizen |
+|---|---|
+| `src/lib/focus/keys.ts` | Samsung's `VK_*` codes (Return 10009, CH ▲▼ 427 / 428) and `registerTizenKeys()`, which asks the TV for the media, colour and channel keys (the arrows, OK and Return always come). |
+| `src/lib/appExit.ts` | Return on a first screen (Home, Setup, Sign in) closes the app to Smart Hub (`tizen.application.getCurrentApplication().exit()`), as Samsung's checklist asks; elsewhere it goes back a page. Exit and Smart Hub stay the system's. |
+| `src/lib/player/avplayMedia.ts` | AVPlay behind an `HTMLVideoElement`'s surface (`src`, `currentTime`, `play()` / `pause()`, `seekable`, the element's events), so the shared player runs unchanged. It reads the session's HLS playlist for `seekable` / `duration`, which AVPlay doesn't report, and maps AVPlay errors to `MediaError` codes (a "not supported" demotes the HEVC claim once and restarts as H.264). Music and audiobooks play on the page's own `<video>`. |
+| `src/lib/player/loadingLayer.ts` | "Starting playback…" on `<body>` while AVPlay opens: its picture plane covers the page until the first frame. |
+| `src/lib/player/hls-loader.ts` | hls.js is never loaded: the page takes its native-HLS path, which lands on AVPlay. (hls.js is a dev dependency for its types and tests only.) |
+| `src/lib/device.ts` | The name the server lists this TV under, "Samsung TV — <model> #<tag>", from `webapis.productinfo` (the productinfo privilege). |
+| `src/lib/api/capabilities.ts` | Static AVPlay claims (H.264 + HEVC, 4K, 10-bit, HDR; never AV1), corrected for good by runtime demotion. |
+| `src/routes/+layout.svelte` | Key registration at boot, Return's root handler, AVPlay released while the app is in the background. |
+| `src/app.html` | Polyfills for Tizen 5.5's Chromium 69 (`globalThis`, `queueMicrotask`, `Object.fromEntries`, and the newer ones webOS needs too). |
 
-```
-tizen/
-  config.xml                  # Tizen widget manifest (W3C Widget format + tizen:application)
-  src/
-    routes/                   # SvelteKit pages (SPA mode, adapter-static)
-    lib/
-      api/                    # REST client (Bearer auth, refresh-token)
-      focus/                  # spatial nav + Tizen VK_* remote key map
-      player/avplay.ts        # Tizen AVPlay wrapper (HW HLS/DASH/MP4)
-      player/progress-reporter.ts  # /items/{id}/progress polling
-      components/             # TV-sized UI primitives
-  scripts/
-    assemble-package.mjs      # copy config.xml + icon into build/
-    package.mjs               # tizen package -t wgt
-    sideload.mjs              # tizen install over sdb
-    launch.mjs                # tizen run on the TV
-  images/README.md            # what icon files Tizen needs (drop PNGs alongside)
-```
+The build targets Chromium 69: `vite.config.ts` sets `cssTarget: 'chrome69'`
+and rewrites Svelte's `:where()` selectors (Chrome 88), and
+`src/chromium69Css.test.ts` fails on CSS Chromium 69 drops (flexbox `gap`,
+`:focus-visible`, `:is` / `:where`, `aspect-ratio`). The bundle must parse
+as ES2019.
 
-## What's done
+## To check on a TV
 
-- **Project skeleton** — SvelteKit + adapter-static + svelte-check,
-  config.xml that the Tizen runtime accepts, build/package/install/
-  launch scripts wired against the Tizen Studio CLI.
-- **Auth flow** — server URL setup → username/password login →
-  bearer token persisted in localStorage. Refresh-token rotation in
-  `src/lib/api/client.ts`.
-- **Hub render** — `routes/hub/+page.svelte` fetches `/api/v1/hub`
-  and renders the rows via `HubRow.svelte` + `PosterCard.svelte`.
-- **Player** — `routes/watch/[id]/+page.svelte` calls `avplay.open`
-  on the transcode session URL with the bearer appended as
-  `?token=`. HTML5 `<video>` fallback for `vite dev`.
-- **Tizen key registration** — `registerTizenKeys()` fires on app
-  mount so Back / MediaPlay / MediaPause / colored buttons reach the
-  focus handler.
+Covered by tests and a simulation of AVPlay in Chromium, not yet run on a
+Samsung panel:
 
-## What's done (continued)
-
-These shipped via the watch / settings / pair screens — the README's
-earlier "not done" list had drifted from the source:
-
-- **Audio + subtitle track pickers** — `routes/watch/[id]` opens
-  audio via Yellow / subtitle via Blue; audio switching re-issues
-  the transcode session (server emits one audio per session),
-  subtitles ride `webapis.avplay.setSelectTrack('TEXT', i)`.
-- **Cross-device progress sync via SSE** — watch screen mounts an
-  `EventSource` on `/api/v1/notifications/stream` and snaps to
-  remote progress when the local player is paused.
-- **Skip intro / credits** — markers loaded alongside the playback
-  session; overlay surfaces while position is inside an active
-  marker, dismissal tracked per-session.
-- **Settings + logout** — `routes/settings/+page.svelte`. Sign-out
-  keeps the server URL; forget-server clears everything and
-  routes back through `/setup`. Same screen surfaces an About
-  block (version + signed-in user + server URL).
-- **SSO provider hint on Pair screen** — fans out to
-  `/api/v1/auth/oidc/enabled` + `/saml/enabled`; renders a one-
-  line hint when at least one is configured so a laptop user
-  knows their IdP is available on the web pair page.
-- **Trickplay scrub previews** — VTT parser at
-  `lib/player/trickplay.ts` (TS port of Roku's `Trickplay.brs`,
-  same xywh cue shape). Watch screen renders a sprite-cropped
-  thumbnail above the seek bar via CSS `background-position`
-  (no canvas, no per-frame work).
-- **Online subtitle search** — subtitle picker has a "Find more
-  online…" entry that hits OpenSubtitles via the server's
-  `/items/{id}/subtitles/search` + `/download` endpoints.
-  Picked result lands as a new external_subtitle row on the
-  next item refetch.
-- **TMDB Discover + in-app requests** —
-  `routes/discover/+page.svelte` searches via
-  `/api/v1/discover/search`, surfaces in-library /
-  active-request state per row, submits requests via
-  `/api/v1/requests`.
-- **Live TV** — `routes/livetv/+page.svelte` lists enabled
-  channels with now/next EPG, plays via AVPlay against
-  `/api/v1/tv/channels/{id}/stream.m3u8`. Single-page model
-  (grid ↔ player) so channel surfing doesn't re-fetch the
-  list.
-- **DVR Recordings** — `routes/recordings/+page.svelte` groups
-  scheduled / recording / completed / failed / cancelled.
-  Completed rows with `item_id` route through the standard
-  `/item/[id]` flow.
+- A film plays through AVPlay on the transparent page (no black plane over
+  it, none left behind on the screen Back returns to), with "Starting
+  playback…" clearing on the first frame.
+- A resume start lands on its point; ← → / ◀◀ ▶▶ seek within the session;
+  a jump past what the server has produced opens a new session there.
+- Subtitles (drawn by the app) line up with the picture; Audio switches
+  the track.
+- Up Next, the end of a film, Back, and a trip to Smart Hub and back
+  mid-film (the player releases AVPlay and re-opens it at the position).
+- A track and an audiobook on the `<video>` element; audiobook speed.
+- CH ▲▼ step tracks, chapters and Live TV channels; Return on Home closes
+  the app.
+- Tizen 5.5 (2020) if one is at hand: the polyfills and the CSS floor.
 
 ## What's still not done
 

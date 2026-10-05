@@ -57,6 +57,10 @@ type Session struct {
 	BitrateKbps    int       `json:"bitrate_kbps,omitempty"`
 	HEVCOutput     bool      `json:"hevc_output,omitempty"` // true = fMP4 segments (.m4s) with hvc1 codec
 	AV1Output      bool      `json:"av1_output,omitempty"`  // true = fMP4 segments (.m4s) with av01 codec; either fMP4 flag selects the .m4s wait path
+	// TSSegments: the client asked for MPEG-TS segments (segment_container
+	// "ts"), so HEVC output is .ts, not .m4s. See VideoOutput.TSSegments. Set
+	// by the API at Start; the worker's stamp (SetWorkerInfo) leaves it alone.
+	TSSegments bool `json:"ts_segments,omitempty"`
 	// Source codec markers (distinct from the *Output flags, which are the
 	// chosen OUTPUT codec). Carried so ABR rung children can set job.IsHEVC /
 	// job.IsAV1 — the worker keys hardware decode (AV1 NVDEC, opt-in QSV HEVC)
@@ -145,7 +149,7 @@ type Session struct {
 // (SetWorkerInfo). Before that these flags hold the API's client-preference
 // guess, which is what the ForceFMP4 contract exists to reconcile.
 func (s *Session) VideoOutput() VideoOutput {
-	return VideoOutput{HEVC: s.HEVCOutput, AV1: s.AV1Output}
+	return VideoOutput{HEVC: s.HEVCOutput, AV1: s.AV1Output, TSSegments: s.TSSegments}
 }
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.
@@ -1011,7 +1015,10 @@ type TranscodeJob struct {
 	// segment 503s and playback never starts. fMP4 carries H.264 perfectly
 	// well, so honouring the promised container costs nothing and makes the
 	// mismatch impossible.
-	ForceFMP4       bool  `json:"force_fmp4,omitempty"`
+	ForceFMP4 bool `json:"force_fmp4,omitempty"`
+	// TSSegments: package HEVC output as MPEG-TS, at the client's request (see
+	// VideoOutput.TSSegments). Mirrors Session.TSSegments.
+	TSSegments      bool  `json:"ts_segments,omitempty"`
 	PreferAV1       bool  `json:"prefer_av1"` // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
 	SubtitleStreams []int `json:"subtitle_streams,omitempty"`
 	// Incarnation is the restart counter of the session this job belongs to

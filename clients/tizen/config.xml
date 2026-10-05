@@ -16,7 +16,7 @@
 <widget xmlns="http://www.w3.org/ns/widgets"
         xmlns:tizen="http://tizen.org/ns/widgets"
         id="http://samsungapps.com/onscreen/3202605045527"
-        version="1.0.0"
+        version="1.1.0"
         viewmodes="maximized">
 
     <name>OnScreen</name>
@@ -34,10 +34,13 @@
 
     <!-- Privileges: only what we actually call. (mediastorage was
          dropped: nothing uses tizen.filesystem / tizen.content — the
-         app only calls tizen.application, tizen.tvinputdevice and
-         webapis.avplay, and streams over HTTP.) -->
+         app only calls tizen.application, tizen.tvinputdevice,
+         webapis.avplay and webapis.productinfo, and streams over HTTP.) -->
     <tizen:privilege name="http://tizen.org/privilege/internet" />
     <tizen:privilege name="http://tizen.org/privilege/avplay" />
+    <!-- The TV's model name, for the name the server lists this TV under
+         ("Samsung TV — QN75Q80BAFXZA #a1b2", src/lib/device.ts). -->
+    <tizen:privilege name="http://developer.samsung.com/privilege/productinfo" />
 
     <!-- Tizen-specific application metadata. -->
     <tizen:application id="OnScreenTV.OnScreen"

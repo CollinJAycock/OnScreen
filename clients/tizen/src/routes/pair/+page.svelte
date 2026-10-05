@@ -33,10 +33,9 @@
   let errorMsg = $state('');
 
   // Federated providers configured on this server. Surfaced as a
-  // hint on the pair screen so a laptop user knows they can pick
-  // "Sign in with <Google / Okta / etc.>" on the web pair page —
-  // the underlying flow doesn't change (PIN claim is the same on
-  // any auth backend), this is purely a TV-side affordance.
+  // hint so a laptop user knows they can pick "Sign in with X" on
+  // the web pair page — the underlying flow doesn't change (PIN
+  // claim is auth-agnostic), this is a TV-side affordance only.
   let providers = $state<EnabledProvider[]>([]);
 
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -95,9 +94,8 @@
 
   onMount(() => {
     startCycle();
-    // Best-effort provider probe. Fires in parallel with the pair
-    // code request so it never blocks the PIN render. A failure
-    // here just means the hint doesn't show.
+    // Best-effort provider probe in parallel with the pair-code
+    // request — never blocks the PIN render. Failure → no hint.
     void endpoints.auth.providers().then((p) => { providers = p; }).catch(() => {});
     // Back button leaves pairing and returns to the local-credentials
     // login flow.
@@ -106,6 +104,16 @@
       return true;
     });
   });
+
+  // Another server: as Sign in's and the hub's Change server (the address
+  // forgotten, then Setup). Signed out here, so nothing to confirm.
+  let changingServer = $state(false);
+  async function changeServer() {
+    if (changingServer) return;
+    changingServer = true;
+    await api.forgetServer();
+    goto('#/setup');
+  }
 
   onDestroy(() => {
     cancelled = true;
@@ -145,19 +153,26 @@
   <button use:focusable class="cancel-btn" onclick={() => goto('#/login')}>
     Use password instead
   </button>
+  <button use:focusable class="cancel-btn" onclick={() => void changeServer()}>
+    Change server
+  </button>
 </div>
 
 <style>
+  /* A one-column grid rather than a flex column: grid `gap` works on
+     webOS 6's Chromium 79, flexbox `gap` needs Chrome 84. justify-items /
+     align-content centre it the way align-items / justify-content did, and
+     grid items' margins add to the gap as flex items' did. */
   .page {
     padding: var(--page-pad);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: center;
+    align-content: center;
     text-align: center;
-    gap: 18px;
+    row-gap: 18px;
     min-height: 100vh;
     box-sizing: border-box;
-    justify-content: center;
   }
   h1 {
     font-size: var(--font-2xl);

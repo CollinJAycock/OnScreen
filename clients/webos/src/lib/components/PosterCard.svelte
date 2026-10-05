@@ -41,6 +41,10 @@
   // `${origin}/artwork/...?w=400` URL omits auth and 401s — `<img>`
   // can't attach an Authorization header.
   const posterUrl = $derived(posterPath ? api.assetUrl(`/artwork/${posterPath}?w=400`) : '');
+  // A poster the server can't supply (a 404 for a missing file) showed as
+  // an empty tile. It gets the no-poster tile instead. Keyed to the URL,
+  // so a renewed asset token (a new URL) tries again.
+  let failedUrl = $state('');
 </script>
 
 <button
@@ -50,8 +54,8 @@
   {onclick}
 >
   <div class="art">
-    {#if posterUrl}
-      <img src={posterUrl} alt="" loading="lazy" />
+    {#if posterUrl && failedUrl !== posterUrl}
+      <img src={posterUrl} alt="" loading="lazy" onerror={() => (failedUrl = posterUrl)} />
     {:else}
       <div class="no-poster">{title.slice(0, 2).toUpperCase()}</div>
     {/if}

@@ -13,12 +13,15 @@
 // webview's history.
 
 import { goto } from '$app/navigation';
+import { writable } from 'svelte/store';
+import { focusMemory } from './focus/memory';
 
 const backStack: string[] = [];
 
 function currentHash(): string {
   // Default to hub if the hash is empty / root — protects pop() from
-  // landing on the bare app shell that auto-redirects.
+  // landing on the bare app shell that auto-redirects. (focus/memory's
+  // currentRoute keys its notes by the same rule.)
   const h = typeof location !== 'undefined' ? location.hash : '';
   return !h || h === '#' || h === '#/' ? '#/hub' : h;
 }
@@ -60,11 +63,63 @@ export function pushTo(hashRoute: string) {
 // up-next episode's resume point) instead.
 const startOverrides = new Map<string, number>();
 
-/** Open the player for an item, optionally at a given position. */
-export function playItem(id: string, startMs?: number) {
+/** Bumped to give the item already open in the player a fresh player: the
+ *  watch layout keys its page on the item id AND this. Another item's route
+ *  remounts by its id; the same item's is the same URL, where goto does
+ *  nothing, so a transfer of the item playing here (at another position)
+ *  would have been dropped. */
+export const playerEpoch = writable(0);
+
+/** Open the player for an item, optionally at a given position. Pushes the
+ *  current route, so the player's Back (and the end of playback with nothing
+ *  after it) returns to the screen that launched it: the album, the season,
+ *  the hub. It used to go to the playing item's own detail page, so album →
+ *  track → Back landed on a bare track page. `push: false` leaves the stack
+ *  as it is (after resetStack). The item already open in the player starts
+ *  over in a fresh player (see playerEpoch). */
+export function playItem(id: string, startMs?: number, opts: { push?: boolean } = {}) {
   if (startMs !== undefined) startOverrides.set(id, Math.max(0, startMs));
   else startOverrides.delete(id);
-  goto(`#/watch/${id}`);
+  const route = `#/watch/${id}`;
+  if (currentHash() === route) {
+    playerEpoch.update((n) => n + 1);
+    return;
+  }
+  if (opts.push !== false) pushHere();
+  goto(route);
+}
+
+/** Start the back stack over: Back from the next screen lands on `root`,
+ *  whatever led here. "Play on this TV" (a playback.transfer from another
+ *  device) uses it, so the player it opens returns to the hub rather than
+ *  into whatever the TV happened to show, with that screen's own history
+ *  under it (Android pops its whole back stack for a transfer). */
+export function resetStack(root = '#/hub') {
+  backStack.length = 0;
+  backStack.push(root);
+}
+
+/** Forget all navigation history: the back stack, pending start positions
+ *  and the focus notes. On sign-out, so the next user's Back can't land on
+ *  the previous user's screens (their search, their library on the old
+ *  server after Change server). */
+export function forgetHistory() {
+  backStack.length = 0;
+  startOverrides.clear();
+  focusMemory.clear();
+}
+
+/** Move to `hashRoute` in place of the current route, pushing nothing: the
+ *  player moving on to the next episode / track / chapter. Back from there
+ *  still returns to the launching screen, never to the item just played
+ *  (and an album of auto-advances doesn't grow the stack by a route a
+ *  track). `start` gives the item opened there a start position, as
+ *  playItem's does: the player starts the next item from the top (Android's
+ *  newInstance(next.id, 0)), not at a resume point left by an earlier skip,
+ *  which cut a song a minute in. */
+export function replaceTo(hashRoute: string, start?: { id: string; ms: number }) {
+  if (start) startOverrides.set(start.id, Math.max(0, start.ms));
+  goto(hashRoute, { replaceState: true });
 }
 
 /** The position playItem asked for, consumed on read (undefined = resume). */
@@ -74,15 +129,30 @@ export function takeStartOverride(id: string): number | undefined {
   return v;
 }
 
-/** Detail-page back handler. Pops the stack; falls back to hub when
- *  empty (e.g. cold-launch deep link). */
-export function goBack() {
-  const dest = backStack.pop() ?? '#/hub';
+/** Detail-page back handler. Pops the stack; falls back to `fallback`
+ *  (the hub unless the caller has a better parent) when empty, e.g. a
+ *  cold-launch deep link. Also where a Back no screen took goes, off the
+ *  first screens (lib/appExit): the app owns Back (disableBackHistoryAPI),
+ *  so the webview's history never moves on its own. */
+export function goBack(fallback = '#/hub') {
+  const dest = backStack.pop() ?? fallback;
+  // The page Back lands on may put focus back where it was (focus/memory).
+  focusMemory.back(dest);
   goto(dest);
+}
+
+/** Where goBack would go now, without going: null when the stack is empty
+ *  (goBack's fallback then). Sign in asks it, to tell a Sign in that Setup
+ *  opened (Back returns there) from one the app launched on. */
+export function backTarget(): string | null {
+  return backStack.length > 0 ? backStack[backStack.length - 1] : null;
 }
 
 function pushHere() {
   const h = currentHash();
+  // Note the focused card (and how many the page had loaded) for when
+  // Back returns here; see focus/memory.
+  focusMemory.leave(h);
   // Don't stack the same route twice — guards against re-clicking the
   // current tile from a slow-rendering page.
   if (backStack[backStack.length - 1] !== h) backStack.push(h);

@@ -142,6 +142,8 @@
     <string name="filter_by_genre">Filter by genre…</string>
     <string name="all_libraries">All libraries</string>
     <string name="search_in">Search in</string>
+    <string name="voice_search_unavailable">Voice search isn\'t available on this device. Type your search instead.</string>
+    <string name="voice_search_nothing_heard">Didn\'t catch that. Select the microphone to try again, or type your search.</string>
     <string name="content_restricted">This title is outside your content rating limit.</string>
     <string name="content_revoked">This title is no longer available on this profile.</string>
     <string name="watch_limit_title">Watch limit reached</string>

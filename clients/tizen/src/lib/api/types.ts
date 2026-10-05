@@ -19,6 +19,9 @@ export interface HubItem {
 
 export interface HubData {
   continue_watching: HubItem[];
+  // Pre-split arrays — newer servers populate these so the UI can
+  // render TV / Movies / Other rows. Older servers omit them; the
+  // hub page falls back to filtering continue_watching itself.
   continue_watching_tv?: HubItem[];
   continue_watching_movies?: HubItem[];
   continue_watching_other?: HubItem[];
@@ -27,10 +30,14 @@ export interface HubData {
   // have them — absent means an older server.
   next_up?: HubItem[];
   plan_to_watch?: HubItem[];
+  /** Most-watched titles across the server this week. Absent on older
+   *  servers; the hub renders it as the "Trending" row. */
+  trending?: HubItem[];
   recently_added: HubItem[];
   // Per-library "Recently added to <Library>" strips. Each entry is
-  // one library's slice; hub renders one row per entry. Falls back
-  // to the flat recently_added when older servers omit this.
+  // one library's slice; the hub page renders one row per entry,
+  // titled with library_name. Falls back to the flat recently_added
+  // when older servers omit this.
   recently_added_by_library?: HubLibraryRow[];
 }
 
@@ -39,6 +46,19 @@ export interface HubLibraryRow {
   library_name: string;
   library_type: string;
   items: HubItem[];
+}
+
+/** One entry of the saved home layout (users/me/preferences hub_layout):
+ *  a row key and whether that row is shown. See lib/hubLayout.ts. */
+export interface HubRowPref {
+  key: string;
+  enabled: boolean;
+}
+
+/** One row of GET /libraries/{id}/genres. */
+export interface GenreCount {
+  name: string;
+  count: number;
 }
 
 export interface Library {
@@ -104,6 +124,24 @@ export interface Chapter {
   end_ms: number;
 }
 
+/** A subtitle file attached to a media file (downloaded from OpenSubtitles,
+ *  or OCR'd from an image track), served as WebVTT at `url`
+ *  (/media/external-subtitles/{id}, asset token). */
+export interface ExternalSubtitle {
+  id: string;
+  file_id: string;
+  language: string;
+  title?: string | null;
+  forced: boolean;
+  sdh: boolean;
+  /** 'opensubtitles' | 'ocr' | … */
+  source: string;
+  /** The provider's id: the OpenSubtitles file id for a download (the
+   *  search result's provider_file_id, as a string), 'stream_N' for OCR. */
+  source_id?: string | null;
+  url: string;
+}
+
 export interface ItemFile {
   id: string;
   stream_url: string;
@@ -114,10 +152,19 @@ export interface ItemFile {
   resolution_h?: number;
   bitrate?: number;
   hdr_type?: string;
+  /** Frame rate as probed (e.g. 23.976). Absent on older servers. */
+  frame_rate?: number;
   duration_ms?: number;
+  /** A 24 h token scoped to this file's stream / subtitle routes, so a
+   *  long play outlives the 1 h access token. Empty or absent on older
+   *  servers. The player still signs URLs with the asset token
+   *  (api.assetUrl); typed for parity with the other clients. */
+  stream_token?: string;
   faststart: boolean;
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
+  /** Absent when the file has none (the server omits an empty list). */
+  external_subtitles?: ExternalSubtitle[];
   chapters: Chapter[];
 }
 
@@ -135,6 +182,8 @@ export interface ItemDetail {
   content_rating?: string;
   genres: string[];
   parent_id?: string;
+  /** The parent's parent: an episode's show (episode → season → show). */
+  grandparent_id?: string;
   index?: number;
   view_offset_ms: number;
   /** Playable videos (v2.5): the caller's watch state. Absent on other
@@ -270,6 +319,16 @@ export interface TranscodeSession {
   session_id: string;
   playlist_url: string;
   token: string;
+  /** Content position (seconds) the stream begins at: stream time 0 is this
+   *  far into the item. Keyframe-aligned, so a remux (video_copy) can open
+   *  several seconds before the requested position; 0 for a stream that
+   *  covers the whole file. A real 0 is a value, not "absent" (see
+   *  sessionOffsetMs in player/session.ts). */
+  start_offset_sec?: number;
+  /** How far into the stream (seconds) seg 0's audio starts: an AAC
+   *  re-encode after a mid-stream -ss warms up over a moment of silent
+   *  video, and playback starts here instead. 0 = no measurable gap. */
+  seg0_audio_gap_sec?: number;
 }
 
 // ── Device pairing ──────────────────────────────────────────────────────────
@@ -365,13 +424,6 @@ export interface CollectionItem {
 }
 
 // ── Discover (TMDB-backed) + Requests ──────────────────────────────────────
-//
-// `/api/v1/discover/search` is a TMDB proxy that also annotates each
-// row with `in_library` + active-request status so the UI can hide
-// titles the user already has and surface "Already requested"
-// states on titles they've asked for. A user submitting a request
-// goes through `POST /api/v1/requests` which an admin then routes
-// to the configured Sonarr / Radarr.
 
 export interface DiscoverItem {
   type: string; // "movie" | "show"
@@ -386,15 +438,13 @@ export interface DiscoverItem {
   library_item_id?: string;
   has_active_request?: boolean;
   active_request_id?: string;
-  /** "pending" | "approved" | "declined" | "downloading" |
-   *  "available" | "failed". UI maps each to a chip colour. */
   active_request_status?: string;
 }
 
 export interface MediaRequest {
   id: string;
   user_id: string;
-  type: string; // "movie" | "show"
+  type: string;
   tmdb_id: number;
   title: string;
   year?: number;
@@ -405,14 +455,7 @@ export interface MediaRequest {
   updated_at?: string;
 }
 
-// ── Online subtitle search (OpenSubtitles) ─────────────────────────────────
-//
-// In-player feature: when the file's bundled subtitle tracks miss
-// the user's preferred language (or when a sub-quality replacement
-// is wanted), search OpenSubtitles via the server and download a
-// pick into the file's external_subtitles. The newly-downloaded
-// track surfaces in the next `/items/{id}` fetch's
-// subtitle_streams list.
+// ── Online subtitle search ─────────────────────────────────────────────────
 
 export interface OnlineSubtitle {
   provider_file_id: number;
@@ -428,12 +471,6 @@ export interface OnlineSubtitle {
 }
 
 // ── Live TV / DVR ──────────────────────────────────────────────────────────
-//
-// Channels come from the configured tuner (HDHomeRun, xTeVe, etc.).
-// now-next pairs each channel with its current + next program for
-// the EPG row. Recordings are the DVR queue + completed history;
-// `item_id` is set once the recording lands in a media_item and
-// can be played through the standard /watch flow.
 
 export interface Channel {
   id: string;
@@ -454,7 +491,7 @@ export interface NowNext {
   program_id: string;
   title: string;
   subtitle?: string;
-  starts_at: string; // ISO8601
+  starts_at: string;
   ends_at: string;
   season_num?: number;
   episode_num?: number;
@@ -472,9 +509,6 @@ export interface Recording {
   subtitle?: string;
   season_num?: number;
   episode_num?: number;
-  /** "scheduled" | "recording" | "completed" | "failed" |
-   *  "cancelled". When status=completed and item_id is set,
-   *  the recording is playable via the standard /watch flow. */
   status: string;
   starts_at: string;
   ends_at: string;

@@ -101,6 +101,15 @@
          OnBackPressedDispatcher or the platform stops honouring it.
          tools:targetApi="33" only silences lint's UnusedAttribute for that
          below-33 no-op. -->
+    <!-- Search's microphone looks for a speech recognizer
+         (ui/search/VoiceSearch): from Android 11 the lookup sees no other
+         app's activity unless it is declared here. -->
+    <queries>
+        <intent>
+            <action android:name="android.speech.action.RECOGNIZE_SPEECH" />
+        </intent>
+    </queries>
+
     <application
         android:name=".OnScreenApp"
         android:enableOnBackInvokedCallback="false"

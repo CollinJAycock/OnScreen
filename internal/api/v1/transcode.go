@@ -289,6 +289,11 @@ type transcodeStartRequest struct {
 	// the source layout (5.1/7.1 stays multichannel); a stereo-only client can
 	// send 2 to force a downmix.
 	MaxAudioChannels *int `json:"max_audio_channels,omitempty"`
+	// SegmentContainer "ts" asks for MPEG-TS segments where the server would
+	// otherwise package HEVC as fMP4. Samsung's AVPlay plays HEVC in TS but not
+	// the fMP4 HLS ffmpeg writes. Absent (or anything else) keeps today's
+	// behaviour. AV1 output is fMP4 regardless (MPEG-TS has no AV1 type).
+	SegmentContainer string `json:"segment_container,omitempty"`
 }
 
 // clientCaps resolves the effective client playback capabilities for a transcode
@@ -841,9 +846,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// The worker overwrites these via SetWorkerInfo once it knows the encoder
 	// it actually got, but the client can ask for the playlist before that
 	// lands, so the initial guess has to be right on its own.
-	sessVout := transcode.VideoOutput{HEVC: preferHEVC, AV1: preferAV1}
+	tsSegments := strings.EqualFold(body.SegmentContainer, "ts")
+	sessVout := transcode.VideoOutput{HEVC: preferHEVC, AV1: preferAV1, TSSegments: tsSegments}
 	if body.VideoCopy {
-		sessVout = transcode.ResolveVideoOutput(transcode.EncoderCopy, isSourceHEVC, isSourceAV1, false)
+		sessVout = transcode.ResolveVideoOutput(transcode.EncoderCopy, isSourceHEVC, isSourceAV1, false, tsSegments)
 	}
 
 	// For remux, use the source file bitrate (video is copied unchanged).
@@ -906,6 +912,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		depthOK := !force8Bit || sourceDepth < 10
 		abrCodec := transcode.LadderH264
 		switch {
+		// A client that asked for MPEG-TS segments keeps the H.264 ladder:
+		// HEVC and AV1 ladders are fMP4 only.
+		case tsSegments:
 		case caps.SupportsAV1 && isSourceAV1 && depthOK && h.sessions.FleetCanEncode(ctx, "av1"):
 			abrCodec = transcode.LadderAV1
 		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160) && depthOK &&
@@ -962,6 +971,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		BitrateKbps: sessionBitrate,
 		HEVCOutput:  sessVout.HEVC,
 		AV1Output:   sessVout.AV1,
+		TSSegments:  tsSegments,
 		// Display only here (ABR children read it from their parent): Now
 		// Playing names the copied track's codec, not the first track's.
 		AudioStreamIndex: audioStreamIdx,
@@ -1042,6 +1052,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		NeedsToneMap:     isSourceHDR && !body.VideoCopy,
 		PreferHEVC:       preferHEVC,
 		PreferAV1:        preferAV1,
+		TSSegments:       tsSegments,
 		EnqueuedAt:       time.Now(),
 	}
 	h.logger.InfoContext(ctx, "transcode job created",
@@ -1053,6 +1064,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		"bitrate_kbps", jobBitrate,
 		"prefer_hevc", preferHEVC,
 		"prefer_av1", preferAV1,
+		"ts_segments", tsSegments,
 		"source_codec", func() string {
 			if file.VideoCodec != nil {
 				return *file.VideoCodec

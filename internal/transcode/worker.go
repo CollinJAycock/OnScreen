@@ -663,6 +663,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				CudaTonemap:          cudaTonemapUsable,
 				HasZscale:            w.hasZscale,
 				ForceFMP4:            job.ForceFMP4,
+				TSSegments:           job.TSSegments,
 				HasLibfdkAAC:         w.hasLibfdkAAC,
 				HasLibplacebo:        w.hasLibplacebo,
 				AudioCodec:           job.AudioCodec,
@@ -742,7 +743,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// container from, so any disagreement with what ffmpeg actually wrote is a
 	// playlist that never becomes ready. Remux is the case that breaks a naive
 	// IsHEVCEncoder(encoder) — see videooutput.go.
-	vout := ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4)
+	vout := ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4, job.TSSegments)
 	actualHEVC, actualAV1 := vout.HEVC, vout.AV1
 	segExt := vout.SegExt()
 
@@ -978,7 +979,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// (and the session's HEVC/AV1 flags, via runFFmpeg → SetWorkerInfo)
 		// defensively so the playlist handler waits on the right segment extension.
 		actualEncoder = enc
-		vout = ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4)
+		vout = ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4, job.TSSegments)
 		actualHEVC, actualAV1 = vout.HEVC, vout.AV1
 		segExt = vout.SegExt()
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))

@@ -60,9 +60,7 @@ a {
 [data-focused="true"] {
   /* Two-layer ring: a 6 px solid accent border for high contrast at
      TV viewing distance, plus a 32 px soft glow so cards on dark
-     backgrounds don't lose the highlight against the page chrome.
-     The 1.06 scale + outline keeps focus visible even on tiles
-     whose own background matches the page background. */
+     backgrounds don't lose the highlight against the page chrome. */
   box-shadow:
     0 0 0 6px var(--focus-ring),
     0 0 32px 8px rgba(124, 106, 247, 0.55);
@@ -74,4 +72,15 @@ a {
 
 [data-focused="false"] {
   transition: transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+/* The page's scroll box (+layout's <main>). The focus manager scrolls the
+   focused element in with scrollIntoView, which aligns its unscaled box
+   with the edge of the scroll box less this padding (Chromium 69+): without
+   it the 1.06 scale, the ring and the glow spilled off the bottom edge, and
+   a hub row reached by Up had its heading above the top one. 110 px on top
+   keeps that heading (about 86 px over the cards) on screen. Unscoped here
+   so the rule reaches the layout's element. */
+.tv-root {
+  scroll-padding: 110px 0 64px;
 }

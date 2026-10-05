@@ -433,6 +433,42 @@ Roku channel (no request features, as on Android):
 
 ### Changed
 
+- **Tizen app 1.1.0: parity with the Android TV app**, by moving the Samsung
+  app onto the webOS app's code (which reached parity in 0.2.0) with
+  Samsung's own platform layer. Not yet run on a Samsung panel: covered by
+  the shared tests (686) and an AVPlay simulation in Chromium.
+  - Everything webOS 0.2.0 and 0.2.1 list, on Samsung TVs: server sessions
+    on the content timeline with re-issues past the produced window,
+    subtitles drawn by the app, the Audio / Subtitles / Chapters row, Up
+    Next and auto-advance, one `stopped` report per item under the TV's
+    name ("Samsung TV — <model> #<tag>"), "play on this TV" from any screen,
+    favorites, artist pages, library paging / sort / genre, the saved home
+    layout, Trending and Collections rows, the photo slideshow, Back
+    returning focus to the card that was opened, and Sign in's Change
+    server.
+  - The player runs on AVPlay through an adapter that gives it a media
+    element's surface; AVPlay's growing-session length is read from the
+    HLS playlist, and a stream AVPlay refuses demotes the HEVC claim once
+    and restarts as H.264. hls.js is not bundled (400 KB, against 940 KB on
+    webOS).
+  - The remote: the channel rocker is registered (CH ▲▼ step tracks,
+    chapters and channels), Return on Home, Setup or Sign in closes the app
+    to Smart Hub as Samsung's checklist asks, and a held key is one press.
+  - Tizen 5.5's Chromium 69: the build rewrites Svelte's `:where()`
+    selectors (which even the 2022 Q80B's Chromium 85 dropped, so every
+    scoped descendant rule had done nothing), writes CSS for Chrome 69, and
+    the page shell polyfills `globalThis`, `queueMicrotask` and
+    `Object.fromEntries`; a test fails on CSS Chromium 69 drops.
+  - config.xml asks for the productinfo privilege (the model name); the
+    version is 1.1.0 in config.xml, package.json and Settings > About.
+  - Posters no longer all break on a TV signed in more than a day ago. Every
+    image URL carries the 24-hour asset token, and nothing renewed it before
+    the first screen rendered (the event stream renewed it only after its
+    own failed dial, too late for the images already requested). The app
+    now renews a stale token, or one of unknown age, before showing
+    anything (waiting at most 4 s) and again on return from the
+    background. The webOS app had the same bug and gets the same fix (found
+    on the Q80B, whose sign-in dated from the old Tizen build).
 - **webOS app 0.2.0: parity with the Android TV app**, run on an LG
   OLED77C1PUB (webOS 6, Chromium 79).
   - Server sessions play on the content timeline: an exact start at the
@@ -593,6 +629,45 @@ Roku channel (no request features, as on Android):
     Remote, and what it stores in the web view (all deleted on uninstall).
     It also says the app uses no camera, microphone, location or other TV
     data.
+- **TV 1.4.2 (25): Search's microphone shows only where it works.** The
+  Amazon Appstore rejected TV 1.4.1 (24) under Performance: the microphone
+  button on Search did not respond. Its test Fire TV has no speech
+  recognizer for apps (voice there is Alexa's), so the recognizer intent
+  failed and the failure was swallowed. The orb now shows only when a
+  recognizer resolves (the manifest declares the `RECOGNIZE_SPEECH` intent
+  query for Android 11+ package visibility), on Fire TV and Google TV
+  alike, so devices where voice search worked keep it. Where it is hidden,
+  Leanback's automatic listening on open returns the bar to typing. A
+  launch that fails, or a recognizer that returns before anyone could speak
+  (an empty result within 1.5 s, or a cancel within 300 ms), shows "Voice
+  search isn't available" and removes the orb for the rest of the session
+  (silently when it was Leanback's own start on open, not a press). One that
+  listened but heard nothing says so. Any result but a query puts back the
+  query that was there before, with its results. Verified on a Fire TV Stick
+  4K Max (Fire OS 8.1.8.2), which has no recognizer: on 1.4.1 the orb did
+  nothing, and on 1.4.2 there is no orb and Search opens on the keyboard.
+  Testing there also turned up three older Search bugs, now fixed:
+  - **The keyboard closed while typing.** The "Search in" row waited for the
+    libraries and was then inserted at the top on the first results. That
+    moved Leanback's selected row off row 0, so it hid the search bar, the
+    keyboard closed after the third letter, focus jumped to the Movies chip
+    and the row was drawn under the bar. The row is now built first, when
+    Search opens (its picker opens even before the libraries arrive).
+  - **One BACK with the keyboard open left Search.** The Fire TV keyboard
+    hides itself on the key-down but lets the key through. A BACK that
+    closes the keyboard is now consumed, so it only closes the keyboard;
+    the next BACK leaves.
+  - **On a device with voice, cancelling voice search emptied the field**
+    and cleared the results.
+  - **Coming back from a title's detail screen put focus on the first card**
+    (and now and then on nothing visible), because the query on screen was
+    searched again and the rows rebuilt after focus had been restored. A
+    query already answered for the same scope isn't searched again, and
+    focus returns to the card that was opened.
+  - **The MENU key didn't open the "Search in" picker.** Its listener sat on
+    the screen's root view, which never has focus.
+
+  Both flavors move to versionCode 25 / 1.4.2.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
   search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
   its Deceptive and Malicious Behavior policy, which names apps that "save,
@@ -725,6 +800,23 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **HEVC titles didn't play on Samsung TVs unless they direct-played.**
+  Samsung's AVPlay (tested on a 2022 Q80B, Tizen 6.5) refuses the fMP4 HLS
+  ffmpeg writes (`PLAYER_ERROR_NOT_SUPPORTED_FILE`): the same HEVC + 5.1 AAC
+  plays as one MP4 file, in MPEG-TS HLS, and in fMP4 HLS only with no `styp`
+  box and a single track. The server packages HEVC as fMP4 because browsers
+  need it, so every HEVC remux and HEVC re-encode failed on the TV, and the
+  app's fallback transcode asked for HEVC again. A transcode start now takes
+  `segment_container: "ts"`, which packages HEVC output as MPEG-TS (`.ts`, no
+  `#EXT-X-MAP`, no `hvc1` tag) and keeps an Auto (ABR) start on the H.264
+  ladder; AV1 stays fMP4, and without the field nothing changes. The Tizen
+  app sends it on every start (servers before it ignore it). Also on Tizen
+  1.1.0: AVPlay is prepared only once the session's first playlist read
+  answers (the server holds it until segment 0 exists, ~30 s for a 4K remux
+  on QA, and AVPlay gives up at ~30 s); a remux starts at its beginning
+  rather than AVPlay's live edge of the growing playlist (it began ~20 s
+  in); and a poster the server can't supply shows the no-poster tile
+  instead of an empty one (webOS too).
 - **Movies auto-matched the wrong film although the folder named the title
   and year.** The scanner took TMDB's top search hit, and its year filter
   counts a release in any country, so a popular near-miss won: "Spring

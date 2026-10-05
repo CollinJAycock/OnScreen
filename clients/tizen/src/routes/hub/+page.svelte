@@ -1,15 +1,34 @@
 <script lang="ts">
   import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
-  import { endpoints, type HubData, type HubItem } from '$lib/api';
+  import {
+    api,
+    endpoints,
+    type HubData,
+    type HubItem,
+    type HubRowPref,
+    type MediaCollection,
+  } from '$lib/api';
   import { Unauthorized } from '$lib/api';
+  import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import {
+    focusFirstOf,
+    restoreFocusTo,
+    restoreGuard,
+    restoreKeyed,
+    takeFocusMemo,
+    type FocusMemo,
+    type RestoreGuard,
+  } from '$lib/focus/memory';
   import HubRow from '$lib/components/HubRow.svelte';
   import OptionsDialog from '$lib/components/OptionsDialog.svelte';
   import PosterCard from '$lib/components/PosterCard.svelte';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
   import { openItem } from '$lib/nav';
+  import { ensureNavGates } from '$lib/navGates';
+  import { orderRows } from '$lib/hubLayout';
   import {
     endpointMissing,
     hubTileText,
@@ -20,10 +39,17 @@
   } from '$lib/watchState';
 
   let data = $state<HubData | null>(null);
+  // The Collections row (GET /collections) and the saved row layout
+  // (preferences hub_layout) ride along with the hub, best effort.
+  let collections = $state<MediaCollection[]>([]);
+  let layout = $state<HubRowPref[] | null>(null);
   let error = $state('');
   // Autofocus only on the first paint — a card re-created later (a failed
   // removal putting a tile back) must not steal focus.
   let firstPaint = $state(true);
+  // Back from a card: the first card holds its autofocus while the one the
+  // user opened takes focus again (lib/focus/memory).
+  let restoring = $state(false);
 
   // Continue Watching card options (hold OK). Offered on servers that have
   // the v2.5 watch-state routes (they send next_up); hidden for good if the
@@ -33,40 +59,101 @@
   let cwRemovalMissing = $state(false);
   let notice = $state('');
   let noticeTimer: ReturnType<typeof setTimeout> | null = null;
+  // The error state's "Change server" confirm (Android's escape hatch from a
+  // home screen that can't load: a wrong or retired server address).
+  let confirmChangeServer = $state(false);
+  // Confirmed and under way. The revoke goes to the very server that isn't
+  // answering and can take its request timeout (20 s), so meanwhile the
+  // button says "Signing out…" and keeps focus, both buttons are disabled,
+  // and every key is swallowed (Back here would leave the app mid-revoke).
+  let signingOut = $state(false);
 
-  // Minimal type for the one tizen.application call we make — same
-  // local-cast pattern keys.ts uses, avoids the @types dependency.
-  type TizenApplication = {
-    application?: { getCurrentApplication(): { exit(): void } };
-  };
+  $effect(() => {
+    if (!signingOut) return;
+    return focusManager.pushKeyHandler(() => true);
+  });
 
   onMount(() => {
-    (async () => {
-      try {
-        data = await endpoints.hub.get();
-        await tick();
-        firstPaint = false;
-      } catch (e) {
-        if (e instanceof Unauthorized) goto('#/login');
-        else error = (e as Error).message;
-      }
-    })();
+    // Ends the restore when the page goes away or the user moves focus
+    // while the hub is still loading (lib/focus/memory).
+    const guard = restoreGuard();
+    void load(takeFocusMemo(), guard);
 
-    // The hub is the app's home screen — Samsung certification requires
-    // Back here to exit the app. The focus manager preventDefaults the
-    // keypress when a back handler returns true, so it can't also fall
-    // through to the webview default. window.tizen is absent in browser
-    // dev (`vite dev`); returning true is then a handled no-op.
-    const offBack = focusManager.pushBack(() => {
-      (window as Window & { tizen?: TizenApplication })
-        .tizen?.application?.getCurrentApplication()?.exit();
-      return true;
-    });
+    // No Back handler here: the hub is a first screen, so Back falls
+    // through to the layout's exit popup (lib/appExit).
     return () => {
-      offBack();
+      guard.end();
       if (noticeTimer) clearTimeout(noticeTimer);
     };
   });
+
+  // The hub plus, in parallel, the collections and the saved layout. Only
+  // the hub is required: without the other two the page shows no
+  // Collections row and the default row order rather than an error.
+  // `memo`: the card to put focus back on (Back to the hub), while `guard`
+  // says the restore may still act.
+  async function load(memo: FocusMemo | null = null, guard?: RestoreGuard<HTMLElement>) {
+    error = '';
+    data = null;
+    firstPaint = true;
+    restoring = !!memo?.focusedId;
+    try {
+      const [hub, cols, prefs] = await Promise.all([
+        endpoints.hub.get(),
+        endpoints.collections.list().catch(() => [] as MediaCollection[]),
+        endpoints.users.preferences().catch(() => null),
+      ]);
+      collections = Array.isArray(cols) ? cols : [];
+      layout = prefs?.hub_layout ?? null;
+      data = hub;
+      // The server answers now: Retry keeps the bar mounted, so a pill whose
+      // answer failed at launch (server or Wi-Fi not up yet) asks again here.
+      void ensureNavGates();
+      await tick();
+      if (memo && restoring && guard) restoreHubFocus(memo, guard);
+      firstPaint = false;
+    } catch (e) {
+      if (e instanceof Unauthorized) goto('#/login');
+      else error = (e as Error).message;
+    } finally {
+      restoring = false;
+    }
+  }
+
+  // The card the user opened; else, when it has left its row (finished and
+  // gone from Continue Watching), the first card of that row; else the first
+  // card on the page. Keys are "<row key>:<id>" (see the cards below).
+  function restoreHubFocus(memo: FocusMemo, guard: RestoreGuard<HTMLElement>) {
+    if (!guard.active || restoreKeyed(memo, guard) || !memo.focusedId) return;
+    const rowKey = memo.focusedId.slice(0, memo.focusedId.lastIndexOf(':'));
+    const row = [...document.querySelectorAll<HTMLElement>('[data-row]')].find(
+      (r) => r.getAttribute('data-row') === rowKey,
+    );
+    const first = row?.querySelector<HTMLElement>('[data-focusable]');
+    if (first) restoreFocusTo(first, guard);
+    else focusFirstOf('[data-row] [data-focusable]', guard);
+  }
+
+  // Confirmed: the same teardown as Settings' Forget server (revoke, clear
+  // the tokens and the address), then Setup. The revoke stays best effort:
+  // forgetServer clears the session whatever the server says.
+  async function changeServer() {
+    if (signingOut) return;
+    confirmChangeServer = false;
+    signingOut = true;
+    await tick();
+    // The dialog's gone: focus back on the button, now "Signing out…".
+    focusFirstOf('.message .secondary');
+    await api.forgetServer();
+    goto('#/setup');
+  }
+
+  async function cancelChangeServer() {
+    confirmChangeServer = false;
+    await tick();
+    // Back on the button that opened it.
+    focusFirstOf('.message .secondary');
+  }
 
   function open(id: string, type: string) {
     // Type-aware routing: photos go to a full-screen viewer,
@@ -86,34 +173,36 @@
 
   const cwOptions = $derived(!!data && data.next_up !== undefined && !cwRemovalMissing);
 
-  interface Row {
-    key: string;
-    title: string;
-    items: HubItem[];
-    continueWatching?: boolean;
-  }
+  type Row =
+    | { kind: 'items'; key: string; title: string; items: HubItem[]; continueWatching?: boolean }
+    | { kind: 'collections'; key: string; title: string; items: MediaCollection[] };
 
-  // Home rows in display order — the web / Android default: Next Up right
-  // under Continue Watching TV, Plan to Watch after the Continue rows, then
-  // the per-library "Recently Added to <Library>" strips (or the flat
-  // aggregate on older servers that don't emit recently_added_by_library).
+  // Home rows in their default order — the web / Android default: Next Up
+  // right under Continue Watching TV, Plan to Watch after the Continue rows,
+  // Trending, then the per-library "Recently Added to <Library>" strips (or
+  // the flat aggregate on older servers that don't emit
+  // recently_added_by_library), then Collections. The user's saved layout
+  // (hub_layout, keys shared with the web) reorders and hides them; empty
+  // rows are dropped after that.
   const rows = $derived.by<Row[]>(() => {
     if (!data) return [];
     const out: Row[] = [
-      { key: 'continue_tv', title: 'Continue Watching TV Shows', items: tv, continueWatching: true },
-      { key: 'next_up', title: 'Next Up', items: nextUp },
-      { key: 'continue_movies', title: 'Continue Watching Movies', items: movies, continueWatching: true },
-      { key: 'continue_other', title: 'Continue Watching', items: other, continueWatching: true },
-      { key: 'plan_to_watch', title: 'Plan to Watch', items: plan },
+      { kind: 'items', key: 'continue_tv', title: 'Continue Watching TV Shows', items: tv, continueWatching: true },
+      { kind: 'items', key: 'next_up', title: 'Next Up', items: nextUp },
+      { kind: 'items', key: 'continue_movies', title: 'Continue Watching Movies', items: movies, continueWatching: true },
+      { kind: 'items', key: 'continue_other', title: 'Continue Watching', items: other, continueWatching: true },
+      { kind: 'items', key: 'plan_to_watch', title: 'Plan to Watch', items: plan },
+      { kind: 'items', key: 'trending', title: 'Trending', items: data.trending ?? [] },
     ];
     if (data.recently_added_by_library && data.recently_added_by_library.length > 0) {
       for (const r of data.recently_added_by_library) {
-        out.push({ key: `library:${r.library_id}`, title: `Recently Added to ${r.library_name}`, items: r.items });
+        out.push({ kind: 'items', key: `library:${r.library_id}`, title: `Recently Added to ${r.library_name}`, items: r.items });
       }
     } else {
-      out.push({ key: 'recently_added', title: 'Recently Added', items: data.recently_added });
+      out.push({ kind: 'items', key: 'recently_added', title: 'Recently Added', items: data.recently_added ?? [] });
     }
-    return out.filter((r) => r.items.length > 0);
+    out.push({ kind: 'collections', key: 'collections', title: 'Collections', items: collections });
+    return orderRows(out, layout).filter((r) => r.items.length > 0);
   });
 
   function showNotice(text: string) {
@@ -184,42 +273,93 @@
 </script>
 
 <div class="page">
-  <TopNav />
+  <!-- The rows run full-bleed (their scrollers pad themselves), so the bar
+       gets the page inset other pages give it with their own padding. -->
+  <div class="nav-inset"><TopNav /></div>
 
   {#if error}
-    <p class="error">{error}</p>
+    <!-- Android's error overlay: the reason, Retry, and one Down press
+         below it Change server, for a wrong or retired server address
+         (confirmed first: it signs out). -->
+    <div class="message">
+      <p class="message-title">Couldn't load your home screen</p>
+      <p class="error">{error}</p>
+      <button
+        use:focusable={{ autofocus: true }}
+        class="btn"
+        disabled={signingOut}
+        onclick={() => void load()}>Retry</button>
+      <button
+        use:focusable
+        class="btn secondary"
+        disabled={signingOut}
+        onclick={() => (confirmChangeServer = true)}
+      >
+        {signingOut ? 'Signing out…' : 'Change server'}
+      </button>
+    </div>
   {:else if !data}
     <Spinner />
   {:else}
     {#each rows as row, ri (row.key)}
-      <HubRow
-        title={row.title}
-        rowKey={row.key}
-        hint={row.continueWatching && cwOptions ? 'Hold OK for options' : undefined}
-      >
-        {#each row.items as item, i (item.id)}
-          {@const text = hubTileText(item)}
-          <PosterCard
-            title={text.title}
-            posterPath={item.poster_path}
-            subtitle={text.subtitle}
-            progressRatio={row.continueWatching ? progressRatio(item.view_offset_ms, item.duration_ms) : undefined}
-            autofocus={firstPaint && ri === 0 && i === 0}
-            onclick={() => open(item.id, item.type)}
-            onlongpress={row.continueWatching && cwOptions ? () => openCwMenu(item) : undefined}
-          />
-        {/each}
-      </HubRow>
+      {#if row.kind === 'collections'}
+        <HubRow title={row.title} rowKey={row.key}>
+          {#each row.items as col, i (col.id)}
+            <PosterCard
+              title={col.name}
+              posterPath={col.poster_path}
+              focusKey={`${row.key}:${col.id}`}
+              autofocus={firstPaint && !restoring && ri === 0 && i === 0}
+              onclick={() => open(col.id, 'collection')}
+            />
+          {/each}
+        </HubRow>
+      {:else}
+        <HubRow
+          title={row.title}
+          rowKey={row.key}
+          hint={row.continueWatching && cwOptions ? 'Hold OK for options' : undefined}
+        >
+          {#each row.items as item, i (item.id)}
+            {@const text = hubTileText(item)}
+            <PosterCard
+              title={text.title}
+              posterPath={item.poster_path}
+              subtitle={text.subtitle}
+              progressRatio={row.continueWatching ? progressRatio(item.view_offset_ms, item.duration_ms) : undefined}
+              focusKey={`${row.key}:${item.id}`}
+              autofocus={firstPaint && !restoring && ri === 0 && i === 0}
+              onclick={() => open(item.id, item.type)}
+              onlongpress={row.continueWatching && cwOptions ? () => openCwMenu(item) : undefined}
+            />
+          {/each}
+        </HubRow>
+      {/if}
     {/each}
 
     {#if rows.length === 0}
-      <p class="empty">Your library is empty. Add a library and run a scan from the web UI.</p>
+      <!-- An empty server (or every row hidden): say so rather than show a
+           blank page. The top nav stays reachable. -->
+      <div class="message">
+        <p class="message-title">Nothing to watch yet</p>
+        <p class="empty">Add a library from the web app, then come back.</p>
+      </div>
     {/if}
   {/if}
 </div>
 
 {#if notice}
   <div class="notice" role="status">{notice}</div>
+{/if}
+
+{#if confirmChangeServer}
+  <OptionsDialog
+    title="Change server"
+    message="Disconnect from this server and choose another? You'll be signed out."
+    options={[{ label: 'Change server', danger: true, onselect: () => void changeServer() }]}
+    focusCancel
+    oncancel={() => void cancelChangeServer()}
+  />
 {/if}
 
 {#if cwMenuItem}
@@ -238,13 +378,63 @@
     padding: 0 0 32px;
   }
 
-  .error, .empty {
+  .nav-inset {
     padding: 0 var(--page-pad);
+  }
+
+  /* A one-column grid rather than a flex column: grid `gap` works on
+     webOS 6's Chromium 79, flexbox `gap` needs Chrome 84. */
+  .message {
+    padding: 24px var(--page-pad) 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: start;
+    row-gap: 16px;
+  }
+
+  .message-title {
+    margin: 0;
+    font-size: var(--font-lg);
+    font-weight: 600;
+  }
+
+  .error, .empty {
+    margin: 0;
     font-size: var(--font-md);
   }
 
   .error { color: #fca5a5; }
   .empty { color: var(--text-secondary); }
+
+  .btn {
+    margin-top: 16px;
+    min-width: 320px;
+    font-family: inherit;
+    font-size: var(--font-md);
+    padding: 20px 48px;
+    border-radius: 12px;
+    border: 2px solid var(--accent);
+    background: var(--accent);
+    color: white;
+    cursor: pointer;
+  }
+
+  /* After .btn so it wins. Sits right under Retry (grid row gap). */
+  .btn.secondary {
+    margin-top: 0;
+    border-color: var(--border);
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+  }
+
+  /* Signing out: Retry dims; the focused button keeps its look and says
+     what is happening. */
+  .btn:disabled {
+    cursor: default;
+  }
+  .btn:disabled:not([data-focused='true']) {
+    opacity: 0.5;
+  }
 
   .notice {
     position: fixed;

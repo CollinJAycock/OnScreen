@@ -1,10 +1,7 @@
 <script lang="ts">
   // Libraries index — top-level grid of every library the user has
   // access to. Each tile drills into /library/[id] for the full item
-  // listing. Mirrors the Android TV LibrariesFragment shape: name +
-  // type chip, no thumbnails for v1 (text-only tiles are readable at
-  // TV distance and avoid an N-query per-library first-item fetch).
-
+  // listing.
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { endpoints, Unauthorized, type Library } from '$lib/api';
@@ -33,13 +30,13 @@
     });
   });
 
-  // Loose categorization for the type chip — "movie" → "Movies",
-  // "show" → "TV Shows", etc. Server returns the raw scan type;
-  // we humanize it here.
   function typeLabel(t: string): string {
     switch (t) {
       case 'movie': return 'Movies';
       case 'show': return 'TV Shows';
+      case 'anime': return 'Anime';
+      case 'cartoons': return 'Cartoons';
+      case 'dvr': return 'DVR Recordings';
       case 'music': return 'Music';
       case 'photo': return 'Photos';
       case 'audiobook': return 'Audiobooks';
@@ -108,7 +105,6 @@
     text-align: left;
     display: flex;
     flex-direction: column;
-    gap: 10px;
     cursor: pointer;
     min-height: 140px;
   }
@@ -120,6 +116,8 @@
   }
 
   .lib-type {
+    /* Not flexbox `gap` (Chrome 84; webOS 6 runs Chromium 79). */
+    margin-top: 10px;
     font-size: var(--font-sm);
     color: var(--text-secondary);
     text-transform: uppercase;

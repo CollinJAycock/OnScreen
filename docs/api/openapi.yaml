@@ -5656,6 +5656,17 @@ components:
             the AV1-source case but works generically: the server
             decides remux vs. re-encode from the source codec + this
             flag.
+        segment_container:
+          type: string
+          enum: [ts]
+          description: |
+            v2.5. `ts` asks for MPEG-TS segments where the server would
+            otherwise package HEVC output (an HEVC remux or HEVC re-encode)
+            as fMP4: `.ts` segments, no `#EXT-X-MAP`, no `hvc1` tag. For
+            players that decode HEVC but can't read the server's fMP4 HLS
+            (Samsung AVPlay). Browsers must not send it (MSE can't take HEVC
+            in TS). AV1 output stays fMP4 (MPEG-TS has no AV1 stream type);
+            an Auto (ABR) start keeps the H.264 ladder. Absent = unchanged.
     TranscodeStartResponse:
       type: object
       description: |

@@ -116,8 +116,12 @@ android {
         // below) after Amazon rejected 1.4.0 (23) on 2026-10-01. Both flavors
         // move to 24 so the codes stay in step; the Google TV build is
         // unchanged in behaviour.
-        versionCode = 24
-        versionName = "1.4.1"
+        // 25 / 1.4.2: Search's microphone shows only on a device with a
+        // speech recognizer, after Amazon rejected 1.4.1 (24) on 2026-10-03
+        // because the orb did nothing on its test Fire TV, which has none.
+        // Fire TVs that have one keep voice search.
+        versionCode = 25
+        versionName = "1.4.2"
     }
 
     // Per-store flavor split. Both stores ship from the same code. They

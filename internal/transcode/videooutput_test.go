@@ -37,6 +37,7 @@ func TestVideoOutput_ServerAndClientAgreeOnContainer(t *testing.T) {
 		srcHEVC    bool
 		srcAV1     bool
 		forceFMP4  bool
+		tsSegments bool
 		wantExt    string
 		wantTagV   string
 		wantSegTyp string
@@ -90,11 +91,31 @@ func TestVideoOutput_ServerAndClientAgreeOnContainer(t *testing.T) {
 			name: "H.264 fallback under ForceFMP4", encoder: EncoderSoftware, forceFMP4: true,
 			wantExt: ".m4s", wantTagV: "", wantSegTyp: "fmp4",
 		},
+
+		// ── TSSegments: a client that asked for MPEG-TS (Samsung AVPlay, which
+		// refuses ffmpeg's fMP4 HLS) gets HEVC in .ts with no tag. AV1 has no
+		// MPEG-TS stream type and a promised .m4s playlist wins, so neither moves.
+		{
+			name: "HEVC source remux, TS requested", encoder: EncoderCopy, srcHEVC: true, tsSegments: true,
+			wantExt: ".ts", wantTagV: "", wantSegTyp: "mpegts",
+		},
+		{
+			name: "HEVC encode, TS requested", encoder: EncoderHEVCNVENC, tsSegments: true,
+			wantExt: ".ts", wantTagV: "", wantSegTyp: "mpegts",
+		},
+		{
+			name: "AV1 source remux ignores a TS request", encoder: EncoderCopy, srcAV1: true, tsSegments: true,
+			wantExt: ".m4s", wantTagV: "av01", wantSegTyp: "fmp4",
+		},
+		{
+			name: "ForceFMP4 wins over a TS request", encoder: EncoderSoftware, forceFMP4: true, tsSegments: true,
+			wantExt: ".m4s", wantTagV: "", wantSegTyp: "fmp4",
+		},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			vout := ResolveVideoOutput(tc.encoder, tc.srcHEVC, tc.srcAV1, tc.forceFMP4)
+			vout := ResolveVideoOutput(tc.encoder, tc.srcHEVC, tc.srcAV1, tc.forceFMP4, tc.tsSegments)
 
 			// 1. The resolver's own answer.
 			if got := vout.SegExt(); got != tc.wantExt {
@@ -115,6 +136,7 @@ func TestVideoOutput_ServerAndClientAgreeOnContainer(t *testing.T) {
 				IsHEVC:        tc.srcHEVC,
 				IsAV1:         tc.srcAV1,
 				ForceFMP4:     tc.forceFMP4,
+				TSSegments:    tc.tsSegments,
 				Width:         1920,
 				Height:        1080,
 				BitrateKbps:   8000,
@@ -153,7 +175,7 @@ func TestVideoOutput_ServerAndClientAgreeOnContainer(t *testing.T) {
 			// session (only ABR rung CHILDREN carry it, and nothing reads a
 			// child's flags for a container decision).
 			if !tc.forceFMP4 {
-				sess := &Session{HEVCOutput: vout.HEVC, AV1Output: vout.AV1}
+				sess := &Session{HEVCOutput: vout.HEVC, AV1Output: vout.AV1, TSSegments: tc.tsSegments}
 				if got := sess.VideoOutput().SegExt(); got != tc.wantExt {
 					t.Errorf("Session.VideoOutput().SegExt() = %q, want %q — "+
 						"the API would wait for the wrong filename", got, tc.wantExt)

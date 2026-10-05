@@ -19,8 +19,22 @@
   import { forgetHistory, goBack, playItem, resetStack } from '$lib/nav';
   import { ensureNavGates } from '$lib/navGates';
   import { forgetSearch } from '$lib/searchMemory';
+  import { ensureFreshAssetToken, type AssetTokenDeps } from '$lib/assetToken';
 
   let { children } = $props();
+
+  // The first screen waits for a stale asset token to be renewed (lib/
+  // assetToken): every poster on it carries that token, and an expired one
+  // (a TV signed in more than a day ago) left them all broken. Capped, and
+  // immediate when the token is fresh.
+  const assetTokenDeps: AssetTokenDeps = {
+    accessToken: () => api.getToken(),
+    assetToken: () => api.getAssetToken(),
+    issuedAt: () => api.getAssetTokenIssuedAt(),
+    now: () => Date.now(),
+    refresh: () => api.refreshTokensOutcome(),
+  };
+  let booted = $state(false);
 
   // Back that no screen took (lib/appExit): the previous page, or on a
   // first screen (Home, Setup, Sign in) the exit popup, or on webOS TV 23
@@ -116,6 +130,10 @@
     }
     if (hiddenAt && shouldRedialAfterHidden(Date.now() - hiddenAt)) events.restart();
     hiddenAt = 0;
+    // A day in the background outlives the asset token: renewed now, so the
+    // next images load (the event stream's reconnect would only renew it
+    // after a failed dial).
+    void ensureFreshAssetToken(assetTokenDeps);
     void ensureNavGates();
   }
   function onOnline() {
@@ -147,6 +165,7 @@
   }
 
   onMount(() => {
+    void ensureFreshAssetToken(assetTokenDeps).finally(() => (booted = true));
     focusManager.init();
     const offRootBack = focusManager.setRootBack(onRootBack);
     const offTransfer = events.subscribe(PLAYBACK_TRANSFER_EVENT, onTransfer);
@@ -168,7 +187,9 @@
 </script>
 
 <main class="tv-root">
-  {@render children()}
+  {#if booted}
+    {@render children()}
+  {/if}
   {#if exitOpen}
     <ExitPopup onexit={exitApp} oncancel={() => void cancelExit()} />
   {/if}

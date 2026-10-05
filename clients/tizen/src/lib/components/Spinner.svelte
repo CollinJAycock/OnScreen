@@ -11,12 +11,13 @@
 </div>
 
 <style>
+  /* The label's margin stands in for flexbox `gap` (Chrome 84; webOS 6 runs
+     Chromium 79). Flex items' margins don't collapse, so it's the same 24px. */
   .spinner {
     display: flex;
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 24px;
     padding: 40px;
     color: var(--text-primary);
     font-size: var(--font-md);
@@ -26,12 +27,15 @@
     width: 96px;
     height: 96px;
     /* Higher contrast than var(--border)'s rgba(255,255,255,.08) so
-       the ring is visible at TV viewing distance against any backdrop
-       (player's AVPlay overlay, overlay dim, light wallpaper). */
+       the ring is visible at TV viewing distance against any backdrop. */
     border: 10px solid rgba(255, 255, 255, 0.25);
     border-top-color: var(--accent);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
+  }
+
+  .label {
+    margin-top: 24px;
   }
 
   @keyframes spin {
