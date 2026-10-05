@@ -1,5 +1,6 @@
 <script lang="ts">
   import { focusable } from '$lib/focus/focusable';
+  import { onDestroy } from 'svelte';
   import { api } from '$lib/api';
 
   interface Props {
@@ -40,11 +41,32 @@
   // RequiredAllowQueryToken-protected /artwork/ route. The naive
   // `${origin}/artwork/...?w=400` URL omits auth and 401s — `<img>`
   // can't attach an Authorization header.
-  const posterUrl = $derived(posterPath ? api.assetUrl(`/artwork/${posterPath}?w=400`) : '');
-  // A poster the server can't supply (a 404 for a missing file) showed as
-  // an empty tile. It gets the no-poster tile instead. Keyed to the URL,
-  // so a renewed asset token (a new URL) tries again.
-  let failedUrl = $state('');
+  // A poster that fails to load (a 404 for a missing file, or a transient
+  // failure: a token renewed a moment late, a Wi-Fi blip) showed as an empty
+  // tile. It gets the no-poster tile instead, and one more try after
+  // RETRY_MS: the URL is built again then (assetUrl reads the token from
+  // storage, which Svelte doesn't track, so `retry` is what rebuilds it),
+  // picking up a renewed token. A second failure keeps the tile.
+  const RETRY_MS = 15_000;
+  let retry = $state(0);
+  const posterUrl = $derived.by(() => {
+    void retry;
+    return posterPath ? api.assetUrl(`/artwork/${posterPath}?w=400`) : '';
+  });
+  let failed = $state(false);
+  let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  function onPosterError() {
+    failed = true;
+    if (retry > 0 || retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      failed = false;
+      retry++;
+    }, RETRY_MS);
+  }
+  onDestroy(() => {
+    if (retryTimer) clearTimeout(retryTimer);
+  });
 </script>
 
 <button
@@ -54,8 +76,8 @@
   {onclick}
 >
   <div class="art">
-    {#if posterUrl && failedUrl !== posterUrl}
-      <img src={posterUrl} alt="" loading="lazy" onerror={() => (failedUrl = posterUrl)} />
+    {#if posterUrl && !failed}
+      <img src={posterUrl} alt="" loading="lazy" onerror={onPosterError} />
     {:else}
       <div class="no-poster">{title.slice(0, 2).toUpperCase()}</div>
     {/if}

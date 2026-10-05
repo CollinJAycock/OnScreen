@@ -47,6 +47,13 @@ export function mediaPlaylistSpan(text: string): PlaylistSpan | null {
   return { producedEndSec: Math.round(total * 1000) / 1000, ended };
 }
 
+/** Whether a media playlist plays from its first segment: an EVENT or VOD
+ *  playlist, or one that's complete. A live sliding window (no type, no
+ *  ENDLIST) plays from its live edge. */
+export function startsAtBeginning(text: string): boolean {
+  return /^#EXT-X-PLAYLIST-TYPE:\s*(EVENT|VOD)\s*$/m.test(text) || /^#EXT-X-ENDLIST/m.test(text);
+}
+
 /** `uri` against `base`, keeping base's query (the session token rides
  *  there) only when `uri` has none of its own. */
 export function resolveUrl(uri: string, base: string): string {

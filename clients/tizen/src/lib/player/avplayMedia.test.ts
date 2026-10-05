@@ -3,6 +3,7 @@ import type { AvPlayApi, AvPlayListener } from './avplay';
 import {
   AvplayMedia,
   HAVE_ENOUGH_DATA,
+  MEDIA_ERR_DECODE,
   MEDIA_ERR_NETWORK,
   MEDIA_ERR_SRC_NOT_SUPPORTED,
   PLAYLIST_POLL_MS,
@@ -46,6 +47,8 @@ function fakeAvplay() {
 }
 
 const PLAYLIST = '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4.0,\na.ts\n#EXTINF:4.0,\nb.ts\n';
+/** A server session's growing playlist. */
+const EVENT_PLAYLIST = '#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-PLAYLIST-TYPE:EVENT\n#EXTINF:4.0,\na.ts\n#EXTINF:4.0,\nb.ts\n';
 
 function setup(playlist = PLAYLIST) {
   const av = fakeAvplay();
@@ -306,7 +309,7 @@ describe('AvplayMedia', () => {
   });
 
   it("starts a session at its beginning, not at the playlist's live edge where AVPlay opens it", async () => {
-    const { av, media, events } = setup();
+    const { av, media, events } = setup(EVENT_PLAYLIST);
     av.api.getCurrentTime = () => 24_000; // AVPlay began 3 segments from the end
     media.src = URL;
     await flush();
@@ -319,6 +322,39 @@ describe('AvplayMedia', () => {
     av.seeks[0].ok?.();
     expect(media.seeking).toBe(false);
     expect(media.currentTime).toBe(0);
+  });
+
+  it('plays a live sliding window (Live TV) at its live edge: no seek to its oldest segment', async () => {
+    const { av, media } = setup(PLAYLIST); // no PLAYLIST-TYPE, no ENDLIST
+    av.api.getCurrentTime = () => 20_000;
+    media.src = URL;
+    await flush();
+    av.prepare();
+    await media.play();
+    av.listener.oncurrentplaytime?.(20_000);
+    expect(av.seeks).toEqual([]);
+    expect(media.currentTime).toBe(20);
+  });
+
+  it('reports a failure found while src is set after the setter returns, as the element does', async () => {
+    const { av, media, events, timers } = setup();
+    av.api.open = () => {
+      throw new Error('PLAYER_ERROR_INVALID_URI');
+    };
+    media.src = URL;
+    expect(events).not.toContain('error'); // the page is still opening the stream
+    for (const t of timers.splice(0)) t.fn();
+    expect(events).toContain('error');
+  });
+
+  it("says 'playing' on the first tick when the firmware sends no buffering events", async () => {
+    const { av, media, events } = setup(EVENT_PLAYLIST);
+    media.src = URL;
+    await flush();
+    av.prepare();
+    await media.play();
+    av.listener.oncurrentplaytime?.(40); // opened at the start: no seek
+    expect(events).toContain('playing');
   });
 
   it('does not seek a session that opened at its start', async () => {
@@ -344,6 +380,13 @@ describe('errorCode', () => {
     expect(errorCode('PLAYER_ERROR_CONNECTION_FAILED')).toBe(MEDIA_ERR_NETWORK);
     expect(errorCode({ name: 'PLAYER_ERROR_NETWORK' })).toBe(MEDIA_ERR_NETWORK);
     expect(errorCode('PLAYER_ERROR_NOT_SUPPORTED_FILE')).toBe(MEDIA_ERR_SRC_NOT_SUPPORTED);
-    expect(errorCode('PLAYER_ERROR_INVALID_URI')).toBe(MEDIA_ERR_SRC_NOT_SUPPORTED);
+    // Anything but a refusal is a decode failure: the page demotes a codec
+    // for good only on 'not supported', so one transient error mustn't read so.
+    expect(errorCode('PLAYER_ERROR_INVALID_URI')).toBe(MEDIA_ERR_DECODE);
+    expect(errorCode('PLAYER_ERROR_GENEREIC')).toBe(MEDIA_ERR_DECODE);
+    expect(errorCode({})).toBe(MEDIA_ERR_DECODE);
+    // A WebAPIException's fields may not be enumerable: read by name.
+    const ex = Object.create({ name: 'InvalidAccessError', message: 'PLAYER_ERROR_CONNECTION_FAILED' });
+    expect(errorCode(ex)).toBe(MEDIA_ERR_NETWORK);
   });
 });

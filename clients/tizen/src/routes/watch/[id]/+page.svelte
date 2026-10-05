@@ -947,8 +947,11 @@
       switch (plan.kind) {
         case 'demote': {
           codecEscalated = true;
-          const codec = (item?.files?.[0]?.video_codec ?? '').toLowerCase();
-          demoteCodec(codec === 'av1' ? 'av1' : 'hevc');
+          // HEVC, whatever the source: this TV never claims AV1
+          // (supportsAV1() is false), so an AV1 source came as an HEVC
+          // transcode, and demoting 'av1' changed nothing: the restart asked
+          // for HEVC again and failed the same way.
+          demoteCodec('hevc');
           console.warn('[HLS] bufferAppendError — codec rejected; demoting claim + restarting session');
           restartAfterDemotion();
           return;
@@ -2894,8 +2897,11 @@
           !isAudioOnly
         ) {
           codecEscalated = true;
-          const codec = (item?.files?.[0]?.video_codec ?? '').toLowerCase();
-          demoteCodec(codec === 'av1' ? 'av1' : 'hevc');
+          // HEVC, whatever the source: this TV never claims AV1
+          // (supportsAV1() is false), so an AV1 source came as an HEVC
+          // transcode, and demoting 'av1' changed nothing: the restart asked
+          // for HEVC again and failed the same way.
+          demoteCodec('hevc');
           console.warn('[avplay] stream not supported — demoting the codec claim and restarting', v.error?.message);
           restartAfterDemotion();
           return;

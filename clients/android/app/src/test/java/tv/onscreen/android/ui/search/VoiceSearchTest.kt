@@ -38,33 +38,50 @@ class VoiceSearchTest {
 
     @Test
     fun `a heard query is searched`() {
-        assertThat(VoiceSearch.outcome(ok = true, matches = listOf("  sintel "), elapsedMs = 4000))
+        assertThat(VoiceSearch.outcome(resultCode = OK, matches = listOf("  sintel "), elapsedMs = 4000))
             .isEqualTo(VoiceSearch.Outcome.Query("sintel"))
     }
 
     @Test
     fun `a recognizer that comes straight back never listened, and says so`() {
-        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 100))
+        assertThat(VoiceSearch.outcome(resultCode = CANCELED, matches = null, elapsedMs = 100))
             .isEqualTo(VoiceSearch.Outcome.Unavailable)
-        assertThat(VoiceSearch.outcome(ok = true, matches = emptyList(), elapsedMs = 300))
+        assertThat(VoiceSearch.outcome(resultCode = OK, matches = emptyList(), elapsedMs = 300))
             .isEqualTo(VoiceSearch.Outcome.Unavailable)
     }
 
     @Test
     fun `a viewer backing out quickly on a working recognizer is a cancel, not unavailable`() {
-        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 800))
+        assertThat(VoiceSearch.outcome(resultCode = CANCELED, matches = null, elapsedMs = 800))
             .isEqualTo(VoiceSearch.Outcome.Cancelled)
     }
 
     @Test
     fun `listened but heard nothing`() {
-        assertThat(VoiceSearch.outcome(ok = true, matches = listOf(""), elapsedMs = 6000))
+        assertThat(VoiceSearch.outcome(resultCode = OK, matches = listOf(""), elapsedMs = 6000))
             .isEqualTo(VoiceSearch.Outcome.NothingHeard)
     }
 
     @Test
     fun `backing out after a while is just a cancel`() {
-        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 6000))
+        assertThat(VoiceSearch.outcome(resultCode = CANCELED, matches = null, elapsedMs = 6000))
             .isEqualTo(VoiceSearch.Outcome.Cancelled)
+    }
+
+    // The recognizer's own error codes used to read as a cancel: no toast,
+    // and the press looked dead.
+    @Test
+    fun `a recognizer's no-match is nothing heard, and its errors say so`() {
+        assertThat(VoiceSearch.outcome(resultCode = 1, matches = null, elapsedMs = 3000))
+            .isEqualTo(VoiceSearch.Outcome.NothingHeard)
+        for (code in 2..5) { // client, server, network, audio
+            assertThat(VoiceSearch.outcome(resultCode = code, matches = null, elapsedMs = 3000))
+                .isEqualTo(VoiceSearch.Outcome.Failed)
+        }
+    }
+
+    private companion object {
+        const val OK = -1 // Activity.RESULT_OK
+        const val CANCELED = 0
     }
 }

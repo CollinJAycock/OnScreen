@@ -1,5 +1,11 @@
-import { describe, expect, it, vi } from 'vitest';
-import { ASSET_TOKEN_BOOT_WAIT_MS, assetTokenStale, ensureFreshAssetToken, type AssetTokenDeps } from './assetToken';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  ASSET_TOKEN_BOOT_WAIT_MS,
+  assetTokenStale,
+  ensureFreshAssetToken,
+  resetAssetTokenAttempts,
+  type AssetTokenDeps,
+} from './assetToken';
 
 const HOUR = 60 * 60_000;
 const NOW = 1_000 * HOUR;
@@ -34,6 +40,8 @@ describe('assetTokenStale', () => {
 });
 
 describe('ensureFreshAssetToken', () => {
+  beforeEach(() => resetAssetTokenAttempts());
+
   it('renews a stale token and waits for it', async () => {
     const d = deps({ issuedAt: () => null });
     await expect(ensureFreshAssetToken(d)).resolves.toBe(true);
@@ -54,7 +62,22 @@ describe('ensureFreshAssetToken', () => {
     expect(timer).toHaveBeenCalledWith(expect.any(Function), ASSET_TOKEN_BOOT_WAIT_MS);
     fire();
     await expect(p).resolves.toBe(true);
-    const failing = deps({ issuedAt: () => null, refresh: () => Promise.reject(new Error('offline')) });
+    const failing = deps({ assetToken: () => 'asset-2', issuedAt: () => null, refresh: () => Promise.reject(new Error('offline')) });
     await expect(ensureFreshAssetToken(failing)).resolves.toBe(true);
+  });
+
+  // A refresh whose answer was lost may have rotated the token on the server;
+  // trying again with the retired refresh token reads there as reuse and
+  // signs every device out. One try per stored token; none offline.
+  it('tries once per stored token, and not at all offline', async () => {
+    const d = deps({ issuedAt: () => null });
+    await ensureFreshAssetToken(d);
+    await ensureFreshAssetToken(d); // back from the background, same token
+    expect(d.refresh).toHaveBeenCalledTimes(1);
+    const renewed = deps({ assetToken: () => 'asset-new', issuedAt: () => null });
+    await expect(ensureFreshAssetToken(renewed)).resolves.toBe(true);
+    const offline = deps({ assetToken: () => 'asset-3', issuedAt: () => null, online: () => false });
+    await expect(ensureFreshAssetToken(offline)).resolves.toBe(false);
+    expect(offline.refresh).not.toHaveBeenCalled();
   });
 });

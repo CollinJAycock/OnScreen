@@ -18,6 +18,7 @@
 // Pure (types and labels only) so the parser, the option building and the
 // timing are unit-tested.
 
+import { stableSort } from '$lib/stableSort';
 import type { ItemFile } from '../api/types';
 import { subtitleLabel } from '../langName';
 import { toContentMs } from './session';
@@ -219,8 +220,9 @@ export function parseWebVtt(text: string): Cue[] {
     const cue = parseBlock(block);
     if (cue) cues.push(cue);
   }
-  // Stable (ES2019): cues that start together keep the file's order.
-  return cues.sort((a, b) => a.startMs - b.startMs);
+  // Stably (lib/stableSort: Tizen 5.5 runs Chromium 69): cues that start
+  // together keep the file's order.
+  return stableSort(cues, (a, b) => a.startMs - b.startMs);
 }
 
 function parseBlock(block: string[]): Cue | null {

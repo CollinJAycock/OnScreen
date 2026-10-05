@@ -1,4 +1,4 @@
-// AVPlay behind the media-element surface the player page uses.
+﻿// AVPlay behind the media-element surface the player page uses.
 //
 // The player (routes/watch/[id]) is the webOS app's, written against an
 // HTMLVideoElement: it sets `src` and `currentTime`, calls play() / pause(),
@@ -32,7 +32,7 @@
 //                      from one that re-opens the session.
 
 import type { AvPlayApi, AvPlayListener } from './avplay';
-import { firstVariantUrl, mediaPlaylistSpan, type PlaylistSpan } from './playlist';
+import { firstVariantUrl, mediaPlaylistSpan, startsAtBeginning, type PlaylistSpan } from './playlist';
 
 /** HTMLMediaElement's readyState values. */
 export const HAVE_NOTHING = 0;
@@ -53,16 +53,41 @@ export const PLAYLIST_POLL_MS = 4000;
 export const TIMEUPDATE_MIN_GAP_MS = 200;
 /** A source that opened this close to its start needs no seek to 0. */
 export const START_SLACK_MS = 1000;
+/** The longest a playlist read may take. The server holds a session's first
+ *  read up to 60 s for segment 0; past this the connection is taken for
+ *  dead (it would otherwise leave the page on "Starting playbackâ€¦" with no
+ *  error), the read fails, and AVPlay is prepared to report for itself. */
+export const PLAYLIST_READ_TIMEOUT_MS = 75_000;
 
 /** An AVPlay error's MediaError code: a connection or HTTP failure is a
  *  network error; anything the player refuses (a codec, a container, a
  *  stream it can't open) is "not supported", which is what makes the page
  *  demote a codec claim and re-issue. */
 export function errorCode(e: unknown): number {
-  const s = (typeof e === 'string' ? e : e && typeof e === 'object' ? JSON.stringify(e) : String(e)).toUpperCase();
+  const s = errorText(e).toUpperCase();
   if (/CONNECTION|NETWORK|TIMEOUT|TIMED_OUT|HTTP|SERVER|DISCONNECT/.test(s)) return MEDIA_ERR_NETWORK;
-  if (/DECODE|DECODER/.test(s)) return MEDIA_ERR_DECODE;
-  return MEDIA_ERR_SRC_NOT_SUPPORTED;
+  // Only a refusal of the stream itself is "not supported": the page takes
+  // that as the codec's fault and demotes it for good. Anything else
+  // (PLAYER_ERROR_GENEREIC, INVALID_STATE, an unreadable error) is a decode
+  // failure, which a remux falls back from without demoting anything.
+  if (/NOT_SUPPORTED|UNSUPPORTED/.test(s)) return MEDIA_ERR_SRC_NOT_SUPPORTED;
+  return MEDIA_ERR_DECODE;
+}
+
+/** An AVPlay error's text. A WebAPIException's fields may not be
+ *  enumerable (JSON.stringify gives '{}'), so they're read by name. */
+function errorText(e: unknown): string {
+  if (typeof e === 'string') return e;
+  if (e && typeof e === 'object') {
+    const o = e as { name?: unknown; message?: unknown; code?: unknown };
+    const parts = [o.name, o.message, o.code].filter((x) => x !== undefined && x !== null).map(String);
+    let json = '';
+    try {
+      json = JSON.stringify(e);
+    } catch { /* cyclic */ }
+    return [...parts, json].join(' ');
+  }
+  return String(e);
 }
 
 /** A TimeRanges with zero or one range. */
@@ -90,7 +115,7 @@ export interface AvplayMediaOptions {
 }
 
 export class AvplayMedia {
-  // ── The element surface ────────────────────────────────────────────
+  // â”€â”€ The element surface â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
   paused = true;
   ended = false;
   seeking = false;
@@ -114,13 +139,15 @@ export class AvplayMedia {
   // Bumped on every new source: callbacks from an older open are dropped.
   private gen = 0;
   private listeners = new Map<string, Set<Listener>>();
+  // Playlist reads in flight (the default fetchText), aborted on close.
+  private reads = new Set<AbortController>();
   private readonly fetchText: (url: string) => Promise<string>;
   private readonly now: () => number;
   private readonly setTimer: (fn: () => void, ms: number) => unknown;
   private readonly clearTimer: (id: unknown) => void;
 
   constructor(private readonly opts: AvplayMediaOptions) {
-    this.fetchText = opts.fetchText ?? ((url) => fetch(url).then((r) => (r.ok ? r.text() : '')));
+    this.fetchText = opts.fetchText ?? ((url) => this.fetchWithTimeout(url));
     this.now = opts.now ?? (() => Date.now());
     this.setTimer = opts.setTimer ?? ((fn, ms) => setTimeout(fn, ms));
     this.clearTimer = opts.clearTimer ?? ((id) => clearTimeout(id as ReturnType<typeof setTimeout>));
@@ -249,6 +276,10 @@ export class AvplayMedia {
   close(): void {
     this.gen++;
     this.stopPolling();
+    // An old source's reads go too: left open they'd hold connections the
+    // next source needs (six per host).
+    for (const c of this.reads) c.abort();
+    this.reads.clear();
     const api = this.opts.api;
     if (api) {
       this.call(() => api.stop(), undefined);
@@ -268,26 +299,19 @@ export class AvplayMedia {
     this.networkState = 3;
   }
 
-  // ── AVPlay ─────────────────────────────────────────────────────────
+  // â”€â”€ AVPlay â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private open(url: string): void {
     const api = this.opts.api;
     this.close();
     this.srcUrl = url;
     this.error = null;
+    const gen = this.gen;
     if (!api) {
-      this.fail('AVPlay is not available');
+      this.failLater(gen, 'AVPlay is not available');
       return;
     }
-    const gen = this.gen;
     this.networkState = 2; // NETWORK_LOADING
-    // A new source starts at its beginning, as the element's does. AVPlay
-    // opens a growing (EVENT) session playlist at its live edge, three
-    // segments from the end, and a remux has written dozens by the time
-    // it's ready: the start of the film was skipped. The page asks for a
-    // seek only past 0, so the adapter holds one for 0 (replaced by any
-    // the page makes) and applies it on the first frame.
-    if (/\.m3u8(\?|$)/i.test(url)) this.pendingSeekSec = 0;
     this.dispatch('loadstart');
     try {
       api.open(url);
@@ -302,7 +326,7 @@ export class AvplayMedia {
         api.setStreamingProperty('SET_MODE_4K', 'TRUE');
       } catch { /* older firmware lacks it */ }
     } catch (e) {
-      this.fail(e);
+      this.failLater(gen, e);
       return;
     }
     // An HLS session's first playlist read is held by the server until the
@@ -315,6 +339,28 @@ export class AvplayMedia {
     // tries for itself and reports what it gets.
     if (/\.m3u8(\?|$)/i.test(url)) void this.readPlaylist(gen, url, () => this.prepare(gen));
     else this.prepare(gen);
+  }
+
+  /** A failure found while `src` is being set, reported as the element does:
+   *  after the setter returns. Dispatched inside it, the page (still opening
+   *  the stream) dropped it and stayed on "Starting playbackâ€¦". */
+  private failLater(gen: number, e: unknown): void {
+    this.setTimer(() => {
+      if (gen === this.gen) this.fail(e);
+    }, 0);
+  }
+
+  /** A playlist read with a deadline, aborted when the source closes. */
+  private fetchWithTimeout(url: string): Promise<string> {
+    const c = new AbortController();
+    this.reads.add(c);
+    const timer = this.setTimer(() => c.abort(), PLAYLIST_READ_TIMEOUT_MS);
+    return fetch(url, { signal: c.signal })
+      .then((r) => (r.ok ? r.text() : ''))
+      .finally(() => {
+        this.clearTimer(timer);
+        this.reads.delete(c);
+      });
   }
 
   private prepare(gen: number): void {
@@ -350,7 +396,11 @@ export class AvplayMedia {
         // The first tick may be the first frame (some firmware sends no
         // buffering events): a held seek goes now, and this tick (still the
         // old position) isn't reported.
-        if (!this.flowing) this.startFlowing();
+        if (!this.flowing) {
+          // With no buffering events, this tick is the only sign playback
+          // began: say so, or the page never arms its progress reporting.
+          if (!this.startFlowing() && !this.paused) this.dispatch('playing');
+        }
         if (this.seeking || this.pendingSeekSec !== null) return;
         this.timeSec = Math.max(0, ms) / 1000;
         const t = this.now();
@@ -388,18 +438,20 @@ export class AvplayMedia {
     };
   }
 
-  /** The first frame is in: a seek held for it goes now. */
-  private startFlowing(): void {
-    if (this.flowing) return;
+  /** The first frame is in: a seek held for it goes now. True when it did
+   *  (its 'seeked' brings 'playing'). */
+  private startFlowing(): boolean {
+    if (this.flowing) return false;
     this.flowing = true;
     const held = this.pendingSeekSec;
-    if (held === null) return;
+    if (held === null) return false;
     // Already at the start (a session that opened there): no seek.
     if (held === 0 && this.call(() => this.opts.api!.getCurrentTime(), Infinity) < START_SLACK_MS) {
       this.pendingSeekSec = null;
-      return;
+      return false;
     }
     this.seekNow(held);
+    return true;
   }
 
   private seekNow(sec: number): void {
@@ -424,28 +476,31 @@ export class AvplayMedia {
   }
 
   private fail(e: unknown): void {
-    const message = typeof e === 'string' ? e : e instanceof Error ? e.message : JSON.stringify(e);
+    const message = errorText(e);
     this.error = { code: errorCode(e), message };
     this.networkState = 3;
     this.stopPolling();
     this.dispatch('error');
   }
 
-  // ── The playlist (seekable, duration) ──────────────────────────────
+  // â”€â”€ The playlist (seekable, duration) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private async readPlaylist(gen: number, url: string, onFirstRead?: () => void): Promise<void> {
+    let text = '';
     try {
       let target = this.mediaPlaylistUrl || url;
-      let text = await this.fetchText(target);
+      text = await this.fetchText(target);
       if (gen !== this.gen) return;
-      if (!this.mediaPlaylistUrl) {
+      // Only a playlist that answered: an error page would pin the master
+      // URL as the media playlist, and no span or ENDLIST would ever show.
+      if (!this.mediaPlaylistUrl && text) {
         const variant = firstVariantUrl(text, url);
         if (variant) {
           target = variant;
           text = await this.fetchText(variant);
           if (gen !== this.gen) return;
         }
-        this.mediaPlaylistUrl = target;
+        if (text) this.mediaPlaylistUrl = target;
       }
       const span = mediaPlaylistSpan(text);
       if (span) {
@@ -457,7 +512,18 @@ export class AvplayMedia {
       // Unreadable this time: the next poll tries again.
     }
     if (gen !== this.gen) return;
-    onFirstRead?.();
+    if (onFirstRead) {
+      // A server session's playlist (EVENT, or VOD / ENDLIST) starts at its
+      // beginning, as the element would: AVPlay opens a growing playlist at
+      // its live edge, three segments from the end, and a remux has written
+      // dozens by then, so the start was skipped. The page asks for a seek
+      // only past 0, so one for 0 is held (unless the page asked for one)
+      // and applied on the first frame. Not for a live sliding window (Live
+      // TV): that one plays at its live edge, and its oldest segment is
+      // already being deleted.
+      if (startsAtBeginning(text) && this.pendingSeekSec === null && !this.flowing) this.pendingSeekSec = 0;
+      onFirstRead();
+    }
     if (this.span?.ended) return;
     this.pollTimer = this.setTimer(() => void this.readPlaylist(gen, url), PLAYLIST_POLL_MS);
   }
@@ -467,7 +533,7 @@ export class AvplayMedia {
     this.pollTimer = null;
   }
 
-  // ── Plumbing ───────────────────────────────────────────────────────
+  // â”€â”€ Plumbing â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
   private dispatch(type: string): void {
     const set = this.listeners.get(type);
@@ -491,7 +557,7 @@ export class AvplayMedia {
   }
 }
 
-// ── The picture plane ────────────────────────────────────────────────
+// â”€â”€ The picture plane â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 //
 // AVPlay draws behind the webview, where the page's own background would
 // hide it: while video plays, html, body and the app's root are transparent

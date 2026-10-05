@@ -32,12 +32,21 @@
   let submitting = $state<number | null>(null);
 
   let searchTimer: ReturnType<typeof setTimeout> | null = null;
+  // Bumped per search: only the newest answer lands. A slow 'The' coming
+  // back after 'The M' overwrote its results, and its finally cleared
+  // loading while 'The M' was still out.
+  let searchSeq = 0;
 
   onMount(() => {
-    return focusManager.pushBack(() => {
+    const pop = focusManager.pushBack(() => {
       goto('#/hub');
       return true;
     });
+    return () => {
+      pop();
+      if (searchTimer) clearTimeout(searchTimer);
+      searchSeq++;
+    };
   });
 
   function onQueryChange(v: string) {
@@ -45,6 +54,7 @@
     error = '';
     if (searchTimer) clearTimeout(searchTimer);
     if (v.trim().length < 2) {
+      searchSeq++; // an answer still out for a longer query is stale
       results = [];
       loading = false;
       return;
@@ -56,16 +66,19 @@
   }
 
   async function runSearch() {
+    const seq = ++searchSeq;
     loading = true;
     try {
       const fresh = await endpoints.discover.search(query.trim(), 18);
+      if (seq !== searchSeq) return;
       results = fresh;
     } catch (e) {
+      if (seq !== searchSeq) return;
       if (e instanceof Unauthorized) goto('#/login');
       else error = (e as Error).message ?? 'Search failed';
       results = [];
     } finally {
-      loading = false;
+      if (seq === searchSeq) loading = false;
     }
   }
 

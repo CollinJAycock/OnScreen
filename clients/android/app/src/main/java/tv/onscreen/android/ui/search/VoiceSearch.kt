@@ -34,7 +34,15 @@ internal object VoiceSearch {
         object NothingHeard : Outcome
         /** The viewer backed out. */
         object Cancelled : Outcome
+        /** The recognizer reported an error (network, server, audio, its
+         *  own client): said out loud, but the orb stays (it can recover). */
+        object Failed : Outcome
     }
+
+    /** RecognizerIntent's result codes past RESULT_FIRST_USER: NO_MATCH (1),
+     *  then CLIENT_ERROR, SERVER_ERROR, NETWORK_ERROR, AUDIO_ERROR (2-5). */
+    private const val RESULT_NO_MATCH = RecognizerIntent.RESULT_NO_MATCH
+    private const val RESULT_OK = -1 // Activity.RESULT_OK
 
     /** An empty "success" quicker than this: nobody had time to speak, so
      *  the recognizer never listened. */
@@ -45,12 +53,18 @@ internal object VoiceSearch {
      *  are the viewer changing their mind on a recognizer that works. */
     const val INSTANT_CANCEL_MS = 300L
 
-    fun outcome(ok: Boolean, matches: List<String>?, elapsedMs: Long): Outcome {
+    /** [resultCode] as onActivityResult got it. Only a plain cancel is ever
+     *  silent: a recognizer's own error codes (no match, network, server,
+     *  audio) used to read as a cancel, and the press looked dead. */
+    fun outcome(resultCode: Int, matches: List<String>?, elapsedMs: Long): Outcome {
+        val ok = resultCode == RESULT_OK
         val text = matches?.firstOrNull { it.isNotBlank() }?.trim()
         return when {
             ok && text != null -> Outcome.Query(text)
             ok && elapsedMs < INSTANT_RETURN_MS -> Outcome.Unavailable
             ok -> Outcome.NothingHeard
+            resultCode == RESULT_NO_MATCH -> Outcome.NothingHeard
+            resultCode > RESULT_NO_MATCH -> Outcome.Failed
             elapsedMs < INSTANT_CANCEL_MS -> Outcome.Unavailable
             else -> Outcome.Cancelled
         }

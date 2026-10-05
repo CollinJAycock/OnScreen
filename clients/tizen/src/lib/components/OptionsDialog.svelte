@@ -45,7 +45,7 @@
     <!-- A long list (a library's genres) scrolls inside the dialog: the
          focus manager's scrollIntoView keeps the focused row in view. -->
     <div class="dialog-actions" class:scroll={options.length > 8}>
-      {#each options as opt, i (opt.label)}
+      {#each options as opt, i (i)}
         <button
           use:focusable={{ autofocus: !focusCancel && i === startAt }}
           class="dialog-btn"

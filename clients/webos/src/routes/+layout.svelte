@@ -33,6 +33,7 @@
     issuedAt: () => api.getAssetTokenIssuedAt(),
     now: () => Date.now(),
     refresh: () => api.refreshTokensOutcome(),
+    online: () => navigator.onLine,
   };
   let booted = $state(false);
 

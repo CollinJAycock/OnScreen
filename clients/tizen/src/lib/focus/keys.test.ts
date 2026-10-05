@@ -39,7 +39,7 @@ describe('registerTizenKeys', () => {
   it('asks for the media, colour and channel keys in one batch', () => {
     const registerKeyBatch = vi.fn();
     registerTizenKeys({ registerKeyBatch });
-    expect(registerKeyBatch).toHaveBeenCalledWith([...TIZEN_KEYS]);
+    expect(registerKeyBatch).toHaveBeenCalledWith([...TIZEN_KEYS], undefined, expect.any(Function));
     expect(TIZEN_KEYS).toContain('ChannelUp');
     expect(TIZEN_KEYS).toContain('ChannelDown');
   });
@@ -50,6 +50,26 @@ describe('registerTizenKeys', () => {
     });
     registerTizenKeys({ registerKeyBatch: () => { throw new Error('batch'); }, registerKey });
     expect(registerKey).toHaveBeenCalledTimes(TIZEN_KEYS.length);
+  });
+
+  // Samsung's API reports a name it refuses through the batch's error
+  // callback, not by throwing: the fallback has to run from there too.
+  it('registers one by one when the batch fails through its error callback', () => {
+    const registerKey = vi.fn();
+    registerTizenKeys({
+      registerKeyBatch: (_keys, _ok, onError) => onError?.(new Error('InvalidValuesError')),
+      registerKey,
+    });
+    expect(registerKey).toHaveBeenCalledTimes(TIZEN_KEYS.length);
+  });
+
+  it('asks only for the keys this remote has', () => {
+    const registerKeyBatch = vi.fn();
+    registerTizenKeys({
+      registerKeyBatch,
+      getSupportedKeys: () => [{ name: 'MediaPlayPause' }, { name: 'ChannelUp' }, { name: 'ArrowUp' }],
+    });
+    expect(registerKeyBatch).toHaveBeenCalledWith(['MediaPlayPause', 'ChannelUp'], undefined, expect.any(Function));
   });
 
   it('does nothing outside a Tizen webview', () => {

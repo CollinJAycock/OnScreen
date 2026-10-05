@@ -120,12 +120,13 @@ class SearchViewModel @Inject constructor(
     private var answeredQuery: String? = null
     private var answeredLibraryId: String? = null
 
-    fun search(query: String) {
+    /** [force]: an explicit Submit, searched even when it's the query on screen. */
+    fun search(query: String, force: Boolean = false) {
         // Coming back from a detail screen, Leanback replays the query
         // already on screen. Searching again replaced the result rows after
         // the fragment had put focus back on the opened card, so focus went
         // to the first card or to nothing visible.
-        if (query == answeredQuery && _scope.value?.id == answeredLibraryId &&
+        if (!force && query == answeredQuery && _scope.value?.id == answeredLibraryId &&
             _searchError.value == null && searchJob?.isActive != true) {
             lastQuery = query
             return

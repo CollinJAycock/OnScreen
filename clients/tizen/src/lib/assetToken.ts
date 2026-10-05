@@ -30,6 +30,8 @@ export interface AssetTokenDeps {
   now(): number;
   /** api.refreshTokensOutcome: the app's one refresh in flight. */
   refresh(): Promise<RefreshOutcome>;
+  /** navigator.onLine (absent: assumed online). */
+  online?(): boolean;
 }
 
 /** Whether the stored asset token should be renewed before it is used. */
@@ -42,12 +44,29 @@ export function assetTokenStale(d: Pick<AssetTokenDeps, 'accessToken' | 'assetTo
 /** Renew a stale asset token. Resolves once renewed, or after `waitMs`
  *  whatever the refresh is still doing (it lands in storage when it does);
  *  never rejects. True when a renewal was started. */
+// The asset token the last renewal was started for (this run). A refresh
+// whose answer was lost may still have rotated the token on the server; a
+// second try with the retired refresh token reads there as reuse and signs
+// every device out. So one try per stored token here, as the event stream's
+// redial does (lib/events shouldRefreshBeforeRedial): a token that didn't
+// change is left to the API's own 401 renewal.
+let attemptedFor: string | null = null;
+
+/** Test hook: forget the last attempt. */
+export function resetAssetTokenAttempts(): void {
+  attemptedFor = null;
+}
+
 export async function ensureFreshAssetToken(
   d: AssetTokenDeps,
   waitMs = ASSET_TOKEN_BOOT_WAIT_MS,
   timer: (fn: () => void, ms: number) => unknown = (fn, ms) => setTimeout(fn, ms),
 ): Promise<boolean> {
   if (!assetTokenStale(d)) return false;
+  if (d.online && !d.online()) return false;
+  const token = d.assetToken();
+  if (token !== null && token === attemptedFor) return false;
+  attemptedFor = token;
   const refresh = d.refresh().catch(() => 'failed' as RefreshOutcome);
   await Promise.race([refresh, new Promise<void>((resolve) => timer(resolve, waitMs))]);
   return true;

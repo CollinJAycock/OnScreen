@@ -435,8 +435,10 @@ Roku channel (no request features, as on Android):
 
 - **Tizen app 1.1.0: parity with the Android TV app**, by moving the Samsung
   app onto the webOS app's code (which reached parity in 0.2.0) with
-  Samsung's own platform layer. Not yet run on a Samsung panel: covered by
-  the shared tests (686) and an AVPlay simulation in Chromium.
+  Samsung's own platform layer. Run on a 2022 Q80B (Tizen 6.5) on 2026-10-05:
+  art, H.264 remuxes and transcodes, music and audiobooks play; HEVC needs
+  the server's `segment_container: "ts"` (see Fixed), because AVPlay refuses
+  the server's fMP4 HLS.
   - Everything webOS 0.2.0 and 0.2.1 list, on Samsung TVs: server sessions
     on the content timeline with re-issues past the produced window,
     subtitles drawn by the app, the Audio / Subtitles / Chapters row, Up
@@ -646,7 +648,7 @@ Roku channel (no request features, as on Android):
   query that was there before, with its results. Verified on a Fire TV Stick
   4K Max (Fire OS 8.1.8.2), which has no recognizer: on 1.4.1 the orb did
   nothing, and on 1.4.2 there is no orb and Search opens on the keyboard.
-  Testing there also turned up three older Search bugs, now fixed:
+  Testing there also turned up older Search bugs, now fixed:
   - **The keyboard closed while typing.** The "Search in" row waited for the
     libraries and was then inserted at the top on the first results. That
     moved Leanback's selected row off row 0, so it hid the search bar, the
@@ -666,6 +668,12 @@ Roku channel (no request features, as on Android):
     focus returns to the card that was opened.
   - **The MENU key didn't open the "Search in" picker.** Its listener sat on
     the screen's root view, which never has focus.
+  - From review: a voice recognizer's own error results (no match, network,
+    server, audio) read as a silent cancel, and now say so; an explicit
+    Submit searches again even for the query on screen; a focus listener
+    that leaked with every Search open is removed for real; and the focus
+    restore after a detail screen waits for the results row to come back,
+    since the always-present scope and filter rows let it fire too early.
 
   Both flavors move to versionCode 25 / 1.4.2.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
@@ -815,8 +823,23 @@ Roku channel (no request features, as on Android):
   answers (the server holds it until segment 0 exists, ~30 s for a 4K remux
   on QA, and AVPlay gives up at ~30 s); a remux starts at its beginning
   rather than AVPlay's live edge of the growing playlist (it began ~20 s
-  in); and a poster the server can't supply shows the no-poster tile
-  instead of an empty one (webOS too).
+  in); and a poster that fails to load shows the no-poster tile instead of
+  an empty one, with one retry 15 s later (webOS too). From review, also on
+  Tizen: the seek to the start is held only for a session's EVENT / VOD
+  playlist, never Live TV's sliding window (it had landed on segments being
+  deleted); an AVPlay failure while a source is being set is reported after
+  the setter returns, as the element does (it was dropped, leaving "Starting
+  playback…" up); the playlist read has a 75 s deadline and is aborted with
+  its source; only an explicit "not supported" demotes HEVC, and always HEVC
+  (a transient GENEREIC had demoted it for good, and an AV1 source demoted
+  "av1", which this TV never claims); "playing" fires on the first tick for
+  firmware without buffering events; media, colour and channel keys are
+  registered from the remote's supported list and fall back one by one on
+  the batch's error callback; chapters and subtitle cues sort stably on
+  Chromium 69. Both TV apps: the asset-token renewal on wake makes one try
+  per stored token and none offline (a retry with a rotated refresh token
+  reads as reuse and signs every device out); Discover keeps only its newest
+  search; an options list with two same-named entries no longer throws.
 - **Movies auto-matched the wrong film although the folder named the title
   and year.** The scanner took TMDB's top search hit, and its year filter
   counts a release in any country, so a popular near-miss won: "Spring

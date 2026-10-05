@@ -103,30 +103,46 @@ export const TIZEN_KEYS = [
 ] as const;
 
 interface TvInputDevice {
-  registerKeyBatch?(keys: string[]): void;
+  registerKeyBatch?(keys: string[], onSuccess?: () => void, onError?: (e: unknown) => void): void;
   registerKey?(key: string): void;
+  getSupportedKeys?(): { name: string }[];
 }
 
-/** Register TIZEN_KEYS with the TV (once, at boot). A key this model's
- *  remote lacks fails alone: the batch call throws on the first unknown
- *  name on some firmware, so each is registered by itself when it does.
+/** Register TIZEN_KEYS with the TV (once, at boot): only the ones this
+ *  model's remote has (getSupportedKeys), in one batch. The batch fails as a
+ *  whole on a name the TV refuses: by throwing on some firmware, and through
+ *  its error callback on others (Samsung's API reports an unsupported name
+ *  asynchronously). Either way each is then registered by itself, so one
+ *  missing key can't take the media, colour and channel keys with it.
  *  No-op outside a Tizen webview (vite dev). */
 export function registerTizenKeys(
   device: TvInputDevice | undefined = (globalThis as { tizen?: { tvinputdevice?: TvInputDevice } }).tizen
     ?.tvinputdevice,
 ): void {
   if (!device) return;
+  let keys: string[] = [...TIZEN_KEYS];
   try {
-    device.registerKeyBatch?.([...TIZEN_KEYS]);
-    if (device.registerKeyBatch) return;
+    const supported = device.getSupportedKeys?.()?.map((k) => k.name);
+    if (supported?.length) keys = keys.filter((k) => supported.includes(k));
   } catch {
-    // One by one below.
+    // Unknown: try them all.
   }
-  for (const k of TIZEN_KEYS) {
+  const oneByOne = () => {
+    for (const k of keys) {
+      try {
+        device.registerKey?.(k);
+      } catch {
+        // Not on this remote.
+      }
+    }
+  };
+  if (device.registerKeyBatch) {
     try {
-      device.registerKey?.(k);
+      device.registerKeyBatch(keys, undefined, oneByOne);
+      return;
     } catch {
-      // Not on this remote.
+      // One by one below.
     }
   }
+  oneByOne();
 }

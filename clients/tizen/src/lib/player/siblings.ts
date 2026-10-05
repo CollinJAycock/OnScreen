@@ -4,6 +4,7 @@
 // next season or album). Pure so the ordering rules are checkable without
 // mounting the player.
 
+import { stableSort } from '$lib/stableSort';
 import type { ChildItem } from '../api/types';
 
 /** Play order within a container: disc, then index. No disc_number means
@@ -93,9 +94,9 @@ export function chaptersInOrder(children: ChildItem[]): ChildItem[] {
     seen.add(k.id);
     return true;
   });
-  // Array.prototype.sort is stable (ES2019, Chromium 70+): unnumbered
+  // Stably (lib/stableSort: Tizen 5.5 runs Chromium 69): unnumbered
   // chapters keep the server's order behind the numbered ones.
-  return chapters.sort(
+  return stableSort(chapters,
     (a, b) =>
       (a.disc_number ?? 1) - (b.disc_number ?? 1) ||
       (a.index ?? Number.MAX_SAFE_INTEGER) - (b.index ?? Number.MAX_SAFE_INTEGER)
@@ -150,9 +151,8 @@ export async function resolveNext(
     if (!grandparentId) return null;
     const containerType = item.type === 'track' ? 'album' : 'season';
     const big = Number.MAX_SAFE_INTEGER;
-    const containers = (await fetchChildren(grandparentId))
-      .filter((k) => k.type === containerType)
-      .sort(
+    const containers = stableSort(
+      (await fetchChildren(grandparentId)).filter((k) => k.type === containerType),
         item.type === 'track'
           ? (a, b) => (a.year ?? big) - (b.year ?? big) || (a.index ?? big) - (b.index ?? big)
           : (a, b) => (a.index ?? big) - (b.index ?? big)

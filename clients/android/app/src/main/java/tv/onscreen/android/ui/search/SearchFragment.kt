@@ -64,6 +64,10 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
      *  the first one in its row. */
     private var pendingFocusItemId: String? = null
 
+    /** How long (uptime) a restore waits for the opened card's row to come
+     *  back; set when the view is rebuilt on the way back. */
+    private var pendingFocusUntil = 0L
+
     /** Persistent top-row adapters, mutated in place across rebuilds so
      *  chip focus survives a filter toggle. Null until first build; reset
      *  in onDestroyView with the rows they live in. */
@@ -189,7 +193,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         if (requestCode == REQUEST_SPEECH) {
             val outcome = VoiceSearch.outcome(
-                ok = resultCode == Activity.RESULT_OK,
+                resultCode = resultCode,
                 matches = data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS),
                 elapsedMs = SystemClock.elapsedRealtime() - speechStartedAt,
             )
@@ -205,6 +209,12 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                     endRecognitionUi()
                     context?.let {
                         Toast.makeText(it, R.string.voice_search_nothing_heard, Toast.LENGTH_LONG).show()
+                    }
+                }
+                VoiceSearch.Outcome.Failed -> {
+                    endRecognitionUi()
+                    context?.let {
+                        Toast.makeText(it, R.string.voice_search_failed, Toast.LENGTH_LONG).show()
                     }
                 }
                 VoiceSearch.Outcome.Cancelled -> endRecognitionUi()
@@ -251,7 +261,12 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         // remote's own voice button (Alexa on Fire TV) is the system's
         // either way.
         if (!voiceEnabled) hideOrb()
-        view.viewTreeObserver.addOnGlobalFocusChangeListener(editorFocusWatcher)
+        if (pendingFocusRow >= 0) pendingFocusUntil = SystemClock.uptimeMillis() + RESTORE_WAIT_MS
+        // On the window's observer, which outlives this view: one added to the
+        // view's own is merged into the window's on attach, and by
+        // onDestroyView the view is detached, so removing it there missed and
+        // every Search open leaked a listener (and this fragment with it).
+        requireActivity().window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(editorFocusWatcher)
         viewModel = ViewModelProvider(this)[SearchViewModel::class.java]
         rowsAdapter = ArrayObjectAdapter(ListRowPresenter(FocusHighlight.ZOOM_FACTOR_NONE).apply {
             shadowEnabled = false
@@ -320,7 +335,9 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     }
 
     override fun onDestroyView() {
-        view?.viewTreeObserver?.let { if (it.isAlive) it.removeOnGlobalFocusChangeListener(editorFocusWatcher) }
+        activity?.window?.decorView?.viewTreeObserver?.let {
+            if (it.isAlive) it.removeOnGlobalFocusChangeListener(editorFocusWatcher)
+        }
         super.onDestroyView()
     }
 
@@ -347,14 +364,22 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     private fun restoreFocusIfPending() {
         if (pendingFocusRow < 0 || rowsAdapter.size() == 0) return
         val target = pendingFocusRow.coerceAtMost(rowsAdapter.size() - 1)
-        pendingFocusRow = -1
         val itemId = pendingFocusItemId
-        pendingFocusItemId = null
-        val rowsFrag = rowsSupportFragment ?: return
-        // The opened card's place in the rebuilt row, if it is still there.
+        // The opened card's place in the rebuilt row, if it is there.
         val itemIndex = ((rowsAdapter.get(target) as? ListRow)?.adapter as? ArrayObjectAdapter)
             ?.let { a -> (0 until a.size()).firstOrNull { (a.get(it) as? SearchResult)?.id == itemId } }
             ?: -1
+        // The scope and filter rows are always there, so a rebuild can come
+        // before the results do (the query replayed on the way back can
+        // clear them for a moment). Restoring then spent the target on a
+        // row without the card, the results landed after, and focus fell to
+        // the first card or to nothing. Wait for a rebuild that holds the
+        // card, for a while: past that it has gone (the library changed),
+        // and the row alone is restored.
+        if (itemId != null && itemIndex < 0 && SystemClock.uptimeMillis() < pendingFocusUntil) return
+        pendingFocusRow = -1
+        pendingFocusItemId = null
+        val rowsFrag = rowsSupportFragment ?: return
         // The selection is a pending op Leanback honors at layout, but
         // requestFocus() needs an ALREADY-laid-out focusable child — called
         // synchronously here the rows exist only as adapter items, so the
@@ -380,7 +405,8 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
 
     override fun onQueryTextSubmit(query: String): Boolean {
         lastQuery = query
-        viewModel.search(query)
+        // Asked for: searched again even when it's the query on screen.
+        viewModel.search(query, force = true)
         return true
     }
 
@@ -485,6 +511,7 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
 
     companion object {
         private const val REQUEST_SPEECH = 1001
+        private const val RESTORE_WAIT_MS = 5_000L
         private const val SCOPE_HEADER_ID = 5L
         private const val SEARCH_ERROR_HEADER_ID = 6L
         private const val FILTER_HEADER_ID = 0L
