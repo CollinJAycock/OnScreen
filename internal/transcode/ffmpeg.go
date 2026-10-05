@@ -82,6 +82,9 @@ type BuildArgs struct {
 	// encoder was actually selected — see Job.ForceFMP4. Set when the
 	// client is already holding a playlist that promised .m4s.
 	ForceFMP4 bool
+	// TSSegments: HEVC output as MPEG-TS at the client's request — see
+	// VideoOutput.TSSegments.
+	TSSegments bool
 	// OutputTSOffsetSec shifts output media timestamps so they start at this
 	// content time instead of zero. `-ss` rebases the timeline, which is right
 	// for a solo mid-stream start (the client maps via StartOffsetSec) but
@@ -797,7 +800,7 @@ func BuildHLS(a BuildArgs) []string {
 	// what container"; see videooutput.go for why this must not be re-derived
 	// per call site. ForceFMP4 is folded in there too, so the worker — which
 	// hunts for these same files by extension — cannot disagree with us.
-	vout := ResolveVideoOutput(a.Encoder, a.IsHEVC, a.IsAV1, a.ForceFMP4)
+	vout := ResolveVideoOutput(a.Encoder, a.IsHEVC, a.IsAV1, a.ForceFMP4, a.TSSegments)
 	if a.AudioOnly {
 		// No video stream: AAC-in-MPEG-TS, no codec tag, no init segment.
 		vout = VideoOutput{}

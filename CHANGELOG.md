@@ -800,6 +800,23 @@ Roku channel (no request features, as on Android):
 
 ### Fixed
 
+- **HEVC titles didn't play on Samsung TVs unless they direct-played.**
+  Samsung's AVPlay (tested on a 2022 Q80B, Tizen 6.5) refuses the fMP4 HLS
+  ffmpeg writes (`PLAYER_ERROR_NOT_SUPPORTED_FILE`): the same HEVC + 5.1 AAC
+  plays as one MP4 file, in MPEG-TS HLS, and in fMP4 HLS only with no `styp`
+  box and a single track. The server packages HEVC as fMP4 because browsers
+  need it, so every HEVC remux and HEVC re-encode failed on the TV, and the
+  app's fallback transcode asked for HEVC again. A transcode start now takes
+  `segment_container: "ts"`, which packages HEVC output as MPEG-TS (`.ts`, no
+  `#EXT-X-MAP`, no `hvc1` tag) and keeps an Auto (ABR) start on the H.264
+  ladder; AV1 stays fMP4, and without the field nothing changes. The Tizen
+  app sends it on every start (servers before it ignore it). Also on Tizen
+  1.1.0: AVPlay is prepared only once the session's first playlist read
+  answers (the server holds it until segment 0 exists, ~30 s for a 4K remux
+  on QA, and AVPlay gives up at ~30 s); a remux starts at its beginning
+  rather than AVPlay's live edge of the growing playlist (it began ~20 s
+  in); and a poster the server can't supply shows the no-poster tile
+  instead of an empty one (webOS too).
 - **Movies auto-matched the wrong film although the folder named the title
   and year.** The scanner took TMDB's top search hit, and its year filter
   counts a release in any country, so a popular near-miss won: "Spring

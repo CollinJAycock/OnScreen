@@ -31,6 +31,14 @@ type VideoOutput struct {
 	// It affects the CONTAINER only, never TagV: H.264 in fMP4 takes the
 	// default avc1 and must not be tagged hvc1/av01.
 	ForcedFMP4 bool
+	// TSSegments packages HEVC output as MPEG-TS instead of fMP4, at the
+	// client's request (TranscodeJob.TSSegments). Samsung's AVPlay plays
+	// HEVC-in-TS HLS but refuses the fMP4 HLS ffmpeg writes (a styp box ahead
+	// of each fragment, and audio and video muxed into one track run). Browsers
+	// are the opposite (MSE can't take HEVC in TS), so only a client that asks
+	// gets it. It never applies to AV1 (MPEG-TS has no AV1 stream type) or
+	// under ForcedFMP4 (a playlist already promised .m4s).
+	TSSegments bool
 }
 
 // EncoderCopy is the encoder string that means "remux, don't re-encode".
@@ -49,14 +57,16 @@ func IsVideoCopy(encoder Encoder) bool { return encoder == EncoderCopy }
 // Only when we are really encoding does the encoder determine the output.
 // forceFMP4 is honoured only on a re-encode: a remux's container is already
 // dictated by the source codec it is passing through untouched.
-func ResolveVideoOutput(encoder Encoder, sourceHEVC, sourceAV1, forceFMP4 bool) VideoOutput {
+// tsSegments carries the client's request for MPEG-TS (see VideoOutput.TSSegments).
+func ResolveVideoOutput(encoder Encoder, sourceHEVC, sourceAV1, forceFMP4, tsSegments bool) VideoOutput {
 	if IsVideoCopy(encoder) {
-		return VideoOutput{HEVC: sourceHEVC, AV1: sourceAV1}
+		return VideoOutput{HEVC: sourceHEVC, AV1: sourceAV1, TSSegments: tsSegments}
 	}
 	return VideoOutput{
 		HEVC:       IsHEVCEncoder(encoder),
 		AV1:        IsAV1Encoder(encoder),
 		ForcedFMP4: forceFMP4,
+		TSSegments: tsSegments,
 	}
 }
 
@@ -66,7 +76,10 @@ func ResolveVideoOutput(encoder Encoder, sourceHEVC, sourceAV1, forceFMP4 bool) 
 // Both HEVC and AV1 require it, for different reasons that arrive at the same
 // place: MPEG-TS has no AV1 stream type at all, and while it does carry HEVC,
 // HLS.js cannot transmux HEVC and no browser decodes HEVC-in-TS via MSE.
-func (v VideoOutput) NeedsFMP4() bool { return v.HEVC || v.AV1 || v.ForcedFMP4 }
+// HEVC goes to MPEG-TS only for a client that asked (TSSegments).
+func (v VideoOutput) NeedsFMP4() bool {
+	return v.AV1 || v.ForcedFMP4 || (v.HEVC && !v.TSSegments)
+}
 
 // SegExt is the segment file extension implied by the container.
 func (v VideoOutput) SegExt() string {
@@ -86,9 +99,12 @@ func (v VideoOutput) SegType() string {
 
 // TagV is the `-tag:v` fourCC the container needs, or "" when none applies.
 // MSE requires the modern tag rather than the codec's native one to recognise
-// the track — Safari will not play an untagged HEVC fMP4.
+// the track — Safari will not play an untagged HEVC fMP4. MPEG-TS takes no
+// tag: HEVC there is identified by its stream type.
 func (v VideoOutput) TagV() string {
 	switch {
+	case v.HEVC && !v.NeedsFMP4():
+		return ""
 	case v.HEVC:
 		return "hvc1"
 	case v.AV1:

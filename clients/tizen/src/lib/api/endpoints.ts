@@ -240,7 +240,12 @@ export const transcode = {
       video_copy: opts.videoCopy ?? false,
       audio_stream_index: opts.audioStreamIndex ?? null,
       supports_hevc: opts.supportsHEVC ?? false,
-      supports_av1: opts.supportsAV1 ?? false
+      supports_av1: opts.supportsAV1 ?? false,
+      // MPEG-TS segments, always: AVPlay refuses the fMP4 HLS the server
+      // otherwise writes for HEVC (a styp box ahead of each fragment, audio
+      // and video in one track run: PLAYER_ERROR_NOT_SUPPORTED_FILE on the
+      // Q80B), and plays HEVC in TS. Servers before the field ignore it.
+      segment_container: 'ts'
     }),
   // Server-authoritative play decision (capability profiles). Returns
   // "directPlay" | "directStream" | "transcode". The capability profile rides

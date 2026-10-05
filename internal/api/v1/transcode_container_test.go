@@ -129,3 +129,36 @@ func TestStart_TranscodeSessionUsesClientPreference(t *testing.T) {
 		t.Errorf("HEVC re-encode advertises %q, want \".m4s\"", got)
 	}
 }
+
+// TestStart_SegmentContainerTS: a client that asks for MPEG-TS segments
+// (Samsung AVPlay refuses ffmpeg's fMP4 HLS but plays HEVC in TS) gets HEVC
+// remuxes and HEVC re-encodes as .ts, and the job the worker builds from
+// carries the same answer. Without the request the session is unchanged; AV1
+// stays fMP4 (MPEG-TS has no AV1 stream type).
+func TestStart_SegmentContainerTS(t *testing.T) {
+	hevcYes := true
+	for _, tc := range []struct {
+		name    string
+		codec   string
+		body    transcodeStartRequest
+		wantExt string
+	}{
+		{"hevc remux, ts", "hevc", transcodeStartRequest{VideoCopy: true, SegmentContainer: "ts"}, ".ts"},
+		{"hevc re-encode, ts", "hevc", transcodeStartRequest{Height: 720, SupportsHEVC: &hevcYes, SegmentContainer: "ts"}, ".ts"},
+		{"hevc remux, no request", "hevc", transcodeStartRequest{VideoCopy: true}, ".m4s"},
+		{"av1 remux, ts", "av1", transcodeStartRequest{VideoCopy: true, SegmentContainer: "ts"}, ".m4s"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, store := newTestHandlerWithCodec(t, tc.codec)
+			sess := startSession(t, h, store, tc.body)
+			if got := sess.VideoOutput().SegExt(); got != tc.wantExt {
+				t.Errorf("session advertises %q segments, want %q", got, tc.wantExt)
+			}
+			job := drainJob(t, store)
+			vout := transcode.ResolveVideoOutput(transcode.Encoder(job.Encoder), job.IsHEVC, job.IsAV1, job.ForceFMP4, job.TSSegments)
+			if got := vout.SegExt(); got != tc.wantExt {
+				t.Errorf("the worker would write %q segments, the session promised %q", got, tc.wantExt)
+			}
+		})
+	}
+}
