@@ -5675,6 +5675,16 @@ components:
             (Samsung AVPlay). Browsers must not send it (MSE can't take HEVC
             in TS). AV1 output stays fMP4 (MPEG-TS has no AV1 stream type);
             an Auto (ABR) start keeps the H.264 ladder. Absent = unchanged.
+        audio_rate:
+          type: number
+          minimum: 0.5
+          maximum: 3
+          description: |
+            v2.5. Speeds an audio-only source up (or down) on the server,
+            pitch kept (ffmpeg atempo): for players that ignore playbackRate
+            (Samsung's webview), e.g. an audiobook at 1.5x. Clamped to 0.5-3;
+            ignored for a video source. The stream's clock then runs at
+            content / rate; the response's audio_rate says what was applied.
     TranscodeStartResponse:
       type: object
       description: |

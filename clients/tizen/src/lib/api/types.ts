@@ -319,6 +319,9 @@ export interface ManagedProfile {
 }
 
 export interface TranscodeSession {
+  /** The speed the server applied to an audio-only session (request
+   *  audio_rate; absent = none, including a server without it). */
+  audio_rate?: number;
   session_id: string;
   playlist_url: string;
   token: string;

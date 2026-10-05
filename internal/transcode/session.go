@@ -1018,9 +1018,12 @@ type TranscodeJob struct {
 	ForceFMP4 bool `json:"force_fmp4,omitempty"`
 	// TSSegments: package HEVC output as MPEG-TS, at the client's request (see
 	// VideoOutput.TSSegments). Mirrors Session.TSSegments.
-	TSSegments      bool  `json:"ts_segments,omitempty"`
-	PreferAV1       bool  `json:"prefer_av1"` // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
-	SubtitleStreams []int `json:"subtitle_streams,omitempty"`
+	TSSegments bool `json:"ts_segments,omitempty"`
+	// AudioRate: an audio-only session sped up on the server (see
+	// BuildArgs.AudioRate). 0 = normal.
+	AudioRate       float64 `json:"audio_rate,omitempty"`
+	PreferAV1       bool    `json:"prefer_av1"` // request AV1 output (AV1 source + client supports AV1 + we have an AV1 encoder); takes priority over PreferHEVC since the natural use case is AV1 source playback
+	SubtitleStreams []int   `json:"subtitle_streams,omitempty"`
 	// Incarnation is the restart counter of the session this job belongs to
 	// (see Session.Incarnation). The worker writes into the directory for THIS
 	// incarnation and kills itself when the stored session moves past it, so a

@@ -229,6 +229,9 @@ export interface TranscodeStartOpts {
    *  capability header; an explicit one says the same thing (including a
    *  runtime demotion's false) without depending on the header. */
   supportsAV1?: boolean;
+  /** Speed an audio-only source up on the server (a book on a TV that
+   *  ignores playbackRate, see lib/player/tempoMedia). */
+  audioRate?: number;
 }
 
 export const transcode = {
@@ -245,7 +248,8 @@ export const transcode = {
       // otherwise writes for HEVC (a styp box ahead of each fragment, audio
       // and video in one track run: PLAYER_ERROR_NOT_SUPPORTED_FILE on the
       // Q80B), and plays HEVC in TS. Servers before the field ignore it.
-      segment_container: 'ts'
+      segment_container: 'ts',
+      ...(opts.audioRate ? { audio_rate: opts.audioRate } : {})
     }),
   // Server-authoritative play decision (capability profiles). Returns
   // "directPlay" | "directStream" | "transcode". The capability profile rides

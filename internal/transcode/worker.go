@@ -664,6 +664,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				HasZscale:            w.hasZscale,
 				ForceFMP4:            job.ForceFMP4,
 				TSSegments:           job.TSSegments,
+				AudioRate:            job.AudioRate,
 				HasLibfdkAAC:         w.hasLibfdkAAC,
 				HasLibplacebo:        w.hasLibplacebo,
 				AudioCodec:           job.AudioCodec,

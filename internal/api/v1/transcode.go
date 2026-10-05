@@ -294,6 +294,11 @@ type transcodeStartRequest struct {
 	// the fMP4 HLS ffmpeg writes. Absent (or anything else) keeps today's
 	// behaviour. AV1 output is fMP4 regardless (MPEG-TS has no AV1 type).
 	SegmentContainer string `json:"segment_container,omitempty"`
+	// AudioRate speeds an audio-only source up (or down) on the server,
+	// pitch kept, for players that ignore playbackRate (Samsung's webview):
+	// an audiobook at 1.5x. Clamped to 0.5-3; ignored for a video source.
+	// The stream's clock then runs at content / rate (the client scales it).
+	AudioRate *float64 `json:"audio_rate,omitempty"`
 }
 
 // clientCaps resolves the effective client playback capabilities for a transcode
@@ -351,6 +356,10 @@ type transcodeStartResponse struct {
 	// gap was measurable (seg 0 still being written, probe failed,
 	// or gap below the resolution threshold).
 	Seg0AudioGapSec float64 `json:"seg0_audio_gap_sec"`
+	// AudioRate is the speed the server applied to an audio-only session
+	// (request audio_rate), 0 when none: a client that asked for one and
+	// gets 0 back is on a server without it, and plays at 1x.
+	AudioRate float64 `json:"audio_rate,omitempty"`
 }
 
 // Start handles POST /api/v1/items/{id}/transcode.
@@ -808,6 +817,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	sourceAudioOnly := file.VideoCodec == nil && file.AudioCodec != nil
 	sourceNoAudio := file.AudioCodec == nil && file.VideoCodec != nil
 
+	// Server-side speed for an audio-only source (see AudioRate). Only there:
+	// sped audio under a copied or encoded picture would drift off it.
+	audioRate := 0.0
+	if body.AudioRate != nil && sourceAudioOnly {
+		audioRate = math.Max(0.5, math.Min(3, *body.AudioRate))
+		if math.Abs(audioRate-1) < 0.005 {
+			audioRate = 0
+		}
+	}
+
 	// Bit-depth ceiling: when the client declared a sub-10-bit decoder, the
 	// OUTPUT must be 8-bit. Decide already forces the transcode verdict for
 	// deep sources on these clients — but the job then picked an HEVC encoder
@@ -1053,6 +1072,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		PreferHEVC:       preferHEVC,
 		PreferAV1:        preferAV1,
 		TSSegments:       tsSegments,
+		AudioRate:        audioRate,
 		EnqueuedAt:       time.Now(),
 	}
 	h.logger.InfoContext(ctx, "transcode job created",
@@ -1147,6 +1167,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		Token:           segTok,
 		StartOffsetSec:  startOffsetSec,
 		Seg0AudioGapSec: seg0AudioGap,
+		AudioRate:       audioRate,
 	})
 }
 

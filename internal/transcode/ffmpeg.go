@@ -85,6 +85,11 @@ type BuildArgs struct {
 	// TSSegments: HEVC output as MPEG-TS at the client's request — see
 	// VideoOutput.TSSegments.
 	TSSegments bool
+	// AudioRate speeds an audio-only session up (or down) on the server
+	// (atempo, pitch kept): for players that ignore playbackRate (Samsung's
+	// webview). 0 or 1 = normal. The stream's own clock then runs at
+	// content / AudioRate; the client scales it back.
+	AudioRate float64
 	// OutputTSOffsetSec shifts output media timestamps so they start at this
 	// content time instead of zero. `-ss` rebases the timeline, which is right
 	// for a solo mid-stream start (the client maps via StartOffsetSec) but
@@ -773,8 +778,15 @@ func BuildHLS(a BuildArgs) []string {
 		// keyframe-aligned -ss is already tight (sub-100 ms), so we
 		// don't need the filter for resume seeks. Do not pass
 		// first_pts=0 here either: it aborts the HLS muxer.
+		var afilters []string
 		if a.StartOffset <= 0 {
-			args = append(args, "-af", "aresample=async=1")
+			afilters = append(afilters, "aresample=async=1")
+		}
+		if a.AudioOnly && a.AudioRate > 0 && a.AudioRate != 1 {
+			afilters = append(afilters, AtempoFilter(a.AudioRate))
+		}
+		if len(afilters) > 0 {
+			args = append(args, "-af", strings.Join(afilters, ","))
 		}
 	}
 
@@ -1254,4 +1266,17 @@ func IsAV1Encoder(enc Encoder) bool {
 	default:
 		return false
 	}
+}
+
+// AtempoFilter is the ffmpeg filter that plays audio at `rate` with its pitch
+// kept, for an audio-only session the client asked to be sped up. atempo takes
+// 0.5-100 per instance on current ffmpeg; anything under 0.5 is chained.
+func AtempoFilter(rate float64) string {
+	var parts []string
+	for rate < 0.5 {
+		parts = append(parts, "atempo=0.5")
+		rate /= 0.5
+	}
+	parts = append(parts, fmt.Sprintf("atempo=%.4g", rate))
+	return strings.Join(parts, ",")
 }

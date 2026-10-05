@@ -866,7 +866,15 @@ Roku channel (no request features, as on Android):
   the player withdrew its speed control a few seconds into every book, after
   offering it. The TV now remembers this, so later chapters and books open
   with the note "This TV can only play this book at normal speed" and no
-  control. (Real speed there needs the server to change the tempo.)
+  control. Then real speed: a transcode start takes `audio_rate` (0.5-3) for an
+  audio-only source and the server speeds the stream up itself (ffmpeg
+  `atempo`, pitch kept), echoing the rate it applied. On a TV that ignores
+  playbackRate, the Tizen app plays a book at another speed from such a
+  session, read back in book time by a wrapper over its media element
+  (currentTime, duration, seekable and buffered times the rate, seeks
+  divided by it), so position, progress, seeking and chapters stay in book
+  time. 1x goes back to the file itself. On a server without `audio_rate`
+  the control is withdrawn as before.
 - **Movies auto-matched the wrong film although the folder named the title
   and year.** The scanner took TMDB's top search hit, and its year filter
   counts a release in any country, so a popular near-miss won: "Spring

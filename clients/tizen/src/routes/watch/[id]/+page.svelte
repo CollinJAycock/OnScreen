@@ -75,6 +75,7 @@
   import type { OnlineSubtitle } from '$lib/api';
   import { pickPreferredAudio, pickPreferredSubtitle } from '$lib/subtitleSelect';
   import { rememberSpeedUnsupported, speedKnownUnsupported } from '$lib/speedSupport';
+  import { createTempoMedia, type TempoMedia } from '$lib/player/tempoMedia';
   import { audioTrackLabel } from '$lib/langName';
   import {
     SUBTITLE_FETCH_TIMEOUT_MS,
@@ -296,8 +297,15 @@
   let speed = $state(1);
   let speedPickerOpen = $state(false);
   let speedCursor = $state(1);
-  // Known from an earlier book on this TV (lib/speedSupport): no control.
-  let speedUnsupported = $state(speedKnownUnsupported());
+  // The speed control is withdrawn: this TV ignores playbackRate AND the
+  // server can't speed a stream up either (one without audio_rate).
+  let speedUnsupported = $state(false);
+  // This TV ignores playbackRate (Samsung's webview; remembered from an
+  // earlier book, lib/speedSupport): a book at another speed plays a session
+  // the server sped up instead, read back in content time by 	empo.
+  let rateIgnoredHere = speedKnownUnsupported();
+  let serverSpeedMissing = false;
+  let tempo: TempoMedia | null = null;
   const rateCheck = new RateCheck();
   let rateCheckTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -1068,7 +1076,7 @@
    *  (music, audiobooks, audio-only podcast episodes). */
   type Opened =
     | { kind: 'direct' }
-    | { kind: 'hls'; session: TranscodeSession; Hls: typeof HlsType };
+    | { kind: 'hls'; session: TranscodeSession; Hls: typeof HlsType; askedRate?: number };
 
   const controller = new SessionController<Opened>({
     start: startStream,
@@ -1120,7 +1128,10 @@
   async function startStream(req: OpenRequest): Promise<Opened> {
     const file = item?.files[0];
     if (!file) throw new Error('No playable file for this item.');
-    if (isAudioOnly && !directAudioFailed) return { kind: 'direct' };
+    // A book at another speed on a TV that ignores playbackRate: a session
+    // the server speeds up (the file itself can't be).
+    const askedRate = isAudioOnly && wantServerSpeed() ? speed : undefined;
+    if (isAudioOnly && !directAudioFailed && askedRate === undefined) return { kind: 'direct' };
     // An out-of-range ordinal (a stale row after an item refresh) would earn
     // a 400; null leaves the track to the server's default (0:a:0).
     const ordinal =
@@ -1148,8 +1159,9 @@
       // Both explicit on every start: false after a runtime demotion.
       supportsHEVC: supportsHEVC(),
       supportsAV1: supportsAV1(),
+      audioRate: askedRate,
     });
-    return { kind: 'hls', session: fresh, Hls };
+    return { kind: 'hls', session: fresh, Hls, askedRate };
   }
 
   // Bind what a start produced to the element. The previous session (the
@@ -1182,6 +1194,7 @@
       // Direct play: the file itself, so content time is media time and the
       // start point is a plain seek once metadata is in.
       serverStream = false;
+      tempo?.setServerRate(null);
       offsetMs = 0;
       currentPlaylistUrl = '';
       metadataSeekSec = req.positionMs > 0 ? req.positionMs / 1000 : null;
@@ -1190,6 +1203,15 @@
       return;
     }
     const fresh = o.session;
+    // A sped session reads in content time (tempo) before anything below
+    // sets or reads its clock. Asked for and not applied: a server without
+    // audio_rate, so the stream is at 1x and the control goes.
+    if (o.askedRate !== undefined && !fresh.audio_rate) {
+      serverSpeedMissing = true;
+      speedUnsupported = true;
+      speedPickerOpen = false;
+    }
+    tempo?.setServerRate(fresh.audio_rate ?? null);
     offsetMs = sessionOffsetMs(fresh, req.positionMs);
     const gap = seg0GapMs(fresh);
     const startSec = hlsStartPositionSec(inStreamStartMs(req.positionMs, offsetMs, gap), gap);
@@ -1344,7 +1366,7 @@
   function chooseEngine() {
     const av = !nowPlaying && !!avMedia?.available;
     usingAvplay = av;
-    video = av ? (avMedia as unknown as HTMLVideoElement) : htmlVideo;
+    video = av ? (avMedia as unknown as HTMLVideoElement) : (tempo?.media ?? htmlVideo);
     if (av) enableCompositing();
     else disableCompositing();
   }
@@ -1669,6 +1691,15 @@
   // a new src resets playbackRate.
   function applySpeed() {
     if (!video || refused) return;
+    if (serverSpeedApplies()) {
+      // The stream itself carries the speed (see wantServerSpeed): reopen it
+      // at this point when it plays at another one. Not before the first
+      // stream is bound (that start asks for the speed itself), nor while a
+      // start is out (its attach calls this again).
+      if (!bound || controller.opening) return;
+      if (!sameRate(tempo?.serverRate ?? 1, sameRate(speed, 1) ? 1 : speed)) reopenForSpeed();
+      return;
+    }
     const target = item && hasListeningSpeed(item.type) && !speedUnsupported ? speed : 1;
     if (sameRate(video.playbackRate, target) && sameRate(video.defaultPlaybackRate, target)) return;
     const ok = applyMediaRate(video, target);
@@ -1676,15 +1707,40 @@
     if (!ok && !sameRate(target, 1)) speedIgnored();
   }
 
-  // The platform refused the rate (or plays at 1× regardless). Withdraw the
-  // control on this TV, for this play and the ones after (lib/speedSupport);
-  // the book's saved speed is left alone
-  // for the user's other devices.
+  // A book on a TV that ignores playbackRate, on a server that can speed a
+  // stream up: the speed is the server's (audio_rate, lib/player/tempoMedia).
+  function serverSpeedApplies(): boolean {
+    return rateIgnoredHere && !serverSpeedMissing && !!item && hasListeningSpeed(item.type);
+  }
+
+  /** Whether the next start asks the server for the book's speed. */
+  function wantServerSpeed(): boolean {
+    return serverSpeedApplies() && !sameRate(speed, 1);
+  }
+
+  // The same point again at the new speed: a sped session, or the file
+  // itself back at 1×. Play state kept.
+  function reopenForSpeed() {
+    if (!video || !item || refused) return;
+    void openStream({ positionMs: position, videoCopy: false, audioOrdinal: null, ...intent.stamp() });
+  }
+
+  // The platform refused the rate (or plays at 1× regardless). Remembered on
+  // this TV (lib/speedSupport); the speed then comes from the server, which
+  // speeds the stream itself up. Only a server that can't (no audio_rate)
+  // withdraws the control. The book's saved speed is left alone for the
+  // user's other devices.
   function speedIgnored() {
-    speedUnsupported = true;
     rememberSpeedUnsupported();
-    speedPickerOpen = false;
+    rateIgnoredHere = true;
     if (video) applyMediaRate(video, 1);
+    rateCheck.clear();
+    if (!serverSpeedMissing) {
+      applySpeed();
+      return;
+    }
+    speedUnsupported = true;
+    speedPickerOpen = false;
   }
 
   async function chooseSpeed(rate: number) {
@@ -1700,7 +1756,7 @@
     if (rateCheckTimer) clearInterval(rateCheckTimer);
     rateCheckTimer = setInterval(() => {
       const v = video;
-      if (!v || paused || loading || speedUnsupported || !item || !hasListeningSpeed(item.type) ||
+      if (!v || paused || loading || speedUnsupported || rateIgnoredHere || !item || !hasListeningSpeed(item.type) ||
           v.seeking || v.readyState < 3) {
         rateCheck.reset();
         return;
@@ -3036,7 +3092,10 @@
         // Audiobooks: the book's speed (fetched in the background, applied
         // whenever it lands) and the check that the TV honours it.
         if (hasListeningSpeed(it.type) && !rateCheckTimer) {
-          void loadSpeed();
+          // On a TV known to ignore playbackRate the speed decides what the
+          // first start is (a sped session or the file): wait for it.
+          if (rateIgnoredHere) await loadSpeed();
+          else void loadSpeed();
           startRateCheck();
         }
       } else {
@@ -3103,7 +3162,10 @@
 
   onMount(() => {
     // The elements, for the cleanup (bind:this may be cleared by then).
-    video = htmlVideo;
+    // The page's <video> behind the tempo wrapper (server-side speed reads
+    // back in content time; a plain element otherwise).
+    tempo = htmlVideo ? createTempoMedia(htmlVideo) : null;
+    video = tempo?.media ?? htmlVideo;
     const el = htmlVideo;
     const webapis = (globalThis as { webapis?: { avplay?: import('$lib/player/avplay').AvPlayApi } }).webapis;
     avMedia = new AvplayMedia({ api: webapis?.avplay ?? null, anchor: compositingAnchor });
@@ -3111,7 +3173,7 @@
     document.addEventListener('visibilitychange', onVisibilityChange);
     // Element listeners go on before any source is bound, so the first
     // loadedmetadata can't slip past them.
-    if (htmlVideo) wireVideoEvents(htmlVideo);
+    if (tempo) wireVideoEvents(tempo.media);
     wireVideoEvents(avMedia as unknown as HTMLVideoElement);
     // Sync and the admin stop, from the app's event stream. The handlers
     // wait for the item and a ready stream themselves.
