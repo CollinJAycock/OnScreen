@@ -639,9 +639,35 @@ Roku channel (no request features, as on Android):
   alike, so devices where voice search worked keep it. Where it is hidden,
   Leanback's automatic listening on open returns the bar to typing. A
   launch that fails, or a recognizer that returns before anyone could speak
-  (one that resolves but never listens), shows "Voice search isn't
-  available"; one that listened but heard nothing says so; any result but a
-  query returns the bar to typing, so the orb is never left stuck. Both flavors move to versionCode 25 / 1.4.2.
+  (an empty result within 1.5 s, or a cancel within 300 ms), shows "Voice
+  search isn't available" and removes the orb for the rest of the session
+  (silently when it was Leanback's own start on open, not a press). One that
+  listened but heard nothing says so. Any result but a query puts back the
+  query that was there before, with its results. Verified on a Fire TV Stick
+  4K Max (Fire OS 8.1.8.2), which has no recognizer: on 1.4.1 the orb did
+  nothing, and on 1.4.2 there is no orb and Search opens on the keyboard.
+  Testing there also turned up three older Search bugs, now fixed:
+  - **The keyboard closed while typing.** The "Search in" row waited for the
+    libraries and was then inserted at the top on the first results. That
+    moved Leanback's selected row off row 0, so it hid the search bar, the
+    keyboard closed after the third letter, focus jumped to the Movies chip
+    and the row was drawn under the bar. The row is now built first, when
+    Search opens (its picker opens even before the libraries arrive).
+  - **One BACK with the keyboard open left Search.** The Fire TV keyboard
+    hides itself on the key-down but lets the key through. A BACK that
+    closes the keyboard is now consumed, so it only closes the keyboard;
+    the next BACK leaves.
+  - **On a device with voice, cancelling voice search emptied the field**
+    and cleared the results.
+  - **Coming back from a title's detail screen put focus on the first card**
+    (and now and then on nothing visible), because the query on screen was
+    searched again and the rows rebuilt after focus had been restored. A
+    query already answered for the same scope isn't searched again, and
+    focus returns to the card that was opened.
+  - **The MENU key didn't open the "Search in" picker.** Its listener sat on
+    the screen's root view, which never has focus.
+
+  Both flavors move to versionCode 25 / 1.4.2.
 - **Fire TV 1.4.1 (24) has no Live TV, Recordings or online subtitle
   search.** The Amazon Appstore rejected TV 1.4.0 (23) on 2026-10-01 under
   its Deceptive and Malicious Behavior policy, which names apps that "save,

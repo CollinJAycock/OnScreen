@@ -115,9 +115,24 @@ class SearchViewModel @Inject constructor(
 
     enum class FilterType { MOVIE, SHOW, EPISODE, TRACK }
 
+    /** The query and scope the current results answer, once that search
+     *  has finished without error. */
+    private var answeredQuery: String? = null
+    private var answeredLibraryId: String? = null
+
     fun search(query: String) {
+        // Coming back from a detail screen, Leanback replays the query
+        // already on screen. Searching again replaced the result rows after
+        // the fragment had put focus back on the opened card, so focus went
+        // to the first card or to nothing visible.
+        if (query == answeredQuery && _scope.value?.id == answeredLibraryId &&
+            _searchError.value == null && searchJob?.isActive != true) {
+            lastQuery = query
+            return
+        }
         lastQuery = query
         searchJob?.cancel()
+        answeredQuery = null
 
         if (query.length < 2) {
             _results.value = emptyList()
@@ -158,6 +173,10 @@ class SearchViewModel @Inject constructor(
             // explains why, and "No results found" is separately suppressed.
             _results.value = libResult.items
             _searchError.value = libResult.error
+            if (libResult.error == null) {
+                answeredQuery = query
+                answeredLibraryId = libraryId
+            }
         }
     }
 

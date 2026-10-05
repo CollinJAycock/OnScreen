@@ -44,10 +44,16 @@ class VoiceSearchTest {
 
     @Test
     fun `a recognizer that comes straight back never listened, and says so`() {
-        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 300))
+        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 100))
             .isEqualTo(VoiceSearch.Outcome.Unavailable)
         assertThat(VoiceSearch.outcome(ok = true, matches = emptyList(), elapsedMs = 300))
             .isEqualTo(VoiceSearch.Outcome.Unavailable)
+    }
+
+    @Test
+    fun `a viewer backing out quickly on a working recognizer is a cancel, not unavailable`() {
+        assertThat(VoiceSearch.outcome(ok = false, matches = null, elapsedMs = 800))
+            .isEqualTo(VoiceSearch.Outcome.Cancelled)
     }
 
     @Test

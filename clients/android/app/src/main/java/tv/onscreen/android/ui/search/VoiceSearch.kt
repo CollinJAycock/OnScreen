@@ -12,7 +12,9 @@ import android.speech.RecognizerIntent
  * on Amazon's test device the orb started nothing and the Appstore rejected
  * the build ("Microphone button does not respond"). Devices that have one,
  * Fire TV or Google TV, keep the orb; elsewhere it is hidden and the
- * keyboard is the way in.
+ * keyboard is the way in. A recognizer that resolves but then fails to
+ * start or returns without listening takes the orb away too
+ * ([provenUnavailable]).
  */
 internal object VoiceSearch {
 
@@ -34,18 +36,30 @@ internal object VoiceSearch {
         object Cancelled : Outcome
     }
 
-    /** Quicker than this and nobody spoke: the recognizer never listened. */
+    /** An empty "success" quicker than this: nobody had time to speak, so
+     *  the recognizer never listened. */
     const val INSTANT_RETURN_MS = 1500L
+
+    /** A cancel quicker than this is the recognizer's, not the viewer's: a
+     *  person can't see the prompt and press BACK that fast. Slower cancels
+     *  are the viewer changing their mind on a recognizer that works. */
+    const val INSTANT_CANCEL_MS = 300L
 
     fun outcome(ok: Boolean, matches: List<String>?, elapsedMs: Long): Outcome {
         val text = matches?.firstOrNull { it.isNotBlank() }?.trim()
         return when {
             ok && text != null -> Outcome.Query(text)
-            elapsedMs < INSTANT_RETURN_MS -> Outcome.Unavailable
+            ok && elapsedMs < INSTANT_RETURN_MS -> Outcome.Unavailable
             ok -> Outcome.NothingHeard
+            elapsedMs < INSTANT_CANCEL_MS -> Outcome.Unavailable
             else -> Outcome.Cancelled
         }
     }
+
+    /** Set once a recognizer has failed to start or returned without
+     *  listening. It holds for the rest of the process, so a reopened
+     *  Search shows no orb rather than one already known not to work. */
+    @Volatile var provenUnavailable = false
 
     /** An activity takes [recognizeIntent]. Needs the <queries> entry in the
      *  manifest: from Android 11 the lookup sees no other app without it. */
