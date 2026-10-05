@@ -51,6 +51,8 @@ export const PLAYLIST_POLL_MS = 4000;
 /** The fewest milliseconds between two 'timeupdate's (AVPlay ticks faster
  *  on some firmware; the element's own rate is ~4 Hz). */
 export const TIMEUPDATE_MIN_GAP_MS = 200;
+/** A source that opened this close to its start needs no seek to 0. */
+export const START_SLACK_MS = 1000;
 
 /** An AVPlay error's MediaError code: a connection or HTTP failure is a
  *  network error; anything the player refuses (a codec, a container, a
@@ -279,6 +281,13 @@ export class AvplayMedia {
     }
     const gen = this.gen;
     this.networkState = 2; // NETWORK_LOADING
+    // A new source starts at its beginning, as the element's does. AVPlay
+    // opens a growing (EVENT) session playlist at its live edge, three
+    // segments from the end, and a remux has written dozens by the time
+    // it's ready: the start of the film was skipped. The page asks for a
+    // seek only past 0, so the adapter holds one for 0 (replaced by any
+    // the page makes) and applies it on the first frame.
+    if (/\.m3u8(\?|$)/i.test(url)) this.pendingSeekSec = 0;
     this.dispatch('loadstart');
     try {
       api.open(url);
@@ -296,7 +305,21 @@ export class AvplayMedia {
       this.fail(e);
       return;
     }
-    if (/\.m3u8(\?|$)/i.test(url)) void this.readPlaylist(gen, url);
+    // An HLS session's first playlist read is held by the server until the
+    // first segment exists, which takes up to a minute (~30 s for a 4K
+    // remux on QA). AVPlay gives up on a connection after ~30 s
+    // (PLAYER_ERROR_CONNECTION_FAILED), which failed remuxes over to a
+    // transcode that then hit the same wait. Our own read has no such limit:
+    // AVPlay is prepared once it has answered, so it only ever opens a
+    // playlist that's ready. Answered either way: on a failed read AVPlay
+    // tries for itself and reports what it gets.
+    if (/\.m3u8(\?|$)/i.test(url)) void this.readPlaylist(gen, url, () => this.prepare(gen));
+    else this.prepare(gen);
+  }
+
+  private prepare(gen: number): void {
+    const api = this.opts.api;
+    if (!api || gen !== this.gen) return;
     api.prepareAsync(
       () => {
         if (gen !== this.gen) return;
@@ -370,7 +393,13 @@ export class AvplayMedia {
     if (this.flowing) return;
     this.flowing = true;
     const held = this.pendingSeekSec;
-    if (held !== null) this.seekNow(held);
+    if (held === null) return;
+    // Already at the start (a session that opened there): no seek.
+    if (held === 0 && this.call(() => this.opts.api!.getCurrentTime(), Infinity) < START_SLACK_MS) {
+      this.pendingSeekSec = null;
+      return;
+    }
+    this.seekNow(held);
   }
 
   private seekNow(sec: number): void {
@@ -404,7 +433,7 @@ export class AvplayMedia {
 
   // ── The playlist (seekable, duration) ──────────────────────────────
 
-  private async readPlaylist(gen: number, url: string): Promise<void> {
+  private async readPlaylist(gen: number, url: string, onFirstRead?: () => void): Promise<void> {
     try {
       let target = this.mediaPlaylistUrl || url;
       let text = await this.fetchText(target);
@@ -427,7 +456,9 @@ export class AvplayMedia {
     } catch {
       // Unreadable this time: the next poll tries again.
     }
-    if (gen !== this.gen || this.span?.ended) return;
+    if (gen !== this.gen) return;
+    onFirstRead?.();
+    if (this.span?.ended) return;
     this.pollTimer = this.setTimer(() => void this.readPlaylist(gen, url), PLAYLIST_POLL_MS);
   }
 

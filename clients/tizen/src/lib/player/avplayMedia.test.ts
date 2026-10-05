@@ -69,10 +69,16 @@ function setup(playlist = PLAYLIST) {
 
 const URL = 'https://tv.example/api/v1/transcode/sessions/s1/index.m3u8?token=t';
 
+/** Lets the first playlist read (a resolved promise here) answer. */
+async function flush() {
+  for (let i = 0; i < 6; i++) await Promise.resolve();
+}
+
 describe('AvplayMedia', () => {
-  it('opens a source and reports its metadata once AVPlay has prepared it, without playing', () => {
+  it('opens a source and reports its metadata once AVPlay has prepared it, without playing', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     expect(av.calls).toContain(`open ${URL}`);
     expect(av.calls).toContain('prop ADAPTIVE_INFO=STREAMING_FORMAT=HLS');
     expect(av.calls).toContain('rect 0,0,1920,1080');
@@ -86,6 +92,7 @@ describe('AvplayMedia', () => {
   it('tells AVPlay to play once, whether play() comes before the prepare or from loadedmetadata', async () => {
     const early = setup();
     early.media.src = URL;
+    await flush();
     await early.media.play();
     expect(early.av.calls.filter((c) => c === 'play')).toHaveLength(0);
     early.av.prepare();
@@ -95,6 +102,7 @@ describe('AvplayMedia', () => {
     const late = setup();
     late.media.addEventListener('loadedmetadata', () => void late.media.play());
     late.media.src = URL;
+    await flush();
     late.av.prepare();
     expect(late.av.calls.filter((c) => c === 'play')).toHaveLength(1);
   });
@@ -102,6 +110,7 @@ describe('AvplayMedia', () => {
   it('plays and pauses with the element events', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     await media.play();
     expect(av.calls).toContain('play');
@@ -116,6 +125,7 @@ describe('AvplayMedia', () => {
   it('holds a seek made before the first frame and applies it then (seekTo that early is unreliable)', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     media.currentTime = 42.5;
     expect(av.seeks).toEqual([]);
@@ -134,6 +144,7 @@ describe('AvplayMedia', () => {
   it('seeks at once once playing, with seeking / seeked around it', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     await media.play();
     av.listener.onbufferingcomplete?.();
@@ -147,6 +158,7 @@ describe('AvplayMedia', () => {
   it("reports AVPlay's clock as currentTime, at most every 200 ms", async () => {
     const { av, media, events, tick } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     await media.play();
     av.listener.oncurrentplaytime?.(1000);
@@ -163,6 +175,7 @@ describe('AvplayMedia', () => {
   it('rebuffers: waiting, then canplay and playing', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     await media.play();
     av.listener.onbufferingcomplete?.();
@@ -176,6 +189,7 @@ describe('AvplayMedia', () => {
   it('ends: pause, then ended, as the element does', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     await media.play();
     av.listener.onstreamcompleted?.();
@@ -187,6 +201,7 @@ describe('AvplayMedia', () => {
   it('reads the growing playlist for seekable and duration, until ENDLIST', async () => {
     const { av, media, timers, fetchText } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     await Promise.resolve();
     await Promise.resolve();
@@ -203,9 +218,10 @@ describe('AvplayMedia', () => {
     expect(media.seekable.end(0)).toBe(10.5);
   });
 
-  it('turns an AVPlay failure into a media error the page can act on', () => {
+  it('turns an AVPlay failure into a media error the page can act on', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     av.failPrepare('PLAYER_ERROR_NOT_SUPPORTED_FILE');
     expect(events).toContain('error');
     expect(media.error?.code).toBe(MEDIA_ERR_SRC_NOT_SUPPORTED);
@@ -214,6 +230,7 @@ describe('AvplayMedia', () => {
   it('closes AVPlay when the source is dropped, and ignores the old source after', async () => {
     const { av, media, events } = setup();
     media.src = URL;
+    await flush();
     av.prepare();
     const old = av.listener;
     media.removeAttribute('src');
@@ -225,6 +242,94 @@ describe('AvplayMedia', () => {
     old.onstreamcompleted?.();
     old.onerror?.('late');
     expect(events.length).toBe(before);
+  });
+
+  it("prepares AVPlay only once the session's playlist has answered (AVPlay times out first)", async () => {
+    const { av, media } = setup();
+    let answer: (s: string) => void = () => {};
+    const prepares: number[] = [];
+    const prepareAsync = av.api.prepareAsync;
+    av.api.prepareAsync = (ok, fail) => {
+      prepares.push(1);
+      prepareAsync(ok, fail);
+    };
+    const slow = new Promise<string>((r) => (answer = r));
+    (media as unknown as { fetchText: (u: string) => Promise<string> }).fetchText = () => slow;
+    media.src = URL;
+    await flush();
+    expect(av.calls).toContain(`open ${URL}`);
+    expect(prepares).toHaveLength(0); // the server is still waiting on segment 0
+    answer(PLAYLIST);
+    await flush();
+    expect(prepares).toHaveLength(1);
+  });
+
+  it('prepares AVPlay even when the playlist read fails, so AVPlay reports the failure', async () => {
+    const { av, media, events } = setup();
+    (media as unknown as { fetchText: (u: string) => Promise<string> }).fetchText = () => Promise.reject(new Error('503'));
+    media.src = URL;
+    await flush();
+    av.failPrepare('PLAYER_ERROR_CONNECTION_FAILED');
+    expect(events).toContain('error');
+    expect(media.error?.code).toBe(MEDIA_ERR_NETWORK);
+  });
+
+  it('prepares a file source at once, and never prepares a source replaced during its read', async () => {
+    const file = setup();
+    const prepared: string[] = [];
+    const orig = file.av.api.prepareAsync;
+    file.av.api.prepareAsync = (ok, fail) => {
+      prepared.push(file.media.src);
+      orig(ok, fail);
+    };
+    file.media.src = 'https://tv.example/media/files/f1';
+    expect(prepared).toEqual(['https://tv.example/media/files/f1']);
+
+    const { av, media } = setup();
+    const seen: string[] = [];
+    const orig2 = av.api.prepareAsync;
+    av.api.prepareAsync = (ok, fail) => {
+      seen.push(media.src);
+      orig2(ok, fail);
+    };
+    let answerOld: (s: string) => void = () => {};
+    let first = true;
+    (media as unknown as { fetchText: (u: string) => Promise<string> }).fetchText = () =>
+      first ? ((first = false), new Promise<string>((r) => (answerOld = r))) : Promise.resolve(PLAYLIST);
+    media.src = URL;
+    const next = 'https://tv.example/api/v1/transcode/sessions/s2/index.m3u8?token=t';
+    media.src = next;
+    await flush();
+    answerOld(PLAYLIST);
+    await flush();
+    expect(seen).toEqual([next]);
+  });
+
+  it("starts a session at its beginning, not at the playlist's live edge where AVPlay opens it", async () => {
+    const { av, media, events } = setup();
+    av.api.getCurrentTime = () => 24_000; // AVPlay began 3 segments from the end
+    media.src = URL;
+    await flush();
+    av.prepare();
+    await media.play();
+    expect(media.currentTime).toBe(0);
+    av.listener.oncurrentplaytime?.(24_000);
+    expect(av.seeks.map((s) => s.ms)).toEqual([0]);
+    expect(events).toContain('seeking');
+    av.seeks[0].ok?.();
+    expect(media.seeking).toBe(false);
+    expect(media.currentTime).toBe(0);
+  });
+
+  it('does not seek a session that opened at its start', async () => {
+    const { av, media } = setup();
+    media.src = URL;
+    await flush();
+    av.prepare();
+    await media.play();
+    av.listener.oncurrentplaytime?.(40);
+    expect(av.seeks).toEqual([]);
+    expect(media.currentTime).toBe(0.04);
   });
 
   it('says it plays HLS only where AVPlay is', () => {
