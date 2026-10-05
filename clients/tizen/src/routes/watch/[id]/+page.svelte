@@ -74,6 +74,7 @@
   } from '$lib/player/recovery';
   import type { OnlineSubtitle } from '$lib/api';
   import { pickPreferredAudio, pickPreferredSubtitle } from '$lib/subtitleSelect';
+  import { rememberSpeedUnsupported, speedKnownUnsupported } from '$lib/speedSupport';
   import { audioTrackLabel } from '$lib/langName';
   import {
     SUBTITLE_FETCH_TIMEOUT_MS,
@@ -295,7 +296,8 @@
   let speed = $state(1);
   let speedPickerOpen = $state(false);
   let speedCursor = $state(1);
-  let speedUnsupported = $state(false);
+  // Known from an earlier book on this TV (lib/speedSupport): no control.
+  let speedUnsupported = $state(speedKnownUnsupported());
   const rateCheck = new RateCheck();
   let rateCheckTimer: ReturnType<typeof setInterval> | null = null;
 
@@ -1675,10 +1677,12 @@
   }
 
   // The platform refused the rate (or plays at 1× regardless). Withdraw the
-  // control on this TV for this play; the book's saved speed is left alone
+  // control on this TV, for this play and the ones after (lib/speedSupport);
+  // the book's saved speed is left alone
   // for the user's other devices.
   function speedIgnored() {
     speedUnsupported = true;
+    rememberSpeedUnsupported();
     speedPickerOpen = false;
     if (video) applyMediaRate(video, 1);
   }

@@ -1904,7 +1904,9 @@
     // Auto-select preferred audio/subtitle tracks based on user preferences.
     try {
       const prefs = await userApi.getPreferences();
-      if (prefs.preferred_subtitle_lang && !selectedSubtitle) {
+      // With no preference the file's default track still shows (as on the
+      // Android apps): pickPreferredSubtitle handles both.
+      if (!selectedSubtitle) {
         // Normalized matching (eng↔en↔en-US) + forced-only support, so the
         // pref reliably matches ffprobe's 3-letter language codes and the
         // "forced subtitles only" setting auto-shows foreign-dialogue

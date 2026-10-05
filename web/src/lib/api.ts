@@ -2204,6 +2204,8 @@ export interface SubtitleStream {
   title: string;
   forced: boolean;
   sdh?: boolean;
+  /** The file marks this track default (absent from older servers). */
+  default?: boolean;
 }
 
 export interface ExternalSubtitle {

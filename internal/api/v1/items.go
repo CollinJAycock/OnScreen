@@ -481,6 +481,9 @@ type SubtitleStreamJSON struct {
 	Title    string `json:"title"`
 	Forced   bool   `json:"forced"`
 	SDH      bool   `json:"sdh"`
+	// Default: the file marks this track default (ffprobe disposition).
+	// False on files probed before the field; a metadata reprobe fills it.
+	Default bool `json:"default"`
 }
 
 // ItemFileResponse is the API representation of a media file.

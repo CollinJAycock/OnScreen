@@ -5249,6 +5249,14 @@ components:
         language: { type: string }
         title:    { type: string }
         forced:   { type: boolean }
+        sdh:      { type: boolean }
+        default:
+          type: boolean
+          description: |
+            v2.5. The file marks this track default (ffprobe disposition).
+            Clients with no subtitle-language preference show it. False on
+            files probed before the field until a metadata reprobe
+            (POST /api/v1/maintenance/reprobe-metadata).
     ExternalSubtitle:
       type: object
       properties:

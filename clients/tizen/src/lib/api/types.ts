@@ -116,6 +116,9 @@ export interface SubtitleStream {
   // descriptions, speaker labels). Surfaced as a "(SDH)" badge in the
   // picker; optional so older servers that omit it just don't show it.
   sdh?: boolean;
+  /** The file marks this track default: shown when the user has no
+   *  subtitle preference (lib/subtitleSelect). Absent from older servers. */
+  default?: boolean;
 }
 
 export interface Chapter {

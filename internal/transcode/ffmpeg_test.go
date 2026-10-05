@@ -1978,6 +1978,34 @@ func TestBuildHLS_AudioStreamIndex(t *testing.T) {
 	}
 }
 
+// A client that asked for MPEG-TS gets 0-based segment timestamps
+// (mpegts_copyts): the default mux delay put them at ~10 s, and AVPlay's
+// clock jumped to that a moment into a resumed film. Nobody else changes.
+func TestBuildHLS_TSSegmentsStartAtZero(t *testing.T) {
+	base := BuildArgs{
+		InputPath:     "/media/movie.mkv",
+		Encoder:       EncoderCopy,
+		IsHEVC:        true,
+		AudioCodec:    "aac",
+		StartOffset:   506,
+		SessionDir:    "/tmp/sessions/x",
+		SegmentPrefix: "seg",
+	}
+	ts := base
+	ts.TSSegments = true
+	if got := strings.Join(BuildHLS(ts), " "); !strings.Contains(got, "-hls_segment_options mpegts_copyts=1") {
+		t.Errorf("TS-requested HEVC remux lacks mpegts_copyts: %s", got)
+	}
+	for name, a := range map[string]BuildArgs{"HEVC fMP4 (browser)": base, "H.264 TS, not requested": {
+		InputPath: "/media/movie.mkv", Encoder: EncoderSoftware, AudioCodec: "aac",
+		SessionDir: "/tmp/sessions/x", SegmentPrefix: "seg",
+	}} {
+		if got := strings.Join(BuildHLS(a), " "); strings.Contains(got, "mpegts_copyts") {
+			t.Errorf("%s: unexpected mpegts_copyts: %s", name, got)
+		}
+	}
+}
+
 func TestBuildHLS_MaxMuxingQueueSize(t *testing.T) {
 	args := BuildHLS(BuildArgs{
 		InputPath:     "/media/movie.mkv",

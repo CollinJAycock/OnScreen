@@ -906,6 +906,17 @@ func BuildHLS(a BuildArgs) []string {
 	if videoCopy || a.AudioOnly {
 		args = append(args, "-hls_playlist_type", "event")
 	}
+	// A client that asked for MPEG-TS (Samsung AVPlay) gets segments whose
+	// timestamps start at the stream's start. By default the mpegts muxer
+	// offsets every timestamp by twice -max_delay (10 s here), and AVPlay
+	// sometimes reports its clock in playlist time and then snaps to the
+	// segments' timestamps a moment into playback: a resumed 4K film's clock
+	// jumped 1.4 → 10.4 s, and position, progress and the scrubber with it.
+	// mpegts_copyts leaves the timestamps as the seek made them (0-based).
+	// Browsers never get this (they don't ask for TS).
+	if a.TSSegments && segType == "mpegts" {
+		args = append(args, "-hls_segment_options", "mpegts_copyts=1")
+	}
 	args = append(args, playlistPath)
 
 	// ── Subtitle WebVTT extraction (separate output contexts) ────────────────

@@ -845,6 +845,28 @@ Roku channel (no request features, as on Android):
   privilege, so every registration answered SecurityError); and Discover
   opened with nothing focused, so the first press went to the top nav (both
   TV apps now open it on the keyboard, as Search does).
+- **A file's default subtitle track now shows on every client.** The Fire TV
+  app opened an anime episode with its English dialogue track on (ExoPlayer
+  honours the file's default flag); Samsung, LG and the web player opened it
+  with subtitles off, because the server never passed the flag on. The
+  probe now records ffprobe's `default` disposition on embedded subtitle
+  streams (`subtitle_streams[].default`), and with no subtitle-language
+  preference the TV apps and the web player show that track (under
+  "forced subtitles only", only when it is forced). A set preference still
+  wins. Files probed earlier carry the flag after a metadata reprobe.
+- **A resumed 4K film's clock jumped ~9 s on Samsung TVs.** Every MPEG-TS
+  segment the server wrote started its timestamps at ~10 s (the mpegts
+  muxer offsets them by twice `-max_delay`), and AVPlay sometimes reported
+  playlist time first and then snapped to the segments' timestamps: the
+  clock went 1.4 → 10.4 s, and the position, progress and scrubber with it.
+  Sessions that ask for MPEG-TS (`segment_container: "ts"`) now get 0-based
+  timestamps (`mpegts_copyts`); nothing changes for anyone else.
+- **Audiobook speed on Samsung TVs.** Samsung's webview plays media at 1×
+  whatever playback rate is set (measured: `<audio>` and `<video>` alike), so
+  the player withdrew its speed control a few seconds into every book, after
+  offering it. The TV now remembers this, so later chapters and books open
+  with the note "This TV can only play this book at normal speed" and no
+  control. (Real speed there needs the server to change the tempo.)
 - **Movies auto-matched the wrong film although the folder named the title
   and year.** The scanner took TMDB's top search hit, and its year filter
   counts a release in any country, so a popular near-miss won: "Spring

@@ -36,6 +36,29 @@ describe('langMatches', () => {
   });
 });
 
+describe('pickPreferredSubtitle with no preferred language', () => {
+  // The file's default track, as ExoPlayer picks it: an anime release whose
+  // English dialogue track is marked default opened with subtitles on the
+  // Android TV app and without them here.
+  const subs = [
+    { language: 'eng', forced: false, title: 'Signs' },
+    { language: 'eng', forced: false, title: 'Dialogue', isDefault: true },
+  ];
+  it("shows the file's default track", () => {
+    expect(pickPreferredSubtitle(subs, null, false)?.title).toBe('Dialogue');
+    expect(pickPreferredSubtitle(subs, '', false)?.title).toBe('Dialogue');
+  });
+  it('stays off with no default track, and under forced-only unless the default is forced', () => {
+    expect(pickPreferredSubtitle(subs.map((s) => ({ ...s, isDefault: false })), null, false)).toBeNull();
+    expect(pickPreferredSubtitle(subs, null, true)).toBeNull();
+    expect(pickPreferredSubtitle([{ language: 'eng', forced: true, isDefault: true }], null, true)?.forced).toBe(true);
+  });
+  it('lets a preference win over the default, and leaves a preference with no match off', () => {
+    const multi = [...subs, { language: 'spa', forced: false, title: 'Español' }];
+    expect(pickPreferredSubtitle(multi, 'es', false)?.title).toBe('Español');
+    expect(pickPreferredSubtitle(multi, 'de', false)).toBeNull();
+  });
+});
 describe('pickPreferredSubtitle', () => {
   const subs = [
     { language: 'eng', forced: false },

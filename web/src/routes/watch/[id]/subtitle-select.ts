@@ -39,11 +39,16 @@ export function langMatches(a: string | null | undefined, b: string | null | und
 export interface SelectableSubtitle {
   language: string;
   forced: boolean;
+  /** The file marks the track default: `default` on an API subtitle stream,
+   *  `isDefault` on the TV apps' picker rows. */
+  default?: boolean;
+  isDefault?: boolean;
 }
 
 // pickPreferredSubtitle chooses the subtitle the player should auto-enable,
 // or null for "leave off". Rules:
-//   - No preferred language → no auto-selection (null), regardless of forcedOnly.
+//   - No preferred language → the track the file marks default, if any;
+//     under forcedOnly only when that track is forced. None → null.
 //   - forcedOnly: only ever auto-enable a FORCED track in the preferred
 //     language (the "show foreign-dialogue subtitles but not full captions"
 //     setting). If none exists, stay off.
@@ -54,7 +59,13 @@ export function pickPreferredSubtitle<T extends SelectableSubtitle>(
   preferredLang: string | null | undefined,
   forcedOnly: boolean,
 ): T | null {
-  if (!preferredLang) return null;
+  if (!preferredLang) {
+    // No preference: the track the FILE marks default, as ExoPlayer does from
+    // the same flag (the Android apps), under forcedOnly only when it's forced.
+    const def = subs.find((s) => s.isDefault ?? s.default);
+    if (!def) return null;
+    return forcedOnly && !def.forced ? null : def;
+  }
   const inLang = subs.filter((s) => langMatches(s.language, preferredLang));
   if (inLang.length === 0) return null;
   const forced = inLang.find((s) => s.forced);

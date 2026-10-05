@@ -386,6 +386,11 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 			// brings embedded streams to parity so clients can label/filter
 			// SDH tracks consistently regardless of source.
 			sdh := s.Disposition["hearing_impaired"] == 1
+			// The file's own default track: a player with no language
+			// preference shows it (ExoPlayer does, from the same flag), so
+			// an anime release whose dialogue track is marked default opens
+			// with subtitles on every client, not just the Android ones.
+			def := s.Disposition["default"] == 1
 			subtitleStreams = append(subtitleStreams, map[string]any{
 				"index":    s.Index,
 				"codec":    s.CodecName,
@@ -393,6 +398,7 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 				"title":    title,
 				"forced":   forced,
 				"sdh":      sdh,
+				"default":  def,
 			})
 		}
 	}

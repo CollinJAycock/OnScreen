@@ -46,6 +46,8 @@ export interface SubtitleOption {
   language: string;
   forced: boolean;
   sdh: boolean;
+  /** Embedded rows: the file marks the track default. */
+  isDefault: boolean;
   /** An external row (downloaded, or OCR'd from an image track). */
   downloaded: boolean;
   /** Server path of the WebVTT (signed with api.assetUrl at fetch time). */
@@ -78,6 +80,7 @@ export function buildSubtitleOptions(
       language: s.language ?? '',
       forced: !!s.forced,
       sdh: !!s.sdh,
+      isDefault: !!s.default,
       downloaded: false,
       path: `/media/subtitles/${file.id}/${s.index}`,
     });
@@ -97,6 +100,7 @@ export function buildSubtitleOptions(
       language: e.language ?? '',
       forced: !!e.forced,
       sdh: !!e.sdh,
+      isDefault: false,
       downloaded: true,
       path: e.url,
       externalId: e.id,

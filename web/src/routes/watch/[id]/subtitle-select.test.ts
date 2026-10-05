@@ -34,6 +34,20 @@ describe('langMatches', () => {
   });
 });
 
+describe('pickPreferredSubtitle with no preferred language', () => {
+  const subs = [
+    { language: 'eng', forced: false, title: 'Signs' },
+    { language: 'eng', forced: false, title: 'Dialogue', default: true },
+  ];
+  it("shows the file's default track (API streams carry it as default)", () => {
+    expect(pickPreferredSubtitle(subs, null, false)?.title).toBe('Dialogue');
+  });
+  it('stays off with no default, and under forced-only unless the default is forced', () => {
+    expect(pickPreferredSubtitle(subs.map((s) => ({ ...s, default: false })), null, false)).toBeNull();
+    expect(pickPreferredSubtitle(subs, null, true)).toBeNull();
+  });
+});
+
 describe('pickPreferredSubtitle', () => {
   const subs = [
     { language: 'eng', forced: false },
