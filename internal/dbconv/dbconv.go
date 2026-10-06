@@ -111,6 +111,28 @@ func int32PtrToIntPtr(i *int32) *int {
 	return &v
 }
 
+func int16PtrToIntPtr(i *int16) *int {
+	if i == nil {
+		return nil
+	}
+	v := int(*i)
+	return &v
+}
+
+// IntPtrToInt16Ptr narrows a small optional count (a smallint column). Out of
+// range is nil, like IntPtrToInt32Ptr.
+func IntPtrToInt16Ptr(i *int) *int16 {
+	if i == nil {
+		return nil
+	}
+	if *i < math.MinInt16 || *i > math.MaxInt16 {
+		slog.Warn("IntPtrToInt16Ptr: value out of int16 range, returning nil", "value", *i)
+		return nil
+	}
+	v := int16(*i)
+	return &v
+}
+
 func IntPtrToInt32Ptr(i *int) *int32 {
 	if i == nil {
 		return nil
@@ -376,6 +398,7 @@ func GenMediaFileToFile(f gen.MediaFile) media.File {
 		ResolutionH:         int32PtrToIntPtr(f.ResolutionH),
 		Bitrate:             f.Bitrate,
 		HDRType:             f.HdrType,
+		DVProfile:           int16PtrToIntPtr(f.DvProfile),
 		FrameRate:           frameRate,
 		AudioStreams:        f.AudioStreams,
 		SubtitleStreams:     f.SubtitleStreams,
@@ -413,6 +436,7 @@ func CreateFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 		ResolutionH:         IntPtrToInt32Ptr(p.ResolutionH),
 		Bitrate:             p.Bitrate,
 		HdrType:             p.HDRType,
+		DvProfile:           IntPtrToInt16Ptr(p.DVProfile),
 		FrameRate:           Float64PtrToNumeric(p.FrameRate),
 		AudioStreams:        p.AudioStreams,
 		SubtitleStreams:     p.SubtitleStreams,

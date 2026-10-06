@@ -500,14 +500,18 @@ type ItemFileResponse struct {
 	// fetch token-authenticator paths the other clients run on.
 	// Falls back to the access token client-side when this field is
 	// empty (older server build).
-	StreamToken         string   `json:"stream_token,omitempty"`
-	Container           *string  `json:"container,omitempty"`
-	VideoCodec          *string  `json:"video_codec,omitempty"`
-	AudioCodec          *string  `json:"audio_codec,omitempty"`
-	ResolutionW         *int     `json:"resolution_w,omitempty"`
-	ResolutionH         *int     `json:"resolution_h,omitempty"`
-	Bitrate             *int64   `json:"bitrate,omitempty"`
-	HDRType             *string  `json:"hdr_type,omitempty"`
+	StreamToken string  `json:"stream_token,omitempty"`
+	Container   *string `json:"container,omitempty"`
+	VideoCodec  *string `json:"video_codec,omitempty"`
+	AudioCodec  *string `json:"audio_codec,omitempty"`
+	ResolutionW *int    `json:"resolution_w,omitempty"`
+	ResolutionH *int    `json:"resolution_h,omitempty"`
+	Bitrate     *int64  `json:"bitrate,omitempty"`
+	HDRType     *string `json:"hdr_type,omitempty"`
+	// DVProfile is the file's Dolby Vision profile (5, 7, 8, ...). hdr_type
+	// still names what a player without Dolby Vision gets — the base layer,
+	// or "dolby_vision" for profile 5, which has none.
+	DVProfile           *int     `json:"dv_profile,omitempty"`
 	FrameRate           *float64 `json:"frame_rate,omitempty"` // as probed; TV clients match the display's refresh rate to it
 	DurationMS          *int64   `json:"duration_ms,omitempty"`
 	Faststart           bool     `json:"faststart"`
@@ -855,6 +859,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			ResolutionH:         f.ResolutionH,
 			Bitrate:             f.Bitrate,
 			HDRType:             f.HDRType,
+			DVProfile:           f.DVProfile,
 			FrameRate:           f.FrameRate,
 			DurationMS:          f.DurationMS,
 			Faststart:           h.faststart(r.Context(), f.FilePath),

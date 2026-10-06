@@ -184,7 +184,7 @@ INSERT INTO media_files (
     bit_depth, sample_rate, channel_layout, lossless,
     replaygain_track_gain, replaygain_track_peak,
     replaygain_album_gain, replaygain_album_peak,
-    video_bit_depth
+    video_bit_depth, dv_profile
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -192,7 +192,7 @@ INSERT INTO media_files (
     $17, $18, $19, $20,
     $21, $22,
     $23, $24,
-    $25
+    $25, $26
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -201,7 +201,7 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           bit_depth, sample_rate, channel_layout, lossless,
           replaygain_track_gain, replaygain_track_peak,
           replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-          integrity_status, integrity_checked_at, integrity_detail
+          integrity_status, integrity_checked_at, integrity_detail, dv_profile
 `
 
 type CreateMediaFileParams struct {
@@ -230,6 +230,7 @@ type CreateMediaFileParams struct {
 	ReplaygainAlbumGain pgtype.Numeric `json:"replaygain_album_gain"`
 	ReplaygainAlbumPeak pgtype.Numeric `json:"replaygain_album_peak"`
 	VideoBitDepth       *int32         `json:"video_bit_depth"`
+	DvProfile           *int16         `json:"dv_profile"`
 }
 
 // best quality first (ADR-031)
@@ -260,6 +261,7 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		arg.ReplaygainAlbumGain,
 		arg.ReplaygainAlbumPeak,
 		arg.VideoBitDepth,
+		arg.DvProfile,
 	)
 	var i MediaFile
 	err := row.Scan(
@@ -296,6 +298,7 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		&i.IntegrityStatus,
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
+		&i.DvProfile,
 	)
 	return i, err
 }
@@ -935,7 +938,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile
 FROM media_files
 WHERE id = $1
 `
@@ -978,6 +981,7 @@ func (q *Queries) GetMediaFile(ctx context.Context, id uuid.UUID) (MediaFile, er
 		&i.IntegrityStatus,
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
+		&i.DvProfile,
 	)
 	return i, err
 }
@@ -990,7 +994,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile
 FROM media_files
 WHERE file_hash = $1 AND status = 'missing'
 ORDER BY created_at DESC
@@ -1037,6 +1041,7 @@ func (q *Queries) GetMediaFileByHash(ctx context.Context, fileHash *string) (Med
 		&i.IntegrityStatus,
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
+		&i.DvProfile,
 	)
 	return i, err
 }
@@ -1049,7 +1054,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile
 FROM media_files
 WHERE file_path = $1
 `
@@ -1091,6 +1096,7 @@ func (q *Queries) GetMediaFileByPath(ctx context.Context, filePath string) (Medi
 		&i.IntegrityStatus,
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
+		&i.DvProfile,
 	)
 	return i, err
 }
@@ -1469,7 +1475,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active'
@@ -1518,6 +1524,7 @@ func (q *Queries) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 			&i.IntegrityStatus,
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
+			&i.DvProfile,
 		); err != nil {
 			return nil, err
 		}
@@ -2060,7 +2067,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 JOIN libraries l ON l.id = mi.library_id
@@ -2129,6 +2136,7 @@ func (q *Queries) ListFilesForIntegrityCheck(ctx context.Context, arg ListFilesF
 			&i.IntegrityStatus,
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
+			&i.DvProfile,
 		); err != nil {
 			return nil, err
 		}
@@ -2357,7 +2365,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC
@@ -2406,6 +2414,7 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID uuid.UU
 			&i.IntegrityStatus,
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
+			&i.DvProfile,
 		); err != nil {
 			return nil, err
 		}
@@ -4488,7 +4497,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000
@@ -4537,6 +4546,7 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 			&i.IntegrityStatus,
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
+			&i.DvProfile,
 		); err != nil {
 			return nil, err
 		}
@@ -5866,6 +5876,29 @@ func (q *Queries) TouchMediaItemEnrichAttempt(ctx context.Context, id uuid.UUID)
 	return err
 }
 
+const updateMediaFileDynamicRange = `-- name: UpdateMediaFileDynamicRange :exec
+UPDATE media_files
+SET hdr_type   = $2,
+    dv_profile = $3
+WHERE id = $1
+`
+
+type UpdateMediaFileDynamicRangeParams struct {
+	ID        uuid.UUID `json:"id"`
+	HdrType   *string   `json:"hdr_type"`
+	DvProfile *int16    `json:"dv_profile"`
+}
+
+// Re-classifies a file's dynamic range without touching anything else: the
+// scanner's one-time re-read of files an older scan tagged 'dolby_vision'
+// (see migration 00036). The file's bytes are unchanged, so unlike
+// UpdateMediaFileTechnicalMetadata this keeps the integrity verdict and
+// scanned_at.
+func (q *Queries) UpdateMediaFileDynamicRange(ctx context.Context, arg UpdateMediaFileDynamicRangeParams) error {
+	_, err := q.db.Exec(ctx, updateMediaFileDynamicRange, arg.ID, arg.HdrType, arg.DvProfile)
+	return err
+}
+
 const updateMediaFileHash = `-- name: UpdateMediaFileHash :exec
 UPDATE media_files
 SET file_hash  = $2,
@@ -5955,6 +5988,7 @@ SET container            = $2,
     chapters             = $12,
     duration_ms          = $13,
     video_bit_depth      = $14,
+    dv_profile           = $15,
     integrity_status     = 'unchecked',
     integrity_checked_at = NULL,
     integrity_detail     = NULL,
@@ -5977,6 +6011,7 @@ type UpdateMediaFileTechnicalMetadataParams struct {
 	Chapters        []byte         `json:"chapters"`
 	DurationMs      *int64         `json:"duration_ms"`
 	VideoBitDepth   *int32         `json:"video_bit_depth"`
+	DvProfile       *int16         `json:"dv_profile"`
 }
 
 // Also resets the integrity verdict: this update only runs when the scanner
@@ -6001,6 +6036,7 @@ func (q *Queries) UpdateMediaFileTechnicalMetadata(ctx context.Context, arg Upda
 		arg.Chapters,
 		arg.DurationMs,
 		arg.VideoBitDepth,
+		arg.DvProfile,
 	)
 	return err
 }

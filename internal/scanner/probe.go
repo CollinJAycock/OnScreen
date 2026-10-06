@@ -30,7 +30,10 @@ type ProbeResult struct {
 	Bitrate     *int64
 	DurationMs  *int64
 	HDRType     *string
-	FrameRate   *float64
+	// DVProfile is the Dolby Vision profile from the stream's configuration
+	// record, nil when there is none. See detectHDR.
+	DVProfile *int
+	FrameRate *float64
 	// VideoBitDepth is the primary video stream's bit depth (8/10/12), from
 	// pix_fmt. Distinct from BitDepth (audio). nil when not a video stream.
 	VideoBitDepth   *int
@@ -78,6 +81,12 @@ type ffprobeStream struct {
 
 type ffprobeSideData struct {
 	SideDataType string `json:"side_data_type"`
+	// Set on a "DOVI configuration record".
+	DVProfile *int `json:"dv_profile"`
+	// DVBLCompatID says what a player without Dolby Vision can show from the
+	// base layer: 0 nothing (profile 5), 1 HDR10, 2 SDR, 4 HLG, 6 HDR10
+	// (UHD Blu-ray, profile 7).
+	DVBLCompatID *int `json:"dv_bl_signal_compatibility_id"`
 }
 
 type ffprobeFormat struct {
@@ -337,7 +346,7 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 				if fps := parseFrameRate(s.RFrameRate); fps > 0 {
 					result.FrameRate = &fps
 				}
-				result.HDRType = detectHDR(&s)
+				result.HDRType, result.DVProfile = detectHDR(&s)
 				if bd := videoBitDepth(&s); bd > 0 {
 					result.VideoBitDepth = &bd
 				}
@@ -433,29 +442,60 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 	return result, nil
 }
 
-// detectHDR returns the HDR type string or nil for SDR content.
-func detectHDR(s *ffprobeStream) *string {
-	// Check side data for HDR metadata.
-	for _, sd := range s.SideDataList {
-		switch sd.SideDataType {
+// detectHDR returns the dynamic range a player has to handle — "hdr10",
+// "hlg", "dolby_vision", or nil for SDR — and the Dolby Vision profile when
+// the stream carries a Dolby Vision configuration record.
+//
+// A Dolby Vision file reads as its base layer whenever there is one a player
+// without Dolby Vision can show: profiles 7 and 8.1 carry HDR10, 8.4 HLG, 9
+// SDR. Only a stream with no compatible base (profile 5, whose IPT colour
+// turns green and purple under an HDR10 tonemap) is "dolby_vision", which
+// clients refuse. The base layer is judged from the stream's own signalling,
+// not from the record: some files carry a profile 8 record over plain BT.709
+// video with no Dolby Vision data in it, and those are SDR.
+func detectHDR(s *ffprobeStream) (hdr *string, dvProfile *int) {
+	var dv *ffprobeSideData
+	contentLight := false
+	for i := range s.SideDataList {
+		switch s.SideDataList[i].SideDataType {
 		case "DOVI configuration record":
-			t := "dolby_vision"
-			return &t
+			dv = &s.SideDataList[i]
 		case "Content light level metadata":
-			t := "hdr10"
-			return &t
+			contentLight = true
 		}
 	}
-	// Fallback: check color transfer / primaries.
+
+	base := ""
 	switch s.ColorTransfer {
 	case "smpte2084":
-		t := "hdr10"
-		return &t
+		base = "hdr10"
 	case "arib-std-b67":
-		t := "hlg"
-		return &t
+		base = "hlg"
+	default:
+		if contentLight {
+			base = "hdr10"
+		}
 	}
-	return nil
+
+	if dv != nil {
+		if dv.DVProfile != nil {
+			p := *dv.DVProfile
+			dvProfile = &p
+		}
+		noCompatibleBase := (dv.DVBLCompatID != nil && *dv.DVBLCompatID == 0) ||
+			(dv.DVProfile != nil && *dv.DVProfile == 5) ||
+			// A record without a compatibility id over video that signals
+			// nothing: nothing to fall back to, as before.
+			(dv.DVBLCompatID == nil && base == "")
+		if noCompatibleBase {
+			t := "dolby_vision"
+			return &t, dvProfile
+		}
+	}
+	if base == "" {
+		return nil, dvProfile
+	}
+	return &base, dvProfile
 }
 
 func parseFrameRate(s string) float64 {

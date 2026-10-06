@@ -5306,7 +5306,8 @@ components:
         resolution_w:      { type: integer, nullable: true }
         resolution_h:      { type: integer, nullable: true }
         bitrate:           { type: integer, format: int64, nullable: true }
-        hdr_type:          { type: string, nullable: true }
+        hdr_type:          { type: string, nullable: true, description: 'What a player without Dolby Vision has to handle: hdr10, hlg, dolby_vision (profile 5 only, no compatible base layer), or absent for SDR. A Dolby Vision file with an HDR10 / HLG / SDR base layer reports that base layer.' }
+        dv_profile:        { type: integer, nullable: true, description: 'v2.5.1. Dolby Vision profile from the file''s configuration record (5, 7, 8, ...); absent when the file has none.' }
         frame_rate:        { type: number, format: double, nullable: true, description: 'Video frames per second as probed (e.g. 23.976, 25, 59.94). TV clients match the display refresh rate to it.' }
         duration_ms:       { type: integer, format: int64, nullable: true }
         faststart:         { type: boolean }

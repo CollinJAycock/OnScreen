@@ -142,17 +142,25 @@ const (
 // File represents one physical media file attached to an Item.
 // An Item may have multiple Files (multi-version, ADR-031).
 type File struct {
-	ID              uuid.UUID
-	MediaItemID     uuid.UUID
-	FilePath        string
-	FileSize        int64
-	Container       *string
-	VideoCodec      *string
-	AudioCodec      *string
-	ResolutionW     *int
-	ResolutionH     *int
-	Bitrate         *int64
-	HDRType         *string
+	ID          uuid.UUID
+	MediaItemID uuid.UUID
+	FilePath    string
+	FileSize    int64
+	Container   *string
+	VideoCodec  *string
+	AudioCodec  *string
+	ResolutionW *int
+	ResolutionH *int
+	Bitrate     *int64
+	// HDRType is the dynamic range a player has to handle: "hdr10", "hlg",
+	// "dolby_vision" (profile 5 only — no base layer anything else can show)
+	// or nil for SDR. A Dolby Vision file with a compatible base layer reads
+	// as that base layer; DVProfile records the Dolby Vision side.
+	HDRType *string
+	// DVProfile is the profile from the file's Dolby Vision configuration
+	// record (5, 7, 8, ...), nil when it has none. It comes from the
+	// container and can claim Dolby Vision the video doesn't carry.
+	DVProfile       *int
 	FrameRate       *float64
 	AudioStreams    []byte // JSONB
 	SubtitleStreams []byte // JSONB
@@ -319,6 +327,7 @@ type Querier interface {
 	UpdateMediaFileHash(ctx context.Context, id uuid.UUID, hash string) error
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
+	UpdateMediaFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error
 	UpdateMediaFileIntegrity(ctx context.Context, id uuid.UUID, status string, detail *string) error
 	ListFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]File, error)
 	CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error)
@@ -606,6 +615,7 @@ type CreateFileParams struct {
 	ResolutionH     *int
 	Bitrate         *int64
 	HDRType         *string
+	DVProfile       *int
 	FrameRate       *float64
 	AudioStreams    []byte
 	SubtitleStreams []byte
@@ -819,6 +829,15 @@ func (s *Service) GetFileByPath(ctx context.Context, path string) (*File, error)
 // MarkFileActive marks a media file as active (used by the scanner fast path).
 func (s *Service) MarkFileActive(ctx context.Context, id uuid.UUID) error {
 	return s.rw.MarkMediaFileActive(ctx, id)
+}
+
+// SetFileDynamicRange re-classifies a file's dynamic range (hdr_type and the
+// Dolby Vision profile) and nothing else; see migration 00036.
+func (s *Service) SetFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error {
+	if err := s.rw.UpdateMediaFileDynamicRange(ctx, id, hdrType, dvProfile); err != nil {
+		return fmt.Errorf("set file dynamic range %s: %w", id, err)
+	}
+	return nil
 }
 
 // SetFileIntegrity records the integrity-probe verdict ("ok" | "damaged")

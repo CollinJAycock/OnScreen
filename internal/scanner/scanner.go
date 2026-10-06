@@ -127,6 +127,7 @@ type MediaService interface {
 	StoredTrackDisc(ctx context.Context, id uuid.UUID) (*int, error)
 	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
+	SetFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
 	DeleteFile(ctx context.Context, id uuid.UUID) error
 	SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error
@@ -199,6 +200,14 @@ type Scanner struct {
 	// second copy (the same song as FLAC and as MP3) pays for that once per
 	// process, not on every scan. Keyed by media_files.id; values are unused.
 	foldChecked sync.Map
+	// dynamicRangeChecked holds the IDs of unchanged files healDynamicRange
+	// has tried this process, so one that can't be probed isn't retried on
+	// every scan. Keyed by media_files.id; values are unused.
+	dynamicRangeChecked sync.Map
+
+	// probeFile replaces ProbeFile in healDynamicRange; tests set it. nil
+	// uses ProbeFile.
+	probeFile func(ctx context.Context, path string) (*ProbeResult, error)
 }
 
 // trackSet is a snapshot of track item IDs. Held by pointer so a scan can
@@ -1246,6 +1255,7 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		ResolutionH:     probe.ResolutionH,
 		Bitrate:         probe.Bitrate,
 		HDRType:         probe.HDRType,
+		DVProfile:       probe.DVProfile,
 		FrameRate:       probe.FrameRate,
 		AudioStreams:    probe.AudioStreams,
 		SubtitleStreams: probe.SubtitleStreams,
@@ -1351,6 +1361,9 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryID uuid.UUID,
 	if libraryType == "audiobook" {
 		s.healUnchangedChapter(ctx, item, existing, path)
 	}
+	// A file an older scan tagged Dolby Vision is re-read once; most of them
+	// have a base layer every client can play (see healDynamicRange).
+	s.healDynamicRange(ctx, existing, path)
 	if s.shouldEnrich(ctx, item, false) {
 		return item, existing, true
 	}

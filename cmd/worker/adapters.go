@@ -553,10 +553,21 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		ResolutionH:     intPtrToInt32Ptr(p.ResolutionH),
 		Bitrate:         p.Bitrate,
 		HdrType:         p.HDRType,
+		DvProfile:       dbconv.IntPtrToInt16Ptr(p.DVProfile),
 		FrameRate:       float64PtrToNumeric(p.FrameRate),
 		AudioStreams:    p.AudioStreams,
 		SubtitleStreams: p.SubtitleStreams,
 		Chapters:        p.Chapters,
+		DurationMs:      p.DurationMS,
+		VideoBitDepth:   intPtrToInt32Ptr(p.VideoBitDepth),
+	})
+}
+
+func (a *mediaAdapter) UpdateMediaFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error {
+	return a.q.UpdateMediaFileDynamicRange(ctx, gen.UpdateMediaFileDynamicRangeParams{
+		ID:        id,
+		HdrType:   hdrType,
+		DvProfile: dbconv.IntPtrToInt16Ptr(dvProfile),
 	})
 }
 

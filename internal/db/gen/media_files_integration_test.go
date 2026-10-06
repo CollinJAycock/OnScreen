@@ -173,3 +173,103 @@ func TestMediaFile_Integration_IntegrityRoundTrip(t *testing.T) {
 		t.Fatal("integrity_status CHECK constraint should reject unknown values")
 	}
 }
+
+func dvPtr(v int16) *int16 { return &v }
+
+// TestMediaFile_Integration_DynamicRange pins dv_profile (migration 00036) and
+// the narrow re-classification write the scanner uses for files an older scan
+// tagged 'dolby_vision': it changes hdr_type and dv_profile only, keeping the
+// integrity verdict and scanned_at (the file's bytes didn't change), and every
+// full-row read returns the profile.
+func TestMediaFile_Integration_DynamicRange(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	q := gen.New(pool)
+
+	libID := seedLibrary(ctx, t, q, "dv")
+	itemID := seedMediaItem(ctx, t, q, libID, "Dolby Vision Movie")
+
+	// An old-style row: tagged Dolby Vision, no profile.
+	created, err := q.CreateMediaFile(ctx, gen.CreateMediaFileParams{
+		MediaItemID: itemID,
+		FilePath:    "/media/dv-p8-over-sdr.mkv",
+		FileSize:    1,
+		VideoCodec:  integStrPtr("hevc"),
+		HdrType:     integStrPtr("dolby_vision"),
+	})
+	if err != nil {
+		t.Fatalf("CreateMediaFile: %v", err)
+	}
+	if created.DvProfile != nil {
+		t.Fatalf("unset dv_profile = %v, want nil", *created.DvProfile)
+	}
+	if err := q.UpdateMediaFileIntegrity(ctx, gen.UpdateMediaFileIntegrityParams{
+		ID: created.ID, IntegrityStatus: "ok",
+	}); err != nil {
+		t.Fatalf("UpdateMediaFileIntegrity: %v", err)
+	}
+	before, err := q.GetMediaFile(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetMediaFile: %v", err)
+	}
+
+	// Re-read: a profile 8 record over SDR video → SDR, profile 8.
+	if err := q.UpdateMediaFileDynamicRange(ctx, gen.UpdateMediaFileDynamicRangeParams{
+		ID: created.ID, HdrType: nil, DvProfile: dvPtr(8),
+	}); err != nil {
+		t.Fatalf("UpdateMediaFileDynamicRange: %v", err)
+	}
+	got, err := q.GetMediaFile(ctx, created.ID)
+	if err != nil {
+		t.Fatalf("GetMediaFile after re-read: %v", err)
+	}
+	if got.HdrType != nil || got.DvProfile == nil || *got.DvProfile != 8 {
+		t.Fatalf("after re-read hdr_type=%v dv_profile=%v, want nil / 8", got.HdrType, got.DvProfile)
+	}
+	if got.IntegrityStatus != "ok" || !got.IntegrityCheckedAt.Valid {
+		t.Fatalf("re-read must keep the integrity verdict, got %q (checked %v)", got.IntegrityStatus, got.IntegrityCheckedAt.Valid)
+	}
+	if !got.ScannedAt.Time.Equal(before.ScannedAt.Time) {
+		t.Fatalf("re-read must keep scanned_at: %v -> %v", before.ScannedAt.Time, got.ScannedAt.Time)
+	}
+	if got.VideoCodec == nil || *got.VideoCodec != "hevc" || got.FilePath != before.FilePath {
+		t.Fatalf("re-read touched other columns: codec=%v path=%q", got.VideoCodec, got.FilePath)
+	}
+
+	// Every full-row read carries the profile.
+	byPath, err := q.GetMediaFileByPath(ctx, created.FilePath)
+	if err != nil || byPath.DvProfile == nil || *byPath.DvProfile != 8 {
+		t.Fatalf("GetMediaFileByPath dv_profile = %v (err %v), want 8", byPath.DvProfile, err)
+	}
+	forItem, err := q.ListMediaFilesForItem(ctx, itemID)
+	if err != nil || len(forItem) != 1 || forItem[0].DvProfile == nil || *forItem[0].DvProfile != 8 {
+		t.Fatalf("ListMediaFilesForItem dv_profile wrong (err %v)", err)
+	}
+	inLib, err := q.ListActiveFilesForLibrary(ctx, libID)
+	if err != nil || len(inLib) != 1 || inLib[0].DvProfile == nil || *inLib[0].DvProfile != 8 {
+		t.Fatalf("ListActiveFilesForLibrary dv_profile wrong (err %v)", err)
+	}
+
+	// A new scan of changed content writes it through the full update too.
+	if err := q.UpdateMediaFileTechnicalMetadata(ctx, gen.UpdateMediaFileTechnicalMetadataParams{
+		ID: created.ID, VideoCodec: integStrPtr("hevc"), HdrType: integStrPtr("dolby_vision"), DvProfile: dvPtr(5),
+	}); err != nil {
+		t.Fatalf("UpdateMediaFileTechnicalMetadata: %v", err)
+	}
+	p5, err := q.GetMediaFile(ctx, created.ID)
+	if err != nil || p5.DvProfile == nil || *p5.DvProfile != 5 || p5.HdrType == nil || *p5.HdrType != "dolby_vision" {
+		t.Fatalf("after technical update hdr_type=%v dv_profile=%v (err %v), want dolby_vision / 5", p5.HdrType, p5.DvProfile, err)
+	}
+
+	// CreateMediaFile's RETURNING echoes a profile.
+	withProfile, err := q.CreateMediaFile(ctx, gen.CreateMediaFileParams{
+		MediaItemID: itemID,
+		FilePath:    "/media/dv-p7.mkv",
+		FileSize:    1,
+		HdrType:     integStrPtr("hdr10"),
+		DvProfile:   dvPtr(7),
+	})
+	if err != nil || withProfile.DvProfile == nil || *withProfile.DvProfile != 7 {
+		t.Fatalf("CreateMediaFile RETURNING dv_profile = %v (err %v), want 7", withProfile.DvProfile, err)
+	}
+}

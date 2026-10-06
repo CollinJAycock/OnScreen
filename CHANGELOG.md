@@ -9,6 +9,24 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Fixed
+
+- **Dolby Vision files that every client can play are no longer refused.**
+  The scanner tagged any file with a Dolby Vision configuration record
+  `dolby_vision` (whenever the record came before any HDR10 metadata), and
+  every client refuses those with "Dolby Vision is not supported". But
+  profiles 7 and 8.1 carry an HDR10 base layer and 8.4 an HLG one, and some
+  files carry the record over plain SDR video with no Dolby Vision data in
+  it. The QA library had 26 such files and no profile 5. A file now reads as
+  its base layer, judged from the video's own signalling. Only profile 5,
+  which has no base anything else can show, stays `dolby_vision` and is
+  refused. The profile is kept in `media_files.dv_profile` (migration 00036)
+  and returned as `dv_profile` on item files. **Run a scan of your movie and
+  show libraries after upgrading:** it re-reads each file tagged Dolby Vision
+  once, changing only its dynamic range (the integrity verdict stays). See
+  [docs/dolby-vision.md](docs/dolby-vision.md).
 ## [v2.5.0] — 2026-10-06
 
 Requests, watch marks, franchise collections, Last.fm/Trakt scrobbling,

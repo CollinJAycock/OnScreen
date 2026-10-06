@@ -56,6 +56,16 @@ type mockMediaService struct {
 	// Enrichment-attempt tracking for shouldEnrich tests.
 	enrichAttempts        map[uuid.UUID]time.Time
 	touchedEnrichAttempts []uuid.UUID
+
+	// SetFileDynamicRange calls, in order; dynamicRangeErr fails them.
+	dynamicRangeCalls []dynamicRangeCall
+	dynamicRangeErr   error
+}
+
+type dynamicRangeCall struct {
+	id        uuid.UUID
+	hdrType   *string
+	dvProfile *int
 }
 
 type dedupeCall struct {
@@ -225,7 +235,11 @@ func (m *mockMediaService) UpdateItemTitle(_ context.Context, id uuid.UUID, titl
 func (m *mockMediaService) SetItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
-func (m *mockMediaService) MarkFileActive(_ context.Context, _ uuid.UUID) error        { return nil }
+func (m *mockMediaService) MarkFileActive(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockMediaService) SetFileDynamicRange(_ context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error {
+	m.dynamicRangeCalls = append(m.dynamicRangeCalls, dynamicRangeCall{id: id, hdrType: hdrType, dvProfile: dvProfile})
+	return m.dynamicRangeErr
+}
 func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error           { return nil }
 func (m *mockMediaService) DeleteFile(_ context.Context, _ uuid.UUID) error            { return nil }
 func (m *mockMediaService) SoftDeleteItemIfEmpty(_ context.Context, _ uuid.UUID) error { return nil }

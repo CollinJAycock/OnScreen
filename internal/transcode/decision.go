@@ -25,11 +25,10 @@ const (
 	DecisionTranscode
 	// DecisionUnsupported — the content can't be played and must NOT be
 	// transcoded either: the result would be broken. Today the only case is
-	// Dolby Vision on a client that can't direct-play it — the only correct DV
-	// tonemapper (libplacebo) can't initialize on the deployment host, and
-	// tonemap_cuda produces the green/IPT cast (see docs/dolby-vision.md). The
-	// client surfaces a clear "Dolby Vision is not supported" message instead of
-	// playing a mangled stream.
+	// Dolby Vision profile 5 (no compatible base layer) on a client that can't
+	// direct-play it: an HDR10 tonemap of its IPT colour comes out green and
+	// purple (see docs/dolby-vision.md). The client surfaces a clear "Dolby
+	// Vision is not supported" message instead of playing a mangled stream.
 	DecisionUnsupported
 	// DecisionDamaged — the integrity probe marked the FILE damaged
 	// (media_files.integrity_status, migration 00018): its bitstream fails
@@ -104,11 +103,12 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		(caps.SupportsAudioCodec(audioAlias) && channelsFit && containerCarriesAudio(containerAlias, audioAlias))
 	clientSupportsContainer := caps.SupportsContainer(containerAlias)
 
-	// Dolby Vision: we neither pass it through nor tonemap it. The only correct
-	// DV tonemapper (libplacebo apply_dolbyvision) can't init on the deployment
-	// host (no Vulkan), and tonemap_cuda mangles the colors — so a client that
-	// can't direct-play DV gets an explicit "unsupported" verdict and shows a
-	// clear message rather than a broken transcode (see docs/dolby-vision.md). A
+	// Dolby Vision: "dolby_vision" is only profile 5 now — a file with an HDR10,
+	// HLG or SDR base layer reads as that base (scanner detectHDR). Profile 5 has
+	// no base anything else can show, and we don't tonemap its IPT colour
+	// (hevc_cuvid drops the RPU tonemap_cuda would need), so a client that can't
+	// direct-play it gets an explicit "unsupported" verdict and shows a clear
+	// message rather than a green/purple transcode (see docs/dolby-vision.md). A
 	// future DV-capable client (dovi=1) direct-plays and never reaches here.
 	if strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDV {
 		return DecisionUnsupported

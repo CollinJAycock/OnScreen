@@ -69,6 +69,7 @@ func int32PtrToIntPtr(i *int32) *int {
 // copy of intPtrToInt32Ptr that lacked the int32 range guard. See dbconv.
 func float64PtrToNumeric(f *float64) pgtype.Numeric { return dbconv.Float64PtrToNumeric(f) }
 func intPtrToInt32Ptr(i *int) *int32                { return dbconv.IntPtrToInt32Ptr(i) }
+func intPtrToInt16Ptr(i *int) *int16                { return dbconv.IntPtrToInt16Ptr(i) }
 
 func durationToPtr(d time.Duration) *time.Duration {
 	return &d

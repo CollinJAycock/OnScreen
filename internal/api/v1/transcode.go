@@ -622,10 +622,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Dolby Vision gate: refuse rather than serve a broken stream. The only
-	// correct DV tonemapper (libplacebo) can't init on the deployment host and
-	// tonemap_cuda wrecks the colors (docs/dolby-vision.md), so a DV title can't
-	// be transcoded correctly here. Return a clear error the client shows as
+	// Dolby Vision gate: refuse rather than serve a broken stream. hdr_type is
+	// "dolby_vision" only for profile 5 (a file with an HDR10 / HLG / SDR base
+	// layer reads as that base), whose IPT colour an HDR10 tonemap turns green
+	// and purple (docs/dolby-vision.md). Return a clear error the client shows as
 	// "Dolby Vision is not supported". Honors a DV-capable client (dovi=1), which
 	// would direct-play and not hit transcode-start anyway. This mirrors the
 	// transcode.Decide DecisionUnsupported verdict the playback-decision endpoint

@@ -1,5 +1,50 @@
 # Dolby Vision — handling strategy + decision
 
+## Update 2026-10-06: only profile 5 is refused
+
+The June decision below rested on two premises that turned out wrong:
+
+- **QA's two "Dolby Vision" titles were never Dolby Vision.** Hellraiser (1987)
+  and The Sound of Music (1965) carry a profile 8 configuration record, but the
+  video has no RPU and is plain BT.709 SDR. It plays correctly untouched.
+- **The 4K library has 24 real Dolby Vision titles,** 18 profile 7 UHD
+  Blu-ray remuxes and 6 profile 8.1 encodes, all with an HDR10 base layer, and
+  **no profile 5.** The old scanner tagged a file `dolby_vision` whenever the
+  record came before any HDR10 metadata in ffprobe's side data, so most of these
+  were refused too, although every client can play their base layer. That's
+  what Plex does with profiles 7 and 8, and what Jellyfin falls back to.
+
+**Now (migration 00036):** the scanner sets `hdr_type` from the base layer and
+records the profile separately in `media_files.dv_profile` (API: `dv_profile`).
+
+| Stream | `hdr_type` | Result |
+|---|---|---|
+| Profile 7 / 8.1 (HDR10 base, compatibility id 1 or 6) | `hdr10` | Plays like any HDR10 file |
+| Profile 8.4 (HLG base) | `hlg` | Plays like HLG |
+| Profile 8 / 9 record over SDR video | none (SDR) | Plays like SDR |
+| Profile 5 (compatibility id 0, IPT colour) | `dolby_vision` | Refused, as before |
+
+The base layer is judged from the stream's own transfer signalling, not from
+the record, because records can lie. Files an older scan tagged `dolby_vision`
+are re-read once by the next scan (`healDynamicRange`), which writes only
+`hdr_type` and `dv_profile`.
+
+**Still open:**
+
+- **Real Dolby Vision playback** on capable clients (Fire TV 4K, Shield) would
+  need them to declare it and the server to direct-play those files.
+  `dv_profile` is stored for that.
+- **Tone-mapping profile 5** on NVIDIA looks feasible. Our `tonemap_cuda`
+  (jellyfin's patch) already reshapes the RPU (`apply_dovi`, on by default),
+  but `hevc_cuvid` never attaches the metadata it needs. Jellyfin decodes with
+  ffmpeg's own HEVC decoder plus NVDEC instead. That's untested here, and there
+  is no profile 5 file to test with.
+- **Plex** has no profile 5 transcode ("DoVi (Profile 5) color space is not
+  supported"). **Jellyfin** tone-maps profiles 5 and 8 with its patched ffmpeg,
+  on CUDA, OpenCL, VideoToolbox, RKMPP and the CPU (`tonemapx`).
+
+---
+
 **Status:** Decision proposed. Triggered by 2 DV titles in the QA 4K library
 (Hellraiser, The Sound of Music) failing to play in-browser. Research: deep
 multi-source pass, 2026-06-02 (19 verified claims; sources cited inline).
