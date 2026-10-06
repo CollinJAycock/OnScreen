@@ -2717,6 +2717,7 @@ func parseJSONBSubtitleStreams(data []byte) []SubtitleStreamJSON {
 			Title:    asString(s["title"]),
 			Forced:   asBool(s["forced"]),
 			SDH:      asBool(s["sdh"]),
+			Default:  asBool(s["default"]),
 		})
 	}
 	return out

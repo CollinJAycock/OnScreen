@@ -1096,6 +1096,23 @@ func TestParseJSONBSubtitleStreams_Valid(t *testing.T) {
 	}
 }
 
+// The probe stores each embedded track's default disposition and clients
+// pick that track when the viewer has no language preference, so the API
+// must carry it through rather than report every track non-default.
+func TestParseJSONBSubtitleStreams_Default(t *testing.T) {
+	data := []byte(`[{"index":2,"codec":"ass","title":"Dialogue","sdh":true,"default":true},{"index":3,"codec":"ass","title":"Signs"}]`)
+	got := parseJSONBSubtitleStreams(data)
+	if len(got) != 2 {
+		t.Fatalf("want 2, got %d", len(got))
+	}
+	if !got[0].Default || !got[0].SDH {
+		t.Errorf("first track: default=%v sdh=%v, want both true", got[0].Default, got[0].SDH)
+	}
+	if got[1].Default {
+		t.Error("second track: default=true, want false (key absent)")
+	}
+}
+
 func TestParseJSONBSubtitleStreams_InvalidJSON(t *testing.T) {
 	got := parseJSONBSubtitleStreams([]byte("not json"))
 	if len(got) != 0 {
