@@ -27,9 +27,13 @@ ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS prev_token_hash text;
 -- disturbing the sliding window for normal use.
 ALTER TABLE public.sessions ADD COLUMN IF NOT EXISTS absolute_expires_at timestamp with time zone;
 
--- Backfill so existing sessions get a cap rather than an open-ended one.
+-- Backfill so existing sessions get a cap rather than an open-ended one. The
+-- cap runs from the upgrade, not from created_at: anchoring it to creation
+-- ended every session older than 90 days at the first refresh after the
+-- upgrade, and Fire TV 1.0.x answers that 401 by clearing its sign-in, so a
+-- whole launch cohort of TVs would have had to re-pair at once.
 UPDATE public.sessions
-SET absolute_expires_at = created_at + interval '90 days'
+SET absolute_expires_at = NOW() + interval '90 days'
 WHERE absolute_expires_at IS NULL;
 
 -- Lookup index for the superseded-hash probe. Partial: only rotated rows have
