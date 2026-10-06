@@ -9,7 +9,7 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [v2.5.0] — unreleased
+## [v2.5.0] — 2026-10-06
 
 Requests, watch marks, franchise collections, Last.fm/Trakt scrobbling,
 audiobook speed and bookmarks, a file integrity probe and the TV web app at
