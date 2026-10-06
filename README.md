@@ -65,7 +65,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - **Web** (SvelteKit) — touch-optimised player, bottom-sheet menus, orientation lock, safe-area insets
 - **Desktop** (Tauri 2; Windows and Linux installers attached to each GitHub Release, not yet code-signed; macOS isn't built, since cpal fails to compile there with E0277 — see [clients/desktop/README.md](clients/desktop/README.md)) — reuses the SvelteKit bundle in a system webview; native Rust audio engine outside the webview decodes through symphonia 0.5 and writes raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect, OS mixer bypassed); DSD-via-DoP; ReplayGain enforcement; OS now-playing widget; OS media keys; system tray
 - **Android TV / Google TV** (Leanback + Media3) — 1.4.x in Google Play testing tracks (closed testing since 2026-05-13; not yet in production).
-- **Fire TV** (a `firetv` flavor of the Android TV app) — live on the Amazon Appstore since 2026-06-18 with the 1.0.x build; 1.4.2 submitted to Amazon 2026-10-06.
+- **Fire TV** (a `firetv` flavor of the Android TV app) — live on the Amazon Appstore since 2026-06-18; 1.4.2 is the live build since 2026-10-06.
 - **Android phone** (Compose + Material 3) — book/comic reader (CBZ/CBR/EPUB), Chromecast support, picture-in-picture, WorkManager-backed offline downloads, pair-PIN SSO bridge. 0.3.0 in a Google Play testing track (not yet in production).
 - **Samsung Tizen** (SvelteKit + tizen-package) — hardware-verified on a Samsung QN75Q80B 2022 panel; AVPlay HEVC + HDR10 + audio passthrough confirmed. 1.1.0 submitted to Samsung 2026-10-06, its first store submission.
 - **LG webOS** (SvelteKit + ares-package) — first run on LG hardware 2026-10-01; 0.2.1 submitted to the LG Content Store 2026-10-02.
