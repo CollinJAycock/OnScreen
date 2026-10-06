@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // The capability header probes the TV's media stack; nothing to probe here.
 vi.mock('./capabilities', () => ({ clientCapabilitiesHeader: () => '' }));
 
-import { ApiClient, Unauthorized, type TokenPair } from './client';
+import { ApiClient, TIMED_OUT_MESSAGE, UNREACHABLE_MESSAGE, Unauthorized, type TokenPair } from './client';
 
 const ORIGIN = 'https://tv.example';
 
@@ -145,5 +145,36 @@ describe('token refresh (ApiClient)', () => {
     // The retry with the fresh token 401s too: the caller gets Unauthorized.
     expect(await c).toBeInstanceOf(Unauthorized);
     expect(refreshCalls()).toBe(1);
+  });
+});
+
+describe('request failures (ApiClient)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  it("says what went wrong and what to do, not the browser's 'Failed to fetch'", async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    const client = new ApiClient();
+    client.setOrigin(ORIGIN);
+    client.setTokens(pair(1));
+    await expect(client.get('/api/v1/hub')).rejects.toThrow(UNREACHABLE_MESSAGE);
+  });
+
+  it('a request the server never answers times out with its own message', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn((_u: string, init: RequestInit) => new Promise((_r, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+    })));
+    const client = new ApiClient();
+    client.setOrigin(ORIGIN);
+    client.setTokens(pair(1));
+    const req = expect(client.get('/api/v1/hub')).rejects.toThrow(TIMED_OUT_MESSAGE);
+    await vi.advanceTimersByTimeAsync(60_000);
+    await req;
   });
 });

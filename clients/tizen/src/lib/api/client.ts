@@ -22,6 +22,14 @@ const USER_KEY = 'onscreen.user';
 // surfaces an error instead of hanging the UI indefinitely.
 const REQUEST_TIMEOUT_MS = 20_000;
 
+// What a screen shows when the server can't be reached or doesn't answer:
+// what went wrong and what to do (Samsung's checklist asks for both), not
+// the browser's "Failed to fetch".
+export const UNREACHABLE_MESSAGE =
+  "Can't reach your OnScreen server. Check the TV's network connection and that the server is running, then try again.";
+export const TIMED_OUT_MESSAGE =
+  'Your OnScreen server is taking too long to answer. Check the network connection, then try again.';
+
 export interface UserMeta {
   user_id: string;
   username: string;
@@ -407,8 +415,8 @@ export class ApiClient {
         signal: controller.signal
       });
     } catch (e) {
-      if (controller.signal.aborted) throw new Error(`Request timed out: ${url}`);
-      throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
+      if (controller.signal.aborted) throw new Error(TIMED_OUT_MESSAGE);
+      throw new Error(UNREACHABLE_MESSAGE);
     } finally {
       clearTimeout(timer);
     }
@@ -510,10 +518,10 @@ export class ApiClient {
       });
     } catch (e) {
       if (controller.signal.aborted) {
-        throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`);
+        throw new Error(TIMED_OUT_MESSAGE);
       }
       // DNS / TLS / connection-refused — normalise to a readable message.
-      throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
+      throw new Error(UNREACHABLE_MESSAGE);
     } finally {
       clearTimeout(timer);
     }

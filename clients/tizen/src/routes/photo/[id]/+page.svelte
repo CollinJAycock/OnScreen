@@ -18,6 +18,7 @@
   import { toRemoteKey } from '$lib/focus/keys';
   import { goBack } from '$lib/nav';
   import { SLIDESHOW_HINT_MS, Slideshow, photoCommand } from '$lib/slideshow';
+  import { holdScreenAwake } from '$lib/screenSaver';
 
   const initialId = $derived(page.params.id!);
 
@@ -48,6 +49,8 @@
     (on) => {
       slideshowOn = on;
       if (on) hintVisible = false;
+      // No screensaver over a running slideshow (Samsung's checklist).
+      holdScreenAwake('slideshow', on);
     },
   );
 
@@ -215,6 +218,7 @@
 
   onDestroy(() => {
     slideshow.stop();
+    holdScreenAwake('slideshow', false);
     if (hintTimer) clearTimeout(hintTimer);
     for (const url of blobCache.values()) URL.revokeObjectURL(url);
     blobCache.clear();

@@ -463,6 +463,23 @@ Roku channel (no request features, as on Android):
     `Object.fromEntries`; a test fails on CSS Chromium 69 drops.
   - config.xml asks for the productinfo privilege (the model name); the
     version is 1.1.0 in config.xml, package.json and Settings > About.
+  - The TV's screensaver stays off while video plays and while a photo
+    slideshow runs (Samsung's checklist, items 9 and 195); audio, a pause
+    and leaving the player let it back. The page shell loads Samsung's
+    `webapis.js` on a TV for the switch (`webapis.appcommon`), which the
+    platform does not inject the way it injects AVPlay.
+  - "Sign in with another device" works: the app polled for the sign-in
+    with POST, which the server answers 405 (it routes GET), so a TV showing
+    a PIN waited forever however often the PIN was entered. The Roku channel
+    had the same bug earlier.
+  - A server the TV can't reach, or one that doesn't answer, now says so
+    and what to try ("Can't reach your OnScreen server. Check the TV's
+    network connection and that the server is running, then try again.")
+    instead of the browser's "Network error: Failed to fetch".
+  - The player's trickplay thumbnail shows only while a seek is pending.
+    It used to show whenever the controls were up, over the play state at
+    the start of the bar, on every title with thumbnails (all of the store
+    review server's films).
   - Posters no longer all break on a TV signed in more than a day ago. Every
     image URL carries the 24-hour asset token, and nothing renewed it before
     the first screen rendered (the event stream renewed it only after its

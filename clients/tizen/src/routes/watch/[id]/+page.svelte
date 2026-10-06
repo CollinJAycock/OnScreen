@@ -76,6 +76,7 @@
   import { pickPreferredAudio, pickPreferredSubtitle } from '$lib/subtitleSelect';
   import { rememberSpeedUnsupported, speedKnownUnsupported } from '$lib/speedSupport';
   import { createTempoMedia, type TempoMedia } from '$lib/player/tempoMedia';
+  import { holdScreenAwake } from '$lib/screenSaver';
   import { audioTrackLabel } from '$lib/langName';
   import {
     SUBTITLE_FETCH_TIMEOUT_MS,
@@ -486,6 +487,11 @@
   // plays as audio only (a podcast's audio episode), which used to get a
   // black screen whose controls faded away.
   const nowPlaying = $derived(isAudioItem || isAudioOnly);
+  // No screensaver over playing video (Samsung's checklist); audio, a pause
+  // and the way out let it come back.
+  $effect(() => {
+    holdScreenAwake('player', !!item && !nowPlaying && !paused);
+  });
   const nowPlayingArtPath = $derived(item ? nowPlayingArt(item, parentPoster) : null);
   const queueText = $derived(queueLabel(item?.type, queuePosition, queueTotal));
 
@@ -3237,6 +3243,7 @@
     unsubscribeEvents();
     if (upNextTimer) clearInterval(upNextTimer);
     if (rateCheckTimer) { clearInterval(rateCheckTimer); rateCheckTimer = null; }
+    holdScreenAwake('player', false);
   });
 
   // The bar's fill (and the trickplay preview's anchor) follow barMs: the
@@ -3500,8 +3507,11 @@
                 <div class="chapter-marker" style="left: {(ch.start_ms / duration) * 100}%"></div>
               {/if}
             {/each}
-            {#if trickplayCue && duration > 0}
-              <!-- Sprite-cropped scrub preview. The element sized to
+            {#if trickplayCue && duration > 0 && scrubTargetMs !== null}
+              <!-- Sprite-cropped scrub preview, while a seek is pending
+                   only (as on Android): shown whenever the controls were
+                   up, it sat over the play state next to the bar's start
+                   and showed the frame already on screen. The element sized to
                    (w, h) reveals only the cue's region of the parent
                    sprite via background-position. Anchored to the
                    track so the percent-based `left` lands on the

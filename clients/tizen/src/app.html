@@ -84,6 +84,14 @@
         };
       }
     </script>
+    <script>
+      // Samsung's webapis.js, on a TV only: the platform injects AVPlay by
+      // itself, but appcommon (the screensaver switch, lib/screenSaver) comes
+      // only from this file. A browser has no tizen object and skips it.
+      if (window.tizen) {
+        document.write('<script src="$WEBAPIS/webapis/webapis.js"><\/script>');
+      }
+    </script>
     %sveltekit.head%
   </head>
   <body data-sveltekit-preload-data="hover">
