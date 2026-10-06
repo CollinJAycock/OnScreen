@@ -1,17 +1,15 @@
 openapi: 3.0.3
 info:
   title: OnScreen API
-  version: "2.2.0"
+  version: "2.5.0"
   description: |
     HTTP API for the OnScreen media server.
 
-    **API stability** — frozen as of v2.2.0 (2026-05-09). Future v2.x
-    minor releases may *add* endpoints, fields, or capability flags
-    but never *remove* or *rename* them. Clients written against
-    v2.2.0 keep working through the v2.x line. See
-    [docs/server-lock.md](../server-lock.md) for the full posture
-    and the v2.3 candidate list (ABR ladder, 2FA, Last.fm exporter,
-    audio loudnorm).
+    **API stability** — the v2.2.0 freeze was lifted after v2.3.0. A
+    v2.x release adds endpoints, fields and capability flags; a breaking
+    change ships only together with updated first-party clients (v2.4
+    narrowed `?token=` to purpose-scoped tokens this way). See
+    [docs/server-lock.md](../server-lock.md).
 
     All JSON responses use a uniform envelope:
       - Success: `{ "data": <payload> }`
@@ -23,12 +21,14 @@ info:
     paths return raw `text/plain` errors with appropriate HTTP status codes.
 
     Auth is delivered as either a Paseto v4 bearer token (`Authorization: Bearer ...`)
-    or the `os_access` httpOnly cookie set by `/auth/login`. Browser clients use the
+    or the `onscreen_at` httpOnly cookie set by `/auth/login`. Browser clients use the
     cookie; native and third-party clients use the bearer header. Asset routes
     (artwork, media stream, subtitles, downloads) additionally accept a
-    `?token=<paseto>` query-string token so renderers that can't carry an
+    `?token=` query-string token so renderers that can't carry an
     Authorization header (mobile webview, browser `<img>` / `<video>`) still
-    authenticate.
+    authenticate. Since v2.4 that token must be a purpose-scoped one: the
+    `asset_token` returned by login and refresh, or a file's `stream_token`.
+    An access token in the query string is refused.
   license:
     name: AGPL-3.0
 servers:
@@ -264,7 +264,7 @@ paths:
                 password: { type: string, format: password }
       responses:
         '200':
-          description: Token pair plus user metadata. Sets `os_access` and `os_refresh` cookies.
+          description: Token pair plus user metadata. Sets `onscreen_at` and `onscreen_rt` cookies.
           content:
             application/json:
               schema:
@@ -279,7 +279,7 @@ paths:
   /api/v1/auth/refresh:
     post:
       summary: Refresh access token
-      description: Reads refresh token from JSON body (`refresh_token`) or `os_refresh` cookie.
+      description: Reads refresh token from JSON body (`refresh_token`) or `onscreen_rt` cookie.
       tags: [Auth]
       security: []
       requestBody:
@@ -321,7 +321,7 @@ paths:
       security: []
       responses:
         '204':
-          description: Logged out. Clears `os_access` and `os_refresh` cookies.
+          description: Logged out. Clears `onscreen_at` and `onscreen_rt` cookies.
 
   /api/v1/auth/register:
     post:
@@ -4798,7 +4798,7 @@ components:
     cookieAuth:
       type: apiKey
       in: cookie
-      name: os_access
+      name: onscreen_at
 
   parameters:
     UUID:
@@ -5726,6 +5726,14 @@ components:
             gets A/V synced from the first audible frame instead of
             showing silent video while the audio pipeline warms up.
             0 when no gap was measurable.
+        audio_rate:
+          type: number
+          format: double
+          description: |
+            v2.5. The playback speed the server applied to an audio-only
+            session (request `audio_rate`). Absent or 0 when none was
+            applied: a client that asked for a speed and gets 0 back is
+            on a server without it, and plays at 1x.
 
     # ── Notifications / Sessions ───────────────────────────────────────────
     Notification:

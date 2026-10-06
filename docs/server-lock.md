@@ -11,6 +11,18 @@
 > lock rationale below documents the v2.2.0–v2.3.0 period and still
 > describes the *default* posture: prefer additive change; break only
 > deliberately, with the clients updated in the same cut.
+>
+> **v2.5.0** adds to the API without removing or renaming a route or a
+> field, but some existing calls now fail in new, deliberate ways. Old
+> clients keep working, but see the CHANGELOG's upgrade notes:
+> sessions have a 90-day absolute lifetime (counted from the upgrade for
+> sessions that already exist); a reused refresh token ends every session
+> of that user; transcode and playback-decision can answer
+> `415 UNSUPPORTED_CONTAINER` and `422 FILE_DAMAGED`; HLS playlists and
+> segments are rate-limited per address; refresh answers `503` rather
+> than `401` when the database is unavailable; and parental limits apply
+> to more routes. Migration 00023 drops the internal `watch_state`
+> materialized view in favour of the `user_watch_state` view.
 
 The OnScreen server API was **frozen for new breaking changes** from
 v2.2.0 (tagged 2026-05-09) through v2.3.0 (tagged 2026-05-22).

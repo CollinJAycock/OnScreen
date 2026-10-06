@@ -21,9 +21,9 @@ COPY clients/xbox/ ./
 RUN npm run build
 
 # ── Stage 2: build Go binaries ───────────────────────────────────────────────
-# Use the minor-version tag (1.26-alpine) rather than a pinned patch so the
-# image picks up patch releases that match go.mod's `go 1.26.x` directive
-# without requiring a Dockerfile bump on every Go security release.
+# Use a minor-version tag rather than a pinned patch so the image picks up
+# Go patch releases without a Dockerfile bump on every Go security release.
+# It may be ahead of go.mod's `go` directive, which is only a minimum.
 FROM golang:1.27-alpine AS builder
 WORKDIR /app
 

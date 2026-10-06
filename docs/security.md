@@ -3,8 +3,8 @@
 This document records OnScreen's server-side security posture: the network
 surfaces an operator must control, the behaviors that differ from a naive
 default, and the residual risks that are accepted by design. It reflects the
-hardening pass tracked in the codebase as of v2.4, plus the unreleased v2.5
-additions listed under [v2.5 additions](#v25-additions-unreleased).
+hardening pass tracked in the codebase as of v2.4, plus the v2.5.0
+additions listed under [v2.5.0 additions](#v250-additions).
 
 ## Ports & network exposure
 
@@ -88,7 +88,7 @@ These differ from prior behavior; operators upgrading should be aware:
     and addresses inside this host's own IPv6 /64s, so dual-stack LANs can
     complete setup over IPv6.
 
-## v2.5 additions (unreleased)
+## v2.5.0 additions
 
 **Notification agents** (Settings → Notifications; `/api/v1/admin/notification-agents`)
 
@@ -200,6 +200,15 @@ re-read the real admin's session.
   `http://tauri.localhost, tauri://localhost` under Settings → General →
   CORS allowed origins and restart the server (the list is read at
   startup). The entries can stay after updating.
+
+**TV web app** (`/tvapp/`, the Xbox app's front end)
+
+- Static files embedded in the server binary (`internal/tvui`), served
+  without authentication like the main web app, outside the API's auth and
+  rate-limit groups. Unknown paths under `/tvapp/` get the TV app's index,
+  never the main web app; a build without the TV app serves a placeholder.
+- The page signs in through the same API as every other client and gets the
+  same nonce-based Content-Security-Policy as the main web app.
 
 ## Deployment, packaging & supply-chain hardening
 
@@ -466,8 +475,7 @@ ntfy / Gotify server must use `https`.
 - [ ] Disable LAN discovery on untrusted segments.
 - [ ] Leave LDAP `skip_tls_verify` off in production.
 - [ ] Turn on a notification agent's "Allow private network" only for a
-      self-hosted ntfy / Gotify on your LAN; after rotating `SECRET_KEY`,
-      re-enter each agent's secret.
+      self-hosted ntfy / Gotify on your LAN.
 - [ ] Set a strong `DB_PASS` (compose files refuse to start without one).
 - [ ] Behind a reverse proxy, confirm it forwards `X-Forwarded-For`/`-Proto` on
       every route (the first-run setup gate and rate limits depend on it); set

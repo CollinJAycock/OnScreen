@@ -1,13 +1,14 @@
 // Package tvui embeds the built TV web app (clients/xbox) that the server
-// serves at /tv/. The Xbox shell loads <server>/tv/index.html in a WebView2,
-// so the app runs same-origin with the API.
+// serves at /tvapp/. The Xbox shell loads <server>/tvapp/index.html in a
+// WebView2, so the app runs same-origin with the API. (/tv is the web app's
+// Live TV page.)
 //
 // `make tvui` (and each build script that also builds web/) runs the
 // clients/xbox build and copies its build/ output into dist/ before the Go
 // build.
 // Unlike internal/webui, a missing TV build is not fatal: only dist/.gitkeep
 // is committed, so a checkout that never built the TV app still compiles and
-// /tv/ serves placeholder/index.html instead.
+// /tvapp/ serves placeholder/index.html instead.
 package tvui
 
 import (

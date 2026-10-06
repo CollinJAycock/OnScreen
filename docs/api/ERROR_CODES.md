@@ -23,6 +23,13 @@ releases.
 | `INTERNAL` | 500 | Unexpected server-side failure. |
 | `RATE_LIMITER_UNAVAILABLE` | 503 | Rate limiter backend (Valkey) unreachable. |
 
+## Setup + CSRF
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `SETUP_LOCAL_HOST_ONLY` | 403 | `POST /auth/register` on a server with no users yet, from a local client but through a `Host` that isn't an IP address, `localhost`, a single-label name or a local-only suffix (`.local`, `.localhost`, `.home.arpa`, `.internal`, `.lan`, `.home`). Guards first-run setup against DNS rebinding. Open setup via the server's IP once, or set `ALLOW_PUBLIC_SETUP=true`. |
+| `CSRF_BLOCKED` | 403 | A state-changing request authenticated by the browser cookie (no `Authorization: Bearer`) came from another origin (`Sec-Fetch-Site: same-site` / `cross-site`, or a foreign `Origin` not in the CORS allow-list). Also returned for a cross-origin, non-JSON body posted to a sign-in path (login, LDAP login, TOTP verify, register, invite accept). Written by middleware before the handler runs, so this envelope has no `request_id`. |
+
 ## Live TV / DVR
 
 | Code | HTTP | Meaning |
@@ -52,11 +59,43 @@ releases.
 | `SOURCE_MISSING` | 422 | The source file's path doesn't resolve on disk. Typical causes: media drive unmounted, file deleted/moved since the last scan, network share offline. Re-scan the library to clear stale rows. |
 | `SOURCE_UNREADABLE` | 422 | ffprobe pre-flight failed within the 5 s budget — the container is corrupt, the file is zero-length, or the header references streams the demuxer can't parse. Re-encode or replace the file. Surfaces a friendly error in the player instead of the historical 60 s "spinner forever" while ffmpeg hung on the bad input. |
 | `TOO_MANY_SESSIONS` | 429 | Per-user concurrent session cap reached (default 5). Stop one of the user's existing sessions before starting another. |
+| `FILE_DAMAGED` | 422 | `POST /items/{id}/transcode` on a file the opt-in `integrity_probe` task marked damaged (its stream fails software decode partway through even though the header parses). The playback-decision endpoint gives the same file a "damaged" verdict. Replace the file and re-scan. |
+| `UNSUPPORTED_CONTAINER` | 415 | The file isn't a playable media container — typically an HLS/M3U playlist or other reference file in place of real media. Returned by `POST /items/{id}/transcode` and `POST /items/{id}/playback-decision`, before ffprobe or ffmpeg ever opens the file. |
 
 Generic codes (`INTERNAL` / `NOT_FOUND` / `FORBIDDEN`) still cover the rest of
 the transcode surface; when adding new specific failure modes (codec rejection,
 encoder unavailable, supersede chain), introduce a new stable code rather than
 reusing a generic one.
+
+## Now Playing (admin stop)
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `PLAYBACK_STOPPED` | 403 | An admin stopped this stream from Now Playing. For 2 minutes the same user, item and client IP get this on direct-play byte requests (`/media/stream/{id}`, `/media/download/{id}`), `POST /items/{id}/transcode` and `playing` progress reports. `message` carries the admin's note when one was given. The user's other devices and other titles aren't affected. |
+| `STOP_UNSUPPORTED` | 409 | `POST /sessions/{id}/stop` on a Now Playing card the server can't tie to one viewer (`can_stop: false`: a direct play recorded without a user or item). The card drops out of Now Playing within a minute. |
+
+## Problem reports + re-grab
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `ALREADY_REPORTED` | 409 | `POST /items/{id}/issues`: the caller already has an open report of this kind for this item. |
+| `TOO_MANY_OPEN_ISSUES` | 429 | `POST /items/{id}/issues`: a non-admin caller already has 10 open reports. |
+| `NOT_OPEN` | 409 | `PATCH /admin/issues/{id}` closing a report that is already closed. |
+| `NOT_MANAGED` | 409 | `POST /admin/items/{id}/regrab`: no enabled Radarr / Sonarr instance is configured, or none of them manages this title. |
+| `ARR_UNAVAILABLE` | 502 | `POST /admin/items/{id}/regrab`: the instance that manages the title failed the re-grab, or an instance couldn't be reached while looking for the title. Details go to the server log. |
+
+## Requests
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `REQUESTS_DISABLED` | 403 | An admin turned off requesting for this account (`can_request = false`). Returned by `POST /requests` and `GET /discover/search`; never for an admin. |
+| `TOO_MANY_PENDING_REQUESTS` | 429 | `POST /requests`: the caller already has 25 pending requests. Separate from the per-user quota. |
+
+## Collections
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `MANAGED_COLLECTION` | 409 | Update, delete, add-item or remove-item on a franchise collection. Its name and members are rebuilt from TMDB on every sync, so edits are refused. |
 
 ## Scrobbling
 

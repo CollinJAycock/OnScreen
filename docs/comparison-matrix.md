@@ -12,6 +12,8 @@
 
 **Addendum 2026-10-06:** two store submissions. **Tizen 1.1.0 was submitted to the Samsung Seller Office**, the app's first Samsung submission, and is in Samsung's review. Before submission it ran on the QN75Q80B (Tizen 6.5) against the QA server on 2026-10-05/06: a scripted 19-check regression passed with no page errors. It covered every screen, H.264 and 4K HDR HEVC playback, seeking past the transcoded range, audio / subtitle switching, a file's default subtitle track, Up Next, music, audiobook speed, photos and slideshow, search, library paging, favorites, settings and backgrounding; the remote's Play/Pause and channel keys were pressed on the physical remote. That run depended on server changes now on main: HEVC reaches Samsung TVs as MPEG-TS HLS segments (AVPlay refuses the server's fMP4), audiobook speed is applied by the server for Samsung TVs, which ignore the player's playback rate, and a subtitle track's `default` flag is reported. It also found app defects that were fixed before submission: "Sign in with another device" never completed (the PIN poll used the wrong HTTP method), the screensaver could come up during video and slideshows, and a server the TV couldn't reach showed the browser's raw error text. Samsung reviews on the dedicated review server with eight identical accounts, one per model group. **Fire TV:** Amazon rejected 1.4.1 because Search's microphone button did nothing (Fire TV devices have no speech recognizer for apps); **1.4.2 (versionCode 25)**, which shows the microphone only where a recognizer exists, was submitted and is in Amazon's review. The live Fire TV build is still the June 1.0.x. The Fire TV and Samsung Tizen cells don't change until those builds are live.
 
+**Addendum 2026-10-06 (v2.5.0 cut):** an Xbox row is added at ⚠. The server now serves a TV web app at `/tvapp/` (the webOS app plus controller handling), and a UWP shell in `clients/xbox` loads it from the server the user enters; it has run only on a Windows PC, not yet on a console, and isn't in the Microsoft Store. Every other cell is as of the 2026-10-01 and 2026-10-06 addenda; v2.5.0 changes no other row.
+
 **Legend** — ✅ in core · 💎 paid tier · 🧩 official plugin · ⚠ partial · ❌ not supported
 
 **Scope** — server-side features and first-party clients. Plex / Emby / Jellyfin rows reflect widely-documented upstream behaviour as of the snapshot date; tiering and plugin availability change over time. Cells where all four are ✅ have been moved to [Non-differentiators](#non-differentiators) at the bottom rather than padding every table.
@@ -234,6 +236,7 @@ Per-platform status as of 2026-10-06. ✅ here means "released to users and exer
 | LG webOS                       |    ⚠     |  ✅  |  ✅  |    ✅    |
 | Samsung Tizen                  |    ⚠     |  ✅  |  ✅  |    ✅    |
 | Roku                           |    ⚠     |  ✅  |  ✅  |    ✅    |
+| Xbox                           |    ⚠     |  ✅  |  ✅  |    ✅    |
 | iOS / iPadOS                   |    ❌    |  ✅  |  ✅  |    ✅    |
 | Apple TV                       |    ❌    |  ✅  |  ✅  |    ✅    |
 

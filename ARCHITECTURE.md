@@ -61,9 +61,9 @@ OnScreen fixes all of this from scratch. It is **not** a Plex clone — it ships
 
 | Layer | Choice | Rationale |
 |---|---|---|
-| Language | Go 1.25+ | Single binary, maintainable, fast ramp |
+| Language | Go 1.26+ | Single binary, maintainable, fast ramp |
 | Router | Chi v5 | Lightweight, idiomatic Go, middleware-friendly |
-| Database | PostgreSQL 16+ | MVCC, materialized views, pgvector, FTS |
+| Database | PostgreSQL 16+ | MVCC, materialized views, FTS; extensions pg_trgm, pgcrypto, unaccent |
 | DB driver | pgx/v5 | Native Postgres; better than `database/sql` |
 | Query gen | sqlc | Type-safe queries from raw SQL |
 | Migrations | goose v3 | SQL-first, simple |
@@ -83,10 +83,12 @@ OnScreen fixes all of this from scratch. It is **not** a Plex clone — it ships
 |---|---|---|
 | Web | SvelteKit + TypeScript + hls.js | Same bundle reused inside the desktop Tauri shell |
 | Desktop | Tauri 2 + Rust audio engine outside the webview | symphonia 0.5 decoder; raw `wasapi` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect); DSF + DoP for DSD; OS keychain for token storage; `souvlaki` for OS now-playing |
-| Android TV / Fire TV | Kotlin + AndroidX Leanback + Media3 1.3 | Hilt DI, Retrofit + Moshi, Coil; Watch Next launcher row via `androidx.tvprovider` |
+| Android TV / Fire TV | Kotlin + AndroidX Leanback + Media3 1.11 | Hilt DI, Retrofit + Moshi, Coil; Watch Next launcher row via `androidx.tvprovider` |
 | Android phone | Kotlin + Jetpack Compose | Reuses TV client's data layer verbatim; WorkManager-backed offline downloads |
-| LG webOS / Samsung Tizen | SvelteKit + ares-package / tizen-package | Bulk-ported; remote-key overlays |
+| LG webOS / Samsung Tizen | SvelteKit + ares-package / tizen-package | Tizen 1.1.0 runs on the webOS app's code with a Samsung platform layer (AVPlay behind a media-element adapter, Samsung keys); remote-key overlays |
 | Roku | BrightScript + SceneGraph | `Playback_Decide()` covered by 13 brs unit tests |
+| Xbox | UWP shell (C#, WebView2) + TV web app | Phase 0. The webOS app's Svelte code with an Xbox platform layer, embedded in the server (`internal/tvui`) and served at `/tvapp/`; the shell loads it full screen |
+| CLI | Go (`cmd/onscreen-cli`) + mpv | Terminal client: login, browse, search, play through mpv; `play --print-url` is a shell probe of the playback chain for QA |
 
 ---
 
@@ -167,17 +169,21 @@ Full plan and sequencing: **[docs/ha-roadmap.md](docs/ha-roadmap.md)**. Operatio
 OnScreen/
 ├── cmd/
 │   ├── server/         HTTP API server + embedded transcode worker
-│   └── worker/         Standalone transcode + maintenance worker (separate binary)
+│   ├── worker/         Standalone transcode + maintenance worker (separate binary)
+│   ├── onscreen-cli/   Terminal client that plays through mpv (also a QA probe)
+│   ├── rotate-key/     Re-encrypts at-rest secrets from an old SECRET_KEY to a new one
+│   └── devtoken/       Mints an admin token for a local dev server
 ├── internal/           ~50 packages — server-side code
 │   ├── api/v1/         All HTTP handlers (auth, items, libraries, transcode, tv,
 │   │                   photo, audiobook, books, plugins, requests, settings, …)
-│   ├── auth/           Paseto v4 issuance + validation; OIDC, OAuth, SAML, LDAP providers
+│   ├── auth/           Paseto v4 issuance + validation, TOTP, at-rest encryption
+│   │                   (OIDC / SAML / LDAP sign-in handlers live in api/v1)
 │   ├── audit/          Append-only audit log of admin / playback / auth events
 │   ├── config/         Env-var bootstrap config (only what's needed pre-DB)
 │   ├── db/
 │   │   ├── gen/        sqlc-generated query wrappers
-│   │   └── migrations/ 70+ goose migrations (schema, partitions, audiophile,
-│   │                   live_tv, dvr, photo_albums, audiobook hierarchy, etc.)
+│   │   └── migrations/ 35 goose migrations: squashed baseline 00001_init + 34
+│   │                   since (TOTP, scrobbling, requests, issues, etc.)
 │   ├── domain/         Library, media, profile, library_access, settings, watchevent
 │   ├── livetv/         HDHomeRun / M3U tuners, EPG (Schedules Direct + XMLTV),
 │   │                   DVR matcher + recording worker, refcounted HLS proxy
@@ -193,6 +199,7 @@ OnScreen/
 │   ├── transcode/      FFmpeg args, encoder auto-detect, session store,
 │   │                   per-user supersede, multi-worker dispatcher
 │   ├── trickplay/      Seek-bar thumbnail strip generation
+│   ├── tvui/           Embedded TV web app (clients/xbox build) served at /tvapp/
 │   ├── valkey/         go-redis/v9 wrapper
 │   └── worker/         Periodic tasks (partition cleanup, scheduled scans,
 │                       OCR, EPG refresh, DVR matcher, hub refresh)
@@ -205,13 +212,16 @@ OnScreen/
 │   ├── android/        Android TV / Google TV / Fire TV (Leanback + Media3)
 │   ├── android_native/ Android phone (Compose + Material 3)
 │   ├── webos/          LG webOS (SvelteKit + ares-package)
-│   ├── tizen/          Samsung Tizen (SvelteKit + tizen-package)
+│   ├── tizen/          Samsung Tizen (SvelteKit + tizen-package, webOS app's code)
 │   ├── roku/           Roku (BrightScript + SceneGraph)
+│   ├── xbox/           Xbox: TV web app (served by the server at /tvapp/) + UWP
+│   │                   WebView2 shell in shell/ (phase 0)
 │   └── firetv/         Fire-TV-specific assets (same APK as android/, separate listing)
 ├── docker/             Dockerfile, Dockerfile.gpu, Dockerfile.ffmpeg, compose stacks
 ├── docs/               Architecture decisions, deployment, manual test plan,
-│                       v2 + v2.1 roadmaps, comparison matrix, plugin authoring
-└── installer/          Windows MSI + Linux portable tarball builders
+│                       v2 through v2.5 roadmaps, comparison matrix, plugin authoring
+└── installer/          Windows Inno Setup installer (.exe) + Windows portable zip +
+                        Linux portable tarball builders
 ```
 
 ---
@@ -295,13 +305,15 @@ All endpoints under `/api/v1/` require `Authorization: Bearer <access_token>` ex
 | `PUT` | `/items/{id}/progress` | Record watch event (play/pause/stop) |
 | `POST` | `/items/{id}/enrich` | Re-run TMDB enrichment in background → 204 |
 
-### Playback (no auth — UUID is the credential)
+### Playback (Bearer, cookie, or a purpose-scoped `?token=`)
+
+Media elements can't attach an `Authorization` header, so these routes also accept the auth cookie or a `?token=` query parameter. Only purpose-scoped tokens are honoured in the query: a `stream` token (24h, bound to one file) or an `asset` token (24h, read-only, user-scoped). A general access token in the URL is rejected. Each handler then checks the caller's library access.
 
 | Method | Path | Description |
 |---|---|---|
 | `GET` | `/media/stream/{file_uuid}` | Direct file serve (byte-range) |
-| `GET` | `/media/files/*` | Legacy direct-play path |
-| `GET` | `/artwork/*` | Serve resized artwork images |
+| `GET` | `/media/download/{file_uuid}` | Same as stream, with `Content-Disposition` for save-as |
+| `GET` | `/artwork/*` | Serve resized artwork images (image extensions only) |
 
 ### HLS Transcode (segment auth via query token)
 
@@ -375,7 +387,7 @@ NativeTranscodeHandler.Start()
   - Calculate output dims (aspect-ratio preserving)
   - Create Session → Valkey (TTL 4h)
   - Create TranscodeJob → Valkey queue (RPush)
-  - Issue segment JWT (session-scoped)
+  - Issue segment token (opaque, stored in Valkey, 4h idle TTL)
   - Return {session_id, playlist_url, token}
         │
         ▼
@@ -390,14 +402,14 @@ Worker.jobLoop()  (embedded or cmd/worker)
         │
         ▼
 GET /transcode/sessions/{sid}/playlist.m3u8?token=…
-  - Validate segment JWT
+  - Validate segment token (Valkey lookup; refreshes its TTL)
   - Wait up to 10s for index.m3u8 to appear
   - Rewrite segment URIs: seg0.ts → /api/v1/transcode/sessions/{sid}/seg/seg0.ts?token=…
   - Serve playlist
         │
         ▼
 GET /transcode/sessions/{sid}/seg/{name}?token=…
-  - Validate JWT
+  - Validate segment token
   - http.ServeFile(session_dir/name)
 ```
 
@@ -410,7 +422,7 @@ GET /transcode/sessions/{sid}/seg/{name}?token=…
 ```
 POST /auth/login
   - bcrypt.Compare(password, stored_hash)
-  - Issue Paseto v4 access token (15m TTL)
+  - Issue Paseto v4 access token (1h TTL)
   - Issue opaque refresh token → hash → store in sessions table
   - Return {access_token, refresh_token}
 
@@ -464,7 +476,7 @@ Two layers: **bootstrap env vars** (required to bind sockets and reach the datab
 | `DATABASE_RO_URL` | | `DATABASE_URL` | Read replica DSN (active/active reads: point at the local replica per site) |
 | `CACHE_PATH` | | `~/.onscreen/cache/artwork` | Artwork resize cache |
 | `LISTEN_ADDR` | | `:7070` | API server bind address |
-| `METRICS_ADDR` | | `:7071` | Prometheus metrics bind |
+| `METRICS_ADDR` | | `127.0.0.1:7071` | Prometheus metrics bind (loopback by default; expose only behind a firewall) |
 | `TLS_CERT_FILE` / `TLS_KEY_FILE` | | — | Built-in HTTPS (operator-provided PEM) |
 | `TMDB_API_KEY` | | — | Seeded into Settings on first run |
 | `TVDB_API_KEY` | | — | Seeded into Settings on first run |
@@ -480,7 +492,7 @@ Two layers: **bootstrap env vars** (required to bind sockets and reach the datab
 
 ### Settings UI (stored in `server_settings`)
 
-These were env vars in v1.x and earlier; they're now table-stored under typed keys (`general_config`, `smtp_config`, `otel_config`, `oidc_config`, `saml_config`, `ldap_config`, `oauth_*_config`, `transcode_config`, `scan_config`, `tmdb_config`, …):
+These were env vars in v1.x and earlier; they're now table-stored under typed keys (`general_config`, `smtp_config`, `otel_config`, `oidc_config`, `saml_config`, `ldap_config`, `transcode_config`, `system_config`, `storage_config`, `requests_config`, `lastfm_config`, `trakt_config`, …):
 
 - Public URL, log level, CORS allow-list (`general_config`)
 - SMTP host / port / credentials / from-address (`smtp_config`)
@@ -488,7 +500,9 @@ These were env vars in v1.x and earlier; they're now table-stored under typed ke
 - OIDC issuer / client / scopes (`oidc_config`)
 - SAML EntityID / IdP metadata / signing keys (`saml_config`)
 - LDAP host / bind-DN / search base / group sync (`ldap_config`)
-- OAuth provider credentials (Google / GitHub / Discord)
+- Scrobbling: Last.fm and Trakt API credentials (`lastfm_config`, `trakt_config`); each user links their own account, and per-user ListenBrainz tokens live in `user_scrobble`
+- Media request defaults: auto-approve and quotas (`requests_config`); the Radarr / Sonarr instances requests go to are rows in the `arr_services` table, API keys encrypted
+- Notification agents (Discord / Telegram / ntfy / Gotify / email): rows in the `notification_agents` table, credentials encrypted
 - Transcode quality cap, max sessions, encoder filters, NVENC preset / tune / rate control
 - Scan concurrency (per-file, per-library), missing-file grace period, retention months
 - TMDB / TVDB rate limits
@@ -513,7 +527,7 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | **Structured logs** | `log/slog` JSON to stdout; request ID on every log line; `trace_id`/`span_id` auto-added when a span is active |
 | **Metrics** | Prometheus; exposed at `METRICS_ADDR/metrics`. Go runtime + process collectors plus the `onscreen_*` families: HTTP request count/latency (chi route-template labels — per-ID URLs collapse to one series), DB query duration labeled `query` by SQL verb (pgx tracer wraps the existing OTel one; `SELECT`/`INSERT`/`BEGIN`/`COMMIT`/… plus an `other` catch-all, never raw SQL text), transcode sessions active (gauge from the live Valkey index) + jobs total by status, scanner files scanned per library, watch events by type, webhook delivery failures by URL, hub-cache refresh duration, and the rate-limiter fail-open counter. |
 | **Tracing** | OpenTelemetry (OTLP/gRPC); configured in Settings → Observability and read once at startup (restart required). Auto-instruments HTTP (otelchi) + pgx (otelpgx). Custom spans on `scanner.library` and `transcode.run_job`. |
-| **Health** | `GET /health/live` (always 200); `GET /health/ready` (checks PG + Valkey) |
+| **Health** | `GET /health/live` (always 200); `GET /health/ready` (checks PG + Valkey, and returns 503 while DB migrations are pending) |
 
 ---
 
@@ -530,8 +544,8 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | Outbound SSRF | Operator-configured URLs (webhooks, *arr, S3 storage, IdP discovery, M3U/EPG) dial through a post-DNS IP guard (`internal/safehttp`) blocking loopback/private/link-local/CGNAT/metadata unless the caller opts in |
 | Browser XSS | Nonce-based `script-src` CSP with `base-uri 'self'`, `object-src 'none'`, `frame-ancestors 'none'`; subtitle cues stripped of `<script>`/`on*=`/`javascript:` before serving |
 | Rate limiting | IP-based for auth endpoints; session-based for API; fails open if Valkey down |
-| HLS segments | Per-session signed JWT in query param; HLS.js cannot send arbitrary headers |
-| Direct stream | UUID acts as capability token; no auth header required |
+| HLS segments | Opaque per-session token in the query param, stored in Valkey with a 4h idle TTL and revoked with the user's sessions; HLS.js cannot send arbitrary headers |
+| Direct stream | Bearer, auth cookie, or a purpose-scoped `?token=` (file-bound stream token or user-scoped asset token); a general access token in the URL is rejected |
 
 ---
 
@@ -542,8 +556,8 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | 1 | Resolved (v2.4) | `internal/api/v1/users.go` | ~~No `DELETE /api/v1/users/me` self-service deletion endpoint.~~ Shipped in v2.4.0: a signed-in user can delete their own account (refused for the last admin); the access cookie is cleared and the token dies immediately via the session-epoch check. Originally surfaced during the Play Console submission audit (2026-05-04). |
 | 2 | Low | `internal/scanner/hash.go` | Hash cached by `(path, mtime, size)`; file content corruption without an mtime change goes undetected until a forced re-scan. The mtime+size fast-skip path added in v2.1 (production scanner perf incident) extends this design — a re-evaluation would need to weigh per-file hash cost against the corruption-detection upside. |
 | 3 | Low | `internal/domain/media/service.go` | `FindOrCreateItem` runs a full-text search per file during scan; for TV libraries with thousands of episodes this is measurable. A per-scan in-memory cache would amortise the cost. |
-| 4 | Low | `web/src/routes/watch/[id]/+page.svelte` | On-demand enrich (`POST /items/{id}/enrich`) runs silently with a page-reload-after-delay rather than success/failure feedback. Toast on completion would close the loop. |
-| 5 | Low | `internal/livetv/hls_test.go` | `TestHLSProxy_RefcountAcrossViewers` and `TestHLSProxy_ReleaseAfterCloseIsNoop` hard-code `exec.Command("sh", ...)` without a `runtime.GOOS == "windows"` skip guard. CI on Linux passes; Windows-side `go test` fails with "sh: executable file not found in %PATH%" — purely a developer-environment issue, not a runtime bug. |
+| 4 | Low (partly addressed) | `web/src/routes/watch/[id]/+page.svelte` | Refresh metadata (`POST /items/{id}/enrich`) now polls the item every 2 s for up to 24 s and re-renders when it changes, and a failed request shows an error toast. Still open: no success toast, nothing is shown if the 24 s pass without a change, and Fix Match (`applyMatch`) still reloads the page after a fixed 2 s delay. |
+| 5 | Resolved | `internal/livetv/hls_test.go` | ~~The HLS proxy tests hard-coded `exec.Command("sh", ...)` and failed on Windows.~~ Each test that needs `sh` now skips via `exec.LookPath("sh")` when it isn't on `PATH`. |
 | 6 | Resolved | `internal/api/middleware/recover.go` | `recoverWriter` didn't implement `http.Flusher`, so it swallowed flushes mid-chain and `/api/v1/notifications/stream` never flushed initial bytes to non-browser clients (EventSource never reached OPEN; curl/Node saw 0 bytes for 30+s). Fixed by adding `Flush` delegation to `recoverWriter`; covered by a Go middleware test and the now-un-skipped `sse.spec.ts` e2e guard. |
 | 7 | Resolved (v2.2) | release CI gate | The v2.1 lint debt (26 issues across unused / staticcheck / exhaustive switch / goimports / ineffassign / noctx) was swept during Play Store readiness work. `make lint` now reports 0 errors on the server tree; the Android phone client also went to 0 lint errors with a green unit suite in 2026-05-09's `chore(android_native): fix lint to 0 errors + green unit suite + targetSdk 35`. |
 
@@ -558,9 +572,9 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | ADR-011 | File identity = SHA-256 partial hash | Move detection without full-file reads; cached by mtime+size |
 | ADR-013 | Paseto v4 for access tokens | No algorithm confusion; symmetric; no public-key infrastructure |
 | ADR-021 | Separate RW + RO DB pools | Read replicas supported; falls back to single pool |
-| ADR-024 | Bounded scan concurrency | Prevents I/O thrashing; hot-reloadable at runtime |
+| ADR-024 | Bounded scan concurrency | Prevents I/O thrashing. The "hot-reloadable at runtime" part is superseded: concurrency is set in Settings ▸ System and takes effect on restart |
 | ADR-025 | Encoder auto-detect at startup | NVENC → VAAPI → software; overridable via `TRANSCODE_ENCODERS` |
-| ADR-027 | Hot-reload via SIGHUP | Runtime tuning without restart; no-op on Windows |
+| ADR-027 | ~~Hot-reload via SIGHUP~~ (superseded) | SIGHUP reload was removed in v2.1; settings live in the DB and take effect on restart (see [Configuration](#configuration)) |
 | ADR-031 | Multiple files per media item | Supports multi-version libraries (1080p + 4K editions) |
 | ADR-032 | Valkey-lease leader election for singleton work | One elected instance runs hub/matview refresh, partition maintenance, and scheduled jobs; auto-fails-over on lease expiry so a multi-instance deployment has no singleton SPOF (`internal/worker/master.go`). See [HA roadmap](docs/ha-roadmap.md). |
 | ADR-033 | Multi-host failover DSN for Postgres HA | A `DATABASE_URL` with 2+ hosts + `target_session_attrs=read-write` lets pgx pick the read-write primary and re-home after a promotion; the pool shortens `MaxConnLifetime` to 60s when fallbacks are present so writes re-home within ~1 min of a graceful switchover (`internal/db/db.go`). |
@@ -581,6 +595,6 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | **Phase 6 (v2.0)** | ✅ | Polish + extension: HEVC encode on every encoder family, music videos / audiobooks / podcasts as types, lyrics, NFO sidecar import, Cover Art Archive fallback, DVR retention, subtitle burn-in, SAML SSO, built-in HTTPS, Schedules Direct EPG, gapless playback |
 | **Phase 7 (v2.1)** | ✅ | Native client breadth + per-user policy + audiophile pillar: Tauri desktop with bit-perfect WASAPI, Android TV / phone / webOS / Tizen / Roku clients with playback parity, audiobook hierarchy, all three book formats (CBZ + CBR + EPUB), home video type, smart playlists, trending row, library is_private + auto-grant + admin "view as", per-file streaming token, in-player audio/subtitle pickers across every client, Continue Watching split, Live TV (HDHomeRun + M3U + EPG + DVR), photo albums + EXIF search + map view |
 | **Phase 8 (v2.2)** | ✅ | Server lock + anime track: AniList primary metadata with per-season franchise walk, watching-status mirror (Plan to Watch / Watching / On Hold / Completed / Dropped) as a generic feature, library hygiene admin trays (Fix Match, Set Poster, jobs status, scheduled refresh-missing-art), HLS-only streaming (DASH ripped out), 83-migration squash, `/api/v1/hub` from ~3.2 s → <1 s, runtime-truthful `features.*` capabilities. Server API frozen under the [server-lock posture](docs/server-lock.md); v2.3+ ships additively. |
-| **Phase 9** | 🚧 | Store-channel rollout: Android TV on Play closed-testing (2026-05-13); Fire TV in Amazon Appstore review queue (under appeal for the canned-piracy rejection pattern); Android phone in Play first-review; Samsung Tizen submission prep complete with hardware soak on a 2022 Q80B; LG webOS / Roku hardware soak pending; iOS + Apple TV scoping; Tidal / Qobuz decision; ML-driven personalised recommendations re-scope. |
+| **Phase 9** | 🚧 | Store-channel rollout: Fire TV live on the Amazon Appstore since 2026-06-18 (still the June 1.0.x build; 1.4.2 submitted 2026-10-06 and in review); Android TV and phone apps in Google Play testing tracks, nothing in production; Samsung Tizen 1.1.0 submitted 2026-10-06 (first Samsung submission), after a regression run on a 2022 Q80B; LG webOS 0.2.1 submitted to the LG Content Store 2026-10-02 (UHD models only); Roku never run on a device; Xbox at phase 0 (UWP shell + server-embedded TV app, no console run yet); iOS + Apple TV scoping; Tidal / Qobuz decision; ML-driven personalised recommendations re-scope. |
 
 The detailed v2.2 track-by-track status is in [docs/v2.2-roadmap.md](docs/v2.2-roadmap.md). The full feature comparison vs Plex / Emby / Jellyfin is in [docs/comparison-matrix.md](docs/comparison-matrix.md).

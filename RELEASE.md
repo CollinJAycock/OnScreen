@@ -1,61 +1,90 @@
-# Release Status
+# Cutting a release
 
-## v2.0 — code freeze
+How a server release (`vX.Y.Z`) is prepared, tagged and published. Client
+store releases (Fire TV, Google Play, Samsung, LG) follow their own notes in
+each client's directory; this file is about the server tag.
 
-**Frozen:** 2026-04-26
-**Freeze HEAD:** `fe9cd21` (main at freeze time)
-**Release branch:** `release/v2.0`
+## 1. Prep commit on main
 
-The v2.0 roadmap is feature-complete. Every item in [docs/v2-roadmap.md](docs/v2-roadmap.md) has shipped or is explicitly deferred to v2.1. The test suite is at its strongest of the project's life (87 UAT, 73 integration, fuzz tests for parsers, strong unit coverage on every previously-weak package). Three security passes are closed.
+One commit, `chore(release): prep the vX.Y.Z cut`:
 
-From this point until v2.0 is tagged, **`release/v2.0` only accepts:**
+- **CHANGELOG.md** — the `[vX.Y.Z] — unreleased` section gets an intro
+  paragraph and an **Upgrade notes** block (migrations in the range, anything
+  an operator must do or will notice: new defaults, new required settings,
+  sign-outs, rescans) and a **Security** subsection. Patch releases cut from a
+  release branch since the last minor must already have their sections on
+  main (see [Patch releases](#patch-releases)).
+- **Docs re-snapshot** — README status line and client list,
+  `docs/deployment.md` (migration table, env vars, upgrade section),
+  `docs/security.md` (retitle the "unreleased" section),
+  `docs/api/openapi.yaml` `info.version`, `docs/comparison-matrix.md`
+  addendum, ARCHITECTURE Known Issues.
+- **Version** — `VERSION` and the desktop app (`clients/desktop/package.json`,
+  `src-tauri/Cargo.toml`, `tauri.conf.json`) match the tag;
+  `desktop-client.yml` warns when they don't. The server binary takes its
+  version from the tag (`-X main.version`), not from `VERSION`.
+- **Assets** — nothing bundled or in `screenshots/` shows commercial titles'
+  artwork.
 
-1. Bug fixes triaged out of the manual test plan (since removed from the tree; its successor is [docs/v2.1-release-test-plan.md](docs/v2.1-release-test-plan.md)) Tier 2 sweep and Tier 3 hardware validation.
-2. Critical security fixes (anything that would otherwise gate the release).
-3. Documentation corrections.
+## 2. Gates before tagging
 
-Everything else — new features, refactors, dependency bumps that aren't security-driven, performance polish — lands on `main` and waits for v2.1.
+- `main` is green on `ci.yml` (unit, integration, UAT) and the latest
+  `e2e-nightly` run.
+- `npm ci && npm run build` succeeds in `web/` and `clients/xbox/` (the
+  release workflow runs `npm ci`; a stale lockfile fails the release).
+- `go run golang.org/x/vuln/cmd/govulncheck@latest ./...` reports nothing
+  reachable, and `npm audit --omit=dev` is clean in both web apps.
+- A local `docker build -f docker/Dockerfile .` succeeds.
+- **Upgrade rehearsal** — bring up the previous release's image on a scratch
+  compose stack, add users, libraries (movie, show, music, audiobook), watch
+  progress and favorites, record what the API returns, then switch to an
+  image built from the release commit with `up -d --force-recreate migrate
+  server worker`. Migrations must apply cleanly and the same data, plus
+  existing sign-ins, must still be there.
+- QA deployed from the release commit and smoke-tested.
+- The hardware and manual checks in
+  [docs/v2.1-release-test-plan.md](docs/v2.1-release-test-plan.md) that the
+  release touches.
+- A release that breaks the API ships only after the first-party store
+  builds that handle it are live (see [docs/server-lock.md](docs/server-lock.md)).
 
-### Merge policy
+## 3. Tag
 
-- Bug fixes go to `release/v2.0` first, then cherry-pick to `main` (so we don't lose them in v2.1).
-- New work goes to `main` only. `release/v2.0` is closed to features.
-- The branch is fast-forward only until tagging: rebase on `release/v2.0` if your fix needs to land on top of another fix that landed first.
+On tag day, a second commit stamps the date:
+`## [vX.Y.Z] — unreleased` becomes `## [vX.Y.Z] — YYYY-MM-DD`
+(`chore(release): vX.Y.Z — stamp release date`). Then an annotated tag on
+that commit:
 
-### Validation gates before tagging v2.0
-
-In order:
-
-1. **Tier 2 manual sweep (~90 min)** on staging — all checkboxes green or triaged.
-2. **Tier 3 hardware encode validation** on the TrueNAS RTX 5000 box — every encoder family in the matrix verified or flagged as "not present on this hardware."
-3. **Integration suite with Docker**: `go test -tags=integration ./internal/db/gen/...` (73 tests). Must pass.
-4. **Beta soak**: at least 7 days of the staging deployment running on the freeze HEAD, exercised by the audiophile friend's normal usage. The endurance section of the manual test plan should also have run for at least one 8h session in this window.
-5. **External pen-test or final security re-scan** — re-run the security probe checklist against the freeze HEAD.
-
-When all five gates are green, tag from the tip of `release/v2.0`:
-
-```bash
-git tag -s v2.0.0 -m "v2.0.0"
-git push origin v2.0.0
+```sh
+git tag -a vX.Y.Z -m "OnScreen vX.Y.Z" -m "<two-line summary>"
+git push origin vX.Y.Z
 ```
 
-### Roadmap items deferred to v2.1
+`desktop-vX.Y.Z` tags belong to the desktop app's own builds; don't reuse
+them for the server.
 
-These are documented in the v2 roadmap as deliberate v2.1 targets, not as gaps:
+## 4. What the tag push does
 
-- Books / comics as a media type
-- Tidal / Qobuz integration
-- Podcast RSS auto-fetch (out of scope per project memo — OnScreen doesn't download content)
-- Hardware bit-perfect playback (lands with the native client phase)
-- Native client apps (Windows/macOS/Linux/iOS/Android/TV)
-- **Async OCR endpoint** — `POST /items/{id}/subtitles/ocr` is currently synchronous and bound to `r.Context()`, so it 524s behind any reverse proxy with a sub-multi-minute timeout (Cloudflare Tunnel free tier is 100s; tesseract on a feature-length PGS track regularly exceeds that). Convert to a job-queued pattern: POST returns 202 + job_id, `GET /subtitles/ocr/{jobId}` polls status, OCR runs in a server-lifetime goroutine using `context.Background()` so client disconnect doesn't kill the subprocess. Watch-page UI polls instead of awaiting. The scheduler-based `ocr_subtitles` task already runs out-of-band correctly — same pattern, exposed per-stream.
+- **`release.yml`** runs the Go tests, builds the web app and the TV app,
+  then the server binaries (Linux amd64/arm64 server and worker, macOS
+  amd64/arm64, Windows), checksums, and the multi-arch image
+  `ghcr.io/collinjaycock/onscreen` tagged `X.Y.Z`, `X.Y` and `X`. Binaries and
+  the image get SLSA provenance attestations
+  (`gh attestation verify <file> --repo CollinJAycock/OnScreen`). A tag
+  containing `-` is published as a prerelease.
+- **`desktop-client.yml`** builds the Windows and Linux desktop installers
+  and attaches them to the same GitHub Release.
+- Not automated: the server's Windows and Linux installers (`installer/`) are
+  built by hand and attached afterwards.
+- The release build doesn't inject `DEFAULT_TMDB_KEY` /
+  `DEFAULT_OPENSUBTITLES_KEY` (only the Makefile and `Dockerfile.gpu` do), so
+  GitHub binaries and the ghcr image ship without bundled keys; admins enter
+  their own in Settings.
 
-### Where to find things
+## Patch releases
 
-| Surface | Doc |
-|---|---|
-| Comparison vs Plex / Emby / Jellyfin | [docs/comparison-matrix.md](docs/comparison-matrix.md) |
-| v2 roadmap (history of decisions) | [docs/v2-roadmap.md](docs/v2-roadmap.md) |
-| Release test plan + automated-coverage map | [docs/v2.1-release-test-plan.md](docs/v2.1-release-test-plan.md) |
-| Deployment guide | [docs/deployment.md](docs/deployment.md) |
-| Plugin authoring (MCP) | [docs/plugins.md](docs/plugins.md) |
+Branch `release/X.Y.Z` from the tag being patched, cherry-pick the fixes,
+add a `[vX.Y.Z]` CHANGELOG section there, tag from that branch, and **port
+the CHANGELOG section back to main** in the same sitting (v2.4.1's was
+missed and restored in the v2.5.0 prep). Fixes land on main first unless
+main has moved on so far that they can't.

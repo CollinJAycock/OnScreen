@@ -4,12 +4,28 @@
 
 | Dependency | Version | Purpose |
 |------------|---------|---------|
-| PostgreSQL | 16+ with `pgvector` extension | Primary data store |
+| PostgreSQL | 16+ | Primary data store. Uses the `pg_trgm`, `pgcrypto` and `unaccent` extensions, which ship with PostgreSQL. |
 | Valkey or Redis | 7+ | Sessions, job queue, rate limiting |
 | FFmpeg | Latest stable | Transcoding, `ffprobe` media analysis |
-| Go | 1.25+ | Building from source (bare metal only) |
-| Node.js | 22+ | Building frontend from source (bare metal only) |
-| goose | v3 | Running database migrations |
+| Go | 1.26+ | Building from source (bare metal only) |
+| Node.js | 24+ | Building frontend from source (bare metal only) |
+| goose | v3 | Running database migrations (bundled in the Docker image) |
+
+---
+
+## Ports
+
+| Port (default) | Env | Purpose | Exposure guidance |
+|---|---|---|---|
+| `:7070` | `LISTEN_ADDR` | HTTP/S API + web UI | Public (front with TLS / reverse proxy) |
+| `127.0.0.1:7071` | `METRICS_ADDR` | Prometheus `/metrics` **and unauthenticated `/debug/pprof`** | Loopback by default — keep private. pprof leaks heap/goroutine memory (live tokens), cmdline, and webhook URLs. Only widen behind a firewall. |
+| `:1935` | `RTMP_LISTEN_ADDR` (if `RTMP_ENABLED`) | RTMP "go live" ingest | Reachable by broadcasters; publishes require a valid stream key. |
+| `:7073` | `WORKER_ADDR` (standalone `cmd/worker`) | Transcode-fleet HLS segment server | Requires a `SECRET_KEY`-derived bearer, so every fleet node needs the same `SECRET_KEY`. The embedded worker binds loopback. |
+| `:7368/udp` | `DISCOVERY_PORT` | LAN auto-discovery | Unauthenticated; answers only loopback / private / link-local senders with server name / machine-id / version. Set `DISCOVERY_ENABLED=false` on untrusted L2 segments. |
+
+The standalone worker also serves `/health/live` and `/health/ready` on
+`WORKER_HEALTH_ADDR` (default `:7074`). See [security.md](security.md) for the
+rest of the network posture.
 
 ---
 
@@ -37,28 +53,77 @@
 
 ### Server
 
-Most of these are now the *initial default* for a value editable in the admin UI.
-`LISTEN_ADDR`, `METRICS_ADDR`, and `TLS` are per-node (Settings ▸ Nodes); a saved
-per-node value wins over the env var. `RETAIN_MONTHS` is cluster-wide (Settings ▸
-System). `NODE_ID`, `IGNORE_NODE_DB_CONFIG`, and the connection strings stay
-env-only — they're needed before the settings tables are reachable.
+Many of these are the *initial default* for a value editable in the admin UI; a
+saved value wins over the env var, and a change takes effect on the next restart.
+
+- **Per-node** (Settings ▸ Nodes): `LISTEN_ADDR`, `METRICS_ADDR`, `CACHE_PATH`,
+  `WORKER_HEALTH_ADDR`, `STATIC_ABR_ROOT`, `SITE_ID`, `TRANSCODE_QSV_DECODE`,
+  `DISABLE_EMBEDDED_WORKER`.
+- **Cluster-wide** (Settings ▸ System): `RETAIN_MONTHS`, `SERVER_NAME`,
+  `DISCOVERY_ENABLED`, `DISCOVERY_PORT`, `TMDB_RATE_LIMIT`, `PUBLIC_ASSET_CACHE`,
+  `STATIC_ABR_ENABLED`, and the scan settings below.
+- **Settings ▸ Transcode:** the output ceilings and ABR ladder (see
+  [Transcoding](#transcoding)).
+- **Env-only:** `NODE_ID`, `IGNORE_NODE_DB_CONFIG` and the connection strings
+  (needed before the settings tables are reachable), and every other variable
+  on this page not listed above.
+
+The public URL and the log level have no env var: set them in **Settings ▸
+General ▸ Server** (restart-required).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `NODE_ID` | host name | Stable identity used to key this node's row in `node_settings` (Settings ▸ Nodes). |
 | `IGNORE_NODE_DB_CONFIG` | `false` | Break-glass: boot from env/defaults only, ignoring the `node_settings` row. Recovers a node locked out by a bad bind address. |
 | `LISTEN_ADDR` | `:7070` | Address the HTTP server binds to (per-node UI override). |
-| `METRICS_ADDR` | `127.0.0.1:7071` | Address for the Prometheus metrics endpoint (per-node UI override). In a container, set `0.0.0.0:7071` and keep the published port loopback-only. |
-| `LOG_LEVEL` | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
+| `METRICS_ADDR` | `127.0.0.1:7071` | Address for the Prometheus metrics endpoint and `/debug/pprof` (per-node UI override). In a container, set `0.0.0.0:7071` and keep the published port loopback-only. |
 | `RETAIN_MONTHS` | `24` | How many months of watch history to retain |
 | `TLS_CERT_FILE` | (none) | PEM-encoded certificate chain. When set with `TLS_KEY_FILE`, serves HTTPS from files (these win over an uploaded cert). See [Built-in HTTPS](#built-in-https). |
 | `TLS_KEY_FILE` | (none) | PEM-encoded private key. Must be paired with `TLS_CERT_FILE`; setting only one is a startup error. |
+| `TRUSTED_PROXIES` | (none) | Comma-separated CIDRs or IPs allowed to set `X-Forwarded-*`, e.g. `127.0.0.1,172.18.0.0/16`. Unset means any loopback or private-network peer, which lets a LAN client forge its address for rate limits and the audit log. Set it to your reverse proxy's address. |
+| `PUBLIC_SEGMENT_BASE_URL` | (none) | Host that HLS segments are fetched from instead of the main host. See [Split segment access](#split-segment-access-bypass-a-cdntunnel-for-video). |
+| `SERVER_NAME` | `OnScreen` | Name shown in LAN discovery and capability responses. |
+| `DISCOVERY_ENABLED` | `true` | Answer LAN auto-discovery broadcasts. |
+| `DISCOVERY_PORT` | `7368` | UDP port for LAN discovery. |
+| `AUTO_MIGRATE` | `false` | Apply pending database migrations at startup, before serving. Use it when there is no separate migrate step (single-container installs). |
+| `ALLOW_PUBLIC_SETUP` | `false` | First-run setup (creating the first admin) is accepted only from the local network or a local host name. Set `true` only if you must finish setup over the internet, and finish it promptly. |
+| `PUBLIC_ASSET_CACHE` | `false` | Send resized artwork with `Cache-Control: public` so a CDN in front can cache it. Only set it with a CDN deployed. |
+| `STATIC_ABR_ENABLED` | `false` | Pre-encode the ABR ladder for the most-played titles to the media store. Worthwhile mainly with object storage and a CDN. |
+| `STATIC_ABR_ROOT` | (none) | Key prefix for static-ABR output. Leave empty for object storage; set a directory for a local static root. |
+| `SITE_ID` | (none) | This deployment's site name for multi-site DR, reported on `/health/cluster`. |
+| `VALKEY_SENTINEL_ADDRS` | (none) | Comma-separated Sentinel addresses. When set, Valkey is reached through Sentinel; `VALKEY_URL` still supplies auth, db and TLS (its host is ignored). |
+| `VALKEY_SENTINEL_MASTER` | `onscreen` | Sentinel master name. |
+| `VALKEY_SENTINEL_PASSWORD` | (none) | Password for the Sentinels themselves. |
+
+### Rate limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `OS_AUTH_RATE_LIMIT_PER_MIN` | `10` | Requests per minute to the credential endpoints (sign-in, PIN switch, pairing claims). |
+| `OS_AUTH_RATE_LIMIT_FAIL_CLOSED` | `false` | When Valkey is unreachable, refuse those requests with `503` instead of letting them through unlimited. |
+| `OS_TRANSCODE_START_RATE_LIMIT_PER_MIN` | `10` | Transcode session starts per minute. |
+
+An empty, zero or unparseable value falls back to the default.
+
+### RTMP ingest
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `RTMP_ENABLED` | `true` | Run the embedded RTMP server that accepts OBS/ffmpeg pushes as Live TV channels. A bind failure is logged and the rest of the server still starts. |
+| `RTMP_LISTEN_ADDR` | `:1935` | RTMP listen address. Must be reachable by broadcasters. |
+| `RTMP_PUBLIC_HOST` | (none) | Host name shown in the ingest URL in the broadcast admin UI. Empty uses the request's host. |
 
 ### Worker
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `WORKER_ADDR` | `:7073` | Address the standalone worker's segment server binds **and** registers for the API to proxy HLS to, so it must be routable from the server, e.g. `worker:7073`. A bare `:7073` only works when the API runs on the same host. |
+| `WORKER_HEALTH_ADDR` | `:7074` | Standalone worker health server (`/health/live`, `/health/ready`). |
+| `DISABLE_EMBEDDED_WORKER` | `false` | Server only: skip the in-process transcode worker and use standalone workers only. |
+| `TRANSCODE_QSV_DECODE` | `false` | Standalone worker: Intel Quick Sync HEVC decode into system memory. Opt in once the worker's QSV stack is known good. |
+| `TRANSCODE_QSV_VRAM` | `true` | Standalone worker: keep decode, scale and encode in GPU memory when a QSV encoder is selected (SDR only). Falls back to software decode per job. Set `false` to force the software path. |
+| `TRANSCODE_VAAPI_VRAM` | `true` | Standalone worker: the VAAPI equivalent of `TRANSCODE_QSV_VRAM`. |
+| `TRANSCODE_ENCODER_FAILOVER` | `true` | When the hardware encoder can't get the GPU (for example GeForce NVENC's session cap), retry the job on the next encoder the box has (QSV, then software). No effect on single-GPU boxes. |
 
 ### Scanning
 
@@ -73,7 +138,9 @@ under **Settings ▸ System** (restart-required, a saved value wins over the env
 
 ### Transcoding
 
-`TRANSCODE_MAX_SESSIONS` and the NVENC tuning are hot-reloadable via SIGHUP. The
+`TRANSCODE_MAX_SESSIONS`, `TRANSCODE_ENCODERS` and the NVENC tuning are read at
+startup, so change them and restart (per-worker session caps and encoders can
+also be set in the fleet section of **Settings ▸ Transcode**). The
 output ceilings (`TRANSCODE_MAX_BITRATE_KBPS` / `_WIDTH` / `_HEIGHT`) and the
 adaptive-bitrate ladder (`TRANSCODE_ABR`, `TRANSCODE_ABR_MAX_HEIGHT`,
 `TRANSCODE_ABR_AUTO_MAX_HEIGHT`) are the initial defaults — edit the effective
@@ -87,6 +154,9 @@ values in the admin UI under **Settings ▸ Transcode** ▸ *Output Limits* /
 | `TRANSCODE_MAX_BITRATE_KBPS` | `40000` | Max transcode output bitrate in kbps |
 | `TRANSCODE_MAX_WIDTH` | `3840` | Max transcode output width |
 | `TRANSCODE_MAX_HEIGHT` | `2160` | Max transcode output height |
+| `TRANSCODE_ABR` | `false` | Serve an adaptive-bitrate ladder (multi-rendition master playlist) instead of a single rendition. |
+| `TRANSCODE_ABR_MAX_HEIGHT` | `0` | Hard cap on the ladder's top rung. `0` = up to the source resolution. |
+| `TRANSCODE_ABR_AUTO_MAX_HEIGHT` | `1080` | Top rung when the client hasn't picked a quality. An explicit pick overrides it; `TRANSCODE_ABR_MAX_HEIGHT` still applies. `0` = up to the source resolution. |
 | `TRANSCODE_NVENC_PRESET` | `p4` | NVENC preset: `p1` (fastest) through `p7` (best quality). Lower presets reduce GPU load at the cost of quality. |
 | `TRANSCODE_NVENC_TUNE` | `hq` | NVENC tuning mode: `hq` (high quality, recommended for VOD), `ll` (low latency), `ull` (ultra-low latency) |
 | `TRANSCODE_NVENC_RC` | `vbr` | NVENC rate control: `vbr` (variable bitrate, best quality per bit), `cbr` (constant bitrate), `constqp` (constant quantizer) |
@@ -100,12 +170,6 @@ values in the admin UI under **Settings ▸ Transcode** ▸ *Output Limits* /
 | `TMDB_RATE_LIMIT` | `5` | TMDB API requests per second |
 | `TVDB_API_KEY` | (none) | TheTVDB v4 project key; enables episode metadata fallback |
 
-### Worker
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `WORKER_HEALTH_ADDR` | `:7074` | Worker health server listen address (`/health/live`, `/health/ready`) |
-
 ### Observability
 
 OpenTelemetry tracing (OTLP/gRPC) is configured from the admin Settings UI
@@ -113,17 +177,10 @@ under **Settings → Observability** rather than environment variables. The
 tracer provider is built once at process startup, so a server/worker restart
 is required after changing the endpoint, sample ratio, or deployment env tag.
 
-### OAuth / SSO (optional)
+### Single sign-on
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BASE_URL` | `http://localhost:$LISTEN_ADDR` | Public URL of the server (e.g. `https://media.example.com`). Required for OAuth redirect URIs. |
-| `GOOGLE_CLIENT_ID` | (none) | Google OAuth2 client ID |
-| `GOOGLE_CLIENT_SECRET` | (none) | Google OAuth2 client secret |
-| `GITHUB_CLIENT_ID` | (none) | GitHub OAuth2 client ID |
-| `GITHUB_CLIENT_SECRET` | (none) | GitHub OAuth2 client secret |
-| `DISCORD_CLIENT_ID` | (none) | Discord OAuth2 client ID |
-| `DISCORD_CLIENT_SECRET` | (none) | Discord OAuth2 client secret |
+OIDC, SAML and LDAP have no env vars; configure them in the admin UI. See
+[Single sign-on (OIDC, SAML, LDAP)](#single-sign-on-oidc-saml-ldap).
 
 ### Development (ignored in production)
 
@@ -150,12 +207,14 @@ mkdir onscreen && cd onscreen
 SECRET_KEY=$(openssl rand -hex 32)
 
 cat > .env <<EOF
-DB_PASS=change-me-to-a-strong-password
+DB_PASS=$(openssl rand -hex 24)
 SECRET_KEY=${SECRET_KEY}
 TMDB_API_KEY=your-tmdb-api-key
-LOG_LEVEL=info
 EOF
 ```
+
+`DB_PASS` is required (compose refuses to start without it) and `SECRET_KEY`
+must be a real random key: the server refuses to boot with a placeholder value.
 
 ### 3. Create `docker-compose.yml`
 
@@ -164,10 +223,10 @@ name: onscreen
 
 services:
   postgres:
-    image: pgvector/pgvector:pg16
+    image: pgvector/pgvector:pg16   # same as docker/docker-compose.yml; any PostgreSQL 16+ image works
     environment:
       POSTGRES_USER: onscreen
-      POSTGRES_PASSWORD: ${DB_PASS}
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required}
       POSTGRES_DB: onscreen
     ports:
       - "127.0.0.1:5432:5432"
@@ -189,31 +248,31 @@ services:
       timeout: 3s
       retries: 10
 
+  # Runs the goose binary and migrations bundled in the OnScreen image, so
+  # the schema always matches the image version.
   migrate:
-    image: ghcr.io/pressly/goose:v3.24.1
+    image: ghcr.io/collinjaycock/onscreen:2.5
+    entrypoint: ["/usr/local/bin/goose"]
     depends_on:
       postgres:
         condition: service_healthy
     command: >
       -dir /migrations postgres
-      "postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable" up
-    volumes:
-      - ./migrations:/migrations:ro
+      "postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable" up
     restart: "no"
 
   server:
-    image: ghcr.io/your-org/onscreen:latest
+    image: ghcr.io/collinjaycock/onscreen:2.5
     depends_on:
       migrate:
         condition: service_completed_successfully
       valkey:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      SECRET_KEY: ${SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
       # Container loopback is unreachable through a port publish; the host
       # side stays loopback-only.
       METRICS_ADDR: "0.0.0.0:7071"
@@ -230,7 +289,7 @@ services:
       retries: 10
 
   worker:
-    image: ghcr.io/your-org/onscreen:latest
+    image: ghcr.io/collinjaycock/onscreen:2.5
     entrypoint: ["/usr/local/bin/worker"]
     depends_on:
       migrate:
@@ -238,14 +297,20 @@ services:
       valkey:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
       VALKEY_URL: redis://valkey:6379
-      SECRET_KEY: ${SECRET_KEY}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
       TMDB_API_KEY: ${TMDB_API_KEY:-}
-      LOG_LEVEL: ${LOG_LEVEL:-info}
       # Bind + advertised address: must be routable from the server container.
       WORKER_ADDR: "worker:7073"
     restart: unless-stopped
+    # The image's built-in health check probes the server's :7070, which the
+    # worker doesn't serve; point it at the worker's own health port.
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
     volumes:
       - /path/to/your/media:/media:ro
 
@@ -255,6 +320,15 @@ volumes:
 
 Replace `/path/to/your/media` with the actual path to your media library. Remove `:ro` if transcoding writes output alongside source files.
 
+Release images are published as `ghcr.io/collinjaycock/onscreen:<version>`,
+with `:<major>.<minor>` (used above) and `:<major>` tags that follow the latest
+patch release. Pin a full version such as `:2.5.0` if you want upgrades only
+when you change the tag.
+
+If you'd rather not run a separate `migrate` service, drop it (and the
+`depends_on: migrate` entries) and set `AUTO_MIGRATE: "true"` on the server: it
+then applies pending migrations at startup, before serving.
+
 ### 4. Start everything
 
 ```bash
@@ -262,6 +336,10 @@ docker compose up -d
 ```
 
 The `migrate` service runs once, applies pending migrations, then exits. The server starts after migrations complete.
+
+On a fresh install the users table is empty, and whoever completes first-run
+setup becomes the admin. That is accepted only from the local network or a
+local host name unless you set `ALLOW_PUBLIC_SETUP=true`.
 
 ### 5. Verify
 
@@ -296,7 +374,7 @@ Check the host with `nvidia-smi`: the driver must be **≥ 570** (the table's "C
 docker build -f docker/Dockerfile.ffmpeg -t onscreen-ffmpeg:latest .
 ```
 
-This builds a custom FFmpeg with NVENC, NVDEC, CUDA hwaccel (`scale_cuda`), and the libplacebo Vulkan tonemap. It rarely changes, so the layer cache makes subsequent rebuilds fast — **except** when `CUDA_VERSION` changes, which busts the cache for a full (~15–20 min) rebuild.
+This builds a custom FFmpeg with NVENC, NVDEC, CUDA hwaccel (`scale_cuda`), the patched-in `tonemap_cuda` filter, and the libplacebo Vulkan tonemap. It rarely changes, so the layer cache makes subsequent rebuilds fast — **except** when `CUDA_VERSION` changes, which busts the cache for a full (~15–20 min) rebuild.
 
 ### 2. Build the GPU application image
 
@@ -322,6 +400,8 @@ worker:
     NVIDIA_VISIBLE_DEVICES: all
     NVIDIA_DRIVER_CAPABILITIES: all
     TRANSCODE_ENCODERS: nvenc,software
+  healthcheck:   # the image's default probes the server's :7070
+    test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
   volumes:
     - onscreen_cache:/var/cache/onscreen   # MUST persist — see below
 ```
@@ -352,13 +432,14 @@ The flags that matter:
 |------|---------|-------|
 | `nvdec_hevc` | NVDEC HEVC decode to system memory (offloads the decode) | NVENC GPU + driver |
 | `cuda_scale` | Full-VRAM `cuvid → scale_cuda → NVENC` (GPU downscale, 4K SDR) | matched CUDA/driver + warm JIT cache |
+| `tonemap_cuda` | All-VRAM `cuvid → scale_cuda → tonemap_cuda → NVENC` HDR→SDR (4K HDR, no Vulkan) | matched CUDA/driver + warm JIT cache |
 | `libplacebo` | Vulkan GPU HDR→SDR tonemap **and** scale (4K HDR) | `graphics` capability |
 
-`cuda_scale` is probed **in the background** and reads `false` in the initial `worker ready` line; on a cold JIT cache it flips on ~90s later (logged as `cuda_scale enabled (full-VRAM scale_cuda path)`), and within ~2s on warm boots. So a healthy GPU node ends up with all three `true`. If any stays `false`, see [Troubleshooting](#troubleshooting-gpu-acceleration).
+`cuda_scale` and `tonemap_cuda` are probed **in the background** and read `false` in the initial `worker ready` line; on a cold JIT cache they flip on ~90s later (logged as `cuda_scale enabled (full-VRAM scale_cuda path)` and `tonemap_cuda enabled (all-VRAM CUDA HDR→SDR path)`), and within ~2s on warm boots. So a healthy GPU node ends up with all four `true`. `libplacebo` can stay `false` where Vulkan won't initialize (TrueNAS, WSL2); HDR then uses `tonemap_cuda`. If another flag stays `false`, see [Troubleshooting](#troubleshooting-gpu-acceleration).
 
 ### NVENC tuning
 
-Configure NVENC quality/performance via environment variables (all hot-reloadable):
+Configure NVENC quality/performance via environment variables (read at startup; restart after a change):
 
 - `TRANSCODE_NVENC_PRESET`: `p1` (fastest) to `p7` (best quality), default `p4`
 - `TRANSCODE_NVENC_TUNE`: `hq` (recommended), `ll`, or `ull`
@@ -369,11 +450,13 @@ Configure NVENC quality/performance via environment variables (all hot-reloadabl
 
 HDR content is automatically tonemapped to SDR for clients that don't support HDR. The worker picks the best available filter at runtime, in priority order:
 
-1. **libplacebo (Vulkan)** — GPU tonemap **and** scale in one pass; best quality and the preferred path. Requires the `graphics` capability (see above). This is what our mainline FFmpeg build uses.
-2. **tonemap_opencl** — OpenCL tonemap on the GPU; fallback when libplacebo's Vulkan device is unavailable.
-3. **zscale + tonemap** — CPU software fallback (requires libzimg).
+1. **tonemap_cuda** (NVIDIA) — `scale_cuda` + `tonemap_cuda` entirely in VRAM, straight to NVENC. Plain CUDA, no Vulkan, so it also works where libplacebo can't start (TrueNAS). Used once the `tonemap_cuda` probe passes, for HEVC/H.264 sources on an NVENC encoder.
+2. **libplacebo (Vulkan)** — GPU tonemap **and** scale in one pass, any vendor. Requires the `graphics` capability (see above).
+3. **scale_cuda + zscale** (NVIDIA) — GPU downscale, then the CPU tonemap on the smaller frame. Used when neither of the above is available.
+4. **tonemap_vaapi** (VAAPI encoders, which skip libplacebo) — scale and tonemap on VA surfaces; enabled only where the startup probe passes.
+5. **zscale + tonemap** — CPU software fallback (requires libzimg).
 
-> Note: `tonemap_cuda` is **not** in our build — it's a jellyfin-ffmpeg downstream patch, not upstream FFmpeg. We build mainline FFmpeg and use libplacebo for the GPU HDR path instead. (SDR downscales go through `scale_cuda`, which *is* mainline.)
+> `tonemap_cuda` is not in mainline FFmpeg. `docker/Dockerfile.ffmpeg` applies jellyfin-ffmpeg's CUDA tonemap patches (`docker/patches/`) on top of mainline and builds the CUDA kernels with clang. `tonemap_opencl` is no longer used; it shows in the `worker ready` line for diagnostics only.
 
 The player displays a notice when tonemapping is active, recommending users enable HDR on their display.
 
@@ -390,6 +473,8 @@ Symptoms are read off the `worker ready` log line (see [Verifying GPU accelerati
   ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=s=640x480:r=10:d=1 -c:v hevc_nvenc -frames:v 10 /tmp/t.hevc
   time ffmpeg -hide_banner -loglevel error -hwaccel cuda -hwaccel_output_format cuda -c:v hevc_cuvid -i /tmp/t.hevc -vf scale_cuda=320:240 -c:v hevc_nvenc -frames:v 5 -f null -
   ```
+
+**`tonemap_cuda=false` (4K HDR on NVIDIA uses libplacebo or the CPU tonemap):** same causes as `cuda_scale=false` above. The worker logs `tonemap_cuda unavailable; HDR falls back to …` when its probe fails, which can also happen on a GPU generation the patched kernels don't run on; HDR then falls back down the list in [HDR tonemapping](#hdr-tonemapping).
 
 **First transcode after a fresh deploy is slow, then fine:** expected — that's the one-time cold `scale_cuda` JIT warming the cache. Persist `/var/cache/onscreen` so it doesn't recur.
 
@@ -413,7 +498,7 @@ MSYS_NO_PATHCONV=1 docker run --rm --gpus all \
 
 ```bash
 # Debian/Ubuntu
-sudo apt install postgresql-16 postgresql-16-pgvector valkey ffmpeg
+sudo apt install postgresql-16 valkey ffmpeg
 
 # Arch
 sudo pacman -S postgresql valkey ffmpeg
@@ -422,16 +507,17 @@ sudo pacman -S postgresql valkey ffmpeg
 ### 2. Build from source
 
 ```bash
-git clone https://github.com/your-org/onscreen.git
-cd onscreen
+git clone https://github.com/CollinJAycock/OnScreen.git
+cd OnScreen
 
-# Build frontend
-cd web && npm ci && npm run build && cd ..
-
-# Build Go binaries
-CGO_ENABLED=0 go build -o bin/server ./cmd/server
-CGO_ENABLED=0 go build -o bin/worker ./cmd/worker
+# Builds the web UI and the TV app, copies them into the Go embed
+# directories, then builds bin/server and bin/worker
+make build
 ```
+
+Use `make build` rather than a bare `go build`: the server embeds the web UI
+from `internal/webui/dist`, and `make build` refreshes that copy from
+`web/dist` (a plain `go build` ships whatever stale copy is there).
 
 ### 3. Configure
 
@@ -508,15 +594,25 @@ sudo systemctl enable --now onscreen-server onscreen-worker
 
 ## Database Setup
 
-OnScreen uses PostgreSQL 16+ with the `pgvector` extension. Migrations are managed by [goose](https://github.com/pressly/goose).
+OnScreen uses PostgreSQL 16+. Migrations are managed by [goose](https://github.com/pressly/goose).
 
 ### Create the database
 
 ```sql
 CREATE USER onscreen WITH PASSWORD 'your-password';
 CREATE DATABASE onscreen OWNER onscreen;
+```
+
+The first migration creates the `pg_trgm`, `pgcrypto` and `unaccent`
+extensions. They ship with PostgreSQL and are trusted extensions, so the
+database owner can create them. If your role can't, create them once as a
+superuser:
+
+```sql
 \c onscreen
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+CREATE EXTENSION IF NOT EXISTS unaccent;
 ```
 
 ### Run migrations
@@ -529,12 +625,14 @@ make migrate DATABASE_URL="postgres://onscreen:pass@localhost:5432/onscreen?sslm
 goose -dir internal/db/migrations postgres \
   "postgres://onscreen:pass@localhost:5432/onscreen?sslmode=disable" up
 
-# Using Docker (no local goose needed)
-docker run --rm --network host \
-  -v ./internal/db/migrations:/migrations:ro \
-  ghcr.io/pressly/goose:v3.24.1 \
+# Using the OnScreen image's bundled goose and migrations (no local goose needed)
+docker run --rm --network host --entrypoint /usr/local/bin/goose \
+  ghcr.io/collinjaycock/onscreen:2.5 \
   -dir /migrations postgres \
   "postgres://onscreen:pass@localhost:5432/onscreen?sslmode=disable" up
+
+# Using the server binary (it embeds the migrations and reads DATABASE_URL)
+DATABASE_URL="postgres://onscreen:pass@localhost:5432/onscreen?sslmode=disable" ./bin/server migrate
 ```
 
 ### Check migration status
@@ -591,6 +689,51 @@ inside the retention window; on a large install it takes longer than the
 others, and new watch events wait on its lock until it commits. Set `AUTO_MIGRATE=true` to apply pending migrations on startup, or run
 the migrate step above before starting the new binary; `/health/ready` stays
 unready until they're applied.
+
+---
+
+## Upgrading
+
+Back up the database first (see [Database backups](#database-backups)).
+
+### v2.4.x → v2.5.0
+
+1. **Pull the new image** (`ghcr.io/collinjaycock/onscreen:2.5`) or build the
+   new binaries, and **re-copy `docker/nginx.conf`** if you use it: headers
+   moved to server level, and `X-Forwarded-For` is now replaced rather than
+   appended. Set `TRUSTED_PROXIES` to your proxy's address.
+2. **Make sure `DB_PASS` is set** for compose. There's no `onscreen` default any
+   more, so compose refuses to start without it. Use the password your Postgres
+   volume was created with.
+3. **Check `SECRET_KEY`.** A placeholder value is now refused at boot; rotate it
+   with `cmd/rotate-key` (see [Troubleshooting](#server-wont-start-secret_key-must-be-at-least-32-bytes)).
+4. **Apply migrations 00018–00035**, either with the compose `migrate` service
+   / `make migrate` before starting the new server, or with
+   `AUTO_MIGRATE=true`. `/health/ready` stays unready until they're applied.
+   - `00023` rebuilds watch state from `watch_events` and holds new watch
+     events back while it runs, so it takes longest on a long history. It drops
+     the `watch_state` materialized view; anything outside OnScreen that
+     queried it must move to the `user_watch_state` view.
+   - `00024` turns seek-bar thumbnails (trickplay) on for existing video
+     libraries, so the nightly backfill adds CPU load and the cache disk grows.
+     Turn it off in a library's settings if you don't want that.
+5. **Run a music scan and an audiobook scan** afterwards: multi-disc albums an
+   older scan folded together split again, and audiobooks a scan merged into
+   one are separated.
+6. **Rotate your Radarr/Sonarr API key** if anyone pressed Save on the *arr
+   settings under v2.4.x. That save could store the webhook key as `****`,
+   which then authenticated anyone.
+
+Behaviour that changes without any action from you:
+
+- Sign-ins now last at most 90 days. Sessions that exist at upgrade get 90 days
+  from the upgrade, so nobody is signed out by it; after that each device signs
+  in again (TVs re-pair) every 90 days.
+- First-run setup works only from the local network or a local host name
+  unless `ALLOW_PUBLIC_SETUP=true`. This only matters for a fresh install.
+
+The full list, including client changes, is under "Upgrade notes (from
+v2.4.x)" in [CHANGELOG.md](../CHANGELOG.md).
 
 ---
 
@@ -662,12 +805,10 @@ server {
         proxy_set_header X-Forwarded-For $remote_addr;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # WebSocket support (used by HLS live progress)
         proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
 
-        # Long timeouts for transcoding streams
+        # Long timeouts for transcoding streams and the notification
+        # event stream (SSE), which stays open as long as a tab is open
         proxy_read_timeout 3600s;
         proxy_send_timeout 3600s;
     }
@@ -678,6 +819,17 @@ server {
     }
 }
 ```
+
+OnScreen uses no WebSockets. The one long-lived connection is the
+server-sent events stream at `/api/v1/notifications/stream`, which needs
+`proxy_buffering off` (set above; the server also sends
+`X-Accel-Buffering: no`) and a read timeout well above a few minutes.
+
+For a fuller nginx setup, start from `docker/nginx.conf` in the repository. It
+keeps every `proxy_set_header` at server level: nginx drops inherited
+`proxy_set_header` lines for any location that sets one of its own, which loses
+`X-Forwarded-For` and `X-Forwarded-Proto` for that location. Set
+`TRUSTED_PROXIES` to the proxy's address either way.
 
 If you use Caddy instead:
 
@@ -691,44 +843,20 @@ media.example.com {
 
 ---
 
-## OAuth / SSO Setup
+## Single sign-on (OIDC, SAML, LDAP)
 
-OnScreen supports **Google**, **GitHub**, and **Discord** as OAuth login providers. Each provider is enabled by setting its client ID and secret. Set `BASE_URL` to your public server URL so redirect URIs are correct.
+OnScreen supports OpenID Connect, SAML 2.0 and LDAP sign-in. There are no env
+vars for them: configure each one under **Settings ▸ Users ▸ SSO**, where the
+page also shows the URLs to register with your identity provider:
 
-### Google
+- **OIDC** (Authentik, Keycloak, Auth0, Azure AD, ...): redirect URI
+  `https://media.example.com/api/v1/auth/oidc/callback`.
+- **SAML**: SP metadata at `https://media.example.com/api/v1/auth/saml/metadata`;
+  point OnScreen at your IdP's metadata URL.
+- **LDAP**: host, bind credentials, StartTLS or LDAPS.
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/) > **APIs & Services > Credentials**.
-2. Create an **OAuth client ID** (Web application).
-3. Authorized redirect URI: `https://media.example.com/api/v1/auth/google/callback`
-4. Set `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
-
-### GitHub
-
-1. Go to [GitHub Developer Settings](https://github.com/settings/developers) > **OAuth Apps > New OAuth App**.
-2. Authorization callback URL: `https://media.example.com/api/v1/auth/github/callback`
-3. Set `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET`.
-
-### Discord
-
-1. Go to [Discord Developer Portal](https://discord.com/developers/applications) > **New Application > OAuth2**.
-2. Add redirect: `https://media.example.com/api/v1/auth/discord/callback`
-3. Set `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET`.
-
-### Configuration
-
-```bash
-BASE_URL=https://media.example.com
-GOOGLE_CLIENT_ID=123456789.apps.googleusercontent.com
-GOOGLE_CLIENT_SECRET=GOCSPX-xxxxxxxxxxxxxxxx
-GITHUB_CLIENT_ID=Iv1.xxxxxxxx
-GITHUB_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-DISCORD_CLIENT_ID=123456789012345678
-DISCORD_CLIENT_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-### User flow
-
-Users click "Sign in with Google/GitHub/Discord" on the login page. On first login, a local OnScreen account is created and linked. If an existing user has the same email, the accounts are automatically linked. The first user registered becomes admin.
+Set the server's public URL in **Settings ▸ General ▸ Server** first (and
+restart) so the redirect URIs OnScreen generates use your public host name.
 
 ---
 
@@ -768,8 +896,9 @@ them were still wired to a live reader, so an operator sending `SIGHUP` was told
 
 Settings now flow one of two ways, and both take effect on the next restart:
 
-- **Admin UI** (Settings ▸ System / ▸ Transcode / ▸ Nodes) — stored in the
-  database; the matching env var is only the initial default.
+- **Admin UI** (Settings ▸ General / ▸ System / ▸ Transcode / ▸ Nodes) — stored
+  in the database; the matching env var, where there is one, is only the
+  initial default.
 - **Environment** — the bootstrap set that must be readable before the settings
   tables are (`DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`, `NODE_ID`), plus bind
   addresses and paths.
@@ -794,6 +923,12 @@ openssl rand -hex 32
 
 This produces a 64-character hex string encoding 32 bytes.
 
+The server also refuses a key that looks like a placeholder (one containing
+`change-me`, `example`, `your-secret` and similar). If an existing install used
+one, rotate it with `cmd/rotate-key` (built from source; a dry run unless you
+pass `-apply`) rather than just replacing it, so the secrets encrypted under the
+old key are re-encrypted instead of lost.
+
 ### Server won't start: "DATABASE_URL is required"
 
 All three required environment variables must be set: `DATABASE_URL`, `VALKEY_URL`, `SECRET_KEY`. Double-check your `.env` file or systemd `EnvironmentFile`.
@@ -806,7 +941,7 @@ All three required environment variables must be set: `DATABASE_URL`, `VALKEY_UR
 
 ### Migrations fail
 
-- Ensure the `pgvector` extension is installed: `CREATE EXTENSION IF NOT EXISTS vector;`
+- The first migration creates the `pg_trgm`, `pgcrypto` and `unaccent` extensions. If it fails on one of them, create them as a superuser (see [Create the database](#create-the-database)); on distributions that split them out, install the PostgreSQL contrib package.
 - Check that the database user has schema creation privileges.
 - Run `goose status` to see which migrations have been applied.
 
@@ -827,9 +962,9 @@ All three required environment variables must be set: `DATABASE_URL`, `VALKEY_UR
 - In the Docker image, FFmpeg is bundled. For bare metal, install it separately.
 - If using hardware encoding (`TRANSCODE_ENCODERS=nvenc`), ensure the GPU drivers and NVIDIA Container Toolkit are installed.
 
-### WebSocket connections failing behind reverse proxy
+### Notifications don't arrive live behind a reverse proxy
 
-Make sure your reverse proxy forwards the `Upgrade` and `Connection` headers. See the nginx config example above.
+Live notifications use a server-sent events stream (`/api/v1/notifications/stream`), not WebSockets. If they only show up after a page reload, the proxy is buffering the stream or timing it out: set `proxy_buffering off` and a long `proxy_read_timeout` (nginx), or `flush_interval -1` (Caddy). See the reverse-proxy examples above.
 
 ### PostgreSQL connection exhaustion
 
@@ -848,7 +983,7 @@ Ensure Docker containers use `STOPSIGNAL SIGTERM` and a stop grace period of at 
 
 ### High memory usage during scans
 
-Lower `SCAN_FILE_CONCURRENCY` (hot-reloadable via SIGHUP). The default is `NumCPU * 2`, which may be aggressive on memory-constrained systems.
+Lower the file scan concurrency in **Settings ▸ System** (or `SCAN_FILE_CONCURRENCY`, which is only the initial default) and restart. The default is `NumCPU * 2`, which may be aggressive on memory-constrained systems.
 
 ### Health check endpoint
 

@@ -5,16 +5,65 @@ OnScreen tracks server + first-party-client changes. Versions follow
 endpoints / features without breaking existing API contracts; major
 releases (none yet past v2) reserve the right to break things.
 
-The server API is frozen as of **v2.2.0** — see [docs/server-lock.md](docs/server-lock.md)
-for the lock posture and what's expected to land in v2.3+ minor
-releases without breaking v2.2 clients.
+The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
+API change lands only when every first-party client moves with it — see
+[docs/server-lock.md](docs/server-lock.md).
 
 ## [v2.5.0] — unreleased
 
-Planning: [docs/v2.5-roadmap.md](docs/v2.5-roadmap.md) — the distribution
-wave (stores for the existing fleet), the non-Apple platform track
-(Chromecast receiver, Android Auto, CLI, Flathub), client-parity honesty,
-and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
+Requests, watch marks, franchise collections, Last.fm/Trakt scrobbling,
+audiobook speed and bookmarks, a file integrity probe and the TV web app at
+`/tvapp/` (the Xbox app's front end), plus the fixes and hardening from the
+September 2026 security review ([docs/security.md](docs/security.md)) and a
+round of client releases for Android TV, Fire TV, the phone, Samsung Tizen
+and LG webOS. Roadmap: [docs/v2.5-roadmap.md](docs/v2.5-roadmap.md).
+
+### Upgrade notes (from v2.4.x)
+
+Rehearsed by upgrading a populated v2.4.1 compose stack in place: the
+migrations ran in under a second on a small library, and users, libraries,
+watch progress, favorites and existing sign-ins all carried over.
+
+- **Migrations 00018–00035** apply at startup with `AUTO_MIGRATE=true`
+  (otherwise run the migrate step first; `/health/ready` stays unready until
+  they are applied). 00023 rebuilds watch state from `watch_events` and holds
+  new events back while it runs, so it takes longest on a long history; it
+  drops the `watch_state` materialized view, so anything outside OnScreen
+  that queried it must move to the `user_watch_state` view. 00030 rebuilds a
+  unique index on `media_items`.
+- **Sign-ins now last at most 90 days.** Refreshing still extends a session,
+  but never past 90 days from sign-in. Sessions that exist at upgrade get 90
+  days from the upgrade, so no device is signed out by it; after that, each
+  device signs in again (TVs re-pair) every 90 days.
+- **Compose needs `DB_PASS`.** There is no `onscreen` default any more, so
+  compose refuses to start without it. Set it to the password your Postgres
+  volume was created with.
+- **A placeholder `SECRET_KEY` is refused at boot.** If yours was a sample
+  value, rotate it with `cmd/rotate-key`.
+- **Rotate your Radarr/Sonarr API key** if anyone pressed Save on the *arr
+  settings under v2.4.x. The save could store the webhook key as `****`,
+  which then authenticated anyone.
+- **First-run setup** works only from the local network or a local host
+  name. Set `ALLOW_PUBLIC_SETUP=true` to finish it over the internet.
+- **Reverse proxies:** re-copy `docker/nginx.conf` (headers moved to server
+  level, and `X-Forwarded-For` is replaced rather than appended), and set
+  `TRUSTED_PROXIES` to the proxy's address. The client address is now read
+  from the right of `X-Forwarded-For`, and without `TRUSTED_PROXIES` every
+  private address in it counts as a proxy hop. Behind a proxy that sends only
+  `X-Forwarded-For` (Caddy's default), every LAN client would then share the
+  proxy's rate-limit bucket for sign-in, refresh and pairing, and HLS
+  playlist and segment requests (now limited to 1000 a minute per address).
+- **New background work:** seek-bar thumbnails are switched on for existing
+  video libraries, so the nightly backfill uses CPU and the cache disk grows;
+  `arr_request_sync` polls Radarr/Sonarr for request download status. The
+  `integrity_probe` task is off until you enable it.
+- **Run a music scan and an audiobook scan** after upgrading: multi-disc
+  albums an older scan folded together split again, and audiobooks a scan
+  merged into one are separated.
+- **Clients:** Android TV 1.3+ needs Android 7 or later, so Fire OS 5 sticks
+  stay on 1.2.x. The phone app no longer trusts user-installed certificate
+  authorities, so a server behind a private CA needs a publicly trusted
+  certificate.
 
 ### Added
 
@@ -450,6 +499,18 @@ Roku channel (no request features, as on Android):
   are true with no tuner, and existing clients read them that way). Both
   new flags are cached for 30 seconds, since the endpoint is anonymous.
 
+- **Opt-in file integrity probe** — a new `integrity_probe` scheduled task
+  (migration 00019; seeded disabled; enable in **Settings → Tasks**) spot-decodes ~15 frames at
+  the 10/50/90% offsets of each video file with the software decoder and marks
+  `media_files.integrity_status` ok/damaged. Damaged/fake releases whose
+  headers parse but whose bitstream doesn't (the kind that green-frames
+  hardware decoders and stalls browsers) get a **"file may be damaged"** badge
+  on the item page, a `damaged` playback-decision verdict, and a
+  422 `FILE_DAMAGED` refusal on transcode start — instead of users retrying an
+  unplayable title. Verdicts reset automatically when a file's content changes
+  on disk; probe failures (unreachable share, missing ffmpeg) leave files
+  unchecked rather than branding them.
+
 ### Changed
 
 - **Tizen app 1.1.0: parity with the Android TV app**, by moving the Samsung
@@ -844,7 +905,7 @@ Roku channel (no request features, as on Android):
 - **`GET /api/v1/collections` omits franchise collections** unless called
   with `?include=franchise` (the web client asks for them), so native
   clients see the list they saw before.
-- **Migrations 00020–00035** — applied on startup with `AUTO_MIGRATE=true`,
+- **Migrations 00018–00035** — applied on startup with `AUTO_MIGRATE=true`,
   otherwise by the usual migrate step before starting the new binary
   (`/health/ready` stays unready until they are applied).
 
@@ -1181,8 +1242,8 @@ Roku channel (no request features, as on Android):
   under that track. Tracks now store their disc (migration 00030 adds
   `media_items.disc_number` and makes the one-track-per-position index
   per disc); albums list in disc-then-track order and the children API
-  returns `disc_number`. An album already folded this way separates when
-  the affected files are next re-imported. The web album page heads each
+  returns `disc_number`. An album already folded this way splits on the
+  next music scan (see above). The web album page heads each
   disc ("Disc 2") on an album with more than one, so its restarted track
   numbers read right.
 - **A scan merged an author's audiobooks into one.** The post-scan
@@ -1288,8 +1349,9 @@ Roku channel (no request features, as on Android):
   one: picking a DTS track behind an AC3 first track passed DTS through to a
   client that can't decode it (silence). An `audio_stream_index` past the
   file's last audio track now gets a 400 instead of an ffmpeg that never
-  writes a playlist. (Tizen, webOS and Roku still send the file's stream
-  number there; their last-track pick now gets that 400.)
+  writes a playlist. (Roku still sends the file's stream number there, so
+  its last-track pick now gets that 400; Tizen 1.1.0 and webOS 0.2.0 send
+  the position in `audio_streams`.)
 - **A progress report without a duration no longer erases the stored one.**
   The watch rollup copied the latest report's duration over the stored one,
   so a player that couldn't tell a title's length made it look unwatched and
@@ -1310,10 +1372,76 @@ Roku channel (no request features, as on Android):
   no attribution and identified itself to the tile servers only by package
   name. It now shows "© OpenStreetMap contributors", linked to OSM's
   copyright page, and sends "OnScreen/<version>" with the project's URL.
-- **Android CI failed at SDK setup since 2026-09-25.** The setup action's
-  default package list starts with the retired `tools` package, which the
-  SDK manager no longer serves; the phone and TV workflows now install only
-  `platform-tools` and let the Android Gradle plugin fetch the rest.
+
+### Security
+
+The full list, with the reasoning behind each fix, is in
+[docs/security.md](docs/security.md). The ones operators and client authors
+notice:
+
+- **Refresh-token reuse is detected.** A refresh token presented after it
+  was rotated ends the whole session chain and leaves an audit row, and
+  every session has a 90-day hard limit (migration 00018; sessions that
+  exist at upgrade count from the upgrade).
+- **Pairing:** the web `/pair?code=…&auto=1` link no longer claims a code
+  on its own; the user confirms it (`GET /auth/pair/pending`), and pairing
+  is audit-logged.
+- **Credential endpoints check the request's origin** (CSRF and login
+  CSRF), TOTP codes and the TOTP login challenge are single-use, and SAML
+  sign-in is bound to the browser that started it.
+- **First-run setup** answers only local peers and local host names unless
+  `ALLOW_PUBLIC_SETUP` is set; placeholder `SECRET_KEY` values are refused.
+- **The *arr webhook key could be saved as `****`** by an ordinary Save of
+  the *arr settings; the mask is now never written. Rotate the key.
+- **ffmpeg inputs are restricted** to file protocols, and a playlist-shaped
+  "media" file gets `415 UNSUPPORTED_CONTAINER`.
+- **The content-rating ceiling covers every item surface** (photos, EXIF,
+  lyrics, subtitles, watch status, favorites, progress, markers), and
+  `/jobs`, collections and playlists check ownership.
+- **`X-Forwarded-For` is read right to left** from the trusted proxies;
+  Live TV HLS goes through the watch-limit gate; LAN discovery answers only
+  local senders; `/health/version` reports less.
+- **Compose:** Postgres and Valkey bind to 127.0.0.1, containers drop all
+  capabilities, and `DB_PASS` is required. The installers tighten file ACLs
+  and move a bundled Postgres to scram-sha-256.
+- **Clients:** TV apps confirm before sending a password over plain http to
+  a public host, and signing out revokes the token on the server. The phone
+  keeps tokens in the Android keystore and no longer trusts user-installed
+  certificate authorities.
+- **Dependencies:** `google.golang.org/grpc` 1.83.2 and
+  `golang.org/x/crypto` 0.56.0 (govulncheck: none of the fixed
+  vulnerabilities was reachable from OnScreen's code).
+
+## [v2.4.1] — 2026-08-05
+
+Server-only patch release. Recommended for every deployment that TV
+clients pair against — the v1.1.0 store apps (Amazon Appstore, Google
+Play) walk new users straight into the flow the first fix repairs.
+
+### Fixed
+- **Pairing no longer rate-limits its own household out of logging
+  in.** `/auth/pair/code` and `/auth/pair/poll` moved out of the
+  shared per-IP auth bucket (10/min) into their own (60/min). A TV
+  sitting on the pairing screen polls every 5 s — 12/min — which
+  alone exhausted the household's entire login budget, so the phone
+  trying to *claim* the PIN got 429s and the flow deadlocked itself.
+  Polling is not a brute-force surface (the device token is the
+  credential; the PIN claim runs on the authenticated web session),
+  so the wider bucket gives up nothing.
+- **The notifications SSE stream now sends a keepalive every 30 s**
+  (previously one at connect, then silence). A NAT or router that
+  drops an idle mapping without an RST left clients' reads parked
+  forever — no error, so no reconnect, and cross-device sync +
+  "play on this TV" stayed dead until an app restart. The periodic
+  write also makes the server notice a vanished peer and end the
+  handler. Client-side liveness watchdogs (shipped in the TV 1.1.0
+  apps) time out against a multiple of this cadence.
+- **Transcode sessions are no longer orphaned when the client
+  disconnects during start.** Backing out during the buffering
+  spinner cancels the HTTP call after the session was created but
+  before the client learned its id — nothing could ever DELETE it.
+  The handler now reaps the session inline when the request context
+  is gone by the time the response would be written.
 
 ## [v2.4.0] — 2026-08-05
 
@@ -1466,17 +1594,6 @@ builds shipped since June 2026 already handle the asset token.
 - **Split segment serving** (`PUBLIC_SEGMENT_BASE_URL`) — optional distinct
   base URL for HLS segment fetches, so a CDN or separate ingress can carry the
   segment bandwidth.
-- **Opt-in file integrity probe** — a new `integrity_probe` scheduled task
-  (seeded disabled; enable in **Settings → Tasks**) spot-decodes ~15 frames at
-  the 10/50/90% offsets of each video file with the software decoder and marks
-  `media_files.integrity_status` ok/damaged. Damaged/fake releases whose
-  headers parse but whose bitstream doesn't (the kind that green-frames
-  hardware decoders and stalls browsers) get a **"file may be damaged"** badge
-  on the item page, a `damaged` playback-decision verdict, and a
-  422 `FILE_DAMAGED` refusal on transcode start — instead of users retrying an
-  unplayable title. Verdicts reset automatically when a file's content changes
-  on disk; probe failures (unreachable share, missing ffmpeg) leave files
-  unchecked rather than branding them.
 
 ### Changed — server
 
