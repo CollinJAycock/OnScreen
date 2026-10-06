@@ -3,7 +3,7 @@
 > Source for the Samsung Apps Store submission's App Description.
 > Paste each section into the corresponding field in Samsung's Word
 > template before submission. Keep this file as the canonical copy
-> so revisions land in git. The review account's password goes only in
+> so revisions land in git. The review accounts' passwords go only in
 > the Seller Office account fields, never in this file.
 
 ## 1. App Information
@@ -44,15 +44,16 @@ playback streams from that user-owned server.
 | Field | Value |
 |---|---|
 | Test Server URL | https://onscreen-beta.wolverscreen.com |
-| Test Username | reviewer |
-| Test Password | In the Seller Office account / password fields of this submission |
-| Account validity | Does not expire; one account works on any number of TVs at once |
+| Test Usernames | reviewer1, reviewer2, reviewer3, reviewer4, reviewer5, reviewer6, reviewer7, reviewer8 (one per model group, plus a spare) |
+| Test Passwords | In the Seller Office account / password fields of this submission |
+| Account validity | The accounts do not expire. |
+| Account differences | None: all eight accounts are identical (same content, no ads, no paid tiers, no Live TV, no 4K titles, no account-specific features). Each tester gets a separate account so watch progress, favorites and settings don't carry over between testers. |
 | First-launch flow | (A) "Add your OnScreen server": enter the URL above and select Connect. (B) "Sign in": enter the username, then the password, with the TV's on-screen keyboard. No phone, computer or website is needed. ("Sign in with another device" is an optional alternative and is not needed for review.) |
 
 **About the review server.** https://onscreen-beta.wolverscreen.com is an
 OnScreen server we run for testing and app-store review. It looks up artwork
 and descriptions for its own files from TMDB and TheTVDB; no subtitle,
-download-manager or TV-tuner service is configured on it. The `reviewer`
+download-manager or TV-tuner service is configured on it. Each review
 account sees five libraries holding **only openly licensed works**: Blender
 Foundation open movies and the Caminandes series (Creative Commons
 Attribution), Kevin MacLeod music (CC BY), LibriVox public-domain audiobooks
@@ -67,9 +68,12 @@ starts a slideshow), Search, Settings.
 
 ## 4. Geo-IP Whitelist Status
 
-The review server has no IP allow-list, geo-blocking, rate limiting or
-fail2ban-style filtering, so every Samsung QA address listed in the
-checklist (item 3) reaches it.
+The review server has no IP allow-list, geo-blocking or fail2ban-style
+filtering, so every Samsung QA address listed in the checklist (item 3)
+reaches it. The only limit is a brute-force guard on sign-in: attempts are
+counted per IP address per minute, and the server answers "too many
+requests" past the limit. If several testers share one address, sign in a
+few seconds apart.
 
 ## 5. App Features (functional inventory)
 
@@ -213,7 +217,7 @@ flag them as defects:
 ## 13. Screen Guide (annotated images)
 
 The numbered images are in `docs/store-assets/samsung-appstore/` (`menu-*.png`),
-captured from version 1.1.0 signed in as `reviewer` on the review server; the
+captured from version 1.1.0 signed in as a review account on the review server; the
 navigation diagram is `ui-structure.png`. Plain screenshots for the store
 listing are in `screenshots/` (1920 x 1080).
 
