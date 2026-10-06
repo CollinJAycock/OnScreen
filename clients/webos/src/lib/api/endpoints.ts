@@ -270,12 +270,12 @@ export const pair = {
   poll: async (deviceToken: string): Promise<{ status: 'done' | 'pending' | 'expired'; pair?: TokenPair }> => {
     const origin = api.getOrigin();
     if (!origin) throw new Error('API origin not configured');
+    // GET, as the server routes it: a POST was answered 405 on every poll,
+    // so a TV signing in with a PIN waited forever (Roku and Tizen had the
+    // same bug).
     const resp = await fetch(`${origin}/api/v1/auth/pair/poll`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${deviceToken}`,
-        'Content-Type': 'application/json'
-      },
+      method: 'GET',
+      headers: { Authorization: `Bearer ${deviceToken}` },
       // The device token is the pairing secret; never replay it across a
       // redirect (a non-200/202/410 falls through to the throw below).
       redirect: 'manual'

@@ -514,6 +514,12 @@ Roku channel (no request features, as on Android):
     `<button>`, all of which webOS 6 ignored. The capability header reports
     the panel's real size and HDR support (from LG's config service) and
     claims VP9 only when the media stack takes it.
+- **webOS app 0.2.2: "Sign in with another device" works.** The app polled
+  for the sign-in with POST, which the server answers 405 (it routes
+  `GET /auth/pair/poll`), so a TV showing a PIN waited forever however often
+  the PIN was entered. The same bug was found and fixed in the Tizen app
+  first; Roku had it earlier. 0.2.1, in LG's QA, has the bug; 0.2.2 is
+  0.2.1 with this fix and nothing else.
 - **webOS app 0.2.1, for the first LG Content Store submission.**
   - `appinfo.json` declares `requiredACG: ["systemconfig.query"]`, the
     group of the app's one Luna call (`com.webos.service.config/getConfigs`,

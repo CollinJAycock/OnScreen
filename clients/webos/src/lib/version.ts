@@ -3,4 +3,4 @@
 // version fields in package-lock.json) — keep them in sync on each
 // release; version.test.ts fails when they drift. (Could resolve via
 // Vite's `define` but the extra config isn't worth saving one bump.)
-export const APP_VERSION = '0.2.1';
+export const APP_VERSION = '0.2.2';
