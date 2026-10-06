@@ -1,0 +1,9 @@
+<!--
+    .NET Native runtime directives (Release builds). The app reflects over
+    nothing of its own, so the default is enough.
+-->
+<Directives xmlns="http://schemas.microsoft.com/netfx/2013/01/metadata">
+  <Application>
+    <Assembly Name="*Application*" Dynamic="Required All" />
+  </Application>
+</Directives>

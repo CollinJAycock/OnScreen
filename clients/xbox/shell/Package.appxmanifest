@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The OnScreen Xbox shell: a UWP app whose only job is to ask for the user's
+  OnScreen server and show <server>/tvapp/ in a WebView2 (see MainPage.xaml.cs
+  and ../src/lib/shell.ts). Runs on Xbox and, for testing, on Windows desktop.
+
+  Publisher must match the signing certificate. CN=OnScreen Dev is the local
+  test certificate (make-cert.ps1); a Store build gets the Partner Center
+  identity instead.
+-->
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  IgnorableNamespaces="uap mp">
+
+  <Identity
+    Name="OnScreen.Xbox"
+    Publisher="CN=OnScreen Dev"
+    Version="0.1.0.0" />
+
+  <mp:PhoneIdentity PhoneProductId="6b1f0a4e-3d2c-4f7a-9b8e-0c5d1e2f3a40" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
+
+  <Properties>
+    <DisplayName>OnScreen</DisplayName>
+    <PublisherDisplayName>Collin Aycock</PublisherDisplayName>
+    <Logo>Assets\StoreLogo.png</Logo>
+  </Properties>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Universal" MinVersion="10.0.17763.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Resources>
+    <Resource Language="x-generate"/>
+  </Resources>
+
+  <Applications>
+    <Application Id="App"
+      Executable="$targetnametoken$.exe"
+      EntryPoint="OnScreen.Xbox.App">
+      <uap:VisualElements
+        DisplayName="OnScreen"
+        Square150x150Logo="Assets\Square150x150Logo.png"
+        Square44x44Logo="Assets\Square44x44Logo.png"
+        Description="Watch and listen to your own OnScreen media server."
+        BackgroundColor="#0b0b12">
+        <uap:DefaultTile Wide310x150Logo="Assets\Wide310x150Logo.png"/>
+        <uap:SplashScreen Image="Assets\SplashScreen.png" BackgroundColor="#0b0b12"/>
+      </uap:VisualElements>
+    </Application>
+  </Applications>
+
+  <Capabilities>
+    <!-- A server on the internet, and one on the home network (most
+         self-hosted servers are a LAN address). -->
+    <Capability Name="internetClient" />
+    <Capability Name="privateNetworkClientServer" />
+  </Capabilities>
+</Package>

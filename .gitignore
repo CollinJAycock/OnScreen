@@ -11,6 +11,11 @@ qa-media/
 /web/node_modules/
 /web/.svelte-kit/
 /internal/webui/dist/
+# TV web app build (clients/xbox) synced in for embedding. Only .gitkeep is
+# tracked, so a checkout that never built the TV app still compiles and the
+# server serves internal/tvui/placeholder instead.
+/internal/tvui/dist/*
+!/internal/tvui/dist/.gitkeep
 
 # Generated code is tracked so CI can build without sqlc installed.
 # Regenerate with: make generate

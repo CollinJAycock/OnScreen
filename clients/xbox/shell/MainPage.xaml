@@ -1,0 +1,25 @@
+<Page
+    x:Class="OnScreen.Xbox.MainPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:muxc="using:Microsoft.UI.Xaml.Controls"
+    Background="#0b0b12">
+
+    <Grid>
+        <!-- The TV app, from the server (<server>/tvapp/). Hidden until a
+             server has answered. -->
+        <muxc:WebView2 x:Name="Web" Visibility="Collapsed" />
+
+        <!-- First launch, and Settings' Forget server: which server. -->
+        <StackPanel x:Name="Prompt" Visibility="Collapsed" MaxWidth="900"
+                    HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="24">
+            <TextBlock Text="Add your OnScreen server" FontSize="40" FontWeight="SemiBold" />
+            <TextBlock TextWrapping="Wrap" FontSize="20" Opacity="0.8"
+                       Text="Enter your server's address, for example 192.168.1.10:7070 or https://media.example.com. Without http:// or https://, https is tried first." />
+            <TextBox x:Name="ServerBox" FontSize="24" InputScope="Url" PlaceholderText="Server address"
+                     IsSpellCheckEnabled="False" IsTextPredictionEnabled="False" KeyDown="ServerBox_KeyDown" />
+            <Button x:Name="ConnectButton" Content="Connect" FontSize="22" Padding="32,10" Click="Connect_Click" />
+            <TextBlock x:Name="Status" TextWrapping="Wrap" FontSize="20" Foreground="#ff9a9a" />
+        </StackPanel>
+    </Grid>
+</Page>

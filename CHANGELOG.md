@@ -18,6 +18,25 @@ and product depth (Trakt/Last.fm, collections, music browse, audiobook UX).
 
 ### Added
 
+- **Xbox app, phase 0 (not yet run on a console)** — `clients/xbox`.
+  - The server embeds a TV web app and serves it at `/tvapp/`
+    (`internal/tvui`; `/tvapp` redirects there, unknown paths under it get
+    its index, never the main SPA). A server built without it serves a
+    placeholder page there. `/tv` is the web app's Live TV, hence the name.
+    Makefile (`tvui`), `deploy.ps1`, the Docker images, the installers and
+    the release workflow build it.
+  - The TV web app is the webOS app's code with an Xbox platform layer:
+    the controller (Windows' gamepad key codes; the Gamepad API on a PC),
+    B as Back with the Exit popup on the first screens, the device name and
+    the display's 4K / HDR from the shell, the API at the page's own origin,
+    the 1920x1080 layout scaled to the web view, and Settings > Diagnostics
+    (what the web view decodes, the capability header, a live key log).
+  - The shell (`clients/xbox/shell`) is a UWP app with WinUI 2's WebView2,
+    as Jellyfin's Xbox app is: it asks for the server, checks `/tvapp/`,
+    shows it full screen without a pointer, and handles the page's exit and
+    change-server requests and the system's Back. Release builds run on a
+    Windows PC; the console visit (Dev Mode, Device Portal, a checklist) is
+    in `clients/xbox/README.md`.
 - **`onscreen-cli`** — a terminal client that plays through mpv: login (with
   TOTP), browse/search, server-authoritative playback decision under an mpv
   capability profile, direct play via Authorization header, transcode

@@ -1,0 +1,8 @@
+node_modules/
+build/
+.svelte-kit/
+*.ipk
+.env
+.env.*
+!.env.example
+.vite/

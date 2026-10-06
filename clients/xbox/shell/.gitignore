@@ -1,0 +1,9 @@
+bin/
+obj/
+AppPackages/
+BundleArtifacts/
+.vs/
+*.user
+# The local test signing key (make-cert.ps1); never committed.
+*.pfx
+*.cer

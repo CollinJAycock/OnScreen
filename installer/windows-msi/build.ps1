@@ -138,6 +138,23 @@ if (-not $SkipFrontend) {
     Pop-Location
     if (Test-Path internal\webui\dist) { Remove-Item -Recurse -Force internal\webui\dist }
     Copy-Item -Recurse web\dist internal\webui\dist
+
+    # TV web app (clients/xbox), served at /tvapp/. Without it the server
+    # embeds a placeholder page; when the client is in the tree, a failed
+    # build fails the installer rather than shipping that placeholder.
+    if (Test-Path clients\xbox\package.json) {
+        Write-Host "==> Building TV app..." -ForegroundColor Cyan
+        Push-Location clients\xbox
+        npm ci --silent
+        if ($LASTEXITCODE -ne 0) { throw "npm ci (clients/xbox) failed" }
+        npm run build
+        if ($LASTEXITCODE -ne 0) { throw "npm run build (clients/xbox) failed" }
+        Pop-Location
+        if (Test-Path internal\tvui\dist) { Remove-Item -Recurse -Force internal\tvui\dist }
+        Copy-Item -Recurse clients\xbox\build internal\tvui\dist
+        # Only dist\.gitkeep is tracked; put it back so git status stays clean.
+        New-Item -ItemType File internal\tvui\dist\.gitkeep | Out-Null
+    }
 } else {
     Write-Host "==> Skipping frontend build (-SkipFrontend)" -ForegroundColor Yellow
 }

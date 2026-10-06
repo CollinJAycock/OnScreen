@@ -57,6 +57,22 @@ jobs:
           rm -rf internal/webui/dist
           cp -r web/dist internal/webui/dist
 
+      # TV web app (clients/xbox), embedded and served at /tvapp/. Skipped
+      # only when the client isn't in the tree; the server then embeds a
+      # placeholder page instead.
+      - name: Build TV app
+        if: hashFiles('clients/xbox/package-lock.json') != ''
+        working-directory: clients/xbox
+        run: |
+          npm ci --no-audit --no-fund
+          npm run build
+
+      - name: Copy TV app to embed dir
+        if: hashFiles('clients/xbox/package-lock.json') != ''
+        run: |
+          rm -rf internal/tvui/dist
+          cp -r clients/xbox/build internal/tvui/dist
+
       # A release must never ship untested: run the unit suite with the real
       # embedded frontend in place (the webui embed requires dist to exist).
       # Integration suites need Postgres/Valkey and stay in ci.yml — this is

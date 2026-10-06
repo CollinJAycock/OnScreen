@@ -16,20 +16,21 @@ DEFAULT_TMDB_KEY          ?=
 DEFAULT_OPENSUBTITLES_KEY ?=
 LDFLAGS      := -X main.version=$(VERSION) -X main.buildTime=$(BUILD_TIME) -X main.defaultTMDBAPIKey=$(DEFAULT_TMDB_KEY) -X main.defaultOpenSubtitlesAPIKey=$(DEFAULT_OPENSUBTITLES_KEY)
 
-.PHONY: all build build-server build-worker frontend generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build client-build-linux installer-windows installer-windows-msi installer-linux
+.PHONY: all build build-server build-worker frontend tvui generate migrate test-unit test-int test-e2e test-browser test-browser-install lint fmt coverage docker docker-up docker-down check clean dev help client-deps client-check client-dev client-build client-build-linux installer-windows installer-windows-msi installer-linux
 
 ## all: build everything (frontend + server + worker)
 all: build
 
-## build: build frontend then server and worker binaries
-build: frontend
+## build: build frontend + TV app then server and worker binaries
+build: frontend tvui
 	mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/server $(CMD_SERVER)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/worker $(CMD_WORKER)
 
-## build-server: build server binary only (syncs frontend if web/dist exists)
+## build-server: build server binary only (syncs frontend / TV app builds that exist)
 build-server:
 	@if [ -d web/dist ]; then rm -rf internal/webui/dist && cp -r web/dist internal/webui/dist; fi
+	@if [ -f clients/xbox/build/index.html ]; then $(TVUI_SYNC); fi
 	mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/server $(CMD_SERVER)
 
@@ -59,6 +60,18 @@ frontend:
 	cd web && npm ci && npm run build
 	rm -rf internal/webui/dist
 	cp -r web/dist internal/webui/dist
+
+## tvui: build the TV web app (clients/xbox, served at /tvapp/) and sync it into its Go embed directory
+## Skipped when clients/xbox isn't in the tree: the server then embeds a
+## placeholder page instead (internal/tvui). Only dist/.gitkeep is tracked,
+## so it is put back after the copy to keep `git status` clean.
+TVUI_SYNC := rm -rf internal/tvui/dist && cp -r clients/xbox/build internal/tvui/dist && touch internal/tvui/dist/.gitkeep
+tvui:
+	@if [ -f clients/xbox/package.json ]; then \
+	  (cd clients/xbox && npm ci && npm run build) && $(TVUI_SYNC); \
+	else \
+	  echo "==> clients/xbox not found; the server will serve the TV-app placeholder"; \
+	fi
 
 ## generate: run sqlc code generation
 generate:
@@ -215,7 +228,7 @@ check: lint test-unit
 	cd web && npm run check
 
 ## deploy: full build + migrate + restart (requires DATABASE_URL, server running on :7070)
-deploy: frontend
+deploy: frontend tvui
 	mkdir -p $(BUILD_DIR)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/server $(CMD_SERVER)
 	$(GO) build $(GOFLAGS) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/worker $(CMD_WORKER)
@@ -226,6 +239,8 @@ deploy: frontend
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -rf web/dist web/.svelte-kit internal/webui/dist
+	rm -rf clients/xbox/build clients/xbox/.svelte-kit
+	find internal/tvui/dist -mindepth 1 ! -name .gitkeep -exec rm -rf {} +
 	rm -rf clients/desktop/src-tauri/target
 
 # ── Desktop client (Tauri 2) ───────────────────────────────────────────────

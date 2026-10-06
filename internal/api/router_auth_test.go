@@ -28,6 +28,13 @@ import (
 // group and the /artwork route; everything else is nil and never reached.
 func newTestRouter(t *testing.T, artDir string) (http.Handler, *valkey.RateLimiter, string) {
 	t.Helper()
+	return newTestRouterWith(t, artDir, nil)
+}
+
+// newTestRouterWith is newTestRouter with a hook to adjust the handler set
+// (e.g. inject a fake TV app filesystem) before the router is built.
+func newTestRouterWith(t *testing.T, artDir string, tweak func(*Handlers)) (http.Handler, *valkey.RateLimiter, string) {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	tm, err := auth.NewTokenMaker(auth.DeriveKey32("test-secret-key-that-is-32-bytes!"))
 	if err != nil {
@@ -54,6 +61,9 @@ func newTestRouter(t *testing.T, artDir string) (http.Handler, *valkey.RateLimit
 	tok, err := tm.IssueAccessToken(auth.Claims{UserID: uuid.New(), Username: "alice", IsAdmin: true})
 	if err != nil {
 		t.Fatal(err)
+	}
+	if tweak != nil {
+		tweak(h)
 	}
 	return NewRouter(h), rl, tok
 }

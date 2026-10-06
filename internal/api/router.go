@@ -25,6 +25,7 @@ import (
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/streaming"
+	"github.com/onscreen/onscreen/internal/tvui"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/webui"
 )
@@ -148,6 +149,10 @@ type Handlers struct {
 	// is reachable on the single API port. Ignored in production builds (the
 	// embedded SPA is always served). See frontend_dev.go.
 	DevFrontendURL string
+	// TVUI overrides the filesystem the TV web app is served from at
+	// tvAppPrefix. Nil (production) uses the build embedded by internal/tvui;
+	// tests inject a fake so they don't depend on a real clients/xbox build.
+	TVUI fs.FS
 	// NotificationAgents: admin CRUD + test for the outbound Discord /
 	// Telegram / ntfy / Gotify / email notification agents.
 	NotificationAgents *v1.NotificationAgentHandler
@@ -1304,39 +1309,67 @@ func NewRouter(h *Handlers) http.Handler {
 	devFrontendProxy := newDevFrontendProxy(h.DevFrontendURL, h.Logger)
 	uiFS := webui.FS()
 	serveUI := func(w http.ResponseWriter, req *http.Request, name string) {
-		f, err := uiFS.Open(name)
-		if err != nil {
-			http.NotFound(w, req)
-			return
+		serveEmbeddedFile(uiFS, w, req, name)
+	}
+
+	// ── TV web app ────────────────────────────────────────────────────────────
+	// The Xbox shell loads <server>/tvapp/index.html in a WebView2, so the TV
+	// app (clients/xbox) runs same-origin with the API: no CORS, no mixed
+	// content. The prefix is not /tv/ because the SPA above owns /tv,
+	// /tv/guide, /tv/recordings and /tv/{id} (Live TV) — a hard reload of
+	// those must keep loading the SPA.
+	//
+	// Like the SPA it is public (the app signs in with its own tokens) and
+	// sits outside every auth / rate-limit group, served the same way as the
+	// SPA's static files. These are real routes, so they win over the NotFound
+	// fallback below; an unknown path under the prefix gets the TV shell,
+	// never the SPA's. Dev builds serve it too — the Vite proxy only concerns
+	// the SPA. HEAD is registered next to GET because chi doesn't map one to
+	// the other.
+	//
+	// CSP: the shell's inline <script> tags get the nonce (serveEmbeddedFile)
+	// and hls.js's MSE playback uses blob: media URLs, which media-src allows.
+	// A blob: Web Worker would be BLOCKED — worker-src falls back to child-src
+	// and then script-src, which has no blob: — but nothing needs one: the ESM
+	// build of hls.js that Vite bundles has no inline worker, so it transmuxes
+	// on the main thread anyway, and the UMD build falls back to the main
+	// thread when its worker fails. Don't add blob: to script-src for this;
+	// the header is shared with the SPA and would weaken its policy too.
+	tvFS := h.TVUI
+	if tvFS == nil {
+		var present bool
+		tvFS, present = tvui.FS()
+		if !present {
+			h.Logger.Info("TV web app not included in this build; " + tvAppPrefix + " serves a placeholder")
 		}
-		defer f.Close()
-		info, err := f.Stat()
-		if err != nil {
-			http.NotFound(w, req)
-			return
-		}
-		// index.html is the only shell carrying inline <script> tags
-		// (theme bootstrap + SvelteKit start). Stamp the per-request CSP
-		// nonce onto them so they satisfy `script-src 'nonce-…'` now that
-		// 'unsafe-inline' is gone. The body must NOT be cached — a cached
-		// shell would carry a stale nonce that won't match the next
-		// response's freshly-generated CSP header, breaking the SPA boot.
-		if name == "index.html" {
-			body, err := io.ReadAll(f)
-			if err != nil {
-				http.NotFound(w, req)
+	}
+	serveTV := func(w http.ResponseWriter, req *http.Request) {
+		target := strings.TrimPrefix(req.URL.Path, tvAppPrefix)
+		if target != "" {
+			if info, err := fs.Stat(tvFS, target); err == nil && !info.IsDir() {
+				serveEmbeddedFile(tvFS, w, req, target)
 				return
 			}
-			if nonce := middleware.NonceFromContext(req.Context()); nonce != "" {
-				body = bytes.ReplaceAll(body, []byte("<script>"), []byte(`<script nonce="`+nonce+`">`))
-			}
-			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Cache-Control", "no-store")
-			_, _ = w.Write(body)
-			return
 		}
-		http.ServeContent(w, req, name, info.ModTime(), f.(io.ReadSeeker))
+		// A hash-routed app only ever asks for the shell itself; this
+		// fallback is a safety net for a mistyped or path-routed URL.
+		serveEmbeddedFile(tvFS, w, req, "index.html")
 	}
+	// The app's asset URLs are relative (./…), so the shell must be loaded
+	// from the trailing-slash URL or they would resolve against "/".
+	redirectTV := func(w http.ResponseWriter, req *http.Request) {
+		target := tvAppPrefix
+		if req.URL.RawQuery != "" {
+			target += "?" + req.URL.RawQuery
+		}
+		http.Redirect(w, req, target, http.StatusMovedPermanently)
+	}
+	tvRoot := strings.TrimSuffix(tvAppPrefix, "/")
+	r.Get(tvRoot, redirectTV)
+	r.Head(tvRoot, redirectTV)
+	r.Get(tvAppPrefix+"*", serveTV)
+	r.Head(tvAppPrefix+"*", serveTV)
+
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {
 		// API paths must NOT fall through to the SPA — clients (hls.js,
 		// shaka, native players) parse the response body as JSON / a
@@ -1367,6 +1400,48 @@ func NewRouter(h *Handlers) http.Handler {
 	})
 
 	return r
+}
+
+// tvAppPrefix is where the TV web app (internal/tvui) is served; the Xbox
+// shell loads tvAppPrefix + "index.html". Must end in "/".
+const tvAppPrefix = "/tvapp/"
+
+// serveEmbeddedFile serves one file of an embedded single-page app. It uses
+// http.ServeContent (not FileServer) to avoid redirect loops caused by
+// FileServer's directory canonicalisation.
+func serveEmbeddedFile(fsys fs.FS, w http.ResponseWriter, req *http.Request, name string) {
+	f, err := fsys.Open(name)
+	if err != nil {
+		http.NotFound(w, req)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		http.NotFound(w, req)
+		return
+	}
+	// index.html is the only shell carrying inline <script> tags
+	// (theme bootstrap + SvelteKit start). Stamp the per-request CSP
+	// nonce onto them so they satisfy `script-src 'nonce-…'` now that
+	// 'unsafe-inline' is gone. The body must NOT be cached — a cached
+	// shell would carry a stale nonce that won't match the next
+	// response's freshly-generated CSP header, breaking the SPA boot.
+	if name == "index.html" {
+		body, err := io.ReadAll(f)
+		if err != nil {
+			http.NotFound(w, req)
+			return
+		}
+		if nonce := middleware.NonceFromContext(req.Context()); nonce != "" {
+			body = bytes.ReplaceAll(body, []byte("<script>"), []byte(`<script nonce="`+nonce+`">`))
+		}
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-store")
+		_, _ = w.Write(body)
+		return
+	}
+	http.ServeContent(w, req, name, info.ModTime(), f.(io.ReadSeeker))
 }
 
 // artworkImageExts is every extension the /artwork/* route will serve. The

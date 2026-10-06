@@ -1,6 +1,18 @@
 .git
 .github
 .claude
+# Clients ship separately and aren't used by the image build — except the TV
+# web app, which the image embeds and serves at /tvapp/. The last matching
+# pattern wins and the exception re-includes everything under clients/xbox,
+# so this block must stay ABOVE the secret and build-output patterns below,
+# which then exclude those files inside clients/xbox too.
+clients/
+!clients/xbox/
+clients/xbox/build/
+clients/xbox/.svelte-kit/
+# The UWP shell (its build output, packages and local signing key included)
+# isn't part of the server image.
+clients/xbox/shell/
 # Secrets must never reach the build context: `COPY . .` in the builder stage
 # would otherwise copy them into builder layers that persist in the local and
 # buildx cache. Patterns are anchored to the context root unless prefixed with
@@ -27,13 +39,13 @@ node_modules/
 **/node_modules/
 web/.svelte-kit/
 internal/webui/dist/
+internal/tvui/dist/
 docs/
 *.md
 !README.md
 !LICENSE
-# Not used by any image build (clients ship separately; installer/.cache holds
-# downloaded third-party binaries; screenshots/testdata are docs/tests only).
-clients/
+# Not used by any image build (installer/.cache holds downloaded third-party
+# binaries; screenshots/testdata are docs/tests only). clients/ is near the top.
 installer/
 screenshots/
 testdata/

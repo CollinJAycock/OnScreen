@@ -21,6 +21,33 @@ Pop-Location
 if (Test-Path internal\webui\dist) { Remove-Item -Recurse -Force internal\webui\dist }
 Copy-Item -Recurse web\dist internal\webui\dist
 
+# TV web app (clients/xbox), served at /tvapp/. A failed TV build only warns:
+# the server still deploys, serving whatever internal\tvui\dist already holds
+# (the placeholder page when it was never built). Only dist\.gitkeep is
+# tracked, so it is recreated after the copy to keep `git status` clean.
+if (Test-Path clients\xbox\package.json) {
+    Write-Host "==> Building TV app..." -ForegroundColor Cyan
+    $tvBuilt = $false
+    Push-Location clients\xbox
+    $prevEAP = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        npm install
+        if ($LASTEXITCODE -eq 0) { npm run build }
+        $tvBuilt = ($LASTEXITCODE -eq 0) -and (Test-Path build\index.html)
+    } finally {
+        $ErrorActionPreference = $prevEAP
+        Pop-Location
+    }
+    if ($tvBuilt) {
+        if (Test-Path internal\tvui\dist) { Remove-Item -Recurse -Force internal\tvui\dist }
+        Copy-Item -Recurse clients\xbox\build internal\tvui\dist
+        New-Item -ItemType File internal\tvui\dist\.gitkeep | Out-Null
+    } else {
+        Write-Host "==> TV app build failed; keeping the previous /tvapp/ build" -ForegroundColor Yellow
+    }
+}
+
 Write-Host "==> Building server..." -ForegroundColor Cyan
 # Prefer the VERSION file at repo root — `git describe` falls back to
 # v1.1.2 because v2.0.0 was tagged on a sidetrack not in main's

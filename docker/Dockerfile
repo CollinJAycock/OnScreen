@@ -11,6 +11,15 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY web/ ./
 RUN npm run build
 
+# ── Stage 1b: build the TV web app (clients/xbox, served at /tvapp/) ───────────
+FROM node:26-alpine AS tvui
+WORKDIR /app/clients/xbox
+COPY clients/xbox/package.json clients/xbox/package-lock.json ./
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --no-audit --no-fund
+COPY clients/xbox/ ./
+RUN npm run build
+
 # ── Stage 2: build Go binaries ───────────────────────────────────────────────
 # Use the minor-version tag (1.26-alpine) rather than a pinned patch so the
 # image picks up patch releases that match go.mod's `go 1.26.x` directive
@@ -24,6 +33,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 COPY . .
 COPY --from=frontend /app/web/dist ./internal/webui/dist
+COPY --from=tvui /app/clients/xbox/build ./internal/tvui/dist
 
 ARG VERSION=dev
 ARG BUILD_TIME
