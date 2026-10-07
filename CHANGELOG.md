@@ -9,7 +9,7 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [v2.5.1] — unreleased
+## [v2.5.1] — 2026-10-06
 
 Server patch release: Dolby Vision files with a base layer every player can
 show are no longer refused. Coming from v2.4.x, read the v2.5.0 upgrade notes
