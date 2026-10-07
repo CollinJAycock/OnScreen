@@ -47,6 +47,9 @@ type CollectionHandler struct {
 	// (collections_franchise.go). Optional; wired via WithFranchise.
 	franchise     CollectionFranchiseDB
 	franchiseReqs FranchiseRequestLookup
+	// manual powers admin-curated collections (collections_manual.go).
+	// Optional; wired via WithManual.
+	manual CollectionManualDB
 }
 
 // NewCollectionHandler creates a CollectionHandler.
@@ -81,10 +84,19 @@ type collectionResponse struct {
 	PosterURL        *string                 `json:"poster_url,omitempty"`
 	BackdropURL      *string                 `json:"backdrop_url,omitempty"`
 	Parts            []franchisePartResponse `json:"parts,omitempty"`
+
+	// Manual collections only (type "manual"; all additive). ItemOrder is
+	// how the items listing orders members (custom | release | title);
+	// PosterItemID the member whose poster is the cover (absent = the first
+	// member's); ItemCount how many members the caller can see. PosterPath
+	// carries the cover, chosen from members the caller can see.
+	ItemOrder    string  `json:"item_order,omitempty"`
+	PosterItemID *string `json:"poster_item_id,omitempty"`
+	ItemCount    *int64  `json:"item_count,omitempty"`
 }
 
 func toCollectionResponse(c gen.Collection) collectionResponse {
-	return collectionResponse{
+	out := collectionResponse{
 		ID:               c.ID.String(),
 		Name:             c.Name,
 		Description:      c.Description,
@@ -94,6 +106,14 @@ func toCollectionResponse(c gen.Collection) collectionResponse {
 		CreatedAt:        c.CreatedAt.Time.Format(time.RFC3339),
 		TMDBCollectionID: c.TmdbCollectionID,
 	}
+	if c.Type == collectionTypeManual {
+		out.ItemOrder = c.ItemOrder
+		if c.PosterItemID.Valid {
+			s := uuid.UUID(c.PosterItemID.Bytes).String()
+			out.PosterItemID = &s
+		}
+	}
+	return out
 }
 
 type collectionItemResponse struct {
@@ -168,6 +188,10 @@ func (h *CollectionHandler) List(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	out, ok = h.decorateManualList(w, r, out)
+	if !ok {
+		return
+	}
 	respond.Success(w, r, out)
 }
 
@@ -201,6 +225,9 @@ func (h *CollectionHandler) Get(w http.ResponseWriter, r *http.Request) {
 	}
 	resp := toCollectionResponse(col)
 	if col.Type == collectionTypeFranchise && !h.franchiseDetail(w, r, col, &resp) {
+		return
+	}
+	if col.Type == collectionTypeManual && !h.manualDetail(w, r, col, &resp) {
 		return
 	}
 	respond.Success(w, r, resp)
@@ -268,14 +295,27 @@ func (h *CollectionHandler) requireOwnerOrAdminMutate(w http.ResponseWriter, r *
 	return true
 }
 
-// Create handles POST /api/v1/collections.
+// Create handles POST /api/v1/collections. Without a type it creates the
+// caller's own private playlist, as it always has. type "manual" creates a
+// shared, admin-curated collection (admins only).
 func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Name        string  `json:"name"`
 		Description *string `json:"description"`
+		Type        string  `json:"type"`
+		ItemOrder   string  `json:"item_order"`
 	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Name == "" {
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
 		respond.BadRequest(w, r, "name is required")
+		return
+	}
+	switch body.Type {
+	case collectionTypeManual:
+		h.createManual(w, r, strings.TrimSpace(body.Name), body.Description, body.ItemOrder)
+		return
+	case "", "playlist":
+	default:
+		respond.BadRequest(w, r, "type must be manual or playlist")
 		return
 	}
 	claims := middleware.ClaimsFromContext(r.Context())
@@ -310,24 +350,43 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if !h.requireOwnerOrAdminMutate(w, r, existing) || rejectManagedMutation(w, r, existing) {
 		return
 	}
+	// Absent (or, for name, empty) fields keep their value: a PATCH that only
+	// changes a manual collection's order mustn't blank its name.
 	var body struct {
-		Name        string  `json:"name"`
-		Description *string `json:"description"`
+		Name         *string `json:"name"`
+		Description  *string `json:"description"`
+		ItemOrder    *string `json:"item_order"`
+		PosterItemID *string `json:"poster_item_id"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid body")
 		return
 	}
+	if !h.updateManualSettings(w, r, existing, body.ItemOrder, body.PosterItemID) {
+		return
+	}
+	name := existing.Name
+	if body.Name != nil && strings.TrimSpace(*body.Name) != "" {
+		name = strings.TrimSpace(*body.Name)
+	}
+	description := existing.Description
+	if body.Description != nil {
+		description = body.Description
+	}
 	col, err := h.db.UpdateCollection(r.Context(), gen.UpdateCollectionParams{
 		ID:          id,
-		Name:        body.Name,
-		Description: body.Description,
+		Name:        name,
+		Description: description,
 	})
 	if err != nil {
 		respond.NotFound(w, r)
 		return
 	}
-	respond.Success(w, r, toCollectionResponse(col))
+	resp := toCollectionResponse(col)
+	if col.Type == collectionTypeManual && !h.manualDetail(w, r, col, &resp) {
+		return
+	}
+	respond.Success(w, r, resp)
 }
 
 // Delete handles DELETE /api/v1/collections/{id}.
@@ -468,11 +527,18 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 	if claims != nil {
 		collMaxRank = maxRatingRankFromClaims(claims.MaxContentRating)
 	}
+	// A manual collection lists in its chosen order; everything else by the
+	// stored positions.
+	var itemOrder string
+	if col.Type == collectionTypeManual {
+		itemOrder = col.ItemOrder
+	}
 	rows, err := h.db.ListCollectionItems(r.Context(), gen.ListCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: collMaxRank,
 		Lim:           respond.ParseLimit(r, collectionItemsPageDefault, collectionItemsPageDefault),
 		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
+		ItemOrder:     itemOrder,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list collection items", "id", id, "err", err)
@@ -527,9 +593,23 @@ func (h *CollectionHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 	}
 	var body struct {
 		MediaItemID string `json:"media_item_id"`
+		// Manual collections also take a batch.
+		MediaItemIDs []string `json:"media_item_ids"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid body")
+		return
+	}
+	if col.Type == collectionTypeManual {
+		raw := body.MediaItemIDs
+		if body.MediaItemID != "" {
+			raw = append([]string{body.MediaItemID}, raw...)
+		}
+		ids, ok := parseUniqueIDs(w, r, raw, "media_item_ids")
+		if !ok {
+			return
+		}
+		h.addManualItems(w, r, id, ids)
 		return
 	}
 	itemID, err := uuid.Parse(body.MediaItemID)

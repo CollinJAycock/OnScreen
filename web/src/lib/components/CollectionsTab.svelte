@@ -1,15 +1,24 @@
 <script lang="ts">
-  // The library page's "Collections" tab (movie libraries): franchise
-  // collections — TMDB collections the server holds at least two films of —
-  // that have at least one film in this library the viewer can see.
+  // The library page's "Collections" tab (movie and show libraries):
+  // franchise collections (TMDB collections the server holds at least two
+  // films of) and admin-made collections, each with at least one title in
+  // this library the viewer can see.
   import { collectionApi, assetUrl, type LibraryCollection } from '$lib/api';
   import { collectionCover } from '$lib/franchise';
 
   interface Props {
     libraryId: string;
+    /** The library's type; film series only exist in movie libraries. */
+    libraryType?: string;
   }
 
-  let { libraryId }: Props = $props();
+  let { libraryId, libraryType = 'movie' }: Props = $props();
+
+  /** "3 films" for a film series, "3 titles" for a collection of anything. */
+  function countLabel(c: LibraryCollection): string {
+    const noun = c.type === 'franchise' ? 'film' : 'title';
+    return `${c.item_count} ${noun}${c.item_count === 1 ? '' : 's'}`;
+  }
 
   let collections = $state<LibraryCollection[]>([]);
   let loading = $state(true);
@@ -52,8 +61,12 @@
     <div class="empty">
       <p class="empty-t">No collections yet</p>
       <p class="empty-s">
-        Film series such as the Toy Story or Alien movies appear here once two of their films are in your
-        library.
+        {#if libraryType === 'movie'}
+          Film series such as the Toy Story or Alien movies appear here once two of their films are in your
+          library, along with any collections an admin makes.
+        {:else}
+          Collections an admin makes with this library's titles appear here.
+        {/if}
       </p>
     </div>
   {:else}
@@ -71,7 +84,7 @@
             {/if}
           </div>
           <div class="name">{c.name}</div>
-          <div class="count">{c.item_count} film{c.item_count === 1 ? '' : 's'}</div>
+          <div class="count">{countLabel(c)}</div>
         </a>
       {/each}
     </div>

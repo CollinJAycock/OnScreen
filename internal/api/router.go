@@ -1057,6 +1057,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/collections/{id}/items", h.Collections.Items)
 				r.Post("/collections/{id}/items", h.Collections.AddItem)
 				r.Delete("/collections/{id}/items/{itemId}", h.Collections.RemoveItem)
+				r.Put("/collections/{id}/items/order", h.Collections.Reorder)
 				// A library's franchise collections (the library page's
 				// Collections tab). Library-ACL checked in the handler.
 				r.Get("/libraries/{id}/collections", h.Collections.LibraryCollections)

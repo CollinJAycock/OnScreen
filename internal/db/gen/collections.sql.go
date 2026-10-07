@@ -96,7 +96,7 @@ func (q *Queries) CountItemsByGenre(ctx context.Context, arg CountItemsByGenrePa
 const createCollection = `-- name: CreateCollection :one
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 `
 
 type CreateCollectionParams struct {
@@ -135,6 +135,46 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.Rules,
 		&i.LibraryID,
 		&i.TmdbCollectionID,
+		&i.ItemOrder,
+		&i.PosterItemID,
+	)
+	return i, err
+}
+
+const createManualCollection = `-- name: CreateManualCollection :one
+
+INSERT INTO collections (name, description, type, item_order)
+VALUES ($1, $2, 'manual', $3)
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+`
+
+type CreateManualCollectionParams struct {
+	Name        string  `json:"name"`
+	Description *string `json:"description"`
+	ItemOrder   string  `json:"item_order"`
+}
+
+// ── Manual collections (migration 00037) ─────────────────────────────────────
+// A server-owned (user_id NULL) collection an admin curates.
+func (q *Queries) CreateManualCollection(ctx context.Context, arg CreateManualCollectionParams) (Collection, error) {
+	row := q.db.QueryRow(ctx, createManualCollection, arg.Name, arg.Description, arg.ItemOrder)
+	var i Collection
+	err := row.Scan(
+		&i.ID,
+		&i.UserID,
+		&i.Name,
+		&i.Description,
+		&i.Type,
+		&i.Genre,
+		&i.PosterPath,
+		&i.SortOrder,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.Rules,
+		&i.LibraryID,
+		&i.TmdbCollectionID,
+		&i.ItemOrder,
+		&i.PosterItemID,
 	)
 	return i, err
 }
@@ -149,7 +189,7 @@ func (q *Queries) DeleteCollection(ctx context.Context, id uuid.UUID) error {
 }
 
 const getCollection = `-- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 FROM collections WHERE id = $1
 `
 
@@ -170,12 +210,14 @@ func (q *Queries) GetCollection(ctx context.Context, id uuid.UUID) (Collection, 
 		&i.Rules,
 		&i.LibraryID,
 		&i.TmdbCollectionID,
+		&i.ItemOrder,
+		&i.PosterItemID,
 	)
 	return i, err
 }
 
 const listAutoGenreCollections = `-- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name
@@ -204,6 +246,8 @@ func (q *Queries) ListAutoGenreCollections(ctx context.Context) ([]Collection, e
 			&i.Rules,
 			&i.LibraryID,
 			&i.TmdbCollectionID,
+			&i.ItemOrder,
+			&i.PosterItemID,
 		); err != nil {
 			return nil, err
 		}
@@ -229,13 +273,18 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
-ORDER BY ci.position, ci.media_item_id
-LIMIT NULLIF($4::int, 0) OFFSET $3::int
+ORDER BY
+  CASE WHEN $3::text = 'release'
+       THEN COALESCE(mi.originally_available_at, make_date(COALESCE(mi.year, mi.original_year), 1, 1)) END NULLS LAST,
+  CASE WHEN $3::text = 'title' THEN mi.sort_title END,
+  ci.position, ci.media_item_id
+LIMIT NULLIF($5::int, 0) OFFSET $4::int
 `
 
 type ListCollectionItemsParams struct {
 	CollectionID  uuid.UUID `json:"collection_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	ItemOrder     string    `json:"item_order"`
 	Off           int32     `json:"off"`
 	Lim           int32     `json:"lim"`
 }
@@ -263,12 +312,17 @@ type ListCollectionItemsRow struct {
 // collection (no UNIQUE(collection_id, position); concurrent MAX(position)+1
 // inserts and partial reorders produce ties), and without a tiebreaker OFFSET
 // paging over tied rows skips/duplicates them.
+//
+// item_order is a manual collection's listing order: 'release' (oldest first,
+// undated last) or 'title'; anything else ('custom', or "" from callers that
+// have no such setting) keeps the stored positions.
 // NULLIF so a zero lim means "no limit" (original behaviour); callers pass a
 // positive cap to bound the result. Avoids a forgotten lim returning 0 rows.
 func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionItemsParams) ([]ListCollectionItemsRow, error) {
 	rows, err := q.db.Query(ctx, listCollectionItems,
 		arg.CollectionID,
 		arg.MaxRatingRank,
+		arg.ItemOrder,
 		arg.Off,
 		arg.Lim,
 	)
@@ -303,7 +357,7 @@ func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionIte
 }
 
 const listCollections = `-- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 FROM collections
 WHERE user_id IS NULL OR user_id = $1
 ORDER BY sort_order, name
@@ -332,6 +386,8 @@ func (q *Queries) ListCollections(ctx context.Context, userID pgtype.UUID) ([]Co
 			&i.Rules,
 			&i.LibraryID,
 			&i.TmdbCollectionID,
+			&i.ItemOrder,
+			&i.PosterItemID,
 		); err != nil {
 			return nil, err
 		}
@@ -478,6 +534,159 @@ func (q *Queries) ListItemsByGenre(ctx context.Context, arg ListItemsByGenrePara
 	return items, nil
 }
 
+const listLibraryManualCollections = `-- name: ListLibraryManualCollections :many
+SELECT c.id, c.name, c.type,
+       COUNT(*)::bigint AS item_count,
+       COALESCE(
+         (ARRAY_AGG(mi.poster_path) FILTER (WHERE mi.id = c.poster_item_id AND mi.poster_path IS NOT NULL))[1],
+         (ARRAY_AGG(mi.poster_path ORDER BY ci.position, ci.media_item_id) FILTER (WHERE mi.poster_path IS NOT NULL))[1],
+         '')::text AS cover_poster_path
+FROM collections c
+JOIN collection_items ci ON ci.collection_id = c.id
+JOIN media_items mi ON mi.id = ci.media_item_id
+WHERE c.type = 'manual'
+  AND mi.library_id = $1::uuid
+  AND mi.deleted_at IS NULL
+  AND ($2::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $2::int)
+GROUP BY c.id, c.name, c.type, c.poster_item_id
+ORDER BY c.name, c.id
+`
+
+type ListLibraryManualCollectionsParams struct {
+	LibraryID     uuid.UUID `json:"library_id"`
+	MaxRatingRank *int32    `json:"max_rating_rank"`
+}
+
+type ListLibraryManualCollectionsRow struct {
+	ID              uuid.UUID `json:"id"`
+	Name            string    `json:"name"`
+	Type            string    `json:"type"`
+	ItemCount       int64     `json:"item_count"`
+	CoverPosterPath string    `json:"cover_poster_path"`
+}
+
+// The library page's Collections tab: manual collections with at least one
+// visible member in this library, with that count and a cover chosen as in
+// ListVisibleManualCollections (from this library's visible members).
+func (q *Queries) ListLibraryManualCollections(ctx context.Context, arg ListLibraryManualCollectionsParams) ([]ListLibraryManualCollectionsRow, error) {
+	rows, err := q.db.Query(ctx, listLibraryManualCollections, arg.LibraryID, arg.MaxRatingRank)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListLibraryManualCollectionsRow{}
+	for rows.Next() {
+		var i ListLibraryManualCollectionsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Name,
+			&i.Type,
+			&i.ItemCount,
+			&i.CoverPosterPath,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listManualCollectionsForItem = `-- name: ListManualCollectionsForItem :many
+SELECT c.id, c.name
+FROM collection_items ci
+JOIN collections c ON c.id = ci.collection_id
+WHERE ci.media_item_id = $1 AND c.type = 'manual'
+ORDER BY c.name, c.id
+`
+
+type ListManualCollectionsForItemRow struct {
+	ID   uuid.UUID `json:"id"`
+	Name string    `json:"name"`
+}
+
+// The manual collections an item belongs to, for its detail page. The caller
+// already passed the item's own visibility check, and the item is a member,
+// so each of these has a member the caller can see.
+func (q *Queries) ListManualCollectionsForItem(ctx context.Context, mediaItemID uuid.UUID) ([]ListManualCollectionsForItemRow, error) {
+	rows, err := q.db.Query(ctx, listManualCollectionsForItem, mediaItemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListManualCollectionsForItemRow{}
+	for rows.Next() {
+		var i ListManualCollectionsForItemRow
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listVisibleManualCollections = `-- name: ListVisibleManualCollections :many
+SELECT c.id,
+       COUNT(*)::bigint AS item_count,
+       COALESCE(
+         (ARRAY_AGG(mi.poster_path) FILTER (WHERE mi.id = c.poster_item_id AND mi.poster_path IS NOT NULL))[1],
+         (ARRAY_AGG(mi.poster_path ORDER BY ci.position, ci.media_item_id) FILTER (WHERE mi.poster_path IS NOT NULL))[1],
+         '')::text AS cover_poster_path
+FROM collections c
+JOIN collection_items ci ON ci.collection_id = c.id
+JOIN media_items mi ON mi.id = ci.media_item_id
+WHERE c.type = 'manual'
+  AND mi.deleted_at IS NULL
+  AND ($1::uuid[] IS NULL
+       OR mi.library_id = ANY($1::uuid[]))
+  AND ($2::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $2::int)
+GROUP BY c.id, c.poster_item_id
+`
+
+type ListVisibleManualCollectionsParams struct {
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+}
+
+type ListVisibleManualCollectionsRow struct {
+	ID              uuid.UUID `json:"id"`
+	ItemCount       int64     `json:"item_count"`
+	CoverPosterPath string    `json:"cover_poster_path"`
+}
+
+// Manual collections with at least one member the caller may see (library
+// grant + rating ceiling; NULL = no filter), with the visible member count and
+// a cover from visible members only: the chosen poster member when it is
+// visible and has a poster, else the first visible member that has one. A
+// restricted caller never learns a collection whose members are all hidden
+// from it, nor sees a hidden member's poster on the cover.
+func (q *Queries) ListVisibleManualCollections(ctx context.Context, arg ListVisibleManualCollectionsParams) ([]ListVisibleManualCollectionsRow, error) {
+	rows, err := q.db.Query(ctx, listVisibleManualCollections, arg.LibraryIds, arg.MaxRatingRank)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListVisibleManualCollectionsRow{}
+	for rows.Next() {
+		var i ListVisibleManualCollectionsRow
+		if err := rows.Scan(&i.ID, &i.ItemCount, &i.CoverPosterPath); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const removeCollectionItem = `-- name: RemoveCollectionItem :exec
 DELETE FROM collection_items WHERE collection_id = $1 AND media_item_id = $2
 `
@@ -492,10 +701,39 @@ func (q *Queries) RemoveCollectionItem(ctx context.Context, arg RemoveCollection
 	return err
 }
 
+const setCollectionItemOrder = `-- name: SetCollectionItemOrder :exec
+UPDATE collections SET item_order = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetCollectionItemOrderParams struct {
+	ID        uuid.UUID `json:"id"`
+	ItemOrder string    `json:"item_order"`
+}
+
+func (q *Queries) SetCollectionItemOrder(ctx context.Context, arg SetCollectionItemOrderParams) error {
+	_, err := q.db.Exec(ctx, setCollectionItemOrder, arg.ID, arg.ItemOrder)
+	return err
+}
+
+const setCollectionPosterItem = `-- name: SetCollectionPosterItem :exec
+UPDATE collections SET poster_item_id = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetCollectionPosterItemParams struct {
+	ID           uuid.UUID   `json:"id"`
+	PosterItemID pgtype.UUID `json:"poster_item_id"`
+}
+
+// NULL goes back to the first member's poster.
+func (q *Queries) SetCollectionPosterItem(ctx context.Context, arg SetCollectionPosterItemParams) error {
+	_, err := q.db.Exec(ctx, setCollectionPosterItem, arg.ID, arg.PosterItemID)
+	return err
+}
+
 const updateCollection = `-- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 `
 
 type UpdateCollectionParams struct {
@@ -521,6 +759,8 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.Rules,
 		&i.LibraryID,
 		&i.TmdbCollectionID,
+		&i.ItemOrder,
+		&i.PosterItemID,
 	)
 	return i, err
 }

@@ -75,11 +75,18 @@ describe('Library page — Collections tab', () => {
     expect(await screen.findByRole('link', { name: /Alien Collection/ })).toBeTruthy();
   });
 
-  it('has no Collections tab outside movie libraries', async () => {
+  // Show libraries hold admin-made collections of shows (no film series).
+  it('has a Collections tab in show libraries', async () => {
     mockLibraryGet.mockResolvedValue({ ...movieLib, type: 'show' });
     render(Page);
     await waitFor(() => expect(mockListItems).toHaveBeenCalled());
-    await screen.findByPlaceholderText('Filter…');
+    expect(await screen.findByRole('tab', { name: 'Collections' })).toBeInTheDocument();
+  });
+
+  it('has no Collections tab in music libraries', async () => {
+    mockLibraryGet.mockResolvedValue({ ...movieLib, type: 'music' });
+    render(Page);
+    await waitFor(() => expect(mockListItems).toHaveBeenCalled());
     expect(screen.queryByRole('tab', { name: 'Collections' })).toBeNull();
   });
 });

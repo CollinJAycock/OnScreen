@@ -364,9 +364,9 @@ type libraryCollectionResponse struct {
 }
 
 // LibraryCollections handles GET /api/v1/libraries/{id}/collections: the
-// franchise collections with at least one item in this library that the
-// caller can see, with that visible count. 404 when the caller has no grant
-// on the library.
+// franchise and manual collections with at least one item in this library
+// that the caller can see, with that visible count, by name. 404 when the
+// caller has no grant on the library.
 func (h *CollectionHandler) LibraryCollections(w http.ResponseWriter, r *http.Request) {
 	libID, err := parseUUID(r, "id")
 	if err != nil {
@@ -391,13 +391,22 @@ func (h *CollectionHandler) LibraryCollections(w http.ResponseWriter, r *http.Re
 		}
 	}
 	out := []libraryCollectionResponse{}
+	maxRank := maxRatingRankFromClaims(claims.MaxContentRating)
+	manual, err := h.libraryManualCollections(r.Context(), libID, maxRank)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "library manual collections", "library_id", libID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	out = append(out, manual...)
 	if h.franchise == nil {
+		sortLibraryCollections(out)
 		respond.Success(w, r, out)
 		return
 	}
 	rows, err := h.franchise.ListLibraryFranchiseCollections(r.Context(), gen.ListLibraryFranchiseCollectionsParams{
 		LibraryID:     libID,
-		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		MaxRatingRank: maxRank,
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "library collections", "library_id", libID, "err", err)
@@ -419,7 +428,7 @@ func (h *CollectionHandler) LibraryCollections(w http.ResponseWriter, r *http.Re
 		}
 		out = append(out, c)
 	}
-	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	sortLibraryCollections(out)
 	respond.Success(w, r, out)
 }
 

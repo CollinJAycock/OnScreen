@@ -207,6 +207,8 @@ type ItemHandler struct {
 	dlGate    DownloadGate         // optional; when nil, downloads are allowed (test-friendly default — production wires the settings-backed gate)
 	store     mediastore.Store     // optional; when nil, defaults to mediastore.Local (serve from the on-disk FilePath, as before)
 	franchise ItemFranchiseDB      // optional; when set, movie details carry their franchise "collection" (items_collection.go)
+	// optional; when set, movie and show details list their manual "collections" (items_collection.go)
+	manualCollections ItemManualCollectionsDB
 	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
 	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
 	// disables caching (extract on every request — the old behaviour).
@@ -643,6 +645,9 @@ type ItemDetailResponse struct {
 	// Collection is the TMDB franchise collection a movie belongs to
 	// (additive; movies only, omitted when none). See items_collection.go.
 	Collection *ItemCollectionRef `json:"collection,omitempty"`
+	// Collections are the manual (admin-curated) collections a movie or
+	// show belongs to (additive; omitted when none).
+	Collections []ItemManualCollectionRef `json:"collections,omitempty"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
@@ -927,6 +932,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 
 	if item.Type == "movie" {
 		out.Collection = h.franchiseRef(r.Context(), claims, id)
+	}
+	if item.Type == "movie" || item.Type == "show" {
+		out.Collections = h.manualCollectionRefs(r.Context(), id)
 	}
 
 	// Episode-poster substitution. Single-item endpoint; only matters

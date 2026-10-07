@@ -2350,6 +2350,8 @@ export interface ItemDetail {
   // Movies only: the TMDB franchise collection the movie belongs to
   // (the "Part of the <Name>" shelf). Absent when none.
   collection?: ItemCollectionRef;
+  // Movies and shows: the manual (admin-curated) collections the item is in.
+  collections?: ItemManualCollectionRef[];
 }
 
 export interface FavoriteItem {
@@ -2412,10 +2414,17 @@ export interface Collection {
   id: string;
   name: string;
   description?: string;
-  type: 'auto_genre' | 'playlist' | 'franchise' | 'event_folder' | 'photo_album' | 'smart_playlist';
+  type: 'auto_genre' | 'playlist' | 'franchise' | 'event_folder' | 'photo_album' | 'smart_playlist' | 'manual';
   genre?: string;
   poster_path?: string;
   created_at: string;
+  // Manual collections only (type 'manual', admin-curated, shared):
+  // how the items are listed, the member whose poster is the cover (absent =
+  // the first member's), and how many members the caller can see.
+  // poster_path carries the cover.
+  item_order?: CollectionItemOrder;
+  poster_item_id?: string;
+  item_count?: number;
   // Franchise collections only (type 'franchise'): the TMDB collection id
   // and art. `parts` is set on GET /collections/{id} — every film of the
   // franchise the caller may see, owned (item_id) or not (item_id null).
@@ -2443,12 +2452,16 @@ export interface FranchisePart {
   request_status: 'pending' | 'approved' | 'downloading' | null;
 }
 
-/** A franchise collection with visible items in one library
+/** How a manual collection lists its members: the admin's own order, oldest
+ *  first, or by title. */
+export type CollectionItemOrder = 'custom' | 'release' | 'title';
+
+/** A franchise or manual collection with visible items in one library
  *  (GET /libraries/{id}/collections — the library Collections tab). */
 export interface LibraryCollection {
   id: string;
   name: string;
-  type: 'franchise';
+  type: 'franchise' | 'manual';
   tmdb_collection_id?: number;
   poster_url?: string;
   poster_path?: string;
@@ -2461,6 +2474,12 @@ export interface ItemCollectionRef {
   name: string;
   part_count: number;
   owned_count: number;
+}
+
+/** A manual collection a movie or show belongs to, on its detail response. */
+export interface ItemManualCollectionRef {
+  id: string;
+  name: string;
 }
 
 export interface CollectionItem {
@@ -2484,8 +2503,22 @@ export const collectionApi = {
   get: (id: string) => api.get<Collection>(`/collections/${id}`),
   create: (name: string, description?: string) =>
     api.post<Collection>('/collections', { name, description }),
+  /** A shared, admin-curated collection (admins only). */
+  createManual: (name: string, description?: string, itemOrder: CollectionItemOrder = 'custom') =>
+    api.post<Collection>('/collections', { name, description, type: 'manual', item_order: itemOrder }),
+  /** Fields left out keep their value. */
   update: (id: string, name: string, description?: string) =>
     api.patch<Collection>(`/collections/${id}`, { name, description }),
+  /** A manual collection's settings; poster_item_id '' goes back to the
+   *  first member's poster. Fields left out keep their value. */
+  updateSettings: (id: string, settings: { name?: string; description?: string; item_order?: CollectionItemOrder; poster_item_id?: string }) =>
+    api.patch<Collection>(`/collections/${id}`, settings),
+  /** Adds several movies / shows to a manual collection at once. */
+  addItems: (collectionId: string, mediaItemIds: string[]) =>
+    api.post<void>(`/collections/${collectionId}/items`, { media_item_ids: mediaItemIds }),
+  /** A manual collection's custom order: every member, in order. */
+  reorder: (collectionId: string, itemIds: string[]) =>
+    api.put<void>(`/collections/${collectionId}/items/order`, { item_ids: itemIds }),
   delete: (id: string) => api.delete(`/collections/${id}`),
   items: (id: string, limit = 50, offset = 0) =>
     api.requestList<CollectionItem>(`/collections/${id}/items?limit=${limit}&offset=${offset}`),

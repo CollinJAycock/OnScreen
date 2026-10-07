@@ -1,11 +1,11 @@
 -- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 FROM collections
 WHERE user_id IS NULL OR user_id = sqlc.narg('user_id')
 ORDER BY sort_order, name;
 
 -- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 FROM collections WHERE id = $1;
 
 -- name: CreateCollection :one
@@ -14,12 +14,12 @@ FROM collections WHERE id = $1;
 -- filter shape that resolves at query time.
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id;
 
 -- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id;
 
 -- name: DeleteCollection :exec
 DELETE FROM collections WHERE id = $1;
@@ -47,7 +47,15 @@ WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
 -- collection (no UNIQUE(collection_id, position); concurrent MAX(position)+1
 -- inserts and partial reorders produce ties), and without a tiebreaker OFFSET
 -- paging over tied rows skips/duplicates them.
-ORDER BY ci.position, ci.media_item_id
+--
+-- item_order is a manual collection's listing order: 'release' (oldest first,
+-- undated last) or 'title'; anything else ('custom', or "" from callers that
+-- have no such setting) keeps the stored positions.
+ORDER BY
+  CASE WHEN sqlc.arg('item_order')::text = 'release'
+       THEN COALESCE(mi.originally_available_at, make_date(COALESCE(mi.year, mi.original_year), 1, 1)) END NULLS LAST,
+  CASE WHEN sqlc.arg('item_order')::text = 'title' THEN mi.sort_title END,
+  ci.position, ci.media_item_id
 -- NULLIF so a zero lim means "no limit" (original behaviour); callers pass a
 -- positive cap to bound the result. Avoids a forgotten lim returning 0 rows.
 LIMIT NULLIF(sqlc.arg('lim')::int, 0) OFFSET sqlc.arg('off')::int;
@@ -114,7 +122,7 @@ ON CONFLICT DO NOTHING
 RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, library_id;
 
 -- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name;
@@ -144,3 +152,73 @@ SELECT id, library_id, user_id, name, description, type, genre, poster_path, sor
 FROM collections
 WHERE type = 'event_folder' AND library_id = $1
 ORDER BY name;
+
+-- ── Manual collections (migration 00037) ─────────────────────────────────────
+
+-- name: CreateManualCollection :one
+-- A server-owned (user_id NULL) collection an admin curates.
+INSERT INTO collections (name, description, type, item_order)
+VALUES ($1, $2, 'manual', $3)
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id;
+
+-- name: SetCollectionItemOrder :exec
+UPDATE collections SET item_order = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: SetCollectionPosterItem :exec
+-- NULL goes back to the first member's poster.
+UPDATE collections SET poster_item_id = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: ListVisibleManualCollections :many
+-- Manual collections with at least one member the caller may see (library
+-- grant + rating ceiling; NULL = no filter), with the visible member count and
+-- a cover from visible members only: the chosen poster member when it is
+-- visible and has a poster, else the first visible member that has one. A
+-- restricted caller never learns a collection whose members are all hidden
+-- from it, nor sees a hidden member's poster on the cover.
+SELECT c.id,
+       COUNT(*)::bigint AS item_count,
+       COALESCE(
+         (ARRAY_AGG(mi.poster_path) FILTER (WHERE mi.id = c.poster_item_id AND mi.poster_path IS NOT NULL))[1],
+         (ARRAY_AGG(mi.poster_path ORDER BY ci.position, ci.media_item_id) FILTER (WHERE mi.poster_path IS NOT NULL))[1],
+         '')::text AS cover_poster_path
+FROM collections c
+JOIN collection_items ci ON ci.collection_id = c.id
+JOIN media_items mi ON mi.id = ci.media_item_id
+WHERE c.type = 'manual'
+  AND mi.deleted_at IS NULL
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+GROUP BY c.id, c.poster_item_id;
+
+-- name: ListLibraryManualCollections :many
+-- The library page's Collections tab: manual collections with at least one
+-- visible member in this library, with that count and a cover chosen as in
+-- ListVisibleManualCollections (from this library's visible members).
+SELECT c.id, c.name, c.type,
+       COUNT(*)::bigint AS item_count,
+       COALESCE(
+         (ARRAY_AGG(mi.poster_path) FILTER (WHERE mi.id = c.poster_item_id AND mi.poster_path IS NOT NULL))[1],
+         (ARRAY_AGG(mi.poster_path ORDER BY ci.position, ci.media_item_id) FILTER (WHERE mi.poster_path IS NOT NULL))[1],
+         '')::text AS cover_poster_path
+FROM collections c
+JOIN collection_items ci ON ci.collection_id = c.id
+JOIN media_items mi ON mi.id = ci.media_item_id
+WHERE c.type = 'manual'
+  AND mi.library_id = sqlc.arg('library_id')::uuid
+  AND mi.deleted_at IS NULL
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+GROUP BY c.id, c.name, c.type, c.poster_item_id
+ORDER BY c.name, c.id;
+
+-- name: ListManualCollectionsForItem :many
+-- The manual collections an item belongs to, for its detail page. The caller
+-- already passed the item's own visibility check, and the item is a member,
+-- so each of these has a member the caller can see.
+SELECT c.id, c.name
+FROM collection_items ci
+JOIN collections c ON c.id = ci.collection_id
+WHERE ci.media_item_id = $1 AND c.type = 'manual'
+ORDER BY c.name, c.id;

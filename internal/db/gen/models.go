@@ -79,6 +79,8 @@ type Collection struct {
 	Rules            []byte             `json:"rules"`
 	LibraryID        pgtype.UUID        `json:"library_id"`
 	TmdbCollectionID *int32             `json:"tmdb_collection_id"`
+	ItemOrder        string             `json:"item_order"`
+	PosterItemID     pgtype.UUID        `json:"poster_item_id"`
 }
 
 type CollectionItem struct {

@@ -925,7 +925,8 @@ func run() error {
 		WithDownloadGate(settingsSvc).
 		WithRatings(ratingsSvc).
 		WithMediaStore(mediaStoreProvider).
-		WithFranchise(gen.New(roPool))
+		WithFranchise(gen.New(roPool)).
+		WithManualCollections(gen.New(roPool))
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
@@ -1472,7 +1473,7 @@ func run() error {
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,
-		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc),
+		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc).WithManual(gen.New(rwPool)),
 		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		PhotoAlbums:     v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		LiveTV:          liveTVHandler,

@@ -9,6 +9,45 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Added
+
+- **Manual collections.** Admins can now make their own movie and TV
+  collections ("Halloween night", "Best Picture winners") and share them with
+  everyone, alongside the automatic TMDB film series.
+  - **Making one:** "New Collection" on the Collections page (admins only),
+    then add titles with "Add to Collection" on a movie or show page, or select
+    several in a movie or show library and choose "Add to collection…".
+  - **Arranging it:** a collection lists its titles in a custom order (move
+    earlier or later), by release date or by title, and an admin can pick which
+    member's poster is its cover.
+  - **Who sees it:** a collection appears to anyone who can see at least one
+    title in it. Library access and content-rating limits apply, its count
+    covers only the titles they can see, and its cover comes from one of
+    those. A kid profile never sees a collection of grown-up films.
+  - **Where it appears:** the Collections page, the library's Collections tab
+    (now in show libraries too), and "In collections" links on movie and show
+    pages. The TV and phone apps already list every collection in their
+    Collections row, so they show these without an update.
+  - **API (all additive):**
+    - `POST /collections` takes `type: "manual"` (admins only) and
+      `item_order`;
+    - `PATCH /collections/{id}` takes `item_order` and `poster_item_id`;
+    - `POST /collections/{id}/items` takes `media_item_ids` for up to 500 at
+      once;
+    - `PUT /collections/{id}/items/order` reorders;
+    - collections gain `item_order`, `poster_item_id` and `item_count`;
+    - movie and show details gain `collections`.
+
+    Without a `type`, `POST /collections` still creates a private playlist.
+  - **Migration 00037** adds the type and two columns.
+
+### Changed
+
+- `PATCH /collections/{id}` keeps fields the request leaves out. An omitted
+  description used to be cleared, and an empty name was saved.
+
 ## [v2.5.1] — 2026-10-06
 
 Server patch release: Dolby Vision files with a base layer every player can

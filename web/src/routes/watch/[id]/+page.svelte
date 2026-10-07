@@ -24,6 +24,7 @@
   import { toast } from '$lib/stores/toast';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
+  import CollectionPicker from '$lib/components/CollectionPicker.svelte';
   import PlayOnButton from '$lib/components/PlayOnButton.svelte';
   import FranchiseShelf from '$lib/components/FranchiseShelf.svelte';
   import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
@@ -56,6 +57,7 @@
   import { buildCastMediaInfo, isCastable } from '$lib/cast';
 
   let showPlaylistPicker = false;
+  let showCollectionPicker = false;
 
   $: id = $page.params.id!;
 
@@ -4318,6 +4320,16 @@
       <FranchiseShelf collection={item.collection} currentItemId={item.id} />
     {/if}
 
+    <!-- The admin-curated collections this movie / show is in. -->
+    {#if (item.type === 'movie' || item.type === 'show') && item.collections?.length}
+      <div class="in-collections">
+        <span class="in-collections-label">In collections</span>
+        {#each item.collections as c (c.id)}
+          <a class="collection-chip" href="/collections/{c.id}">{c.name}</a>
+        {/each}
+      </div>
+    {/if}
+
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
     {#if (item.type === 'show' || item.type === 'movie') && isAdmin}
       <button class="fix-match-btn" on:click={openMatchModal}>
@@ -4332,6 +4344,10 @@
       <button class="fix-match-btn" on:click={openPosterModal} title="Pick a different poster image">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="M21 15l-5-5-11 11"/></svg>
         Choose Poster
+      </button>
+      <button class="fix-match-btn" on:click={() => showCollectionPicker = true} title="Add to a shared collection">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M17.5 14v7M14 17.5h7"/></svg>
+        Add to Collection
       </button>
       <button class="fix-match-btn fix-match-btn--danger" on:click={removeItem} title="Soft-delete this item and its descendants">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
@@ -4756,6 +4772,19 @@
     open={showPlaylistPicker}
     on:close={() => showPlaylistPicker = false}
   />
+  {#if isAdmin && (item.type === 'movie' || item.type === 'show')}
+    <CollectionPicker
+      mediaItemIds={[item.id]}
+      open={showCollectionPicker}
+      on:close={() => showCollectionPicker = false}
+      on:added={(e) => {
+        if (item && !item.collections?.some(c => c.id === e.detail.collectionId)) {
+          item.collections = [...(item.collections ?? []), { id: e.detail.collectionId, name: e.detail.name }]
+            .sort((a, b) => a.name.localeCompare(b.name));
+        }
+      }}
+    />
+  {/if}
   <MetadataEditor
     itemId={item.id}
     initialTitle={item.title}
@@ -5854,6 +5883,14 @@
   }
   .fix-match-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-hover); }
   .fix-match-btn:disabled { opacity: 0.55; cursor: not-allowed; }
+  .in-collections { display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 1.25rem; }
+  .in-collections-label { font-size: 0.72rem; color: var(--text-muted); margin-right: 0.2rem; }
+  .collection-chip {
+    font-size: 0.74rem; color: var(--accent-text); text-decoration: none;
+    background: var(--accent-bg); border: 1px solid rgba(124,106,247,0.25);
+    border-radius: 999px; padding: 0.2rem 0.65rem;
+  }
+  .collection-chip:hover { background: rgba(124,106,247,0.2); }
   /* Spin the refresh icon while the request is in flight. SVG is
      the first child of the button — `> svg:first-child` keeps the
      selector tight enough that other admin buttons that happen to

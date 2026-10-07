@@ -1,22 +1,31 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { collectionApi, type Collection } from '$lib/api';
+  import { collectionApi, assetUrl, type Collection } from '$lib/api';
   import { confirmAction } from '$lib/native';
 
   let collections: Collection[] = [];
   let loading = true;
   let error = '';
+  let isAdmin = false;
 
-  // Create playlist
+  // Create a playlist (anyone) or a shared collection (admins).
   let showCreate = false;
+  let createKind: 'playlist' | 'manual' = 'playlist';
   let newName = '';
   let creating = false;
 
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const raw = localStorage.getItem('onscreen_user');
+    if (!raw) { goto('/login'); return; }
+    try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     await load();
   });
+
+  function openCreate(kind: 'playlist' | 'manual') {
+    showCreate = !(showCreate && createKind === kind);
+    createKind = kind;
+  }
 
   async function load() {
     loading = true;
@@ -31,6 +40,13 @@
     if (!newName.trim()) return;
     creating = true;
     try {
+      if (createKind === 'manual') {
+        // Straight to the new collection: it's filled from item pages and
+        // library selections, and its page explains how.
+        const c = await collectionApi.createManual(newName.trim());
+        goto(`/collections/${c.id}`);
+        return;
+      }
       await collectionApi.create(newName.trim());
       newName = '';
       showCreate = false;
@@ -51,6 +67,8 @@
   // TMDB film series the server holds at least two films of.
   $: franchises = collections.filter(c => c.type === 'franchise');
   $: playlists = collections.filter(c => c.type === 'playlist');
+  // Shared, admin-curated movie / TV collections.
+  $: manualCollections = collections.filter(c => c.type === 'manual');
 </script>
 
 <svelte:head><title>Collections — OnScreen</title></svelte:head>
@@ -58,9 +76,12 @@
 <div class="page">
   <div class="header">
     <h1>Collections</h1>
-    <button class="btn-create" on:click={() => showCreate = !showCreate}>
-      + New Playlist
-    </button>
+    <div class="header-actions">
+      {#if isAdmin}
+        <button class="btn-create" on:click={() => openCreate('manual')}>+ New Collection</button>
+      {/if}
+      <button class="btn-create" on:click={() => openCreate('playlist')}>+ New Playlist</button>
+    </div>
   </div>
 
   {#if error}
@@ -69,15 +90,42 @@
 
   {#if showCreate}
     <form class="create-form" on:submit|preventDefault={createPlaylist}>
-      <input bind:value={newName} placeholder="Playlist name" autofocus />
+      <!-- svelte-ignore a11y-autofocus -->
+      <input bind:value={newName} autofocus
+             placeholder={createKind === 'manual' ? 'Collection name' : 'Playlist name'}
+             aria-label={createKind === 'manual' ? 'Collection name' : 'Playlist name'} />
       <button type="submit" class="btn-save" disabled={creating || !newName.trim()}>Create</button>
       <button type="button" class="btn-cancel" on:click={() => showCreate = false}>Cancel</button>
+      {#if createKind === 'manual'}
+        <span class="create-hint">Shared with everyone who can see its movies and shows.</span>
+      {/if}
     </form>
   {/if}
 
   {#if loading}
     <div class="loading">Loading...</div>
   {:else}
+    {#if manualCollections.length > 0}
+      <section>
+        <h2>Collections</h2>
+        <div class="grid">
+          {#each manualCollections as col (col.id)}
+            <a class="card franchise" href="/collections/{col.id}" title={col.name}>
+              {#if col.poster_path}
+                <img class="franchise-poster" src={assetUrl(`/artwork/${encodeURI(col.poster_path)}?w=300`)} alt={col.name} loading="lazy" />
+              {:else}
+                <div class="card-icon">&#9638;</div>
+              {/if}
+              <div class="card-name">{col.name}</div>
+              {#if col.item_count !== undefined}
+                <div class="card-sub">{col.item_count} title{col.item_count === 1 ? '' : 's'}</div>
+              {/if}
+            </a>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
     {#if playlists.length > 0}
       <section>
         <h2>Playlists</h2>
@@ -151,6 +199,9 @@
     cursor: pointer;
   }
   .btn-create:hover { background: rgba(124,106,247,0.2); }
+  .header-actions { display: flex; gap: 0.5rem; }
+  .create-hint { font-size: 0.72rem; color: var(--text-muted); }
+  .card-sub { font-size: 0.7rem; color: var(--text-muted); margin-top: 0.2rem; }
 
   .create-form {
     display: flex; gap: 0.5rem; align-items: center; margin-bottom: 1.5rem;

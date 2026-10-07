@@ -13,7 +13,7 @@ import (
 )
 
 const listMyPlaylists = `-- name: ListMyPlaylists :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
 FROM collections
 WHERE user_id = $1 AND type IN ('playlist', 'smart_playlist')
 ORDER BY updated_at DESC, name
@@ -47,6 +47,8 @@ func (q *Queries) ListMyPlaylists(ctx context.Context, userID pgtype.UUID) ([]Co
 			&i.Rules,
 			&i.LibraryID,
 			&i.TmdbCollectionID,
+			&i.ItemOrder,
+			&i.PosterItemID,
 		); err != nil {
 			return nil, err
 		}

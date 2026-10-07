@@ -2269,7 +2269,11 @@ paths:
       tags: [Collections]
       description: |
         The caller's own collections plus server-owned ones (auto-genre,
-        franchise). `franchise` collections (TMDB collections the server
+        franchise, manual). A `manual` collection (v2.6, admin-curated) is
+        listed to a non-admin only when they can see at least one of its
+        members (library grant and content-rating ceiling), with `item_count`
+        (visible members) and a cover in `poster_path` taken from a visible
+        member; admins see every one, empty ones included. `franchise` collections (TMDB collections the server
         holds at least two films of) are **opt-in**: they are returned only
         with `?include=franchise` (clients that render every collection as a
         home-screen row would otherwise be flooded). Even then they are
@@ -2300,6 +2304,10 @@ paths:
     post:
       summary: Create a collection
       tags: [Collections]
+      description: |
+        Without `type` (or with `playlist`) this creates the caller's own
+        private playlist. `type: manual` (v2.6) creates a shared,
+        admin-curated movie / TV collection — admins only (403 otherwise).
       requestBody:
         required: true
         content:
@@ -2308,8 +2316,10 @@ paths:
               type: object
               required: [name]
               properties:
-                name:    { type: string }
-                summary: { type: string }
+                name:        { type: string }
+                description: { type: string }
+                type:        { type: string, enum: [playlist, manual] }
+                item_order:  { type: string, enum: [custom, release, title], description: 'Manual collections: how members are listed (default custom).' }
       responses:
         '201':
           description: Created.
@@ -2319,6 +2329,8 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/Collection' }
+        '400': { description: 'Missing name, an unknown type, or an invalid item_order.' }
+        '403': { description: 'type manual by a non-admin.' }
 
   /api/v1/collections/{id}:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -2334,7 +2346,9 @@ paths:
         approved or downloading; null when none). Missing parts are listed
         only for profiles without a content-rating ceiling — TMDB parts
         carry no certification, so they rank as unrated (most restrictive).
-        A franchise collection with no item visible to the caller is a 404.
+        A franchise collection with no item visible to the caller is a 404,
+        and so is a manual collection for a non-admin who can see none of its
+        members.
       responses:
         '200':
           description: Collection.
@@ -2348,6 +2362,11 @@ paths:
     patch:
       summary: Update a collection
       tags: [Collections]
+      description: |
+        Fields left out keep their value (an empty name too). `item_order`
+        and `poster_item_id` apply to manual collections only (400
+        otherwise); `poster_item_id` must be a member, and an empty string
+        goes back to the first member's poster.
       requestBody:
         required: true
         content:
@@ -2355,8 +2374,10 @@ paths:
             schema:
               type: object
               properties:
-                name:    { type: string }
-                summary: { type: string }
+                name:           { type: string }
+                description:    { type: string }
+                item_order:     { type: string, enum: [custom, release, title] }
+                poster_item_id: { type: string, description: 'A member item id, or empty to clear.' }
       responses:
         '200':
           description: Updated.
@@ -2377,15 +2398,16 @@ paths:
   /api/v1/libraries/{id}/collections:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
-      summary: Franchise collections with visible items in a library
+      summary: Franchise and manual collections with visible items in a library
       tags: [Collections]
       description: |
-        Backs the library page's Collections tab. Returns the franchise
-        collections that have at least one item in this library visible to
-        the caller (content-rating ceiling applied), with that visible
-        `item_count`. `poster_url` is the TMDB collection poster when known;
-        `poster_path` (artwork path) is the first visible member's poster, a
-        fallback cover. 404 when the caller has no grant on the library.
+        Backs the library page's Collections tab. Returns the franchise and
+        manual collections that have at least one item in this library
+        visible to the caller (content-rating ceiling applied), with that
+        visible `item_count`, by name. `poster_url` is the TMDB collection
+        poster when known; `poster_path` (artwork path) is the cover from a
+        visible member (a manual collection's chosen cover when visible).
+        404 when the caller has no grant on the library.
       responses:
         '200':
           description: Collections.
@@ -2401,7 +2423,7 @@ paths:
                       properties:
                         id:                 { type: string, format: uuid }
                         name:               { type: string }
-                        type:               { type: string, enum: [franchise] }
+                        type:               { type: string, enum: [franchise, manual] }
                         tmdb_collection_id: { type: integer }
                         poster_url:         { type: string }
                         poster_path:        { type: string }
@@ -2413,6 +2435,9 @@ paths:
     get:
       summary: List items in a collection
       tags: [Collections]
+      description: |
+        A manual collection lists its members in its `item_order`: custom
+        (the stored order), release (oldest first) or title.
       responses:
         '200':
           description: Items.
@@ -2427,17 +2452,49 @@ paths:
     post:
       summary: Add an item to a collection
       tags: [Collections]
+      description: |
+        Manual collections also take `media_item_ids`, up to 500 movies and
+        shows in one request. Every item must exist and be visible to the
+        caller (404 otherwise) and be a movie or show (400 otherwise);
+        nothing is added unless all pass. Items already in the collection
+        stay where they are.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [item_id]
               properties:
-                item_id: { type: string, format: uuid }
+                media_item_id:  { type: string, format: uuid }
+                media_item_ids: { type: array, items: { type: string, format: uuid } }
       responses:
         '204': { description: Added. }
+        '400': { description: 'A malformed or repeated id, an empty or oversized batch, or (manual collections) an item that is not a movie or show.' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/collections/{id}/items/order:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Reorder a manual collection
+      tags: [Collections]
+      description: |
+        v2.6. The members in their new custom order (positions 0..N-1);
+        members left out keep their position. Manual collections only
+        (playlists use /playlists/{id}/items/order).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_ids]
+              properties:
+                item_ids: { type: array, items: { type: string, format: uuid } }
+      responses:
+        '204': { description: Reordered. }
+        '400': { description: 'Not a manual collection, or a malformed / repeated id.' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'MANAGED_COLLECTION: a franchise collection.' }
 
   /api/v1/collections/{id}/items/{itemId}:
     parameters:
@@ -5365,6 +5422,14 @@ components:
             name:        { type: string }
             part_count:  { type: integer }
             owned_count: { type: integer }
+        collections:
+          type: array
+          description: 'Movies and shows, omitted when none (v2.6): the manual collections the item is in.'
+          items:
+            type: object
+            properties:
+              id:   { type: string, format: uuid }
+              name: { type: string }
     ChildItem:
       type: object
       properties:
@@ -5829,8 +5894,8 @@ components:
         summary:    { type: string, nullable: true }
         type:
           type: string
-          enum: [playlist, smart_playlist, auto_genre, event_folder, photo_album, franchise]
-          description: v2.1 — `smart_playlist` resolves items at query time from `rules`. `franchise` is a TMDB collection the server holds at least two films of (read-only).
+          enum: [playlist, smart_playlist, auto_genre, event_folder, photo_album, franchise, manual]
+          description: v2.1 — `smart_playlist` resolves items at query time from `rules`. `franchise` is a TMDB collection the server holds at least two films of (read-only). `manual` (v2.6) is an admin-curated movie / TV collection shared with everyone who can see its members.
         rules:
           type: object
           nullable: true
@@ -5845,6 +5910,8 @@ components:
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
         tmdb_collection_id: { type: integer, description: Franchise collections only. }
+        item_order:     { type: string, enum: [custom, release, title], description: 'Manual collections only: how the items listing orders members.' }
+        poster_item_id: { type: string, format: uuid, description: 'Manual collections only: the member whose poster is the cover; absent = the first member''s.' }
         poster_url:   { type: string, description: 'Franchise collections only: TMDB collection poster (absolute URL).' }
         backdrop_url: { type: string, description: 'Franchise detail only: TMDB collection backdrop.' }
         parts:

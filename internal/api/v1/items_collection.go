@@ -31,6 +31,48 @@ type ItemCollectionRef struct {
 	OwnedCount int    `json:"owned_count"`
 }
 
+// ItemManualCollectionsDB is what the "collections" field on movie and show
+// details needs.
+type ItemManualCollectionsDB interface {
+	ListManualCollectionsForItem(ctx context.Context, mediaItemID uuid.UUID) ([]gen.ListManualCollectionsForItemRow, error)
+}
+
+// ItemManualCollectionRef is one manual collection an item belongs to.
+type ItemManualCollectionRef struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+}
+
+// WithManualCollections enables the "collections" field on movie and show
+// details.
+func (h *ItemHandler) WithManualCollections(db ItemManualCollectionsDB) *ItemHandler {
+	h.manualCollections = db
+	return h
+}
+
+// manualCollectionRefs lists the manual collections an item belongs to. The
+// caller has already passed the item's visibility check and the item is a
+// member, so each collection has a member the caller can see (the rule the
+// collections listing applies). Best-effort: a failure omits the field.
+func (h *ItemHandler) manualCollectionRefs(ctx context.Context, itemID uuid.UUID) []ItemManualCollectionRef {
+	if h.manualCollections == nil {
+		return nil
+	}
+	rows, err := h.manualCollections.ListManualCollectionsForItem(ctx, itemID)
+	if err != nil {
+		h.logger.WarnContext(ctx, "item manual collections", "item_id", itemID, "err", err)
+		return nil
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	out := make([]ItemManualCollectionRef, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ItemManualCollectionRef{ID: row.ID.String(), Name: row.Name})
+	}
+	return out
+}
+
 // WithFranchise enables the "collection" reference on movie details.
 func (h *ItemHandler) WithFranchise(db ItemFranchiseDB) *ItemHandler {
 	h.franchise = db

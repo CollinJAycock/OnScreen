@@ -50,3 +50,23 @@ describe('CollectionsTab', () => {
     expect(mockForLibrary).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('CollectionsTab — manual collections', () => {
+  it('counts a manual collection in titles, with its member cover', async () => {
+    mockForLibrary.mockResolvedValue([
+      { id: 'm-1', name: 'Saturday cartoons', type: 'manual', poster_path: 'shows/bluey.jpg', item_count: 2 },
+    ]);
+    render(CollectionsTab, { libraryId: 'lib-2', libraryType: 'show' });
+    const card = await screen.findByRole('link', { name: /Saturday cartoons/ });
+    expect(card.getAttribute('href')).toBe('/collections/m-1');
+    expect(card.textContent).toContain('2 titles');
+    expect(card.querySelector('img')?.getAttribute('src')).toBe('http://srv/artwork/shows/bluey.jpg?w=300');
+  });
+
+  it('explains the empty state of a show library without film series', async () => {
+    mockForLibrary.mockResolvedValue([]);
+    render(CollectionsTab, { libraryId: 'lib-2', libraryType: 'show' });
+    expect(await screen.findByText(/Collections an admin makes/)).toBeTruthy();
+    expect(screen.queryByText(/Film series/)).toBeNull();
+  });
+});

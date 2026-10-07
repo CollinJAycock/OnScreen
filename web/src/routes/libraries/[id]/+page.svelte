@@ -10,6 +10,7 @@
   import CardMenu from '$lib/components/CardMenu.svelte';
   import CollectionsTab from '$lib/components/CollectionsTab.svelte';
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';
+  import CollectionPicker from '$lib/components/CollectionPicker.svelte';
   import { toast } from '$lib/stores/toast';
   import { toggleSelected } from '$lib/photoAlbums';
   import {
@@ -34,22 +35,24 @@
   let playlistPickerItemId = '';
   let showPlaylistPicker = false;
 
-  // Photo libraries: Select mode, where a tile click toggles the photo in
-  // or out of the selection instead of opening it, and the selection goes
-  // to an album through the AlbumPicker.
-  let selectingPhotos = false;
-  let selectedPhotoIds = new Set<string>();
+  // Select mode, where a tile click toggles it in or out of the selection
+  // instead of opening it. Photo libraries send the selection to an album
+  // (AlbumPicker); for admins, movie and show libraries send it to a shared
+  // collection (CollectionPicker).
+  let selecting = false;
+  let selectedIds = new Set<string>();
   let albumPickerOpen = false;
+  let collectionPickerOpen = false;
 
-  function toggleSelectPhotos() {
-    selectingPhotos = !selectingPhotos;
-    selectedPhotoIds = new Set();
+  function toggleSelecting() {
+    selecting = !selecting;
+    selectedIds = new Set();
   }
 
   function onGridItemClick(e: MouseEvent, item: MediaItem) {
-    if (!selectingPhotos || !isPhotoLibrary) return;
+    if (!selecting || !canSelect || !selectable(item)) return;
     e.preventDefault();
-    selectedPhotoIds = toggleSelected(selectedPhotoIds, item.id);
+    selectedIds = toggleSelected(selectedIds, item.id);
   }
 
   // Per-tile metadata editor — admin-only, triggered by the ✎ overlay
@@ -267,11 +270,19 @@
   $: isAudiobookLibrary = library?.type === 'audiobook';
   $: isHomeVideoLibrary = library?.type === 'home_video';
 
-  // Movie libraries get a "Collections" tab: TMDB film series with films in
-  // this library (CollectionsTab). ?tab=collections keeps the choice across
-  // a reload and Back from a collection page.
+  // Movie and show libraries get a "Collections" tab: TMDB film series and
+  // admin-made collections with titles in this library (CollectionsTab).
+  // ?tab=collections keeps the choice across a reload and Back from a
+  // collection page.
   let libTab: 'items' | 'collections' = 'items';
-  $: hasCollectionsTab = library?.type === 'movie';
+  $: hasCollectionsTab = collectionLibrary;
+  // Libraries whose movies and shows can go into a manual collection.
+  $: collectionLibrary = ['movie', 'show', 'anime', 'cartoons'].includes(library?.type ?? '');
+  $: canSelect = isPhotoLibrary || (isAdmin && collectionLibrary);
+  /** Whether Select mode can pick this tile (collections hold movies and shows). */
+  function selectable(item: MediaItem): boolean {
+    return isPhotoLibrary || item.type === 'movie' || item.type === 'show';
+  }
   function tabFromURL(u: URL): 'items' | 'collections' {
     return u.searchParams.get('tab') === 'collections' ? 'collections' : 'items';
   }
@@ -469,8 +480,8 @@
     // new library's URL — nothing carries over from the previous one.
     readFiltersFromURL();
     surpriseMsg = '';
-    selectingPhotos = false;
-    selectedPhotoIds = new Set();
+    selecting = false;
+    selectedIds = new Set();
     loadLibrary().then(() => {
       loadItems();
       loadGenres();
@@ -712,7 +723,7 @@
   {/if}
 
   {#if hasCollectionsTab && libTab === 'collections'}
-    <CollectionsTab libraryId={id} />
+    <CollectionsTab libraryId={id} libraryType={library?.type ?? ''} />
   {:else}
   <!-- Controls -->
   <div class="controls">
@@ -775,15 +786,15 @@
       </button>
     {/if}
 
-    {#if isPhotoLibrary}
+    {#if canSelect}
       <button
         type="button"
         class="surprise-btn"
-        class:on={selectingPhotos}
-        aria-pressed={selectingPhotos}
-        on:click={toggleSelectPhotos}
-        title="Select photos to add to an album"
-      >{selectingPhotos ? 'Done' : 'Select'}</button>
+        class:on={selecting}
+        aria-pressed={selecting}
+        on:click={toggleSelecting}
+        title={isPhotoLibrary ? 'Select photos to add to an album' : 'Select movies and shows to add to a collection'}
+      >{selecting ? 'Done' : 'Select'}</button>
     {/if}
 
     <div class="browse-links">
@@ -965,15 +976,15 @@
         {@const withMenu = watchable && canMarkWatched(item.type)}
         <!-- The cell holds the card link plus the ⋯ menu as a sibling (not
              nested in the link), so the menu is its own tab stop. -->
-        {@const photoSelected = selectingPhotos && selectedPhotoIds.has(item.id)}
+        {@const tileSelected = selecting && selectedIds.has(item.id)}
         <div class="item-cell" class:has-menu={withMenu}>
         <a
           class="item"
           class:circle-poster={isMusicLibrary || (isAudiobookLibrary && item.type === 'book_author')}
-          class:photo-selected={photoSelected}
+          class:photo-selected={tileSelected}
           href={itemHref(item)}
           tabindex="0"
-          aria-label={selectingPhotos && isPhotoLibrary ? `${photoSelected ? 'Deselect' : 'Select'} ${item.title}` : undefined}
+          aria-label={selecting && canSelect && selectable(item) ? `${tileSelected ? 'Deselect' : 'Select'} ${item.title}` : undefined}
           on:click={(e) => onGridItemClick(e, item)}
         >
           <div class="poster">
@@ -1021,10 +1032,10 @@
                 on:click={(e) => openPlaylistPicker(e, item.id)}
               >+</button>
             {/if}
-            {#if selectingPhotos && isPhotoLibrary}
-              <span class="select-check" aria-hidden="true">{photoSelected ? '✓' : ''}</span>
+            {#if selecting && canSelect && selectable(item)}
+              <span class="select-check" aria-hidden="true">{tileSelected ? '✓' : ''}</span>
             {/if}
-            {#if isAdmin && isPhotoLibrary && !selectingPhotos}
+            {#if isAdmin && isPhotoLibrary && !selecting}
               <button
                 class="edit-meta-btn"
                 title="Edit title, summary, date"
@@ -1075,25 +1086,43 @@
   on:close={() => showPlaylistPicker = false}
 />
 
-{#if selectingPhotos && isPhotoLibrary}
-  <div class="select-bar" role="toolbar" aria-label="Selected photos">
-    <span class="sel-count" role="status">{selectedPhotoIds.size} selected</span>
-    <button
-      type="button"
-      class="btn-scan"
-      disabled={selectedPhotoIds.size === 0}
-      on:click={() => albumPickerOpen = true}
-    >Add to album…</button>
-    <button type="button" class="btn-refresh sel-done" on:click={toggleSelectPhotos}>Done</button>
+{#if selecting && canSelect}
+  <div class="select-bar" role="toolbar" aria-label={isPhotoLibrary ? 'Selected photos' : 'Selected titles'}>
+    <span class="sel-count" role="status">{selectedIds.size} selected</span>
+    {#if isPhotoLibrary}
+      <button
+        type="button"
+        class="btn-scan"
+        disabled={selectedIds.size === 0}
+        on:click={() => albumPickerOpen = true}
+      >Add to album…</button>
+    {:else}
+      <button
+        type="button"
+        class="btn-scan"
+        disabled={selectedIds.size === 0}
+        on:click={() => collectionPickerOpen = true}
+      >Add to collection…</button>
+    {/if}
+    <button type="button" class="btn-refresh sel-done" on:click={toggleSelecting}>Done</button>
   </div>
+{/if}
+
+{#if isAdmin && collectionLibrary}
+  <CollectionPicker
+    open={collectionPickerOpen}
+    mediaItemIds={[...selectedIds]}
+    on:close={() => collectionPickerOpen = false}
+    on:added={() => { selecting = false; selectedIds = new Set(); }}
+  />
 {/if}
 
 {#if isPhotoLibrary}
   <AlbumPicker
     open={albumPickerOpen}
-    mediaItemIds={[...selectedPhotoIds]}
+    mediaItemIds={[...selectedIds]}
     onclose={() => albumPickerOpen = false}
-    ondone={() => { selectingPhotos = false; selectedPhotoIds = new Set(); }}
+    ondone={() => { selecting = false; selectedIds = new Set(); }}
   />
 {/if}
 
