@@ -158,11 +158,15 @@ func TestGroupings(t *testing.T) {
 }
 
 type nfoFake struct {
-	libs    map[uuid.UUID]gen.Library
-	files   map[uuid.UUID][]gen.MediaFile
-	cols    map[string]uuid.UUID // source_key → id
-	names   map[uuid.UUID]string
-	members map[uuid.UUID][]uuid.UUID
+	// knownSets: film series the server already tracks, by TMDB id or
+	// lower-cased name.
+	knownIDs   map[int32]bool
+	knownNames map[string]bool
+	libs       map[uuid.UUID]gen.Library
+	files      map[uuid.UUID][]gen.MediaFile
+	cols       map[string]uuid.UUID // source_key → id
+	names      map[uuid.UUID]string
+	members    map[uuid.UUID][]uuid.UUID
 }
 
 func newNFOFake() *nfoFake {
@@ -173,6 +177,10 @@ func newNFOFake() *nfoFake {
 		names:   map[uuid.UUID]string{},
 		members: map[uuid.UUID][]uuid.UUID{},
 	}
+}
+
+func (f *nfoFake) IsKnownTMDBCollection(_ context.Context, p gen.IsKnownTMDBCollectionParams) (bool, error) {
+	return f.knownIDs[p.TmdbID] || f.knownNames[strings.ToLower(p.Name)], nil
 }
 
 func (f *nfoFake) GetLibrary(_ context.Context, id uuid.UUID) (gen.Library, error) {
@@ -290,5 +298,33 @@ func TestNFOSweep(t *testing.T) {
 	}
 	if n, _ := imp.ImportMovie(context.Background(), off.ID, uuid.New(), &nfo.Movie{Set: "Alien Collection"}); n != 0 {
 		t.Fatalf("off library imported %d", n)
+	}
+}
+
+// A <set> the server already tracks as a film series (by TMDB id or name) is
+// skipped; the movie's own sets and tags still import.
+func TestNFOImportSkipsKnownFilmSeries(t *testing.T) {
+	f := newNFOFake()
+	f.knownIDs = map[int32]bool{10919: true}
+	f.knownNames = map[string]bool{"alien collection": true}
+	lib := gen.Library{ID: uuid.New(), Name: "Movies", NfoCollections: NFOSetsAndTags}
+	f.libs[lib.ID] = lib
+	imp := NewNFOImporter(f, slog.Default())
+	ctx := context.Background()
+
+	if n, err := imp.ImportMovie(ctx, lib.ID, uuid.New(), &nfo.Movie{Set: "The Omen Collection", SetTMDBID: 10919, Tags: []string{"Halloween"}}); err != nil || n != 1 {
+		t.Fatalf("import = %d, %v; want only the tag", n, err)
+	}
+	if n, _ := imp.ImportMovie(ctx, lib.ID, uuid.New(), &nfo.Movie{Set: "Alien Collection"}); n != 0 {
+		t.Fatalf("a series known by name imported %d", n)
+	}
+	if n, _ := imp.ImportMovie(ctx, lib.ID, uuid.New(), &nfo.Movie{Set: "Best Picture Winners"}); n != 1 {
+		t.Fatalf("a hand-made set imported %d", n)
+	}
+	if _, ok := f.cols["set:the omen collection"]; ok {
+		t.Fatal("a known film series became a collection")
+	}
+	if _, ok := f.cols["set:best picture winners"]; !ok || f.cols["tag:halloween"] == uuid.Nil {
+		t.Fatalf("collections %v", f.cols)
 	}
 }

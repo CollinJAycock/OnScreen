@@ -5257,7 +5257,9 @@ components:
             makes a collection per `<set>`, `sets_and_tags` also per `<tag>`.
             Movies join as they're enriched, the daily `nfo_collections` task
             re-reads the NFO files, and turning it on imports the existing
-            ones in the background. Membership is only ever added. Default off.
+            ones in the background. Membership is only ever added. A `<set>`
+            that is a TMDB collection the server already tracks as a film series
+            (by its `tmdbSet` / `tmdbcolid` id or name) is skipped. Default off.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:

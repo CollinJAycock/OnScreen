@@ -61,7 +61,10 @@ API change lands only when every first-party client moves with it — see
     optionally, `<tag>`) groupings of its movie.nfo files as collections
     (library settings, "Collections from NFO files", off by default). Movies
     join as they're scanned. Turning it on imports the existing ones, and a
-    daily task picks up edited NFO files.
+    daily task picks up edited NFO files. A set that's a TMDB film series OnScreen
+    already groups automatically is skipped, so a Radarr library (which writes
+    every movie's TMDB collection as its set) doesn't get duplicates. Radarr's
+    tags are TMDB plot keywords, so "Sets and tags" is for hand-tagged libraries.
   - **API (all additive):**
     - `POST` / `PATCH /collections` take `rules` (null makes a collection
       hand-picked again) and `promoted`;

@@ -250,3 +250,23 @@ func TestParseMovie_Set(t *testing.T) {
 		}
 	}
 }
+
+// The set's TMDB collection id: Radarr's <uniqueid type="tmdbSet">, else
+// Kodi's <set tmdbcolid>; 0 when neither is there.
+func TestParseMovie_SetTMDBID(t *testing.T) {
+	cases := map[string]int{
+		`<movie><set><name>The Omen Collection</name></set><uniqueid type="tmdb">794</uniqueid><uniqueid default="false" type="tmdbSet">10919</uniqueid></movie>`: 10919,
+		`<movie><set tmdbcolid="8091"><name>Alien Collection</name></set></movie>`:                                                                                8091,
+		`<movie><set><name>Mine</name></set><uniqueid type="tmdb">794</uniqueid></movie>`:                                                                         0,
+		`<movie><set/><uniqueid type="tmdbSet">x</uniqueid></movie>`:                                                                                              0,
+	}
+	for doc, want := range cases {
+		m, err := ParseMovie(strings.NewReader(doc))
+		if err != nil {
+			t.Fatalf("%s: %v", doc, err)
+		}
+		if m.SetTMDBID != want {
+			t.Errorf("%s: set tmdb id %d, want %d", doc, m.SetTMDBID, want)
+		}
+	}
+}

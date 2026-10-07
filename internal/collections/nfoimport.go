@@ -31,6 +31,7 @@ type NFODB interface {
 	ListLibraries(ctx context.Context) ([]gen.Library, error)
 	ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.UUID) ([]gen.MediaFile, error)
 	FindOrCreateSourceCollection(ctx context.Context, arg gen.FindOrCreateSourceCollectionParams) (uuid.UUID, error)
+	IsKnownTMDBCollection(ctx context.Context, arg gen.IsKnownTMDBCollectionParams) (bool, error)
 	AddCollectionItem(ctx context.Context, arg gen.AddCollectionItemParams) (gen.CollectionItem, error)
 }
 
@@ -40,6 +41,10 @@ type NFODB interface {
 // whole server (found again by name on later scans, so re-imports join it),
 // listed by release date. Membership is only ever added: a movie whose NFO
 // stops naming a set stays in it until an admin removes it.
+//
+// A <set> that is a TMDB collection the server already tracks as a film
+// series (Radarr writes every movie's TMDB collection as its set) is skipped:
+// the automatic franchise collection already covers it.
 type NFOImporter struct {
 	db     NFODB
 	logger *slog.Logger
@@ -94,6 +99,15 @@ func (n *NFOImporter) importMovie(ctx context.Context, mode string, itemID uuid.
 	source := sourceNFO
 	for _, g := range groupings(m, mode) {
 		key := g[0]
+		if strings.HasPrefix(key, "set:") {
+			known, err := n.db.IsKnownTMDBCollection(ctx, gen.IsKnownTMDBCollectionParams{TmdbID: int32(m.SetTMDBID), Name: g[1]})
+			if err != nil {
+				return added, fmt.Errorf("check set %q: %w", g[1], err)
+			}
+			if known {
+				continue
+			}
+		}
 		colID, err := n.db.FindOrCreateSourceCollection(ctx, gen.FindOrCreateSourceCollectionParams{
 			Name:      g[1],
 			Source:    &source,

@@ -268,6 +268,21 @@ ON CONFLICT (source, source_key) WHERE source IS NOT NULL
 DO UPDATE SET updated_at = collections.updated_at
 RETURNING id;
 
+-- name: IsKnownTMDBCollection :one
+-- Whether an NFO movie set is a TMDB collection the server already tracks as
+-- a film series: a franchise collection with that TMDB id or name, or a TMDB
+-- collection a scanned movie belongs to (it becomes a franchise collection
+-- once a second film of it is in). NFO import skips those, so a Radarr
+-- library doesn't get a second copy of every film series.
+SELECT EXISTS (
+    SELECT 1 FROM collections c
+    WHERE c.type = 'franchise'
+      AND (c.tmdb_collection_id = sqlc.arg('tmdb_id')::int OR lower(c.name) = lower(sqlc.arg('name')::text))
+    UNION ALL
+    SELECT 1 FROM tmdb_collections t
+    WHERE t.tmdb_collection_id = sqlc.arg('tmdb_id')::int OR lower(t.name) = lower(sqlc.arg('name')::text)
+);
+
 -- name: UpsertCollectionPoster :exec
 INSERT INTO collection_posters (collection_id, content_type, data, updated_at)
 VALUES ($1, $2, $3, NOW())

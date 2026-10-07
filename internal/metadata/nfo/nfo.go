@@ -67,6 +67,10 @@ type Movie struct {
 	// <set><name>Alien Collection</name></set>, or the older
 	// <set>Alien Collection</set>. Empty when none.
 	Set string
+	// SetTMDBID is the set's TMDB collection id when the NFO names it:
+	// Radarr's <uniqueid type="tmdbSet">, or Kodi's <set tmdbcolid="…">.
+	// 0 = unknown.
+	SetTMDBID int
 }
 
 // Show captures tvshow.nfo. Season overrides live in separate
@@ -145,8 +149,9 @@ type rawMovie struct {
 
 // rawSet is <set><name>…</name></set>, or the older <set>…</set>.
 type rawSet struct {
-	Name string `xml:"name"`
-	Text string `xml:",chardata"`
+	Name      string `xml:"name"`
+	Text      string `xml:",chardata"`
+	TMDBColID string `xml:"tmdbcolid,attr"`
 }
 
 type rawShow struct {
@@ -209,7 +214,24 @@ func ParseMovie(r io.Reader) (*Movie, error) {
 	m.Premiered = parseDate(firstNonEmpty(raw.Premiered, raw.ReleaseDate))
 	m.TMDBID, m.IMDBID, m.TVDBID = resolveIDs(raw.UniqueIDs, raw.TMDBIDLegacy, raw.IMDBIDLegacy, raw.TVDBIDLegacy)
 	m.Set = firstNonEmpty(strings.TrimSpace(raw.Set.Name), strings.TrimSpace(raw.Set.Text))
+	m.SetTMDBID = setTMDBID(raw.UniqueIDs, raw.Set.TMDBColID)
 	return m, nil
+}
+
+// setTMDBID reads a movie set's TMDB collection id: <uniqueid
+// type="tmdbSet"> (Radarr) first, else the set's tmdbcolid attribute (Kodi).
+func setTMDBID(ids []uniqueID, colAttr string) int {
+	for _, id := range ids {
+		if strings.EqualFold(strings.TrimSpace(id.Type), "tmdbset") {
+			if n, err := strconv.Atoi(strings.TrimSpace(id.Value)); err == nil && n > 0 {
+				return n
+			}
+		}
+	}
+	if n, err := strconv.Atoi(strings.TrimSpace(colAttr)); err == nil && n > 0 {
+		return n
+	}
+	return 0
 }
 
 // ParseShow reads a tvshow.nfo and returns a Show.

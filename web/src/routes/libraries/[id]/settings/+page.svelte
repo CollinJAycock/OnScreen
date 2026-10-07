@@ -314,6 +314,9 @@
           <p class="check-help">
             Each set (and tag) named in your movies' NFO files becomes a collection, listed by release date.
             Movies join as they're scanned; turning this on imports the existing ones in the background.
+            Sets that are TMDB film series OnScreen already groups are skipped. Tags written by Radarr,
+            Sonarr or TMDB scrapers are usually plot keywords, not collections — choose "Sets and tags"
+            only if you tagged your movies yourself.
           </p>
         </section>
       {/if}

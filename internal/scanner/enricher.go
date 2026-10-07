@@ -632,7 +632,9 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 	// Use its title for the TMDB search too (gets us better poster
 	// matches when the filename is junk like "Movie_2009_WEB-DL").
 	nfoMovie := e.readMovieNFO(ctx, file)
-	e.importNFOCollections(ctx, item.LibraryID, item.ID, nfoMovie)
+	// Last, after the TMDB match has recorded the movie's film series, so
+	// an NFO set that is that series is recognised and skipped.
+	defer e.importNFOCollections(ctx, item.LibraryID, item.ID, nfoMovie)
 
 	// Clean the stored title before searching: items scanned before this fix
 	// may have filenames like "Movie_Title_2009_1080p_WEB-DL" stored verbatim.

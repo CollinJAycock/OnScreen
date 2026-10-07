@@ -126,6 +126,32 @@ func TestCollectionsPhase2_Integration(t *testing.T) {
 		}
 	}
 
+	// A set the server tracks as a film series is recognised by TMDB id or
+	// name (franchise collection or a TMDB collection a movie belongs to).
+	if _, err := pool.Exec(ctx, `INSERT INTO collections (name, type, tmdb_collection_id) VALUES ('Alien Collection', 'franchise', 8091)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO tmdb_collections (tmdb_collection_id, name, parts) VALUES (10919, 'The Omen Collection', '[]')`); err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range []struct {
+		id   int32
+		name string
+		want bool
+	}{
+		{8091, "anything", true},
+		{0, "alien COLLECTION", true},
+		{10919, "", true},
+		{0, "The Omen Collection", true},
+		{0, "Best Picture Winners", false},
+		{1234, "Mine", false},
+	} {
+		got, err := q.IsKnownTMDBCollection(ctx, gen.IsKnownTMDBCollectionParams{TmdbID: c.id, Name: c.name})
+		if err != nil || got != c.want {
+			t.Errorf("IsKnownTMDBCollection(%d, %q) = %v, %v; want %v", c.id, c.name, got, err, c.want)
+		}
+	}
+
 	// ── Uploaded covers ────────────────────────────────────────────────
 	if err := q.UpsertCollectionPoster(ctx, gen.UpsertCollectionPosterParams{CollectionID: col.ID, ContentType: "image/jpeg", Data: []byte{0xFF, 0xD8, 1}}); err != nil {
 		t.Fatal(err)

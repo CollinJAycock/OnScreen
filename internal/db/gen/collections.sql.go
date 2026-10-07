@@ -292,6 +292,34 @@ func (q *Queries) GetCollectionPoster(ctx context.Context, collectionID uuid.UUI
 	return i, err
 }
 
+const isKnownTMDBCollection = `-- name: IsKnownTMDBCollection :one
+SELECT EXISTS (
+    SELECT 1 FROM collections c
+    WHERE c.type = 'franchise'
+      AND (c.tmdb_collection_id = $1::int OR lower(c.name) = lower($2::text))
+    UNION ALL
+    SELECT 1 FROM tmdb_collections t
+    WHERE t.tmdb_collection_id = $1::int OR lower(t.name) = lower($2::text)
+)
+`
+
+type IsKnownTMDBCollectionParams struct {
+	TmdbID int32  `json:"tmdb_id"`
+	Name   string `json:"name"`
+}
+
+// Whether an NFO movie set is a TMDB collection the server already tracks as
+// a film series: a franchise collection with that TMDB id or name, or a TMDB
+// collection a scanned movie belongs to (it becomes a franchise collection
+// once a second film of it is in). NFO import skips those, so a Radarr
+// library doesn't get a second copy of every film series.
+func (q *Queries) IsKnownTMDBCollection(ctx context.Context, arg IsKnownTMDBCollectionParams) (bool, error) {
+	row := q.db.QueryRow(ctx, isKnownTMDBCollection, arg.TmdbID, arg.Name)
+	var exists bool
+	err := row.Scan(&exists)
+	return exists, err
+}
+
 const listAutoGenreCollections = `-- name: ListAutoGenreCollections :many
 SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 FROM collections
