@@ -21,7 +21,7 @@
     "dev:emu": "npm run package && npm run install-emu && npm run launch-emu && npm run inspect-emu"
   },
   "dependencies": {
-    "hls.js": "^1.5.15"
+    "hls.js": "^1.7.3"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",
@@ -29,7 +29,7 @@
     "@sveltejs/vite-plugin-svelte": "^4.0.4",
     "playwright-core": "^1.63.0",
     "svelte": "^5.0.0",
-    "svelte-check": "^4.0.0",
+    "svelte-check": "^4.7.6",
     "typescript": "^5.0.0",
     "vite": "^5.0.0",
     "vitest": "^3.2.7"
