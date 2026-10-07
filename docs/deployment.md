@@ -696,6 +696,14 @@ unready until they're applied.
 
 Back up the database first (see [Database backups](#database-backups)).
 
+### v2.5.0 → v2.5.1
+
+Pull the new image (`ghcr.io/collinjaycock/onscreen:2.5`, or `:2.5.1`).
+Migration 00036 only adds a column (`media_files.dv_profile`). Then **run a
+scan of your movie and show libraries**. Files an earlier scan tagged Dolby
+Vision are re-read once and play from their HDR10, HLG or SDR base layer. Only
+profile 5 stays refused. Until that scan, the clients keep refusing them.
+
 ### v2.4.x → v2.5.0
 
 1. **Pull the new image** (`ghcr.io/collinjaycock/onscreen:2.5`) or build the

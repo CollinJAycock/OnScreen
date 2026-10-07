@@ -1,7 +1,7 @@
 {
   "name": "onscreen-desktop",
   "private": true,
-  "version": "2.5.0",
+  "version": "2.5.1",
   "description": "OnScreen desktop client (Tauri 2 wrapper around the SvelteKit frontend)",
   "scripts": {
     "build:web": "npm --prefix ../../web run build",

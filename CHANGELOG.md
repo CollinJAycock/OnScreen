@@ -9,7 +9,20 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [Unreleased]
+## [v2.5.1] — unreleased
+
+Server patch release: Dolby Vision files with a base layer every player can
+show are no longer refused. Coming from v2.4.x, read the v2.5.0 upgrade notes
+below first.
+
+### Upgrade notes (from v2.5.0)
+
+- **Migration 00036** adds `media_files.dv_profile` at startup (with
+  `AUTO_MIGRATE=true`, else run the migrate step first). It only adds a column.
+- **Run a scan of your movie and show libraries** after upgrading. Until a scan
+  re-reads them, files tagged Dolby Vision stay refused, because the clients
+  decide from the stored tag. The scan probes each such file once.
+- The desktop installers are rebuilt as 2.5.1. The app itself is unchanged.
 
 ### Fixed
 
