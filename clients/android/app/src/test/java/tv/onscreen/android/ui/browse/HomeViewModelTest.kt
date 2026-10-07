@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import okhttp3.ResponseBody.Companion.toResponseBody
 import retrofit2.HttpException
 import retrofit2.Response
+import tv.onscreen.android.data.model.HubCollectionRow
 import tv.onscreen.android.data.model.HubData
 import tv.onscreen.android.data.model.HubItem
 import tv.onscreen.android.data.model.HubRowPref
@@ -222,6 +223,27 @@ class HomeViewModelTest {
 
         assertThat(vm.uiState.value.nextUp).isEmpty()
         assertThat(vm.uiState.value.planToWatch).isEmpty()
+        assertThat(vm.uiState.value.collectionRows).isEmpty()
+    }
+
+    @Test
+    fun `promoted collection rows flow into state and count as content`() = runTest(dispatcher) {
+        val m = mocks(
+            hubData = HubData(
+                collection_rows = listOf(
+                    HubCollectionRow(collection_id = "c1", name = "Spooky Season", items = listOf(hub("m1"))),
+                    HubCollectionRow(collection_id = "c2", name = "Empty", items = emptyList()),
+                ),
+            ),
+        )
+        val vm = HomeViewModel(m.hub, m.lib, m.col, m.pref)
+        vm.load()
+        advanceUntilIdle()
+
+        val state = vm.uiState.value
+        assertThat(state.collectionRows.map { it.collection_id }).containsExactly("c1", "c2").inOrder()
+        assertThat(state.collectionRows[0].items.map { it.id }).containsExactly("m1")
+        assertThat(state.hasContent).isTrue()
     }
 
     // ── Continue Watching dismiss ───────────────────────────────────────────

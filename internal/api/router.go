@@ -608,6 +608,11 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Photos != nil {
 				r.Get("/items/{id}/image", h.Photos.Image)
 			}
+			// A manual collection's uploaded cover (<img> loads it); the
+			// handler applies the collection's visibility rule.
+			if h.Collections != nil {
+				r.Get("/collections/{id}/poster", h.Collections.Poster)
+			}
 			// Trickplay alias: the Tizen and webOS clients fetch the VTT at
 			// /api/v1/items/{id}/trickplay/index.vtt (Bearer) and sprites at
 			// /api/v1/items/{id}/trickplay/sprite_NNN.jpg (?token= asset token).
@@ -1058,6 +1063,9 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/collections/{id}/items", h.Collections.AddItem)
 				r.Delete("/collections/{id}/items/{itemId}", h.Collections.RemoveItem)
 				r.Put("/collections/{id}/items/order", h.Collections.Reorder)
+				// An uploaded cover (admins; GET is on the asset-token group).
+				r.Post("/collections/{id}/poster", h.Collections.UploadPoster)
+				r.Delete("/collections/{id}/poster", h.Collections.DeletePoster)
 				// A library's franchise collections (the library page's
 				// Collections tab). Library-ACL checked in the handler.
 				r.Get("/libraries/{id}/collections", h.Collections.LibraryCollections)

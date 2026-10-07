@@ -1,7 +1,7 @@
 // Pure helpers for franchise (TMDB collection) UI: the library Collections
 // tab, the collection page's owned/missing parts, and the movie page's
 // "Part of the <Name>" shelf. Kept framework-free so they unit-test cheaply.
-import type { CollectionItem, FranchisePart, LibraryCollection } from '$lib/api';
+import { collectionPosterUrl, type CollectionItem, type FranchisePart, type LibraryCollection } from '$lib/api';
 
 export type PartState = 'owned' | 'requested' | 'missing';
 
@@ -96,9 +96,16 @@ export function partOfHeading(name: string): string {
   return `Part of the ${name}`;
 }
 
-/** Cover for a library-tab card: TMDB collection poster when known, else
- *  the first visible member's artwork (as an /artwork path), else none. */
-export function collectionCover(c: Pick<LibraryCollection, 'poster_url' | 'poster_path'>): { url?: string; artwork?: string } {
+/** Cover for a library-tab card: an admin-uploaded cover, else the TMDB
+ *  collection poster when known, else the chosen or first visible member's
+ *  artwork (as an /artwork path), else none. */
+export function collectionCover(
+  c: Pick<LibraryCollection, 'poster_url' | 'poster_path'> & Partial<Pick<LibraryCollection, 'id' | 'poster_version'>>,
+): { url?: string; artwork?: string } {
+  if (c.id && c.poster_version != null) {
+    const url = collectionPosterUrl({ id: c.id, poster_version: c.poster_version });
+    if (url) return { url };
+  }
   if (c.poster_url) return { url: c.poster_url };
   if (c.poster_path) return { artwork: c.poster_path };
   return {};

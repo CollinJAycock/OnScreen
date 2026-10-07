@@ -136,3 +136,94 @@ test.describe('Manual collections — web', () => {
     }
   });
 });
+
+// Phase 2 (migration 00038): promoted rows on the home screen, smart rules and
+// an uploaded cover.
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+test.describe('Collections phase 2 — API', () => {
+  test.skip(!CAN_API, 'set E2E_PASSWORD or E2E_TOKEN to run collection specs');
+
+  test('promote, smart rules, cover upload', async ({ request }) => {
+    const token = await adminToken(request);
+    const movies = await twoMovies(request, token);
+    test.skip(movies.length < 2, 'needs a movie library with two movies');
+    const r = await request.post('/api/v1/collections', {
+      ...auth(token),
+      data: { name: `E2E smart ${Date.now()}`, type: 'manual', promoted: true, rules: { types: ['movie'], limit: 2 } },
+    });
+    expect(r.status(), await r.text()).toBe(201);
+    const col = (await r.json()).data;
+    try {
+      expect(col.promoted).toBe(true);
+      expect(col.rules.types).toEqual(['movie']);
+      expect(col.item_count).toBe(2);
+      // Members follow the rules: no hand edits.
+      const add = await request.post(`/api/v1/collections/${col.id}/items`, { ...auth(token), data: { media_item_id: movies[0].id } });
+      expect(add.status()).toBe(400);
+      // On the home screen.
+      const hub = (await (await request.get('/api/v1/hub', auth(token))).json()).data;
+      const row = (hub.collection_rows ?? []).find((x: { collection_id: string }) => x.collection_id === col.id);
+      expect(row?.items.length).toBe(2);
+      // A cover upload, served back as a JPEG.
+      const up = await request.post(`/api/v1/collections/${col.id}/poster`, {
+        headers: { ...auth(token).headers, 'Content-Type': 'image/png' }, data: PNG_1PX,
+      });
+      expect(up.status(), await up.text()).toBe(200);
+      const v = (await up.json()).data.poster_version;
+      expect(v).toBeTruthy();
+      const img = await request.get(`/api/v1/collections/${col.id}/poster?v=${v}`, auth(token));
+      expect(img.status()).toBe(200);
+      expect(img.headers()['content-type']).toBe('image/jpeg');
+      // Back to hand-picked, members kept.
+      const clear = await request.patch(`/api/v1/collections/${col.id}`, { ...auth(token), data: { rules: null } });
+      expect(clear.status()).toBe(200);
+      expect((await clear.json()).data.rules).toBeUndefined();
+    } finally {
+      await request.delete(`/api/v1/collections/${col.id}`, auth(token));
+    }
+  });
+});
+
+test.describe('Collections phase 2 — web', () => {
+  test.skip(!CAN_UI, 'set E2E_PASSWORD to run collection UI specs');
+
+  test('show on home, make smart, upload a cover', async ({ page, request }) => {
+    const token = await adminToken(request);
+    const movies = await twoMovies(request, token);
+    test.skip(movies.length < 2, 'needs a movie library with two movies');
+    const name = `E2E home collection ${Date.now()}`;
+    const id = await createCollection(request, token, name);
+    try {
+      await request.post(`/api/v1/collections/${id}/items`, { ...auth(token), data: { media_item_ids: movies.map((m) => m.id) } });
+      await loginUI(page);
+      await page.goto(`/collections/${id}`);
+      await expect(page.getByRole('heading', { name })).toBeVisible();
+
+      // Show on Home: a row titled with the collection, linking to it.
+      await page.getByLabel('Show on Home').check();
+      await expect(page.getByLabel('Show on Home')).toBeChecked();
+      await page.goto('/');
+      const title = page.getByRole('link', { name, exact: true });
+      await expect(title).toHaveAttribute('href', `/collections/${id}`);
+
+      // Upload a cover: the thumbnail appears.
+      await page.goto(`/collections/${id}`);
+      await page.locator('input[type="file"]').setInputFiles({ name: 'cover.png', mimeType: 'image/png', buffer: PNG_1PX });
+      await expect(page.getByAltText('Cover')).toBeVisible();
+
+      // Make it smart from the rules form: the badge shows, hand edits go.
+      await page.getByRole('button', { name: 'Make smart' }).click();
+      await page.getByLabel('Limit').fill('2');
+      await page.getByRole('form', { name: 'Smart collection rules' }).getByRole('button', { name: 'Make smart' }).click();
+      await expect(page.getByText('Smart', { exact: true })).toBeVisible();
+      for (const m of movies) await expect(page.getByRole('button', { name: `Remove ${m.title}` })).toHaveCount(0);
+      await expect(page.getByRole('button', { name: 'Stop smart updates' })).toBeVisible();
+    } finally {
+      await request.delete(`/api/v1/collections/${id}`, auth(token));
+    }
+  });
+});

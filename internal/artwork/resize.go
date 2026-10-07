@@ -84,3 +84,20 @@ func decodeResizeEncodeJPEG(src io.Reader, w, h, quality int) ([]byte, error) {
 	}
 	return buf.Bytes(), nil
 }
+
+// Uploaded covers (a manual collection's poster) are normalised to a JPEG
+// that fits in coverMaxW × coverMaxH, so only that output is ever stored or
+// served, whatever was uploaded.
+const (
+	coverMaxW    = 1000
+	coverMaxH    = 1500
+	coverQuality = 88
+)
+
+// NormalizeCover decodes an uploaded image through the same bounded path as
+// the /artwork resizer (byte cap, pixel cap checked from the header before
+// the bitmap is allocated) and returns it as a JPEG fitting coverMaxW ×
+// coverMaxH. A file that isn't a decodable image is an error.
+func NormalizeCover(src io.Reader) ([]byte, error) {
+	return decodeResizeEncodeJPEG(src, coverMaxW, coverMaxH, coverQuality)
+}

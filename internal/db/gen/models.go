@@ -81,6 +81,9 @@ type Collection struct {
 	TmdbCollectionID *int32             `json:"tmdb_collection_id"`
 	ItemOrder        string             `json:"item_order"`
 	PosterItemID     pgtype.UUID        `json:"poster_item_id"`
+	Promoted         bool               `json:"promoted"`
+	Source           *string            `json:"source"`
+	SourceKey        *string            `json:"source_key"`
 }
 
 type CollectionItem struct {
@@ -89,6 +92,13 @@ type CollectionItem struct {
 	MediaItemID  uuid.UUID          `json:"media_item_id"`
 	Position     int32              `json:"position"`
 	AddedAt      pgtype.Timestamptz `json:"added_at"`
+}
+
+type CollectionPoster struct {
+	CollectionID uuid.UUID          `json:"collection_id"`
+	ContentType  string             `json:"content_type"`
+	Data         []byte             `json:"data"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
 type ContinueWatchingDismissal struct {
@@ -206,6 +216,7 @@ type Library struct {
 	IsPrivate               bool               `json:"is_private"`
 	AutoGrantNewUsers       bool               `json:"auto_grant_new_users"`
 	TrickplayEnabled        bool               `json:"trickplay_enabled"`
+	NfoCollections          string             `json:"nfo_collections"`
 }
 
 type LibraryAccess struct {

@@ -26,13 +26,15 @@ func (q *Queries) CountLibraries(ctx context.Context) (int64, error) {
 const createLibrary = `-- name: CreateLibrary :one
 INSERT INTO libraries (name, type, scan_paths, agent, language,
                        scan_interval, metadata_refresh_interval,
-                       is_private, auto_grant_new_users, trickplay_enabled)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                       is_private, auto_grant_new_users, trickplay_enabled,
+                       nfo_collections)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+        COALESCE(NULLIF($11::text, ''), 'off'))
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
           created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-          trickplay_enabled
+          trickplay_enabled, nfo_collections
 `
 
 type CreateLibraryParams struct {
@@ -46,6 +48,7 @@ type CreateLibraryParams struct {
 	IsPrivate               bool          `json:"is_private"`
 	AutoGrantNewUsers       bool          `json:"auto_grant_new_users"`
 	TrickplayEnabled        bool          `json:"trickplay_enabled"`
+	NfoCollections          string        `json:"nfo_collections"`
 }
 
 // trickplay_enabled is resolved by the caller (the library service turns it
@@ -62,6 +65,7 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		arg.IsPrivate,
 		arg.AutoGrantNewUsers,
 		arg.TrickplayEnabled,
+		arg.NfoCollections,
 	)
 	var i Library
 	err := row.Scan(
@@ -81,6 +85,7 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		&i.IsPrivate,
 		&i.AutoGrantNewUsers,
 		&i.TrickplayEnabled,
+		&i.NfoCollections,
 	)
 	return i, err
 }
@@ -90,7 +95,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled
+       trickplay_enabled, nfo_collections
 FROM libraries
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -115,6 +120,7 @@ func (q *Queries) GetLibrary(ctx context.Context, id uuid.UUID) (Library, error)
 		&i.IsPrivate,
 		&i.AutoGrantNewUsers,
 		&i.TrickplayEnabled,
+		&i.NfoCollections,
 	)
 	return i, err
 }
@@ -154,7 +160,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled
+       trickplay_enabled, nfo_collections
 FROM libraries
 WHERE deleted_at IS NULL
 ORDER BY name
@@ -186,6 +192,7 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 			&i.IsPrivate,
 			&i.AutoGrantNewUsers,
 			&i.TrickplayEnabled,
+			&i.NfoCollections,
 		); err != nil {
 			return nil, err
 		}
@@ -202,7 +209,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled
+       trickplay_enabled, nfo_collections
 FROM libraries
 WHERE deleted_at IS NULL
   AND metadata_refresh_interval IS NOT NULL
@@ -236,6 +243,7 @@ func (q *Queries) ListLibrariesDueForMetadataRefresh(ctx context.Context) ([]Lib
 			&i.IsPrivate,
 			&i.AutoGrantNewUsers,
 			&i.TrickplayEnabled,
+			&i.NfoCollections,
 		); err != nil {
 			return nil, err
 		}
@@ -252,7 +260,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled
+       trickplay_enabled, nfo_collections
 FROM libraries
 WHERE deleted_at IS NULL
   AND scan_interval IS NOT NULL
@@ -286,6 +294,7 @@ func (q *Queries) ListLibrariesDueForScan(ctx context.Context) ([]Library, error
 			&i.IsPrivate,
 			&i.AutoGrantNewUsers,
 			&i.TrickplayEnabled,
+			&i.NfoCollections,
 		); err != nil {
 			return nil, err
 		}
@@ -340,13 +349,14 @@ SET name                      = $2,
     is_private                = COALESCE($8::bool, is_private),
     auto_grant_new_users      = COALESCE($9::bool, auto_grant_new_users),
     trickplay_enabled         = COALESCE($10::bool, trickplay_enabled),
+    nfo_collections           = COALESCE($11::text, nfo_collections),
     updated_at                = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
           created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-          trickplay_enabled
+          trickplay_enabled, nfo_collections
 `
 
 type UpdateLibraryParams struct {
@@ -360,6 +370,7 @@ type UpdateLibraryParams struct {
 	IsPrivate               *bool         `json:"is_private"`
 	AutoGrantNewUsers       *bool         `json:"auto_grant_new_users"`
 	TrickplayEnabled        *bool         `json:"trickplay_enabled"`
+	NfoCollections          *string       `json:"nfo_collections"`
 }
 
 // is_private uses COALESCE so admins can update other fields without
@@ -378,6 +389,7 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		arg.IsPrivate,
 		arg.AutoGrantNewUsers,
 		arg.TrickplayEnabled,
+		arg.NfoCollections,
 	)
 	var i Library
 	err := row.Scan(
@@ -397,6 +409,7 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		&i.IsPrivate,
 		&i.AutoGrantNewUsers,
 		&i.TrickplayEnabled,
+		&i.NfoCollections,
 	)
 	return i, err
 }

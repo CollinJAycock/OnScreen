@@ -48,8 +48,9 @@ type CollectionHandler struct {
 	franchise     CollectionFranchiseDB
 	franchiseReqs FranchiseRequestLookup
 	// manual powers admin-curated collections (collections_manual.go).
-	// Optional; wired via WithManual.
+	// Optional; wired via WithManual, with smart (may be nil).
 	manual CollectionManualDB
+	smart  SmartRefresher
 }
 
 // NewCollectionHandler creates a CollectionHandler.
@@ -93,6 +94,16 @@ type collectionResponse struct {
 	ItemOrder    string  `json:"item_order,omitempty"`
 	PosterItemID *string `json:"poster_item_id,omitempty"`
 	ItemCount    *int64  `json:"item_count,omitempty"`
+	// Phase 2 (all additive, manual collections only). Promoted: an admin
+	// put it on the home screen. Rules: a smart collection's definition
+	// (its members follow them). PosterVersion: set when an admin uploaded
+	// a cover, served at /collections/{id}/poster?v=<PosterVersion>; it
+	// wins over PosterPath. Source: "nfo" for a collection imported from
+	// movie.nfo files.
+	Promoted      bool            `json:"promoted,omitempty"`
+	Rules         json.RawMessage `json:"rules,omitempty"`
+	PosterVersion *int64          `json:"poster_version,omitempty"`
+	Source        *string         `json:"source,omitempty"`
 }
 
 func toCollectionResponse(c gen.Collection) collectionResponse {
@@ -112,6 +123,11 @@ func toCollectionResponse(c gen.Collection) collectionResponse {
 			s := uuid.UUID(c.PosterItemID.Bytes).String()
 			out.PosterItemID = &s
 		}
+		out.Promoted = c.Promoted
+		if isSmart(c) {
+			out.Rules = json.RawMessage(c.Rules)
+		}
+		out.Source = c.Source
 	}
 	return out
 }
@@ -303,7 +319,10 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 		Name        string  `json:"name"`
 		Description *string `json:"description"`
 		Type        string  `json:"type"`
-		ItemOrder   string  `json:"item_order"`
+		// Manual collections only.
+		ItemOrder string          `json:"item_order"`
+		Promoted  *bool           `json:"promoted"`
+		Rules     json.RawMessage `json:"rules"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || strings.TrimSpace(body.Name) == "" {
 		respond.BadRequest(w, r, "name is required")
@@ -311,7 +330,11 @@ func (h *CollectionHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	switch body.Type {
 	case collectionTypeManual:
-		h.createManual(w, r, strings.TrimSpace(body.Name), body.Description, body.ItemOrder)
+		h.createManual(w, r, strings.TrimSpace(body.Name), body.Description, manualSettings{
+			ItemOrder: &body.ItemOrder,
+			Promoted:  body.Promoted,
+			Rules:     body.Rules,
+		})
 		return
 	case "", "playlist":
 	default:
@@ -353,16 +376,15 @@ func (h *CollectionHandler) Update(w http.ResponseWriter, r *http.Request) {
 	// Absent (or, for name, empty) fields keep their value: a PATCH that only
 	// changes a manual collection's order mustn't blank its name.
 	var body struct {
-		Name         *string `json:"name"`
-		Description  *string `json:"description"`
-		ItemOrder    *string `json:"item_order"`
-		PosterItemID *string `json:"poster_item_id"`
+		Name        *string `json:"name"`
+		Description *string `json:"description"`
+		manualSettings
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid body")
 		return
 	}
-	if !h.updateManualSettings(w, r, existing, body.ItemOrder, body.PosterItemID) {
+	if !h.updateManualSettings(w, r, existing, body.manualSettings) {
 		return
 	}
 	name := existing.Name
@@ -601,6 +623,9 @@ func (h *CollectionHandler) AddItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if col.Type == collectionTypeManual {
+		if rejectSmartMembership(w, r, col) {
+			return
+		}
 		raw := body.MediaItemIDs
 		if body.MediaItemID != "" {
 			raw = append([]string{body.MediaItemID}, raw...)
@@ -656,7 +681,7 @@ func (h *CollectionHandler) RemoveItem(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) {
+	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) || rejectSmartMembership(w, r, col) {
 		return
 	}
 	itemID, err := uuid.Parse(chi.URLParam(r, "itemId"))

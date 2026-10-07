@@ -34,6 +34,18 @@ data class HubData(
     val next_up: List<HubItem> = emptyList(),
     // [plan_to_watch]: items the caller set to Plan to Watch, newest first.
     val plan_to_watch: List<HubItem> = emptyList(),
+    // v2.6: collections an admin put on the home screen, each with the
+    // members the caller can see. Layout key collection:<collection_id>.
+    // Older servers omit it.
+    val collection_rows: List<HubCollectionRow> = emptyList(),
+)
+
+/** A promoted collection on the home screen. */
+@JsonClass(generateAdapter = true)
+data class HubCollectionRow(
+    val collection_id: String,
+    val name: String,
+    val items: List<HubItem> = emptyList(),
 )
 
 @JsonClass(generateAdapter = true)

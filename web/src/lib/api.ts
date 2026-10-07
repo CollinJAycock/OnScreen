@@ -915,6 +915,30 @@ export class ApiClient {
 
   get = <T>(path: string) => this.request<T>('GET', path);
   post = <T>(path: string, body?: unknown) => this.request<T>('POST', path, body);
+
+  /** POST a file as the raw request body, typed by the blob (an image
+   *  upload). Same auth, retry and error handling as the JSON calls. */
+  async postBlob<T>(path: string, blob: Blob): Promise<T> {
+    const finalPath = this.withViewAs('POST', path);
+    return this.requestWithRetry(
+      finalPath,
+      () => fetch(apiBase + finalPath, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'Content-Type': blob.type || 'application/octet-stream' },
+        credentials: credentialsMode(),
+        body: blob,
+      }),
+      async (resp) => {
+        if (resp.status === 204) return undefined as T;
+        const json = (await resp.json()) as ApiResponse<T> | ApiError;
+        if (!resp.ok) {
+          const err = json as ApiError;
+          throw new ApiRequestError(err.error?.message ?? `HTTP ${resp.status}`, resp.status, err.error?.code ?? '');
+        }
+        return (json as ApiResponse<T>).data;
+      },
+    );
+  }
   /** POST that does NOT attempt the 401→refresh→logout cascade. For
    *  pre-session auth steps (TOTP verify) where a 401 means "wrong
    *  code, retry", not "session dead, bounce to /login". */
@@ -1559,7 +1583,7 @@ export interface UserPreferences {
 
 // One entry of the per-user hub layout. key: "continue_tv",
 // "continue_movies", "continue_other", "next_up", "plan_to_watch",
-// "trending", "libraries", or "library:<uuid>". Hub rows not present in the
+// "trending", "libraries", "library:<uuid>" or "collection:<uuid>". Hub rows not present in the
 // saved layout render enabled, after the configured rows — so new libraries
 // appear without re-saving. Exception: a saved layout that predates
 // next_up / plan_to_watch comes back from GET /users/me/preferences with
@@ -1591,9 +1615,15 @@ export interface Library {
   // Automatic seek-bar thumbnail (trickplay) generation after scans and in
   // the nightly backfill. Optional: servers before v2.5 don't send it.
   trickplay_enabled?: boolean;
+  // Import movie.nfo <set> (and <tag>) groupings as manual collections.
+  // Optional: servers before v2.6 don't send it.
+  nfo_collections?: NFOCollectionsMode;
   created_at: string;
   updated_at: string;
 }
+
+/** What a library imports from movie.nfo files as collections. */
+export type NFOCollectionsMode = 'off' | 'sets' | 'sets_and_tags';
 
 // Per-library seek-bar thumbnail progress (admin). pending = not generated
 // yet, including the item generating right now; failed includes items with
@@ -2425,6 +2455,14 @@ export interface Collection {
   item_order?: CollectionItemOrder;
   poster_item_id?: string;
   item_count?: number;
+  // Manual collections, v2.6: on the home screen (an admin promoted it); a
+  // smart collection's rules (its members follow them; hand edits are
+  // refused); set when an admin uploaded a cover (collectionPosterUrl, it
+  // wins over poster_path); 'nfo' when imported from movie.nfo files.
+  promoted?: boolean;
+  rules?: CollectionRules;
+  poster_version?: number;
+  source?: string;
   // Franchise collections only (type 'franchise'): the TMDB collection id
   // and art. `parts` is set on GET /collections/{id} — every film of the
   // franchise the caller may see, owned (item_id) or not (item_id null).
@@ -2456,6 +2494,25 @@ export interface FranchisePart {
  *  first, or by title. */
 export type CollectionItemOrder = 'custom' | 'release' | 'title';
 
+/** A smart collection's rules: movies and/or shows, optionally one genre, a
+ *  year range, a minimum rating and some libraries; limit caps the members
+ *  (default 200, at most 500). */
+export interface CollectionRules {
+  types: ('movie' | 'show')[];
+  genres?: string[];
+  year_min?: number;
+  year_max?: number;
+  rating_min?: number;
+  library_ids?: string[];
+  limit?: number;
+}
+
+/** The URL of a manual collection's uploaded cover, or null without one. */
+export function collectionPosterUrl(c: Pick<Collection, 'id' | 'poster_version'>): string | null {
+  if (c.poster_version == null) return null;
+  return assetUrl(`/api/v1/collections/${c.id}/poster?v=${c.poster_version}`);
+}
+
 /** A franchise or manual collection with visible items in one library
  *  (GET /libraries/{id}/collections — the library Collections tab). */
 export interface LibraryCollection {
@@ -2466,6 +2523,8 @@ export interface LibraryCollection {
   poster_url?: string;
   poster_path?: string;
   item_count: number;
+  /** A manual collection's uploaded cover (collectionPosterUrl). */
+  poster_version?: number;
 }
 
 /** The franchise a movie belongs to, on the movie's detail response. */
@@ -2504,15 +2563,27 @@ export const collectionApi = {
   create: (name: string, description?: string) =>
     api.post<Collection>('/collections', { name, description }),
   /** A shared, admin-curated collection (admins only). */
-  createManual: (name: string, description?: string, itemOrder: CollectionItemOrder = 'custom') =>
-    api.post<Collection>('/collections', { name, description, type: 'manual', item_order: itemOrder }),
+  createManual: (name: string, description?: string, itemOrder: CollectionItemOrder = 'custom',
+                 extra: { rules?: CollectionRules; promoted?: boolean } = {}) =>
+    api.post<Collection>('/collections', { name, description, type: 'manual', item_order: itemOrder, ...extra }),
   /** Fields left out keep their value. */
   update: (id: string, name: string, description?: string) =>
     api.patch<Collection>(`/collections/${id}`, { name, description }),
   /** A manual collection's settings; poster_item_id '' goes back to the
    *  first member's poster. Fields left out keep their value. */
-  updateSettings: (id: string, settings: { name?: string; description?: string; item_order?: CollectionItemOrder; poster_item_id?: string }) =>
+  updateSettings: (id: string, settings: {
+    name?: string; description?: string; item_order?: CollectionItemOrder; poster_item_id?: string;
+    /** On the home screen for everyone who can see it. */
+    promoted?: boolean;
+    /** Rules make it smart; null makes it hand-picked again (members stay). */
+    rules?: CollectionRules | null;
+  }) =>
     api.patch<Collection>(`/collections/${id}`, settings),
+  /** Uploads a cover (a JPEG at most 1 MB — see fitCoverImage). */
+  uploadPoster: (id: string, image: Blob) =>
+    api.postBlob<Collection>(`/collections/${id}/poster`, image),
+  /** Back to the chosen (or first) member's poster. */
+  deletePoster: (id: string) => api.delete(`/collections/${id}/poster`),
   /** Adds several movies / shows to a manual collection at once. */
   addItems: (collectionId: string, mediaItemIds: string[]) =>
     api.post<void>(`/collections/${collectionId}/items`, { media_item_ids: mediaItemIds }),
@@ -3372,6 +3443,13 @@ export interface HubLibraryRow {
   items: HubItem[];
 }
 
+/** A promoted collection on the home screen (layout key collection:<id>). */
+export interface HubCollectionRow {
+  collection_id: string;
+  name: string;
+  items: HubItem[];
+}
+
 export interface HubData {
   // Legacy combined feed; clients should prefer the split arrays
   // below. Kept for backward compatibility — same items as
@@ -3394,6 +3472,9 @@ export interface HubData {
   next_up?: HubItem[];
   // Items the caller marked Plan to Watch, newest first.
   plan_to_watch?: HubItem[];
+  // Collections an admin put on the home screen, with the members the
+  // caller can see (v2.6+).
+  collection_rows?: HubCollectionRow[];
 }
 
 // What the Play button on a show or season should start.

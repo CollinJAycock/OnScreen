@@ -436,6 +436,41 @@ describe('Next Up and Plan to Watch rows', () => {
     expect(names.some((n) => n.startsWith('Next Up'))).toBe(true);
     expect(names.some((n) => n.startsWith('Plan to Watch'))).toBe(true);
   });
+
+  it('renders promoted collections as rows linking to the collection, ordered by the layout', async () => {
+    mockHubGet.mockResolvedValue({
+      continue_watching: [],
+      recently_added: [],
+      trending: [{ id: 't1', title: 'Trending Thing', updated_at: 1 }],
+      collection_rows: [
+        { collection_id: 'c-1', name: 'Spooky Season', items: [{ id: 'm-1', title: 'Halloween', type: 'movie', updated_at: 1 }] },
+        { collection_id: 'c-2', name: 'Hidden One', items: [{ id: 'm-2', title: 'Nope', type: 'movie', updated_at: 1 }] },
+        { collection_id: 'c-3', name: 'Empty One', items: [] },
+      ],
+    });
+    mockGetPreferences.mockResolvedValue({
+      hub_layout: [
+        { key: 'trending', enabled: true },
+        { key: 'collection:c-1', enabled: true },
+        { key: 'collection:c-2', enabled: false },
+      ],
+    });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Spooky Season')).toBeTruthy());
+    expect(screen.getByText('Spooky Season').closest('a')?.getAttribute('href')).toBe('/collections/c-1');
+    expect(screen.getByText('Halloween')).toBeTruthy();
+    expect(screen.queryByText('Hidden One')).toBeNull();
+    expect(screen.queryByText('Empty One')).toBeNull();
+    const titles = Array.from(document.querySelectorAll('.hub-title')).map((el) => el.textContent?.trim());
+    expect(titles.indexOf('Trending this week')).toBeLessThan(titles.indexOf('Spooky Season'));
+
+    // The editor lists them, so a user can hide or move them.
+    await fireEvent.click(screen.getByText('Customize rows'));
+    await waitFor(() => expect(screen.getByText('Hub rows')).toBeTruthy());
+    const names = Array.from(document.querySelectorAll('.edit-name')).map((el) => el.textContent?.trim() ?? '');
+    expect(names.some((n) => n.startsWith('Spooky Season'))).toBe(true);
+    expect(names.some((n) => n.startsWith('Hidden One'))).toBe(true);
+  });
 });
 
 describe('Continue Watching remove', () => {

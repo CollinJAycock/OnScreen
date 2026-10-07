@@ -96,7 +96,7 @@ func (q *Queries) CountItemsByGenre(ctx context.Context, arg CountItemsByGenrePa
 const createCollection = `-- name: CreateCollection :one
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 `
 
 type CreateCollectionParams struct {
@@ -137,6 +137,9 @@ func (q *Queries) CreateCollection(ctx context.Context, arg CreateCollectionPara
 		&i.TmdbCollectionID,
 		&i.ItemOrder,
 		&i.PosterItemID,
+		&i.Promoted,
+		&i.Source,
+		&i.SourceKey,
 	)
 	return i, err
 }
@@ -145,7 +148,7 @@ const createManualCollection = `-- name: CreateManualCollection :one
 
 INSERT INTO collections (name, description, type, item_order)
 VALUES ($1, $2, 'manual', $3)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 `
 
 type CreateManualCollectionParams struct {
@@ -175,6 +178,9 @@ func (q *Queries) CreateManualCollection(ctx context.Context, arg CreateManualCo
 		&i.TmdbCollectionID,
 		&i.ItemOrder,
 		&i.PosterItemID,
+		&i.Promoted,
+		&i.Source,
+		&i.SourceKey,
 	)
 	return i, err
 }
@@ -188,8 +194,58 @@ func (q *Queries) DeleteCollection(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
+const deleteCollectionItemsNotIn = `-- name: DeleteCollectionItemsNotIn :exec
+DELETE FROM collection_items
+WHERE collection_id = $1
+  AND NOT (media_item_id = ANY($2::uuid[]))
+`
+
+type DeleteCollectionItemsNotInParams struct {
+	CollectionID uuid.UUID   `json:"collection_id"`
+	ItemIds      []uuid.UUID `json:"item_ids"`
+}
+
+// A smart collection's refresh: drop the members its rules no longer match.
+func (q *Queries) DeleteCollectionItemsNotIn(ctx context.Context, arg DeleteCollectionItemsNotInParams) error {
+	_, err := q.db.Exec(ctx, deleteCollectionItemsNotIn, arg.CollectionID, arg.ItemIds)
+	return err
+}
+
+const deleteCollectionPoster = `-- name: DeleteCollectionPoster :exec
+DELETE FROM collection_posters WHERE collection_id = $1
+`
+
+func (q *Queries) DeleteCollectionPoster(ctx context.Context, collectionID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deleteCollectionPoster, collectionID)
+	return err
+}
+
+const findOrCreateSourceCollection = `-- name: FindOrCreateSourceCollection :one
+INSERT INTO collections (name, type, source, source_key, item_order)
+VALUES ($1, 'manual', $2, $3, 'release')
+ON CONFLICT (source, source_key) WHERE source IS NOT NULL
+DO UPDATE SET updated_at = collections.updated_at
+RETURNING id
+`
+
+type FindOrCreateSourceCollectionParams struct {
+	Name      string  `json:"name"`
+	Source    *string `json:"source"`
+	SourceKey *string `json:"source_key"`
+}
+
+// An imported collection (source 'nfo', source_key 'set:<name>' or
+// 'tag:<name>'): the existing one, or a new manual collection named after it.
+// Imported collections list by release date.
+func (q *Queries) FindOrCreateSourceCollection(ctx context.Context, arg FindOrCreateSourceCollectionParams) (uuid.UUID, error) {
+	row := q.db.QueryRow(ctx, findOrCreateSourceCollection, arg.Name, arg.Source, arg.SourceKey)
+	var id uuid.UUID
+	err := row.Scan(&id)
+	return id, err
+}
+
 const getCollection = `-- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 FROM collections WHERE id = $1
 `
 
@@ -212,12 +268,32 @@ func (q *Queries) GetCollection(ctx context.Context, id uuid.UUID) (Collection, 
 		&i.TmdbCollectionID,
 		&i.ItemOrder,
 		&i.PosterItemID,
+		&i.Promoted,
+		&i.Source,
+		&i.SourceKey,
 	)
 	return i, err
 }
 
+const getCollectionPoster = `-- name: GetCollectionPoster :one
+SELECT content_type, data, updated_at FROM collection_posters WHERE collection_id = $1
+`
+
+type GetCollectionPosterRow struct {
+	ContentType string             `json:"content_type"`
+	Data        []byte             `json:"data"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
+func (q *Queries) GetCollectionPoster(ctx context.Context, collectionID uuid.UUID) (GetCollectionPosterRow, error) {
+	row := q.db.QueryRow(ctx, getCollectionPoster, collectionID)
+	var i GetCollectionPosterRow
+	err := row.Scan(&i.ContentType, &i.Data, &i.UpdatedAt)
+	return i, err
+}
+
 const listAutoGenreCollections = `-- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name
@@ -248,6 +324,9 @@ func (q *Queries) ListAutoGenreCollections(ctx context.Context) ([]Collection, e
 			&i.TmdbCollectionID,
 			&i.ItemOrder,
 			&i.PosterItemID,
+			&i.Promoted,
+			&i.Source,
+			&i.SourceKey,
 		); err != nil {
 			return nil, err
 		}
@@ -356,8 +435,40 @@ func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionIte
 	return items, nil
 }
 
+const listCollectionPosterVersions = `-- name: ListCollectionPosterVersions :many
+SELECT collection_id, updated_at FROM collection_posters
+WHERE collection_id = ANY($1::uuid[])
+`
+
+type ListCollectionPosterVersionsRow struct {
+	CollectionID uuid.UUID          `json:"collection_id"`
+	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+// Which collections have an uploaded cover, and when it last changed (the
+// clients' cache key).
+func (q *Queries) ListCollectionPosterVersions(ctx context.Context, ids []uuid.UUID) ([]ListCollectionPosterVersionsRow, error) {
+	rows, err := q.db.Query(ctx, listCollectionPosterVersions, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListCollectionPosterVersionsRow{}
+	for rows.Next() {
+		var i ListCollectionPosterVersionsRow
+		if err := rows.Scan(&i.CollectionID, &i.UpdatedAt); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listCollections = `-- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 FROM collections
 WHERE user_id IS NULL OR user_id = $1
 ORDER BY sort_order, name
@@ -388,6 +499,9 @@ func (q *Queries) ListCollections(ctx context.Context, userID pgtype.UUID) ([]Co
 			&i.TmdbCollectionID,
 			&i.ItemOrder,
 			&i.PosterItemID,
+			&i.Promoted,
+			&i.Source,
+			&i.SourceKey,
 		); err != nil {
 			return nil, err
 		}
@@ -631,6 +745,70 @@ func (q *Queries) ListManualCollectionsForItem(ctx context.Context, mediaItemID 
 	return items, nil
 }
 
+const listPromotedCollections = `-- name: ListPromotedCollections :many
+SELECT id, name, item_order FROM collections
+WHERE type = 'manual' AND promoted
+ORDER BY sort_order, name, id
+`
+
+type ListPromotedCollectionsRow struct {
+	ID        uuid.UUID `json:"id"`
+	Name      string    `json:"name"`
+	ItemOrder string    `json:"item_order"`
+}
+
+// Manual collections an admin put on the home screen.
+func (q *Queries) ListPromotedCollections(ctx context.Context) ([]ListPromotedCollectionsRow, error) {
+	rows, err := q.db.Query(ctx, listPromotedCollections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromotedCollectionsRow{}
+	for rows.Next() {
+		var i ListPromotedCollectionsRow
+		if err := rows.Scan(&i.ID, &i.Name, &i.ItemOrder); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listSmartCollections = `-- name: ListSmartCollections :many
+SELECT id, rules FROM collections
+WHERE type = 'manual' AND rules IS NOT NULL
+ORDER BY id
+`
+
+type ListSmartCollectionsRow struct {
+	ID    uuid.UUID `json:"id"`
+	Rules []byte    `json:"rules"`
+}
+
+func (q *Queries) ListSmartCollections(ctx context.Context) ([]ListSmartCollectionsRow, error) {
+	rows, err := q.db.Query(ctx, listSmartCollections)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSmartCollectionsRow{}
+	for rows.Next() {
+		var i ListSmartCollectionsRow
+		if err := rows.Scan(&i.ID, &i.Rules); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listVisibleManualCollections = `-- name: ListVisibleManualCollections :many
 SELECT c.id,
        COUNT(*)::bigint AS item_count,
@@ -730,10 +908,42 @@ func (q *Queries) SetCollectionPosterItem(ctx context.Context, arg SetCollection
 	return err
 }
 
+const setCollectionPromoted = `-- name: SetCollectionPromoted :exec
+
+UPDATE collections SET promoted = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetCollectionPromotedParams struct {
+	ID       uuid.UUID `json:"id"`
+	Promoted bool      `json:"promoted"`
+}
+
+// ── Manual collections, phase 2 (migration 00038) ────────────────────────────
+func (q *Queries) SetCollectionPromoted(ctx context.Context, arg SetCollectionPromotedParams) error {
+	_, err := q.db.Exec(ctx, setCollectionPromoted, arg.ID, arg.Promoted)
+	return err
+}
+
+const setCollectionRules = `-- name: SetCollectionRules :exec
+UPDATE collections SET rules = $2, updated_at = NOW() WHERE id = $1
+`
+
+type SetCollectionRulesParams struct {
+	ID    uuid.UUID `json:"id"`
+	Rules []byte    `json:"rules"`
+}
+
+// Rules make a manual collection smart; NULL makes it hand-picked again
+// (its current members stay).
+func (q *Queries) SetCollectionRules(ctx context.Context, arg SetCollectionRulesParams) error {
+	_, err := q.db.Exec(ctx, setCollectionRules, arg.ID, arg.Rules)
+	return err
+}
+
 const updateCollection = `-- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 `
 
 type UpdateCollectionParams struct {
@@ -761,6 +971,9 @@ func (q *Queries) UpdateCollection(ctx context.Context, arg UpdateCollectionPara
 		&i.TmdbCollectionID,
 		&i.ItemOrder,
 		&i.PosterItemID,
+		&i.Promoted,
+		&i.Source,
+		&i.SourceKey,
 	)
 	return i, err
 }
@@ -803,6 +1016,43 @@ func (q *Queries) UpsertAutoGenreCollection(ctx context.Context, name string) (U
 		&i.LibraryID,
 	)
 	return i, err
+}
+
+const upsertCollectionItemPositions = `-- name: UpsertCollectionItemPositions :exec
+INSERT INTO collection_items (collection_id, media_item_id, position)
+SELECT $1, t.id, (t.idx - 1)::int
+FROM unnest($2::uuid[]) WITH ORDINALITY AS t(id, idx)
+ON CONFLICT (collection_id, media_item_id) DO UPDATE SET position = EXCLUDED.position
+`
+
+type UpsertCollectionItemPositionsParams struct {
+	CollectionID uuid.UUID   `json:"collection_id"`
+	ItemIds      []uuid.UUID `json:"item_ids"`
+}
+
+// A smart collection's refresh: add the members its rules match, in the
+// rules' order (positions 0..N-1).
+func (q *Queries) UpsertCollectionItemPositions(ctx context.Context, arg UpsertCollectionItemPositionsParams) error {
+	_, err := q.db.Exec(ctx, upsertCollectionItemPositions, arg.CollectionID, arg.ItemIds)
+	return err
+}
+
+const upsertCollectionPoster = `-- name: UpsertCollectionPoster :exec
+INSERT INTO collection_posters (collection_id, content_type, data, updated_at)
+VALUES ($1, $2, $3, NOW())
+ON CONFLICT (collection_id) DO UPDATE
+SET content_type = EXCLUDED.content_type, data = EXCLUDED.data, updated_at = NOW()
+`
+
+type UpsertCollectionPosterParams struct {
+	CollectionID uuid.UUID `json:"collection_id"`
+	ContentType  string    `json:"content_type"`
+	Data         []byte    `json:"data"`
+}
+
+func (q *Queries) UpsertCollectionPoster(ctx context.Context, arg UpsertCollectionPosterParams) error {
+	_, err := q.db.Exec(ctx, upsertCollectionPoster, arg.CollectionID, arg.ContentType, arg.Data)
+	return err
 }
 
 const upsertEventCollection = `-- name: UpsertEventCollection :one

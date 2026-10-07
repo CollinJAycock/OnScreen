@@ -39,6 +39,15 @@ export interface HubData {
   // titled with library_name. Falls back to the flat recently_added
   // when older servers omit this.
   recently_added_by_library?: HubLibraryRow[];
+  /** v2.6: collections an admin put on the home screen, with the members
+   *  the caller can see. Layout key collection:<collection_id>. */
+  collection_rows?: HubCollectionRow[];
+}
+
+export interface HubCollectionRow {
+  collection_id: string;
+  name: string;
+  items: HubItem[];
 }
 
 export interface HubLibraryRow {
@@ -416,7 +425,16 @@ export interface MediaCollection {
   type: string;
   genre?: string;
   poster_path?: string;
+  /** v2.6: set when an admin uploaded a cover for a manual collection
+   *  (collectionCoverPath); it wins over poster_path. */
+  poster_version?: number;
   created_at: string;
+}
+
+/** The API path of a collection's uploaded cover, or undefined without one
+ *  (PosterCard's posterSrc). */
+export function collectionCoverPath(c: Pick<MediaCollection, 'id' | 'poster_version'>): string | undefined {
+  return c.poster_version == null ? undefined : `/api/v1/collections/${c.id}/poster?v=${c.poster_version}`;
 }
 
 export interface CollectionItem {

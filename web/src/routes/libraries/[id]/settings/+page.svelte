@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, type Library, type LibraryTrickplayStatus } from '$lib/api';
+  import { libraryApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
   import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from '$lib/trickplayProgress';
 
@@ -34,6 +34,10 @@
   let tpGenerating = false;
   let tpMessage = '';
 
+  // Movie libraries: import movie.nfo <set> / <tag> as collections. Sent
+  // only when changed — turning it on starts a catch-up import.
+  let nfoCollections: NFOCollectionsMode = 'off';
+
   let mounted = false;
   let prevId = '';
   let savedTimeout: ReturnType<typeof setTimeout>;
@@ -61,6 +65,7 @@
     language = 'en';
     scanIntervalMinutes = 60;
     trickplayEnabled = false;
+    nfoCollections = 'off';
     tpStatus = null;
     tpMessage = '';
     fetchLibrary();
@@ -77,6 +82,7 @@
       isPrivate = library.is_private ?? false;
       autoGrantNewUsers = library.auto_grant_new_users ?? false;
       trickplayEnabled = library.trickplay_enabled ?? false;
+      nfoCollections = library.nfo_collections ?? 'off';
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally { loading = false; }
@@ -130,6 +136,8 @@
         auto_grant_new_users: isPrivate && autoGrantNewUsers,
         // Only video libraries show the switch; leave other types' flag alone.
         ...(isVideoLibraryType(library?.type) ? { trickplay_enabled: trickplayEnabled } : {}),
+        ...(library?.type === 'movie' && nfoCollections !== (library?.nfo_collections ?? 'off')
+          ? { nfo_collections: nfoCollections } : {}),
       });
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
@@ -288,6 +296,25 @@
           {#if tpMessage}
             <div class="tp-msg">{tpMessage}</div>
           {/if}
+        </section>
+      {/if}
+
+      {#if library?.type === 'movie'}
+        <section>
+          <div class="sec-label">Collections from NFO files</div>
+          <div class="field">
+            <label for="nfo-collections">Import from movie.nfo</label>
+            <select id="nfo-collections" value={nfoCollections}
+                    on:change={(e) => nfoCollections = e.currentTarget.value as NFOCollectionsMode}>
+              <option value="off">Off</option>
+              <option value="sets">Sets (&lt;set&gt;)</option>
+              <option value="sets_and_tags">Sets and tags (&lt;set&gt; and &lt;tag&gt;)</option>
+            </select>
+          </div>
+          <p class="check-help">
+            Each set (and tag) named in your movies' NFO files becomes a collection, listed by release date.
+            Movies join as they're scanned; turning this on imports the existing ones in the background.
+          </p>
         </section>
       {/if}
 

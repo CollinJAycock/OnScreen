@@ -206,6 +206,9 @@ type Enricher struct {
 	// franchise, when set, is told which TMDB collection each enriched
 	// movie belongs to (see enricher_franchise.go). nil = not wired.
 	franchise FranchiseRecorder
+	// nfoCollections, when set, imports movie.nfo groupings as manual
+	// collections (see enricher_nfo_collections.go). nil = not wired.
+	nfoCollections NFOCollectionImporter
 }
 
 // aniListEpsCacheEntry is the cached return of a streamingEpisodes
@@ -385,6 +388,11 @@ func inShowCascade(ctx context.Context) bool {
 func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.File) error {
 	agent := e.agentFn()
 	if agent == nil {
+		// No metadata agent, but a movie's NFO collections are still
+		// imported: they come from the files, not from TMDB.
+		if item.Type == "movie" && e.nfoCollections != nil {
+			e.importNFOCollections(ctx, item.LibraryID, item.ID, e.readMovieNFO(ctx, file))
+		}
 		return nil
 	}
 	switch item.Type {
@@ -623,19 +631,8 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 	// metadata source — if it exists we trust it over TMDB guesses.
 	// Use its title for the TMDB search too (gets us better poster
 	// matches when the filename is junk like "Movie_2009_WEB-DL").
-	var nfoMovie *nfo.Movie
-	if nfoPath, err := nfo.FindMovieNFO(file.FilePath); err == nil {
-		if f, err := os.Open(nfoPath); err == nil {
-			parsed, perr := nfo.ParseMovie(f)
-			_ = f.Close()
-			if perr == nil {
-				nfoMovie = parsed
-			} else {
-				e.logger.WarnContext(ctx, "nfo parse failed; falling through to TMDB",
-					"path", nfoPath, "err", perr)
-			}
-		}
-	}
+	nfoMovie := e.readMovieNFO(ctx, file)
+	e.importNFOCollections(ctx, item.LibraryID, item.ID, nfoMovie)
 
 	// Clean the stored title before searching: items scanned before this fix
 	// may have filenames like "Movie_Title_2009_1080p_WEB-DL" stored verbatim.

@@ -10,6 +10,8 @@ vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/api', () => ({
   collectionApi: { list: mockList, create: mockCreate, createManual: mockCreateManual, delete: vi.fn() },
   assetUrl: (p: string) => `http://srv${p}`,
+  collectionPosterUrl: (c: { id: string; poster_version?: number }) =>
+    c.poster_version == null ? null : `/api/v1/collections/${c.id}/poster?v=${c.poster_version}`,
 }));
 
 function signIn(isAdmin: boolean) {

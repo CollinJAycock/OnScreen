@@ -1,3 +1,4 @@
+import { collectionCoverPath } from './api/types';
 import { describe, expect, it } from 'vitest';
 import type { HubRowPref } from './api/types';
 import { orderRows } from './hubLayout';
@@ -102,5 +103,22 @@ describe('orderRows', () => {
     const out = orderRows(rows, [{ key: 'b', enabled: true }]);
     expect(out[0]).toBe(rows[1]);
     expect(keys(rows)).toEqual(['a', 'b']);
+  });
+});
+
+describe('promoted collection rows', () => {
+  it('orders and hides collection:<id> rows like any other', () => {
+    const rows = [{ key: 'plan_to_watch' }, { key: 'collection:c-1' }, { key: 'collection:c-2' }, { key: 'trending' }];
+    const out = orderRows(rows, [
+      { key: 'trending', enabled: true },
+      { key: 'collection:c-2', enabled: true },
+      { key: 'collection:c-1', enabled: false },
+    ]).map((r) => r.key);
+    expect(out).toEqual(['trending', 'collection:c-2', 'plan_to_watch']);
+  });
+
+  it("builds an uploaded cover's path only when there is one", () => {
+    expect(collectionCoverPath({ id: 'c-1', poster_version: 9 })).toBe('/api/v1/collections/c-1/poster?v=9');
+    expect(collectionCoverPath({ id: 'c-1' })).toBeUndefined();
   });
 });

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { collectionApi, assetUrl, type Collection } from '$lib/api';
+  import { collectionApi, assetUrl, collectionPosterUrl, type Collection } from '$lib/api';
   import { confirmAction } from '$lib/native';
 
   let collections: Collection[] = [];
@@ -111,12 +111,14 @@
         <div class="grid">
           {#each manualCollections as col (col.id)}
             <a class="card franchise" href="/collections/{col.id}" title={col.name}>
-              {#if col.poster_path}
+              {#if collectionPosterUrl(col)}
+                <img class="franchise-poster" src={collectionPosterUrl(col)} alt={col.name} loading="lazy" />
+              {:else if col.poster_path}
                 <img class="franchise-poster" src={assetUrl(`/artwork/${encodeURI(col.poster_path)}?w=300`)} alt={col.name} loading="lazy" />
               {:else}
                 <div class="card-icon">&#9638;</div>
               {/if}
-              <div class="card-name">{col.name}</div>
+              <div class="card-name">{col.name}{#if col.rules}<span class="smart-tag">Smart</span>{/if}</div>
               {#if col.item_count !== undefined}
                 <div class="card-sub">{col.item_count} title{col.item_count === 1 ? '' : 's'}</div>
               {/if}
@@ -262,6 +264,7 @@
 
   .card-icon { font-size: 1.5rem; margin-bottom: 0.5rem; color: var(--accent); }
   .card-name { font-size: 0.82rem; font-weight: 600; color: var(--text-secondary); text-align: center; }
+  .smart-tag { margin-left: 0.35rem; font-size: 0.6rem; font-weight: 700; text-transform: uppercase; color: var(--accent); }
 
   .card.genre { padding: 1rem; }
   .card.franchise { padding: 0 0 0.75rem; overflow: hidden; justify-content: flex-start; }

@@ -63,6 +63,10 @@ type Movie struct {
 	TMDBID        int        // from <uniqueid type="tmdb">
 	IMDBID        string     // from <uniqueid type="imdb">
 	TVDBID        int        // some scrapers emit this on movie.nfo too
+	// Set is the movie set (Kodi's collection) the movie belongs to:
+	// <set><name>Alien Collection</name></set>, or the older
+	// <set>Alien Collection</set>. Empty when none.
+	Set string
 }
 
 // Show captures tvshow.nfo. Season overrides live in separate
@@ -136,6 +140,13 @@ type rawMovie struct {
 	IMDBIDLegacy  string     `xml:"imdbid"`
 	TVDBIDLegacy  string     `xml:"tvdbid"`
 	UniqueIDs     []uniqueID `xml:"uniqueid"`
+	Set           rawSet     `xml:"set"`
+}
+
+// rawSet is <set><name>…</name></set>, or the older <set>…</set>.
+type rawSet struct {
+	Name string `xml:"name"`
+	Text string `xml:",chardata"`
 }
 
 type rawShow struct {
@@ -197,6 +208,7 @@ func ParseMovie(r io.Reader) (*Movie, error) {
 	}
 	m.Premiered = parseDate(firstNonEmpty(raw.Premiered, raw.ReleaseDate))
 	m.TMDBID, m.IMDBID, m.TVDBID = resolveIDs(raw.UniqueIDs, raw.TMDBIDLegacy, raw.IMDBIDLegacy, raw.TVDBIDLegacy)
+	m.Set = firstNonEmpty(strings.TrimSpace(raw.Set.Name), strings.TrimSpace(raw.Set.Text))
 	return m, nil
 }
 

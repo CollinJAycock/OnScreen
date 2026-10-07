@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -16,6 +17,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/collections"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -34,6 +36,7 @@ type mcStore struct {
 	itemsArgs   []gen.ListCollectionItemsParams
 	reorders    []gen.ReorderPlaylistItemsParams
 	created     []gen.CreateCollectionParams
+	posters     map[uuid.UUID]gen.GetCollectionPosterRow
 }
 
 func newMCStore() *mcStore {
@@ -41,6 +44,7 @@ func newMCStore() *mcStore {
 		cols:    map[uuid.UUID]gen.Collection{},
 		items:   map[uuid.UUID]gen.GetMediaItemRow{},
 		members: map[uuid.UUID][]uuid.UUID{},
+		posters: map[uuid.UUID]gen.GetCollectionPosterRow{},
 	}
 }
 
@@ -171,6 +175,59 @@ func (s *mcStore) ReorderPlaylistItems(_ context.Context, p gen.ReorderPlaylistI
 	return nil
 }
 
+// Phase 2.
+func (s *mcStore) SetCollectionPromoted(_ context.Context, p gen.SetCollectionPromotedParams) error {
+	c := s.cols[p.ID]
+	c.Promoted = p.Promoted
+	s.cols[p.ID] = c
+	return nil
+}
+func (s *mcStore) SetCollectionRules(_ context.Context, p gen.SetCollectionRulesParams) error {
+	c := s.cols[p.ID]
+	c.Rules = p.Rules
+	s.cols[p.ID] = c
+	return nil
+}
+func (s *mcStore) UpsertCollectionPoster(_ context.Context, p gen.UpsertCollectionPosterParams) error {
+	s.posters[p.CollectionID] = gen.GetCollectionPosterRow{ContentType: p.ContentType, Data: p.Data,
+		UpdatedAt: pgtype.Timestamptz{Time: time.UnixMilli(1700000000000), Valid: true}}
+	return nil
+}
+func (s *mcStore) GetCollectionPoster(_ context.Context, id uuid.UUID) (gen.GetCollectionPosterRow, error) {
+	p, ok := s.posters[id]
+	if !ok {
+		return p, pgx.ErrNoRows
+	}
+	return p, nil
+}
+func (s *mcStore) DeleteCollectionPoster(_ context.Context, id uuid.UUID) error {
+	delete(s.posters, id)
+	return nil
+}
+func (s *mcStore) ListCollectionPosterVersions(_ context.Context, ids []uuid.UUID) ([]gen.ListCollectionPosterVersionsRow, error) {
+	var out []gen.ListCollectionPosterVersionsRow
+	for _, id := range ids {
+		if p, ok := s.posters[id]; ok {
+			out = append(out, gen.ListCollectionPosterVersionsRow{CollectionID: id, UpdatedAt: p.UpdatedAt})
+		}
+	}
+	return out, nil
+}
+
+// mcSmart stands in for collections.Smart: a refresh makes the members
+// whatever the test put in matches.
+type mcSmart struct {
+	s         *mcStore
+	matches   []uuid.UUID
+	refreshed []collections.Rules
+}
+
+func (m *mcSmart) Refresh(_ context.Context, id uuid.UUID, rules collections.Rules) (int, error) {
+	m.refreshed = append(m.refreshed, rules)
+	m.s.members[id] = append([]uuid.UUID(nil), m.matches...)
+	return len(m.matches), nil
+}
+
 var (
 	mcLibMovies = uuid.MustParse("00000000-0000-0000-0000-0000000000a1")
 	mcLibKids   = uuid.MustParse("00000000-0000-0000-0000-0000000000a2")
@@ -185,6 +242,7 @@ type mcFixture struct {
 	show   uuid.UUID // kids library, PG
 	ep     uuid.UUID // an episode (not a collection member type)
 	secret uuid.UUID // a library the user has no grant on
+	smart  *mcSmart
 }
 
 func newMCFixture(t *testing.T, withManual bool) *mcFixture {
@@ -207,8 +265,9 @@ func newMCFixture(t *testing.T, withManual bool) *mcFixture {
 
 	access := frAccess{allowed: map[uuid.UUID]struct{}{mcLibMovies: {}, mcLibKids: {}}}
 	h := NewCollectionHandler(s, slog.Default()).WithLibraryAccess(access)
+	f.smart = &mcSmart{s: s}
 	if withManual {
-		h = h.WithManual(s)
+		h = h.WithManual(s, f.smart)
 	}
 	r := chi.NewRouter()
 	r.Get("/collections", h.List)
@@ -220,6 +279,10 @@ func newMCFixture(t *testing.T, withManual bool) *mcFixture {
 	r.Post("/collections/{id}/items", h.AddItem)
 	r.Put("/collections/{id}/items/order", h.Reorder)
 	r.Get("/libraries/{id}/collections", h.LibraryCollections)
+	r.Delete("/collections/{id}/items/{itemId}", h.RemoveItem)
+	r.Post("/collections/{id}/poster", h.UploadPoster)
+	r.Delete("/collections/{id}/poster", h.DeletePoster)
+	r.Get("/collections/{id}/poster", h.Poster)
 	f.router = r
 	return f
 }

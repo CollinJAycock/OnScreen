@@ -10,7 +10,7 @@
     type HubRowPref,
     type MediaCollection,
   } from '$lib/api';
-  import { Unauthorized } from '$lib/api';
+  import { Unauthorized, collectionCoverPath } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import {
@@ -181,7 +181,7 @@
 
   // Home rows in their default order — the web / Android default: Next Up
   // right under Continue Watching TV, Plan to Watch after the Continue rows,
-  // Trending, then the per-library "Recently Added to <Library>" strips (or
+  // the collections an admin put on the home screen, Trending, then the per-library "Recently Added to <Library>" strips (or
   // the flat aggregate on older servers that don't emit
   // recently_added_by_library), then Collections. The user's saved layout
   // (hub_layout, keys shared with the web) reorders and hides them; empty
@@ -194,8 +194,11 @@
       { kind: 'items', key: 'continue_movies', title: 'Continue Watching Movies', items: movies, continueWatching: true },
       { kind: 'items', key: 'continue_other', title: 'Continue Watching', items: other, continueWatching: true },
       { kind: 'items', key: 'plan_to_watch', title: 'Plan to Watch', items: plan },
-      { kind: 'items', key: 'trending', title: 'Trending', items: data.trending ?? [] },
     ];
+    for (const c of data.collection_rows ?? []) {
+      out.push({ kind: 'items', key: `collection:${c.collection_id}`, title: c.name, items: c.items ?? [] });
+    }
+    out.push({ kind: 'items', key: 'trending', title: 'Trending', items: data.trending ?? [] });
     if (data.recently_added_by_library && data.recently_added_by_library.length > 0) {
       for (const r of data.recently_added_by_library) {
         out.push({ kind: 'items', key: `library:${r.library_id}`, title: `Recently Added to ${r.library_name}`, items: r.items });
@@ -310,6 +313,7 @@
             <PosterCard
               title={col.name}
               posterPath={col.poster_path}
+              posterSrc={collectionCoverPath(col)}
               focusKey={`${row.key}:${col.id}`}
               autofocus={firstPaint && !restoring && ri === 0 && i === 0}
               onclick={() => open(col.id, 'collection')}

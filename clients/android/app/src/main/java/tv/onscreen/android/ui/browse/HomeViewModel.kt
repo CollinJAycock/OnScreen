@@ -28,6 +28,8 @@ data class HomeUiState(
     // v2.5 per-user watch rows (empty on older servers → rows hidden).
     val nextUp: List<HubItem> = emptyList(),
     val planToWatch: List<HubItem> = emptyList(),
+    // v2.6 promoted collections (empty on older servers).
+    val collectionRows: List<HubCollectionRow> = emptyList(),
     val libraryPreviews: List<Pair<Library, List<MediaItem>>> = emptyList(),
     val collections: List<MediaCollection> = emptyList(),
     // User's saved hub row order + visibility (from web). Empty = default layout.
@@ -44,6 +46,7 @@ data class HomeUiState(
             trending.isNotEmpty() ||
             nextUp.isNotEmpty() ||
             planToWatch.isNotEmpty() ||
+            collectionRows.any { it.items.isNotEmpty() } ||
             libraryPreviews.isNotEmpty() ||
             collections.isNotEmpty()
 }
@@ -161,6 +164,7 @@ class HomeViewModel @Inject constructor(
                     trending = hub.trending,
                     nextUp = hub.next_up,
                     planToWatch = hub.plan_to_watch,
+                    collectionRows = hub.collection_rows,
                     libraryPreviews = previews,
                     collections = cols,
                     hubLayout = layout,

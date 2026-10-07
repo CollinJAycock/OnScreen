@@ -230,3 +230,23 @@ func writeFile(t *testing.T, path, body string) {
 		t.Fatalf("writeFile %s: %v", path, err)
 	}
 }
+
+// Kodi writes <set> two ways: the current <set><name>…</name></set> and the
+// legacy bare <set>Name</set>. Both are read; an absent set is "".
+func TestParseMovie_Set(t *testing.T) {
+	cases := map[string]string{
+		`<movie><title>A</title><set><name> The Matrix Collection </name><overview>x</overview></set></movie>`: "The Matrix Collection",
+		`<movie><title>A</title><set>Alien Collection</set></movie>`:                                           "Alien Collection",
+		`<movie><title>A</title></movie>`:                                                                      "",
+		`<movie><title>A</title><set><name></name></set></movie>`:                                              "",
+	}
+	for doc, want := range cases {
+		m, err := ParseMovie(strings.NewReader(doc))
+		if err != nil {
+			t.Fatalf("%s: %v", doc, err)
+		}
+		if m.Set != want {
+			t.Errorf("%s: set %q, want %q", doc, m.Set, want)
+		}
+	}
+}

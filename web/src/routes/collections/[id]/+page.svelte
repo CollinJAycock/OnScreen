@@ -2,8 +2,11 @@
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
-  import { collectionApi, assetUrl, type Collection, type CollectionItem, type CollectionItemOrder } from '$lib/api';
+  import { collectionApi, assetUrl, collectionPosterUrl, type Collection, type CollectionItem, type CollectionItemOrder, type CollectionRules } from '$lib/api';
   import { confirmAction } from '$lib/native';
+  import { describeRules } from '$lib/collectionRules';
+  import { fitCoverImage } from '$lib/coverImage';
+  import CollectionRulesEditor from '$lib/components/CollectionRulesEditor.svelte';
   import FranchiseParts from './FranchiseParts.svelte';
 
   let collection: Collection | null = null;
@@ -23,7 +26,13 @@
   $: manual = collection?.type === 'manual';
   // Playlists are their owner's; manual collections are edited by admins.
   $: canEdit = collection?.type === 'playlist' || (manual && isAdmin);
-  $: customOrder = manual && (collection?.item_order ?? 'custom') === 'custom';
+  // A smart collection's members follow its rules: no hand edits.
+  $: smart = manual && !!collection?.rules;
+  $: canEditMembers = canEdit && !smart;
+  $: customOrder = manual && !smart && (collection?.item_order ?? 'custom') === 'custom';
+  $: uploadedCover = collection ? collectionPosterUrl(collection) : null;
+  let editingRules = false;
+  let coverInput: HTMLInputElement;
 
   const orderLabels: Record<CollectionItemOrder, string> = {
     custom: 'Custom order',
@@ -117,6 +126,65 @@
     } finally { busy = false; }
   }
 
+  async function reloadItems() {
+    const res = await collectionApi.items(id, 200, 0);
+    items = res.items;
+    total = res.total;
+  }
+
+  async function setPromoted(on: boolean) {
+    if (!collection || busy) return;
+    busy = true;
+    try {
+      collection = await collectionApi.updateSettings(id, { promoted: on });
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    finally { busy = false; }
+  }
+
+  async function saveRules(rules: CollectionRules) {
+    if (!collection || busy) return;
+    busy = true;
+    try {
+      collection = await collectionApi.updateSettings(id, { rules });
+      editingRules = false;
+      await reloadItems();
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    finally { busy = false; }
+  }
+
+  async function stopSmart() {
+    if (!collection || busy) return;
+    if (!(await confirmAction('Stop updating this collection from its rules? Its current movies and shows stay, and you can edit them by hand.'))) return;
+    busy = true;
+    try {
+      collection = await collectionApi.updateSettings(id, { rules: null });
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    finally { busy = false; }
+  }
+
+  async function uploadCover(e: Event) {
+    const input = e.currentTarget as HTMLInputElement;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file || !collection || busy) return;
+    busy = true;
+    try {
+      const jpeg = await fitCoverImage(file);
+      collection = await collectionApi.uploadPoster(id, jpeg);
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Could not upload the cover'; }
+    finally { busy = false; }
+  }
+
+  async function removeCover() {
+    if (!collection || busy) return;
+    busy = true;
+    try {
+      await collectionApi.deletePoster(id);
+      collection = await collectionApi.get(id);
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Failed'; }
+    finally { busy = false; }
+  }
+
   async function deleteCollection() {
     if (!collection) return;
     if (!(await confirmAction(`Delete the collection "${collection.name}"? Its movies and shows stay in your libraries.`))) return;
@@ -172,6 +240,12 @@
 
     {#if manual}
       {#if collection.description && !editing}<p class="overview">{collection.description}</p>{/if}
+      {#if smart && collection.rules}
+        <p class="smart-line"><span class="smart-badge">Smart</span> {describeRules(collection.rules)} — updates on its own as your libraries change.</p>
+      {/if}
+      {#if collection.source === 'nfo'}
+        <p class="smart-line"><span class="smart-badge nfo">NFO</span> Imported from movie.nfo files; movies whose NFO names it join automatically.</p>
+      {/if}
       {#if isAdmin}
         <div class="toolbar">
           <label class="sort">
@@ -179,14 +253,50 @@
             <select value={collection.item_order ?? 'custom'} disabled={busy}
                     on:change={(e) => setOrder(e.currentTarget.value as CollectionItemOrder)}>
               {#each Object.entries(orderLabels) as [value, label]}
-                <option {value}>{label}</option>
+                <option {value}>{smart && value === 'custom' ? 'Rules order' : label}</option>
               {/each}
             </select>
           </label>
+          <label class="sort">
+            <input type="checkbox" checked={!!collection.promoted} disabled={busy}
+                   on:change={(e) => setPromoted(e.currentTarget.checked)} />
+            <span>Show on Home</span>
+          </label>
+          <span class="cover-ctl">
+            {#if uploadedCover}
+              <img class="cover-thumb" src={uploadedCover} alt="Cover" />
+            {/if}
+            <button class="btn-edit" disabled={busy} on:click={() => coverInput.click()}>
+              {uploadedCover ? 'Replace cover' : 'Upload cover'}
+            </button>
+            {#if uploadedCover}
+              <button class="btn-edit" disabled={busy} on:click={removeCover}>Remove cover</button>
+            {/if}
+            <input bind:this={coverInput} type="file" accept="image/*" hidden on:change={uploadCover} />
+          </span>
+          {#if smart}
+            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>Edit rules</button>
+            <button class="btn-edit" disabled={busy} on:click={stopSmart}>Stop smart updates</button>
+          {:else}
+            <button class="btn-edit" disabled={busy} on:click={() => editingRules = !editingRules}>Make smart</button>
+          {/if}
           <span class="hint">
-            Add movies and shows from their page or a library's selection. ★ makes a poster the cover.
+            {#if smart}
+              ★ makes a poster the cover.
+            {:else}
+              Add movies and shows from their page or a library's selection. ★ makes a poster the cover.
+            {/if}
           </span>
         </div>
+        {#if editingRules}
+          <CollectionRulesEditor rules={collection.rules} {busy}
+                                 submitLabel={smart ? 'Save rules' : 'Make smart'}
+                                 on:save={(e) => saveRules(e.detail)}
+                                 on:cancel={() => editingRules = false} />
+          {#if !smart}
+            <p class="hint rules-warn">A smart collection's members come from its rules: the current ones are replaced.</p>
+          {/if}
+        {/if}
       {/if}
     {/if}
 
@@ -226,7 +336,7 @@
                 {#if item.duration_ms}<span class="dot">·</span>{fmt(item.duration_ms)}{/if}
               </div>
             </div>
-            {#if canEdit}
+            {#if canEditMembers}
               <button class="remove" title="Remove" aria-label="Remove {item.title}"
                       on:click|preventDefault|stopPropagation={() => removeItem(item.id)}>×</button>
             {/if}
@@ -277,6 +387,16 @@
     color: var(--text-primary); font-size: 0.75rem; padding: 0.25rem 0.4rem;
   }
   .hint { font-size: 0.72rem; color: var(--text-muted); }
+  .rules-warn { margin: -1rem 0 1.5rem; }
+  .smart-line { font-size: 0.78rem; color: var(--text-secondary); margin: -1rem 0 1.25rem; }
+  .smart-badge {
+    display: inline-block; font-size: 0.62rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    padding: 0.1rem 0.4rem; border-radius: 4px; background: rgba(124,106,247,0.18); color: var(--accent); margin-right: 0.3rem;
+  }
+  .smart-badge.nfo { background: rgba(250,204,21,0.15); color: #facc15; }
+  .cover-ctl { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .cover-thumb { width: 1.6rem; height: 2.4rem; object-fit: cover; border-radius: 3px; border: 1px solid var(--border-strong); }
+  .sort input[type='checkbox'] { accent-color: var(--accent); }
 
   .admin-ctl {
     position: absolute; top: 0.35rem; left: 0.35rem; display: flex; gap: 0.2rem;

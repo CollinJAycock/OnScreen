@@ -58,14 +58,16 @@ type HubLibraryLister interface {
 
 // HubHandler serves the home page hub data.
 type HubHandler struct {
-	db       HubDB
-	access   LibraryAccessChecker
-	libs     HubLibraryLister
-	epDB     EpisodePosterDB // optional — when set, substitutes show posters for episode rows
-	watchDB  HubWatchDB      // optional — Next Up / Plan to Watch rows (WithWatchRows)
-	logger   *slog.Logger
-	perLib   int32 // items per library row; defaults to 12 if zero
-	trending *trendingCache
+	db      HubDB
+	access  LibraryAccessChecker
+	libs    HubLibraryLister
+	epDB    EpisodePosterDB // optional — when set, substitutes show posters for episode rows
+	watchDB HubWatchDB      // optional — Next Up / Plan to Watch rows (WithWatchRows)
+	// optional — promoted manual collection rows (WithCollections)
+	collections HubCollectionsDB
+	logger      *slog.Logger
+	perLib      int32 // items per library row; defaults to 12 if zero
+	trending    *trendingCache
 }
 
 // NewHubHandler creates a HubHandler.
@@ -144,6 +146,84 @@ type HubResponse struct {
 	// PlanToWatch: items the caller set to Plan to Watch, newest first,
 	// minus anything now fully watched.
 	PlanToWatch []HubItem `json:"plan_to_watch"`
+	// CollectionRows: the manual collections an admin put on the home
+	// screen, each with the members the caller can see (in the
+	// collection's order); a collection with none visible is left out.
+	// Clients key them collection:<collection_id> in the hub layout.
+	CollectionRows []HubCollectionRow `json:"collection_rows"`
+}
+
+// HubCollectionRow is a promoted collection on the home page.
+type HubCollectionRow struct {
+	CollectionID string    `json:"collection_id"`
+	Name         string    `json:"name"`
+	Items        []HubItem `json:"items"`
+}
+
+// HubCollectionsDB serves the promoted-collection rows. Optional (see
+// WithCollections); *gen.Queries satisfies it.
+type HubCollectionsDB interface {
+	ListPromotedCollections(ctx context.Context) ([]gen.ListPromotedCollectionsRow, error)
+	ListCollectionItems(ctx context.Context, arg gen.ListCollectionItemsParams) ([]gen.ListCollectionItemsRow, error)
+}
+
+// hubCollectionRowLimit caps a promoted collection's row; the query
+// over-fetches so members dropped by the library ACL still leave a full row.
+const (
+	hubCollectionRowLimit = 20
+	hubCollectionRowFetch = 60
+)
+
+// WithCollections wires the promoted-collection rows. Without it
+// collection_rows comes back empty.
+func (h *HubHandler) WithCollections(db HubCollectionsDB) *HubHandler {
+	h.collections = db
+	return h
+}
+
+// collectionRows builds the promoted-collection rows for the caller. Errors
+// drop the affected row rather than the hub.
+func (h *HubHandler) collectionRows(ctx context.Context, maxRank *int32, libAllowed func(uuid.UUID) bool) []HubCollectionRow {
+	out := []HubCollectionRow{}
+	promoted, err := h.collections.ListPromotedCollections(ctx)
+	if err != nil {
+		h.logger.ErrorContext(ctx, "hub: promoted collections", "err", err)
+		return out
+	}
+	for _, c := range promoted {
+		rows, err := h.collections.ListCollectionItems(ctx, gen.ListCollectionItemsParams{
+			CollectionID:  c.ID,
+			MaxRatingRank: maxRank,
+			ItemOrder:     c.ItemOrder,
+			Lim:           hubCollectionRowFetch,
+		})
+		if err != nil {
+			h.logger.ErrorContext(ctx, "hub: collection row", "collection_id", c.ID, "err", err)
+			continue
+		}
+		row := HubCollectionRow{CollectionID: c.ID.String(), Name: c.Name, Items: []HubItem{}}
+		for _, it := range rows {
+			if !libAllowed(it.LibraryID) {
+				continue
+			}
+			row.Items = append(row.Items, HubItem{
+				ID:         it.ID.String(),
+				Title:      it.Title,
+				Type:       it.Type,
+				Year:       intPtrFrom32(it.Year),
+				PosterPath: it.PosterPath,
+				DurationMS: it.DurationMs,
+				UpdatedAt:  timestamptzToMilli(it.AddedAt),
+			})
+			if len(row.Items) >= hubCollectionRowLimit {
+				break
+			}
+		}
+		if len(row.Items) > 0 {
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 // HubLibraryRow is one "Recently added to <library>" strip on the home
@@ -197,6 +277,7 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		Trending:               []HubItem{},
 		NextUp:                 []HubItem{},
 		PlanToWatch:            []HubItem{},
+		CollectionRows:         []HubCollectionRow{},
 	}
 
 	// Convert max content rating from claims to a rank for SQL filtering.
@@ -414,6 +495,10 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if h.watchDB != nil {
 		out.NextUp = h.nextUpRow(r.Context(), claims.UserID, maxRank, libAllowed)
 		out.PlanToWatch = h.planToWatchRow(r.Context(), claims.UserID, maxRank, libAllowed)
+	}
+
+	if h.collections != nil {
+		out.CollectionRows = h.collectionRows(r.Context(), maxRank, libAllowed)
 	}
 
 	// Episode-poster substitution. Collect every episode ID across

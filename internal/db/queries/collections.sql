@@ -1,11 +1,11 @@
 -- name: ListCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 FROM collections
 WHERE user_id IS NULL OR user_id = sqlc.narg('user_id')
 ORDER BY sort_order, name;
 
 -- name: GetCollection :one
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 FROM collections WHERE id = $1;
 
 -- name: CreateCollection :one
@@ -14,12 +14,12 @@ FROM collections WHERE id = $1;
 -- filter shape that resolves at query time.
 INSERT INTO collections (user_id, name, description, type, genre, rules)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key;
 
 -- name: UpdateCollection :one
 UPDATE collections SET name = $2, description = $3, updated_at = NOW()
 WHERE id = $1
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key;
 
 -- name: DeleteCollection :exec
 DELETE FROM collections WHERE id = $1;
@@ -122,7 +122,7 @@ ON CONFLICT DO NOTHING
 RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, library_id;
 
 -- name: ListAutoGenreCollections :many
-SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id
+SELECT id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key
 FROM collections
 WHERE type = 'auto_genre'
 ORDER BY name;
@@ -159,7 +159,7 @@ ORDER BY name;
 -- A server-owned (user_id NULL) collection an admin curates.
 INSERT INTO collections (name, description, type, item_order)
 VALUES ($1, $2, 'manual', $3)
-RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id;
+RETURNING id, user_id, name, description, type, genre, poster_path, sort_order, created_at, updated_at, rules, library_id, tmdb_collection_id, item_order, poster_item_id, promoted, source, source_key;
 
 -- name: SetCollectionItemOrder :exec
 UPDATE collections SET item_order = $2, updated_at = NOW() WHERE id = $1;
@@ -222,3 +222,66 @@ FROM collection_items ci
 JOIN collections c ON c.id = ci.collection_id
 WHERE ci.media_item_id = $1 AND c.type = 'manual'
 ORDER BY c.name, c.id;
+
+-- ── Manual collections, phase 2 (migration 00038) ────────────────────────────
+
+-- name: SetCollectionPromoted :exec
+UPDATE collections SET promoted = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: SetCollectionRules :exec
+-- Rules make a manual collection smart; NULL makes it hand-picked again
+-- (its current members stay).
+UPDATE collections SET rules = $2, updated_at = NOW() WHERE id = $1;
+
+-- name: ListSmartCollections :many
+SELECT id, rules FROM collections
+WHERE type = 'manual' AND rules IS NOT NULL
+ORDER BY id;
+
+-- name: DeleteCollectionItemsNotIn :exec
+-- A smart collection's refresh: drop the members its rules no longer match.
+DELETE FROM collection_items
+WHERE collection_id = sqlc.arg('collection_id')
+  AND NOT (media_item_id = ANY(sqlc.arg('item_ids')::uuid[]));
+
+-- name: UpsertCollectionItemPositions :exec
+-- A smart collection's refresh: add the members its rules match, in the
+-- rules' order (positions 0..N-1).
+INSERT INTO collection_items (collection_id, media_item_id, position)
+SELECT sqlc.arg('collection_id'), t.id, (t.idx - 1)::int
+FROM unnest(sqlc.arg('item_ids')::uuid[]) WITH ORDINALITY AS t(id, idx)
+ON CONFLICT (collection_id, media_item_id) DO UPDATE SET position = EXCLUDED.position;
+
+-- name: ListPromotedCollections :many
+-- Manual collections an admin put on the home screen.
+SELECT id, name, item_order FROM collections
+WHERE type = 'manual' AND promoted
+ORDER BY sort_order, name, id;
+
+-- name: FindOrCreateSourceCollection :one
+-- An imported collection (source 'nfo', source_key 'set:<name>' or
+-- 'tag:<name>'): the existing one, or a new manual collection named after it.
+-- Imported collections list by release date.
+INSERT INTO collections (name, type, source, source_key, item_order)
+VALUES (sqlc.arg('name'), 'manual', sqlc.arg('source'), sqlc.arg('source_key'), 'release')
+ON CONFLICT (source, source_key) WHERE source IS NOT NULL
+DO UPDATE SET updated_at = collections.updated_at
+RETURNING id;
+
+-- name: UpsertCollectionPoster :exec
+INSERT INTO collection_posters (collection_id, content_type, data, updated_at)
+VALUES ($1, $2, $3, NOW())
+ON CONFLICT (collection_id) DO UPDATE
+SET content_type = EXCLUDED.content_type, data = EXCLUDED.data, updated_at = NOW();
+
+-- name: GetCollectionPoster :one
+SELECT content_type, data, updated_at FROM collection_posters WHERE collection_id = $1;
+
+-- name: DeleteCollectionPoster :exec
+DELETE FROM collection_posters WHERE collection_id = $1;
+
+-- name: ListCollectionPosterVersions :many
+-- Which collections have an uploaded cover, and when it last changed (the
+-- clients' cache key).
+SELECT collection_id, updated_at FROM collection_posters
+WHERE collection_id = ANY(sqlc.arg('ids')::uuid[]);

@@ -1054,7 +1054,7 @@ type preferencesResponse struct {
 // hubRowPref is one entry of the per-user hub layout. Key is a row
 // identifier shared across clients: "continue_tv", "continue_movies",
 // "continue_other", "next_up", "plan_to_watch", "trending", "libraries",
-// or "library:<uuid>". Keys are not allow-listed (length-capped only), so a
+// "library:<uuid>" or "collection:<uuid>" (a promoted collection). Keys are not allow-listed (length-capped only), so a
 // client that knows a newer row can save it before this server does. Rows
 // present in the hub data but absent from the layout render enabled, after
 // the configured ones, in default order — so new libraries appear without

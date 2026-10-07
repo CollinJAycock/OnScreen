@@ -99,6 +99,27 @@ var requiredSystemTasks = []systemTask{
 		enabled:  true,
 	},
 	{
+		name:     "Refresh smart collections",
+		taskType: "smart_collections",
+		// Hourly: re-resolves every smart (rule-based) manual collection
+		// against the library so new and re-matched movies and shows join or
+		// leave it. One indexed query per smart collection; with none it does
+		// nothing. Saving a collection's rules refreshes it immediately too.
+		cronExpr: "41 * * * *",
+		enabled:  true,
+	},
+	{
+		name:     "Import NFO collections",
+		taskType: "nfo_collections",
+		// Daily 3:17am: re-reads the movie.nfo files of libraries whose
+		// nfo_collections setting is on and adds their movies to the <set>
+		// (and, if chosen, <tag>) collections. New movies are added as
+		// they're enriched; this catches NFO files edited since. With no
+		// library opted in it reads nothing.
+		cronExpr: "17 3 * * *",
+		enabled:  true,
+	},
+	{
 		name:     "OCR image subtitles",
 		taskType: "ocr_subtitles",
 		// Weekly, Sunday 4:00am local — a full-library OCR sweep of image-based

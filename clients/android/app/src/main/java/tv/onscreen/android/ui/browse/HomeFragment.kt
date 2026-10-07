@@ -137,6 +137,7 @@ class HomeFragment : BrowseSupportFragment() {
                     state.trending.isNotEmpty() ||
                     state.nextUp.isNotEmpty() ||
                     state.planToWatch.isNotEmpty() ||
+                    state.collectionRows.any { it.items.isNotEmpty() } ||
                     state.libraryPreviews.any { it.second.isNotEmpty() } ||
                     state.collections.isNotEmpty()
                 if (state.error != null && !hasContent) {
@@ -366,7 +367,8 @@ class HomeFragment : BrowseSupportFragment() {
         // Candidate home rows in DEFAULT order, each keyed so the user's saved hub
         // layout (configured on the web home, shared per-account via prefs) can
         // reorder + hide them. The web-shared keys are continue_*, next_up,
-        // plan_to_watch, trending and library:<uuid>; recently_added / collections
+        // plan_to_watch, collection:<uuid> (a collection an admin put on the
+        // home screen), trending and library:<uuid>; recently_added / collections
         // are TV-only extras the web never emits, so they fall through to their
         // default position. Default order mirrors the web home: Next Up right
         // under Continue Watching TV, Plan to Watch after the Continue rows (the
@@ -378,6 +380,9 @@ class HomeFragment : BrowseSupportFragment() {
             add(Section("continue_movies") { hubRow(getString(R.string.continue_watching_movies), state.continueWatchingMovies, continuePresenter) })
             add(Section("continue_other") { hubRow(getString(R.string.continue_watching), state.continueWatchingOther, continuePresenter) })
             add(Section("plan_to_watch") { hubRow(getString(R.string.hub_plan_to_watch), state.planToWatch) })
+            state.collectionRows.forEach { row ->
+                add(Section("collection:${row.collection_id}") { hubRow(row.name, row.items) })
+            }
             add(Section("trending") { hubRow(getString(R.string.trending), state.trending) })
             add(Section("recently_added") { hubRow(getString(R.string.recently_added), state.recentlyAdded) })
             state.libraryPreviews.forEach { (library, items) ->
@@ -433,6 +438,7 @@ class HomeFragment : BrowseSupportFragment() {
             state.trending.isNotEmpty() ||
             state.nextUp.isNotEmpty() ||
             state.planToWatch.isNotEmpty() ||
+            state.collectionRows.any { it.items.isNotEmpty() } ||
             state.libraryPreviews.any { it.second.isNotEmpty() } ||
             state.collections.isNotEmpty()
         if (!hasContent) {

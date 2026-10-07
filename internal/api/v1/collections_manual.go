@@ -14,6 +14,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/collections"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -45,13 +46,77 @@ type CollectionManualDB interface {
 	ListLibraryManualCollections(ctx context.Context, arg gen.ListLibraryManualCollectionsParams) ([]gen.ListLibraryManualCollectionsRow, error)
 	ListManualCollectionsForItem(ctx context.Context, mediaItemID uuid.UUID) ([]gen.ListManualCollectionsForItemRow, error)
 	ReorderPlaylistItems(ctx context.Context, arg gen.ReorderPlaylistItemsParams) error
+	// Phase 2 (migration 00038).
+	SetCollectionPromoted(ctx context.Context, arg gen.SetCollectionPromotedParams) error
+	SetCollectionRules(ctx context.Context, arg gen.SetCollectionRulesParams) error
+	UpsertCollectionPoster(ctx context.Context, arg gen.UpsertCollectionPosterParams) error
+	GetCollectionPoster(ctx context.Context, collectionID uuid.UUID) (gen.GetCollectionPosterRow, error)
+	DeleteCollectionPoster(ctx context.Context, collectionID uuid.UUID) error
+	ListCollectionPosterVersions(ctx context.Context, ids []uuid.UUID) ([]gen.ListCollectionPosterVersionsRow, error)
+}
+
+// SmartRefresher sets a smart collection's members from its rules
+// (satisfied by *collections.Smart).
+type SmartRefresher interface {
+	Refresh(ctx context.Context, collectionID uuid.UUID, rules collections.Rules) (int, error)
 }
 
 // WithManual enables manual collections: creating them, their settings and
-// order, their covers and visibility in the listings.
-func (h *CollectionHandler) WithManual(db CollectionManualDB) *CollectionHandler {
+// order, their covers and visibility in the listings. smart may be nil, and
+// then rules can't be saved.
+func (h *CollectionHandler) WithManual(db CollectionManualDB, smart SmartRefresher) *CollectionHandler {
 	h.manual = db
+	h.smart = smart
 	return h
+}
+
+// isSmart reports whether a manual collection's members come from rules.
+func isSmart(c gen.Collection) bool {
+	return c.Type == collectionTypeManual && len(c.Rules) > 0 && string(c.Rules) != "null"
+}
+
+// rejectSmartMembership answers 400 for a hand edit of a smart collection's
+// members (their rules decide them). Returns true when it wrote the response.
+func rejectSmartMembership(w http.ResponseWriter, r *http.Request, c gen.Collection) bool {
+	if !isSmart(c) {
+		return false
+	}
+	respond.BadRequest(w, r, "a smart collection's members come from its rules; change the rules instead")
+	return true
+}
+
+// attachPosterVersions sets PosterVersion on the manual collections in out
+// that have an uploaded cover. Best-effort: a failure leaves them without.
+func (h *CollectionHandler) attachPosterVersions(ctx context.Context, out []collectionResponse) {
+	if h.manual == nil {
+		return
+	}
+	var ids []uuid.UUID
+	for _, c := range out {
+		if c.Type == collectionTypeManual {
+			if id, err := uuid.Parse(c.ID); err == nil {
+				ids = append(ids, id)
+			}
+		}
+	}
+	if len(ids) == 0 {
+		return
+	}
+	rows, err := h.manual.ListCollectionPosterVersions(ctx, ids)
+	if err != nil {
+		h.logger.WarnContext(ctx, "collections: poster versions", "err", err)
+		return
+	}
+	versions := make(map[string]int64, len(rows))
+	for _, row := range rows {
+		versions[row.CollectionID.String()] = row.UpdatedAt.Time.UnixMilli()
+	}
+	for i := range out {
+		if v, ok := versions[out[i].ID]; ok {
+			vv := v
+			out[i].PosterVersion = &vv
+		}
+	}
 }
 
 // manualCover is what the listing shows for a manual collection the caller
@@ -136,6 +201,7 @@ func (h *CollectionHandler) decorateManualList(w http.ResponseWriter, r *http.Re
 		}
 		kept = append(kept, c)
 	}
+	h.attachPosterVersions(r.Context(), kept)
 	return kept, true
 }
 
@@ -171,12 +237,49 @@ func (h *CollectionHandler) manualDetail(w http.ResponseWriter, r *http.Request,
 	resp.PosterPath = cover.poster
 	n := cover.itemCount
 	resp.ItemCount = &n
+	one := []collectionResponse{*resp}
+	h.attachPosterVersions(r.Context(), one)
+	resp.PosterVersion = one[0].PosterVersion
 	return true
+}
+
+// manualSettings are the PATCH-able settings of a manual collection; nil /
+// absent fields are left alone. Rules: absent keeps them, JSON null makes the
+// collection hand-picked again (its members stay), an object makes it smart.
+type manualSettings struct {
+	ItemOrder    *string         `json:"item_order"`
+	PosterItemID *string         `json:"poster_item_id"`
+	Promoted     *bool           `json:"promoted"`
+	Rules        json.RawMessage `json:"rules"`
+}
+
+func (m manualSettings) empty() bool {
+	return m.ItemOrder == nil && m.PosterItemID == nil && m.Promoted == nil && len(m.Rules) == 0
+}
+
+// parseRulesField validates a rules field. clear=true is JSON null.
+// ok=false means a response was already written.
+func (h *CollectionHandler) parseRulesField(w http.ResponseWriter, r *http.Request, raw json.RawMessage) (rules collections.Rules, clear, ok bool) {
+	if string(raw) == "null" {
+		return rules, true, true
+	}
+	if h.smart == nil {
+		respond.BadRequest(w, r, "smart collections are not available on this server")
+		return rules, false, false
+	}
+	rules, err := collections.ParseRules(raw)
+	if err != nil {
+		respond.BadRequest(w, r, err.Error())
+		return rules, false, false
+	}
+	return rules, false, true
 }
 
 // createManual handles POST /collections with type "manual". Admins only:
 // a manual collection is shared with everyone who can see its members.
-func (h *CollectionHandler) createManual(w http.ResponseWriter, r *http.Request, name string, description *string, itemOrder string) {
+// Rules make it smart (members filled from them straight away); promoted
+// puts it on the home screen.
+func (h *CollectionHandler) createManual(w http.ResponseWriter, r *http.Request, name string, description *string, settings manualSettings) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil {
 		respond.Unauthorized(w, r)
@@ -190,12 +293,22 @@ func (h *CollectionHandler) createManual(w http.ResponseWriter, r *http.Request,
 		respond.BadRequest(w, r, "manual collections are not available on this server")
 		return
 	}
-	if itemOrder == "" {
-		itemOrder = "custom"
+	itemOrder := "custom"
+	if settings.ItemOrder != nil && *settings.ItemOrder != "" {
+		itemOrder = *settings.ItemOrder
 	}
 	if !validItemOrder(itemOrder) {
 		respond.BadRequest(w, r, "item_order must be custom, release or title")
 		return
+	}
+	// Validate the rules before anything is written.
+	var rules collections.Rules
+	smart := len(settings.Rules) > 0 && string(settings.Rules) != "null"
+	if smart {
+		var ok bool
+		if rules, _, ok = h.parseRulesField(w, r, settings.Rules); !ok {
+			return
+		}
 	}
 	col, err := h.manual.CreateManualCollection(r.Context(), gen.CreateManualCollectionParams{
 		Name:        name,
@@ -207,31 +320,73 @@ func (h *CollectionHandler) createManual(w http.ResponseWriter, r *http.Request,
 		respond.InternalError(w, r)
 		return
 	}
+	if settings.Promoted != nil && *settings.Promoted {
+		if err := h.manual.SetCollectionPromoted(r.Context(), gen.SetCollectionPromotedParams{ID: col.ID, Promoted: true}); err != nil {
+			h.logger.ErrorContext(r.Context(), "collection promote", "id", col.ID, "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		col.Promoted = true
+	}
+	count := int64(0)
+	if smart {
+		n, ok := h.applyRules(w, r, col.ID, rules)
+		if !ok {
+			return
+		}
+		col.Rules = settings.Rules
+		count = int64(n)
+	}
 	resp := toCollectionResponse(col)
-	zero := int64(0)
-	resp.ItemCount = &zero
+	resp.ItemCount = &count
 	respond.Created(w, r, resp)
 }
 
-// updateManualSettings applies a PATCH's item_order and poster_item_id to a
-// manual collection. An empty poster_item_id clears it (back to the first
-// member's poster); a non-empty one must name a member. ok=false means a
-// response was already written.
-func (h *CollectionHandler) updateManualSettings(w http.ResponseWriter, r *http.Request, col gen.Collection, itemOrder, posterItemID *string) bool {
-	if itemOrder == nil && posterItemID == nil {
+// applyRules stores a smart collection's rules and fills its members from
+// them, returning the member count. ok=false means a response was already
+// written.
+func (h *CollectionHandler) applyRules(w http.ResponseWriter, r *http.Request, id uuid.UUID, rules collections.Rules) (int, bool) {
+	raw, _ := json.Marshal(rules)
+	if err := h.manual.SetCollectionRules(r.Context(), gen.SetCollectionRulesParams{ID: id, Rules: raw}); err != nil {
+		h.logger.ErrorContext(r.Context(), "collection rules", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return 0, false
+	}
+	n, err := h.smart.Refresh(r.Context(), id, rules)
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "smart collection refresh", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return 0, false
+	}
+	return n, true
+}
+
+// updateManualSettings applies a PATCH's manual-collection settings. An empty
+// poster_item_id clears it (back to the first member's poster); a non-empty
+// one must name a member. ok=false means a response was already written.
+func (h *CollectionHandler) updateManualSettings(w http.ResponseWriter, r *http.Request, col gen.Collection, s manualSettings) bool {
+	if s.empty() {
 		return true
 	}
 	if col.Type != collectionTypeManual || h.manual == nil {
-		respond.BadRequest(w, r, "item_order and poster_item_id apply to manual collections only")
+		respond.BadRequest(w, r, "item_order, poster_item_id, promoted and rules apply to manual collections only")
 		return false
 	}
-	if itemOrder != nil && !validItemOrder(*itemOrder) {
+	if s.ItemOrder != nil && !validItemOrder(*s.ItemOrder) {
 		respond.BadRequest(w, r, "item_order must be custom, release or title")
 		return false
 	}
+	var rules collections.Rules
+	clearRules := false
+	if len(s.Rules) > 0 {
+		var ok bool
+		if rules, clearRules, ok = h.parseRulesField(w, r, s.Rules); !ok {
+			return false
+		}
+	}
 	var poster pgtype.UUID
-	if posterItemID != nil && *posterItemID != "" {
-		itemID, err := uuid.Parse(*posterItemID)
+	if s.PosterItemID != nil && *s.PosterItemID != "" {
+		itemID, err := uuid.Parse(*s.PosterItemID)
 		if err != nil {
 			respond.BadRequest(w, r, "invalid poster_item_id")
 			return false
@@ -248,17 +403,35 @@ func (h *CollectionHandler) updateManualSettings(w http.ResponseWriter, r *http.
 		}
 		poster = pgtype.UUID{Bytes: [16]byte(itemID), Valid: true}
 	}
-	if itemOrder != nil {
-		if err := h.manual.SetCollectionItemOrder(r.Context(), gen.SetCollectionItemOrderParams{ID: col.ID, ItemOrder: *itemOrder}); err != nil {
+	if s.ItemOrder != nil {
+		if err := h.manual.SetCollectionItemOrder(r.Context(), gen.SetCollectionItemOrderParams{ID: col.ID, ItemOrder: *s.ItemOrder}); err != nil {
 			h.logger.ErrorContext(r.Context(), "collection item order", "id", col.ID, "err", err)
 			respond.InternalError(w, r)
 			return false
 		}
 	}
-	if posterItemID != nil {
+	if s.PosterItemID != nil {
 		if err := h.manual.SetCollectionPosterItem(r.Context(), gen.SetCollectionPosterItemParams{ID: col.ID, PosterItemID: poster}); err != nil {
 			h.logger.ErrorContext(r.Context(), "collection poster", "id", col.ID, "err", err)
 			respond.InternalError(w, r)
+			return false
+		}
+	}
+	if s.Promoted != nil {
+		if err := h.manual.SetCollectionPromoted(r.Context(), gen.SetCollectionPromotedParams{ID: col.ID, Promoted: *s.Promoted}); err != nil {
+			h.logger.ErrorContext(r.Context(), "collection promote", "id", col.ID, "err", err)
+			respond.InternalError(w, r)
+			return false
+		}
+	}
+	if len(s.Rules) > 0 {
+		if clearRules {
+			if err := h.manual.SetCollectionRules(r.Context(), gen.SetCollectionRulesParams{ID: col.ID, Rules: nil}); err != nil {
+				h.logger.ErrorContext(r.Context(), "collection rules", "id", col.ID, "err", err)
+				respond.InternalError(w, r)
+				return false
+			}
+		} else if _, ok := h.applyRules(w, r, col.ID, rules); !ok {
 			return false
 		}
 	}
@@ -293,7 +466,7 @@ func (h *CollectionHandler) Reorder(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) {
+	if !h.requireOwnerOrAdminMutate(w, r, col) || rejectManagedMutation(w, r, col) || rejectSmartMembership(w, r, col) {
 		return
 	}
 	if col.Type != collectionTypeManual || h.manual == nil {
@@ -411,6 +584,25 @@ func (h *CollectionHandler) libraryManualCollections(ctx context.Context, libID 
 			c.PosterPath = &p
 		}
 		out = append(out, c)
+	}
+	if len(rows) > 0 {
+		ids := make([]uuid.UUID, len(rows))
+		for i, row := range rows {
+			ids[i] = row.ID
+		}
+		// Best-effort, as for the main listing.
+		if versions, err := h.manual.ListCollectionPosterVersions(ctx, ids); err == nil {
+			byID := make(map[string]int64, len(versions))
+			for _, v := range versions {
+				byID[v.CollectionID.String()] = v.UpdatedAt.Time.UnixMilli()
+			}
+			for i := range out {
+				if v, ok := byID[out[i].ID]; ok {
+					vv := v
+					out[i].PosterVersion = &vv
+				}
+			}
+		}
 	}
 	return out, nil
 }

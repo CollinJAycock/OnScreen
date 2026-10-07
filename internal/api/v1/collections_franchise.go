@@ -361,6 +361,9 @@ type libraryCollectionResponse struct {
 	PosterURL        *string `json:"poster_url,omitempty"`
 	PosterPath       *string `json:"poster_path,omitempty"`
 	ItemCount        int64   `json:"item_count"`
+	// PosterVersion: a manual collection's uploaded cover (see
+	// collectionResponse.PosterVersion).
+	PosterVersion *int64 `json:"poster_version,omitempty"`
 }
 
 // LibraryCollections handles GET /api/v1/libraries/{id}/collections: the

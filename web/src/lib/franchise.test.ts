@@ -145,6 +145,9 @@ describe('labels and covers', () => {
   it('prefers the TMDB poster, then the member artwork', () => {
     expect(collectionCover({ poster_url: 'https://x/p.jpg', poster_path: 'a.jpg' })).toEqual({ url: 'https://x/p.jpg' });
     expect(collectionCover({ poster_path: 'a.jpg' })).toEqual({ artwork: 'a.jpg' });
+    // An admin-uploaded cover wins over both.
+    expect(collectionCover({ id: 'c-1', poster_version: 7, poster_url: 'https://x/p.jpg', poster_path: 'a.jpg' }).url)
+      .toBe('/api/v1/collections/c-1/poster?v=7');
     expect(collectionCover({})).toEqual({});
   });
 });

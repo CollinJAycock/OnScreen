@@ -42,6 +42,40 @@ API change lands only when every first-party client moves with it — see
 
     Without a `type`, `POST /collections` still creates a private playlist.
   - **Migration 00037** adds the type and two columns.
+- **Collections on the home screen, smart collections, covers and NFO
+  import.**
+  - **Show on Home:** an admin can put a collection on everyone's home screen.
+    Each person sees it as a row of the titles they can see, and can hide or
+    move it under "Customize rows" like any other row. It appears in the web
+    app and in the Android TV, Samsung, LG and Xbox apps.
+  - **Smart collections:** a collection can follow rules instead of being
+    picked by hand: movies and/or shows, a genre, a year range, a minimum
+    rating and some libraries ("80s horror", "Animated films rated 8+"). It
+    refreshes when the rules are saved and every hour, so new and re-matched
+    titles join on their own. "Stop smart updates" keeps the current titles
+    and makes it hand-picked again.
+  - **Uploaded covers:** an admin can upload any image as a collection's
+    cover instead of picking a member's poster. It's stored re-encoded, at
+    most 1000×1500.
+  - **Kodi NFO import:** a movie library can import the `<set>` (and,
+    optionally, `<tag>`) groupings of its movie.nfo files as collections
+    (library settings, "Collections from NFO files", off by default). Movies
+    join as they're scanned. Turning it on imports the existing ones, and a
+    daily task picks up edited NFO files.
+  - **API (all additive):**
+    - `POST` / `PATCH /collections` take `rules` (null makes a collection
+      hand-picked again) and `promoted`;
+    - `GET`, `POST` and `DELETE /collections/{id}/poster`;
+    - collections gain `rules`, `promoted`, `poster_version` and `source`;
+    - the hub gains `collection_rows`, with layout keys
+      `collection:<id>`;
+    - libraries gain `nfo_collections`.
+
+    Hand edits of a smart collection's titles are refused with a 400.
+  - **New tasks:** "Refresh smart collections" (hourly) and "Import NFO
+    collections" (daily).
+  - **Migration 00038** adds the columns, the cover table and the library
+    setting.
 
 ### Changed
 

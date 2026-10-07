@@ -124,3 +124,34 @@ describe('Library settings — seek-bar thumbnails', () => {
     expect(screen.getByTestId('trickplay-progress').textContent).toBe('');
   });
 });
+
+describe('Library settings — NFO collections', () => {
+  it('shows the current mode on movie libraries and sends a change', async () => {
+    mockGet.mockResolvedValue(lib({ nfo_collections: 'sets' }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib(body));
+    render(Page);
+    const select = (await screen.findByLabelText('Import from movie.nfo')) as HTMLSelectElement;
+    expect(select.value).toBe('sets');
+    await fireEvent.change(select, { target: { value: 'sets_and_tags' } });
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].nfo_collections).toBe('sets_and_tags');
+  });
+
+  it('leaves an unchanged mode out of the save (no re-import)', async () => {
+    mockGet.mockResolvedValue(lib({ nfo_collections: 'sets' }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib(body));
+    render(Page);
+    await screen.findByLabelText('Import from movie.nfo');
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect('nfo_collections' in mockUpdate.mock.calls[0][1]).toBe(false);
+  });
+
+  it('is only offered for movie libraries', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'show' }));
+    render(Page);
+    await screen.findByRole('button', { name: /save changes/i });
+    expect(screen.queryByLabelText('Import from movie.nfo')).toBeNull();
+  });
+});

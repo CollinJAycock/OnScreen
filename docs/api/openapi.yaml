@@ -2308,6 +2308,9 @@ paths:
         Without `type` (or with `playlist`) this creates the caller's own
         private playlist. `type: manual` (v2.6) creates a shared,
         admin-curated movie / TV collection — admins only (403 otherwise).
+        A manual collection can be created smart (`rules`: its members are
+        filled from them at once and kept in step by the hourly
+        `smart_collections` task) and on the home screen (`promoted`).
       requestBody:
         required: true
         content:
@@ -2320,6 +2323,8 @@ paths:
                 description: { type: string }
                 type:        { type: string, enum: [playlist, manual] }
                 item_order:  { type: string, enum: [custom, release, title], description: 'Manual collections: how members are listed (default custom).' }
+                promoted:    { type: boolean, description: 'Manual collections: on the home screen (hub collection_rows).' }
+                rules:       { $ref: '#/components/schemas/CollectionRules' }
       responses:
         '201':
           description: Created.
@@ -2329,7 +2334,7 @@ paths:
                 type: object
                 properties:
                   data: { $ref: '#/components/schemas/Collection' }
-        '400': { description: 'Missing name, an unknown type, or an invalid item_order.' }
+        '400': { description: 'Missing name, an unknown type, an invalid item_order, or invalid rules.' }
         '403': { description: 'type manual by a non-admin.' }
 
   /api/v1/collections/{id}:
@@ -2363,10 +2368,14 @@ paths:
       summary: Update a collection
       tags: [Collections]
       description: |
-        Fields left out keep their value (an empty name too). `item_order`
-        and `poster_item_id` apply to manual collections only (400
-        otherwise); `poster_item_id` must be a member, and an empty string
-        goes back to the first member's poster.
+        Fields left out keep their value (an empty name too). `item_order`,
+        `poster_item_id`, `promoted` and `rules` apply to manual collections
+        only (400 otherwise); `poster_item_id` must be a member, and an empty
+        string goes back to the first member's poster. `rules` (v2.6) makes
+        the collection smart and replaces its members with what the rules
+        match; `rules: null` makes it hand-picked again, keeping its members.
+        A smart collection's members can't be added, removed or reordered by
+        hand (400).
       requestBody:
         required: true
         content:
@@ -2378,6 +2387,10 @@ paths:
                 description:    { type: string }
                 item_order:     { type: string, enum: [custom, release, title] }
                 poster_item_id: { type: string, description: 'A member item id, or empty to clear.' }
+                promoted:       { type: boolean }
+                rules:
+                  allOf: [{ $ref: '#/components/schemas/CollectionRules' }]
+                  nullable: true
       responses:
         '200':
           description: Updated.
@@ -2428,6 +2441,7 @@ paths:
                         poster_url:         { type: string }
                         poster_path:        { type: string }
                         item_count:         { type: integer, format: int64 }
+                        poster_version:     { type: integer, format: int64, description: 'v2.6: a manual collection''s uploaded cover (see Collection.poster_version).' }
         '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/collections/{id}/items:
@@ -2457,7 +2471,7 @@ paths:
         shows in one request. Every item must exist and be visible to the
         caller (404 otherwise) and be a movie or show (400 otherwise);
         nothing is added unless all pass. Items already in the collection
-        stay where they are.
+        stay where they are. A smart collection refuses hand adds (400).
       requestBody:
         required: true
         content:
@@ -2492,9 +2506,65 @@ paths:
                 item_ids: { type: array, items: { type: string, format: uuid } }
       responses:
         '204': { description: Reordered. }
-        '400': { description: 'Not a manual collection, or a malformed / repeated id.' }
+        '400': { description: 'Not a manual collection, a smart one, or a malformed / repeated id.' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { description: 'MANAGED_COLLECTION: a franchise collection.' }
+
+  /api/v1/collections/{id}/poster:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A manual collection's uploaded cover
+      tags: [Collections]
+      description: |
+        v2.6. The JPEG an admin uploaded. Accepts `?token=` (asset token) as
+        well as the Authorization header, so an `<img>` can load it. Served to
+        admins and to anyone who can see one of the collection's members
+        (404 otherwise, and when there is no uploaded cover). Clients add
+        `?v=<poster_version>` so a new cover isn't served from cache.
+      responses:
+        '200':
+          description: The cover.
+          content:
+            image/jpeg: { schema: { type: string, format: binary } }
+        '304': { description: Not modified (If-None-Match). }
+        '404': { $ref: '#/components/responses/NotFound' }
+    post:
+      summary: Upload a manual collection's cover
+      tags: [Collections]
+      description: |
+        v2.6, admins only. The image as the raw request body (typed by its
+        Content-Type) or as the multipart field `poster`; JPEG, PNG, GIF or
+        WebP, at most 1 MB (the API's body limit — scale a photo down
+        first). It is re-encoded as a JPEG of at most 1000×1500, which is all
+        that is stored. It wins over `poster_item_id` until deleted.
+      requestBody:
+        required: true
+        content:
+          image/*: { schema: { type: string, format: binary } }
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                poster: { type: string, format: binary }
+      responses:
+        '200':
+          description: The collection, with its new `poster_version`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Collection' }
+        '400': { description: 'Not a manual collection, or not an image the server can read.' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '413': { description: 'PAYLOAD_TOO_LARGE: over 1 MB.' }
+    delete:
+      summary: Remove a manual collection's uploaded cover
+      tags: [Collections]
+      description: v2.6, admins only. Back to the chosen (or first) member's poster.
+      responses:
+        '204': { description: Removed. }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /api/v1/collections/{id}/items/{itemId}:
     parameters:
@@ -2505,6 +2575,7 @@ paths:
       tags: [Collections]
       responses:
         '204': { description: Removed. }
+        '400': { description: 'A smart collection (its members follow its rules).' }
 
   # ── Playlists ──────────────────────────────────────────────────────────────
   /api/v1/playlists:
@@ -5178,6 +5249,15 @@ components:
             each scan the library's video items without sprites are queued,
             and the nightly `trickplay_backfill` task works through the rest.
             On by default for movie/show/anime/cartoons/home_video libraries.
+        nfo_collections:
+          type: string
+          enum: ['off', sets, sets_and_tags]
+          description: |
+            v2.6. Import movie.nfo groupings as manual collections: `sets`
+            makes a collection per `<set>`, `sets_and_tags` also per `<tag>`.
+            Movies join as they're enriched, the daily `nfo_collections` task
+            re-reads the NFO files, and turning it on imports the existing
+            ones in the background. Membership is only ever added. Default off.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:
@@ -5203,6 +5283,7 @@ components:
         trickplay_enabled:
           type: boolean
           description: Omit for the per-type default (on for video library types, off otherwise).
+        nfo_collections: { type: string, enum: ['off', sets, sets_and_tags], default: 'off' }
     LibraryUpdate:
       type: object
       description: |
@@ -5232,6 +5313,10 @@ components:
           type: boolean
           nullable: true
           description: PATCH semantics — omit to preserve current value.
+        nfo_collections:
+          type: string
+          enum: ['off', sets, sets_and_tags]
+          description: Omit to preserve. Changing it to sets or sets_and_tags starts a background import of the library's movie.nfo files.
     GenreCount:
       type: object
       properties:
@@ -5551,6 +5636,22 @@ components:
             recently set first, at most 20, minus anything now fully
             watched. Always present (possibly empty); per-user layout
             key `plan_to_watch`.
+        collection_rows:
+          type: array
+          description: |
+            v2.6. The manual collections an admin put on the home screen
+            (`promoted`), each with up to 20 members the caller can see, in
+            the collection's order; a collection with none visible is left
+            out. Always present (possibly empty); per-user layout key
+            `collection:<collection_id>`.
+          items:
+            type: object
+            properties:
+              collection_id: { type: string, format: uuid }
+              name:          { type: string }
+              items:
+                type: array
+                items: { $ref: '#/components/schemas/ChildItem' }
     NextUpItem:
       type: object
       description: An episode tile. Art is the show's (poster / fanart); thumb_path is the episode still when there is one.
@@ -5904,7 +6005,8 @@ components:
             ("all 4K HDR movies from 2020+", "songs not played in
             6 months"). Evaluated at query time so newly-imported
             items matching the rules appear without a rebuild. Null
-            for static playlists / collections.
+            for static playlists / collections. On a `manual` collection
+            (v2.6) it is a CollectionRules object: the collection is smart.
           additionalProperties: true
         item_count: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
@@ -5912,12 +6014,29 @@ components:
         tmdb_collection_id: { type: integer, description: Franchise collections only. }
         item_order:     { type: string, enum: [custom, release, title], description: 'Manual collections only: how the items listing orders members.' }
         poster_item_id: { type: string, format: uuid, description: 'Manual collections only: the member whose poster is the cover; absent = the first member''s.' }
+        promoted:       { type: boolean, description: 'v2.6, manual collections: on the home screen.' }
+        poster_version: { type: integer, format: int64, description: 'v2.6, manual collections: set when an admin uploaded a cover, served at /collections/{id}/poster?v=<poster_version>; wins over poster_path.' }
+        source:         { type: string, enum: [nfo], description: 'v2.6: set on a manual collection imported from movie.nfo files.' }
         poster_url:   { type: string, description: 'Franchise collections only: TMDB collection poster (absolute URL).' }
         backdrop_url: { type: string, description: 'Franchise detail only: TMDB collection backdrop.' }
         parts:
           type: array
           description: Franchise detail (GET /collections/{id}) only; see that operation.
           items: { $ref: '#/components/schemas/FranchisePart' }
+    CollectionRules:
+      type: object
+      description: |
+        v2.6. A smart manual collection's rules: what it holds is every movie
+        and/or show matching all of them, best-sorted by title.
+      required: [types]
+      properties:
+        types:       { type: array, items: { type: string, enum: [movie, show] }, minItems: 1 }
+        genres:      { type: array, items: { type: string }, description: 'A member must have the first genre.' }
+        year_min:    { type: integer }
+        year_max:    { type: integer }
+        rating_min:  { type: number, minimum: 0, maximum: 10 }
+        library_ids: { type: array, items: { type: string, format: uuid }, description: 'Only these libraries; empty = all.' }
+        limit:       { type: integer, minimum: 1, maximum: 500, default: 200 }
     FranchisePart:
       type: object
       properties:

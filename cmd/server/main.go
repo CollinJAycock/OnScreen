@@ -28,6 +28,7 @@ import (
 	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/collections"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db"
 	"github.com/onscreen/onscreen/internal/db/gen"
@@ -481,6 +482,12 @@ func run() error {
 	// into any closure before the reassignment, so no placeholder is needed.
 	var artworkRootsFn func() []api.ArtworkRoot
 	metaAgent := scanner.NewEnricher(agentFn, artworkMgr, mediaSvc, func() []string { return scanPathsFn() }, logger)
+	// Manual collections whose members aren't hand-picked: smart (rule-based)
+	// ones, and ones imported from movie.nfo <set> / <tag> as movies are
+	// enriched (libraries.nfo_collections).
+	smartCollections := collections.NewSmart(gen.New(rwPool), logger)
+	nfoCollections := collections.NewNFOImporter(gen.New(rwPool), logger)
+	metaAgent.SetNFOCollectionImporter(nfoCollections)
 
 	// Wire TVDB fallback — reads key from DB setting, falls back to env var.
 	// Uses lazy init so the key can be set at runtime via the settings UI.
@@ -689,7 +696,8 @@ func run() error {
 		WithDetector(libEnqueuer.introDetector).
 		WithAudit(auditLogger).
 		WithWatchState(gen.New(roPool)).
-		WithParentTitles(gen.New(roPool))
+		WithParentTitles(gen.New(roPool)).
+		WithNFOSweeper(nfoCollections)
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 
@@ -737,7 +745,8 @@ func run() error {
 		WithLibraryAccess(libSvc).
 		WithLibraries(libSvc).
 		WithEpisodePoster(gen.New(roPool)).
-		WithWatchRows(gen.New(roPool))
+		WithWatchRows(gen.New(roPool)).
+		WithCollections(gen.New(roPool))
 	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
@@ -1389,6 +1398,12 @@ func run() error {
 	// the once-per-failure "download failed" notices (seeded every 5 min).
 	schedRegistry.Register("arr_request_sync",
 		scheduler.NewArrRequestSyncHandler(requestsSvc))
+	// Smart (rule-based) collections follow their rules; NFO-imported
+	// collections pick up edited movie.nfo files.
+	schedRegistry.Register("smart_collections",
+		scheduler.NewSmartCollectionsHandler(smartCollections))
+	schedRegistry.Register("nfo_collections",
+		scheduler.NewNFOCollectionsHandler(nfoCollections))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the
@@ -1473,7 +1488,7 @@ func run() error {
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,
-		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc).WithManual(gen.New(rwPool)),
+		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc).WithManual(gen.New(rwPool), smartCollections),
 		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		PhotoAlbums:     v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		LiveTV:          liveTVHandler,

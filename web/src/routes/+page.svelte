@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
-  import { libraryApi, hubApi, userApi, itemApi, assetUrl, waitForAuthBootstrap, type Library, type HubItem, type HubData, type HubLibraryRow, type HubRowPref } from '$lib/api';
+  import { libraryApi, hubApi, userApi, itemApi, assetUrl, waitForAuthBootstrap, type Library, type HubItem, type HubData, type HubLibraryRow, type HubRowPref, type HubCollectionRow } from '$lib/api';
   import { itemHref } from '$lib/itemHref';
   import { toast } from '$lib/stores/toast';
   import { nextUpSubtitle, removeById, restoreAt } from '$lib/watchState';
@@ -16,6 +16,8 @@
   // Next unwatched episode per show in flight; the user's Plan to Watch list.
   let nextUp: HubItem[] = [];
   let planToWatch: HubItem[] = [];
+  // Collections an admin put on the home screen.
+  let collectionRows: HubCollectionRow[] = [];
   let loading = true;
   let error = '';
   let confirmDelete: Library | null = null;
@@ -39,8 +41,9 @@
     // header and may render square; 'plain' is trending; 'libraries' is
     // the library-tile grid (default last, pinnable anywhere); 'next_up'
     // tiles are episodes labelled show title + "S2 · E5 — Title".
-    kind: 'continue' | 'plain' | 'library' | 'libraries' | 'next_up';
+    kind: 'continue' | 'plain' | 'library' | 'libraries' | 'next_up' | 'collection';
     libraryId?: string;
+    collectionId?: string;
     libraryType?: string;
     librarySquare?: boolean;
   };
@@ -52,6 +55,13 @@
     { key: 'continue_movies', title: 'Continue Watching Movies',   items: continueMovies, kind: 'continue' },
     { key: 'continue_other',  title: 'Continue Watching',          items: continueOther,  kind: 'continue' },
     { key: 'plan_to_watch',   title: 'Plan to Watch',              items: planToWatch,    kind: 'plain' },
+    ...collectionRows.map((row): HubSection => ({
+      key: `collection:${row.collection_id}`,
+      title: row.name,
+      items: row.items,
+      kind: 'collection',
+      collectionId: row.collection_id,
+    })),
     { key: 'trending',        title: 'Trending this week',         items: trending,       kind: 'plain' },
     ...recentlyAddedByLibrary.map((row): HubSection => ({
       key: `library:${row.library_id}`,
@@ -192,6 +202,7 @@
   function unpackWatchRows(hub: HubData) {
     nextUp = hub.next_up ?? [];
     planToWatch = hub.plan_to_watch ?? [];
+    collectionRows = hub.collection_rows ?? [];
   }
 
   // ── Continue Watching: remove a tile ─────────────────────────────────────
@@ -465,6 +476,10 @@
               <a class="hub-title-link" href={libraryGridHref(section.libraryId ?? '', section.libraryType, { sort: 'created_at', sort_dir: 'desc' })}>
                 {section.title}
               </a>
+            </h2>
+          {:else if section.kind === 'collection'}
+            <h2 class="hub-title">
+              <a class="hub-title-link" href="/collections/{section.collectionId}">{section.title}</a>
             </h2>
           {:else}
             <h2 class="hub-title">{section.title}</h2>

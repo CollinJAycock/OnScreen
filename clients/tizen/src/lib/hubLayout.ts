@@ -12,7 +12,8 @@
 //     recently_added / collections rows) still shows up without a re-save.
 //
 // Keys: continue_tv, next_up, continue_movies, continue_other, plan_to_watch,
-// trending and library:<uuid> are shared with the web; recently_added (older
+// trending, library:<uuid> and collection:<uuid> (a promoted collection) are
+// shared with the web; recently_added (older
 // servers' flat strip) and collections are TV-only extras.
 
 import type { HubRowPref } from './api/types';

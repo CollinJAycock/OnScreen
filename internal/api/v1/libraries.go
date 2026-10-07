@@ -56,9 +56,12 @@ type LibraryResponse struct {
 	// TrickplayEnabled: automatic seek-bar thumbnail generation after scans
 	// and in the nightly backfill. Additive (v2.5); on by default for new
 	// video libraries.
-	TrickplayEnabled bool   `json:"trickplay_enabled"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	TrickplayEnabled bool `json:"trickplay_enabled"`
+	// NFOCollections: which movie.nfo groupings scans import as manual
+	// collections — "off", "sets" or "sets_and_tags". Additive (v2.6).
+	NFOCollections string `json:"nfo_collections"`
+	CreatedAt      string `json:"created_at"`
+	UpdatedAt      string `json:"updated_at"`
 }
 
 // toLibraryResponse converts a domain Library into the API response.
@@ -75,6 +78,7 @@ func toLibraryResponse(lib *library.Library, includeScanPaths bool) LibraryRespo
 		IsPrivate:         lib.IsPrivate,
 		AutoGrantNewUsers: lib.AutoGrantNewUsers,
 		TrickplayEnabled:  lib.TrickplayEnabled,
+		NFOCollections:    lib.NFOCollections,
 		CreatedAt:         lib.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         lib.UpdatedAt.Format(time.RFC3339),
 	}
@@ -171,9 +175,41 @@ type LibraryHandler struct {
 	media    MediaItemLister // optional; enables GET /libraries/:id/items
 	detector IntroDetectorRunner
 	logger   *slog.Logger
-	audit    *audit.Logger   // optional; nil disables admin-action audit logging
-	watchDB  LibraryWatchDB  // optional; per-item watch fields + GET /libraries/:id/random (WithWatchState)
-	parentDB LibraryParentDB // optional; parent_title on child rows of the listing (WithParentTitles)
+	audit    *audit.Logger        // optional; nil disables admin-action audit logging
+	watchDB  LibraryWatchDB       // optional; per-item watch fields + GET /libraries/:id/random (WithWatchState)
+	parentDB LibraryParentDB      // optional; parent_title on child rows of the listing (WithParentTitles)
+	nfoSweep NFOCollectionSweeper // optional; catch-up import when NFO collections are turned on (WithNFOSweeper)
+}
+
+// NFOCollectionSweeper imports a library's movie.nfo groupings as manual
+// collections. Satisfied by *collections.NFOImporter.
+type NFOCollectionSweeper interface {
+	SweepLibrary(ctx context.Context, libraryID uuid.UUID) (string, error)
+}
+
+// WithNFOSweeper makes turning a library's nfo_collections setting on import
+// its existing movies' NFO groupings straight away, in the background.
+func (h *LibraryHandler) WithNFOSweeper(s NFOCollectionSweeper) *LibraryHandler {
+	h.nfoSweep = s
+	return h
+}
+
+// sweepNFOCollections runs the catch-up import detached from the request
+// (it reads every movie.nfo in the library). Logs the outcome.
+func (h *LibraryHandler) sweepNFOCollections(libraryID uuid.UUID) {
+	if h.nfoSweep == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Hour)
+		defer cancel()
+		summary, err := h.nfoSweep.SweepLibrary(ctx, libraryID)
+		if err != nil {
+			h.logger.Warn("nfo collections: library import failed", "library_id", libraryID, "err", err)
+			return
+		}
+		h.logger.Info("nfo collections: library imported", "library_id", libraryID, "summary", summary)
+	}()
 }
 
 // NewLibraryHandler creates a LibraryHandler.
@@ -272,9 +308,15 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		AutoGrantNewUsers       bool          `json:"auto_grant_new_users"`
 		// Omitted = per-type default (on for video libraries).
 		TrickplayEnabled *bool `json:"trickplay_enabled"`
+		// Omitted = "off".
+		NFOCollections string `json:"nfo_collections"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	if body.NFOCollections != "" && !library.ValidNFOCollections(body.NFOCollections) {
+		respond.BadRequest(w, r, "nfo_collections must be off, sets or sets_and_tags")
 		return
 	}
 
@@ -313,6 +355,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		IsPrivate:               body.IsPrivate,
 		AutoGrantNewUsers:       autoGrant,
 		TrickplayEnabled:        body.TrickplayEnabled,
+		NFOCollections:          body.NFOCollections,
 	})
 	if err != nil {
 		var ve *library.ValidationError
@@ -381,11 +424,16 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IsPrivate               *bool          `json:"is_private,omitempty"`
 		AutoGrantNewUsers       *bool          `json:"auto_grant_new_users,omitempty"`
 		TrickplayEnabled        *bool          `json:"trickplay_enabled,omitempty"`
+		NFOCollections          *string        `json:"nfo_collections,omitempty"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body: "+err.Error())
+		return
+	}
+	if body.NFOCollections != nil && !library.ValidNFOCollections(*body.NFOCollections) {
+		respond.BadRequest(w, r, "nfo_collections must be off, sets or sets_and_tags")
 		return
 	}
 
@@ -452,6 +500,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		IsPrivate:               body.IsPrivate,
 		AutoGrantNewUsers:       body.AutoGrantNewUsers,
 		TrickplayEnabled:        body.TrickplayEnabled,
+		NFOCollections:          body.NFOCollections,
 	})
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
@@ -461,6 +510,9 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(r.Context(), "update library", "id", id, "err", err)
 		respond.InternalError(w, r)
 		return
+	}
+	if body.NFOCollections != nil && *body.NFOCollections != "off" {
+		h.sweepNFOCollections(lib.ID)
 	}
 	// Update is admin-only at the router; admins always see scan_paths.
 	respond.Success(w, r, toLibraryResponse(lib, true))

@@ -49,6 +49,11 @@ type Library struct {
 	// rest. New video libraries default to on (see DefaultTrickplayEnabled).
 	TrickplayEnabled bool
 
+	// NFOCollections is which movie.nfo groupings a scan imports as manual
+	// collections: "off", "sets" (<set>) or "sets_and_tags" (<set> and
+	// <tag>). See ValidNFOCollections.
+	NFOCollections string
+
 	ScanInterval            *time.Duration
 	ScanLastCompletedAt     *time.Time
 	MetadataRefreshInterval *time.Duration
@@ -77,6 +82,14 @@ type CreateLibraryParams struct {
 	// TrickplayEnabled: nil lets Create pick the per-type default
 	// (DefaultTrickplayEnabled); non-nil is the admin's explicit choice.
 	TrickplayEnabled *bool
+	// NFOCollections: "" means "off".
+	NFOCollections string
+}
+
+// ValidNFOCollections reports whether s is a library's NFO collection import
+// setting.
+func ValidNFOCollections(s string) bool {
+	return s == "off" || s == "sets" || s == "sets_and_tags"
 }
 
 // DefaultTrickplayEnabled reports whether a new library of the given type
@@ -106,6 +119,7 @@ type UpdateLibraryParams struct {
 	IsPrivate         *bool
 	AutoGrantNewUsers *bool
 	TrickplayEnabled  *bool
+	NFOCollections    *string
 }
 
 // Querier is the subset of gen.Querier that this service needs.

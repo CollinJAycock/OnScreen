@@ -286,6 +286,8 @@ class CardPresenter(
         // endpoint, which is type-agnostic and re-encodes whatever
         // image the server has on hand.
         val url = when {
+            data.imageApiPath != null && serverUrl.isNotEmpty() ->
+                "${normaliseScheme(serverUrl)}${data.imageApiPath}"
             data.posterPath != null && serverUrl.isNotEmpty() ->
                 artworkUrl(serverUrl, data.posterPath)
             data.itemId != null && serverUrl.isNotEmpty() ->
@@ -354,6 +356,9 @@ class CardPresenter(
          *  the server didn't expose an /artwork/ path (audiobooks,
          *  some photos). Null for non-item types like collections. */
         val itemId: String?,
+        /** An API image path that wins over [posterPath] (a collection's
+         *  uploaded cover). Sent with the session's auth like /artwork. */
+        val imageApiPath: String? = null,
     )
 
     private fun extractCardData(item: Any): CardData? = when (item) {
@@ -361,7 +366,7 @@ class CardPresenter(
         is MediaItem -> CardData(item.title, item.poster_path, item.id)
         is ChildItem -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
         is SearchResult -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
-        is MediaCollection -> CardData(item.name, item.poster_path, null)
+        is MediaCollection -> CardData(item.name, item.poster_path, null, item.coverApiPath)
         is CollectionItem -> CardData(item.title, item.poster_path, item.id)
         is FavoriteItem -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
         is HistoryItem -> CardData(item.title, item.thumb_path, item.id)

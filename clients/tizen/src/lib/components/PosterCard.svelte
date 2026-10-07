@@ -6,6 +6,9 @@
   interface Props {
     title: string;
     posterPath?: string;
+    /** An API path for the image instead of an /artwork poster (a
+     *  collection's uploaded cover); wins over posterPath. */
+    posterSrc?: string;
     subtitle?: string;
     progressRatio?: number;
     /** Fully watched: a check mark in the corner. */
@@ -26,6 +29,7 @@
   let {
     title,
     posterPath,
+    posterSrc,
     subtitle,
     progressRatio,
     watched = false,
@@ -51,6 +55,7 @@
   let retry = $state(0);
   const posterUrl = $derived.by(() => {
     void retry;
+    if (posterSrc) return api.assetUrl(posterSrc);
     return posterPath ? api.assetUrl(`/artwork/${posterPath}?w=400`) : '';
   });
   let failed = $state(false);
