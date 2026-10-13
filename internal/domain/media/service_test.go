@@ -471,7 +471,7 @@ func (m *mockQuerier) SoftDeleteItemsWithNoActiveFiles(_ context.Context, libID 
 			continue
 		}
 		switch it.Type {
-		case "movie", "episode", "track", "photo":
+		case "movie", "episode", "track", "photo", "audiobook_chapter", "podcast_episode":
 			hasActive := false
 			for _, f := range m.files[id] {
 				if f.Status == "active" {
@@ -499,7 +499,7 @@ func (m *mockQuerier) SoftDeleteEmptyContainerItems(_ context.Context, libID uui
 			continue
 		}
 		switch it.Type {
-		case "show", "season", "artist", "album":
+		case "show", "season", "artist", "album", "podcast":
 			hasChild := false
 			for _, child := range m.items {
 				if child.ParentID != nil && *child.ParentID == id {

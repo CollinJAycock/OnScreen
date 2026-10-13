@@ -26,6 +26,7 @@
 
   let id = $derived($page.params.id!);
   let downloading = $derived(episodes.some((e) => e.status === 'downloading'));
+  let downloadedCount = $derived(feed?.downloaded_count ?? episodes.filter((e) => e.status === 'downloaded').length);
 
   const keepOptions: [number, string][] = [
     [0, 'All episodes'], [1, 'Newest 1'], [3, 'Newest 3'], [5, 'Newest 5'],
@@ -254,7 +255,7 @@
           <p>Stop following {feed.title}? The feed stops being checked.</p>
           <label class="check">
             <input type="checkbox" bind:checked={deleteFiles} />
-            Also delete the {feed.downloaded_count ?? episodes.filter((e) => e.status === 'downloaded').length} downloaded episodes
+            Also delete the {downloadedCount === 1 ? 'downloaded episode' : `${downloadedCount} downloaded episodes`}
             (otherwise they stay in the library)
           </label>
           <div class="actions">
