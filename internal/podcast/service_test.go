@@ -347,6 +347,7 @@ type fakeFiles struct {
 	byPath  map[string]*media.File
 	deleted []uuid.UUID
 	hidden  []uuid.UUID
+	cleaned []uuid.UUID // libraries CleanupEmptyItems ran on
 }
 
 func (f *fakeFiles) GetFileByPath(_ context.Context, path string) (*media.File, error) {
@@ -369,6 +370,13 @@ func (f *fakeFiles) SoftDeleteItemIfEmpty(_ context.Context, id uuid.UUID) error
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.hidden = append(f.hidden, id)
+	return nil
+}
+
+func (f *fakeFiles) CleanupEmptyItems(_ context.Context, libraryID uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.cleaned = append(f.cleaned, libraryID)
 	return nil
 }
 
@@ -694,6 +702,9 @@ func TestRetention_KeepsLatestDownloads(t *testing.T) {
 			t.Errorf("%s = %q, want downloaded", g, st)
 		}
 	}
+	if len(h.files.cleaned) != 1 {
+		t.Errorf("CleanupEmptyItems ran %d times after retention, want 1", len(h.files.cleaned))
+	}
 
 	// A refresh doesn't fetch a removed episode again.
 	if _, err := h.svc.Refresh(context.Background(), feed.ID); err != nil {
@@ -775,6 +786,11 @@ func TestDeleteDownload(t *testing.T) {
 	if len(h.files.deleted) != 1 || h.files.deleted[0] != file.ID || len(h.files.hidden) != 1 || h.files.hidden[0] != file.MediaItemID {
 		t.Errorf("library record: deleted %v, hidden %v", h.files.deleted, h.files.hidden)
 	}
+	// An emptied show is hidden by the service: the folder rescan finds no
+	// media and stops before the scanner's own cleanup.
+	if len(h.files.cleaned) != 1 || h.files.cleaned[0] != h.lib.ID {
+		t.Errorf("CleanupEmptyItems ran on %v, want once on the library", h.files.cleaned)
+	}
 	if err := h.svc.DeleteDownload(context.Background(), ep.ID); err != ErrNotDownloaded {
 		t.Errorf("second DeleteDownload = %v, want ErrNotDownloaded", err)
 	}
@@ -796,6 +812,9 @@ func TestUnsubscribe(t *testing.T) {
 			_, statErr := os.Stat(*ep.FilePath)
 			if deleteFiles != os.IsNotExist(statErr) {
 				t.Errorf("file exists = %v after unsubscribe with delete_files=%v", statErr == nil, deleteFiles)
+			}
+			if cleaned := len(h.files.cleaned) > 0; cleaned != deleteFiles {
+				t.Errorf("CleanupEmptyItems ran = %v with delete_files=%v", cleaned, deleteFiles)
 			}
 		})
 	}
