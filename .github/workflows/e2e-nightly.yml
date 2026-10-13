@@ -30,6 +30,10 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "1.26"
+          # Newest 1.26.x, not the runner's cached patch: security fixes land
+          # in patch releases, and setup-go's GOTOOLCHAIN=local ignores go.mod's
+          # toolchain line.
+          check-latest: true
           cache: true
 
       # Builds the image (web + Go inside the Dockerfile), runs the suite and

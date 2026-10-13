@@ -35,6 +35,10 @@ jobs:
           # the same toolchain CI tests (this was 1.25 vs CI's 1.26 until the
           # v2.4.0 cut).
           go-version: "1.26"
+          # Newest 1.26.x, not the runner's cached patch: security fixes land
+          # in patch releases, and setup-go's GOTOOLCHAIN=local ignores go.mod's
+          # toolchain line.
+          check-latest: true
           cache: true
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0

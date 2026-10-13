@@ -24,6 +24,10 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "1.26"
+          # Newest 1.26.x, not the runner's cached patch: security fixes land
+          # in patch releases, and setup-go's GOTOOLCHAIN=local ignores go.mod's
+          # toolchain line.
+          check-latest: true
           cache: true
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -78,6 +82,10 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "1.26"
+          # Newest 1.26.x, not the runner's cached patch: security fixes land
+          # in patch releases, and setup-go's GOTOOLCHAIN=local ignores go.mod's
+          # toolchain line.
+          check-latest: true
           cache: true
 
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
@@ -173,6 +181,10 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
           go-version: "1.26"
+          # Newest 1.26.x, not the runner's cached patch: security fixes land
+          # in patch releases, and setup-go's GOTOOLCHAIN=local ignores go.mod's
+          # toolchain line.
+          check-latest: true
           cache: true
 
       - name: Install govulncheck
