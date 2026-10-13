@@ -3289,9 +3289,12 @@ paths:
 
         Documented fields (additive — v2.x may add more):
           - `tmdb_api_key`, `tvdb_api_key`, `arr_api_key` (masked)
-          - `omdb_api_key` *(v2.6, masked)* — the OMDb key the daily
+          - `omdb_api_key` *(v2.6, masked)* — the OMDb key the hourly
             `external_ratings` task uses for IMDb, Rotten Tomatoes and
             Metacritic scores (`ItemDetail.external_ratings`)
+          - `omdb_daily_limit` *(v2.6)* — lookups the key allows a day
+            (1–1000000, default 1000); the task never exceeds it in any
+            24 hours. Out of range is a 422.
           - `arr_webhook_url`, `arr_path_mappings`
           - `transcode_encoders`
           - `web_downloads_enabled` *(v2.2)* — admin toggle for the

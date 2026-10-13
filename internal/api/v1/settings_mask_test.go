@@ -43,6 +43,8 @@ func (m *maskSpySettings) ArrAPIKey(context.Context) string  { return "real-arr"
 func (m *maskSpySettings) OMDbAPIKey(context.Context) string { return "real-omdb" }
 
 func (m *maskSpySettings) SetOMDbAPIKey(_ context.Context, v string) error { m.omdb = v; return nil }
+func (m *maskSpySettings) OMDbDailyLimit(context.Context) int              { return 1000 }
+func (m *maskSpySettings) SetOMDbDailyLimit(context.Context, int) error    { return nil }
 
 func (m *maskSpySettings) SetTMDBAPIKey(_ context.Context, v string) error { m.tmdb = v; return nil }
 func (m *maskSpySettings) SetTVDBAPIKey(_ context.Context, v string) error { m.tvdb = v; return nil }

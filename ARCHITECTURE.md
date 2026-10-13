@@ -182,13 +182,13 @@ OnScreen/
 │   ├── config/         Env-var bootstrap config (only what's needed pre-DB)
 │   ├── db/
 │   │   ├── gen/        sqlc-generated query wrappers
-│   │   └── migrations/ 41 goose migrations: squashed baseline 00001_init + 40
+│   │   └── migrations/ 42 goose migrations: squashed baseline 00001_init + 41
 │   │                   since (TOTP, scrobbling, requests, issues, etc.)
 │   ├── domain/         Library, media, profile, library_access, settings, watchevent
 │   ├── livetv/         HDHomeRun / M3U tuners, EPG (Schedules Direct + XMLTV),
 │   │                   DVR matcher + recording worker, refcounted HLS proxy
 │   ├── externalratings/ IMDb / Rotten Tomatoes / Metacritic scores from OMDb,
-│   │                   refreshed by a daily task within the key's budget
+│   │                   refreshed hourly within the key's daily limit
 │   ├── metadata/       TMDB / TVDB / MusicBrainz / OpenLibrary / Wikipedia / OMDb clients
 │   ├── notification/   In-app SSE notifications + webhook dispatch (HMAC-SHA256)
 │   ├── observability/  slog handlers, Prometheus metrics, OTel setup, health checks

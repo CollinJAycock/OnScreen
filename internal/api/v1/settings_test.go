@@ -30,6 +30,7 @@ type mockSettingsService struct {
 	key            string
 	tvdbKey        string
 	omdbKey        string
+	omdbLimit      int
 	setErr         error
 	setTVDBErr     error
 	fleet          settings.WorkerFleetConfig
@@ -78,6 +79,19 @@ func (m *mockSettingsService) SetTVDBAPIKey(_ context.Context, key string) error
 	return nil
 }
 func (m *mockSettingsService) OMDbAPIKey(_ context.Context) string { return m.omdbKey }
+func (m *mockSettingsService) OMDbDailyLimit(_ context.Context) int {
+	if m.omdbLimit == 0 {
+		return settings.DefaultOMDbDailyLimit
+	}
+	return m.omdbLimit
+}
+func (m *mockSettingsService) SetOMDbDailyLimit(_ context.Context, n int) error {
+	if n < 1 || n > settings.MaxOMDbDailyLimit {
+		return settings.ErrInvalidSetting
+	}
+	m.omdbLimit = n
+	return nil
+}
 func (m *mockSettingsService) SetOMDbAPIKey(_ context.Context, key string) error {
 	m.omdbKey = key
 	return nil
@@ -1070,5 +1084,34 @@ func TestSettings_UpdateLDAP_ReplacesNewPassword(t *testing.T) {
 	}
 	if svc.ldap.BindPassword != "new-pw" {
 		t.Errorf("password not replaced: got %q", svc.ldap.BindPassword)
+	}
+}
+
+func TestSettings_OMDbDailyLimit(t *testing.T) {
+	svc := &mockSettingsService{}
+	h := newSettingsHandler(svc)
+
+	rec := httptest.NewRecorder()
+	h.Get(rec, httptest.NewRequest(http.MethodGet, "/api/v1/settings", nil))
+	var resp struct {
+		Data struct {
+			OMDbDailyLimit int `json:"omdb_daily_limit"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil || resp.Data.OMDbDailyLimit != 1000 {
+		t.Errorf("default limit = %d %v, want 1000", resp.Data.OMDbDailyLimit, err)
+	}
+
+	rec = httptest.NewRecorder()
+	h.Update(rec, httptest.NewRequest(http.MethodPatch, "/api/v1/settings", strings.NewReader(`{"omdb_daily_limit":100000}`)))
+	if rec.Code != http.StatusNoContent || svc.omdbLimit != 100000 {
+		t.Errorf("set: status %d, limit %d", rec.Code, svc.omdbLimit)
+	}
+	for _, bad := range []string{`0`, `-5`, `2000000`} {
+		rec = httptest.NewRecorder()
+		h.Update(rec, httptest.NewRequest(http.MethodPatch, "/api/v1/settings", strings.NewReader(`{"omdb_daily_limit":`+bad+`}`)))
+		if rec.Code != http.StatusUnprocessableEntity || svc.omdbLimit != 100000 {
+			t.Errorf("limit %s: status %d, limit %d; want 422 and unchanged", bad, rec.Code, svc.omdbLimit)
+		}
 	}
 }

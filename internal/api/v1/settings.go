@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -30,6 +31,8 @@ type SettingsServiceIface interface {
 	SetTVDBAPIKey(ctx context.Context, key string) error
 	OMDbAPIKey(ctx context.Context) string
 	SetOMDbAPIKey(ctx context.Context, key string) error
+	OMDbDailyLimit(ctx context.Context) int
+	SetOMDbDailyLimit(ctx context.Context, n int) error
 	ArrAPIKey(ctx context.Context) string
 	SetArrAPIKey(ctx context.Context, key string) error
 	ArrPathMappings(ctx context.Context) map[string]string
@@ -578,6 +581,7 @@ type settingsResponse struct {
 	TMDBAPIKey          string                  `json:"tmdb_api_key"`
 	TVDBAPIKey          string                  `json:"tvdb_api_key"`
 	OMDbAPIKey          string                  `json:"omdb_api_key"`
+	OMDbDailyLimit      int                     `json:"omdb_daily_limit"`
 	ArrAPIKey           string                  `json:"arr_api_key"`
 	ArrWebhookURL       string                  `json:"arr_webhook_url"`
 	ArrPathMappings     map[string]string       `json:"arr_path_mappings,omitempty"`
@@ -979,6 +983,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		TMDBAPIKey:          maskAPIKey(h.svc.TMDBAPIKey(ctx)),
 		TVDBAPIKey:          maskAPIKey(h.svc.TVDBAPIKey(ctx)),
 		OMDbAPIKey:          maskAPIKey(h.svc.OMDbAPIKey(ctx)),
+		OMDbDailyLimit:      h.svc.OMDbDailyLimit(ctx),
 		ArrAPIKey:           maskAPIKey(arrKey),
 		ArrWebhookURL:       webhookURL,
 		ArrPathMappings:     h.svc.ArrPathMappings(ctx),
@@ -1004,6 +1009,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		TMDBAPIKey          *string            `json:"tmdb_api_key"`
 		TVDBAPIKey          *string            `json:"tvdb_api_key"`
 		OMDbAPIKey          *string            `json:"omdb_api_key"`
+		OMDbDailyLimit      *int               `json:"omdb_daily_limit"`
 		ArrAPIKey           *string            `json:"arr_api_key"`
 		ArrPathMappings     *map[string]string `json:"arr_path_mappings"`
 		TranscodeEncoders   *string            `json:"transcode_encoders"`
@@ -1176,6 +1182,17 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.TVDBAPIKey != nil && *body.TVDBAPIKey != maskedSecret {
 		if err := h.svc.SetTVDBAPIKey(ctx, *body.TVDBAPIKey); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "tvdb_api_key", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.OMDbDailyLimit != nil {
+		if err := h.svc.SetOMDbDailyLimit(ctx, *body.OMDbDailyLimit); err != nil {
+			if errors.Is(err, settings.ErrInvalidSetting) {
+				respond.ValidationError(w, r, fmt.Sprintf("omdb_daily_limit must be between 1 and %d", settings.MaxOMDbDailyLimit))
+				return
+			}
+			h.logger.ErrorContext(ctx, "update settings", "key", "omdb_daily_limit", "err", err)
 			respond.InternalError(w, r)
 			return
 		}
@@ -1503,6 +1520,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.OMDbAPIKey != nil {
 			detail["omdb_api_key"] = "changed"
+		}
+		if body.OMDbDailyLimit != nil {
+			detail["omdb_daily_limit"] = *body.OMDbDailyLimit
 		}
 		if body.ArrAPIKey != nil {
 			detail["arr_api_key"] = "changed"

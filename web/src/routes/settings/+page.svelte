@@ -10,6 +10,7 @@
   let tmdbApiKey = '';
   let tvdbApiKey = '';
   let omdbApiKey = '';
+  let omdbDailyLimit = 1000;
   let arrApiKey = '';
   let arrWebhookUrl = '';
   let arrPathMappings: Array<{ remote: string; local: string }> = [];
@@ -64,6 +65,7 @@
       tmdbApiKey = s.tmdb_api_key ?? '';
       tvdbApiKey = s.tvdb_api_key ?? '';
       omdbApiKey = s.omdb_api_key ?? '';
+      omdbDailyLimit = s.omdb_daily_limit ?? 1000;
       arrApiKey = s.arr_api_key ?? '';
       arrWebhookUrl = s.arr_webhook_url ?? '';
       const pm = s.arr_path_mappings ?? {};
@@ -141,6 +143,7 @@
         tmdb_api_key: tmdbApiKey.trim(),
         tvdb_api_key: tvdbApiKey.trim(),
         omdb_api_key: omdbApiKey.trim(),
+        omdb_daily_limit: Math.min(Math.max(Math.round(Number(omdbDailyLimit) || 1000), 1), 1000000),
         arr_api_key: arrApiKey.trim(),
         arr_path_mappings: pm,
         opensubtitles: {
@@ -340,10 +343,17 @@
             spellcheck="false"
           />
           <div class="hint">
-            Optional. Adds IMDb, Rotten Tomatoes and Metacritic scores to movies and shows, fetched by a daily task
-            (Settings ▸ Library ▸ Tasks runs it on demand). A free key allows 1,000 lookups a day, so a large library
-            fills in over a few days. Get one at
+            Optional. Adds IMDb, Rotten Tomatoes and Metacritic scores to movies and shows, fetched by an hourly task
+            (Settings ▸ Library ▸ Tasks runs it on demand). Get a free key at
             <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">omdbapi.com</a>.
+          </div>
+        </div>
+        <div class="field">
+          <label for="omdb-limit">OMDb Daily Lookups</label>
+          <input id="omdb-limit" type="number" min="1" max="1000000" step="1" bind:value={omdbDailyLimit} />
+          <div class="hint">
+            How many lookups the key allows a day: 1,000 for a free key, more for a paid one. Lower it if another app
+            uses the same key. Lookups never go over this in any 24 hours, so a large library fills in over a few days.
           </div>
         </div>
       </section>
