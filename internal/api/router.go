@@ -98,14 +98,17 @@ type Handlers struct {
 	Debug           *v1.DebugHandler // admin runtime + pprof
 	Capabilities    *v1.CapabilitiesHandler
 	ArrServices     *v1.ArrServicesHandler // outbound arr instance CRUD (admin)
-	Requests        *v1.RequestHandler     // user + admin request workflow
-	Discover        *v1.DiscoverHandler    // TMDB-backed search for the request UI
-	Upcoming        *v1.UpcomingHandler    // Radarr/Sonarr calendar for the request UI
-	Issues          *v1.IssueHandler       // "Report a problem" + admin Library health / re-grab
-	StreamTracker   *streaming.Tracker
-	Artwork         *artwork.Manager
-	ArtworkRoots    func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
-	LibraryAccess   v1.LibraryAccessChecker // ACL for artwork; nil = bypass (dev setups)
+	// Podcasts: admin podcast RSS subscriptions — subscribe, episodes,
+	// downloads, auto-download and retention.
+	Podcasts      *v1.PodcastHandler
+	Requests      *v1.RequestHandler  // user + admin request workflow
+	Discover      *v1.DiscoverHandler // TMDB-backed search for the request UI
+	Upcoming      *v1.UpcomingHandler // Radarr/Sonarr calendar for the request UI
+	Issues        *v1.IssueHandler    // "Report a problem" + admin Library health / re-grab
+	StreamTracker *streaming.Tracker
+	Artwork       *artwork.Manager
+	ArtworkRoots  func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
+	LibraryAccess v1.LibraryAccessChecker // ACL for artwork; nil = bypass (dev setups)
 	// ArtworkContentRating resolves the owning item's content rating for an
 	// artwork file, keyed by (library, library-relative slash path). Lets the
 	// artwork server apply the per-user content-rating ceiling — library ACL
@@ -964,6 +967,23 @@ func NewRouter(h *Handlers) http.Handler {
 					// Reachability, the instance's own health checks, disk
 					// space behind its root folders, queue size.
 					r.Get("/admin/arr-services/{id}/health", h.ArrServices.Health)
+				})
+			}
+
+			// Podcast feed subscriptions — admin only. Subscribing makes the
+			// server fetch the feed hourly and write episodes into a library.
+			if h.Podcasts != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/admin/podcast-feeds", h.Podcasts.List)
+					r.Post("/admin/podcast-feeds", h.Podcasts.Create)
+					r.Get("/admin/podcast-feeds/{id}", h.Podcasts.Get)
+					r.Patch("/admin/podcast-feeds/{id}", h.Podcasts.Update)
+					r.Delete("/admin/podcast-feeds/{id}", h.Podcasts.Delete)
+					r.Post("/admin/podcast-feeds/{id}/refresh", h.Podcasts.Refresh)
+					r.Get("/admin/podcast-feeds/{id}/episodes", h.Podcasts.Episodes)
+					r.Post("/admin/podcast-episodes/{id}/download", h.Podcasts.DownloadEpisode)
+					r.Delete("/admin/podcast-episodes/{id}/download", h.Podcasts.DeleteEpisodeDownload)
 				})
 			}
 

@@ -27,6 +27,9 @@ var (
 	_ Store  = (*Provider)(nil)
 	_ Lister = (*Provider)(nil)
 	_ Putter = (*Provider)(nil)
+
+	_ StreamPutter = (*Provider)(nil)
+	_ Deleter      = (*Provider)(nil)
 )
 
 // NewProvider returns a Provider serving from s, or from Local when s is nil.
@@ -103,4 +106,26 @@ func (p *Provider) Put(ctx context.Context, key string, data []byte) error {
 		return fmt.Errorf("mediastore: backend %T does not support writes", cur)
 	}
 	return pt.Put(ctx, key, data)
+}
+
+// PutStream implements StreamPutter by delegating to the active backend when it
+// supports streamed writes.
+func (p *Provider) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	cur := p.current()
+	sp, ok := cur.(StreamPutter)
+	if !ok {
+		return fmt.Errorf("mediastore: backend %T does not support streamed writes", cur)
+	}
+	return sp.PutStream(ctx, key, r, size)
+}
+
+// Delete implements Deleter by delegating to the active backend when it
+// supports deletes.
+func (p *Provider) Delete(ctx context.Context, key string) error {
+	cur := p.current()
+	d, ok := cur.(Deleter)
+	if !ok {
+		return fmt.Errorf("mediastore: backend %T does not support deletes", cur)
+	}
+	return d.Delete(ctx, key)
 }

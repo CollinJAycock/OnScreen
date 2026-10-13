@@ -670,11 +670,14 @@ type ChildItemResponse struct {
 	// so the UI can show an OVA / Special badge on the episode list.
 	// Nil for ordinary episodes; the web client treats absent + "episode"
 	// the same.
-	Kind         *string   `json:"kind,omitempty"`
-	ViewOffsetMS int64     `json:"view_offset_ms"`
-	Watched      bool      `json:"watched"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    int64     `json:"updated_at"`
+	Kind *string `json:"kind,omitempty"`
+	// OriginallyAvailableAt is the release date (YYYY-MM-DD) when known —
+	// a podcast episode's publish date, which orders its show's episodes.
+	OriginallyAvailableAt *string   `json:"originally_available_at,omitempty"`
+	ViewOffsetMS          int64     `json:"view_offset_ms"`
+	Watched               bool      `json:"watched"`
+	CreatedAt             time.Time `json:"created_at"`
+	UpdatedAt             int64     `json:"updated_at"`
 }
 
 // Get handles GET /api/v1/items/{id}.
@@ -1212,22 +1215,23 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out = append(out, ChildItemResponse{
-			ID:           c.ID.String(),
-			Title:        c.Title,
-			Type:         c.Type,
-			Year:         c.Year,
-			Summary:      c.Summary,
-			Rating:       c.Rating,
-			DurationMS:   c.DurationMS,
-			PosterPath:   c.PosterPath,
-			ThumbPath:    c.ThumbPath,
-			Index:        c.Index,
-			DiscNumber:   c.DiscNumber,
-			Kind:         c.Kind,
-			ViewOffsetMS: viewOffsetMS,
-			Watched:      watched,
-			CreatedAt:    c.CreatedAt,
-			UpdatedAt:    c.UpdatedAt.UnixMilli(),
+			ID:                    c.ID.String(),
+			Title:                 c.Title,
+			Type:                  c.Type,
+			Year:                  c.Year,
+			Summary:               c.Summary,
+			Rating:                c.Rating,
+			DurationMS:            c.DurationMS,
+			PosterPath:            c.PosterPath,
+			ThumbPath:             c.ThumbPath,
+			Index:                 c.Index,
+			DiscNumber:            c.DiscNumber,
+			Kind:                  c.Kind,
+			OriginallyAvailableAt: dateString(c.OriginallyAvailableAt),
+			ViewOffsetMS:          viewOffsetMS,
+			Watched:               watched,
+			CreatedAt:             c.CreatedAt,
+			UpdatedAt:             c.UpdatedAt.UnixMilli(),
 		})
 	}
 	respond.List(w, r, out, int64(len(out)), "")
@@ -3004,4 +3008,13 @@ func watchLimitBlocks(
 		return true
 	}
 	return false
+}
+
+// dateString formats a calendar date as YYYY-MM-DD; nil stays nil.
+func dateString(t *time.Time) *string {
+	if t == nil {
+		return nil
+	}
+	s := t.Format("2006-01-02")
+	return &s
 }

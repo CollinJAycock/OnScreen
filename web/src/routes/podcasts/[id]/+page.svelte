@@ -2,12 +2,16 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
+  import { itemApi, podcastApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
+  import { sortPodcastEpisodes } from '$lib/podcasts';
 
   let show: ItemDetail | null = null;
   let episodes: ChildItem[] = [];
   let loading = true;
   let error = '';
+  // The RSS subscription behind this show, for admins (its episodes and
+  // settings live on the feed page).
+  let feedId: string | null = null;
 
   $: id = $page.params.id!;
 
@@ -36,20 +40,31 @@
       }
       show = detail;
       const list = await itemApi.children(id);
-      // Newest episodes first. The scanner stores episode index from
-      // file ordering; for date-stamped folders ("2024-04-01 - Title")
-      // the natural order matches publication order so we reverse-sort.
-      episodes = list.items.slice().sort((a, b) => {
-        const ai = a.index ?? 0;
-        const bi = b.index ?? 0;
-        if (ai !== bi) return bi - ai;
-        return b.title.localeCompare(a.title);
-      });
+      episodes = sortPodcastEpisodes(list.items);
+      feedId = await findFeed(detail.library_id, detail.id);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load podcast';
     } finally {
       loading = false;
     }
+  }
+
+  async function findFeed(libraryId: string, showId: string): Promise<string | null> {
+    let admin = false;
+    try { admin = !!JSON.parse(localStorage.getItem('onscreen_user') ?? '{}')?.is_admin; } catch { /* not admin */ }
+    if (!admin) return null;
+    try {
+      const feeds = await podcastApi.listFeeds(libraryId);
+      return feeds.items.find((f) => f.show_item_id === showId)?.id ?? null;
+    } catch {
+      return null;
+    }
+  }
+
+  function published(date?: string): string {
+    if (!date) return '';
+    const d = new Date(`${date}T00:00:00`);
+    return isNaN(d.getTime()) ? '' : d.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
   }
 
   function dur(ms?: number): string {
@@ -90,6 +105,7 @@
         <h1>{show.title}</h1>
         <div class="counts">
           {episodes.length} {episodes.length === 1 ? 'episode' : 'episodes'}
+          {#if feedId}· <a class="feed-link" href="/podcasts/feeds/{feedId}">Manage subscription</a>{/if}
         </div>
         {#if show.summary}<p class="summary">{show.summary}</p>{/if}
       </div>
@@ -97,7 +113,11 @@
 
     {#if episodes.length === 0}
       <div class="empty">
-        <p>No episodes scanned yet. Drop episode files into this podcast's folder and rescan.</p>
+        {#if feedId}
+          <p>No episodes downloaded yet. <a href="/podcasts/feeds/{feedId}">Choose episodes to download</a>.</p>
+        {:else}
+          <p>No episodes scanned yet. Drop episode files into this podcast's folder and rescan.</p>
+        {/if}
       </div>
     {:else}
       <section class="episodes">
@@ -120,7 +140,11 @@
                 <div class="ep-body">
                   <div class="ep-title">{ep.title}</div>
                   {#if ep.summary}<div class="ep-summary">{ep.summary}</div>{/if}
-                  {#if ep.duration_ms}<div class="ep-meta">{dur(ep.duration_ms)}</div>{/if}
+                  {#if ep.originally_available_at || ep.duration_ms}
+                    <div class="ep-meta">
+                      {published(ep.originally_available_at)}{ep.originally_available_at && ep.duration_ms ? ' · ' : ''}{dur(ep.duration_ms)}
+                    </div>
+                  {/if}
                 </div>
               </a>
             </li>
@@ -160,6 +184,8 @@
     margin: 0 0 0.5rem; line-height: 1.1;
   }
   .counts { font-size: 0.85rem; color: var(--text-secondary); margin-bottom: 0.6rem; }
+  .feed-link, .empty a { color: var(--accent); text-decoration: none; }
+  .feed-link:hover, .empty a:hover { text-decoration: underline; }
   .summary {
     font-size: 0.85rem; color: var(--text-secondary); line-height: 1.5;
     margin: 0; max-width: 70ch;

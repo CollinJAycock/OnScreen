@@ -33,7 +33,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 ## Features
 
 **Library**
-- Movies, TV shows, **anime** (typed library with AniList primary metadata), music, photos, **audiobooks**, **books / comics** (CBZ + CBR + EPUB), **music videos**, **home videos**, podcasts (local files); all scanned with ffprobe / EXIF / tag readers
+- Movies, TV shows, **anime** (typed library with AniList primary metadata), music, photos, **audiobooks**, **books / comics** (CBZ + CBR + EPUB), **music videos**, **home videos**, **podcasts** (RSS feed subscriptions with auto-download and retention, or local files); all scanned with ffprobe / EXIF / tag readers
 - TMDB + TVDB + AniList + MusicBrainz metadata enrichment with Cover Art Archive fallback
 - Watching status (Plan to Watch / Watching / On Hold / Completed / Dropped) — generic, not anime-only — synced across every client
 - TMDB franchise collections, created automatically once two films of a collection are in the library; the collection page lists the missing films with a Request button

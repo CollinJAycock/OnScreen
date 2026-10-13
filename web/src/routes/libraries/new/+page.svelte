@@ -18,24 +18,23 @@
   // until the volume/chapter hierarchy + reader polish ship. Server-side
   // validateCreateParams refuses it too. Re-add 'manga' here when the
   // feature reopens.
-  // `podcast` is parked the same way as of v2.5 — the scanner is a
-  // local-files stub with no RSS subscription; existing podcast
-  // libraries keep working, but new ones wait for the real model.
-  let type: 'movie' | 'show' | 'anime' | 'cartoons' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'home_video' | 'book' = 'movie';
+  let type: 'movie' | 'show' | 'anime' | 'cartoons' | 'music' | 'photo' | 'dvr' | 'audiobook' | 'podcast' | 'home_video' | 'book' = 'movie';
   let paths: string[] = [''];
   let agent = 'tmdb';
   let language = 'en';
   let submitting = false;
   let error = '';
 
-  // DVR recordings carry their own metadata from EPG — no point
-  // hitting TMDB. Auto-flip agent when user picks DVR; reset on
-  // switch back so we don't leave 'none' stuck across type changes.
+  // DVR recordings carry their own metadata from EPG, and podcasts from
+  // their RSS feed — no point hitting TMDB. Auto-flip agent when the user
+  // picks one; reset on switch back so we don't leave 'none' stuck across
+  // type changes.
+  const ownMetadata = (t: string) => t === 'dvr' || t === 'podcast';
   let lastType: string = type;
   $: {
     if ((type as string) !== lastType) {
-      if (type === 'dvr') agent = 'none';
-      else if (lastType === 'dvr') agent = 'tmdb';
+      if (ownMetadata(type)) agent = 'none';
+      else if (ownMetadata(lastType)) agent = 'tmdb';
       lastType = type;
     }
   }
@@ -84,7 +83,7 @@
         <input id="name" bind:value={name} placeholder="Movies" autocomplete="off" />
       </div>
       <div class="type-picker">
-        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime'],['cartoons','🦸','Cartoons'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
+        {#each [['movie','🎬','Movies'],['show','📺','TV Shows'],['anime','🌸','Anime'],['cartoons','🦸','Cartoons'],['music','🎵','Music'],['audiobook','🎧','Audiobooks'],['podcast','🎙️','Podcasts'],['photo','🖼️','Photos'],['home_video','📹','Home Videos'],['book','📚','Books'],['dvr','📼','DVR Recordings']] as [val, icon, label, img]}
           <label class="type-opt" class:selected={type === val}>
             <input type="radio" bind:group={type} value={val} />
             {#if img}

@@ -60,6 +60,7 @@ import (
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/plugin"
+	"github.com/onscreen/onscreen/internal/podcast"
 	"github.com/onscreen/onscreen/internal/preencode"
 	"github.com/onscreen/onscreen/internal/requests"
 	"github.com/onscreen/onscreen/internal/safehttp"
@@ -806,6 +807,15 @@ func run() error {
 	// embedded-tag/cover reads degrade to online enrichment for remote sources).
 	libScanner.WithMediaStore(mediaStoreProvider)
 
+	// Podcast RSS subscriptions: feeds download episodes into their podcast
+	// library's folder through the media store, rescan that folder when a
+	// file lands or goes (taking a deleted one out of the library first), and
+	// save the feed's artwork as the show's poster. The scanner names the
+	// downloaded files from their feed.
+	podcastSvc := podcast.New(ctx, gen.New(rwPool), libSvc, mediaStoreProvider, libEnqueuer, artworkMgr, logger).
+		WithLibraryFiles(mediaSvc)
+	libScanner.WithPodcastFeeds(podcastSvc)
+
 	// Last playback decision per (user, item), shared by transcode Start and
 	// StreamFile (writers) and the progress beacon (reader), so plays from
 	// clients that don't report a decision aren't charted as "unknown".
@@ -1264,6 +1274,7 @@ func run() error {
 	arrServicesHandler := v1.NewArrServicesHandler(gen.New(rwPool), logger).
 		WithAudit(auditLogger).
 		WithEncryptor(encryptor)
+	podcastHandler := v1.NewPodcastHandler(podcastSvc, logger).WithAudit(auditLogger)
 	// Discover reuses the same adapter so admins toggling the TMDB key
 	// flow through to search results without a server restart.
 	discoverHandler := v1.NewDiscoverHandler(gen.New(roPool), requestsTMDB, requestsSvc, logger).
@@ -1404,6 +1415,9 @@ func run() error {
 		scheduler.NewSmartCollectionsHandler(smartCollections))
 	schedRegistry.Register("nfo_collections",
 		scheduler.NewNFOCollectionsHandler(nfoCollections))
+	// Podcast subscriptions: re-read every feed, download new episodes where
+	// auto-download is on, apply retention (seeded hourly).
+	schedRegistry.Register("podcast_refresh", scheduler.NewPodcastRefreshHandler(podcastSvc))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the
@@ -1516,6 +1530,7 @@ func run() error {
 		Debug:           v1.NewDebugHandler(logger).WithExplain(roPool),
 		Capabilities:    capabilitiesHandler,
 		ArrServices:     arrServicesHandler,
+		Podcasts:        podcastHandler,
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
 		Upcoming:        upcomingHandler,

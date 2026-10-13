@@ -2412,6 +2412,8 @@ export interface ChildItem {
   // `movie`). Absent or `episode` = ordinary episode. Surfaced as a
   // badge on the episode list.
   kind?: string;
+  /** Release date, YYYY-MM-DD (a podcast episode's publish date). */
+  originally_available_at?: string;
   // Per-user playback state populated by the server's children
   // endpoint. Used by show / season detail pages to render the
   // watched indicator + in-progress bar on each episode row.
@@ -3316,6 +3318,88 @@ export const notificationAgentApi = {
     api.patch<NotificationAgent>(`/admin/notification-agents/${id}`, body),
   del: (id: string) => api.del(`/admin/notification-agents/${id}`),
   test: (id: string) => api.post<NotificationAgentTestResult>(`/admin/notification-agents/${id}/test`)
+};
+
+// ── Podcast feed subscriptions (admin) ───────────────────────────────────────
+
+export interface PodcastFeed {
+  id: string;
+  library_id: string;
+  feed_url: string;
+  title: string;
+  author?: string;
+  description?: string;
+  image_url?: string;
+  site_url?: string;
+  language?: string;
+  /** Folder the episodes download into. */
+  folder: string;
+  auto_download: boolean;
+  /** Downloaded episodes kept, newest first. 0 keeps all. */
+  keep_latest: number;
+  last_checked_at?: string;
+  last_error?: string;
+  /** The podcast item in the library, once an episode has been scanned. */
+  show_item_id?: string;
+  /** Present in list responses. */
+  episode_count?: number;
+  downloaded_count?: number;
+  created_at: string;
+}
+
+export type PodcastEpisodeStatus = 'available' | 'downloading' | 'downloaded' | 'failed' | 'removed';
+
+export interface PodcastEpisode {
+  id: string;
+  feed_id: string;
+  title: string;
+  description?: string;
+  published_at?: string;
+  duration_ms?: number;
+  enclosure_length?: number;
+  season?: number;
+  episode?: number;
+  status: PodcastEpisodeStatus;
+  error?: string;
+  /** The library item, once the downloaded file has been scanned. */
+  media_item_id?: string;
+  downloaded_at?: string;
+}
+
+export interface PodcastSubscribeInput {
+  library_id: string;
+  feed_url: string;
+  /** Default true. */
+  auto_download?: boolean;
+  /** Default 0 (keep all). */
+  keep_latest?: number;
+  /** Newest episodes to download now. Default 1. */
+  download_latest?: number;
+}
+
+export interface PodcastRefreshResult {
+  new_episodes: number;
+  downloading: number;
+  removed: number;
+  not_modified: boolean;
+}
+
+export const podcastApi = {
+  listFeeds: (libraryId?: string) =>
+    api.requestList<PodcastFeed>(
+      libraryId ? `/admin/podcast-feeds?library_id=${encodeURIComponent(libraryId)}` : '/admin/podcast-feeds'
+    ),
+  getFeed: (id: string) => api.get<PodcastFeed>(`/admin/podcast-feeds/${id}`),
+  subscribe: (body: PodcastSubscribeInput) => api.post<PodcastFeed>('/admin/podcast-feeds', body),
+  updateFeed: (id: string, body: { auto_download?: boolean; keep_latest?: number }) =>
+    api.patch<PodcastFeed>(`/admin/podcast-feeds/${id}`, body),
+  unsubscribe: (id: string, deleteFiles: boolean) =>
+    api.del(`/admin/podcast-feeds/${id}${deleteFiles ? '?delete_files=true' : ''}`),
+  refresh: (id: string) => api.post<PodcastRefreshResult>(`/admin/podcast-feeds/${id}/refresh`),
+  episodes: (id: string, limit = 50, offset = 0) =>
+    api.requestList<PodcastEpisode>(`/admin/podcast-feeds/${id}/episodes?limit=${limit}&offset=${offset}`),
+  download: (episodeId: string) => api.post<PodcastEpisode>(`/admin/podcast-episodes/${episodeId}/download`),
+  deleteDownload: (episodeId: string) => api.del(`/admin/podcast-episodes/${episodeId}/download`)
 };
 
 // ── Plugins (admin) ───────────────────────────────────────────────────────────

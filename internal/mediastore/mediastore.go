@@ -90,6 +90,21 @@ type Putter interface {
 	Put(ctx context.Context, key string, data []byte) error
 }
 
+// StreamPutter is an optional Store capability: writing an object from a
+// reader, for content too large to buffer — downloaded podcast episodes. Like
+// Put, a reader never sees a partial object at key.
+type StreamPutter interface {
+	// PutStream writes r's bytes at key, overwriting any existing object. size
+	// is the byte count when known, -1 otherwise.
+	PutStream(ctx context.Context, key string, r io.Reader, size int64) error
+}
+
+// Deleter is an optional Store capability: removing an object — a podcast
+// episode retention drops. Deleting a key that doesn't exist is not an error.
+type Deleter interface {
+	Delete(ctx context.Context, key string) error
+}
+
 // PathMapping rewrites a key prefix. It's the content-addressing primitive for
 // multi-site active/passive DR: a standby site resolves the primary's absolute
 // FilePaths (carried verbatim in the replicated Postgres) against its own mount
@@ -200,6 +215,57 @@ func (l Local) Put(_ context.Context, key string, data []byte) error {
 		return err
 	}
 	return nil
+}
+
+// PutStream implements StreamPutter: Put's temp file + rename, copied from r
+// instead of a buffer.
+func (l Local) PutStream(ctx context.Context, key string, r io.Reader, _ int64) error {
+	p := l.resolve(key)
+	dir := filepath.Dir(p)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(dir, ".mediastore-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	if _, err := io.Copy(tmp, ctxReader{ctx: ctx, r: r}); err != nil {
+		tmp.Close()
+		os.Remove(tmpName)
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	if err := os.Rename(tmpName, p); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
+}
+
+// Delete implements Deleter. A missing file is not an error.
+func (l Local) Delete(_ context.Context, key string) error {
+	if err := os.Remove(l.resolve(key)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
+// ctxReader stops a copy when ctx is cancelled, so a cancelled PutStream from
+// a slow source doesn't run to the end.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // Serve writes the media identified by key to w, honouring HTTP Range,
