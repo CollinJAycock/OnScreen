@@ -1900,6 +1900,8 @@ export interface ServerSettings {
   tvdb_api_key: string;
   /** OMDb key for IMDb / Rotten Tomatoes / Metacritic scores. */
   omdb_api_key?: string;
+  /** OMDb lookups the key allows a day (1000 for a free key). */
+  omdb_daily_limit?: number;
   arr_api_key: string;
   arr_webhook_url: string;
   arr_path_mappings?: Record<string, string>;

@@ -132,11 +132,13 @@ var requiredSystemTasks = []systemTask{
 	{
 		name:     "Refresh IMDb, Rotten Tomatoes and Metacritic scores",
 		taskType: "external_ratings",
-		// Daily 5:41am: looks up movies' and shows' scores on OMDb, the
+		// Hourly at :41: looks up movies' and shows' scores on OMDb, the
 		// ones still missing first, then recent titles weekly and older
-		// ones every 90 days, up to 900 lookups a run (the free key allows
-		// 1000 a day). Without an OMDb key in Settings it does nothing.
-		cronExpr: "41 5 * * *",
+		// ones every 90 days, using what's left of the key's daily limit
+		// (Settings, 1000 by default) over the last 24 hours. Hourly so the
+		// budget is spent as it frees up; most runs find nothing to do.
+		// Without an OMDb key in Settings it does nothing.
+		cronExpr: "41 * * * *",
 		enabled:  true,
 	},
 	{

@@ -47,11 +47,11 @@ func TestExternalRatingQueries_Integration(t *testing.T) {
 			t.Fatalf("insert %s: %v", imdb, err)
 		}
 	}
-	item("movie", "tt-new", 2010, false)     // never fetched
-	item("movie", "tt-new", 2010, false)     // a second copy: listed once
-	item("show", "tt-show", 2008, false)     // never fetched
-	item("episode", "tt-ep", 2008, false)    // episodes aren't looked up
-	item("movie", "tt-gone", 2010, true)     // deleted
+	item("movie", "tt-new", 2010, false)  // never fetched
+	item("movie", "tt-new", 2010, false)  // a second copy: listed once
+	item("show", "tt-show", 2008, false)  // never fetched
+	item("episode", "tt-ep", 2008, false) // episodes aren't looked up
+	item("movie", "tt-gone", 2010, true)  // deleted
 	item("movie", "tt-recent", now.Year(), false)
 	item("movie", "tt-old", 2001, false)
 	item("movie", "tt-oldfresh", 2001, false)
@@ -118,6 +118,13 @@ func TestExternalRatingQueries_Integration(t *testing.T) {
 	bad := 11.0
 	if err := q.UpsertExternalRatings(ctx, gen.UpsertExternalRatingsParams{ImdbID: "tt-x", ImdbRating: &bad, Found: true}); err == nil {
 		t.Error("an IMDb rating over 10 was stored")
+	}
+
+	// Lookups in the last 24 hours: the rows fetched (or refetched) in it.
+	// Seeded rows 8+ days old don't count; the three upserts above do.
+	used, err := q.CountExternalRatingLookupsSince(ctx, ts(now.Add(-24*time.Hour)))
+	if err != nil || used != 2 {
+		t.Errorf("lookups in the last 24 hours = %d %v, want 2 (tt-new, tt-old; tt-x was rejected)", used, err)
 	}
 
 	c, err := q.CountExternalRatingCandidates(ctx)

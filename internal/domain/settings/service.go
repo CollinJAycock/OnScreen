@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -24,6 +25,7 @@ var ErrInvalidSetting = errors.New("invalid setting value")
 const keyTMDBAPIKey = "tmdb_api_key"
 const keyTVDBAPIKey = "tvdb_api_key"
 const keyOMDbAPIKey = "omdb_api_key"
+const keyOMDbDailyLimit = "omdb_daily_limit"
 const keyArrAPIKey = "arr_api_key"
 const keyArrPathMappings = "arr_path_mappings"
 const keyTranscodeEncoders = "transcode_encoders"
@@ -158,6 +160,33 @@ func (s *Service) OMDbAPIKey(ctx context.Context) string {
 // SetOMDbAPIKey persists the OMDb API key (empty string clears it).
 func (s *Service) SetOMDbAPIKey(ctx context.Context, key string) error {
 	return s.set(ctx, keyOMDbAPIKey, key)
+}
+
+// DefaultOMDbDailyLimit is the free OMDb key's daily request limit.
+const DefaultOMDbDailyLimit = 1000
+
+// MaxOMDbDailyLimit bounds the setting (OMDb's largest paid tier allows
+// 250,000 a day).
+const MaxOMDbDailyLimit = 1_000_000
+
+// OMDbDailyLimit returns how many OMDb lookups the key allows a day:
+// DefaultOMDbDailyLimit unless an admin set it (a paid key allows more; a
+// key shared with another app should get less).
+func (s *Service) OMDbDailyLimit(ctx context.Context) int {
+	n, err := strconv.Atoi(s.get(ctx, keyOMDbDailyLimit))
+	if err != nil || n < 1 || n > MaxOMDbDailyLimit {
+		return DefaultOMDbDailyLimit
+	}
+	return n
+}
+
+// SetOMDbDailyLimit persists the OMDb daily limit; out of range is
+// ErrInvalidSetting.
+func (s *Service) SetOMDbDailyLimit(ctx context.Context, n int) error {
+	if n < 1 || n > MaxOMDbDailyLimit {
+		return ErrInvalidSetting
+	}
+	return s.set(ctx, keyOMDbDailyLimit, strconv.Itoa(n))
 }
 
 // ArrAPIKey returns the stored API key for arr app notifications, or "" if not set.

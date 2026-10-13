@@ -46,3 +46,10 @@ LEFT JOIN external_ratings er ON er.imdb_id = mi.imdb_id
 WHERE mi.deleted_at IS NULL
   AND mi.type IN ('movie', 'show')
   AND mi.imdb_id IS NOT NULL AND mi.imdb_id <> '';
+
+-- name: CountExternalRatingLookupsSince :one
+-- OMDb lookups made since a time: every lookup that reached OMDb (scores or
+-- "not found") stamps its row's fetched_at, and no ID is looked up twice a
+-- day, so the rows fetched in the last 24 hours are the lookups that count
+-- against the key's daily limit.
+SELECT count(*)::bigint FROM external_ratings WHERE fetched_at > @since;

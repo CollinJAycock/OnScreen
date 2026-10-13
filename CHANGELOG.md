@@ -147,19 +147,26 @@ API change lands only when every first-party client moves with it — see
   score and Metascore.
   - **Setup:** paste a free OMDb API key into Settings ▸ General
     (omdbapi.com). Without one nothing is fetched.
-  - **Refresh:** a new daily task, "Refresh IMDb, Rotten Tomatoes and
+  - **Refresh:** a new hourly task, "Refresh IMDb, Rotten Tomatoes and
     Metacritic scores", looks titles up by IMDb ID: missing scores first,
     then this year's and last year's titles weekly and older ones every 90
-    days. It does up to 900 lookups a run, under the free key's 1,000 a day,
-    so a large library fills in over a few days. It stops when the key's
-    daily limit is used up and fails when OMDb refuses the key.
+    days.
+  - **Daily limit:** Settings ▸ General ▸ "OMDb Daily Lookups" (1,000 by
+    default, a free key's limit; raise it for a paid key, lower it if
+    another app shares the key). Every run, manual ones included, counts the
+    lookups made in the last 24 hours and uses only what's left, so the key
+    never goes over its limit in any 24 hours; a large library fills in over
+    a few days. Runs never overlap. A run stops if OMDb says the limit is
+    used up anyway, and fails when OMDb refuses the key.
   - **Shared:** copies of a title in several libraries share one lookup.
     Episodes have no scores.
   - **API (additive):** `ItemDetail.external_ratings` (`imdb_id`,
     `imdb_rating`, `imdb_votes`, `rotten_tomatoes`, `metacritic`) on movies
-    and shows; `omdb_api_key` (masked, encrypted at rest) in
-    `/settings`.
-  - **Migration 00041** adds the `external_ratings` table.
+    and shows; `omdb_api_key` (masked, encrypted at rest) and
+    `omdb_daily_limit` in `/settings`.
+  - **Migrations:** 00041 adds the `external_ratings` table; 00042 moves an
+    install that already seeded the task daily to hourly (a changed schedule
+    is kept).
 
 ### Changed
 

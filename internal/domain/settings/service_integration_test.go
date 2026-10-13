@@ -9,6 +9,7 @@ package settings
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"reflect"
 	"testing"
@@ -510,5 +511,29 @@ func TestService_WorkerFleetDefaultsEmbeddedEnabled(t *testing.T) {
 	}
 	if svc.WorkerFleet(ctx).EmbeddedEnabled {
 		t.Error("explicit embedded_enabled=false must be respected, not reset to the default")
+	}
+}
+
+// The OMDb daily limit defaults to the free key's 1000, keeps what an admin
+// sets, and refuses out-of-range values.
+func TestService_OMDbDailyLimit(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test (testcontainer)")
+	}
+	svc := newServiceForTest(t)
+	ctx := context.Background()
+	if got := svc.OMDbDailyLimit(ctx); got != DefaultOMDbDailyLimit {
+		t.Errorf("unset = %d, want %d", got, DefaultOMDbDailyLimit)
+	}
+	if err := svc.SetOMDbDailyLimit(ctx, 100000); err != nil || svc.OMDbDailyLimit(ctx) != 100000 {
+		t.Errorf("set 100000: %v, got %d", err, svc.OMDbDailyLimit(ctx))
+	}
+	for _, bad := range []int{0, -1, MaxOMDbDailyLimit + 1} {
+		if err := svc.SetOMDbDailyLimit(ctx, bad); !errors.Is(err, ErrInvalidSetting) {
+			t.Errorf("set %d: %v, want ErrInvalidSetting", bad, err)
+		}
+	}
+	if svc.OMDbDailyLimit(ctx) != 100000 {
+		t.Error("a refused value changed the limit")
 	}
 }

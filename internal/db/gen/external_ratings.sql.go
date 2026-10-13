@@ -36,6 +36,21 @@ func (q *Queries) CountExternalRatingCandidates(ctx context.Context) (CountExter
 	return i, err
 }
 
+const countExternalRatingLookupsSince = `-- name: CountExternalRatingLookupsSince :one
+SELECT count(*)::bigint FROM external_ratings WHERE fetched_at > $1
+`
+
+// OMDb lookups made since a time: every lookup that reached OMDb (scores or
+// "not found") stamps its row's fetched_at, and no ID is looked up twice a
+// day, so the rows fetched in the last 24 hours are the lookups that count
+// against the key's daily limit.
+func (q *Queries) CountExternalRatingLookupsSince(ctx context.Context, since pgtype.Timestamptz) (int64, error) {
+	row := q.db.QueryRow(ctx, countExternalRatingLookupsSince, since)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const getExternalRatings = `-- name: GetExternalRatings :one
 SELECT imdb_id, imdb_rating, imdb_votes, rotten_tomatoes, metacritic, found, fetched_at
 FROM external_ratings
