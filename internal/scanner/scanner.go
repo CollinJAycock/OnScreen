@@ -178,6 +178,9 @@ type Scanner struct {
 	store   mediastore.Store // optional; nil → mediastore.Local (read media from disk)
 	metrics *observability.Metrics
 	grace   func() time.Duration // optional; nil → defaultMissingFileGrace
+	// podcasts names podcast items from their RSS feed (WithPodcastFeeds);
+	// nil scans podcast libraries by folder and file name only.
+	podcasts PodcastFeeds
 
 	// unnumberedTracks holds the IDs of unchanged music files, and
 	// audiobook chapter files, that couldn't be given a number (see
@@ -1145,8 +1148,8 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		}
 	} else if libraryType == "podcast" && isAudiobookFile(path) {
 		// Podcasts: same audio file detection as audiobooks (mp3 + m4a
-		// + others). Folder = show, file = episode. Subscriptions
-		// (RSS auto-download) are v2.1.
+		// + others). Folder = show, file = episode; a file a feed
+		// subscription downloaded is named from the feed.
 		var pcErr error
 		item, pcErr = s.processPodcast(ctx, libraryID, path, roots)
 		if pcErr != nil {

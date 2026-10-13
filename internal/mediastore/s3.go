@@ -55,6 +55,9 @@ var (
 	_ Store  = (*S3)(nil)
 	_ Lister = (*S3)(nil)
 	_ Putter = (*S3)(nil)
+
+	_ StreamPutter = (*S3)(nil)
+	_ Deleter      = (*S3)(nil)
 )
 
 // NewS3 builds an S3 backend. It does not perform any network I/O — call Ping to
@@ -186,6 +189,25 @@ func (s *S3) Put(ctx context.Context, key string, data []byte) error {
 		bytes.NewReader(data), int64(len(data)), minio.PutObjectOptions{})
 	if err != nil {
 		return fmt.Errorf("mediastore: put: %w", err)
+	}
+	return nil
+}
+
+// PutStream implements StreamPutter. With size -1 the client uploads in
+// parts, so the object appears only once the whole stream has arrived.
+func (s *S3) PutStream(ctx context.Context, key string, r io.Reader, size int64) error {
+	_, err := s.client.PutObject(ctx, s.bucket, s.objectKey(key), r, size, minio.PutObjectOptions{})
+	if err != nil {
+		return fmt.Errorf("mediastore: put stream: %w", err)
+	}
+	return nil
+}
+
+// Delete implements Deleter. S3 deletes are idempotent: a missing key is not
+// an error.
+func (s *S3) Delete(ctx context.Context, key string) error {
+	if err := s.client.RemoveObject(ctx, s.bucket, s.objectKey(key), minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("mediastore: delete: %w", err)
 	}
 	return nil
 }

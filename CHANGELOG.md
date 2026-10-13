@@ -79,6 +79,35 @@ API change lands only when every first-party client moves with it — see
     collections" (daily).
   - **Migration 00038** adds the columns, the cover table and the library
     setting.
+- **Podcast subscriptions.** A podcast library can follow podcasts' RSS
+  feeds, and podcast libraries can be created again (they were hidden in
+  v2.5 while podcasts were local files only).
+  - **Subscribing:** on a podcast library's new "Subscriptions" tab (admins
+    only), paste a feed URL and choose whether new episodes download on their
+    own, how many of the newest episodes to download now, and how many
+    downloaded episodes to keep.
+  - **Episodes** download into the library's folder, one folder per podcast
+    (`<podcast>/<date> <episode title>.mp3`), and are scanned into the
+    library with the feed's titles, show notes and publish dates, and the
+    feed's artwork as the podcast's poster. Every app plays them the way it
+    plays any podcast file, so no app needed an update.
+  - **Each feed's page** lists its episodes with Download, Play and Delete
+    file, and has its settings, "Check for new episodes" and Unsubscribe (with
+    or without deleting the downloads). The podcast's page in the library
+    links to it.
+  - **Refresh:** a new hourly task, "Refresh podcast feeds", checks every
+    feed (an unchanged feed answers 304), downloads new episodes where
+    auto-download is on, and deletes downloads past each feed's "Keep" limit,
+    oldest first. A deleted episode isn't downloaded again automatically.
+  - **Limits:** audio episodes only (video podcasts are skipped); feeds and
+    episodes on a private or local network address are refused; at most 2
+    downloads run at once, 10 per refresh on their own, 4 GB per episode.
+  - **API (all additive):** `/admin/podcast-feeds` (list, subscribe, get,
+    update, unsubscribe, refresh, episodes) and
+    `/admin/podcast-episodes/{id}/download` (`POST` downloads, `DELETE`
+    deletes the file); item children gain `originally_available_at`.
+    Subscribing, changing and unsubscribing are audited.
+  - **Migration 00039** adds the feed and episode tables.
 
 ### Changed
 

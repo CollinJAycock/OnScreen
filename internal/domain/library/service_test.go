@@ -362,9 +362,9 @@ func TestCreate_ValidatesTypeInvalid(t *testing.T) {
 // features are unbudgeted — the type stays out of the picker AND the API
 // so a stub can't erode trust. Existing libraries of these types keep
 // working; only creation is gated. Manga parked at v2.2 (volume/chapter
-// hierarchy), podcast parked at v2.5 (no RSS model — local-files stub).
+// hierarchy).
 func TestCreate_RefusesParkedTypes(t *testing.T) {
-	for _, typ := range []string{"manga", "podcast"} {
+	for _, typ := range []string{"manga"} {
 		t.Run(typ, func(t *testing.T) {
 			svc, _, _ := newService(t)
 			_, err := svc.Create(context.Background(), CreateLibraryParams{
@@ -380,6 +380,24 @@ func TestCreate_RefusesParkedTypes(t *testing.T) {
 				t.Errorf("want field=type, got %s", ve.Field)
 			}
 		})
+	}
+}
+
+// Podcast libraries were parked in v2.5 and came back with RSS feed
+// subscriptions.
+func TestCreate_AcceptsPodcast(t *testing.T) {
+	svc, _, _ := newService(t)
+	lib, err := svc.Create(context.Background(), CreateLibraryParams{
+		Name:  "Podcasts",
+		Type:  "podcast",
+		Paths: []string{"/media/podcasts"},
+		Agent: "none",
+	})
+	if err != nil {
+		t.Fatalf("create podcast library: %v", err)
+	}
+	if lib.Type != "podcast" {
+		t.Errorf("type = %q, want podcast", lib.Type)
 	}
 }
 

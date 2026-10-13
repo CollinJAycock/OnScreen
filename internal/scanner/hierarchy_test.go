@@ -156,6 +156,11 @@ func (m *mockMediaService) GetItem(_ context.Context, id uuid.UUID) (*media.Item
 func (m *mockMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
 	if it, ok := m.items[p.ID]; ok {
 		it.Title = p.Title
+		it.SortTitle = p.SortTitle
+		it.Summary = p.Summary
+		it.Year = p.Year
+		it.OriginallyAvailableAt = p.OriginallyAvailableAt
+		it.DurationMS = p.DurationMS
 		if p.PosterPath != nil {
 			it.PosterPath = p.PosterPath
 		}

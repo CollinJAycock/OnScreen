@@ -89,6 +89,13 @@ const (
 	ActionNotificationAgentDelete = "notification_agent.delete"
 	ActionNotificationAgentTest   = "notification_agent.test"
 
+	// Podcast feed subscriptions. Each makes the server fetch an outbound
+	// URL on a schedule and write files into a library, so subscribing,
+	// changing and unsubscribing are recorded.
+	ActionPodcastSubscribe   = "podcast.subscribe"
+	ActionPodcastUpdate      = "podcast.update"
+	ActionPodcastUnsubscribe = "podcast.unsubscribe"
+
 	// Admin impersonation. ViewAs lets an admin browse the home/library/etc.
 	// surfaces as another user; without an audit trail the request log
 	// attributes the GETs to the *target* user (since the synthetic claims

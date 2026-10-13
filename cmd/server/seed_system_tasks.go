@@ -120,6 +120,16 @@ var requiredSystemTasks = []systemTask{
 		enabled:  true,
 	},
 	{
+		name:     "Refresh podcast feeds",
+		taskType: "podcast_refresh",
+		// Hourly at :07: re-reads every subscribed podcast feed (a
+		// conditional GET, so an unchanged feed answers 304), downloads new
+		// episodes where auto-download is on, and applies each feed's
+		// keep-latest retention. With no subscriptions it does nothing.
+		cronExpr: "7 * * * *",
+		enabled:  true,
+	},
+	{
 		name:     "OCR image subtitles",
 		taskType: "ocr_subtitles",
 		// Weekly, Sunday 4:00am local — a full-library OCR sweep of image-based

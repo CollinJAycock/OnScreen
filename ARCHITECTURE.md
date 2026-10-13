@@ -182,7 +182,7 @@ OnScreen/
 │   ├── config/         Env-var bootstrap config (only what's needed pre-DB)
 │   ├── db/
 │   │   ├── gen/        sqlc-generated query wrappers
-│   │   └── migrations/ 35 goose migrations: squashed baseline 00001_init + 34
+│   │   └── migrations/ 39 goose migrations: squashed baseline 00001_init + 38
 │   │                   since (TOTP, scrobbling, requests, issues, etc.)
 │   ├── domain/         Library, media, profile, library_access, settings, watchevent
 │   ├── livetv/         HDHomeRun / M3U tuners, EPG (Schedules Direct + XMLTV),
@@ -192,6 +192,8 @@ OnScreen/
 │   ├── observability/  slog handlers, Prometheus metrics, OTel setup, health checks
 │   ├── photoimage/     On-demand photo resize endpoint with disk cache
 │   ├── plugin/         MCP-based outbound plugin host
+│   ├── podcast/        RSS podcast subscriptions: feed parser, episode downloads
+│   │                   into the library folder, hourly refresh, retention
 │   ├── scanner/        Recursive scan, hash + ffprobe, mtime+size fast-skip,
 │   │                   per-type modules (audiobook, book_cbz/cbr/epub, home_video)
 │   ├── streaming/      Direct-play "Now Playing" tracker; per-file stream tokens
@@ -254,6 +256,8 @@ OnScreen/
 | `user_watch_state` | View over `watch_progress`: the one derivation of status (unwatched/in_progress/watched), resume point and Continue Watching eligibility |
 | `continue_watching_dismissals` | Per-user tiles hidden from Continue Watching / Next Up until newer activity |
 | `hub_recently_added` | Materialized recently-added cache; refreshed by background worker |
+| `podcast_feeds` | RSS podcast subscriptions: feed URL, download folder, auto-download, keep-latest retention, ETag / Last-Modified |
+| `podcast_feed_episodes` | A feed's episodes and their download state (available / downloading / downloaded / failed / removed); `file_path` is how the scanner matches a download to its feed |
 | `webhook_endpoints` | Outbound webhook URLs; AES-256-GCM encrypted secrets |
 | `webhook_failures` | Dead-letter for failed webhook deliveries |
 | `server_settings` | Runtime config (TMDB API key, etc.) |

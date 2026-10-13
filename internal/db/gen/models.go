@@ -462,6 +462,52 @@ type Plugin struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PodcastFeed struct {
+	ID            uuid.UUID          `json:"id"`
+	LibraryID     uuid.UUID          `json:"library_id"`
+	FeedUrl       string             `json:"feed_url"`
+	Title         string             `json:"title"`
+	Author        *string            `json:"author"`
+	Description   *string            `json:"description"`
+	ImageUrl      *string            `json:"image_url"`
+	SiteUrl       *string            `json:"site_url"`
+	Language      *string            `json:"language"`
+	Folder        string             `json:"folder"`
+	AutoDownload  bool               `json:"auto_download"`
+	KeepLatest    int32              `json:"keep_latest"`
+	Etag          *string            `json:"etag"`
+	LastModified  *string            `json:"last_modified"`
+	LastCheckedAt pgtype.Timestamptz `json:"last_checked_at"`
+	LastError     *string            `json:"last_error"`
+	ShowItemID    pgtype.UUID        `json:"show_item_id"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PodcastFeedEpisode struct {
+	ID              uuid.UUID          `json:"id"`
+	FeedID          uuid.UUID          `json:"feed_id"`
+	Guid            string             `json:"guid"`
+	Title           string             `json:"title"`
+	Description     *string            `json:"description"`
+	PublishedAt     pgtype.Timestamptz `json:"published_at"`
+	DurationMs      *int64             `json:"duration_ms"`
+	EnclosureUrl    string             `json:"enclosure_url"`
+	EnclosureType   *string            `json:"enclosure_type"`
+	EnclosureLength *int64             `json:"enclosure_length"`
+	Season          *int32             `json:"season"`
+	Episode         *int32             `json:"episode"`
+	ImageUrl        *string            `json:"image_url"`
+	Status          string             `json:"status"`
+	FilePath        *string            `json:"file_path"`
+	Error           *string            `json:"error"`
+	MediaItemID     pgtype.UUID        `json:"media_item_id"`
+	DownloadedAt    pgtype.Timestamptz `json:"downloaded_at"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Recording struct {
 	ID         uuid.UUID          `json:"id"`
 	ScheduleID pgtype.UUID        `json:"schedule_id"`

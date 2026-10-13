@@ -111,6 +111,14 @@ tags:
       and a `has_secret` / `secret_changed` flag.
   - name: Maintenance
     description: One-shot admin operations (artwork backfill, dedupe).
+  - name: Podcasts
+    description: |
+      Podcast RSS subscriptions (admin only). A podcast library subscribes
+      to a feed; the server re-reads it hourly (the `podcast_refresh` task)
+      and downloads episodes into `<library folder>/<feed title>/`, where the
+      scanner makes them ordinary `podcast` / `podcast_episode` items named
+      from the feed. Clients play them like any other file. Feed and episode
+      fetches refuse private and loopback addresses.
   - name: Notifications
     description: |
       Outbound notification agents (admin only): Discord webhooks, Telegram
@@ -4086,6 +4094,246 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  # ── Podcast subscriptions (admin) ──────────────────────────────────────────
+  /api/v1/admin/podcast-feeds:
+    get:
+      summary: List podcast subscriptions (admin)
+      tags: [Podcasts]
+      parameters:
+        - name: library_id
+          in: query
+          required: false
+          description: Only this library's feeds.
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Feeds by title, each with `episode_count` and `downloaded_count`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/PodcastFeed' } }
+                  meta: { type: object, properties: { total: { type: integer } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Subscribe a podcast library to a feed (admin, audited)
+      description: |
+        Fetches and reads the feed (RSS 2.0 with the iTunes tags; `feed://`
+        and `pcast://` links are read as https), lists its audio episodes,
+        saves its artwork as the show poster and starts downloading the
+        newest `download_latest` episodes in the background. The episodes go
+        in `<first scan path>/<feed title>/<YYYY-MM-DD> <episode title>.<ext>`.
+        `download_latest` is capped at `keep_latest` when that is set.
+      tags: [Podcasts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [library_id, feed_url]
+              properties:
+                library_id:      { type: string, format: uuid, description: A podcast library. }
+                feed_url:        { type: string, format: uri }
+                auto_download:   { type: boolean, default: true, description: Download new episodes as refreshes find them. }
+                keep_latest:     { type: integer, minimum: 0, maximum: 1000, default: 0, description: 'Keep this many downloaded episodes, newest by publish date; 0 keeps all.' }
+                download_latest: { type: integer, minimum: 0, maximum: 50, default: 1, description: Newest episodes to download now. }
+      responses:
+        '201':
+          description: Subscribed. Audited as `podcast.subscribe`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PodcastFeed' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`ALREADY_SUBSCRIBED` — the library already follows this feed URL.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422':
+          description: |
+            Not a podcast library, the library has no folder, the URL isn't
+            http(s), the feed has no audio episodes, or a setting is out of
+            range.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '502':
+          description: |
+            `FEED_UNAVAILABLE` — the feed couldn't be fetched or isn't an RSS
+            podcast feed (the message says which: an HTTP status, a timeout, a
+            private address, not a feed).
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/admin/podcast-feeds/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Get a podcast subscription (admin)
+      tags: [Podcasts]
+      responses:
+        '200':
+          description: The feed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PodcastFeed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      summary: Change auto-download and retention (admin, audited)
+      description: Omitted fields are unchanged. A lower `keep_latest` deletes the extra downloads at once.
+      tags: [Podcasts]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                auto_download: { type: boolean }
+                keep_latest:   { type: integer, minimum: 0, maximum: 1000 }
+      responses:
+        '200':
+          description: Updated. Audited as `podcast.update`.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PodcastFeed' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: keep_latest out of range.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    delete:
+      summary: Unsubscribe (admin, audited)
+      description: |
+        Stops following the feed. With `delete_files=true` its downloaded
+        episodes are deleted too; otherwise they stay in the library as
+        plain files.
+      tags: [Podcasts]
+      parameters:
+        - name: delete_files
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+      responses:
+        '204': { description: Unsubscribed. Audited as `podcast.unsubscribe`. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/podcast-feeds/{id}/refresh:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Check a feed for new episodes now (admin)
+      description: What the hourly refresh does, for one feed.
+      tags: [Podcasts]
+      responses:
+        '200':
+          description: Refresh result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      new_episodes: { type: integer }
+                      downloading:  { type: integer, description: New episodes auto-download started on. }
+                      removed:      { type: integer, description: Downloads retention deleted. }
+                      not_modified: { type: boolean, description: The feed answered 304 to its ETag / Last-Modified. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '502':
+          description: '`FEED_UNAVAILABLE` — the feed couldn''t be fetched or read. Also recorded as the feed''s `last_error`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/admin/podcast-feeds/{id}/episodes:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: List a feed's episodes (admin)
+      tags: [Podcasts]
+      parameters:
+        - { name: limit,  in: query, schema: { type: integer, default: 50, maximum: 200 } }
+        - { name: offset, in: query, schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Episodes, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/PodcastEpisode' } }
+                  meta: { type: object, properties: { total: { type: integer } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/podcast-episodes/{id}/download:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Download an episode (admin)
+      description: |
+        Starts the download in the background and answers with the episode
+        as `downloading`. Poll the feed's episodes for the outcome.
+      tags: [Podcasts]
+      responses:
+        '202':
+          description: Download started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PodcastEpisode' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`EPISODE_STATE` — already downloading or downloaded.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+    delete:
+      summary: Delete an episode's downloaded file (admin)
+      description: The episode stays listed as `removed`; auto-download won't fetch it again.
+      tags: [Podcasts]
+      responses:
+        '204': { description: Deleted. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`EPISODE_STATE` — the episode isn''t downloaded.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
   # ── Plugins (admin) ────────────────────────────────────────────────────────
   /api/v1/admin/plugins:
     get:
@@ -5537,6 +5785,10 @@ components:
             Tracks only: the disc within the album (`index` is the track on
             that disc). Absent means no disc tag — read it as disc 1.
             Children are returned in (disc, index) order.
+        originally_available_at:
+          type: string
+          format: date
+          description: Release date when known — a podcast episode's publish date.
         view_offset_ms: { type: integer, format: int64 }
         watched:        { type: boolean }
         created_at:     { type: string, format: date-time }
@@ -6128,6 +6380,48 @@ components:
         server_url: { type: string, format: uri, description: 'ntfy / Gotify server. https unless allow_private_network.' }
         topic:      { type: string, description: 'ntfy topic ([A-Za-z0-9_-], at most 64).' }
         recipients: { type: array, items: { type: string, format: email }, maxItems: 10, description: 'Email addresses.' }
+    PodcastFeed:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        library_id:       { type: string, format: uuid }
+        feed_url:         { type: string, format: uri }
+        title:            { type: string }
+        author:           { type: string }
+        description:      { type: string }
+        image_url:        { type: string, format: uri }
+        site_url:         { type: string, format: uri }
+        language:         { type: string }
+        folder:           { type: string, description: Folder the episodes download into. }
+        auto_download:    { type: boolean }
+        keep_latest:      { type: integer, description: 'Downloaded episodes kept, newest first; 0 keeps all.' }
+        last_checked_at:  { type: string, format: date-time }
+        last_error:       { type: string, description: 'Why the last refresh failed; absent after a good one.' }
+        show_item_id:     { type: string, format: uuid, description: 'The podcast item, once an episode has been scanned.' }
+        episode_count:    { type: integer, description: List responses only. }
+        downloaded_count: { type: integer, description: List responses only. }
+        created_at:       { type: string, format: date-time }
+    PodcastEpisode:
+      type: object
+      properties:
+        id:               { type: string, format: uuid }
+        feed_id:          { type: string, format: uuid }
+        title:            { type: string }
+        description:      { type: string, description: Show notes as plain text. }
+        published_at:     { type: string, format: date-time }
+        duration_ms:      { type: integer, format: int64 }
+        enclosure_length: { type: integer, format: int64, description: 'Size the feed gives, in bytes.' }
+        season:           { type: integer }
+        episode:          { type: integer }
+        status:
+          type: string
+          enum: [available, downloading, downloaded, failed, removed]
+          description: |
+            `removed`: the file was deleted (retention or by hand);
+            auto-download leaves it alone, a manual download brings it back.
+        error:            { type: string, description: Why the last download failed. }
+        media_item_id:    { type: string, format: uuid, description: 'The library item, once the file has been scanned.' }
+        downloaded_at:    { type: string, format: date-time }
     NotificationAgent:
       type: object
       properties:

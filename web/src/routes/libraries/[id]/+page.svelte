@@ -9,6 +9,7 @@
   import WatchBadge from '$lib/components/WatchBadge.svelte';
   import CardMenu from '$lib/components/CardMenu.svelte';
   import CollectionsTab from '$lib/components/CollectionsTab.svelte';
+  import PodcastSubscriptions from '$lib/components/PodcastSubscriptions.svelte';
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';
   import CollectionPicker from '$lib/components/CollectionPicker.svelte';
   import { toast } from '$lib/stores/toast';
@@ -273,9 +274,11 @@
   // Movie and show libraries get a "Collections" tab: TMDB film series and
   // admin-made collections with titles in this library (CollectionsTab).
   // ?tab=collections keeps the choice across a reload and Back from a
-  // collection page.
-  let libTab: 'items' | 'collections' = 'items';
+  // collection page. Podcast libraries get a "Subscriptions" tab instead,
+  // for admins: the RSS feeds that download into the library.
+  let libTab: 'items' | 'collections' | 'subscriptions' = 'items';
   $: hasCollectionsTab = collectionLibrary;
+  $: hasSubscriptionsTab = isAdmin && library?.type === 'podcast';
   // Libraries whose movies and shows can go into a manual collection.
   $: collectionLibrary = ['movie', 'show', 'anime', 'cartoons'].includes(library?.type ?? '');
   $: canSelect = isPhotoLibrary || (isAdmin && collectionLibrary);
@@ -283,14 +286,15 @@
   function selectable(item: MediaItem): boolean {
     return isPhotoLibrary || item.type === 'movie' || item.type === 'show';
   }
-  function tabFromURL(u: URL): 'items' | 'collections' {
-    return u.searchParams.get('tab') === 'collections' ? 'collections' : 'items';
+  function tabFromURL(u: URL): 'items' | 'collections' | 'subscriptions' {
+    const tab = u.searchParams.get('tab');
+    return tab === 'collections' || tab === 'subscriptions' ? tab : 'items';
   }
-  function setLibTab(next: 'items' | 'collections') {
+  function setLibTab(next: 'items' | 'collections' | 'subscriptions') {
     libTab = next;
     try {
       const u = new URL($page.url);
-      if (next === 'collections') u.searchParams.set('tab', 'collections');
+      if (next !== 'items') u.searchParams.set('tab', next);
       else u.searchParams.delete('tab');
       replaceState(u, $page.state);
     } catch { /* router not ready (tests / early mount) — the tab still switches */ }
@@ -711,6 +715,13 @@
       <button type="button" role="tab" aria-selected={libTab === 'collections'} class:on={libTab === 'collections'}
               on:click={() => setLibTab('collections')}>Collections</button>
     </div>
+  {:else if hasSubscriptionsTab}
+    <div class="lib-tabs" role="tablist" aria-label="Library view">
+      <button type="button" role="tab" aria-selected={libTab === 'items'} class:on={libTab === 'items'}
+              on:click={() => setLibTab('items')}>Library</button>
+      <button type="button" role="tab" aria-selected={libTab === 'subscriptions'} class:on={libTab === 'subscriptions'}
+              on:click={() => setLibTab('subscriptions')}>Subscriptions</button>
+    </div>
   {/if}
 
   {#if isMusicLibrary}
@@ -724,6 +735,8 @@
 
   {#if hasCollectionsTab && libTab === 'collections'}
     <CollectionsTab libraryId={id} libraryType={library?.type ?? ''} />
+  {:else if hasSubscriptionsTab && libTab === 'subscriptions'}
+    <PodcastSubscriptions libraryId={id} onchange={() => loadLibrary()} />
   {:else}
   <!-- Controls -->
   <div class="controls">

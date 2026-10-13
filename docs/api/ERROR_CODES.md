@@ -127,3 +127,11 @@ When introducing a new stable error code:
 1. Use `respond.Error(w, r, STATUS, "YOUR_CODE", message)` at the emission site.
 2. Add a row to this doc in the appropriate section.
 3. Don't reuse a generic code — be specific even for low-volume paths.
+
+## Podcast subscriptions (admin)
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `ALREADY_SUBSCRIBED` | 409 | `POST /admin/podcast-feeds` for a feed URL the library already follows. |
+| `FEED_UNAVAILABLE` | 502 | The feed couldn't be fetched or read. `message` says why: the HTTP status the feed answered, a timeout, an address on a private or local network (feeds are fetched through the SSRF guard), or a document that isn't an RSS podcast feed. A failed refresh also records it as the feed's `last_error`. |
+| `EPISODE_STATE` | 409 | `POST /admin/podcast-episodes/{id}/download` on an episode already downloading or downloaded, or `DELETE` on one that isn't downloaded. |

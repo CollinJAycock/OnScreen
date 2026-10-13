@@ -191,6 +191,65 @@ func TestLocal_Put_HonoursRemap(t *testing.T) {
 	}
 }
 
+func TestLocal_PutStream_WritesAndCreatesDirs(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "Show", "2026-10-12 Episode.mp3")
+	if err := (Local{}).PutStream(context.Background(), key, strings.NewReader("episode-bytes"), -1); err != nil {
+		t.Fatalf("PutStream: %v", err)
+	}
+	got, err := os.ReadFile(key)
+	if err != nil || string(got) != "episode-bytes" {
+		t.Fatalf("read back %q, %v; want episode-bytes", got, err)
+	}
+	entries, _ := os.ReadDir(filepath.Dir(key))
+	if len(entries) != 1 {
+		t.Errorf("directory holds %d entries, want only the episode (no temp file)", len(entries))
+	}
+}
+
+// A failed copy leaves neither the object nor a temp file behind.
+func TestLocal_PutStream_FailedCopyLeavesNothing(t *testing.T) {
+	dir := t.TempDir()
+	key := filepath.Join(dir, "ep.mp3")
+	src := io.MultiReader(strings.NewReader("partial"), errReader{})
+	if err := (Local{}).PutStream(context.Background(), key, src, -1); err == nil {
+		t.Fatal("PutStream succeeded on a failing reader")
+	}
+	entries, _ := os.ReadDir(dir)
+	if len(entries) != 0 {
+		t.Errorf("directory holds %d entries after a failed PutStream, want 0", len(entries))
+	}
+}
+
+func TestLocal_PutStream_StopsOnCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	key := filepath.Join(t.TempDir(), "ep.mp3")
+	if err := (Local{}).PutStream(ctx, key, strings.NewReader("x"), 1); !errors.Is(err, context.Canceled) {
+		t.Fatalf("PutStream on a cancelled context = %v, want context.Canceled", err)
+	}
+	if _, err := os.Stat(key); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("object written despite cancel: %v", err)
+	}
+}
+
+func TestLocal_Delete_RemovesAndToleratesMissing(t *testing.T) {
+	p := writeTemp(t, "bytes")
+	if err := (Local{}).Delete(context.Background(), p); err != nil {
+		t.Fatalf("Delete: %v", err)
+	}
+	if _, err := os.Stat(p); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("file still there after Delete: %v", err)
+	}
+	if err := (Local{}).Delete(context.Background(), p); err != nil {
+		t.Errorf("Delete of a missing file = %v, want nil", err)
+	}
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("connection reset") }
+
 func TestLocal_SignedURL_EmptyMeansNoOffload(t *testing.T) {
 	// The non-breaking hinge: Local can't offload, so Serve must stream through
 	// the app. An empty string with a nil error is the contract callers branch on.
