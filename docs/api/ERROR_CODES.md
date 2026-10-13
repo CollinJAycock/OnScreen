@@ -135,3 +135,12 @@ When introducing a new stable error code:
 | `ALREADY_SUBSCRIBED` | 409 | `POST /admin/podcast-feeds` for a feed URL the library already follows. |
 | `FEED_UNAVAILABLE` | 502 | The feed couldn't be fetched or read. `message` says why: the HTTP status the feed answered, a timeout, an address on a private or local network (feeds are fetched through the SSRF guard), or a document that isn't an RSS podcast feed. A failed refresh also records it as the feed's `last_error`. |
 | `EPISODE_STATE` | 409 | `POST /admin/podcast-episodes/{id}/download` on an episode already downloading or downloaded, or `DELETE` on one that isn't downloaded. |
+
+## Imports from Plex / Jellyfin / Emby (admin)
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `IMPORT_SOURCE_UNAUTHORIZED` | 422 | The source server refused the token: a wrong or revoked key, or (Plex) a token that isn't the server owner's. |
+| `IMPORT_SOURCE_UNAVAILABLE` | 502 | The source server couldn't be reached or didn't answer as expected. `message` says why: a refused or timed-out connection, a link-local address (refused, like the cloud metadata range), an HTTP status, or a reply that isn't the chosen server type's API. |
+| `IMPORT_RUNNING` | 409 | `POST /admin/imports` while another import is running. One runs at a time. |
+| `IMPORT_NOT_RUNNING` | 409 | `POST /admin/imports/{id}/cancel` for an import that has finished, or that runs on another server node. |

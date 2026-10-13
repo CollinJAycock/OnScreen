@@ -100,7 +100,10 @@ type Handlers struct {
 	ArrServices     *v1.ArrServicesHandler // outbound arr instance CRUD (admin)
 	// Podcasts: admin podcast RSS subscriptions — subscribe, episodes,
 	// downloads, auto-download and retention.
-	Podcasts      *v1.PodcastHandler
+	Podcasts *v1.PodcastHandler
+	// Imports: admin import of watch state, ratings, playlists and play
+	// history from a Plex, Jellyfin or Emby server.
+	Imports       *v1.ImportHandler
 	Requests      *v1.RequestHandler  // user + admin request workflow
 	Discover      *v1.DiscoverHandler // TMDB-backed search for the request UI
 	Upcoming      *v1.UpcomingHandler // Radarr/Sonarr calendar for the request UI
@@ -984,6 +987,20 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/admin/podcast-feeds/{id}/episodes", h.Podcasts.Episodes)
 					r.Post("/admin/podcast-episodes/{id}/download", h.Podcasts.DownloadEpisode)
 					r.Delete("/admin/podcast-episodes/{id}/download", h.Podcasts.DeleteEpisodeDownload)
+				})
+			}
+
+			// Imports from another media server — admin only. A run reads the
+			// old server with an admin-supplied token and writes every mapped
+			// user's watch state.
+			if h.Imports != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Post("/admin/imports/connect", h.Imports.Connect)
+					r.Get("/admin/imports", h.Imports.List)
+					r.Post("/admin/imports", h.Imports.Start)
+					r.Get("/admin/imports/{id}", h.Imports.Get)
+					r.Post("/admin/imports/{id}/cancel", h.Imports.Cancel)
 				})
 			}
 

@@ -71,13 +71,14 @@
     {
       label: 'Integrations',
       href: '/settings/webhooks',
-      matches: ['/settings/webhooks', '/settings/notifications', '/settings/arr-services', '/settings/plugins', '/settings/storage'],
+      matches: ['/settings/webhooks', '/settings/notifications', '/settings/arr-services', '/settings/plugins', '/settings/storage', '/settings/import'],
       children: [
         { href: '/settings/webhooks', label: 'Webhooks' },
         { href: '/settings/notifications', label: 'Notifications' },
         { href: '/settings/arr-services', label: 'Arr Services' },
         { href: '/settings/plugins', label: 'Plugins' },
         { href: '/settings/storage', label: 'Storage' },
+        { href: '/settings/import', label: 'Import' },
       ],
     },
     {
