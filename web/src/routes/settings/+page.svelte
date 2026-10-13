@@ -9,6 +9,7 @@
 
   let tmdbApiKey = '';
   let tvdbApiKey = '';
+  let omdbApiKey = '';
   let arrApiKey = '';
   let arrWebhookUrl = '';
   let arrPathMappings: Array<{ remote: string; local: string }> = [];
@@ -62,6 +63,7 @@
       const s = await settingsApi.get();
       tmdbApiKey = s.tmdb_api_key ?? '';
       tvdbApiKey = s.tvdb_api_key ?? '';
+      omdbApiKey = s.omdb_api_key ?? '';
       arrApiKey = s.arr_api_key ?? '';
       arrWebhookUrl = s.arr_webhook_url ?? '';
       const pm = s.arr_path_mappings ?? {};
@@ -138,6 +140,7 @@
       await settingsApi.update({
         tmdb_api_key: tmdbApiKey.trim(),
         tvdb_api_key: tvdbApiKey.trim(),
+        omdb_api_key: omdbApiKey.trim(),
         arr_api_key: arrApiKey.trim(),
         arr_path_mappings: pm,
         opensubtitles: {
@@ -324,6 +327,23 @@
             Optional. Used as a fallback for TV episode metadata when TMDB doesn't have the right numbering (anime, etc.).
             Get a free key at
             <a href="https://thetvdb.com/dashboard/account/apikey" target="_blank" rel="noopener">thetvdb.com</a>.
+          </div>
+        </div>
+        <div class="field">
+          <label for="omdb-key">OMDb API Key</label>
+          <input
+            id="omdb-key"
+            type="text"
+            bind:value={omdbApiKey}
+            placeholder="Enter your OMDb API key"
+            autocomplete="off"
+            spellcheck="false"
+          />
+          <div class="hint">
+            Optional. Adds IMDb, Rotten Tomatoes and Metacritic scores to movies and shows, fetched by a daily task
+            (Settings ▸ Library ▸ Tasks runs it on demand). A free key allows 1,000 lookups a day, so a large library
+            fills in over a few days. Get one at
+            <a href="https://www.omdbapi.com/apikey.aspx" target="_blank" rel="noopener">omdbapi.com</a>.
           </div>
         </div>
       </section>

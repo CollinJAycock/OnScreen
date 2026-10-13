@@ -43,6 +43,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/domain/watchstatus"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/externalratings"
 	"github.com/onscreen/onscreen/internal/franchise"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/livetv"
@@ -946,7 +947,8 @@ func run() error {
 		WithRatings(ratingsSvc).
 		WithMediaStore(mediaStoreProvider).
 		WithFranchise(gen.New(roPool)).
-		WithManualCollections(gen.New(roPool))
+		WithManualCollections(gen.New(roPool)).
+		WithExternalRatings(gen.New(roPool))
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
@@ -1427,6 +1429,8 @@ func run() error {
 	// Podcast subscriptions: re-read every feed, download new episodes where
 	// auto-download is on, apply retention (seeded hourly).
 	schedRegistry.Register("podcast_refresh", scheduler.NewPodcastRefreshHandler(podcastSvc))
+	schedRegistry.Register("external_ratings", scheduler.NewExternalRatingsHandler(
+		externalratings.New(gen.New(rwPool), settingsSvc, logger)))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the

@@ -142,6 +142,24 @@ API change lands only when every first-party client moves with it — see
     start), `/admin/imports/{id}` and `/admin/imports/{id}/cancel`. Starting
     and cancelling an import are audited.
   - **Migration 00040** adds the import job table.
+- **IMDb, Rotten Tomatoes and Metacritic scores.** Movie and show pages show
+  a title's IMDb rating (linking to its IMDb page), Rotten Tomatoes critics'
+  score and Metascore.
+  - **Setup:** paste a free OMDb API key into Settings ▸ General
+    (omdbapi.com). Without one nothing is fetched.
+  - **Refresh:** a new daily task, "Refresh IMDb, Rotten Tomatoes and
+    Metacritic scores", looks titles up by IMDb ID: missing scores first,
+    then this year's and last year's titles weekly and older ones every 90
+    days. It does up to 900 lookups a run, under the free key's 1,000 a day,
+    so a large library fills in over a few days. It stops when the key's
+    daily limit is used up and fails when OMDb refuses the key.
+  - **Shared:** copies of a title in several libraries share one lookup.
+    Episodes have no scores.
+  - **API (additive):** `ItemDetail.external_ratings` (`imdb_id`,
+    `imdb_rating`, `imdb_votes`, `rotten_tomatoes`, `metacritic`) on movies
+    and shows; `omdb_api_key` (masked, encrypted at rest) in
+    `/settings`.
+  - **Migration 00041** adds the `external_ratings` table.
 
 ### Changed
 

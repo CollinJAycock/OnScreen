@@ -209,6 +209,9 @@ type ItemHandler struct {
 	franchise ItemFranchiseDB      // optional; when set, movie details carry their franchise "collection" (items_collection.go)
 	// optional; when set, movie and show details list their manual "collections" (items_collection.go)
 	manualCollections ItemManualCollectionsDB
+	// optional; when set, movie and show details carry their IMDb / Rotten
+	// Tomatoes / Metacritic scores (items_external_ratings.go)
+	externalRatings ItemExternalRatingsDB
 	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
 	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
 	// disables caching (extract on every request — the old behaviour).
@@ -578,12 +581,16 @@ type ItemDetailResponse struct {
 	UserRating      *float64 `json:"user_rating,omitempty"`
 	CommunityRating *float64 `json:"community_rating,omitempty"`
 	RatingCount     int      `json:"rating_count,omitempty"`
-	DurationMS      *int64   `json:"duration_ms,omitempty"`
-	PosterPath      *string  `json:"poster_path,omitempty"`
-	FanartPath      *string  `json:"fanart_path,omitempty"`
-	ContentRating   *string  `json:"content_rating,omitempty"`
-	Genres          []string `json:"genres"`
-	ParentID        *string  `json:"parent_id,omitempty"`
+	// ExternalRatings: a movie's or show's IMDb, Rotten Tomatoes and
+	// Metacritic scores, when the server has an OMDb key and has fetched
+	// them. Omitted otherwise.
+	ExternalRatings *ExternalRatingsResponse `json:"external_ratings,omitempty"`
+	DurationMS      *int64                   `json:"duration_ms,omitempty"`
+	PosterPath      *string                  `json:"poster_path,omitempty"`
+	FanartPath      *string                  `json:"fanart_path,omitempty"`
+	ContentRating   *string                  `json:"content_rating,omitempty"`
+	Genres          []string                 `json:"genres"`
+	ParentID        *string                  `json:"parent_id,omitempty"`
 	// GrandparentID is the parent of the parent — for an episode it's the
 	// show id (episode → season → show), letting the back button on the
 	// player jump straight to the show page instead of replaying browser
@@ -781,6 +788,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		UserRating:      userRating,
 		CommunityRating: communityRating,
 		RatingCount:     ratingCount,
+		ExternalRatings: h.externalRatingsFor(r.Context(), item),
 		DurationMS:      item.DurationMS,
 		PosterPath:      item.PosterPath,
 		FanartPath:      item.FanartPath,

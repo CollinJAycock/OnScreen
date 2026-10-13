@@ -156,6 +156,7 @@ Plex and Emby gate the entire Live TV / DVR feature set behind paid tiers (Plex 
 | Watch-status mirror (Plan/Watching/Done/Hold/Drop) |    ✅    |  ❌  |  ❌  |    ❌    |
 | Watchlist (persistent, all types)                  |    ⚠    |  ⚠   |  ✅  |    ✅    |
 | Full-text search w/ library ACL + rating ceiling   |    ✅    |  ⚠   |  ⚠   |    ⚠    |
+| IMDb / Rotten Tomatoes / Metacritic scores (OMDb)  |    ✅    |  ✅  |  🧩  |    ✅    |
 | Sonarr / Radarr request fan-out (admin-approved)   |    ✅    |  🧩  |  ❌  |    🧩    |
 | Per-user request quotas + auto-approve             |    ✅    |  🧩  |  ❌  |    🧩    |
 | Season-level TV requests ("request more seasons")  |    ✅    |  🧩  |  ❌  |    🧩    |
