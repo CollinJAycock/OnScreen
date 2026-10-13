@@ -90,11 +90,13 @@ type PosterFetcher interface {
 // LibraryFiles drops the library's record of a file the service deleted, the
 // way a full scan drops a file that vanished: a folder rescan doesn't look for
 // missing files, so without this a deleted episode stayed listed until the
-// next full scan. Satisfied by *media.Service.
+// next full scan. CleanupEmptyItems then hides a show left with no episodes.
+// Satisfied by *media.Service.
 type LibraryFiles interface {
 	GetFileByPath(ctx context.Context, path string) (*media.File, error)
 	DeleteFile(ctx context.Context, id uuid.UUID) error
 	SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error
+	CleanupEmptyItems(ctx context.Context, libraryID uuid.UUID) error
 }
 
 // Errors the API maps to client responses.
@@ -500,6 +502,7 @@ func (s *Service) DeleteDownload(ctx context.Context, episodeID uuid.UUID) error
 	if err := s.removeFile(ctx, ep); err != nil {
 		return err
 	}
+	s.tidyLibrary(ctx, feed.LibraryID)
 	s.rescan(feed)
 	return nil
 }
@@ -547,6 +550,7 @@ func (s *Service) Unsubscribe(ctx context.Context, feedID uuid.UUID, deleteFiles
 		return fmt.Errorf("delete podcast feed: %w", err)
 	}
 	if deleteFiles {
+		s.tidyLibrary(ctx, feed.LibraryID)
 		s.rescan(feed)
 	}
 	s.logger.InfoContext(ctx, "podcast unsubscribed", "feed_id", feed.ID, "title", feed.Title, "files_deleted", deleteFiles)
@@ -772,6 +776,7 @@ func (s *Service) applyRetention(ctx context.Context, feed gen.PodcastFeed) (int
 	}
 	if removed > 0 {
 		s.logger.InfoContext(ctx, "podcast retention removed episodes", "feed_id", feed.ID, "count", removed)
+		s.tidyLibrary(ctx, feed.LibraryID)
 		s.rescan(feed)
 	}
 	return removed, nil
@@ -793,7 +798,7 @@ func (s *Service) removeFile(ctx context.Context, ep gen.PodcastFeedEpisode) err
 }
 
 // retireFile drops the library record of a deleted file and hides its item
-// once it has no files left; the folder rescan that follows tidies the show.
+// once it has no files left; tidyLibrary then hides an emptied show.
 // Best effort: what it misses, the next full scan finds.
 func (s *Service) retireFile(ctx context.Context, path string) {
 	if s.files == nil {
@@ -812,6 +817,19 @@ func (s *Service) retireFile(ctx context.Context, path string) {
 	}
 	if err := s.files.SoftDeleteItemIfEmpty(ctx, f.MediaItemID); err != nil {
 		s.logger.WarnContext(ctx, "podcast: hide emptied episode", "item_id", f.MediaItemID, "err", err)
+	}
+}
+
+// tidyLibrary hides episodes and shows left with no files once episodes are
+// deleted. The folder rescan can't be relied on for it: a scan that finds no
+// media stops before its cleanup (an empty walk may be an unmounted share),
+// and a folder whose last episode went holds only its poster. Best effort.
+func (s *Service) tidyLibrary(ctx context.Context, libraryID uuid.UUID) {
+	if s.files == nil {
+		return
+	}
+	if err := s.files.CleanupEmptyItems(ctx, libraryID); err != nil {
+		s.logger.WarnContext(ctx, "podcast: hide emptied shows", "library_id", libraryID, "err", err)
 	}
 }
 
