@@ -23,6 +23,7 @@ var ErrInvalidSetting = errors.New("invalid setting value")
 
 const keyTMDBAPIKey = "tmdb_api_key"
 const keyTVDBAPIKey = "tvdb_api_key"
+const keyOMDbAPIKey = "omdb_api_key"
 const keyArrAPIKey = "arr_api_key"
 const keyArrPathMappings = "arr_path_mappings"
 const keyTranscodeEncoders = "transcode_encoders"
@@ -110,6 +111,7 @@ const encPrefixV2 = "encv2:"
 var secretKeys = map[string]struct{}{
 	keyTMDBAPIKey:          {},
 	keyTVDBAPIKey:          {},
+	keyOMDbAPIKey:          {},
 	keyArrAPIKey:           {},
 	keyOpenSubtitlesConfig: {}, // contains user/password
 	keyOIDCConfig:          {}, // contains client_secret
@@ -145,6 +147,17 @@ func (s *Service) TVDBAPIKey(ctx context.Context) string {
 // SetTVDBAPIKey persists the TheTVDB API key (empty string clears it).
 func (s *Service) SetTVDBAPIKey(ctx context.Context, key string) error {
 	return s.set(ctx, keyTVDBAPIKey, key)
+}
+
+// OMDbAPIKey returns the stored OMDb API key (IMDb / Rotten Tomatoes /
+// Metacritic scores), or "" if not set.
+func (s *Service) OMDbAPIKey(ctx context.Context) string {
+	return s.get(ctx, keyOMDbAPIKey)
+}
+
+// SetOMDbAPIKey persists the OMDb API key (empty string clears it).
+func (s *Service) SetOMDbAPIKey(ctx context.Context, key string) error {
+	return s.set(ctx, keyOMDbAPIKey, key)
 }
 
 // ArrAPIKey returns the stored API key for arr app notifications, or "" if not set.

@@ -28,6 +28,7 @@ import (
 type maskSpySettings struct {
 	SettingsServiceIface
 	tmdb, tvdb, arr string
+	omdb            string
 	opensubsPw      string
 	oidcSecret      string
 	ldapBindPw      string
@@ -39,6 +40,9 @@ type maskSpySettings struct {
 func (m *maskSpySettings) TMDBAPIKey(context.Context) string { return "real-tmdb" }
 func (m *maskSpySettings) TVDBAPIKey(context.Context) string { return "real-tvdb" }
 func (m *maskSpySettings) ArrAPIKey(context.Context) string  { return "real-arr" }
+func (m *maskSpySettings) OMDbAPIKey(context.Context) string { return "real-omdb" }
+
+func (m *maskSpySettings) SetOMDbAPIKey(_ context.Context, v string) error { m.omdb = v; return nil }
 
 func (m *maskSpySettings) SetTMDBAPIKey(_ context.Context, v string) error { m.tmdb = v; return nil }
 func (m *maskSpySettings) SetTVDBAPIKey(_ context.Context, v string) error { m.tvdb = v; return nil }
@@ -105,7 +109,10 @@ func TestSettingsPatch_MaskSentinelDoesNotOverwriteAPIKeys(t *testing.T) {
 
 	// Exactly what the admin UI sends when the operator opens Settings and
 	// presses Save without touching the key fields.
-	patchSettings(t, h, `{"tmdb_api_key":"****","tvdb_api_key":"****","arr_api_key":"****"}`)
+	patchSettings(t, h, `{"tmdb_api_key":"****","tvdb_api_key":"****","arr_api_key":"****","omdb_api_key":"****"}`)
+	if spy.omdb != "" {
+		t.Errorf("omdb key overwritten with mask: %q", spy.omdb)
+	}
 
 	if spy.arr != "" {
 		t.Errorf("arr key was written with the mask sentinel (%q) — an unauthenticated caller could then authenticate with `X-Api-Key: ****`", spy.arr)
@@ -122,7 +129,10 @@ func TestSettingsPatch_RealValuesStillWrite(t *testing.T) {
 	spy := &maskSpySettings{}
 	h := NewSettingsHandler(spy, slog.Default())
 
-	patchSettings(t, h, `{"tmdb_api_key":"new-tmdb","tvdb_api_key":"new-tvdb","arr_api_key":"new-arr"}`)
+	patchSettings(t, h, `{"tmdb_api_key":"new-tmdb","tvdb_api_key":"new-tvdb","arr_api_key":"new-arr","omdb_api_key":" new-omdb "}`)
+	if spy.omdb != "new-omdb" {
+		t.Errorf("omdb key = %q, want it written (trimmed)", spy.omdb)
+	}
 
 	if spy.tmdb != "new-tmdb" || spy.tvdb != "new-tvdb" || spy.arr != "new-arr" {
 		t.Errorf("real values must still be written: tmdb=%q tvdb=%q arr=%q", spy.tmdb, spy.tvdb, spy.arr)

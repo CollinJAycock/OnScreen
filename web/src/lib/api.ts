@@ -1887,9 +1887,19 @@ export interface RequestSettings {
   quota_window_days?: number;
 }
 
+export interface ExternalRatings {
+  imdb_id: string;
+  imdb_rating?: number; // 0-10
+  imdb_votes?: number;
+  rotten_tomatoes?: number; // critics' Tomatometer, 0-100
+  metacritic?: number; // 0-100
+}
+
 export interface ServerSettings {
   tmdb_api_key: string;
   tvdb_api_key: string;
+  /** OMDb key for IMDb / Rotten Tomatoes / Metacritic scores. */
+  omdb_api_key?: string;
   arr_api_key: string;
   arr_webhook_url: string;
   arr_path_mappings?: Record<string, string>;
@@ -2332,6 +2342,9 @@ export interface ItemDetail {
   user_rating?: number; // the signed-in user's own 0-10 rating
   community_rating?: number; // mean of all OnScreen users' ratings
   rating_count?: number; // number of OnScreen user ratings behind community_rating
+  /** Movies and shows: IMDb / Rotten Tomatoes / Metacritic scores, when the
+   *  server has an OMDb key and has fetched them. */
+  external_ratings?: ExternalRatings;
   duration_ms?: number;
   poster_path?: string;
   fanart_path?: string;

@@ -130,6 +130,16 @@ var requiredSystemTasks = []systemTask{
 		enabled:  true,
 	},
 	{
+		name:     "Refresh IMDb, Rotten Tomatoes and Metacritic scores",
+		taskType: "external_ratings",
+		// Daily 5:41am: looks up movies' and shows' scores on OMDb, the
+		// ones still missing first, then recent titles weekly and older
+		// ones every 90 days, up to 900 lookups a run (the free key allows
+		// 1000 a day). Without an OMDb key in Settings it does nothing.
+		cronExpr: "41 5 * * *",
+		enabled:  true,
+	},
+	{
 		name:     "OCR image subtitles",
 		taskType: "ocr_subtitles",
 		// Weekly, Sunday 4:00am local — a full-library OCR sweep of image-based

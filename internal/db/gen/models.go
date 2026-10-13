@@ -144,6 +144,16 @@ type EpisodeAncestry struct {
 	ContentRating *string     `json:"content_rating"`
 }
 
+type ExternalRating struct {
+	ImdbID         string             `json:"imdb_id"`
+	ImdbRating     *float64           `json:"imdb_rating"`
+	ImdbVotes      *int32             `json:"imdb_votes"`
+	RottenTomatoes *int16             `json:"rotten_tomatoes"`
+	Metacritic     *int16             `json:"metacritic"`
+	Found          bool               `json:"found"`
+	FetchedAt      pgtype.Timestamptz `json:"fetched_at"`
+}
+
 type ExternalSubtitle struct {
 	ID            uuid.UUID          `json:"id"`
 	FileID        uuid.UUID          `json:"file_id"`

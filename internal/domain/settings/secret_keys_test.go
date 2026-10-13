@@ -13,3 +13,10 @@ func TestScrobbleAppConfigsAreEncryptedAtRest(t *testing.T) {
 		}
 	}
 }
+
+// The OMDb key is a credential like the TMDB and TVDB keys.
+func TestOMDbKeyIsEncryptedAtRest(t *testing.T) {
+	if !(&Service{}).isSecretKey(keyOMDbAPIKey) {
+		t.Error("omdb_api_key must be in secretKeys")
+	}
+}

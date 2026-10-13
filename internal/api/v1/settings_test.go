@@ -29,6 +29,7 @@ func (m *mockWorkerLister) ListWorkers(_ context.Context) ([]transcode.WorkerReg
 type mockSettingsService struct {
 	key            string
 	tvdbKey        string
+	omdbKey        string
 	setErr         error
 	setTVDBErr     error
 	fleet          settings.WorkerFleetConfig
@@ -74,6 +75,11 @@ func (m *mockSettingsService) SetTVDBAPIKey(_ context.Context, key string) error
 		return m.setErr
 	}
 	m.tvdbKey = key
+	return nil
+}
+func (m *mockSettingsService) OMDbAPIKey(_ context.Context) string { return m.omdbKey }
+func (m *mockSettingsService) SetOMDbAPIKey(_ context.Context, key string) error {
+	m.omdbKey = key
 	return nil
 }
 func (m *mockSettingsService) ArrAPIKey(_ context.Context) string                  { return "" }

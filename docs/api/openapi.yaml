@@ -3289,6 +3289,9 @@ paths:
 
         Documented fields (additive — v2.x may add more):
           - `tmdb_api_key`, `tvdb_api_key`, `arr_api_key` (masked)
+          - `omdb_api_key` *(v2.6, masked)* — the OMDb key the daily
+            `external_ratings` task uses for IMDb, Rotten Tomatoes and
+            Metacritic scores (`ItemDetail.external_ratings`)
           - `arr_webhook_url`, `arr_path_mappings`
           - `transcode_encoders`
           - `web_downloads_enabled` *(v2.2)* — admin toggle for the
@@ -5895,6 +5898,15 @@ components:
         year:           { type: integer, nullable: true }
         summary:        { type: string, nullable: true }
         rating:         { type: number, format: float, nullable: true }
+        external_ratings:
+          type: object
+          description: 'Movies and shows only *(v2.6)*, omitted until the server (with an OMDb key) has fetched scores for the title''s IMDb ID. Each score is omitted when OMDb has none.'
+          properties:
+            imdb_id:         { type: string }
+            imdb_rating:     { type: number, minimum: 0, maximum: 10 }
+            imdb_votes:      { type: integer }
+            rotten_tomatoes: { type: integer, minimum: 0, maximum: 100, description: "Critics' Tomatometer, percent." }
+            metacritic:      { type: integer, minimum: 0, maximum: 100 }
         duration_ms:    { type: integer, format: int64, nullable: true }
         poster_path:    { type: string, nullable: true }
         fanart_path:    { type: string, nullable: true }

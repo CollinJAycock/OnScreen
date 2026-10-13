@@ -182,12 +182,14 @@ OnScreen/
 │   ├── config/         Env-var bootstrap config (only what's needed pre-DB)
 │   ├── db/
 │   │   ├── gen/        sqlc-generated query wrappers
-│   │   └── migrations/ 40 goose migrations: squashed baseline 00001_init + 39
+│   │   └── migrations/ 41 goose migrations: squashed baseline 00001_init + 40
 │   │                   since (TOTP, scrobbling, requests, issues, etc.)
 │   ├── domain/         Library, media, profile, library_access, settings, watchevent
 │   ├── livetv/         HDHomeRun / M3U tuners, EPG (Schedules Direct + XMLTV),
 │   │                   DVR matcher + recording worker, refcounted HLS proxy
-│   ├── metadata/       TMDB / TVDB / MusicBrainz / OpenLibrary / Wikipedia clients
+│   ├── externalratings/ IMDb / Rotten Tomatoes / Metacritic scores from OMDb,
+│   │                   refreshed by a daily task within the key's budget
+│   ├── metadata/       TMDB / TVDB / MusicBrainz / OpenLibrary / Wikipedia / OMDb clients
 │   ├── notification/   In-app SSE notifications + webhook dispatch (HMAC-SHA256)
 │   ├── observability/  slog handlers, Prometheus metrics, OTel setup, health checks
 │   ├── photoimage/     On-demand photo resize endpoint with disk cache
@@ -261,6 +263,7 @@ OnScreen/
 | `hub_recently_added` | Materialized recently-added cache; refreshed by background worker |
 | `podcast_feeds` | RSS podcast subscriptions: feed URL, download folder, auto-download, keep-latest retention, ETag / Last-Modified |
 | `podcast_feed_episodes` | A feed's episodes and their download state (available / downloading / downloaded / failed / removed); `file_path` is how the scanner matches a download to its feed |
+| `external_ratings` | IMDb rating and votes, Rotten Tomatoes (critics) and Metacritic scores from OMDb, keyed by IMDb ID (every copy of a title shares a row); `found` / `fetched_at` drive the refresh schedule |
 | `import_jobs` | Imports from Plex / Jellyfin / Emby (dry runs included): source, account mapping, phase, match and write counts, a sample of unmatched items; the source's token is never stored |
 | `webhook_endpoints` | Outbound webhook URLs; AES-256-GCM encrypted secrets |
 | `webhook_failures` | Dead-letter for failed webhook deliveries |

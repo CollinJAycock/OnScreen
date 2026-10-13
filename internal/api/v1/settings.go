@@ -28,6 +28,8 @@ type SettingsServiceIface interface {
 	SetTMDBAPIKey(ctx context.Context, key string) error
 	TVDBAPIKey(ctx context.Context) string
 	SetTVDBAPIKey(ctx context.Context, key string) error
+	OMDbAPIKey(ctx context.Context) string
+	SetOMDbAPIKey(ctx context.Context, key string) error
 	ArrAPIKey(ctx context.Context) string
 	SetArrAPIKey(ctx context.Context, key string) error
 	ArrPathMappings(ctx context.Context) map[string]string
@@ -575,6 +577,7 @@ func (h *SettingsHandler) UpdateFleet(w http.ResponseWriter, r *http.Request) {
 type settingsResponse struct {
 	TMDBAPIKey          string                  `json:"tmdb_api_key"`
 	TVDBAPIKey          string                  `json:"tvdb_api_key"`
+	OMDbAPIKey          string                  `json:"omdb_api_key"`
 	ArrAPIKey           string                  `json:"arr_api_key"`
 	ArrWebhookURL       string                  `json:"arr_webhook_url"`
 	ArrPathMappings     map[string]string       `json:"arr_path_mappings,omitempty"`
@@ -975,6 +978,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	respond.Success(w, r, settingsResponse{
 		TMDBAPIKey:          maskAPIKey(h.svc.TMDBAPIKey(ctx)),
 		TVDBAPIKey:          maskAPIKey(h.svc.TVDBAPIKey(ctx)),
+		OMDbAPIKey:          maskAPIKey(h.svc.OMDbAPIKey(ctx)),
 		ArrAPIKey:           maskAPIKey(arrKey),
 		ArrWebhookURL:       webhookURL,
 		ArrPathMappings:     h.svc.ArrPathMappings(ctx),
@@ -999,6 +1003,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		TMDBAPIKey          *string            `json:"tmdb_api_key"`
 		TVDBAPIKey          *string            `json:"tvdb_api_key"`
+		OMDbAPIKey          *string            `json:"omdb_api_key"`
 		ArrAPIKey           *string            `json:"arr_api_key"`
 		ArrPathMappings     *map[string]string `json:"arr_path_mappings"`
 		TranscodeEncoders   *string            `json:"transcode_encoders"`
@@ -1171,6 +1176,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.TVDBAPIKey != nil && *body.TVDBAPIKey != maskedSecret {
 		if err := h.svc.SetTVDBAPIKey(ctx, *body.TVDBAPIKey); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "tvdb_api_key", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.OMDbAPIKey != nil && *body.OMDbAPIKey != maskedSecret {
+		if err := h.svc.SetOMDbAPIKey(ctx, strings.TrimSpace(*body.OMDbAPIKey)); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "omdb_api_key", "err", err)
 			respond.InternalError(w, r)
 			return
 		}
@@ -1488,6 +1500,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.TVDBAPIKey != nil {
 			detail["tvdb_api_key"] = "changed"
+		}
+		if body.OMDbAPIKey != nil {
+			detail["omdb_api_key"] = "changed"
 		}
 		if body.ArrAPIKey != nil {
 			detail["arr_api_key"] = "changed"

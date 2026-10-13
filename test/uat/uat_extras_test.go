@@ -234,6 +234,8 @@ func (s *stubSettingsService) TMDBAPIKey(_ context.Context) string              
 func (s *stubSettingsService) SetTMDBAPIKey(_ context.Context, _ string) error     { return nil }
 func (s *stubSettingsService) TVDBAPIKey(_ context.Context) string                 { return "" }
 func (s *stubSettingsService) SetTVDBAPIKey(_ context.Context, _ string) error     { return nil }
+func (s *stubSettingsService) OMDbAPIKey(_ context.Context) string                 { return "" }
+func (s *stubSettingsService) SetOMDbAPIKey(_ context.Context, _ string) error     { return nil }
 func (s *stubSettingsService) ArrAPIKey(_ context.Context) string                  { return "" }
 func (s *stubSettingsService) SetArrAPIKey(_ context.Context, _ string) error      { return nil }
 func (s *stubSettingsService) ArrPathMappings(_ context.Context) map[string]string { return nil }

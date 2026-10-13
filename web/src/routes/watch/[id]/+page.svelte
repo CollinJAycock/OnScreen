@@ -3,6 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { externalRatingChips } from '$lib/externalRatings';
   import { cssUrl } from '$lib/cssurl';
   import { progressUpdates } from '$lib/stores/notifications';
   // Admin stop (Now Playing): playback.stop SSE + PLAYBACK_STOPPED refusals.
@@ -4196,6 +4197,13 @@
           {#if item.rating}<span title="Critic rating">&#9733; {item.rating.toFixed(1)}</span>{/if}
           {#if item.audience_rating}<span title="Audience rating">&#128101; {item.audience_rating.toFixed(1)}</span>{/if}
           {#if item.community_rating}<span title="OnScreen users ({item.rating_count})">OnScreen {item.community_rating.toFixed(1)}</span>{/if}
+          {#each externalRatingChips(item.external_ratings) as chip (chip.key)}
+            {#if chip.href}
+              <a class="ext-rating" href={chip.href} target="_blank" rel="noopener noreferrer" title={chip.title}>{chip.label}</a>
+            {:else}
+              <span class="ext-rating" title={chip.title}>{chip.label}</span>
+            {/if}
+          {/each}
           {#if fileDamaged}
             <span class="damaged-pill"
               title={sourceFile?.integrity_detail ?? 'The integrity check could not decode parts of this file'}>
@@ -5607,10 +5615,13 @@
     margin: 0 0 0.5rem;
   }
   .detail-tags {
-    display: flex; gap: 0.75rem;
+    display: flex; flex-wrap: wrap; gap: 0.3rem 0.75rem;
     font-size: 0.8rem; color: var(--text-muted);
     margin-bottom: 0.4rem;
   }
+  /* IMDb / Rotten Tomatoes / Metacritic scores; the IMDb one links out. */
+  .ext-rating { color: var(--text-muted); text-decoration: none; white-space: nowrap; }
+  a.ext-rating:hover { color: var(--text-secondary); text-decoration: underline; }
   /* Integrity-probe verdict badge (same hue family as .ep-kind-movie). The
      title attribute carries the probe detail for admins. */
   .damaged-pill {
