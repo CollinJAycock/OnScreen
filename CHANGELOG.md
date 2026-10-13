@@ -108,6 +108,40 @@ API change lands only when every first-party client moves with it — see
     deletes the file); item children gain `originally_available_at`.
     Subscribing, changing and unsubscribing are audited.
   - **Migration 00039** adds the feed and episode tables.
+- **Import from Plex, Jellyfin or Emby.** Settings ▸ Integrations ▸ Import
+  brings users' history over from the server they're leaving: watched state,
+  resume points, ratings, favorites, playlists and play history.
+  - **How:** connect with the old server's URL and token (Plex: the owner's
+    X-Plex-Token; Jellyfin and Emby: an API key), choose the OnScreen user
+    each of its accounts goes to (users with the same name are suggested),
+    pick what to bring, then **Preview** to see how much matches before
+    **Import** writes anything. The token is used for the run only and never
+    stored.
+  - **Matching:** by file path first (the two servers usually read the same
+    files, wherever each mounts them), shows by their folder, then by TMDB,
+    TVDB or IMDb ID, and episodes by their show plus season and episode
+    number. A sample of what didn't match is listed.
+  - **Safe to repeat:** anything a user already did on OnScreen is kept (a
+    newer watched or unwatched mark, a rating, a favorite), and running an
+    import again writes only what's new.
+  - **Play history** counts toward play counts, Trending and analytics.
+    Plays older than the server's watch-history retention are left out (their
+    items still count as watched), and imported plays get their own monthly
+    history partitions, so retention removes them on time. Imports write
+    straight to the database, so they don't send scrobbles to Trakt, Last.fm
+    or ListenBrainz.
+  - **What each server shows:** a Plex server shows resume points, ratings
+    and playlists only for its owner; its other accounts bring their play
+    history and what it shows they watched. Plex has no favorites. Jellyfin
+    and Emby keep no log of individual plays, so each watched item brings one
+    play on its last-played date, and a playlist shared with everyone comes
+    over for each user who could see it.
+  - **Tested** against Jellyfin 12.2 and Emby 4.10 servers. The Plex reader
+    is tested against a fake modelled on its API, not a live server.
+  - **API (all additive):** `/admin/imports/connect`, `/admin/imports` (list,
+    start), `/admin/imports/{id}` and `/admin/imports/{id}/cancel`. Starting
+    and cancelling an import are audited.
+  - **Migration 00040** adds the import job table.
 
 ### Changed
 

@@ -91,7 +91,19 @@ func (w *PartitionWorker) EnsurePartitions(ctx context.Context) error {
 }
 
 func (w *PartitionWorker) createPartition(ctx context.Context, month time.Time) error {
-	// Truncate to first of month.
+	if err := EnsureWatchEventsPartition(ctx, w.pool, month); err != nil {
+		return err
+	}
+	w.logger.DebugContext(ctx, "partition ensured", "month", month.Format("2006-01"))
+	return nil
+}
+
+// EnsureWatchEventsPartition creates the watch_events partition for month's
+// calendar month (UTC) if it doesn't exist. Idempotent. Used by the monthly
+// run and by imports that backfill past months: rows for a month with no
+// partition land in the default partition, which retention never detaches.
+func EnsureWatchEventsPartition(ctx context.Context, pool *pgxpool.Pool, month time.Time) error {
+	month = month.UTC()
 	start := time.Date(month.Year(), month.Month(), 1, 0, 0, 0, 0, time.UTC)
 	end := start.AddDate(0, 1, 0)
 
@@ -109,13 +121,8 @@ func (w *PartitionWorker) createPartition(ctx context.Context, month time.Time) 
 
 	qCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	_, err := w.pool.Exec(qCtx, query)
-	if err != nil {
-		return err
-	}
-
-	w.logger.DebugContext(ctx, "partition ensured", "table", tableName)
-	return nil
+	_, err := pool.Exec(qCtx, query)
+	return err
 }
 
 func (w *PartitionWorker) detachOldPartitions(ctx context.Context, cutoff time.Time) error {

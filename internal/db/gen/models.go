@@ -170,6 +170,25 @@ type HubRecentlyAdded struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type ImportJob struct {
+	ID         uuid.UUID          `json:"id"`
+	SourceKind string             `json:"source_kind"`
+	SourceUrl  string             `json:"source_url"`
+	ServerName *string            `json:"server_name"`
+	Status     string             `json:"status"`
+	DryRun     bool               `json:"dry_run"`
+	Options    []byte             `json:"options"`
+	Mapping    []byte             `json:"mapping"`
+	Phase      string             `json:"phase"`
+	Stats      []byte             `json:"stats"`
+	Unmatched  []byte             `json:"unmatched"`
+	Error      *string            `json:"error"`
+	CreatedBy  pgtype.UUID        `json:"created_by"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+	FinishedAt pgtype.Timestamptz `json:"finished_at"`
+}
+
 type IntroMarker struct {
 	ID          uuid.UUID          `json:"id"`
 	MediaItemID uuid.UUID          `json:"media_item_id"`

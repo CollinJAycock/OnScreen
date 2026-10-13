@@ -57,8 +57,8 @@ jobs:
         run: go test -tags=integration -timeout 10m ./internal/...
 
       # Race detector on the concurrency-heavy packages — broker pubsub,
-      # transcode dispatcher, scheduler, valkey lock + master-election,
-      # streaming session tracker. -race needs cgo so we install gcc;
+      # transcode dispatcher, scheduler, server-import runs, valkey lock +
+      # master-election, streaming session tracker. -race needs cgo so we install gcc;
       # scoping to the packages that actually exercise goroutines keeps
       # CI time bounded vs running -race across the whole repo.
       - name: Race detector
@@ -67,6 +67,7 @@ jobs:
             ./internal/notification/... \
             ./internal/streaming/... \
             ./internal/scheduler/... \
+            ./internal/serverimport/... \
             ./internal/valkey/... \
             ./internal/worker/... \
             ./internal/transcode/...

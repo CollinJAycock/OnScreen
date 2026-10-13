@@ -96,6 +96,12 @@ const (
 	ActionPodcastUpdate      = "podcast.update"
 	ActionPodcastUnsubscribe = "podcast.unsubscribe"
 
+	// Imports from a Plex / Jellyfin / Emby server. A run writes other
+	// users' watch state, ratings and playlists, so starting and cancelling
+	// one are recorded.
+	ActionImportStart  = "import.start"
+	ActionImportCancel = "import.cancel"
+
 	// Admin impersonation. ViewAs lets an admin browse the home/library/etc.
 	// surfaces as another user; without an audit trail the request log
 	// attributes the GETs to the *target* user (since the synthetic claims

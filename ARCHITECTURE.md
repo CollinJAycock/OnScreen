@@ -182,7 +182,7 @@ OnScreen/
 │   ├── config/         Env-var bootstrap config (only what's needed pre-DB)
 │   ├── db/
 │   │   ├── gen/        sqlc-generated query wrappers
-│   │   └── migrations/ 39 goose migrations: squashed baseline 00001_init + 38
+│   │   └── migrations/ 40 goose migrations: squashed baseline 00001_init + 39
 │   │                   since (TOTP, scrobbling, requests, issues, etc.)
 │   ├── domain/         Library, media, profile, library_access, settings, watchevent
 │   ├── livetv/         HDHomeRun / M3U tuners, EPG (Schedules Direct + XMLTV),
@@ -194,6 +194,9 @@ OnScreen/
 │   ├── plugin/         MCP-based outbound plugin host
 │   ├── podcast/        RSS podcast subscriptions: feed parser, episode downloads
 │   │                   into the library folder, hourly refresh, retention
+│   ├── serverimport/   Import from Plex / Jellyfin / Emby: read the old server,
+│   │                   match its items by path and external ID, write users'
+│   │                   watch state, ratings, playlists and play history
 │   ├── scanner/        Recursive scan, hash + ffprobe, mtime+size fast-skip,
 │   │                   per-type modules (audiobook, book_cbz/cbr/epub, home_video)
 │   ├── streaming/      Direct-play "Now Playing" tracker; per-file stream tokens
@@ -258,6 +261,7 @@ OnScreen/
 | `hub_recently_added` | Materialized recently-added cache; refreshed by background worker |
 | `podcast_feeds` | RSS podcast subscriptions: feed URL, download folder, auto-download, keep-latest retention, ETag / Last-Modified |
 | `podcast_feed_episodes` | A feed's episodes and their download state (available / downloading / downloaded / failed / removed); `file_path` is how the scanner matches a download to its feed |
+| `import_jobs` | Imports from Plex / Jellyfin / Emby (dry runs included): source, account mapping, phase, match and write counts, a sample of unmatched items; the source's token is never stored |
 | `webhook_endpoints` | Outbound webhook URLs; AES-256-GCM encrypted secrets |
 | `webhook_failures` | Dead-letter for failed webhook deliveries |
 | `server_settings` | Runtime config (TMDB API key, etc.) |

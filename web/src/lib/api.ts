@@ -3402,6 +3402,99 @@ export const podcastApi = {
   deleteDownload: (episodeId: string) => api.del(`/admin/podcast-episodes/${episodeId}/download`)
 };
 
+// ── Import from Plex / Jellyfin / Emby (admin) ───────────────────────────────
+
+export type ImportKind = 'plex' | 'jellyfin' | 'emby';
+
+export interface ImportAccount {
+  id: string;
+  name: string;
+  /** The source shows this account's watched state, resume points, ratings
+   *  and playlists. A Plex server does only for its owner; other Plex
+   *  accounts bring their play history (and watched state from it). */
+  full_state: boolean;
+  /** The OnScreen user with the same name, if any. */
+  suggested_user_id?: string;
+}
+
+export interface ImportConnection {
+  kind: ImportKind;
+  server_name: string;
+  version: string;
+  accounts: ImportAccount[];
+}
+
+export interface ImportOptions {
+  watched: boolean;
+  ratings: boolean;
+  favorites: boolean;
+  playlists: boolean;
+  history: boolean;
+}
+
+export interface ImportAccountMapping {
+  account_id: string;
+  account_name?: string;
+  user_id: string;
+}
+
+export interface ImportCounts {
+  watched: number;
+  resume_points: number;
+  plays: number;
+  ratings: number;
+  favorites: number;
+  playlists: number;
+  playlist_items: number;
+}
+
+export interface ImportStats {
+  source_items?: number;
+  referenced?: number;
+  matched?: number;
+  unmatched?: number;
+  plays_outside_retention?: number;
+  planned?: ImportCounts;
+  written?: ImportCounts;
+  write_progress?: number;
+}
+
+export type ImportStatus = 'running' | 'succeeded' | 'failed' | 'cancelled';
+
+export interface ImportJob {
+  id: string;
+  source_kind: ImportKind;
+  source_url: string;
+  server_name?: string;
+  status: ImportStatus;
+  dry_run: boolean;
+  options: Partial<ImportOptions>;
+  mapping: ImportAccountMapping[];
+  phase: string;
+  stats: ImportStats;
+  /** A sample of the source items nothing here matched. */
+  unmatched: string[];
+  error?: string;
+  created_at: string;
+  updated_at: string;
+  finished_at?: string;
+}
+
+export interface ImportSource {
+  kind: ImportKind;
+  url: string;
+  token: string;
+}
+
+export const importApi = {
+  connect: (src: ImportSource) => api.post<ImportConnection>('/admin/imports/connect', src),
+  start: (body: ImportSource & { mapping: ImportAccountMapping[]; options: ImportOptions; dry_run: boolean }) =>
+    api.post<ImportJob>('/admin/imports', body),
+  list: () => api.requestList<ImportJob>('/admin/imports'),
+  get: (id: string) => api.get<ImportJob>(`/admin/imports/${id}`),
+  cancel: (id: string) => api.post<void>(`/admin/imports/${id}/cancel`)
+};
+
 // ── Plugins (admin) ───────────────────────────────────────────────────────────
 
 export type PluginRole = 'notification' | 'metadata' | 'task';

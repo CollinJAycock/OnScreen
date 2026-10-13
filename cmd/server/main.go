@@ -67,6 +67,7 @@ import (
 	"github.com/onscreen/onscreen/internal/scanner"
 	"github.com/onscreen/onscreen/internal/scheduler"
 	"github.com/onscreen/onscreen/internal/scrobble"
+	"github.com/onscreen/onscreen/internal/serverimport"
 	"github.com/onscreen/onscreen/internal/staticabr"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/subtitles"
@@ -1275,6 +1276,14 @@ func run() error {
 		WithAudit(auditLogger).
 		WithEncryptor(encryptor)
 	podcastHandler := v1.NewPodcastHandler(podcastSvc, logger).WithAudit(auditLogger)
+	// Imports from Plex / Jellyfin / Emby. Imported plays go into their own
+	// month partitions, so the retention sweep drops them on time.
+	importSvc := serverimport.New(ctx, gen.New(rwPool),
+		func(ctx context.Context, month time.Time) error {
+			return worker.EnsureWatchEventsPartition(ctx, rwPool, month)
+		},
+		(&hotRetainMonths{cfg: cfg}).RetainMonths, logger)
+	importHandler := v1.NewImportHandler(importSvc, gen.New(rwPool), logger).WithAudit(auditLogger)
 	// Discover reuses the same adapter so admins toggling the TMDB key
 	// flow through to search results without a server restart.
 	discoverHandler := v1.NewDiscoverHandler(gen.New(roPool), requestsTMDB, requestsSvc, logger).
@@ -1531,6 +1540,7 @@ func run() error {
 		Capabilities:    capabilitiesHandler,
 		ArrServices:     arrServicesHandler,
 		Podcasts:        podcastHandler,
+		Imports:         importHandler,
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
 		Upcoming:        upcomingHandler,

@@ -119,6 +119,16 @@ tags:
       scanner makes them ordinary `podcast` / `podcast_episode` items named
       from the feed. Clients play them like any other file. Feed and episode
       fetches refuse private and loopback addresses.
+  - name: Imports
+    description: |
+      Import from a Plex, Jellyfin or Emby server (admin only): each mapped
+      user's watched state, resume points, ratings, favorites, playlists and
+      play history. Connect to list the server's accounts, start a run (or a
+      `dry_run` preview that matches without writing) and poll it. Items are
+      matched by file path, shows by their folder, then by TMDB / TVDB / IMDb
+      ID. What a user already did on OnScreen is kept, and a re-run writes
+      only what's new. The token is used for the run and never stored. The
+      server URL may be on the LAN or loopback; link-local is refused.
   - name: Notifications
     description: |
       Outbound notification agents (admin only): Discord webhooks, Telegram
@@ -4335,6 +4345,166 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   # ── Plugins (admin) ────────────────────────────────────────────────────────
+  /api/v1/admin/imports/connect:
+    post:
+      summary: Check a source server and list its accounts (admin)
+      description: |
+        Reads the server's identity and accounts with the token: Plex needs
+        the server owner's X-Plex-Token, Jellyfin and Emby an API key. Each
+        account comes with the OnScreen user of the same name (any case) as
+        `suggested_user_id`. Nothing is stored.
+      tags: [Imports]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ImportSource' }
+      responses:
+        '200':
+          description: The server and its accounts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ImportConnection' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422':
+          description: |
+            `IMPORT_SOURCE_UNAUTHORIZED` — the server refused the token; or
+            `VALIDATION` — an unknown kind, a URL that isn't plain
+            http(s) (no user name, query or fragment), or no token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '502':
+          description: '`IMPORT_SOURCE_UNAVAILABLE` — unreachable, a refused address, or not the chosen server type.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /api/v1/admin/imports:
+    get:
+      summary: List recent imports (admin)
+      description: The 20 newest, previews included. A running import whose server stopped is failed here.
+      tags: [Imports]
+      responses:
+        '200':
+          description: Imports, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/ImportJob' } }
+                  meta: { type: object, properties: { total: { type: integer } } }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Start an import or preview (admin, audited)
+      description: |
+        Runs in the background; poll `GET /admin/imports/{id}`. One import
+        runs at a time. A real run (not `dry_run`) is audited as
+        `import.start`.
+
+        - Watched state becomes a watched mark dated when the source last saw
+          the item watched; an equal or newer mark on OnScreen is kept.
+        - A resume point and each past play become watch events
+          (`client_name` "Plex (imported)" etc.). Plays older than the
+          server's watch-history retention are skipped. Imported events don't
+          trigger scrobbles.
+        - Ratings and favorites already set on OnScreen are kept.
+        - Playlists become playlists of the mapped user; a re-run adds the
+          items missing from them.
+      tags: [Imports]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/ImportSource'
+                - type: object
+                  required: [mapping, options]
+                  properties:
+                    mapping:
+                      type: array
+                      minItems: 1
+                      items:
+                        type: object
+                        required: [account_id, user_id]
+                        properties:
+                          account_id: { type: string, description: The source account's ID from connect. }
+                          user_id:    { type: string, format: uuid, description: The OnScreen user its data goes to. }
+                    options: { $ref: '#/components/schemas/ImportOptions' }
+                    dry_run: { type: boolean, default: false, description: Match and count without writing. }
+      responses:
+        '202':
+          description: Started.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ImportJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409':
+          description: '`IMPORT_RUNNING` — another import is running.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '422':
+          description: |
+            As for connect, or: no account mapped, an account that isn't on
+            the source, a user that doesn't exist, or nothing selected.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '502':
+          description: '`IMPORT_SOURCE_UNAVAILABLE`.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+  /api/v1/admin/imports/{id}:
+    get:
+      summary: An import's progress and outcome (admin)
+      tags: [Imports]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: The import.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ImportJob' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+  /api/v1/admin/imports/{id}/cancel:
+    post:
+      summary: Cancel a running import (admin, audited)
+      description: What it wrote before the cancel stays; a re-run picks up the rest. Audited as `import.cancel`.
+      tags: [Imports]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '204': { description: Cancelling. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: '`IMPORT_NOT_RUNNING` — finished, or running on another server node.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
   /api/v1/admin/plugins:
     get:
       summary: List plugins (admin)
@@ -6380,6 +6550,81 @@ components:
         server_url: { type: string, format: uri, description: 'ntfy / Gotify server. https unless allow_private_network.' }
         topic:      { type: string, description: 'ntfy topic ([A-Za-z0-9_-], at most 64).' }
         recipients: { type: array, items: { type: string, format: email }, maxItems: 10, description: 'Email addresses.' }
+    ImportSource:
+      type: object
+      required: [kind, url, token]
+      properties:
+        kind:  { type: string, enum: [plex, jellyfin, emby] }
+        url:   { type: string, format: uri, example: 'http://192.168.1.10:32400' }
+        token: { type: string, description: "Plex: the server owner's X-Plex-Token. Jellyfin / Emby: an API key. Never stored." }
+    ImportConnection:
+      type: object
+      properties:
+        kind:        { type: string, enum: [plex, jellyfin, emby] }
+        server_name: { type: string }
+        version:     { type: string }
+        accounts:
+          type: array
+          items:
+            type: object
+            properties:
+              id:                { type: string }
+              name:              { type: string }
+              full_state:        { type: boolean, description: "The source shows this account's resume points, ratings and playlists (on Plex only the owner's; other Plex accounts bring their play history)." }
+              suggested_user_id: { type: string, format: uuid, description: The OnScreen user with the same name. }
+    ImportOptions:
+      type: object
+      properties:
+        watched:   { type: boolean, description: Watched marks and resume points. }
+        ratings:   { type: boolean }
+        favorites: { type: boolean, description: Jellyfin / Emby only. }
+        playlists: { type: boolean }
+        history:   { type: boolean, description: "Every past play as a play event (Jellyfin / Emby: one per watched item, on its last-played date)." }
+    ImportCounts:
+      type: object
+      properties:
+        watched:        { type: integer }
+        resume_points:  { type: integer }
+        plays:          { type: integer }
+        ratings:        { type: integer }
+        favorites:      { type: integer }
+        playlists:      { type: integer }
+        playlist_items: { type: integer }
+    ImportJob:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        source_kind: { type: string, enum: [plex, jellyfin, emby] }
+        source_url:  { type: string }
+        server_name: { type: string }
+        status:      { type: string, enum: [running, succeeded, failed, cancelled] }
+        dry_run:     { type: boolean }
+        options:     { $ref: '#/components/schemas/ImportOptions' }
+        mapping:
+          type: array
+          items:
+            type: object
+            properties:
+              account_id:   { type: string }
+              account_name: { type: string }
+              user_id:      { type: string, format: uuid }
+        phase:       { type: string, description: What a running import is doing, for display. }
+        stats:
+          type: object
+          properties:
+            source_items:            { type: integer, description: Items read from the source. }
+            referenced:              { type: integer, description: Items a mapped account did something with. }
+            matched:                 { type: integer }
+            unmatched:               { type: integer }
+            plays_outside_retention: { type: integer }
+            planned:                 { $ref: '#/components/schemas/ImportCounts' }
+            written:                 { $ref: '#/components/schemas/ImportCounts' }
+            write_progress:          { type: number, minimum: 0, maximum: 1 }
+        unmatched:   { type: array, items: { type: string }, description: Up to 100 source items nothing here matched. }
+        error:       { type: string }
+        created_at:  { type: string, format: date-time }
+        updated_at:  { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
     PodcastFeed:
       type: object
       properties:
