@@ -1287,14 +1287,17 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// File-level duration_ms (set above via CreateOrUpdateFile) is the authoritative
 	// source for the player — no need to copy it to the item here.
 
-	// Tracks: copy duration from the probe result to the item so the
-	// children API can return it without joining against media_files.
-	// Only the duration: UpdateItemMetadata would also blank the track's
-	// year, genres and artist, and a split fold rewrites many durations.
-	if libraryType == "music" && item.Type == "track" && probe.DurationMs != nil &&
-		(item.DurationMS == nil || *item.DurationMS != *probe.DurationMs) {
+	// Tracks and podcast episodes: copy duration from the probe result to the
+	// item so the children API can return it without joining against
+	// media_files. Only the duration: UpdateItemMetadata would also blank the
+	// track's year, genres and artist, and a split fold rewrites many
+	// durations. An episode's probed length replaces its feed's
+	// itunes:duration, which leaves out the ads inserted when it's served.
+	if probe.DurationMs != nil && (item.DurationMS == nil || *item.DurationMS != *probe.DurationMs) &&
+		((libraryType == "music" && item.Type == "track") ||
+			(libraryType == "podcast" && item.Type == "podcast_episode")) {
 		if err := s.media.UpdateItemDuration(ctx, item.ID, *probe.DurationMs); err != nil {
-			s.logger.WarnContext(ctx, "update track duration failed", "item_id", item.ID, "err", err)
+			s.logger.WarnContext(ctx, "update item duration failed", "item_id", item.ID, "err", err)
 		}
 	}
 

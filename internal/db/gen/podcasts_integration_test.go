@@ -179,3 +179,58 @@ func guidsOf(eps []gen.PodcastFeedEpisode) []string {
 	}
 	return out
 }
+
+// TestCleanupEmptyPodcastItems_Integration: the scan-end cleanup hides a
+// podcast episode left with no file and then its show once no episode is
+// left, as it does for TV shows and albums. Before podcast types were in
+// these queries, deleting a feed's last download (or unsubscribing with
+// "also delete") left an empty show in the library.
+func TestCleanupEmptyPodcastItems_Integration(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := gen.New(pool)
+
+	var lib uuid.UUID
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO libraries (name, type, scan_paths) VALUES ('Podcasts', 'podcast', '{/media/podcasts}') RETURNING id`,
+	).Scan(&lib); err != nil {
+		t.Fatalf("insert library: %v", err)
+	}
+	item := func(typ, title string, parent *uuid.UUID) uuid.UUID {
+		t.Helper()
+		var id uuid.UUID
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO media_items (library_id, type, title, sort_title, parent_id) VALUES ($1, $2, $3, $3, $4) RETURNING id`,
+			lib, typ, title, parent,
+		).Scan(&id); err != nil {
+			t.Fatalf("insert %s: %v", typ, err)
+		}
+		return id
+	}
+	emptied := item("podcast", "Emptied", nil)
+	gone := item("podcast_episode", "Gone", &emptied)
+	kept := item("podcast", "Kept", nil)
+	live := item("podcast_episode", "Live", &kept)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO media_files (media_item_id, file_path, file_size) VALUES ($1, '/media/podcasts/Kept/ep.mp3', 1)`, live,
+	); err != nil {
+		t.Fatalf("insert file: %v", err)
+	}
+
+	if err := q.SoftDeleteItemsWithNoActiveFiles(ctx, lib); err != nil {
+		t.Fatalf("SoftDeleteItemsWithNoActiveFiles: %v", err)
+	}
+	if err := q.SoftDeleteEmptyContainerItems(ctx, lib); err != nil {
+		t.Fatalf("SoftDeleteEmptyContainerItems: %v", err)
+	}
+
+	for id, wantDeleted := range map[uuid.UUID]bool{gone: true, emptied: true, live: false, kept: false} {
+		var deleted bool
+		if err := pool.QueryRow(ctx, `SELECT deleted_at IS NOT NULL FROM media_items WHERE id = $1`, id).Scan(&deleted); err != nil {
+			t.Fatalf("read item: %v", err)
+		}
+		if deleted != wantDeleted {
+			t.Errorf("item %s deleted = %v, want %v", id, deleted, wantDeleted)
+		}
+	}
+}

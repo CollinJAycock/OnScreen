@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 	"time"
@@ -131,6 +132,51 @@ func TestProcessPodcast_FromFeed(t *testing.T) {
 	}
 	if again.ID != ep.ID || len(svc.hierarchyCalls) != calls {
 		t.Errorf("rescan made item %v (was %v) with %d new find-or-create calls", again.ID, ep.ID, len(svc.hierarchyCalls)-calls)
+	}
+}
+
+// The file's probed length replaces the feed's itunes:duration on the
+// episode item. A feed's duration leaves out the ads inserted when the file
+// is served, so on QA an NPR episode listed as 13 min played for 15:13.
+func TestProcessFile_PodcastEpisodeTakesProbedDuration(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not installed")
+	}
+	if _, err := exec.LookPath("ffprobe"); err != nil {
+		t.Skip("ffprobe not installed")
+	}
+	root := t.TempDir()
+	folder := filepath.Join(root, "Show")
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(folder, "2026-10-13 Ep.mp3")
+	cmd := exec.Command("ffmpeg", "-v", "error", "-y",
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=3", "-c:a", "libmp3lame", path)
+	if b, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("ffmpeg could not build the fixture: %v\n%s", err, b)
+	}
+	feedDur := int64(1000)
+	feeds := &fakePodcastFeeds{byPath: map[string]*podcast.FileMatch{path: {
+		FeedID: uuid.New(), Folder: folder, ShowTitle: "Show",
+		Episode: &podcast.MatchedEpisode{ID: uuid.New(), Title: "Ep", DurationMS: &feedDur},
+	}}}
+	svc := newMockMediaService()
+	s := newTestScanner(svc).WithPodcastFeeds(feeds)
+
+	item, _, _, err := s.processFile(context.Background(), uuid.New(), "podcast", path, []string{root})
+	if err != nil {
+		t.Fatalf("processFile: %v", err)
+	}
+	if item == nil {
+		t.Fatal("processFile returned no item")
+	}
+	got := svc.items[item.ID].DurationMS
+	if got == nil {
+		t.Fatal("episode duration not set")
+	}
+	if *got < 2900 || *got > 3200 {
+		t.Errorf("episode duration = %d ms, want the probed ~3000 ms, not the feed's %d", *got, feedDur)
 	}
 }
 

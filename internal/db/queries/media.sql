@@ -1730,13 +1730,13 @@ WHERE id = $1;
 
 -- name: SoftDeleteItemsWithNoActiveFiles :exec
 -- Soft-delete leaf items (those that own files directly) with no active files.
--- Container types (show, season, artist, album) never own files — they're
--- handled by SoftDeleteEmptyContainerItems instead.
+-- Container types (show, season, artist, album, podcast) never own files —
+-- they're handled by SoftDeleteEmptyContainerItems instead.
 UPDATE media_items
 SET deleted_at = NOW(), updated_at = NOW()
 WHERE library_id = $1
   AND deleted_at IS NULL
-  AND type IN ('movie', 'episode', 'track', 'photo', 'audiobook_chapter')
+  AND type IN ('movie', 'episode', 'track', 'photo', 'audiobook_chapter', 'podcast_episode')
   AND NOT EXISTS (
       SELECT 1 FROM media_files
       WHERE media_files.media_item_id = media_items.id AND media_files.status = 'active'
@@ -1818,15 +1818,15 @@ WHERE f.media_item_id = i.id
         AND p.original_title = ANY(@authors::text[])));
 
 -- name: SoftDeleteEmptyContainerItems :exec
--- Soft-delete container items (show, season, artist, album) whose every
--- child has been soft-deleted. Call twice in sequence to cascade up: the
--- first pass clears empty seasons/albums, the second clears shows/artists
--- whose seasons/albums just died.
+-- Soft-delete container items (show, season, artist, album, podcast) whose
+-- every child has been soft-deleted. Call twice in sequence to cascade up:
+-- the first pass clears empty seasons/albums, the second clears
+-- shows/artists whose seasons/albums just died.
 UPDATE media_items AS parent
 SET deleted_at = NOW(), updated_at = NOW()
 WHERE parent.library_id = $1
   AND parent.deleted_at IS NULL
-  AND parent.type IN ('show', 'season', 'artist', 'album')
+  AND parent.type IN ('show', 'season', 'artist', 'album', 'podcast')
   AND NOT EXISTS (
       SELECT 1 FROM media_items child
       WHERE child.parent_id = parent.id AND child.deleted_at IS NULL

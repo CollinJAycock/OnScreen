@@ -158,7 +158,8 @@ func podcastShowUpdate(show *media.Item, m *podcast.FileMatch) (media.UpdateItem
 }
 
 // podcastEpisodeUpdate gives the episode its feed title, show notes and
-// release date; the probed duration wins over the feed's.
+// release date. The feed's duration only fills a gap: the probe that follows
+// (processFile) replaces it with the file's real length.
 func podcastEpisodeUpdate(item *media.Item, ep *podcast.MatchedEpisode) (media.UpdateItemMetadataParams, bool) {
 	p := metadataParamsOf(item)
 	changed := false
