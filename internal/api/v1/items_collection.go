@@ -94,7 +94,7 @@ func (h *ItemHandler) franchiseRef(ctx context.Context, claims *auth.Claims, ite
 		}
 		return nil
 	}
-	v := viewerScope{claims: claims, maxRank: maxRatingRankFromClaims(claims.MaxContentRating)}
+	v := viewerScope{claims: claims, maxRank: maxRatingRankFromClaims(claims.MaxContentRating), labels: claims.LabelFilter()}
 	if h.access != nil {
 		allowed, aerr := h.access.AllowedLibraryIDs(ctx, claims.UserID, claims.IsAdmin)
 		if aerr != nil {
@@ -123,6 +123,8 @@ func (h *ItemHandler) franchiseRef(ctx context.Context, claims *auth.Claims, ite
 			CollectionID:  row.ID,
 			LibraryIds:    v.allowedLibIDs,
 			MaxRatingRank: v.maxRank,
+			BlockedLabels: v.labels.BlockedArg(),
+			AllowedLabels: v.labels.AllowedArg(),
 		})
 		if cerr != nil {
 			h.logger.WarnContext(ctx, "item franchise count", "item_id", itemID, "err", cerr)

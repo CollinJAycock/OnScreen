@@ -25,6 +25,7 @@ JOIN media_items m ON m.id = f.media_id
 WHERE f.user_id = $1
   AND m.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 -- , m.id tiebreaker: favorited_at is non-unique, so OFFSET paging needs a unique
 -- key to avoid skipping/duplicating rows tied at a page boundary.
 ORDER BY f.created_at DESC, m.id
@@ -37,4 +38,5 @@ SELECT COUNT(*) FROM user_favorites f
 JOIN media_items m ON m.id = f.media_id
 WHERE f.user_id = $1
   AND m.deleted_at IS NULL
-  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'));
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);

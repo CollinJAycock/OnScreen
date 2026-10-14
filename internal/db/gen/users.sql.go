@@ -109,7 +109,7 @@ func (q *Queries) CountUsers(ctx context.Context) (int64, error) {
 const createDiscordUser = `-- name: CreateDiscordUser :one
 INSERT INTO users (username, email, discord_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels
 `
 
 type CreateDiscordUserParams struct {
@@ -169,12 +169,14 @@ func (q *Queries) CreateDiscordUser(ctx context.Context, arg CreateDiscordUserPa
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const createFirstAdmin = `-- name: CreateFirstAdmin :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM create_first_admin_atomic($1, $2, $3)
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM create_first_admin_atomic($1, $2, $3)
 `
 
 type CreateFirstAdminParams struct {
@@ -245,6 +247,8 @@ func (q *Queries) CreateFirstAdmin(ctx context.Context, arg CreateFirstAdminPara
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
@@ -252,7 +256,7 @@ func (q *Queries) CreateFirstAdmin(ctx context.Context, arg CreateFirstAdminPara
 const createGitHubUser = `-- name: CreateGitHubUser :one
 INSERT INTO users (username, email, github_id, is_admin)
 VALUES ($1, $2, $3, $4)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels
 `
 
 type CreateGitHubUserParams struct {
@@ -312,6 +316,8 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
@@ -319,7 +325,7 @@ func (q *Queries) CreateGitHubUser(ctx context.Context, arg CreateGitHubUserPara
 const createGoogleUser = `-- name: CreateGoogleUser :one
 INSERT INTO users (username, email, google_id, google_avatar_url, is_admin)
 VALUES ($1, $2, $3, $4, $5)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels
 `
 
 type CreateGoogleUserParams struct {
@@ -381,6 +387,8 @@ func (q *Queries) CreateGoogleUser(ctx context.Context, arg CreateGoogleUserPara
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
@@ -388,7 +396,7 @@ func (q *Queries) CreateGoogleUser(ctx context.Context, arg CreateGoogleUserPara
 const createLDAPUser = `-- name: CreateLDAPUser :one
 INSERT INTO users (username, email, ldap_dn, is_admin, auto_approve_movies, auto_approve_tv)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels
 `
 
 type CreateLDAPUserParams struct {
@@ -452,13 +460,18 @@ func (q *Queries) CreateLDAPUser(ctx context.Context, arg CreateLDAPUserParams) 
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const createManagedProfile = `-- name: CreateManagedProfile :one
-INSERT INTO users (username, parent_user_id, avatar_url, pin, is_admin, max_content_rating)
-VALUES ($1, $2, $3, $4, false, (SELECT max_content_rating FROM users WHERE id = $2))
+INSERT INTO users (username, parent_user_id, avatar_url, pin, is_admin, max_content_rating,
+                   blocked_labels, allowed_labels)
+VALUES ($1, $2, $3, $4, false, (SELECT max_content_rating FROM users WHERE id = $2),
+        COALESCE((SELECT blocked_labels FROM users WHERE id = $2), '{}'::text[]),
+        COALESCE((SELECT allowed_labels FROM users WHERE id = $2), '{}'::text[]))
 RETURNING id, username, avatar_url, created_at
 `
 
@@ -486,6 +499,8 @@ type CreateManagedProfileRow struct {
 // atomically — there is no window in which the child exists unrestricted —
 // and an admin can still loosen the child afterwards via
 // PUT /users/{id}/content-rating, which is the intended way to grant it.
+// The label restriction (blocked / allowed labels, migration 00047) is
+// inherited the same way and for the same reason.
 func (q *Queries) CreateManagedProfile(ctx context.Context, arg CreateManagedProfileParams) (CreateManagedProfileRow, error) {
 	row := q.db.QueryRow(ctx, createManagedProfile,
 		arg.Username,
@@ -506,7 +521,7 @@ func (q *Queries) CreateManagedProfile(ctx context.Context, arg CreateManagedPro
 const createOIDCUser = `-- name: CreateOIDCUser :one
 INSERT INTO users (username, email, oidc_issuer, oidc_subject, is_admin, auto_approve_movies, auto_approve_tv)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels
 `
 
 type CreateOIDCUserParams struct {
@@ -572,6 +587,8 @@ func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) 
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
@@ -579,7 +596,7 @@ func (q *Queries) CreateOIDCUser(ctx context.Context, arg CreateOIDCUserParams) 
 const createSAMLUser = `-- name: CreateSAMLUser :one
 INSERT INTO users (username, email, saml_issuer, saml_subject, is_admin, auto_approve_movies, auto_approve_tv)
 VALUES ($1, $2, $3, $4, $5, $6, $7)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels
 `
 
 type CreateSAMLUserParams struct {
@@ -646,6 +663,8 @@ func (q *Queries) CreateSAMLUser(ctx context.Context, arg CreateSAMLUserParams) 
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
@@ -653,7 +672,7 @@ func (q *Queries) CreateSAMLUser(ctx context.Context, arg CreateSAMLUserParams) 
 const createUser = `-- name: CreateUser :one
 INSERT INTO users (username, email, password_hash, is_admin, auto_approve_movies, auto_approve_tv)
 VALUES ($1, $2, $3, $4, $5, $6)
-RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps
+RETURNING id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels
 `
 
 type CreateUserParams struct {
@@ -721,6 +740,8 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
@@ -827,7 +848,7 @@ func (q *Queries) GetSessionState(ctx context.Context, arg GetSessionStateParams
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE id = $1
 `
 
 func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
@@ -875,12 +896,14 @@ func (q *Queries) GetUser(ctx context.Context, id uuid.UUID) (User, error) {
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserByDiscordID = `-- name: GetUserByDiscordID :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE discord_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE discord_id = $1
 `
 
 func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (User, error) {
@@ -928,12 +951,14 @@ func (q *Queries) GetUserByDiscordID(ctx context.Context, discordID *string) (Us
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE email = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE email = $1
 `
 
 func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, error) {
@@ -981,12 +1006,14 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email *string) (User, erro
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserByGitHubID = `-- name: GetUserByGitHubID :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE github_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE github_id = $1
 `
 
 func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User, error) {
@@ -1034,12 +1061,14 @@ func (q *Queries) GetUserByGitHubID(ctx context.Context, githubID *string) (User
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserByGoogleID = `-- name: GetUserByGoogleID :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE google_id = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE google_id = $1
 `
 
 func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User, error) {
@@ -1087,12 +1116,14 @@ func (q *Queries) GetUserByGoogleID(ctx context.Context, googleID *string) (User
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserByLDAPDN = `-- name: GetUserByLDAPDN :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE ldap_dn = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE ldap_dn = $1
 `
 
 func (q *Queries) GetUserByLDAPDN(ctx context.Context, ldapDn *string) (User, error) {
@@ -1140,12 +1171,14 @@ func (q *Queries) GetUserByLDAPDN(ctx context.Context, ldapDn *string) (User, er
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserByOIDCSubject = `-- name: GetUserByOIDCSubject :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE oidc_issuer = $1 AND oidc_subject = $2
 `
 
 type GetUserByOIDCSubjectParams struct {
@@ -1198,12 +1231,14 @@ func (q *Queries) GetUserByOIDCSubject(ctx context.Context, arg GetUserByOIDCSub
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserBySAMLSubject = `-- name: GetUserBySAMLSubject :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE saml_issuer = $1 AND saml_subject = $2
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE saml_issuer = $1 AND saml_subject = $2
 `
 
 type GetUserBySAMLSubjectParams struct {
@@ -1257,12 +1292,14 @@ func (q *Queries) GetUserBySAMLSubject(ctx context.Context, arg GetUserBySAMLSub
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserByUsername = `-- name: GetUserByUsername :one
-SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps FROM users WHERE username = $1
+SELECT id, username, email, password_hash, is_admin, pin, created_at, updated_at, google_id, google_avatar_url, github_id, discord_id, parent_user_id, avatar_url, preferred_audio_lang, preferred_subtitle_lang, max_content_rating, oidc_issuer, oidc_subject, ldap_dn, max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height, preferred_video_codec, forced_subtitles_only, session_epoch, saml_issuer, saml_subject, inherit_library_access, episode_use_show_poster, totp_secret, totp_enabled, max_concurrent_streams, max_stream_bitrate_kbps, hub_layout, auto_approve_movies, auto_approve_tv, can_request, request_quota_movies, request_quota_tv, max_remote_stream_bitrate_kbps, blocked_labels, allowed_labels FROM users WHERE username = $1
 `
 
 func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User, error) {
@@ -1310,12 +1347,14 @@ func (q *Queries) GetUserByUsername(ctx context.Context, username string) (User,
 		&i.RequestQuotaMovies,
 		&i.RequestQuotaTv,
 		&i.MaxRemoteStreamBitrateKbps,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
 
 const getUserForImpersonation = `-- name: GetUserForImpersonation :one
-SELECT id, username, is_admin, max_content_rating
+SELECT id, username, is_admin, max_content_rating, blocked_labels, allowed_labels
 FROM users
 WHERE id = $1
 `
@@ -1325,11 +1364,13 @@ type GetUserForImpersonationRow struct {
 	Username         string    `json:"username"`
 	IsAdmin          bool      `json:"is_admin"`
 	MaxContentRating *string   `json:"max_content_rating"`
+	BlockedLabels    []string  `json:"blocked_labels"`
+	AllowedLabels    []string  `json:"allowed_labels"`
 }
 
 // Narrow lookup the view-as middleware uses to synthesize the
 // target user's claims. Reading only the fields that affect policy
-// (id, username, is_admin, max_content_rating) keeps the
+// (id, username, is_admin, max_content_rating, the label restriction) keeps the
 // impersonation footprint small — adding a column to users doesn't
 // silently change what an admin can "see as".
 func (q *Queries) GetUserForImpersonation(ctx context.Context, id uuid.UUID) (GetUserForImpersonationRow, error) {
@@ -1340,6 +1381,8 @@ func (q *Queries) GetUserForImpersonation(ctx context.Context, id uuid.UUID) (Ge
 		&i.Username,
 		&i.IsAdmin,
 		&i.MaxContentRating,
+		&i.BlockedLabels,
+		&i.AllowedLabels,
 	)
 	return i, err
 }
@@ -1587,7 +1630,8 @@ func (q *Queries) LinkSAMLAccount(ctx context.Context, arg LinkSAMLAccountParams
 const listAllManagedProfiles = `-- name: ListAllManagedProfiles :many
 SELECT u.id, u.username, u.avatar_url, (u.pin IS NOT NULL) AS has_pin, u.created_at,
        u.parent_user_id AS owner_id, p.username AS owner_username,
-       u.max_content_rating, u.inherit_library_access
+       u.max_content_rating, u.inherit_library_access,
+       u.blocked_labels, u.allowed_labels
 FROM users u
 JOIN users p ON p.id = u.parent_user_id
 ORDER BY p.username, u.username
@@ -1603,6 +1647,8 @@ type ListAllManagedProfilesRow struct {
 	OwnerUsername        string             `json:"owner_username"`
 	MaxContentRating     *string            `json:"max_content_rating"`
 	InheritLibraryAccess bool               `json:"inherit_library_access"`
+	BlockedLabels        []string           `json:"blocked_labels"`
+	AllowedLabels        []string           `json:"allowed_labels"`
 }
 
 func (q *Queries) ListAllManagedProfiles(ctx context.Context) ([]ListAllManagedProfilesRow, error) {
@@ -1624,6 +1670,8 @@ func (q *Queries) ListAllManagedProfiles(ctx context.Context) ([]ListAllManagedP
 			&i.OwnerUsername,
 			&i.MaxContentRating,
 			&i.InheritLibraryAccess,
+			&i.BlockedLabels,
+			&i.AllowedLabels,
 		); err != nil {
 			return nil, err
 		}
@@ -1666,7 +1714,8 @@ func (q *Queries) ListManagedProfileIDs(ctx context.Context, parentUserID pgtype
 
 const listManagedProfiles = `-- name: ListManagedProfiles :many
 SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at,
-       max_content_rating, inherit_library_access
+       max_content_rating, inherit_library_access,
+       blocked_labels, allowed_labels
 FROM users
 WHERE parent_user_id = $1
 ORDER BY username
@@ -1680,6 +1729,8 @@ type ListManagedProfilesRow struct {
 	CreatedAt            pgtype.Timestamptz `json:"created_at"`
 	MaxContentRating     *string            `json:"max_content_rating"`
 	InheritLibraryAccess bool               `json:"inherit_library_access"`
+	BlockedLabels        []string           `json:"blocked_labels"`
+	AllowedLabels        []string           `json:"allowed_labels"`
 }
 
 func (q *Queries) ListManagedProfiles(ctx context.Context, parentUserID pgtype.UUID) ([]ListManagedProfilesRow, error) {
@@ -1699,6 +1750,8 @@ func (q *Queries) ListManagedProfiles(ctx context.Context, parentUserID pgtype.U
 			&i.CreatedAt,
 			&i.MaxContentRating,
 			&i.InheritLibraryAccess,
+			&i.BlockedLabels,
+			&i.AllowedLabels,
 		); err != nil {
 			return nil, err
 		}
@@ -1765,7 +1818,8 @@ SELECT id, username, email, is_admin,
        created_at, updated_at,
        auto_approve_movies, auto_approve_tv,
        max_content_rating,
-       can_request, request_quota_movies, request_quota_tv
+       can_request, request_quota_movies, request_quota_tv,
+       blocked_labels, allowed_labels
 FROM users
 ORDER BY username
 LIMIT 1000
@@ -1784,6 +1838,8 @@ type ListUsersRow struct {
 	CanRequest         bool               `json:"can_request"`
 	RequestQuotaMovies *int32             `json:"request_quota_movies"`
 	RequestQuotaTv     *int32             `json:"request_quota_tv"`
+	BlockedLabels      []string           `json:"blocked_labels"`
+	AllowedLabels      []string           `json:"allowed_labels"`
 }
 
 // Hard-capped at 1000 — admin user-management UI; if a deployment
@@ -1812,6 +1868,8 @@ func (q *Queries) ListUsers(ctx context.Context) ([]ListUsersRow, error) {
 			&i.CanRequest,
 			&i.RequestQuotaMovies,
 			&i.RequestQuotaTv,
+			&i.BlockedLabels,
+			&i.AllowedLabels,
 		); err != nil {
 			return nil, err
 		}

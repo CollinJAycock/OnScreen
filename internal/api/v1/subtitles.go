@@ -15,7 +15,6 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
-	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/observability"
@@ -629,12 +628,12 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	// mixed-rating library shouldn't pull the subtitle text of an over-ceiling
 	// item (the video bytes are already gated on StreamFile/transcode; this
 	// closes the metadata-leak gap the security scan flagged).
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -662,12 +661,12 @@ func (h *SubtitleHandler) checkItemAccess(w http.ResponseWriter, r *http.Request
 	if !h.checkAccess(w, r, item.LibraryID) {
 		return false
 	}
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return false
 		}

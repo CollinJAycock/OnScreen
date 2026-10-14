@@ -45,12 +45,15 @@ WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
        OR mi.library_id = ANY($2::uuid[]))
   AND ($3::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $3::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $4::text[], $5::text[])
 `
 
 type CountCollectionItemsParams struct {
 	CollectionID  uuid.UUID   `json:"collection_id"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 // Backs meta.total for the static collection/playlist listing so a paginating
@@ -62,7 +65,13 @@ type CountCollectionItemsParams struct {
 // collection — which handed that caller the exact item count of a private
 // library's folder. NULL = admin / no filtering.
 func (q *Queries) CountCollectionItems(ctx context.Context, arg CountCollectionItemsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countCollectionItems, arg.CollectionID, arg.LibraryIds, arg.MaxRatingRank)
+	row := q.db.QueryRow(ctx, countCollectionItems,
+		arg.CollectionID,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -73,13 +82,16 @@ SELECT COUNT(*) FROM media_items
 WHERE deleted_at IS NULL AND $1::text = ANY(genres) AND type IN ('movie', 'show')
   AND ($2::int IS NULL
        OR content_rating_rank(content_rating) <= $2::int)
-  AND ($3::uuid[] IS NULL
-       OR library_id = ANY($3::uuid[]))
+  AND media_item_labels_permitted(labels, parent_id, $3::text[], $4::text[])
+  AND ($5::uuid[] IS NULL
+       OR library_id = ANY($5::uuid[]))
 `
 
 type CountItemsByGenreParams struct {
 	Genre         string      `json:"genre"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 }
 
@@ -87,7 +99,13 @@ type CountItemsByGenreParams struct {
 // the paginated total matches the rows the user can actually see. Without the
 // same gates the pagination footer would lie ("Page 1 of 12" but only 4 visible).
 func (q *Queries) CountItemsByGenre(ctx context.Context, arg CountItemsByGenreParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countItemsByGenre, arg.Genre, arg.MaxRatingRank, arg.LibraryIds)
+	row := q.db.QueryRow(ctx, countItemsByGenre,
+		arg.Genre,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+		arg.LibraryIds,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -380,17 +398,20 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
 ORDER BY
-  CASE WHEN $3::text = 'release'
+  CASE WHEN $5::text = 'release'
        THEN COALESCE(mi.originally_available_at, make_date(COALESCE(mi.year, mi.original_year), 1, 1)) END NULLS LAST,
-  CASE WHEN $3::text = 'title' THEN mi.sort_title END,
+  CASE WHEN $5::text = 'title' THEN mi.sort_title END,
   ci.position, ci.media_item_id
-LIMIT NULLIF($5::int, 0) OFFSET $4::int
+LIMIT NULLIF($7::int, 0) OFFSET $6::int
 `
 
 type ListCollectionItemsParams struct {
 	CollectionID  uuid.UUID `json:"collection_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 	ItemOrder     string    `json:"item_order"`
 	Off           int32     `json:"off"`
 	Lim           int32     `json:"lim"`
@@ -429,6 +450,8 @@ func (q *Queries) ListCollectionItems(ctx context.Context, arg ListCollectionIte
 	rows, err := q.db.Query(ctx, listCollectionItems,
 		arg.CollectionID,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.ItemOrder,
 		arg.Off,
 		arg.Lim,
@@ -607,15 +630,18 @@ WHERE deleted_at IS NULL
   AND type IN ('movie', 'show')
   AND ($2::int IS NULL
        OR content_rating_rank(content_rating) <= $2::int)
-  AND ($3::uuid[] IS NULL
-       OR library_id = ANY($3::uuid[]))
+  AND media_item_labels_permitted(labels, parent_id, $3::text[], $4::text[])
+  AND ($5::uuid[] IS NULL
+       OR library_id = ANY($5::uuid[]))
 ORDER BY rating DESC NULLS LAST, id
-LIMIT $5::int OFFSET $4::int
+LIMIT $7::int OFFSET $6::int
 `
 
 type ListItemsByGenreParams struct {
 	Genre         string      `json:"genre"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	Off           int32       `json:"off"`
 	Lim           int32       `json:"lim"`
@@ -643,6 +669,8 @@ func (q *Queries) ListItemsByGenre(ctx context.Context, arg ListItemsByGenrePara
 	rows, err := q.db.Query(ctx, listItemsByGenre,
 		arg.Genre,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.LibraryIds,
 		arg.Off,
 		arg.Lim,
@@ -691,6 +719,7 @@ WHERE c.type = 'manual'
   AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
 GROUP BY c.id, c.name, c.type, c.poster_item_id
 ORDER BY c.name, c.id
 `
@@ -698,6 +727,8 @@ ORDER BY c.name, c.id
 type ListLibraryManualCollectionsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListLibraryManualCollectionsRow struct {
@@ -712,7 +743,12 @@ type ListLibraryManualCollectionsRow struct {
 // visible member in this library, with that count and a cover chosen as in
 // ListVisibleManualCollections (from this library's visible members).
 func (q *Queries) ListLibraryManualCollections(ctx context.Context, arg ListLibraryManualCollectionsParams) ([]ListLibraryManualCollectionsRow, error) {
-	rows, err := q.db.Query(ctx, listLibraryManualCollections, arg.LibraryID, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listLibraryManualCollections,
+		arg.LibraryID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -853,12 +889,15 @@ WHERE c.type = 'manual'
        OR mi.library_id = ANY($1::uuid[]))
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
 GROUP BY c.id, c.poster_item_id
 `
 
 type ListVisibleManualCollectionsParams struct {
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 type ListVisibleManualCollectionsRow struct {
@@ -874,7 +913,12 @@ type ListVisibleManualCollectionsRow struct {
 // restricted caller never learns a collection whose members are all hidden
 // from it, nor sees a hidden member's poster on the cover.
 func (q *Queries) ListVisibleManualCollections(ctx context.Context, arg ListVisibleManualCollectionsParams) ([]ListVisibleManualCollectionsRow, error) {
-	rows, err := q.db.Query(ctx, listVisibleManualCollections, arg.LibraryIds, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listVisibleManualCollections,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}

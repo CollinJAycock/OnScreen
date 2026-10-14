@@ -309,6 +309,38 @@ API change lands only when every first-party client moves with it — see
     `GET`/`DELETE /users/{id}/sessions` and
     `DELETE /users/{id}/sessions/{sid}`. Clients may send an `X-Device-Name`
     header when signing in to name themselves.
+- **Labels, and restricting users by label.** Admins can label titles
+  ("kids", "horror", "dad's films") and limit what each user sees by them, like
+  Plex's label restrictions or Jellyfin's blocked and allowed tags.
+  - **Labelling:** a "Labels" box on every title's page (admins only — other
+    users never see labels), or select titles in a movie, show or photo
+    library and choose "Add label…" to add or remove labels on up to 500 at
+    once. Labels are lower-cased, and suggestions come from the labels already
+    in use. They are separate from the keywords metadata providers supply, so
+    a metadata refresh never adds or removes one.
+  - **Restricting:** Settings ▸ Users ▸ a user's menu ▸ "Labels…". "Never
+    show titles labelled" hides anything carrying one of those labels; "Only
+    show titles labelled" hides everything that carries none of them. A label
+    on a show covers its seasons and episodes, and one on an artist or album
+    covers its tracks; a label on a single episode hides just that episode.
+    A user's managed profiles get the same restriction (new profiles inherit
+    it), and saving signs them out so it applies straight away. "View as user"
+    shows the result.
+  - **Where it applies:** everywhere the content-rating limit does — title
+    pages, episode lists, library browsing and its counts, search, the home
+    screen (Continue Watching, Next Up, Plan to Watch, Recently Added,
+    Trending, collection rows), collections and playlists (counts and covers
+    included), favorites, history, people pages, photos and albums, posters,
+    seek-bar thumbnails, subtitles, playback, downloads, Up Next, the upcoming
+    calendar and the "already in your library" marks on requests. A hidden
+    title looks exactly like one above the user's rating limit. Phone and TV
+    apps need no update.
+  - **API (all additive):** `GET /labels`, `POST /labels/apply`,
+    `GET`/`PUT /items/{id}/labels`, `PUT /users/{id}/label-restrictions`;
+    `labels` on item detail for admins; `blocked_labels` and `allowed_labels`
+    on the admin user and profile lists.
+  - **Migration 00047** adds `media_items.labels` and the users'
+    `blocked_labels` / `allowed_labels`.
 
 ### Changed
 

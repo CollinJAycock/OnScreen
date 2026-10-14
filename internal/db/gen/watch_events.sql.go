@@ -235,7 +235,7 @@ WITH events AS (
                ORDER BY we.occurred_at
            ) AS next_at
     FROM watch_events we
-    WHERE we.user_id = $4::uuid
+    WHERE we.user_id = $6::uuid
       AND we.event_type IN ('stop', 'scrobble')
 )
 SELECT e.id, e.user_id, e.media_id, e.event_type,
@@ -249,12 +249,15 @@ JOIN media_items m ON m.id = e.media_id
 WHERE (e.next_at IS NULL OR (e.next_at - e.occurred_at) > INTERVAL '30 minutes')
   AND ($1::int IS NULL
        OR content_rating_rank(m.content_rating) <= $1::int)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $2::text[], $3::text[])
 ORDER BY e.occurred_at DESC
-LIMIT $3::int OFFSET $2::int
+LIMIT $5::int OFFSET $4::int
 `
 
 type ListWatchHistoryParams struct {
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 	Off           int32     `json:"off"`
 	Lim           int32     `json:"lim"`
 	UserID        uuid.UUID `json:"user_id"`
@@ -292,6 +295,8 @@ type ListWatchHistoryRow struct {
 func (q *Queries) ListWatchHistory(ctx context.Context, arg ListWatchHistoryParams) ([]ListWatchHistoryRow, error) {
 	rows, err := q.db.Query(ctx, listWatchHistory,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Off,
 		arg.Lim,
 		arg.UserID,

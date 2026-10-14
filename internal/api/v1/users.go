@@ -12,6 +12,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"golang.org/x/crypto/bcrypt"
 
@@ -21,6 +22,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // Sentinel errors returned by UserService.
@@ -49,6 +51,8 @@ type PINSwitchResult struct {
 	Username         string
 	IsAdmin          bool
 	MaxContentRating string
+	BlockedLabels    []string
+	AllowedLabels    []string
 	SessionEpoch     int64
 }
 
@@ -84,6 +88,10 @@ type UserDB interface {
 	// ListManagedProfileIDs backs the revocation cascade that must accompany
 	// the content-rating cascade — see SetContentRating.
 	ListManagedProfileIDs(ctx context.Context, parentUserID pgtype.UUID) ([]uuid.UUID, error)
+	// The label restriction (blocked / allowed labels, migration 00047):
+	// cascades to managed profiles like UpdateUserContentRating.
+	GetUserLabelRestrictions(ctx context.Context, id uuid.UUID) (gen.GetUserLabelRestrictionsRow, error)
+	UpdateUserLabelRestrictions(ctx context.Context, arg gen.UpdateUserLabelRestrictionsParams) error
 	UpdateUserStreamCaps(ctx context.Context, arg gen.UpdateUserStreamCapsParams) error
 	GetUserStreamCaps(ctx context.Context, id uuid.UUID) (gen.GetUserStreamCapsRow, error)
 	SetProfileInheritLibraryAccess(ctx context.Context, arg gen.SetProfileInheritLibraryAccessParams) (int64, error)
@@ -306,6 +314,11 @@ type userListEntry struct {
 	CanRequest         bool   `json:"can_request"`
 	RequestQuotaMovies *int32 `json:"request_quota_movies"`
 	RequestQuotaTV     *int32 `json:"request_quota_tv"`
+	// The user's label restriction (PUT /users/{id}/label-restrictions):
+	// never shown items carrying a blocked label; when allowed_labels is
+	// non-empty, shown only items carrying one of them. Always present.
+	BlockedLabels []string `json:"blocked_labels"`
+	AllowedLabels []string `json:"allowed_labels"`
 }
 
 func tsToTime(ts pgtype.Timestamptz) time.Time {
@@ -342,6 +355,8 @@ func (h *UserHandler) ListUsers(w http.ResponseWriter, r *http.Request) {
 			CanRequest:         row.CanRequest,
 			RequestQuotaMovies: row.RequestQuotaMovies,
 			RequestQuotaTV:     row.RequestQuotaTv,
+			BlockedLabels:      nonNilStrings(row.BlockedLabels),
+			AllowedLabels:      nonNilStrings(row.AllowedLabels),
 		}
 	}
 	respond.List(w, r, users, int64(len(users)), "")
@@ -712,6 +727,8 @@ func (h *UserHandler) PINSwitch(w http.ResponseWriter, r *http.Request) {
 		Username:         result.Username,
 		IsAdmin:          result.IsAdmin,
 		MaxContentRating: result.MaxContentRating,
+		BlockedLabels:    result.BlockedLabels,
+		AllowedLabels:    result.AllowedLabels,
 		SessionEpoch:     result.SessionEpoch,
 		Switched:         true,
 	}
@@ -762,6 +779,10 @@ type profileResponse struct {
 	InheritLibraryAccess bool    `json:"inherit_library_access"`
 	OwnerID              *string `json:"owner_id,omitempty"`       // admin only
 	OwnerUsername        *string `json:"owner_username,omitempty"` // admin only
+	// The profile's label restriction (inherited from its owner at creation,
+	// cascaded on the owner's changes). Always present.
+	BlockedLabels []string `json:"blocked_labels"`
+	AllowedLabels []string `json:"allowed_labels"`
 }
 
 // ListProfiles handles GET /api/v1/profiles.
@@ -797,6 +818,8 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 				InheritLibraryAccess: row.InheritLibraryAccess,
 				OwnerID:              &ownerID,
 				OwnerUsername:        &row.OwnerUsername,
+				BlockedLabels:        nonNilStrings(row.BlockedLabels),
+				AllowedLabels:        nonNilStrings(row.AllowedLabels),
 			}
 		}
 		respond.Success(w, r, out)
@@ -819,6 +842,8 @@ func (h *UserHandler) ListProfiles(w http.ResponseWriter, r *http.Request) {
 			CreatedAt:            row.CreatedAt.Time.Format(time.RFC3339),
 			MaxContentRating:     row.MaxContentRating,
 			InheritLibraryAccess: row.InheritLibraryAccess,
+			BlockedLabels:        nonNilStrings(row.BlockedLabels),
+			AllowedLabels:        nonNilStrings(row.AllowedLabels),
 		}
 	}
 	respond.Success(w, r, out)
@@ -1412,67 +1437,8 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	// Revoke the target's outstanding credentials, mirroring SetAdmin.
-	//
-	// The ceiling is baked into the PASETO claims at issue time, so the DB
-	// update alone changes nothing for tokens already in the wild: the access
-	// token rides out its TTL and the 24 h asset/stream tokens keep carrying
-	// the OLD, looser ceiling for up to a day. An admin tightening a child's
-	// parental control reasonably expects it to bite immediately, and had no
-	// override available. Fail the request on error — leaving the ceiling
-	// changed but the old tokens live is the worst state to be in.
-	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
-		if h.logger != nil {
-			h.logger.ErrorContext(r.Context(), "bump session epoch after content-rating change",
-				"target_id", targetID, "err", err)
-		}
-		respond.InternalError(w, r)
+	if !h.revokeAfterPolicyChange(w, r, targetID, "content-rating change") {
 		return
-	}
-	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
-		if h.logger != nil {
-			h.logger.ErrorContext(r.Context(), "delete sessions after content-rating change",
-				"target_id", targetID, "err", err)
-		}
-		respond.InternalError(w, r)
-		return
-	}
-	// Segment tokens are a query-string capability with their own Valkey TTL
-	// and no session_epoch participation, so they need an explicit revoke or a
-	// restricted profile keeps streaming over-ceiling content for hours.
-	if h.segTokens != nil {
-		if err := h.segTokens.RevokeAllForUser(r.Context(), targetID); err != nil && h.logger != nil {
-			h.logger.WarnContext(r.Context(), "revoke segment tokens after content-rating change",
-				"target_id", targetID, "err", err)
-		}
-	}
-	// The UPDATE above cascades to managed profiles, so the revocation has to
-	// as well — otherwise a child whose ceiling just tightened keeps a live
-	// session and 24 h asset tokens carrying the OLD, looser value, which is
-	// precisely the escape the cascade was added to close. Best-effort per
-	// child: a failure here leaves that profile on stale claims until its
-	// tokens expire, which is worth a log but not worth failing the admin's
-	// request after the parent has already been revoked.
-	if kids, kerr := h.db.ListManagedProfileIDs(r.Context(), pgtype.UUID{Bytes: [16]byte(targetID), Valid: true}); kerr == nil {
-		for _, kid := range kids {
-			if err := h.db.BumpSessionEpoch(r.Context(), kid); err != nil && h.logger != nil {
-				h.logger.ErrorContext(r.Context(), "bump session epoch for managed profile after content-rating change",
-					"profile_id", kid, "err", err)
-			}
-			if err := h.db.DeleteSessionsForUser(r.Context(), kid); err != nil && h.logger != nil {
-				h.logger.ErrorContext(r.Context(), "delete sessions for managed profile after content-rating change",
-					"profile_id", kid, "err", err)
-			}
-			if h.segTokens != nil {
-				if err := h.segTokens.RevokeAllForUser(r.Context(), kid); err != nil && h.logger != nil {
-					h.logger.WarnContext(r.Context(), "revoke segment tokens for managed profile after content-rating change",
-						"profile_id", kid, "err", err)
-				}
-			}
-		}
-	} else if h.logger != nil {
-		h.logger.ErrorContext(r.Context(), "list managed profiles after content-rating change; their tokens not revoked",
-			"target_id", targetID, "err", kerr)
 	}
 	if h.audit != nil {
 		rating := "none"
@@ -1483,6 +1449,159 @@ func (h *UserHandler) SetContentRating(w http.ResponseWriter, r *http.Request) {
 			map[string]any{"max_content_rating": rating}, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
+}
+
+// revokeAfterPolicyChange revokes the target's outstanding credentials, and
+// those of every managed profile beneath it, after an admin changed a policy
+// that is baked into token claims (the content-rating ceiling, the label
+// restriction). change names the policy in log lines. false means a response
+// was already written.
+//
+// The policy is baked into the PASETO claims at issue time, so the DB update
+// alone changes nothing for tokens already in the wild: the access token rides
+// out its TTL and the 24 h asset/stream tokens keep carrying the OLD, looser
+// policy for up to a day. An admin tightening a child's parental control
+// reasonably expects it to bite immediately, and had no override available.
+// Fail the request on error — leaving the policy changed but the old tokens
+// live is the worst state to be in.
+func (h *UserHandler) revokeAfterPolicyChange(w http.ResponseWriter, r *http.Request, targetID uuid.UUID, change string) bool {
+	if err := h.db.BumpSessionEpoch(r.Context(), targetID); err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "bump session epoch after "+change,
+				"target_id", targetID, "err", err)
+		}
+		respond.InternalError(w, r)
+		return false
+	}
+	if err := h.db.DeleteSessionsForUser(r.Context(), targetID); err != nil {
+		if h.logger != nil {
+			h.logger.ErrorContext(r.Context(), "delete sessions after "+change,
+				"target_id", targetID, "err", err)
+		}
+		respond.InternalError(w, r)
+		return false
+	}
+	// Segment tokens are a query-string capability with their own Valkey TTL
+	// and no session_epoch participation, so they need an explicit revoke or a
+	// restricted profile keeps streaming now-refused content for hours.
+	if h.segTokens != nil {
+		if err := h.segTokens.RevokeAllForUser(r.Context(), targetID); err != nil && h.logger != nil {
+			h.logger.WarnContext(r.Context(), "revoke segment tokens after "+change,
+				"target_id", targetID, "err", err)
+		}
+	}
+	// The policy UPDATE cascades to managed profiles, so the revocation has to
+	// as well — otherwise a child whose policy just tightened keeps a live
+	// session and 24 h asset tokens carrying the OLD, looser value, which is
+	// precisely the escape the cascade was added to close. Best-effort per
+	// child: a failure here leaves that profile on stale claims until its
+	// tokens expire, which is worth a log but not worth failing the admin's
+	// request after the parent has already been revoked.
+	if kids, kerr := h.db.ListManagedProfileIDs(r.Context(), pgtype.UUID{Bytes: [16]byte(targetID), Valid: true}); kerr == nil {
+		for _, kid := range kids {
+			if err := h.db.BumpSessionEpoch(r.Context(), kid); err != nil && h.logger != nil {
+				h.logger.ErrorContext(r.Context(), "bump session epoch for managed profile after "+change,
+					"profile_id", kid, "err", err)
+			}
+			if err := h.db.DeleteSessionsForUser(r.Context(), kid); err != nil && h.logger != nil {
+				h.logger.ErrorContext(r.Context(), "delete sessions for managed profile after "+change,
+					"profile_id", kid, "err", err)
+			}
+			if h.segTokens != nil {
+				if err := h.segTokens.RevokeAllForUser(r.Context(), kid); err != nil && h.logger != nil {
+					h.logger.WarnContext(r.Context(), "revoke segment tokens for managed profile after "+change,
+						"profile_id", kid, "err", err)
+				}
+			}
+		}
+	} else if h.logger != nil {
+		h.logger.ErrorContext(r.Context(), "list managed profiles after "+change+"; their tokens not revoked",
+			"target_id", targetID, "err", kerr)
+	}
+	return true
+}
+
+// SetLabelRestrictions handles PUT /api/v1/users/{id}/label-restrictions
+// (admin only) with {"blocked_labels": [...], "allowed_labels": [...]}.
+// An omitted list keeps its stored value; [] clears it. Labels are
+// normalised (lower-case, single-spaced) and de-duplicated; at most
+// itemlabel.MaxPerUser per list. Applies to the user and every managed
+// profile beneath it (as the rating ceiling does), and revokes their tokens
+// so the change bites immediately. Returns the stored lists.
+func (h *UserHandler) SetLabelRestrictions(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	targetID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid user id")
+		return
+	}
+	var body struct {
+		BlockedLabels *[]string `json:"blocked_labels"`
+		AllowedLabels *[]string `json:"allowed_labels"`
+	}
+	// Unknown fields are refused for the reason SetContentRating gives: a
+	// typo must not decode into "no change" and report success.
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body: "+err.Error())
+		return
+	}
+	current, err := h.db.GetUserLabelRestrictions(r.Context(), targetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respond.NotFound(w, r)
+			return
+		}
+		respond.InternalError(w, r)
+		return
+	}
+	blocked, allowed := current.BlockedLabels, current.AllowedLabels
+	if body.BlockedLabels != nil {
+		if blocked, err = itemlabel.NormalizeList(*body.BlockedLabels, itemlabel.MaxPerUser); err != nil {
+			respond.ValidationError(w, r, "blocked_labels: "+err.Error())
+			return
+		}
+	}
+	if body.AllowedLabels != nil {
+		if allowed, err = itemlabel.NormalizeList(*body.AllowedLabels, itemlabel.MaxPerUser); err != nil {
+			respond.ValidationError(w, r, "allowed_labels: "+err.Error())
+			return
+		}
+	}
+	blocked, allowed = nonNilStrings(blocked), nonNilStrings(allowed)
+	if err := h.db.UpdateUserLabelRestrictions(r.Context(), gen.UpdateUserLabelRestrictionsParams{
+		ID:            targetID,
+		BlockedLabels: blocked,
+		AllowedLabels: allowed,
+	}); err != nil {
+		respond.InternalError(w, r)
+		return
+	}
+	if !h.revokeAfterPolicyChange(w, r, targetID, "label-restriction change") {
+		return
+	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserLabelRestrictionChange, targetID.String(),
+			map[string]any{"blocked_labels": blocked, "allowed_labels": allowed}, audit.ClientIP(r))
+	}
+	respond.Success(w, r, map[string]any{
+		"blocked_labels": blocked,
+		"allowed_labels": allowed,
+	})
+}
+
+// nonNilStrings returns s, or an empty slice for nil, so JSON lists render as
+// [] rather than null.
+func nonNilStrings(s []string) []string {
+	if s == nil {
+		return []string{}
+	}
+	return s
 }
 
 // GetStreamingLimits returns a user's admin-set streaming caps (admin only).

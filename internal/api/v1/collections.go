@@ -16,7 +16,6 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
-	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 )
 
@@ -505,6 +504,8 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 			Lim:           page.Limit,
 			Off:           page.Offset,
 			MaxRatingRank: maxRank,
+			BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+			AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 			LibraryIds:    allowedLibIDs,
 		})
 		if err != nil {
@@ -517,6 +518,8 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 		total, _ := h.db.CountItemsByGenre(r.Context(), gen.CountItemsByGenreParams{
 			Genre:         *col.Genre,
 			MaxRatingRank: maxRank,
+			BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+			AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 			LibraryIds:    allowedLibIDs,
 		})
 		out := make([]collectionItemResponse, 0, len(rows))
@@ -558,6 +561,8 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListCollectionItems(r.Context(), gen.ListCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: collMaxRank,
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		Lim:           respond.ParseLimit(r, collectionItemsPageDefault, collectionItemsPageDefault),
 		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
 		ItemOrder:     itemOrder,
@@ -593,6 +598,8 @@ func (h *CollectionHandler) Items(w http.ResponseWriter, r *http.Request) {
 	total, _ := h.db.CountCollectionItems(r.Context(), gen.CountCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: collMaxRank,
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		LibraryIds:    allowedLibIDs,
 	})
 	respond.List(w, r, out, total, "")
@@ -735,15 +742,16 @@ func itemAddAllowed(
 			return false
 		}
 	}
-	// contentrating.IsAllowed, not an open-coded rank comparison: it ranks an
-	// absent rating as 4 rather than treating it as unrestricted, so an unrated
-	// item is gated the same way here as on the streaming path. Enforcing it
-	// differently in one place is how a title becomes addable-but-unplayable.
+	// itemPermitted (contentrating.IsAllowed plus the label restriction), not
+	// an open-coded rank comparison: it ranks an absent rating as 4 rather
+	// than treating it as unrestricted, so an unrated item is gated the same
+	// way here as on the streaming path. Enforcing it differently in one place
+	// is how a title becomes addable-but-unplayable.
 	cr := ""
 	if item.ContentRating != nil {
 		cr = *item.ContentRating
 	}
-	if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+	if !itemPermitted(r.Context(), claims, item.ID, cr) {
 		respond.NotFound(w, r)
 		return false
 	}

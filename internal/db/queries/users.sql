@@ -13,7 +13,8 @@ SELECT id, username, email, is_admin,
        created_at, updated_at,
        auto_approve_movies, auto_approve_tv,
        max_content_rating,
-       can_request, request_quota_movies, request_quota_tv
+       can_request, request_quota_movies, request_quota_tv,
+       blocked_labels, allowed_labels
 FROM users
 ORDER BY username
 LIMIT 1000;
@@ -63,7 +64,8 @@ ORDER BY username;
 
 -- name: ListManagedProfiles :many
 SELECT id, username, avatar_url, (pin IS NOT NULL) AS has_pin, created_at,
-       max_content_rating, inherit_library_access
+       max_content_rating, inherit_library_access,
+       blocked_labels, allowed_labels
 FROM users
 WHERE parent_user_id = $1
 ORDER BY username;
@@ -79,8 +81,13 @@ ORDER BY username;
 -- atomically — there is no window in which the child exists unrestricted —
 -- and an admin can still loosen the child afterwards via
 -- PUT /users/{id}/content-rating, which is the intended way to grant it.
-INSERT INTO users (username, parent_user_id, avatar_url, pin, is_admin, max_content_rating)
-VALUES ($1, $2, $3, $4, false, (SELECT max_content_rating FROM users WHERE id = $2))
+-- The label restriction (blocked / allowed labels, migration 00047) is
+-- inherited the same way and for the same reason.
+INSERT INTO users (username, parent_user_id, avatar_url, pin, is_admin, max_content_rating,
+                   blocked_labels, allowed_labels)
+VALUES ($1, $2, $3, $4, false, (SELECT max_content_rating FROM users WHERE id = $2),
+        COALESCE((SELECT blocked_labels FROM users WHERE id = $2), '{}'::text[]),
+        COALESCE((SELECT allowed_labels FROM users WHERE id = $2), '{}'::text[]))
 RETURNING id, username, avatar_url, created_at;
 
 -- name: DeleteManagedProfile :exec
@@ -102,7 +109,8 @@ RETURNING id, username, avatar_url, parent_user_id, created_at;
 -- name: ListAllManagedProfiles :many
 SELECT u.id, u.username, u.avatar_url, (u.pin IS NOT NULL) AS has_pin, u.created_at,
        u.parent_user_id AS owner_id, p.username AS owner_username,
-       u.max_content_rating, u.inherit_library_access
+       u.max_content_rating, u.inherit_library_access,
+       u.blocked_labels, u.allowed_labels
 FROM users u
 JOIN users p ON p.id = u.parent_user_id
 ORDER BY p.username, u.username;
@@ -284,10 +292,10 @@ SELECT id FROM users WHERE parent_user_id = $1;
 -- name: GetUserForImpersonation :one
 -- Narrow lookup the view-as middleware uses to synthesize the
 -- target user's claims. Reading only the fields that affect policy
--- (id, username, is_admin, max_content_rating) keeps the
+-- (id, username, is_admin, max_content_rating, the label restriction) keeps the
 -- impersonation footprint small — adding a column to users doesn't
 -- silently change what an admin can "see as".
-SELECT id, username, is_admin, max_content_rating
+SELECT id, username, is_admin, max_content_rating, blocked_labels, allowed_labels
 FROM users
 WHERE id = $1;
 

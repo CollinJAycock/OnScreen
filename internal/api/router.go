@@ -22,6 +22,7 @@ import (
 	v1 "github.com/onscreen/onscreen/internal/api/v1"
 	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/contentrating"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/streaming"
@@ -109,6 +110,7 @@ type Handlers struct {
 	Discover      *v1.DiscoverHandler // TMDB-backed search for the request UI
 	Upcoming      *v1.UpcomingHandler // Radarr/Sonarr calendar for the request UI
 	Issues        *v1.IssueHandler    // "Report a problem" + admin Library health / re-grab
+	Labels        *v1.LabelHandler    // admin item labels (label restrictions match them)
 	StreamTracker *streaming.Tracker
 	Artwork       *artwork.Manager
 	ArtworkRoots  func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
@@ -124,6 +126,17 @@ type Handlers struct {
 	// surface. An unrated but known item comes back found=true with "".
 	// nil = skip the rating gate (dev/test).
 	ArtworkContentRating func(ctx context.Context, libraryID uuid.UUID, relPath string) (rating string, found bool)
+	// ArtworkLabelsPermitted is the label-restriction half of the same gate:
+	// true only when the path belongs to an item in the library and every
+	// item it belongs to passes the caller's label restriction. Consulted
+	// only for a label-restricted caller; nil refuses such a caller (fail
+	// closed — unlike the rating hook, there is no dev bypass, because a
+	// restriction an admin set must never silently stop applying).
+	ArtworkLabelsPermitted func(ctx context.Context, libraryID uuid.UUID, relPath string, labels itemlabel.Filter) bool
+	// LabelGate is the per-item label check every handler reaches through
+	// the request context (v1.ItemLabelGate). nil leaves label-restricted
+	// callers refused on every single-item surface (fail closed).
+	LabelGate v1.ItemLabelGate
 	// PublicAssetCache reports whether to emit `Cache-Control: public` on
 	// immutable resized artwork so a CDN/shared cache in front can store it
 	// (HA roadmap §4). Default returns false (private posture). Implemented
@@ -188,6 +201,9 @@ func NewRouter(h *Handlers) http.Handler {
 	// Bearer clients, safe methods, and unauthenticated requests.
 	r.Use(middleware.CSRFGuard(h.CORSAllowedOrigins))
 	r.Use(middleware.Recover(h.Logger))
+	// Per-item label restriction lookup, on every request's context so each
+	// single-item gate can reach it without per-handler wiring.
+	r.Use(v1.ItemLabelGateMiddleware(h.LabelGate))
 	r.Use(middleware.Logger(h.Logger))
 	if h.Metrics != nil {
 		r.Use(middleware.Metrics(h.Metrics))
@@ -361,6 +377,15 @@ func NewRouter(h *Handlers) http.Handler {
 							// per-user decision and must never be shared-cached.
 							rated = true
 							if !contentrating.IsAllowed(rating, claims.MaxContentRating) {
+								continue
+							}
+						}
+						// Label restriction: the same per-item rule, keyed by the
+						// same path, and likewise a per-user decision.
+						if lf := claims.LabelFilter(); lf.Active() {
+							rated = true
+							if h.ArtworkLabelsPermitted == nil ||
+								!h.ArtworkLabelsPermitted(req.Context(), root.LibraryID, filepath.ToSlash(clean), lf) {
 								continue
 							}
 						}
@@ -783,6 +808,7 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Patch("/users/{id}", h.User.SetAdmin)
 					r.Put("/users/{id}/password", h.User.ResetPassword)
 					r.Put("/users/{id}/content-rating", h.User.SetContentRating)
+					r.Put("/users/{id}/label-restrictions", h.User.SetLabelRestrictions)
 					r.Get("/users/{id}/streaming-limits", h.User.GetStreamingLimits)
 					r.Put("/users/{id}/streaming-limits", h.User.SetStreamingLimits)
 					r.Put("/users/{id}/request-permissions", h.User.SetRequestPermissions)
@@ -1225,6 +1251,17 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/rating", h.Items.GetRating)
 				r.Put("/items/{id}/rating", h.Items.SetRating)
 				r.Delete("/items/{id}/rating", h.Items.DeleteRating)
+			}
+
+			// Admin item labels — what per-user label restrictions match.
+			if h.Labels != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/labels", h.Labels.List)
+					r.Post("/labels/apply", h.Labels.Apply)
+					r.Get("/items/{id}/labels", h.Labels.GetItem)
+					r.Put("/items/{id}/labels", h.Labels.SetItem)
+				})
 			}
 
 			// "Report a problem": any user reports an item they can see (the

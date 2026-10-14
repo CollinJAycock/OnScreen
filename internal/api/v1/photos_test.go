@@ -20,6 +20,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/photoimage"
 )
 
@@ -81,7 +82,7 @@ func (m *mockPhotoMedia) CountPhotos(_ context.Context, _ media.ListPhotosParams
 	return int64(len(m.photos)), nil
 }
 
-func (m *mockPhotoMedia) ListPhotoTimeline(_ context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]media.PhotoTimelineBucket, error) {
+func (m *mockPhotoMedia) ListPhotoTimeline(_ context.Context, libraryID uuid.UUID, maxRatingRank *int, _ itemlabel.Filter) ([]media.PhotoTimelineBucket, error) {
 	m.timelineLibID = libraryID
 	m.timelineRank = maxRatingRank
 	return m.timeline, nil
@@ -93,7 +94,7 @@ func (m *mockPhotoMedia) ListPhotoMapPoints(_ context.Context, p media.ListPhoto
 	return m.mapPts, nil
 }
 
-func (m *mockPhotoMedia) CountPhotoMapPoints(_ context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error) {
+func (m *mockPhotoMedia) CountPhotoMapPoints(_ context.Context, libraryID uuid.UUID, maxRatingRank *int, _ itemlabel.Filter) (int64, error) {
 	m.mapCountLibID = libraryID
 	m.mapCountRank = maxRatingRank
 	return m.mapTotal, nil

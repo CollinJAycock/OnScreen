@@ -36,5 +36,7 @@ func (a *impersonationAdapter) GetUserForImpersonation(ctx context.Context, user
 		Username:         row.Username,
 		IsAdmin:          row.IsAdmin,
 		MaxContentRating: rating,
+		BlockedLabels:    row.BlockedLabels,
+		AllowedLabels:    row.AllowedLabels,
 	}, nil
 }

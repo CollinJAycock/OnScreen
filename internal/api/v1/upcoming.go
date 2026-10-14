@@ -28,6 +28,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/library"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // Range and fetch limits for GET /api/v1/upcoming.
@@ -217,6 +218,9 @@ func (h *UpcomingHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	entries := v.visible(snap.entries)
+	if v.labels.Active() {
+		entries = h.labelVisible(ctx, v, entries)
+	}
 
 	now := h.now()
 	items := make([]UpcomingItem, len(entries))
@@ -547,6 +551,7 @@ func positiveInt(n int) *int {
 type upcomingViewer struct {
 	admin   bool
 	ceiling string                 // max content rating; "" = unrestricted
+	labels  itemlabel.Filter       // label restriction; zero = none
 	allowed map[uuid.UUID]struct{} // nil = every library
 	acl     *upcomingACL           // nil only for admins
 }
@@ -557,7 +562,7 @@ func (h *UpcomingHandler) viewer(ctx context.Context, claims *auth.Claims) (upco
 	if claims.IsAdmin {
 		return upcomingViewer{admin: true}, nil
 	}
-	v := upcomingViewer{ceiling: claims.MaxContentRating}
+	v := upcomingViewer{ceiling: claims.MaxContentRating, labels: claims.LabelFilter()}
 	allowed, err := h.access.AllowedLibraryIDs(ctx, claims.UserID, false)
 	if err != nil {
 		return v, fmt.Errorf("allowed libraries: %w", err)
@@ -586,6 +591,52 @@ func (v upcomingViewer) visible(entries []upcomingEntry) []upcomingEntry {
 			continue
 		}
 		if !v.acl.permits(e.arrPath) {
+			continue
+		}
+		out = append(out, e)
+	}
+	return out
+}
+
+// labelVisible applies the caller's label restriction to calendar entries.
+// An entry has no labels of its own; it takes those of the library movie or
+// show it belongs to (by TMDB id). A blocked-labels list drops an entry whose
+// library title is blocked; an allowed-labels list keeps only entries whose
+// library title carries an allowed label, so a title not yet in the library
+// is dropped too — the same way a capped profile never sees an uncertified
+// entry. Fails closed: a lookup failure drops every entry the lookup was for.
+func (h *UpcomingHandler) labelVisible(ctx context.Context, v upcomingViewer, entries []upcomingEntry) []upcomingEntry {
+	if v.admin || !v.labels.Active() {
+		return entries
+	}
+	var movieIDs, showIDs []int32
+	for _, e := range entries {
+		if e.tmdbID <= 0 {
+			continue
+		}
+		if e.item.Kind == upcomingKindMovie {
+			movieIDs = append(movieIDs, e.tmdbID)
+		} else {
+			showIDs = append(showIDs, e.tmdbID)
+		}
+	}
+	allMovies := h.lookupItems(ctx, v, "movie", movieIDs, false)
+	allShows := h.lookupItems(ctx, v, "show", showIDs, false)
+	okMovies := h.lookupItems(ctx, v, "movie", movieIDs, true)
+	okShows := h.lookupItems(ctx, v, "show", showIDs, true)
+	allowedMode := len(v.labels.Allowed) > 0
+	out := make([]upcomingEntry, 0, len(entries))
+	for _, e := range entries {
+		all, ok := allShows, okShows
+		if e.item.Kind == upcomingKindMovie {
+			all, ok = allMovies, okMovies
+		}
+		_, inLib := all[e.tmdbID]
+		_, permitted := ok[e.tmdbID]
+		if allowedMode && !permitted {
+			continue
+		}
+		if inLib && !permitted {
 			continue
 		}
 		out = append(out, e)
@@ -704,8 +755,8 @@ func (h *UpcomingHandler) link(ctx context.Context, v upcomingViewer, entries []
 			showIDs = append(showIDs, e.tmdbID)
 		}
 	}
-	movies := h.lookupItems(ctx, v, "movie", movieIDs)
-	shows := h.lookupItems(ctx, v, "show", showIDs)
+	movies := h.lookupItems(ctx, v, "movie", movieIDs, true)
+	shows := h.lookupItems(ctx, v, "show", showIDs, true)
 	for i, e := range entries {
 		hits := shows
 		if e.item.Kind == upcomingKindMovie {
@@ -718,13 +769,20 @@ func (h *UpcomingHandler) link(ctx context.Context, v upcomingViewer, entries []
 	}
 }
 
-func (h *UpcomingHandler) lookupItems(ctx context.Context, v upcomingViewer, itemType string, tmdbIDs []int32) map[int32]uuid.UUID {
+// lookupItems maps TMDB ids to the caller's visible library items. withLabels
+// false skips the label restriction (library ACL and ceiling still apply),
+// which labelVisible uses to tell "blocked" from "not in the library".
+func (h *UpcomingHandler) lookupItems(ctx context.Context, v upcomingViewer, itemType string, tmdbIDs []int32, withLabels bool) map[int32]uuid.UUID {
 	if len(tmdbIDs) == 0 {
 		return nil
 	}
 	params := gen.ListMediaItemsByTMDBIDsParams{Type: itemType, TmdbIds: tmdbIDs}
 	if !v.admin {
 		params.MaxRatingRank = maxRatingRankFromClaims(v.ceiling)
+		if withLabels {
+			params.BlockedLabels = v.labels.BlockedArg()
+			params.AllowedLabels = v.labels.AllowedArg()
+		}
 		if v.allowed != nil {
 			if len(v.allowed) == 0 {
 				return nil

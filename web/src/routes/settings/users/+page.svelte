@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import LabelEditor from '$lib/components/LabelEditor.svelte';
   import {
-    api, userApi, inviteApi, profileApi, settingsApi,
+    api, userApi, inviteApi, profileApi, settingsApi, labelApi,
     type User, type UserMeta, type UserLibraryAccess, type WatchLimitInfo,
     type RequestPermissions, type RequestSettings
   } from '$lib/api';
@@ -57,6 +58,14 @@
   let hoursEnabled = false;
   let startTime = '08:00';
   let endTime = '20:00';
+
+  // Label restriction (blocked / allowed labels). Applies to the user and
+  // every managed profile beneath it; saving signs them out.
+  let labelsTarget: User | null = null;
+  let labelsSaving = false;
+  let blockedLabels: string[] = [];
+  let allowedLabels: string[] = [];
+  let labelSuggestions: string[] = [];
 
   // Streaming caps (admin-enforced per-user)
   let capsTarget: User | null = null;
@@ -500,6 +509,38 @@
     }
   }
 
+  async function openLabels(user: User) {
+    labelsTarget = user;
+    blockedLabels = [...(user.blocked_labels ?? [])];
+    allowedLabels = [...(user.allowed_labels ?? [])];
+    try {
+      labelSuggestions = (await labelApi.list()).map((l) => l.label);
+    } catch {
+      labelSuggestions = [];
+    }
+  }
+
+  async function saveLabels() {
+    if (!labelsTarget) return;
+    const target = labelsTarget;
+    labelsSaving = true;
+    try {
+      const saved = await userApi.setLabelRestrictions(target.id, {
+        blocked_labels: blockedLabels,
+        allowed_labels: allowedLabels
+      });
+      users = users.map((u) => u.id === target.id
+        ? { ...u, blocked_labels: saved.blocked_labels, allowed_labels: saved.allowed_labels }
+        : u);
+      toast.success(`Label restrictions updated for "${target.username}"`);
+      labelsTarget = null;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update label restrictions');
+    } finally {
+      labelsSaving = false;
+    }
+  }
+
   async function openCaps(user: User) {
     capsTarget = user;
     capsLoading = true;
@@ -809,6 +850,7 @@
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLibraries, mu)}>Library access…</button>
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLimits, mu)}>Watch limits…</button>
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(openCaps, mu)}>Streaming caps…</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLabels, mu)}>Labels…</button>
           <div class="menu-sep"></div>
         {/if}
         {#if !isSelf(mu)}
@@ -1027,6 +1069,47 @@
           <button class="btn-cancel" on:click={() => limitsTarget = null}>Cancel</button>
           <button class="btn-save" disabled={limitsLoading || limitsSaving} on:click={saveLimits}>
             {limitsSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Label restriction (admin) dialog -->
+  {#if labelsTarget}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="overlay" on:click={() => labelsTarget = null}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="dialog" role="dialog" aria-label="Label restrictions" tabindex="-1" on:click|stopPropagation>
+        <h2>Labels</h2>
+        <p>Limit what <strong>{labelsTarget.username}</strong> sees by the labels on titles (set on a title's page, or with "Add label…" in a library selection). A label on a show covers its episodes. Also applies to their managed profiles; saving signs them out so it takes effect at once.</p>
+        <div class="limit-section">
+          <span class="limit-label">Never show titles labelled</span>
+          <LabelEditor
+            labels={blockedLabels}
+            suggestions={labelSuggestions}
+            disabled={labelsSaving}
+            label="Blocked labels"
+            idSuffix="blocked"
+            on:change={(e) => blockedLabels = e.detail.labels}
+          />
+        </div>
+        <div class="limit-section">
+          <span class="limit-label">Only show titles labelled</span>
+          <LabelEditor
+            labels={allowedLabels}
+            suggestions={labelSuggestions}
+            disabled={labelsSaving}
+            label="Allowed labels"
+            idSuffix="allowed"
+            on:change={(e) => allowedLabels = e.detail.labels}
+          />
+          <p class="limit-hint">Leave empty to allow everything not blocked. When set, unlabelled titles are hidden too.</p>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn-cancel" on:click={() => labelsTarget = null}>Cancel</button>
+          <button class="btn-save" disabled={labelsSaving} on:click={saveLabels}>
+            {labelsSaving ? 'Saving...' : 'Save'}
           </button>
         </div>
       </div>
@@ -1383,6 +1466,7 @@
   .limit-field input[type="number"] { width: 80px; }
   .limit-field input[type="time"] { width: auto; }
   .limit-field .unit { font-size: 0.78rem; color: var(--text-muted); }
+  .limit-label { display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.4rem; }
   .dialog .limit-hint { font-size: 0.7rem; color: var(--text-muted); margin: 0.5rem 0 0 1.6rem; }
 
   .library-list {

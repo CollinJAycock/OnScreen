@@ -27,6 +27,7 @@
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import CollectionPicker from '$lib/components/CollectionPicker.svelte';
+  import ItemLabels from '$lib/components/ItemLabels.svelte';
   import PlayOnButton from '$lib/components/PlayOnButton.svelte';
   import FranchiseShelf from '$lib/components/FranchiseShelf.svelte';
   import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
@@ -4432,6 +4433,10 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
         Edit Metadata
       </button>
+    {/if}
+    <!-- Admin labels (what per-user label restrictions match). -->
+    {#if isAdmin}
+      <ItemLabels itemId={item.id} labels={item.labels ?? []} />
     {/if}
 
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->

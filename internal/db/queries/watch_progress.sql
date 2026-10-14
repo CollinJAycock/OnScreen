@@ -28,6 +28,7 @@ WITH targets AS (
       AND ea.container_id = sqlc.arg('target_id')::uuid
       AND (sqlc.narg('max_rating_rank')::int IS NULL
            OR content_rating_rank(ea.content_rating) <= sqlc.narg('max_rating_rank')::int)
+      AND media_item_id_labels_permitted(ea.episode_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
     UNION ALL
     SELECT m.id AS media_id
     FROM media_items m
@@ -91,6 +92,7 @@ WHERE se.type = 'season'
   AND (se.id = sqlc.arg('container_id')::uuid OR se.parent_id = sqlc.arg('container_id')::uuid)
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(e.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(e.labels, e.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY COALESCE(se.index, 999999), COALESCE(e.index, 999999), e.sort_title, e.id;
 
 -- name: ListNextUp :many
@@ -174,11 +176,13 @@ CROSS JOIN LATERAL (
                  AND rs.deleted_at IS NULL AND COALESCE(rs.index, -1) <> 0))
       AND (sqlc.narg('max_rating_rank')::int IS NULL
            OR content_rating_rank(e.content_rating) <= sqlc.narg('max_rating_rank')::int)
+      AND media_item_labels_permitted(e.labels, e.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
     ORDER BY COALESCE(se.index, 999999), COALESCE(e.index, 999999), e.sort_title, e.id
     LIMIT 1
 ) nx
 WHERE (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(sh.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(sh.labels, sh.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND NOT EXISTS (
       SELECT 1 FROM continue_watching_dismissals cwd
       WHERE cwd.user_id = sqlc.arg('user_id')::uuid
@@ -201,6 +205,7 @@ WHERE uws.user_id = sqlc.arg('user_id')::uuid
   AND uws.status = 'plan_to_watch'
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND media_watch_bucket(sqlc.arg('user_id')::uuid, mi.id, mi.type, sqlc.narg('max_rating_rank')::int) <> 'watched'
 ORDER BY uws.updated_at DESC, mi.id
 LIMIT sqlc.arg('result_limit')::int;
@@ -232,6 +237,7 @@ CROSS JOIN LATERAL (
       AND ea.container_id = m.id
       AND (sqlc.narg('max_rating_rank')::int IS NULL
            OR content_rating_rank(ea.content_rating) <= sqlc.narg('max_rating_rank')::int)
+      AND media_item_id_labels_permitted(ea.episode_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ) c
 WHERE m.id = ANY(sqlc.arg('media_ids')::uuid[]);
 
@@ -250,6 +256,7 @@ WHERE library_id = sqlc.arg('library_id')::uuid
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY random()
 LIMIT 1;

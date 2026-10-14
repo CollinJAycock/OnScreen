@@ -186,7 +186,8 @@ WHERE c.type = 'franchise'
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int);
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
 
 -- name: ListLibraryFranchiseCollections :many
 -- The library page's Collections tab: franchise collections with at least one
@@ -205,6 +206,7 @@ WHERE c.type = 'franchise'
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY c.id, tc.poster_url
 ORDER BY c.name, c.id;
 

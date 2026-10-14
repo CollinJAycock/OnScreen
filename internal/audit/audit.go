@@ -28,6 +28,14 @@ const (
 	// role_change so an operator can audit parental-control edits —
 	// loosening a child's ceiling is exactly the action worth reviewing.
 	ActionUserRatingChange = "user.rating_change"
+	// ActionUserLabelRestrictionChange records a change to a user's (and its
+	// managed profiles') blocked / allowed labels — a parental-control edit
+	// like the rating ceiling, audited separately so it can be reviewed.
+	ActionUserLabelRestrictionChange = "user.label_restriction_change"
+	// ActionItemLabelsChange records admin label edits on items (one item or
+	// a bulk apply). Labels drive per-user restrictions, so adding or
+	// removing one changes who can see the item.
+	ActionItemLabelsChange = "item.labels_change"
 	ActionPasswordReset    = "user.password_reset"
 	ActionLibraryCreate    = "library.create"
 	ActionLibraryDelete    = "library.delete"

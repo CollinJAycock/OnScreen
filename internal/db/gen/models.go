@@ -369,6 +369,7 @@ type MediaItem struct {
 	LockedFields              []string           `json:"locked_fields"`
 	IndexEnd                  *int32             `json:"index_end"`
 	EpisodeOrder              *string            `json:"episode_order"`
+	Labels                    []string           `json:"labels"`
 }
 
 type MediaItemTmdbCollection struct {
@@ -717,6 +718,8 @@ type User struct {
 	RequestQuotaMovies         *int32             `json:"request_quota_movies"`
 	RequestQuotaTv             *int32             `json:"request_quota_tv"`
 	MaxRemoteStreamBitrateKbps *int32             `json:"max_remote_stream_bitrate_kbps"`
+	BlockedLabels              []string           `json:"blocked_labels"`
+	AllowedLabels              []string           `json:"allowed_labels"`
 }
 
 type UserAudiobookRate struct {

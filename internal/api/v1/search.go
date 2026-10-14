@@ -140,6 +140,8 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			WebsearchToTsquery: query,
 			Limit:              limit,
 			MaxRatingRank:      maxRank,
+			BlockedLabels:      ctxLabels(r.Context()).BlockedArg(),
+			AllowedLabels:      ctxLabels(r.Context()).AllowedArg(),
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))
@@ -165,6 +167,8 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			Limit:              limit,
 			LibraryIds:         libIDs,
 			MaxRatingRank:      maxRank,
+			BlockedLabels:      ctxLabels(r.Context()).BlockedArg(),
+			AllowedLabels:      ctxLabels(r.Context()).AllowedArg(),
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))

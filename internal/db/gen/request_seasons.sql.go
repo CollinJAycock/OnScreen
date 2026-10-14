@@ -35,6 +35,7 @@ WHERE sh.type = 'show'
        OR sh.library_id = ANY($2::uuid[]))
   AND ($3::int IS NULL
        OR content_rating_rank(sh.content_rating) <= $3::int)
+  AND media_item_labels_permitted(sh.labels, sh.parent_id, $4::text[], $5::text[])
 GROUP BY sh.tmdb_id, se.index
 ORDER BY sh.tmdb_id, se.index
 `
@@ -43,6 +44,8 @@ type ListOwnedEpisodeCountsByShowTMDBParams struct {
 	TmdbIds       []int32     `json:"tmdb_ids"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 type ListOwnedEpisodeCountsByShowTMDBRow struct {
@@ -64,7 +67,13 @@ type ListOwnedEpisodeCountsByShowTMDBRow struct {
 // caller's grants and rating ceiling (checked on the show), NULL = admin /
 // unrestricted (the fulfilment reconciler passes NULL for both).
 func (q *Queries) ListOwnedEpisodeCountsByShowTMDB(ctx context.Context, arg ListOwnedEpisodeCountsByShowTMDBParams) ([]ListOwnedEpisodeCountsByShowTMDBRow, error) {
-	rows, err := q.db.Query(ctx, listOwnedEpisodeCountsByShowTMDB, arg.TmdbIds, arg.LibraryIds, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listOwnedEpisodeCountsByShowTMDB,
+		arg.TmdbIds,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}

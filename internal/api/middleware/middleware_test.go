@@ -922,6 +922,33 @@ func TestViewAs_AdminSwapsClaims(t *testing.T) {
 	}
 }
 
+// The label restriction follows the target too, so "view as" a profile with
+// blocked / allowed labels shows exactly what the label filter leaves it.
+func TestViewAs_CarriesTargetLabelRestriction(t *testing.T) {
+	tm := testTokenMaker(t)
+	a := NewAuthenticator(tm)
+	target := ImpersonatedUser{ID: uuid.New(), Username: "kid", BlockedLabels: []string{"horror"}, AllowedLabels: []string{"kids"}}
+	mw := a.ViewAs(stubImpersonationLookup{user: target}, nil)
+
+	var seen *auth.Claims
+	handler := a.Required(mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = ClaimsFromContext(r.Context())
+		w.WriteHeader(http.StatusOK)
+	})))
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("GET", "/api/v1/hub?view_as="+target.ID.String(), nil)
+	req.Header.Set("Authorization", "Bearer "+issueTestToken(t, tm, true))
+	handler.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || seen == nil {
+		t.Fatalf("status %d, claims %v", rec.Code, seen)
+	}
+	f := seen.LabelFilter()
+	if len(f.Blocked) != 1 || f.Blocked[0] != "horror" || len(f.Allowed) != 1 || f.Allowed[0] != "kids" {
+		t.Errorf("label filter under view_as = %+v, want the target's", f)
+	}
+}
+
 func TestViewAs_NonAdminCallerIsForbidden(t *testing.T) {
 	tm := testTokenMaker(t)
 	a := NewAuthenticator(tm)

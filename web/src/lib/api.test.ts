@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ApiClient, ApiRequestError, authApi, libraryApi, userApi, notificationApi, subtitleApi, api } from './api';
+import { ApiClient, ApiRequestError, authApi, libraryApi, userApi, notificationApi, subtitleApi, api, labelApi, normalizeLabel } from './api';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -321,6 +321,18 @@ describe('userApi', () => {
     expect(JSON.parse(opts.body as string)).toEqual({ auto_approve_movies: true, auto_approve_tv: false });
   });
 
+  it('setLabelRestrictions calls PUT /users/:id/label-restrictions and returns the stored lists', async () => {
+    const stored = { blocked_labels: ['horror'], allowed_labels: [] };
+    const fetch = mockFetch(200, { data: stored });
+    vi.stubGlobal('fetch', fetch);
+    const got = await userApi.setLabelRestrictions('user-8', { blocked_labels: ['Horror'], allowed_labels: [] });
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/users/user-8/label-restrictions');
+    const [, opts] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(opts.method).toBe('PUT');
+    expect(JSON.parse(opts.body as string)).toEqual({ blocked_labels: ['Horror'], allowed_labels: [] });
+    expect(got).toEqual(stored);
+  });
+
   it('listSwitchable calls GET /users/switchable', async () => {
     const users = [{ id: '1', username: 'alice', is_admin: false, has_pin: true }];
     vi.stubGlobal('fetch', mockFetch(200, { data: users }));
@@ -526,5 +538,43 @@ describe('subtitleApi.ocrStatus', () => {
 describe('api singleton', () => {
   it('is an ApiClient instance', () => {
     expect(api).toBeInstanceOf(ApiClient);
+  });
+});
+
+// ── labelApi ──────────────────────────────────────────────────────────────────
+
+describe('labelApi', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('list reads GET /labels', async () => {
+    const rows = [{ label: 'kids', item_count: 3 }];
+    vi.stubGlobal('fetch', mockFetch(200, { data: rows, meta: { total: 1 } }));
+    expect(await labelApi.list()).toEqual(rows);
+  });
+
+  it('setItem PUTs the labels and returns the stored list', async () => {
+    const fetch = mockFetch(200, { data: { labels: ['kids'] } });
+    vi.stubGlobal('fetch', fetch);
+    expect(await labelApi.setItem('item-1', ['Kids'])).toEqual(['kids']);
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/items/item-1/labels');
+    const [, opts] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(opts.method).toBe('PUT');
+    expect(JSON.parse(opts.body as string)).toEqual({ labels: ['Kids'] });
+  });
+
+  it('apply POSTs item ids with add / remove', async () => {
+    const fetch = mockFetch(200, { data: { added: 2, removed: 0 } });
+    vi.stubGlobal('fetch', fetch);
+    expect(await labelApi.apply(['a', 'b'], { add: ['kids'] })).toEqual({ added: 2, removed: 0 });
+    expect(fetch.mock.calls[0][0]).toBe('/api/v1/labels/apply');
+    expect(JSON.parse((fetch.mock.calls[0] as [string, RequestInit])[1].body as string))
+      .toEqual({ item_ids: ['a', 'b'], add: ['kids'] });
+  });
+
+  it('normalizeLabel matches the server: lower-case, single-spaced, trimmed', () => {
+    expect(normalizeLabel('  Scary\t  Stuff ')).toBe('scary stuff');
+    expect(normalizeLabel('   ')).toBe('');
   });
 });

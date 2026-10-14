@@ -34,6 +34,7 @@ WHERE sh.type = 'show'
        OR sh.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(sh.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(sh.labels, sh.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY sh.tmdb_id, se.index
 ORDER BY sh.tmdb_id, se.index;
 

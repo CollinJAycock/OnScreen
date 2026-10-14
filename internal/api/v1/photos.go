@@ -15,8 +15,8 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/artwork"
-	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/photoimage"
 )
 
@@ -50,9 +50,9 @@ type PhotoMediaService interface {
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListPhotos(ctx context.Context, p media.ListPhotosParams) ([]media.PhotoListItem, error)
 	CountPhotos(ctx context.Context, p media.ListPhotosParams) (int64, error)
-	ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]media.PhotoTimelineBucket, error)
+	ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) ([]media.PhotoTimelineBucket, error)
 	ListPhotoMapPoints(ctx context.Context, p media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error)
-	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error)
+	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) (int64, error)
 	SearchPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error)
 	CountPhotosByExif(ctx context.Context, p media.SearchPhotosByExifParams) (int64, error)
 }
@@ -158,6 +158,7 @@ func (h *PhotosHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:         limit,
 		Offset:        offset,
 		MaxRatingRank: callerRatingRank(r),
+		Labels:        callerLabels(r),
 	}
 
 	rows, err := h.media.ListPhotos(r.Context(), params)
@@ -211,7 +212,7 @@ func (h *PhotosHandler) Timeline(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	rows, err := h.media.ListPhotoTimeline(r.Context(), libID, callerRatingRank(r))
+	rows, err := h.media.ListPhotoTimeline(r.Context(), libID, callerRatingRank(r), callerLabels(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo timeline", "library_id", libID, "err", err)
 		respond.InternalError(w, r)
@@ -298,13 +299,14 @@ func (h *PhotosHandler) Map(w http.ResponseWriter, r *http.Request) {
 		MaxLon:        maxLon,
 		Limit:         limit,
 		MaxRatingRank: callerRatingRank(r),
+		Labels:        callerLabels(r),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list photo map points", "library_id", libID, "err", err)
 		respond.InternalError(w, r)
 		return
 	}
-	total, err := h.media.CountPhotoMapPoints(r.Context(), libID, callerRatingRank(r))
+	total, err := h.media.CountPhotoMapPoints(r.Context(), libID, callerRatingRank(r), callerLabels(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "count photo map points", "library_id", libID, "err", err)
 		respond.InternalError(w, r)
@@ -452,6 +454,7 @@ func (h *PhotosHandler) Search(w http.ResponseWriter, r *http.Request) {
 		Limit:         limit,
 		Offset:        offset,
 		MaxRatingRank: callerRatingRank(r),
+		Labels:        callerLabels(r),
 	}
 
 	rows, err := h.media.SearchPhotosByExif(r.Context(), params)
@@ -527,12 +530,12 @@ func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 	// library ACL alone let a restricted profile pull the image bytes of an
 	// over-ceiling item by direct URL. 404 (not 403) to match this handler's
 	// existing shape — access denial stays indistinguishable from absence.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}

@@ -61,6 +61,7 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('from')::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= sqlc.narg('from'))
   AND (sqlc.narg('to')::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= sqlc.narg('to'))
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id DESC
@@ -77,6 +78,7 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('from')::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= sqlc.narg('from'))
   AND (sqlc.narg('to')::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= sqlc.narg('to'));
 
@@ -99,6 +101,7 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND pm.gps_lat IS NOT NULL
   AND pm.gps_lon IS NOT NULL
   AND (sqlc.narg('min_lat')::double precision IS NULL OR pm.gps_lat >= sqlc.narg('min_lat'))
@@ -120,6 +123,7 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND pm.gps_lat IS NOT NULL
   AND pm.gps_lon IS NOT NULL;
 
@@ -146,6 +150,7 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('camera_make')::text   IS NULL OR pm.camera_make  ILIKE '%' || sqlc.narg('camera_make')::text  || '%')
   AND (sqlc.narg('camera_model')::text  IS NULL OR pm.camera_model ILIKE '%' || sqlc.narg('camera_model')::text || '%')
   AND (sqlc.narg('lens_model')::text    IS NULL OR pm.lens_model   ILIKE '%' || sqlc.narg('lens_model')::text   || '%')
@@ -174,6 +179,7 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('camera_make')::text   IS NULL OR pm.camera_make  ILIKE '%' || sqlc.narg('camera_make')::text  || '%')
   AND (sqlc.narg('camera_model')::text  IS NULL OR pm.camera_model ILIKE '%' || sqlc.narg('camera_model')::text || '%')
   AND (sqlc.narg('lens_model')::text    IS NULL OR pm.lens_model   ILIKE '%' || sqlc.narg('lens_model')::text   || '%')
@@ -210,6 +216,7 @@ FROM (
       AND mi.deleted_at IS NULL
       AND (sqlc.narg('max_rating_rank')::int IS NULL
            OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+      AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ) sub
 GROUP BY sub.year, sub.month
 ORDER BY sub.year DESC, sub.month DESC;

@@ -26,7 +26,6 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
-	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/mediastore"
@@ -427,12 +426,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if claims.MaxContentRating != "" {
+	if viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}

@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 func TestManualCollection_Promote(t *testing.T) {
@@ -260,7 +261,7 @@ func TestHubCollectionRows(t *testing.T) {
 	}
 	h := (&HubHandler{logger: slog.Default()}).WithCollections(f)
 	rank := int32(3)
-	rows := h.collectionRows(context.Background(), &rank, func(id uuid.UUID) bool { return id == allowed })
+	rows := h.collectionRows(context.Background(), &rank, itemlabel.Filter{}, func(id uuid.UUID) bool { return id == allowed })
 	if len(rows) != 2 || rows[0].Name != "Spooky" || rows[1].Name != "Many" {
 		t.Fatalf("rows %+v, want Spooky and Many (Private has nothing visible)", rows)
 	}

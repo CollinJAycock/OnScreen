@@ -24,6 +24,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/observability"
 )
 
@@ -111,8 +112,8 @@ type MediaItemLister interface {
 	CountItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
-	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.GenreCount, error)
-	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.YearCount, error)
+	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.GenreCount, error)
+	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.YearCount, error)
 	ListEventCollectionsForLibrary(ctx context.Context, libraryID uuid.UUID) ([]media.EventCollection, error)
 }
 
@@ -751,11 +752,12 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 	// On a top-level listing every parent is NULL and it degrades to
 	// year then title.
 
-	// Inject content rating ceiling from auth claims.
+	// Inject content rating ceiling and label restriction from auth claims.
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		if rk := contentrating.MaxRatingRank(claims.MaxContentRating); rk != nil {
 			fp.MaxRatingRank = rk
 		}
+		fp.Labels = claims.LabelFilter()
 	}
 
 	// ?watch= narrows to the caller's watch state, in SQL, so the page, sort,
@@ -767,7 +769,7 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 	}
 	fp.Watch, fp.WatchUserID = watch, claims.UserID
 
-	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Sort != "title" || !fp.SortAsc || fp.Watch != ""
+	hasFilter := fp.Genre != nil || fp.YearMin != nil || fp.YearMax != nil || fp.RatingMin != nil || fp.MaxRatingRank != nil || fp.Labels.Active() || fp.Sort != "title" || !fp.SortAsc || fp.Watch != ""
 
 	// `?type=` lets callers list a non-root item type within the library —
 	// e.g. ?type=music_video on a music library returns the videos that
@@ -824,8 +826,8 @@ func (h *LibraryHandler) Items(w http.ResponseWriter, r *http.Request) {
 			out[i].ParentID = &s
 		}
 	}
-	h.attachWatchState(r.Context(), claims.UserID, fp.MaxRatingRank, items, out)
-	h.attachParentTitles(r.Context(), fp.MaxRatingRank, items, out)
+	h.attachWatchState(r.Context(), claims.UserID, fp.MaxRatingRank, fp.Labels, items, out)
+	h.attachParentTitles(r.Context(), fp.MaxRatingRank, fp.Labels, items, out)
 	respond.List(w, r, out, total, "")
 }
 
@@ -872,7 +874,7 @@ func (h *LibraryHandler) Genres(w http.ResponseWriter, r *http.Request) {
 	}
 	// Apply the caller's ceiling to the facet counts — see the query comment.
 	rows, err := h.media.ListGenresWithCounts(r.Context(), id, itemType,
-		callerRatingRank(r))
+		callerRatingRank(r), callerLabels(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list genres", "library_id", id, "err", err)
 		respond.InternalError(w, r)
@@ -991,7 +993,7 @@ func (h *LibraryHandler) Years(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rows, err := h.media.ListYearsWithCounts(r.Context(), id, itemType,
-		callerRatingRank(r))
+		callerRatingRank(r), callerLabels(r))
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list years", "library_id", id, "err", err)
 		respond.InternalError(w, r)

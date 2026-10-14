@@ -100,6 +100,8 @@ func (h *WatchStateHandler) mark(w http.ResponseWriter, r *http.Request, state s
 		TargetType:    item.Type,
 		TargetID:      item.ID,
 		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "mark watch state",
@@ -197,6 +199,8 @@ func (h *WatchStateHandler) UpNext(w http.ResponseWriter, r *http.Request) {
 		UserID:        claims.UserID,
 		ContainerID:   item.ID,
 		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "up next episodes",

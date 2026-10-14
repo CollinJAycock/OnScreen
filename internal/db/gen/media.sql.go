@@ -105,7 +105,8 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND ($5::int IS NULL OR year <= $5)
   AND ($6::numeric IS NULL OR rating >= $6)
   AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
-  AND ($8::text IS NULL OR media_watch_bucket($9::uuid, id, type, $7::int) = $8::text)
+  AND media_item_labels_permitted(labels, parent_id, $8::text[], $9::text[])
+  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $7::int) = $10::text)
 `
 
 type CountMediaItemsFilteredParams struct {
@@ -116,6 +117,8 @@ type CountMediaItemsFilteredParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -129,6 +132,8 @@ func (q *Queries) CountMediaItemsFiltered(ctx context.Context, arg CountMediaIte
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -1821,6 +1826,7 @@ WITH rows AS (
       AND m.deleted_at IS NULL
       AND m.type IN ('movie', 'episode')
       AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
+      AND media_item_labels_permitted(m.labels, m.parent_id, $4::text[], $5::text[])
 ),
 deduped AS (
     SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline,
@@ -1863,6 +1869,8 @@ type ListContinueWatchingParams struct {
 	UserID        uuid.UUID `json:"user_id"`
 	Limit         int32     `json:"limit"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListContinueWatchingRow struct {
@@ -1933,7 +1941,13 @@ type ListContinueWatchingRow struct {
 // sqlc generates them as pointer / pgtype types, and a NULL show_id
 // in Go means "no rollup, render the row's own identity".
 func (q *Queries) ListContinueWatching(ctx context.Context, arg ListContinueWatchingParams) ([]ListContinueWatchingRow, error) {
-	rows, err := q.db.Query(ctx, listContinueWatching, arg.UserID, arg.Limit, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listContinueWatching,
+		arg.UserID,
+		arg.Limit,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2359,6 +2373,7 @@ SELECT g::text AS genre, COUNT(*)::bigint AS count
 FROM media_items, unnest(genres) AS g
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
+  AND media_item_labels_permitted(labels, parent_id, $4::text[], $5::text[])
 GROUP BY g
 ORDER BY g
 `
@@ -2367,6 +2382,8 @@ type ListGenresWithCountsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	Type          string    `json:"type"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListGenresWithCountsRow struct {
@@ -2381,7 +2398,13 @@ type ListGenresWithCountsRow struct {
 // the number) of over-ceiling titles to a restricted profile, which is exactly
 // what the ceiling is for.
 func (q *Queries) ListGenresWithCounts(ctx context.Context, arg ListGenresWithCountsParams) ([]ListGenresWithCountsRow, error) {
-	rows, err := q.db.Query(ctx, listGenresWithCounts, arg.LibraryID, arg.Type, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listGenresWithCounts,
+		arg.LibraryID,
+		arg.Type,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2710,11 +2733,14 @@ FROM media_items
 WHERE id = ANY($1::uuid[])
   AND deleted_at IS NULL
   AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
+  AND media_item_labels_permitted(labels, parent_id, $3::text[], $4::text[])
 `
 
 type ListMediaItemTitlesParams struct {
 	Ids           []uuid.UUID `json:"ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 type ListMediaItemTitlesRow struct {
@@ -2727,7 +2753,12 @@ type ListMediaItemTitlesRow struct {
 // The caller's rating ceiling applies to the parents too: a parent above it
 // (a show over a season the profile may list) stays unnamed.
 func (q *Queries) ListMediaItemTitles(ctx context.Context, arg ListMediaItemTitlesParams) ([]ListMediaItemTitlesRow, error) {
-	rows, err := q.db.Query(ctx, listMediaItemTitles, arg.Ids, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listMediaItemTitles,
+		arg.Ids,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2867,7 +2898,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY created_at DESC, id
 LIMIT $3 OFFSET $4
 `
@@ -2882,6 +2914,8 @@ type ListMediaItemsByDateAddedParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -2928,6 +2962,8 @@ func (q *Queries) ListMediaItemsByDateAdded(ctx context.Context, arg ListMediaIt
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -2993,7 +3029,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY created_at ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3008,6 +3045,8 @@ type ListMediaItemsByDateAddedAscParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3054,6 +3093,8 @@ func (q *Queries) ListMediaItemsByDateAddedAsc(ctx context.Context, arg ListMedi
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3120,7 +3161,8 @@ WHERE m.library_id = $1
   AND ($7::int IS NULL OR m.year <= $7)
   AND ($8::numeric IS NULL OR m.rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(m.content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, m.id, m.type, $9::int) = $10::text)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, m.id, m.type, $9::int) = $12::text)
 ORDER BY p.sort_title ASC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4
 `
@@ -3135,6 +3177,8 @@ type ListMediaItemsByParentTitleParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3186,6 +3230,8 @@ func (q *Queries) ListMediaItemsByParentTitle(ctx context.Context, arg ListMedia
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3252,7 +3298,8 @@ WHERE m.library_id = $1
   AND ($7::int IS NULL OR m.year <= $7)
   AND ($8::numeric IS NULL OR m.rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(m.content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, m.id, m.type, $9::int) = $10::text)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, m.id, m.type, $9::int) = $12::text)
 ORDER BY p.sort_title DESC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4
 `
@@ -3267,6 +3314,8 @@ type ListMediaItemsByParentTitleDescParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3314,6 +3363,8 @@ func (q *Queries) ListMediaItemsByParentTitleDesc(ctx context.Context, arg ListM
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3379,7 +3430,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY rating DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3394,6 +3446,8 @@ type ListMediaItemsByRatingParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3440,6 +3494,8 @@ func (q *Queries) ListMediaItemsByRating(ctx context.Context, arg ListMediaItems
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3505,7 +3561,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY rating ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3520,6 +3577,8 @@ type ListMediaItemsByRatingAscParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3566,6 +3625,8 @@ func (q *Queries) ListMediaItemsByRatingAsc(ctx context.Context, arg ListMediaIt
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3627,6 +3688,7 @@ WHERE type = $1
        OR library_id = ANY($3::uuid[]))
   AND ($4::int IS NULL
        OR content_rating_rank(content_rating) <= $4::int)
+  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
 `
 
 type ListMediaItemsByTMDBIDsParams struct {
@@ -3634,6 +3696,8 @@ type ListMediaItemsByTMDBIDsParams struct {
 	TmdbIds       []int32     `json:"tmdb_ids"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 type ListMediaItemsByTMDBIDsRow struct {
@@ -3659,6 +3723,8 @@ func (q *Queries) ListMediaItemsByTMDBIDs(ctx context.Context, arg ListMediaItem
 		arg.TmdbIds,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err
@@ -3693,7 +3759,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY originally_available_at DESC NULLS LAST, created_at DESC, id
 LIMIT $3 OFFSET $4
 `
@@ -3708,6 +3775,8 @@ type ListMediaItemsByTakenAtParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3756,6 +3825,8 @@ func (q *Queries) ListMediaItemsByTakenAt(ctx context.Context, arg ListMediaItem
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3821,7 +3892,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3836,6 +3908,8 @@ type ListMediaItemsByTakenAtAscParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3882,6 +3956,8 @@ func (q *Queries) ListMediaItemsByTakenAtAsc(ctx context.Context, arg ListMediaI
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3947,7 +4023,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3962,6 +4039,8 @@ type ListMediaItemsByTitleParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -4008,6 +4087,8 @@ func (q *Queries) ListMediaItemsByTitle(ctx context.Context, arg ListMediaItemsB
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -4073,7 +4154,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY sort_title DESC, id
 LIMIT $3 OFFSET $4
 `
@@ -4088,6 +4170,8 @@ type ListMediaItemsByTitleDescParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -4134,6 +4218,8 @@ func (q *Queries) ListMediaItemsByTitleDesc(ctx context.Context, arg ListMediaIt
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -4199,7 +4285,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY year ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -4214,6 +4301,8 @@ type ListMediaItemsByYearParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -4260,6 +4349,8 @@ func (q *Queries) ListMediaItemsByYear(ctx context.Context, arg ListMediaItemsBy
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -4325,7 +4416,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY year DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -4340,6 +4432,8 @@ type ListMediaItemsByYearDescParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -4386,6 +4480,8 @@ func (q *Queries) ListMediaItemsByYearDesc(ctx context.Context, arg ListMediaIte
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -4451,8 +4547,9 @@ WHERE library_id = ANY($1::uuid[])
   AND ($5::int IS NULL OR year <= $5)
   AND ($6::numeric IS NULL OR rating >= $6)
   AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
+  AND media_item_labels_permitted(labels, parent_id, $8::text[], $9::text[])
 ORDER BY sort_title
-LIMIT $8::int
+LIMIT $10::int
 `
 
 type ListMediaItemsForSmartPlaylistParams struct {
@@ -4463,6 +4560,8 @@ type ListMediaItemsForSmartPlaylistParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	ResultLimit   int32          `json:"result_limit"`
 }
 
@@ -4516,6 +4615,8 @@ func (q *Queries) ListMediaItemsForSmartPlaylist(ctx context.Context, arg ListMe
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.ResultLimit,
 	)
 	if err != nil {
@@ -4861,7 +4962,8 @@ WITH recent_episodes AS (
            e.rating, e.audience_rating, e.content_rating, e.duration_ms,
            e.genres, e.tags, e.tmdb_id, e.tvdb_id, e.imdb_id, e.musicbrainz_id,
            e.index, e.poster_path, e.fanart_path, e.thumb_path,
-           e.originally_available_at, e.updated_at, e.deleted_at, e.type
+           e.originally_available_at, e.updated_at, e.deleted_at, e.type,
+           e.labels
     FROM media_items e
     WHERE e.type = 'episode' AND e.deleted_at IS NULL
       AND ($1::uuid IS NULL OR e.library_id = $1)
@@ -4891,6 +4993,7 @@ WITH recent_episodes AS (
         AND grandparent.type = 'show'
         AND grandparent.poster_path IS NOT NULL
     WHERE ($3::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= $3)
+      AND media_item_labels_permitted(e.labels, e.parent_id, $4::text[], $5::text[])
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -4938,15 +5041,18 @@ FROM (
       AND ($2::uuid[] IS NULL
            OR library_id = ANY($2::uuid[]))
       AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
+      AND media_item_labels_permitted(labels, parent_id, $4::text[], $5::text[])
 ) combined
 ORDER BY created_at DESC
-LIMIT $4
+LIMIT $6
 `
 
 type ListRecentlyAddedParams struct {
 	LibraryID     pgtype.UUID `json:"library_id"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 	Limit         int32       `json:"limit"`
 }
 
@@ -5016,6 +5122,8 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 		arg.LibraryID,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Limit,
 	)
 	if err != nil {
@@ -5172,6 +5280,7 @@ WITH watched AS (
       AND we.event_type IN ('play', 'scrobble', 'stop')
       AND we.occurred_at >= NOW() - make_interval(days => $2::int)
       AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
+      AND media_item_labels_permitted(m.labels, m.parent_id, $4::text[], $5::text[])
 ),
 agg AS (
     SELECT bucket_id,
@@ -5192,9 +5301,11 @@ LIMIT $1::int
 `
 
 type ListTrendingParams struct {
-	ResultLimit   int32  `json:"result_limit"`
-	WindowDays    int32  `json:"window_days"`
-	MaxRatingRank *int32 `json:"max_rating_rank"`
+	ResultLimit   int32    `json:"result_limit"`
+	WindowDays    int32    `json:"window_days"`
+	MaxRatingRank *int32   `json:"max_rating_rank"`
+	BlockedLabels []string `json:"blocked_labels"`
+	AllowedLabels []string `json:"allowed_labels"`
 }
 
 type ListTrendingRow struct {
@@ -5239,7 +5350,13 @@ type ListTrendingRow struct {
 // callers can swap 7 / 30 / 365 without a query rewrite. make_interval
 // gives postgres the typed interval the comparison needs.
 func (q *Queries) ListTrending(ctx context.Context, arg ListTrendingParams) ([]ListTrendingRow, error) {
-	rows, err := q.db.Query(ctx, listTrending, arg.ResultLimit, arg.WindowDays, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listTrending,
+		arg.ResultLimit,
+		arg.WindowDays,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5386,6 +5503,7 @@ SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
   AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
+  AND media_item_labels_permitted(labels, parent_id, $4::text[], $5::text[])
 GROUP BY year
 ORDER BY year DESC
 `
@@ -5394,6 +5512,8 @@ type ListYearsWithCountsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	Type          string    `json:"type"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListYearsWithCountsRow struct {
@@ -5405,7 +5525,13 @@ type ListYearsWithCountsRow struct {
 // NULL years are excluded so the browse UI doesn't show an empty bucket.
 // Rating-filtered for the same reason as ListGenresWithCounts above.
 func (q *Queries) ListYearsWithCounts(ctx context.Context, arg ListYearsWithCountsParams) ([]ListYearsWithCountsRow, error) {
-	rows, err := q.db.Query(ctx, listYearsWithCounts, arg.LibraryID, arg.Type, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listYearsWithCounts,
+		arg.LibraryID,
+		arg.Type,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5715,6 +5841,7 @@ WHERE library_id = $1
      OR (original_title IS NOT NULL AND original_title % $2)
   )
   AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
+  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $2)),
     similarity(title, $2),
@@ -5728,6 +5855,8 @@ type SearchMediaItemsParams struct {
 	WebsearchToTsquery string    `json:"websearch_to_tsquery"`
 	Limit              int32     `json:"limit"`
 	MaxRatingRank      *int32    `json:"max_rating_rank"`
+	BlockedLabels      []string  `json:"blocked_labels"`
+	AllowedLabels      []string  `json:"allowed_labels"`
 }
 
 type SearchMediaItemsRow struct {
@@ -5772,6 +5901,8 @@ func (q *Queries) SearchMediaItems(ctx context.Context, arg SearchMediaItemsPara
 		arg.WebsearchToTsquery,
 		arg.Limit,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err
@@ -5836,6 +5967,7 @@ WHERE deleted_at IS NULL
   AND ($3::uuid[] IS NULL
        OR library_id = ANY($3::uuid[]))
   AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
+  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $1)),
     similarity(title, $1),
@@ -5849,6 +5981,8 @@ type SearchMediaItemsGlobalParams struct {
 	Limit              int32       `json:"limit"`
 	LibraryIds         []uuid.UUID `json:"library_ids"`
 	MaxRatingRank      *int32      `json:"max_rating_rank"`
+	BlockedLabels      []string    `json:"blocked_labels"`
+	AllowedLabels      []string    `json:"allowed_labels"`
 }
 
 type SearchMediaItemsGlobalRow struct {
@@ -5893,6 +6027,8 @@ func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaIte
 		arg.Limit,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err

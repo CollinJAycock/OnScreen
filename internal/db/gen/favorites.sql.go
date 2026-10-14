@@ -34,17 +34,25 @@ JOIN media_items m ON m.id = f.media_id
 WHERE f.user_id = $1
   AND m.deleted_at IS NULL
   AND ($2::int IS NULL OR content_rating_rank(m.content_rating) <= $2)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $3::text[], $4::text[])
 `
 
 type CountFavoritesParams struct {
 	UserID        uuid.UUID `json:"user_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 // Mirrors ListFavorites' filters (soft-delete + content-rating ceiling) so the
 // pagination total matches the rows a restricted profile actually sees.
 func (q *Queries) CountFavorites(ctx context.Context, arg CountFavoritesParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countFavorites, arg.UserID, arg.MaxRatingRank)
+	row := q.db.QueryRow(ctx, countFavorites,
+		arg.UserID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -81,6 +89,7 @@ JOIN media_items m ON m.id = f.media_id
 WHERE f.user_id = $1
   AND m.deleted_at IS NULL
   AND ($4::int IS NULL OR content_rating_rank(m.content_rating) <= $4)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $5::text[], $6::text[])
 ORDER BY f.created_at DESC, m.id
 LIMIT $2 OFFSET $3
 `
@@ -90,6 +99,8 @@ type ListFavoritesParams struct {
 	Limit         int32     `json:"limit"`
 	Offset        int32     `json:"offset"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListFavoritesRow struct {
@@ -132,6 +143,8 @@ func (q *Queries) ListFavorites(ctx context.Context, arg ListFavoritesParams) ([
 		arg.Limit,
 		arg.Offset,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err

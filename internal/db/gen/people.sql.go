@@ -216,7 +216,8 @@ SELECT p.id, p.tmdb_id, p.name, p.profile_path
 FROM people p
 WHERE LOWER(p.name) LIKE LOWER($1::text) || '%'
   AND (
-        ($2::uuid[] IS NULL AND $3::int IS NULL)
+        ($2::uuid[] IS NULL AND $3::int IS NULL
+         AND $4::text[] IS NULL AND $5::text[] IS NULL)
      OR EXISTS (
             SELECT 1
             FROM media_credits mc
@@ -227,16 +228,19 @@ WHERE LOWER(p.name) LIKE LOWER($1::text) || '%'
                    OR mi.library_id = ANY($2::uuid[]))
               AND ($3::int IS NULL
                    OR content_rating_rank(mi.content_rating) <= $3::int)
+              AND media_item_labels_permitted(mi.labels, mi.parent_id, $4::text[], $5::text[])
         )
   )
 ORDER BY p.name
-LIMIT $4::int
+LIMIT $6::int
 `
 
 type SearchPeopleParams struct {
 	Prefix        string      `json:"prefix"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 	LimitN        int32       `json:"limit_n"`
 }
 
@@ -258,6 +262,8 @@ func (q *Queries) SearchPeople(ctx context.Context, arg SearchPeopleParams) ([]S
 		arg.Prefix,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.LimitN,
 	)
 	if err != nil {

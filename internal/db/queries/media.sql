@@ -425,7 +425,8 @@ WHERE type = $1
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int);
+       OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
 
 -- name: ListMediaItemsMissingArt :many
 -- Returns top-level items (movies + shows) that have no poster so the
@@ -923,6 +924,7 @@ WHERE library_id = $1
      OR (original_title IS NOT NULL AND original_title % $2)
   )
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $2)),
     similarity(title, $2),
@@ -951,6 +953,7 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $1)),
     similarity(title, $1),
@@ -973,6 +976,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -992,6 +996,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY sort_title DESC, id
 LIMIT $3 OFFSET $4;
@@ -1011,6 +1016,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY year ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -1030,6 +1036,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY year DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -1049,6 +1056,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY rating DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -1068,6 +1076,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY rating ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -1087,6 +1096,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY created_at DESC, id
 LIMIT $3 OFFSET $4;
@@ -1106,6 +1116,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY created_at ASC, id
 LIMIT $3 OFFSET $4;
@@ -1127,6 +1138,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY originally_available_at DESC NULLS LAST, created_at DESC, id
 LIMIT $3 OFFSET $4;
@@ -1146,6 +1158,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4;
@@ -1171,6 +1184,7 @@ WHERE m.library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR m.year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR m.rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, m.id, m.type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY p.sort_title ASC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4;
@@ -1192,6 +1206,7 @@ WHERE m.library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR m.year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR m.rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, m.id, m.type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY p.sort_title DESC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4;
@@ -1205,7 +1220,8 @@ SELECT id, title
 FROM media_items
 WHERE id = ANY(@ids::uuid[])
   AND deleted_at IS NULL
-  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'));
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
 
 -- name: CountMediaItemsFiltered :one
 SELECT COUNT(*) FROM media_items
@@ -1215,6 +1231,7 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text);
 
 -- name: ListDistinctGenres :many
@@ -1234,6 +1251,7 @@ SELECT g::text AS genre, COUNT(*)::bigint AS count
 FROM media_items, unnest(genres) AS g
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY g
 ORDER BY g;
 
@@ -1245,6 +1263,7 @@ SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY year
 ORDER BY year DESC;
 
@@ -1293,7 +1312,8 @@ WITH recent_episodes AS (
            e.rating, e.audience_rating, e.content_rating, e.duration_ms,
            e.genres, e.tags, e.tmdb_id, e.tvdb_id, e.imdb_id, e.musicbrainz_id,
            e.index, e.poster_path, e.fanart_path, e.thumb_path,
-           e.originally_available_at, e.updated_at, e.deleted_at, e.type
+           e.originally_available_at, e.updated_at, e.deleted_at, e.type,
+           e.labels
     FROM media_items e
     WHERE e.type = 'episode' AND e.deleted_at IS NULL
       AND (sqlc.narg('library_id')::uuid IS NULL OR e.library_id = sqlc.narg('library_id'))
@@ -1323,6 +1343,7 @@ WITH recent_episodes AS (
         AND grandparent.type = 'show'
         AND grandparent.poster_path IS NOT NULL
     WHERE (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(e.labels, e.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -1370,6 +1391,7 @@ FROM (
       AND (sqlc.narg('library_ids')::uuid[] IS NULL
            OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ) combined
 ORDER BY created_at DESC
 LIMIT sqlc.arg('limit');
@@ -1430,6 +1452,7 @@ WITH rows AS (
       AND m.deleted_at IS NULL
       AND m.type IN ('movie', 'episode')
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ),
 deduped AS (
     SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline,
@@ -1492,6 +1515,7 @@ WHERE library_id = ANY(sqlc.arg('library_ids')::uuid[])
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY sort_title
 LIMIT sqlc.arg('result_limit')::int;
 
@@ -1539,6 +1563,7 @@ WITH watched AS (
       AND we.event_type IN ('play', 'scrobble', 'stop')
       AND we.occurred_at >= NOW() - make_interval(days => sqlc.arg('window_days')::int)
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ),
 agg AS (
     SELECT bucket_id,

@@ -10,7 +10,6 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/audit"
-	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/transcode"
 )
@@ -79,12 +78,12 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 			return
 		}
 	}
-	if claims.MaxContentRating != "" {
+	if viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
