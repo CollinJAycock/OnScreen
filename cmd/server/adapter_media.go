@@ -124,6 +124,14 @@ func (a *mediaAdapter) UpdateMediaItemMetadata(ctx context.Context, p media.Upda
 	return genUpdateItemRowToItem(r), nil
 }
 
+func (a *mediaAdapter) EditMediaItemMetadata(ctx context.Context, p media.EditItemMetadataParams) (media.Item, error) {
+	r, err := a.q.EditMediaItemMetadata(ctx, editItemMetadataParamsToGen(p))
+	if err != nil {
+		return media.Item{}, err
+	}
+	return genEditItemRowToItem(r), nil
+}
+
 func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error {
 	return a.q.UpdateMediaItemLyrics(ctx, gen.UpdateMediaItemLyricsParams{
 		ID:           id,

@@ -123,6 +123,12 @@ type Item struct {
 	// library-type default (manga → rtl, everything else → ltr).
 	ReadingDirection *string
 
+	// LockedFields names the metadata fields an admin set by hand
+	// (media_items.locked_fields, see LockableFields): automatic metadata
+	// writes leave them as they are. Filled by GetItem and EditItemMetadata;
+	// nil from the narrower list queries.
+	LockedFields []string
+
 	OriginallyAvailableAt *time.Time
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
@@ -264,6 +270,9 @@ type Querier interface {
 	ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]Item, error)
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
+	// EditMediaItemMetadata is an admin's manual edit: it writes the named
+	// fields, locks them, and drops the unlocked names from the lock set.
+	EditMediaItemMetadata(ctx context.Context, p EditItemMetadataParams) (Item, error)
 	UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
 	// FillTrackPosition sets a track's index / disc_number, or a multi-file
 	// audiobook chapter's index, where they are NULL, leaving stored values

@@ -86,6 +86,12 @@ func createItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
 func updateItemMetadataParamsToGen(p media.UpdateItemMetadataParams) gen.UpdateMediaItemMetadataParams {
 	return dbconv.UpdateItemMetadataParamsToGen(p)
 }
+func genEditItemRowToItem(r gen.EditMediaItemMetadataRow) media.Item {
+	return dbconv.GenEditItemRowToItem(r)
+}
+func editItemMetadataParamsToGen(p media.EditItemMetadataParams) gen.EditMediaItemMetadataParams {
+	return dbconv.EditItemMetadataParamsToGen(p)
+}
 func genMediaFileToFile(f gen.MediaFile) media.File { return dbconv.GenMediaFileToFile(f) }
 func createFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 	return dbconv.CreateFileParamsToGen(p)
@@ -201,6 +207,14 @@ func (a *mediaAdapter) UpdateMediaItemMetadata(ctx context.Context, p media.Upda
 		return media.Item{}, err
 	}
 	return genUpdateItemRowToItem(r), nil
+}
+
+func (a *mediaAdapter) EditMediaItemMetadata(ctx context.Context, p media.EditItemMetadataParams) (media.Item, error) {
+	r, err := a.q.EditMediaItemMetadata(ctx, editItemMetadataParamsToGen(p))
+	if err != nil {
+		return media.Item{}, err
+	}
+	return genEditItemRowToItem(r), nil
 }
 
 func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error {

@@ -189,6 +189,12 @@ func createItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
 func updateItemMetadataParamsToGen(p media.UpdateItemMetadataParams) gen.UpdateMediaItemMetadataParams {
 	return dbconv.UpdateItemMetadataParamsToGen(p)
 }
+func genEditItemRowToItem(r gen.EditMediaItemMetadataRow) media.Item {
+	return dbconv.GenEditItemRowToItem(r)
+}
+func editItemMetadataParamsToGen(p media.EditItemMetadataParams) gen.EditMediaItemMetadataParams {
+	return dbconv.EditItemMetadataParamsToGen(p)
+}
 func genMediaFileToFile(f gen.MediaFile) media.File { return dbconv.GenMediaFileToFile(f) }
 func createFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 	return dbconv.CreateFileParamsToGen(p)

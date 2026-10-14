@@ -91,3 +91,13 @@ func (c *trendingCache) get(
 	c.mu.Unlock()
 	return rows, nil
 }
+
+// invalidate drops every cached entry, so the next hub fetch re-reads
+// trending. Called after an admin edits an item's metadata: a cached row
+// keeps the old title, and, having been rating-filtered when it was
+// fetched, could show a re-rated item to a profile it now exceeds.
+func (c *trendingCache) invalidate() {
+	c.mu.Lock()
+	clear(c.entries)
+	c.mu.Unlock()
+}

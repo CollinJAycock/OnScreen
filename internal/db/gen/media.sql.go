@@ -517,6 +517,143 @@ func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uui
 	return result.RowsAffected(), nil
 }
 
+const editMediaItemMetadata = `-- name: EditMediaItemMetadata :one
+UPDATE media_items
+SET title          = CASE WHEN 'title' = ANY($1::text[]) THEN $2::text ELSE title END,
+    sort_title     = CASE WHEN 'sort_title' = ANY($1::text[]) THEN $3::text ELSE sort_title END,
+    original_title = CASE WHEN 'original_title' = ANY($1::text[]) THEN $4::text ELSE original_title END,
+    year           = CASE WHEN 'year' = ANY($1::text[]) THEN $5::int ELSE year END,
+    originally_available_at = CASE WHEN 'originally_available_at' = ANY($1::text[])
+                                   THEN $6::date
+                                   ELSE originally_available_at END,
+    summary        = CASE WHEN 'summary' = ANY($1::text[]) THEN $7::text ELSE summary END,
+    tagline        = CASE WHEN 'tagline' = ANY($1::text[]) THEN $8::text ELSE tagline END,
+    rating         = CASE WHEN 'rating' = ANY($1::text[]) THEN $9::numeric ELSE rating END,
+    content_rating = CASE WHEN 'content_rating' = ANY($1::text[]) THEN $10::text ELSE content_rating END,
+    genres         = CASE WHEN 'genres' = ANY($1::text[]) THEN $11::text[] ELSE genres END,
+    locked_fields  = ARRAY(
+        SELECT DISTINCT f
+        FROM unnest(locked_fields || $12::text[]) AS f
+        WHERE f <> ALL($13::text[])
+        ORDER BY f),
+    updated_at     = NOW()
+WHERE id = $14 AND deleted_at IS NULL
+RETURNING id, library_id, type, title, sort_title, original_title, year,
+          summary, tagline, rating, audience_rating, content_rating, duration_ms,
+          genres, tags, tmdb_id, tvdb_id, imdb_id,
+          parent_id, index, poster_path, fanart_path, thumb_path,
+          originally_available_at, created_at, updated_at, deleted_at,
+          locked_fields
+`
+
+type EditMediaItemMetadataParams struct {
+	SetFields             []string       `json:"set_fields"`
+	Title                 string         `json:"title"`
+	SortTitle             string         `json:"sort_title"`
+	OriginalTitle         *string        `json:"original_title"`
+	Year                  *int32         `json:"year"`
+	OriginallyAvailableAt pgtype.Date    `json:"originally_available_at"`
+	Summary               *string        `json:"summary"`
+	Tagline               *string        `json:"tagline"`
+	Rating                pgtype.Numeric `json:"rating"`
+	ContentRating         *string        `json:"content_rating"`
+	Genres                []string       `json:"genres"`
+	LockFields            []string       `json:"lock_fields"`
+	UnlockFields          []string       `json:"unlock_fields"`
+	ID                    uuid.UUID      `json:"id"`
+}
+
+type EditMediaItemMetadataRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+	LockedFields          []string           `json:"locked_fields"`
+}
+
+// An admin's manual metadata edit (PATCH /api/v1/items/{id}). set_fields
+// names the columns the edit sets; only those are written. lock_fields
+// (normally the same names) join the item's locked_fields so later
+// automatic writes (UpdateMediaItemMetadata, UpdateMediaItemTitle,
+// UpdateMediaItemTakenAt) leave them alone. unlock_fields drops names from
+// the lock set; the stored value stays until the next refresh rewrites it. This is the only
+// metadata write that ignores the locks. Column-level CASEs rather than a
+// read-merge-write in Go, so an enrichment landing between the editor's
+// read and this write isn't rolled back for the fields the edit didn't set.
+func (q *Queries) EditMediaItemMetadata(ctx context.Context, arg EditMediaItemMetadataParams) (EditMediaItemMetadataRow, error) {
+	row := q.db.QueryRow(ctx, editMediaItemMetadata,
+		arg.SetFields,
+		arg.Title,
+		arg.SortTitle,
+		arg.OriginalTitle,
+		arg.Year,
+		arg.OriginallyAvailableAt,
+		arg.Summary,
+		arg.Tagline,
+		arg.Rating,
+		arg.ContentRating,
+		arg.Genres,
+		arg.LockFields,
+		arg.UnlockFields,
+		arg.ID,
+	)
+	var i EditMediaItemMetadataRow
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Type,
+		&i.Title,
+		&i.SortTitle,
+		&i.OriginalTitle,
+		&i.Year,
+		&i.Summary,
+		&i.Tagline,
+		&i.Rating,
+		&i.AudienceRating,
+		&i.ContentRating,
+		&i.DurationMs,
+		&i.Genres,
+		&i.Tags,
+		&i.TmdbID,
+		&i.TvdbID,
+		&i.ImdbID,
+		&i.ParentID,
+		&i.Index,
+		&i.PosterPath,
+		&i.FanartPath,
+		&i.ThumbPath,
+		&i.OriginallyAvailableAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.LockedFields,
+	)
+	return i, err
+}
+
 const fillTrackPosition = `-- name: FillTrackPosition :execrows
 UPDATE media_items
 SET index       = COALESCE(index, $1::int),
@@ -1110,7 +1247,8 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        disc_total, track_total, original_year, compilation, release_type,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
        parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
-       originally_available_at, created_at, updated_at, deleted_at
+       originally_available_at, created_at, updated_at, deleted_at,
+       locked_fields
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -1159,6 +1297,7 @@ type GetMediaItemRow struct {
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt                 pgtype.Timestamptz `json:"deleted_at"`
+	LockedFields              []string           `json:"locked_fields"`
 }
 
 func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemRow, error) {
@@ -1208,6 +1347,7 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.LockedFields,
 	)
 	return i, err
 }
@@ -6087,17 +6227,17 @@ func (q *Queries) UpdateMediaItemLyrics(ctx context.Context, arg UpdateMediaItem
 
 const updateMediaItemMetadata = `-- name: UpdateMediaItemMetadata :one
 UPDATE media_items
-SET title                   = $2,
-    sort_title              = $3,
-    original_title          = $4,
-    year                    = $5,
-    summary                 = $6,
-    tagline                 = $7,
-    rating                  = $8,
+SET title                   = CASE WHEN 'title' = ANY(locked_fields) THEN title ELSE $2 END,
+    sort_title              = CASE WHEN locked_fields && ARRAY['title', 'sort_title'] THEN sort_title ELSE $3 END,
+    original_title          = CASE WHEN 'original_title' = ANY(locked_fields) THEN original_title ELSE $4 END,
+    year                    = CASE WHEN 'year' = ANY(locked_fields) THEN year ELSE $5 END,
+    summary                 = CASE WHEN 'summary' = ANY(locked_fields) THEN summary ELSE $6 END,
+    tagline                 = CASE WHEN 'tagline' = ANY(locked_fields) THEN tagline ELSE $7 END,
+    rating                  = CASE WHEN 'rating' = ANY(locked_fields) THEN rating ELSE $8 END,
     audience_rating         = $9,
-    content_rating          = $10,
+    content_rating          = CASE WHEN 'content_rating' = ANY(locked_fields) THEN content_rating ELSE $10 END,
     duration_ms             = $11,
-    genres                  = $12,
+    genres                  = CASE WHEN 'genres' = ANY(locked_fields) THEN genres ELSE $12 END,
     tags                    = $13,
     -- COALESCE on the art paths: the enricher only sets these when
     -- it has a new URL to download. Without this guard, a nil from
@@ -6108,7 +6248,8 @@ SET title                   = $2,
     poster_path             = COALESCE($14, poster_path),
     fanart_path             = COALESCE($15, fanart_path),
     thumb_path              = COALESCE($16, thumb_path),
-    originally_available_at = $17,
+    originally_available_at = CASE WHEN 'originally_available_at' = ANY(locked_fields)
+                                   THEN originally_available_at ELSE $17 END,
     tmdb_id                 = COALESCE($18, tmdb_id),
     tvdb_id                 = COALESCE($19, tvdb_id),
     -- COALESCE on the anime IDs matches the tmdb_id / tvdb_id shape:
@@ -6195,6 +6336,14 @@ type UpdateMediaItemMetadataRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
+// The automatic metadata write: enrichment (TMDB / TVDB / AniList /
+// MusicBrainz / NFO), refresh, re-enrich, Fix Match and the scanner all
+// come through here. Fields an admin locked by editing them
+// (locked_fields, see EditMediaItemMetadata) keep their stored value; the
+// CASE guards are here, not in the callers, so no write path can forget
+// them. A locked title also keeps the sort title, which every automatic
+// writer derives from the title. Provider IDs and art aren't lockable, so
+// Fix Match still re-points the item while the admin's text stays.
 func (q *Queries) UpdateMediaItemMetadata(ctx context.Context, arg UpdateMediaItemMetadataParams) (UpdateMediaItemMetadataRow, error) {
 	row := q.db.QueryRow(ctx, updateMediaItemMetadata,
 		arg.ID,
@@ -6276,7 +6425,9 @@ func (q *Queries) UpdateMediaItemPosterPath(ctx context.Context, arg UpdateMedia
 
 const updateMediaItemTakenAt = `-- name: UpdateMediaItemTakenAt :exec
 UPDATE media_items
-SET originally_available_at = $1,
+SET originally_available_at = CASE WHEN 'originally_available_at' = ANY(locked_fields)
+                                   THEN originally_available_at
+                                   ELSE $1 END,
     updated_at              = NOW()
 WHERE id = $2
 `
@@ -6288,6 +6439,7 @@ type UpdateMediaItemTakenAtParams struct {
 
 // Sets only an item's originally_available_at: a photo's EXIF capture date.
 // Same reason as UpdateMediaItemDuration.
+// An admin's edit locks the date (locked_fields), and a locked date stays.
 func (q *Queries) UpdateMediaItemTakenAt(ctx context.Context, arg UpdateMediaItemTakenAtParams) error {
 	_, err := q.db.Exec(ctx, updateMediaItemTakenAt, arg.TakenAt, arg.ID)
 	return err
@@ -6295,8 +6447,8 @@ func (q *Queries) UpdateMediaItemTakenAt(ctx context.Context, arg UpdateMediaIte
 
 const updateMediaItemTitle = `-- name: UpdateMediaItemTitle :exec
 UPDATE media_items
-SET title      = $2,
-    sort_title = $3,
+SET title      = CASE WHEN 'title' = ANY(locked_fields) THEN title ELSE $2 END,
+    sort_title = CASE WHEN locked_fields && ARRAY['title', 'sort_title'] THEN sort_title ELSE $3 END,
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -6311,7 +6463,10 @@ type UpdateMediaItemTitleParams struct {
 // the title + sort_title without touching the metadata fields that
 // UpdateMediaItemMetadata would overwrite. Lets the operator clean a
 // bracket-prefixed title before the enricher runs, so even if TMDB still
-// can't match the show, the title is at least readable.
+// can't match the show, the title is at least readable. Also the music
+// scanner's write of a track's tag title. A field an admin locked
+// (locked_fields) keeps its value, the same rule UpdateMediaItemMetadata
+// applies; a locked title keeps the sort title too.
 func (q *Queries) UpdateMediaItemTitle(ctx context.Context, arg UpdateMediaItemTitleParams) error {
 	_, err := q.db.Exec(ctx, updateMediaItemTitle, arg.ID, arg.Title, arg.SortTitle)
 	return err

@@ -362,6 +362,7 @@ type MediaItem struct {
 	ReadingDirection          *string            `json:"reading_direction"`
 	FranchiseID               *int32             `json:"franchise_id"`
 	DiscNumber                *int32             `json:"disc_number"`
+	LockedFields              []string           `json:"locked_fields"`
 }
 
 type MediaItemTmdbCollection struct {

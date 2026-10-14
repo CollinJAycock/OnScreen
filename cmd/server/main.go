@@ -948,7 +948,10 @@ func run() error {
 		WithMediaStore(mediaStoreProvider).
 		WithFranchise(gen.New(roPool)).
 		WithManualCollections(gen.New(roPool)).
-		WithExternalRatings(gen.New(roPool))
+		WithExternalRatings(gen.New(roPool)).
+		// A metadata edit drops the hub's cached trending row, which carries
+		// titles and was rating-filtered when fetched.
+		WithCacheInvalidator(hubHandler)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)

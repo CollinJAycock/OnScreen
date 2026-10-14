@@ -2397,6 +2397,44 @@ export interface ItemDetail {
   collection?: ItemCollectionRef;
   // Movies and shows: the manual (admin-curated) collections the item is in.
   collections?: ItemManualCollectionRef[];
+  // Pre-fill the admin metadata editor. sort_title is omitted when empty.
+  sort_title?: string;
+  tagline?: string;
+  // Metadata fields an admin edited, which refreshes leave alone. Older
+  // servers omit it.
+  locked_fields?: string[];
+}
+
+// Body of PATCH /items/{id} for the admin metadata editor. Each field is
+// "set when present" and locked once set; strings clear with '', year and
+// rating with null. taken_at is the release date (YYYY-MM-DD).
+export interface MetadataEdit {
+  title?: string;
+  sort_title?: string;
+  original_title?: string;
+  summary?: string;
+  tagline?: string;
+  taken_at?: string;
+  year?: number | null;
+  rating?: number | null;
+  content_rating?: string;
+  genres?: string[];
+  unlock_fields?: string[];
+}
+
+export interface MetadataEditResult {
+  id: string;
+  title: string;
+  summary: string | null;
+  originally_available_at: string | null;
+  sort_title: string;
+  original_title: string | null;
+  tagline: string | null;
+  year: number | null;
+  rating: number | null;
+  content_rating: string | null;
+  genres: string[];
+  locked_fields: string[];
 }
 
 export interface FavoriteItem {
@@ -2816,6 +2854,11 @@ export const itemApi = {
   // (year, month).
   updateMetadata: (id: string, fields: { title?: string; summary?: string; taken_at?: string }) =>
     api.patch<{ id: string; title: string; summary: string | null; originally_available_at: string | null }>(`/items/${id}`, fields),
+  // editMetadata is the same endpoint for the movie / show / season /
+  // episode editor: the fields it sets are locked against refreshes, and
+  // unlock_fields releases locks.
+  editMetadata: (id: string, fields: MetadataEdit) =>
+    api.patch<MetadataEditResult>(`/items/${id}`, fields),
   remove: (id: string) => api.delete(`/items/${id}`),
   // Cross-device transfer — list distinct clients the user has
   // recently scrobbled from (drives the "Play on…" picker), and

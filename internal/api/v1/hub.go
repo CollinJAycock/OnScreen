@@ -87,6 +87,12 @@ func (h *HubHandler) WithTrendingCacheTTL(d time.Duration) *HubHandler {
 	return h
 }
 
+// InvalidateItemCaches drops the cached trending row (ItemCacheInvalidator),
+// so an item's metadata edit shows on the next hub fetch.
+func (h *HubHandler) InvalidateItemCaches() {
+	h.trending.invalidate()
+}
+
 // WithLibraryAccess enables per-user library filtering on hub rows.
 func (h *HubHandler) WithLibraryAccess(a LibraryAccessChecker) *HubHandler {
 	h.access = a

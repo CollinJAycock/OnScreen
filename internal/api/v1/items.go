@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
@@ -51,7 +52,8 @@ type ItemMediaService interface {
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error)
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*media.PhotoMetadata, error)
-	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
+	// EditItemMetadata applies an admin's metadata edit and its field locks.
+	EditItemMetadata(ctx context.Context, p media.EditItemMetadataParams) (*media.Item, error)
 	// RenameItemFile + TouchItemFileMtime are best-effort filesystem
 	// reflections of the metadata editor: rename the file when the
 	// title changes, set the mtime when taken_at changes. Single-file
@@ -212,6 +214,8 @@ type ItemHandler struct {
 	// optional; when set, movie and show details carry their IMDb / Rotten
 	// Tomatoes / Metacritic scores (items_external_ratings.go)
 	externalRatings ItemExternalRatingsDB
+	// optional; caches a metadata edit invalidates (items_metadata.go)
+	caches ItemCacheInvalidator
 	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
 	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
 	// disables caching (extract on every request — the old behaviour).
@@ -655,6 +659,14 @@ type ItemDetailResponse struct {
 	// Collections are the manual (admin-curated) collections a movie or
 	// show belongs to (additive; omitted when none).
 	Collections []ItemManualCollectionRef `json:"collections,omitempty"`
+
+	// SortTitle and Tagline pre-fill the admin metadata editor (additive).
+	SortTitle string  `json:"sort_title,omitempty"`
+	Tagline   *string `json:"tagline,omitempty"`
+	// LockedFields names the metadata fields an admin edited by hand, which
+	// refreshes leave alone (additive; [] when none). Names are
+	// media.LockableFields; "originally_available_at" is taken_at here.
+	LockedFields []string `json:"locked_fields"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
@@ -802,6 +814,12 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:       item.UpdatedAt.UnixMilli(),
 		TakenAt:         item.OriginallyAvailableAt,
 		Files:           make([]ItemFileResponse, 0, len(files)),
+		SortTitle:       item.SortTitle,
+		Tagline:         item.Tagline,
+		LockedFields:    item.LockedFields,
+	}
+	if out.LockedFields == nil {
+		out.LockedFields = []string{}
 	}
 	if item.ParentID != nil {
 		s := item.ParentID.String()
@@ -965,30 +983,40 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateMetadataRequest is the body for PATCH /api/v1/items/{id}.
-// Only the three fields users can usefully manage on items the
-// metadata agent doesn't enrich (home_video, photo): the displayed
-// title, a free-form summary, and the date used for the date-grouped
-// grid + photo timeline (originally_available_at on the row). Each
-// pointer field is "set when present"; omitting the field leaves the
-// stored value untouched. Sending an empty string for title clears
-// nothing — title is non-null in the schema, so the handler
-// short-circuits a blank-only payload as a 400.
+// Each field is "set when present"; omitting a field leaves the stored
+// value untouched. Strings: an empty string clears the column (title is
+// non-null, so a blank title is a 400; a blank sort_title resets it to the
+// title). Year and rating: null clears. Genres: the full list, [] clears.
+// taken_at is the item's date (originally_available_at): a photo's capture
+// date, a home video's recording date, a movie's or episode's release date.
+//
+// Every field the body sets is locked (media_items.locked_fields): scans,
+// enrichment, refresh and Fix Match no longer overwrite it. unlock_fields
+// releases locks by field name (media.LockableFields); the stored value
+// stays until the next refresh rewrites it.
 type updateMetadataRequest struct {
 	Title   *string `json:"title,omitempty"`
 	Summary *string `json:"summary,omitempty"`
 	TakenAt *string `json:"taken_at,omitempty"` // RFC3339 ("2024-04-15T00:00:00Z") or YYYY-MM-DD
+
+	SortTitle     *string           `json:"sort_title,omitempty"`
+	OriginalTitle *string           `json:"original_title,omitempty"`
+	Tagline       *string           `json:"tagline,omitempty"`
+	Year          nullable[int]     `json:"year"`
+	Rating        nullable[float64] `json:"rating"` // critic score, 0-10
+	ContentRating *string           `json:"content_rating,omitempty"`
+	Genres        *[]string         `json:"genres,omitempty"`
+	UnlockFields  []string          `json:"unlock_fields,omitempty"`
 }
 
 // UpdateMetadata handles PATCH /api/v1/items/{id}.
 //
-// Admin-gated editor for the three fields users actually need to
-// manage on home_video + photo items (the two media types with no
-// external metadata source). Title, summary, and taken_at all flow
-// through media.UpdateItemMetadata so the same validation and audit
-// surface that the scanner enricher uses applies here too. Any other
-// field on the item — genres, rating, fanart, etc. — is intentionally
-// not editable; those belong to the TMDB-enriched flow which has its
-// own Fix Match path.
+// Admin-only metadata editor. Home videos and photos (no external metadata
+// source) have always used it for title, summary and date; movies, shows,
+// seasons and episodes use the same body for the fields enrichment fills
+// (see updateMetadataRequest). Fields the body sets are locked so the next
+// refresh keeps them. Cast, artwork, tags and provider IDs are not editable
+// here: cast and IDs come from Fix Match, artwork from the poster picker.
 func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil || !claims.IsAdmin {
@@ -1004,11 +1032,10 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	var body updateMetadataRequest
 	if r.Body != nil {
 		// Reject unknown fields so callers (or tests) sending
-		// unsupported fields like `content_rating` get an explicit 400
-		// instead of a silent 200 that "succeeded" but updated nothing.
-		// The endpoint is admin-curated metadata for home_video / photo
-		// items; if a future field belongs here it should be added to
-		// updateMetadataRequest deliberately, not slipped in by accident.
+		// unsupported fields like `tags` get an explicit 400 instead of
+		// a silent 200 that "succeeded" but updated nothing. If a future
+		// field belongs here it should be added to updateMetadataRequest
+		// deliberately, not slipped in by accident.
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&body); err != nil {
@@ -1028,65 +1055,29 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := media.UpdateItemMetadataParams{
-		ID:                    existing.ID,
-		Title:                 existing.Title,
-		SortTitle:             existing.SortTitle,
-		OriginalTitle:         existing.OriginalTitle,
-		Year:                  existing.Year,
-		Summary:               existing.Summary,
-		Tagline:               existing.Tagline,
-		Rating:                existing.Rating,
-		AudienceRating:        existing.AudienceRating,
-		ContentRating:         existing.ContentRating,
-		DurationMS:            existing.DurationMS,
-		Genres:                existing.Genres,
-		Tags:                  existing.Tags,
-		PosterPath:            existing.PosterPath,
-		FanartPath:            existing.FanartPath,
-		ThumbPath:             existing.ThumbPath,
-		OriginallyAvailableAt: existing.OriginallyAvailableAt,
-		TMDBID:                existing.TMDBID,
-		TVDBID:                existing.TVDBID,
-	}
-
-	if body.Title != nil {
-		t := strings.TrimSpace(*body.Title)
-		if t == "" {
-			respond.BadRequest(w, r, "title cannot be empty")
-			return
-		}
-		p.Title = t
-		p.SortTitle = t
-	}
-	if body.Summary != nil {
-		// Empty string clears the summary; the column is nullable but the
-		// service maps "" to nil for tidy semantics.
-		s := strings.TrimSpace(*body.Summary)
-		if s == "" {
-			p.Summary = nil
-		} else {
-			p.Summary = &s
-		}
-	}
-	if body.TakenAt != nil {
-		raw := strings.TrimSpace(*body.TakenAt)
-		if raw == "" {
-			p.OriginallyAvailableAt = nil
-		} else {
-			t, parseErr := parseTakenAt(raw)
-			if parseErr != nil {
-				respond.BadRequest(w, r, "taken_at: "+parseErr.Error())
-				return
-			}
-			p.OriginallyAvailableAt = &t
-		}
-	}
-
-	updated, err := h.media.UpdateItemMetadata(r.Context(), p)
+	p, err := body.editParams(existing)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "update item metadata", "id", id, "err", err)
-		respond.InternalError(w, r)
+		respond.BadRequest(w, r, err.Error())
+		return
+	}
+
+	updated, err := h.media.EditItemMetadata(r.Context(), p)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.Is(err, media.ErrNotFound):
+			respond.NotFound(w, r)
+		case errors.Is(err, media.ErrNotLockable):
+			respond.BadRequest(w, r, err.Error())
+		case errors.As(err, &pgErr) && pgErr.Code == "23505":
+			// idx_media_items_library_type_title_year: top-level items of
+			// one type are unique by title + year within a library.
+			respond.Error(w, r, http.StatusConflict, "CONFLICT",
+				"another item in this library already has this title and year")
+		default:
+			h.logger.ErrorContext(r.Context(), "update item metadata", "id", id, "err", err)
+			respond.InternalError(w, r)
+		}
 		return
 	}
 
@@ -1112,22 +1103,41 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.caches != nil {
+		h.caches.InvalidateItemCaches()
+	}
+
 	if h.audit != nil {
 		actor := claims.UserID
 		h.audit.Log(r.Context(), &actor, audit.ActionItemEnrich, id.String(),
 			map[string]any{
-				"action":      "manual_metadata_edit",
-				"title_set":   body.Title != nil,
-				"summary_set": body.Summary != nil,
-				"taken_set":   body.TakenAt != nil,
+				"action":          "manual_metadata_edit",
+				"title_set":       body.Title != nil,
+				"summary_set":     body.Summary != nil,
+				"taken_set":       body.TakenAt != nil,
+				"fields_set":      p.Set,
+				"fields_locked":   p.Lock,
+				"fields_unlocked": p.Unlock,
 			}, audit.ClientIP(r))
 	}
 
+	lockedFields := updated.LockedFields
+	if lockedFields == nil {
+		lockedFields = []string{}
+	}
 	respond.Success(w, r, map[string]any{
 		"id":                      updated.ID.String(),
 		"title":                   updated.Title,
 		"summary":                 updated.Summary,
 		"originally_available_at": updated.OriginallyAvailableAt,
+		"sort_title":              updated.SortTitle,
+		"original_title":          updated.OriginalTitle,
+		"tagline":                 updated.Tagline,
+		"year":                    updated.Year,
+		"rating":                  updated.Rating,
+		"content_rating":          updated.ContentRating,
+		"genres":                  updated.Genres,
+		"locked_fields":           lockedFields,
 	})
 }
 

@@ -960,26 +960,34 @@ paths:
                   data: { $ref: '#/components/schemas/ItemDetail' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
-      summary: Update item metadata (admin)
+      summary: Edit item metadata and field locks (admin)
       tags: [Items]
       description: |
-        Admin-curated metadata editor. Intentionally narrow: only the
-        three fields below are editable, because they're the only
-        ones that don't have an external metadata agent owning them
-        (home_video and photo libraries have no TMDB-equivalent, so
-        the user owns title / summary / taken_at outright). Any other
-        field — genres, rating, fanart, **content_rating**, etc. —
-        belongs to the TMDB-enriched flow and has its own Fix Match
-        path. Unknown fields are rejected with HTTP 400
-        (DisallowUnknownFields) so a misnamed key like
-        `content_rating` returns a clear error instead of silently
-        being dropped.
+        Admin metadata editor for any item type. Each field is "set when
+        present"; omitted fields keep their stored value. Unknown fields
+        are rejected with HTTP 400 (DisallowUnknownFields) so a misnamed
+        key returns a clear error instead of silently being dropped.
+        Cast, artwork, tags and provider IDs are not editable here (Fix
+        Match, the poster picker).
 
-        For home_video items, setting `title` also renames the file
-        on disk (sanitized + collision-suffixed) and stamps the
-        file's mtime to `taken_at`, so user edits travel with the
-        file across tools (Finder, Photos.app, Plex/Jellyfin
-        scanners) instead of being locked into OnScreen's DB.
+        **Field locks** *(v2.6)*: every field the body sets is added to
+        the item's `locked_fields`, and scans, enrichment, refresh,
+        re-enrich and Fix Match leave locked fields as they are (Fix
+        Match still changes the provider IDs). A locked title also keeps
+        the sort title. `unlock_fields` releases locks; the stored value
+        stays until the next refresh rewrites it. Lock names:
+        `title`, `sort_title`, `original_title`, `year`,
+        `originally_available_at` (sent as `taken_at`), `summary`,
+        `tagline`, `rating`, `content_rating`, `genres`.
+
+        Setting `title` also sets the sort title to it, unless the body
+        carries `sort_title` or the item has a locked sort title; that
+        derived sort title isn't locked itself.
+
+        For home_video and photo items, setting `title` also renames the
+        file on disk (sanitized + collision-suffixed) and `taken_at`
+        stamps the file's mtime, so user edits travel with the file
+        across tools instead of being locked into OnScreen's DB.
       requestBody:
         required: true
         content:
@@ -987,32 +995,74 @@ paths:
             schema:
               type: object
               properties:
-                title:    { type: string, description: 'Empty string is rejected with 400.' }
+                title:    { type: string, maxLength: 500, description: 'Empty string is rejected with 400.' }
                 summary:  { type: string, description: 'Empty string clears the summary.' }
                 taken_at:
                   type: string
                   description: |
-                    RFC3339 timestamp ("2024-04-15T00:00:00Z") or
-                    bare YYYY-MM-DD. Empty string clears the date.
-                    For home_video items, this also drives the file
-                    mtime stamp so external tools sort by recording
-                    date rather than scan date.
+                    The item's date (originally_available_at): a photo's
+                    capture date, a home video's recording date, a movie's
+                    or episode's release date. RFC3339 timestamp
+                    ("2024-04-15T00:00:00Z") or bare YYYY-MM-DD. Empty
+                    string clears the date. For home_video items, this
+                    also drives the file mtime stamp so external tools
+                    sort by recording date rather than scan date.
+                sort_title:     { type: string, maxLength: 500, description: '*(v2.6)* Empty string resets the sort title to the title and unlocks it.' }
+                original_title: { type: string, maxLength: 500, description: '*(v2.6)* Empty string clears.' }
+                tagline:        { type: string, maxLength: 500, description: '*(v2.6)* Empty string clears.' }
+                year:           { type: integer, nullable: true, minimum: 1000, maximum: 9999, description: '*(v2.6)* null clears.' }
+                rating:         { type: number, nullable: true, minimum: 0, maximum: 10, description: '*(v2.6)* Critic score; null clears.' }
+                content_rating:
+                  type: string
+                  maxLength: 32
+                  description: |
+                    *(v2.6)* Empty string clears. Free text; a rating the
+                    parental ceiling doesn't recognise ranks as most
+                    restrictive, like an unrated item.
+                genres:
+                  type: array
+                  maxItems: 50
+                  items: { type: string, maxLength: 100 }
+                  description: '*(v2.6)* The full list (trimmed, case-insensitive repeats dropped); [] clears.'
+                unlock_fields:
+                  type: array
+                  items: { type: string }
+                  description: '*(v2.6)* Lock names to release. A field can''t be edited and unlocked in one request (400).'
       responses:
         '200':
-          description: Updated.
+          description: Updated. The edited fields and the resulting lock set.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  data: { $ref: '#/components/schemas/ItemDetail' }
+                  data:
+                    type: object
+                    properties:
+                      id:                      { type: string, format: uuid }
+                      title:                   { type: string }
+                      summary:                 { type: string, nullable: true }
+                      originally_available_at: { type: string, format: date-time, nullable: true }
+                      sort_title:              { type: string, description: '*(v2.6)*' }
+                      original_title:          { type: string, nullable: true, description: '*(v2.6)*' }
+                      tagline:                 { type: string, nullable: true, description: '*(v2.6)*' }
+                      year:                    { type: integer, nullable: true, description: '*(v2.6)*' }
+                      rating:                  { type: number, nullable: true, description: '*(v2.6)*' }
+                      content_rating:          { type: string, nullable: true, description: '*(v2.6)*' }
+                      genres:                  { type: array, items: { type: string }, description: '*(v2.6)*' }
+                      locked_fields:           { type: array, items: { type: string }, description: '*(v2.6)*' }
         '400':
-          description: 'Invalid body, empty title, or unknown field.'
+          description: 'Invalid body, empty title, out-of-range value, unknown field or lock name.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'Another top-level item of the same type in the library already has this title and year.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   /api/v1/items/{id}/children:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -5950,6 +6000,12 @@ components:
             properties:
               id:   { type: string, format: uuid }
               name: { type: string }
+        sort_title: { type: string, description: '*(v2.6)* Omitted when empty.' }
+        tagline:    { type: string, nullable: true, description: '*(v2.6)*' }
+        locked_fields:
+          type: array
+          items: { type: string }
+          description: '*(v2.6)* Metadata fields an admin edited, which refreshes leave alone ([] when none). See PATCH /api/v1/items/{id} for the names; `originally_available_at` is `taken_at`.'
     ChildItem:
       type: object
       properties:

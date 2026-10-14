@@ -167,6 +167,31 @@ API change lands only when every first-party client moves with it — see
   - **Migrations:** 00041 adds the `external_ratings` table; 00042 moves an
     install that already seeded the task daily to hourly (a changed schedule
     is kept).
+- **Edit metadata, with field locks.** Admins can correct a movie's, show's,
+  season's or episode's details and keep them that way.
+  - **Editing:** "Edit Metadata" on a movie, show or season page, or the
+    pencil on an episode's row, opens an editor for the title, sort title,
+    original title, year, release date, content rating, critic rating,
+    genres, tagline and summary.
+  - **Locks:** every field you change is locked. Scans, metadata refreshes,
+    re-enrichment and Fix Match leave a locked field as it is (Fix Match still
+    re-points the item at the new match, and fills in the fields you haven't
+    locked). Each field shows a padlock; click a locked one, or "Unlock all",
+    to hand it back to the next refresh. A locked title keeps its sort title
+    too.
+  - **Content rating:** an edited rating takes effect at once for profiles
+    with a content-rating limit, home screen included. A rating OnScreen
+    doesn't recognise counts as the most restrictive.
+  - **Home videos and photos** keep their editor, and a title change still
+    renames the file. Their edited title, summary and date are now locked as
+    well, so a rescan no longer replaces a photo's corrected date with the
+    camera's.
+  - **API (additive):** `PATCH /items/{id}` also takes `sort_title`,
+    `original_title`, `tagline`, `year`, `rating`, `content_rating`, `genres`
+    and `unlock_fields`, and answers 409 when another item in the library
+    already has the title and year. Item details gain `sort_title`, `tagline`
+    and `locked_fields`.
+  - **Migration 00043** adds `locked_fields` to media items.
 
 ### Changed
 

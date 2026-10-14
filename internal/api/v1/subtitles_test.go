@@ -113,7 +113,7 @@ func (m *mockSubsMedia) ListChildren(_ context.Context, _ uuid.UUID) ([]media.It
 func (m *mockSubsMedia) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
 	return nil, media.ErrNotFound
 }
-func (m *mockSubsMedia) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
+func (m *mockSubsMedia) EditItemMetadata(_ context.Context, p media.EditItemMetadataParams) (*media.Item, error) {
 	return &media.Item{ID: p.ID, Title: p.Title}, nil
 }
 func (m *mockSubsMedia) RenameItemFile(_ context.Context, _ uuid.UUID, _ string) (string, bool, error) {

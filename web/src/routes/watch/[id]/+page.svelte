@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type MetadataEditResult, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
   import { externalRatingChips } from '$lib/externalRatings';
   import { cssUrl } from '$lib/cssurl';
   import { progressUpdates } from '$lib/stores/notifications';
@@ -31,6 +31,7 @@
   import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
   import RequestMoreSeasonsButton from '$lib/components/RequestMoreSeasonsButton.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
+  import ItemMetadataEditor from '$lib/components/ItemMetadataEditor.svelte';
   // Subtitle styling: full preference set (size, color, background,
   // outline) lives in ./subtitle-style. Helper handles localStorage
   // load / save, schema migration from the v1 size-only key, and the
@@ -1413,6 +1414,42 @@
   // home_video). Bound to MetadataEditor's `open` prop, closed via the
   // modal's `close` event.
   let editMetadataOpen = false;
+
+  // Admin metadata editor (movie / show / season, and an episode from the
+  // season list): ItemMetadataEditor loads the item it's given and saves
+  // with field locks. metaEditId is the item being edited.
+  let metaEditOpen = false;
+  let metaEditId = '';
+  function openMetaEditor(id: string) {
+    metaEditId = id;
+    metaEditOpen = true;
+  }
+  function onMetaSaved(res: MetadataEditResult) {
+    if (item && res.id === item.id) {
+      item = {
+        ...item,
+        title: res.title,
+        sort_title: res.sort_title,
+        original_title: res.original_title ?? undefined,
+        summary: res.summary ?? undefined,
+        tagline: res.tagline ?? undefined,
+        year: res.year ?? undefined,
+        rating: res.rating ?? undefined,
+        content_rating: res.content_rating ?? undefined,
+        genres: res.genres ?? [],
+        taken_at: res.originally_available_at ?? undefined,
+        locked_fields: res.locked_fields,
+      };
+      return;
+    }
+    for (const [sid, eps] of seasonEpisodes) {
+      const i = eps.findIndex((e) => e.id === res.id);
+      if (i < 0) continue;
+      eps[i] = { ...eps[i], title: res.title, summary: res.summary ?? undefined };
+      seasonEpisodes.set(sid, [...eps]);
+      seasonEpisodes = seasonEpisodes;
+    }
+  }
 
   let showPosterModal = false;
   let posterStep: 'pick-tmdb' | 'pick-poster' = 'pick-tmdb';
@@ -4338,6 +4375,17 @@
       </div>
     {/if}
 
+    <!-- Edit Metadata (movies, shows and seasons, admin): edits lock the
+         fields so refreshes and Fix Match keep them. Episodes are edited
+         from the pencil on their row below. -->
+    {#if (item.type === 'show' || item.type === 'movie' || item.type === 'season') && isAdmin}
+      <button class="fix-match-btn" on:click={() => item && openMetaEditor(item.id)}
+              title="Edit title, summary, genres, rating and other details">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        Edit Metadata
+      </button>
+    {/if}
+
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
     {#if (item.type === 'show' || item.type === 'movie') && isAdmin}
       <button class="fix-match-btn" on:click={openMatchModal}>
@@ -4528,6 +4576,17 @@
           >
             <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
           </button>
+          {#if isAdmin}
+            <button
+              type="button"
+              class="ep-edit-btn"
+              on:click={() => openMetaEditor(ep.id)}
+              title="Edit episode metadata"
+              aria-label={`Edit metadata: ${ep.index != null ? `episode ${ep.index}, ` : ''}${ep.title}`}
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+            </button>
+          {/if}
           </div>
         {/each}
         {#if selectedEpisodes.length === 0}
@@ -4792,6 +4851,9 @@
         }
       }}
     />
+  {/if}
+  {#if isAdmin && metaEditId}
+    <ItemMetadataEditor itemId={metaEditId} bind:open={metaEditOpen} onsaved={onMetaSaved} />
   {/if}
   <MetadataEditor
     itemId={item.id}
@@ -5851,6 +5913,22 @@
   .ep-watch-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .ep-watch-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .ep-watch-toggle:disabled { opacity: 0.6; cursor: progress; }
+  /* Admin: edit an episode's metadata, under the watched toggle. */
+  .ep-edit-btn {
+    position: absolute;
+    top: 2.55rem;
+    right: 0.6rem;
+    display: flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px;
+    padding: 0;
+    border-radius: 50%;
+    border: 1px solid transparent;
+    background: transparent;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .ep-edit-btn:hover { border-color: var(--border-strong); color: var(--text-primary); }
+  .ep-edit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
   /* Watched toggle / "Mark all" buttons beside Play on the detail page. */
   .mark-watched-btn {
