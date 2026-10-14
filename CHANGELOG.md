@@ -601,6 +601,48 @@ API change lands only when every first-party client moves with it — see
     and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
   - **Migration 00050** adds the per-library overrides and the
     per-title-and-language attempt log.
+- **My stats and Year in review.** Everyone now has their own stats page
+  (My stats, in the sidebar and on the Account page): hours watched and
+  listened, plays, titles finished, books read, activity by month, a
+  weekday-by-hour chart of when you play, time by type and genre, your top
+  movies, shows, artists and albums, your longest streak of days and the
+  devices you use most. Pick the last 30 or 90 days, 12 months, all time or a
+  single year.
+  - **Year in review** (`/year/2026`) sums up a year on cards that look good
+    in a screenshot or printed: headline numbers, top fives, the first thing
+    you played, your busiest day, new artists you discovered and how the year
+    compares with the one before.
+  - **Only yours:** each person sees only their own numbers, and a profile
+    sees its own. Titles you can't see (library access, rating limit, label
+    restrictions) are left out, as in your history. Admins keep the
+    server-wide Analytics page.
+  - Numbers refresh every few minutes, like Analytics. Time counts how far you
+    got into each title, so sampling a film for five minutes counts as five
+    minutes.
+  - **API (additive):** `GET /users/me/stats?range=30d|90d|365d|all|year:YYYY`
+    and `GET /users/me/year-in-review?year=YYYY` (both take `tz`).
+  - **Migration 00054** adds an index so these stay fast on long histories.
+- **Digest email.** People can get a weekly or monthly email of what was added
+  to their libraries: new movies, shows (new episodes grouped per show), music
+  albums and books, with posters. Turn it on under Account ▸ Email me a
+  digest.
+  - It can also list what you're in the middle of and your own numbers for the
+    week or month. Only titles you're allowed to see are included.
+  - An admin turns digests on and picks the day and hour under Settings ▸
+    Email (off by default), and can send themselves a test digest. Links use
+    the Base URL from Settings ▸ General. Without SMTP nothing is sent and the
+    page says so.
+  - The new "Send digest emails" task checks every hour. Each person gets each
+    week or month once, a digest with nothing new isn't sent, and sends are
+    spaced out. People without an email address are skipped.
+  - Posters are attached to the email itself, so it shows them without
+    signing in and carries no link that grants access to the server. Every
+    digest has an unsubscribe link that works without signing in, and mail
+    apps can offer one-click unsubscribe.
+  - **API (additive):** `GET`/`PUT /users/me/digest`; admin
+    `GET`/`PUT /settings/digest` and `POST /settings/digest/test`;
+    `GET`/`POST /digest/unsubscribe?token=…` (no sign-in).
+  - **Migration 00054** adds the per-user digest setting.
 
 ### Changed
 
