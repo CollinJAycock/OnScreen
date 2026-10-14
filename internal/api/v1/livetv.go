@@ -48,9 +48,12 @@ type LiveTVService interface {
 // channel listing + now/next (any authenticated user). The HLS proxy
 // endpoint lives in livetv_stream.go to keep the file sizes manageable.
 type LiveTVHandler struct {
-	svc    LiveTVService
-	proxy  LiveTVStreamProxy
-	dvr    LiveTVDVRService
+	svc   LiveTVService
+	proxy LiveTVStreamProxy
+	dvr   LiveTVDVRService
+	// post queues DVR post-processing jobs (admin recording actions).
+	// nil = those endpoints answer 503.
+	post   LiveTVPostProcessor
 	logger *slog.Logger
 	// watchLimit gates + accounts live viewing under the parental policy.
 	// Live TV used to be entirely outside the watch-limit system: a capped

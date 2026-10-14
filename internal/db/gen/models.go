@@ -101,10 +101,29 @@ type CollectionPoster struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type CommercialMarker struct {
+	ID          uuid.UUID          `json:"id"`
+	MediaFileID uuid.UUID          `json:"media_file_id"`
+	StartMs     int64              `json:"start_ms"`
+	EndMs       int64              `json:"end_ms"`
+	Source      string             `json:"source"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type ContinueWatchingDismissal struct {
 	UserID      uuid.UUID          `json:"user_id"`
 	MediaID     uuid.UUID          `json:"media_id"`
 	DismissedAt pgtype.Timestamptz `json:"dismissed_at"`
+}
+
+type DvrPostprocessJob struct {
+	RecordingID      uuid.UUID          `json:"recording_id"`
+	Kind             string             `json:"kind"`
+	Status           string             `json:"status"`
+	Message          *string            `json:"message"`
+	OriginalFilePath *string            `json:"original_file_path"`
+	QueuedAt         pgtype.Timestamptz `json:"queued_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type EpgProgram struct {

@@ -25,6 +25,15 @@ func TestMain(m *testing.M) {
 		fakeFFmpegMain()
 		return
 	}
+	// Post-processing test doubles (dvr_postprocess_test.go).
+	if os.Getenv("DVR_FAKE_SCRIPT") != "" {
+		fakeScriptMain()
+		return
+	}
+	if os.Getenv("DVR_FAKE_COMSKIP") != "" {
+		fakeComskipMain()
+		return
+	}
 	os.Exit(m.Run())
 }
 

@@ -1982,7 +1982,9 @@ func isMusicFile(path string) bool {
 // descend into. Two classes:
 //
 //   - OnScreen's own conventions: `.artwork` is the artwork storage tree
-//     written by the artwork manager; not user media.
+//     written by the artwork manager; not user media. `.dvr-originals` holds
+//     DVR captures kept after post-processing — scanning it would file each
+//     one as a second copy of its recording.
 //   - OS / filesystem trash patterns: Samba's vfs_recycle puts SMB-deleted
 //     content into `.recycle/<original>/` (and variants `#recycle`,
 //     `.recycle.bin`); Windows SMB clients use `$RECYCLE.BIN`; the
@@ -1998,7 +2000,7 @@ func isMusicFile(path string) bool {
 // differs from the live tree. None should ever be scanned.
 func shouldSkipDir(name string) bool {
 	switch name {
-	case ".artwork",
+	case ".artwork", ".dvr-originals",
 		".recycle", "#recycle", ".recycle.bin",
 		"$RECYCLE.BIN",
 		"lost+found",

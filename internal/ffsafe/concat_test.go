@@ -77,3 +77,26 @@ func TestWriteConcatList(t *testing.T) {
 		t.Fatalf("list =\n%s\nwant\n%s", got, want)
 	}
 }
+
+func TestWriteConcatList_InOutPoints(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cut.ffconcat")
+	err := WriteConcatList(path, []ConcatPart{
+		{Input: "/dvr/Show.mkv", OutPointSec: 600.25},
+		{Input: "/dvr/Show.mkv", InPointSec: 780, OutPointSec: 1500.5},
+		{Input: "/dvr/Show.mkv", InPointSec: 1680},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "ffconcat version 1.0\n" +
+		"file '/dvr/Show.mkv'\noutpoint 600.250\n" +
+		"file '/dvr/Show.mkv'\ninpoint 780.000\noutpoint 1500.500\n" +
+		"file '/dvr/Show.mkv'\ninpoint 1680.000\n"
+	if string(got) != want {
+		t.Fatalf("list =\n%s\nwant\n%s", got, want)
+	}
+}

@@ -117,6 +117,19 @@ type Config struct {
 	RTMPListenAddr string `env:"RTMP_LISTEN_ADDR" envDefault:":1935"`
 	RTMPPublicHost string `env:"RTMP_PUBLIC_HOST"`
 
+	// ── DVR post-processing ──────────────────────────────────────────────────
+	// Executables are configurable ONLY here, never through the settings UI
+	// or API: a UI-settable executable path is code execution for anyone
+	// holding an admin session.
+	//
+	// DVRPostProcessScript runs after each recording is post-processed, with
+	// the recording's path as its only argument (no shell). Empty = none.
+	DVRPostProcessScript string `env:"ONSCREEN_DVR_POSTPROCESS_SCRIPT"`
+	// ComskipPath enables comskip for DVR commercial detection (ComskipINI is
+	// passed as --ini when set). Empty = the built-in black/silence detector.
+	ComskipPath string `env:"ONSCREEN_COMSKIP_PATH"`
+	ComskipINI  string `env:"ONSCREEN_COMSKIP_INI"`
+
 	// ── Scanning (hot-reloadable via SIGHUP) ─────────────────────────────────
 	// ScanFileConcurrency defaults to runtime.NumCPU()*2 (I/O-bound).
 	ScanFileConcurrency    int           `env:"SCAN_FILE_CONCURRENCY"`

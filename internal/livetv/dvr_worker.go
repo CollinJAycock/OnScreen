@@ -67,6 +67,8 @@ type DVRWorker struct {
 	lib    DVRLibraryResolver
 	media  DVRMediaCreator
 	logger structuredLogger
+	// post queues post-processing when a capture completes. nil = none.
+	post captureCompletionHook
 
 	mu     sync.Mutex
 	active map[uuid.UUID]*captureSession
@@ -141,6 +143,19 @@ func NewDVRWorker(cfg DVRWorkerConfig, q DVRQuerier, live dvrStreamSource, lib D
 		cfg: cfg, q: q, live: live, lib: lib, media: media, logger: logger,
 		active: make(map[uuid.UUID]*captureSession),
 	}
+}
+
+// captureCompletionHook is told about every recording that reaches
+// 'completed'. *PostProcessor implements it.
+type captureCompletionHook interface {
+	QueueAfterCapture(ctx context.Context, recordingID uuid.UUID)
+}
+
+// WithPostProcessor queues finished recordings for post-processing. The
+// processor itself decides (from the DVR settings) whether there is work.
+func (w *DVRWorker) WithPostProcessor(p captureCompletionHook) *DVRWorker {
+	w.post = p
+	return w
 }
 
 // Run loops until the context is cancelled. Every tick:
@@ -520,6 +535,9 @@ func (w *DVRWorker) markCompleted(ctx context.Context, recID, itemID uuid.UUID) 
 		w.logger.WarnContext(ctx, "mark recording completed (will retry)",
 			"recording_id", recID, "err", err)
 		return false
+	}
+	if w.post != nil {
+		w.post.QueueAfterCapture(ctx, recID)
 	}
 	return true
 }
