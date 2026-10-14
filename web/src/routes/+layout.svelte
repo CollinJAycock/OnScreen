@@ -498,6 +498,14 @@
           </svg>
           History
         </a>
+        <!-- The caller's own stats; admins' server-wide numbers are Analytics. -->
+        <a href="/stats" class="nav-link" class:active={path.startsWith('/stats') || path.startsWith('/year/')}>
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path d="M12 9a1 1 0 01-1-1V3c0-.553.45-1.008.997-.93a7.004 7.004 0 015.933 5.933c.078.547-.378.997-.93.997h-5z"/>
+            <path d="M8.003 4.07C8.55 3.992 9 4.447 9 5v5a1 1 0 001 1h5c.552 0 1.008.45.93.997A7.001 7.001 0 012 11a7.002 7.002 0 016.003-6.93z"/>
+          </svg>
+          My stats
+        </a>
         {#if showRequestsNav}
           <a href="/requests" class="nav-link" class:active={path.startsWith('/requests')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
@@ -565,15 +573,15 @@
             </svg>
             Settings
           </a>
-        {:else}
-          <!-- Admins find their devices under Settings ▸ Security. -->
-          <a href="/account" class="nav-link" class:active={path.startsWith('/account')}>
-            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
-              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a4.978 4.978 0 00-3.462 1.393A5.99 5.99 0 0010 15a5.99 5.99 0 003.462-1.607A4.978 4.978 0 0010 12z" clip-rule="evenodd"/>
-            </svg>
-            Account
-          </a>
         {/if}
+        <!-- Every user, admins included: the account page also holds the
+             per-user digest email opt-in and the link to My stats. -->
+        <a href="/account" class="nav-link" class:active={path.startsWith('/account')}>
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a4.978 4.978 0 00-3.462 1.393A5.99 5.99 0 0010 15a5.99 5.99 0 003.462-1.607A4.978 4.978 0 0010 12z" clip-rule="evenodd"/>
+          </svg>
+          Account
+        </a>
       </nav>
 
       <div class="sidebar-foot">

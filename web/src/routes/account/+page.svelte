@@ -6,12 +6,31 @@
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import MyDownloads from '$lib/components/MyDownloads.svelte';
   import ApiKeys from '$lib/components/ApiKeys.svelte';
+  import DigestOptIn from '$lib/components/DigestOptIn.svelte';
 </script>
 
 <svelte:head><title>Account — OnScreen</title></svelte:head>
 
 <div class="account">
   <h1>Account</h1>
+
+  <section class="card">
+    <h2>My stats</h2>
+    <p class="sub">
+      Your own viewing and listening numbers: hours, top titles, genres, when
+      you play, and your year in review. Only you can see them.
+    </p>
+    <a class="stats-link" href="/stats">Open my stats →</a>
+  </section>
+
+  <section class="card">
+    <h2>Email me a digest</h2>
+    <p class="sub">
+      A weekly or monthly email of what was added to your libraries, with what
+      you're in the middle of and your numbers for the period.
+    </p>
+    <DigestOptIn />
+  </section>
 
   <section class="card">
     <h2>Signed-in devices</h2>
@@ -61,4 +80,6 @@
   }
   h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin: 0 0 0.3rem; }
   .sub { color: var(--text-muted); font-size: 0.82rem; margin: 0 0 1rem; line-height: 1.45; max-width: 46ch; }
+  .stats-link { color: var(--accent-text); font-size: 0.85rem; font-weight: 600; text-decoration: none; }
+  .stats-link:hover { text-decoration: underline; }
 </style>
