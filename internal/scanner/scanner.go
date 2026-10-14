@@ -128,6 +128,7 @@ type MediaService interface {
 	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	SetFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error
+	SetFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
 	DeleteFile(ctx context.Context, id uuid.UUID) error
 	SoftDeleteItemIfEmpty(ctx context.Context, id uuid.UUID) error
@@ -1120,6 +1121,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// flat filename parser.
 	var item *media.Item
 	var musicTags *MusicTags
+	// naming is the edition label and stacked-part number a movie file's
+	// name carries (migration 00045); zero for every other kind of file.
+	var naming MovieNaming
 	if libraryType == "music" && isMusicFile(path) {
 		var musicErr error
 		item, musicTags, musicErr = s.processMusicHierarchy(ctx, libraryID, path, roots)
@@ -1213,6 +1217,12 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	} else {
 		title, year := parseFilename(path)
 		itemType := fileTypeForLibrary(libraryType)
+		if itemType == "movie" {
+			// Same title and year, plus the edition / part the name
+			// carries; see parseMovieFilename for the two yearless cases
+			// where a stacking marker comes off the title.
+			title, year, naming = parseMovieFilename(path)
+		}
 		// Movies: Radarr's recommended layout is
 		// `{Movie CleanTitle} ({Release Year})/file.mkv`, with optional
 		// `{tmdb-NNN}` / `[imdb-tt...]` suffix on the folder. Parsing
@@ -1260,6 +1270,8 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		HDRType:         probe.HDRType,
 		DVProfile:       probe.DVProfile,
 		FrameRate:       probe.FrameRate,
+		Edition:         naming.EditionPtr(),
+		PartIndex:       naming.PartIndexPtr(),
 		AudioStreams:    probe.AudioStreams,
 		SubtitleStreams: probe.SubtitleStreams,
 		Chapters:        probe.Chapters,
@@ -1370,6 +1382,11 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryID uuid.UUID,
 	// A file an older scan tagged Dolby Vision is re-read once; most of them
 	// have a base layer every client can play (see healDynamicRange).
 	s.healDynamicRange(ctx, existing, path)
+	// A movie file scanned before editions and stacked parts were read
+	// (migration 00045) gets them from its name; nothing is re-read.
+	if item.Type == "movie" {
+		s.healFileNaming(ctx, existing, path)
+	}
 	if s.shouldEnrich(ctx, item, false) {
 		return item, existing, true
 	}

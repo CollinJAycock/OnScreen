@@ -422,6 +422,9 @@ func (m *mockQuerier) UpdateMediaFileIntegrity(_ context.Context, _ uuid.UUID, _
 func (m *mockQuerier) UpdateMediaFileDynamicRange(_ context.Context, _ uuid.UUID, _ *string, _ *int) error {
 	return nil
 }
+func (m *mockQuerier) UpdateMediaFileNaming(_ context.Context, _ uuid.UUID, _ *string, _ *int) error {
+	return nil
+}
 func (m *mockQuerier) ListFilesForIntegrityCheck(_ context.Context, _ *uuid.UUID, _ int32) ([]File, error) {
 	return nil, nil
 }

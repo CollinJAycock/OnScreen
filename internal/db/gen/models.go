@@ -298,6 +298,8 @@ type MediaFile struct {
 	IntegrityCheckedAt  pgtype.Timestamptz `json:"integrity_checked_at"`
 	IntegrityDetail     *string            `json:"integrity_detail"`
 	DvProfile           *int16             `json:"dv_profile"`
+	Edition             *string            `json:"edition"`
+	PartIndex           *int16             `json:"part_index"`
 }
 
 type MediaIssue struct {

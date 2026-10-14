@@ -60,6 +60,15 @@ type mockMediaService struct {
 	// SetFileDynamicRange calls, in order; dynamicRangeErr fails them.
 	dynamicRangeCalls []dynamicRangeCall
 	dynamicRangeErr   error
+
+	// SetFileNaming calls, in order.
+	namingCalls []namingCall
+}
+
+type namingCall struct {
+	id        uuid.UUID
+	edition   *string
+	partIndex *int
 }
 
 type dynamicRangeCall struct {
@@ -131,6 +140,8 @@ func (m *mockMediaService) CreateOrUpdateFile(_ context.Context, p media.CreateF
 		MediaItemID: p.MediaItemID,
 		FilePath:    p.FilePath,
 		FileSize:    p.FileSize,
+		Edition:     p.Edition,
+		PartIndex:   p.PartIndex,
 		Status:      "active",
 	}
 	m.files[f.ID] = f
@@ -244,6 +255,13 @@ func (m *mockMediaService) MarkFileActive(_ context.Context, _ uuid.UUID) error 
 func (m *mockMediaService) SetFileDynamicRange(_ context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error {
 	m.dynamicRangeCalls = append(m.dynamicRangeCalls, dynamicRangeCall{id: id, hdrType: hdrType, dvProfile: dvProfile})
 	return m.dynamicRangeErr
+}
+func (m *mockMediaService) SetFileNaming(_ context.Context, id uuid.UUID, edition *string, partIndex *int) error {
+	m.namingCalls = append(m.namingCalls, namingCall{id: id, edition: edition, partIndex: partIndex})
+	if f, ok := m.files[id]; ok {
+		f.Edition, f.PartIndex = edition, partIndex
+	}
+	return nil
 }
 func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error           { return nil }
 func (m *mockMediaService) DeleteFile(_ context.Context, _ uuid.UUID) error            { return nil }
