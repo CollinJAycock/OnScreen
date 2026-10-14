@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit, type EpisodeOrder } from '$lib/api';
   import { externalRatingChips } from '$lib/externalRatings';
   import { cssUrl } from '$lib/cssurl';
   import { progressUpdates } from '$lib/stores/notifications';
@@ -52,6 +52,12 @@
   // in $lib/watchState.test.ts.
   import type { UpNext } from '$lib/api';
   import { upNextLabel, markAllOptions, detailWatched } from '$lib/watchState';
+  import {
+    nextEpisode as nextEpisodeAfter,
+    previousEpisode as previousEpisodeBefore,
+    episodeHeading,
+    episodeNumberLabel
+  } from '$lib/episodeRange';
   // Chromecast / Google Cast sender. Pure helpers (URL build, MIME
   // map, isCastable predicate) live in $lib/cast and are unit-tested
   // there; the SDK glue is local to this page.
@@ -946,18 +952,21 @@
     }
   );
 
+  // The episode after this one: after a multi-episode file (E01–E02) it's
+  // the one numbered after its last episode (E03).
   $: nextEpisode = (() => {
     if (!item || item.type !== 'episode' || item.index == null) return null;
-    return siblings.find(s => s.index != null && s.index === (item!.index! + 1)) ?? null;
+    return nextEpisodeAfter(siblings, item);
   })();
 
   // Previous episode lookup — same shape as nextEpisode but stepping
-  // back. Surfaced as an explicit "Previous" button on the player so
-  // users can navigate without bouncing back to the season list,
-  // matching the next-episode affordance.
+  // back (to the file covering the episode before, E01–E02 for E03).
+  // Surfaced as an explicit "Previous" button on the player so users can
+  // navigate without bouncing back to the season list, matching the
+  // next-episode affordance.
   $: prevEpisode = (() => {
     if (!item || item.type !== 'episode' || item.index == null || item.index <= 1) return null;
-    return siblings.find(s => s.index != null && s.index === (item!.index! - 1)) ?? null;
+    return previousEpisodeBefore(siblings, item);
   })();
 
   // Chapters from the source file (already parsed by ffprobe at scan time).
@@ -1535,6 +1544,27 @@
       toast.error(e instanceof Error ? e.message : 'Refresh failed');
     } finally {
       refreshing = false;
+    }
+  }
+
+  // ── Episode order (admin, shows) ──────────────────────────────────────────
+  // Aired / DVD / absolute: which numbering the show's files follow.
+  // "" = the library's default. The server re-enriches the show's
+  // episodes in the background when it changes; refresh the episode list
+  // after a pause so the new titles show up.
+  let episodeOrderSaving = false;
+  async function changeEpisodeOrder(value: string) {
+    if (!item || episodeOrderSaving) return;
+    const order = value === '' ? null : (value as EpisodeOrder);
+    episodeOrderSaving = true;
+    try {
+      await itemApi.setEpisodeOrder(item.id, order);
+      item = { ...item, episode_order: order ?? undefined };
+      toast.success('Episode order saved — refreshing episode metadata');
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to set episode order');
+    } finally {
+      episodeOrderSaving = false;
     }
   }
 
@@ -3386,7 +3416,7 @@
         <div class="top-title">
           <span class="top-title-main">{item.title}</span>
           {#if item.type === 'episode' && item.index != null}
-            <span class="top-title-sub">Episode {item.index}</span>
+            <span class="top-title-sub">{episodeHeading(item.index, item.index_end)}</span>
           {/if}
           {#if currentChapter}
             <span class="top-title-sub">· {currentChapter.title}</span>
@@ -4363,6 +4393,26 @@
       </button>
     {/if}
 
+    <!-- Episode order (admin, shows): which numbering the show's files
+         follow — aired, DVD or absolute — or the library's default. -->
+    {#if item.type === 'show' && isAdmin}
+      <div class="watch-status-control">
+        <label for="episode-order-select" class="watch-status-label">Episode order</label>
+        <select
+          id="episode-order-select"
+          class="watch-status-select"
+          value={item.episode_order ?? ''}
+          disabled={episodeOrderSaving}
+          on:change={(e) => changeEpisodeOrder(e.currentTarget.value)}
+        >
+          <option value="">Library default</option>
+          <option value="aired">Aired</option>
+          <option value="dvd">DVD</option>
+          <option value="absolute">Absolute</option>
+        </select>
+      </div>
+    {/if}
+
     <!-- Per-user watching status. Visible on shows / movies for any
          signed-in user (not admin-gated — it's their own list).
          Distinct surface from the watched / in-progress markers the
@@ -4481,7 +4531,7 @@
                it's its own tab stop and doesn't navigate). -->
           <div class="episode-row-wrap">
           <a href="/watch/{ep.id}" class="episode-row has-watch-toggle" class:ep-watched={ep.watched}>
-            <div class="ep-number">{ep.index ?? '—'}</div>
+            <div class="ep-number">{ep.index != null ? episodeNumberLabel(ep.index, ep.index_end) : '—'}</div>
             <div class="ep-info">
               <div class="ep-title">
                 {ep.title}
@@ -4524,7 +4574,7 @@
             disabled={episodeMarkBusy.has(ep.id) || !selectedSeasonId}
             on:click={() => selectedSeasonId && toggleEpisodeWatched(ep, selectedSeasonId)}
             title={ep.watched ? 'Mark unwatched' : 'Mark watched'}
-            aria-label={`${ep.watched ? 'Mark unwatched' : 'Mark watched'}: ${ep.index != null ? `episode ${ep.index}, ` : ''}${ep.title}`}
+            aria-label={`${ep.watched ? 'Mark unwatched' : 'Mark watched'}: ${ep.index != null ? `${episodeHeading(ep.index, ep.index_end).toLowerCase()}, ` : ''}${ep.title}`}
           >
             <svg viewBox="0 0 16 16" fill="currentColor" width="12" height="12" aria-hidden="true"><path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"/></svg>
           </button>
@@ -5750,7 +5800,7 @@
   }
   .episode-row:hover { background: var(--bg-hover); }
   .ep-number {
-    width: 2rem; flex-shrink: 0;
+    min-width: 2rem; flex-shrink: 0; white-space: nowrap; /* "1–2" for a multi-episode file */
     font-size: 0.85rem; font-weight: 600;
     color: var(--text-muted); text-align: center;
     padding-top: 0.1rem;

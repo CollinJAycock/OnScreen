@@ -37,6 +37,13 @@ describe('episodeCode / nextUpSubtitle', () => {
     expect(nextUpSubtitle({ title: 'The One', season_number: 2, episode_number: 5 })).toBe('S2 · E5 — The One');
     expect(nextUpSubtitle({ title: 'The One' })).toBe('The One');
   });
+  it('shows a multi-episode file as a range', () => {
+    expect(episodeCode(1, 1, 2)).toBe('S1 · E1–E2');
+    expect(episodeCode(1, 3, 3)).toBe('S1 · E3');
+    expect(nextUpSubtitle({ title: 'Pilot / Part 2', season_number: 1, episode_number: 1, episode_number_end: 2 }))
+      .toBe('S1 · E1–E2 — Pilot / Part 2');
+    expect(upNextLabel({ mode: 'next', episode: { ...ep(1, 1), episode_number_end: 2 } })).toBe('Play S1 · E1–E2');
+  });
 });
 
 describe('upNextLabel', () => {

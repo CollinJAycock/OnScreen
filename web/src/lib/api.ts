@@ -1618,12 +1618,18 @@ export interface Library {
   // Import movie.nfo <set> (and <tag>) groupings as manual collections.
   // Optional: servers before v2.6 don't send it.
   nfo_collections?: NFOCollectionsMode;
+  // The order the library's shows are numbered in unless a show sets its
+  // own. Optional: servers before v2.6 don't send it (aired).
+  episode_order?: EpisodeOrder;
   created_at: string;
   updated_at: string;
 }
 
 /** What a library imports from movie.nfo files as collections. */
 export type NFOCollectionsMode = 'off' | 'sets' | 'sets_and_tags';
+
+/** The order a show's episode files are numbered in. */
+export type EpisodeOrder = 'aired' | 'dvd' | 'absolute';
 
 // Per-library seek-bar thumbnail progress (admin). pending = not generated
 // yet, including the item generating right now; failed includes items with
@@ -2355,6 +2361,11 @@ export interface ItemDetail {
   parent_id?: string;
   grandparent_id?: string;
   index?: number;
+  // Episodes: the last episode a multi-episode file covers ("S01E01-E02"
+  // → index 1, index_end 2). Absent for a single episode.
+  index_end?: number;
+  // Shows: the show's own episode order. Absent = follows the library.
+  episode_order?: EpisodeOrder;
   view_offset_ms: number;
   // Playable videos only: the caller's watch state (manual marks included).
   watch_state?: 'watched' | 'in_progress' | 'unwatched';
@@ -2420,6 +2431,8 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  // Episodes: last episode of a multi-episode file. Absent = single episode.
+  index_end?: number;
   // Tracks: disc within the album (index is the track on that disc).
   // Absent = no disc tag, i.e. disc 1. Children arrive in (disc, track) order.
   disc_number?: number;
@@ -2807,6 +2820,10 @@ export const itemApi = {
     api.get<PosterCandidate[]>(`/items/${id}/posters?tmdb_id=${tmdbId}`),
   applyPoster: (id: string, url: string) =>
     api.post<void>(`/items/${id}/poster`, { url }),
+  // Admin: a show's own episode order; null follows the library's again.
+  // The server re-enriches the show's episodes when it changes.
+  setEpisodeOrder: (id: string, order: EpisodeOrder | null) =>
+    api.put<{ id: string; episode_order: EpisodeOrder | null }>(`/items/${id}/episode-order`, { episode_order: order }),
   // updateMetadata edits the title / summary / taken-at on items the
   // metadata agent doesn't enrich (home_video + photo). Each field is
   // "set when present" — pass undefined to leave a field unchanged,
@@ -3625,6 +3642,8 @@ export interface HubItem {
   /** Episode tiles in Next Up: position within the show. */
   season_number?: number;
   episode_number?: number;
+  /** Last episode of a multi-episode file; absent for a single episode. */
+  episode_number_end?: number;
   show_id?: string;
 }
 
@@ -3683,6 +3702,7 @@ export interface UpNext {
     season_id: string;
     season_number: number;
     episode_number: number;
+    episode_number_end?: number;
     view_offset_ms?: number;
     duration_ms?: number;
     thumb_path?: string;
