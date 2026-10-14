@@ -255,6 +255,29 @@ func (r *RateLimiter) ResetFailures(ctx context.Context, key string) {
 	}
 }
 
+// Failures returns the committed failure count at `key` without reserving
+// anything — for a surface where successful requests are frequent and
+// concurrent (an e-reader fetching a page of covers), so a reservation per
+// request would lock out legitimate bursts. Pair with IncrFailure on failure;
+// the counter expires on its own. Fails open (0) when Valkey is unavailable.
+func (r *RateLimiter) Failures(ctx context.Context, key string) (int, error) {
+	n, err := r.client.rdb.Get(ctx, key).Int()
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return 0, nil
+		}
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return 0, err
+		}
+		r.logger.Error("rate limiter Valkey error, failing open", "key", key, "err", err)
+		if r.failOpenCounter != nil {
+			r.failOpenCounter()
+		}
+		return 0, nil
+	}
+	return n, nil
+}
+
 func (r *RateLimiter) nowMS() int64 {
 	if r.now != nil {
 		return r.now().UnixMilli()
