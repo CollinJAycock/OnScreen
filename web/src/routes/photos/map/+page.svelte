@@ -35,6 +35,7 @@
     type Cluster,
   } from '$lib/photoMap';
   import { photoViewerHref } from '$lib/photoViewerContext';
+  import { isBrowserImage, photoImageUrl } from '$lib/photos';
 
   // Thumbnails listed for one marker; a world-zoom cluster can hold
   // thousands, and zooming in splits it up.
@@ -76,7 +77,9 @@
     return e instanceof Error && e.message ? e.message : fallback;
   }
 
-  function thumb(posterPath: string, w: number): string {
+  // Camera RAW / HEIC / TIFF posters are rendered by the server.
+  function thumb(posterPath: string, w: number, id: string): string {
+    if (!isBrowserImage(posterPath)) return photoImageUrl({ id, poster_path: posterPath }, { w });
     return assetUrl(`/artwork/${encodeURI(posterPath)}?w=${w}`);
   }
 
@@ -200,7 +203,7 @@
     if (mapEl) {
       try {
         handle = await createPhotoMap(mapEl, {
-          thumbUrl: (p) => thumb(p, 96),
+          thumbUrl: (p, id) => thumb(p, 96, id),
           onViewChange,
           onClusterClick: openCluster,
         });
@@ -304,7 +307,7 @@
             {#each shown as p (p.id)}
               <a class="thumb" href={photoViewerHref(p.id, { kind: 'map', libraryId })} title={p.title}>
                 {#if p.poster_path}
-                  <img src={thumb(p.poster_path, 300)} alt={p.title} loading="lazy" />
+                  <img src={thumb(p.poster_path, 300, p.id)} alt={p.title} loading="lazy" />
                 {:else}
                   <span class="thumb-blank">{p.title[0]?.toUpperCase() ?? '◇'}</span>
                 {/if}

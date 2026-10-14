@@ -16,6 +16,7 @@
   import LabelPicker from '$lib/components/LabelPicker.svelte';
   import { toast } from '$lib/stores/toast';
   import { toggleSelected } from '$lib/photoAlbums';
+  import { isBrowserImage, photoImageUrl } from '$lib/photos';
   import {
     WATCH_FILTER_OPTIONS,
     parseWatchFilter,
@@ -819,6 +820,8 @@
       {#if isPhotoLibrary}
         <a href="/photos/map?library={id}">Map</a>
         <a href="/photos/albums">Albums</a>
+        <a href="/photos/people?library={id}">People</a>
+        <a href="/photos/memories">Memories</a>
       {/if}
       <a href="/libraries/{id}/genres">Browse genres</a>
       <a href="/libraries/{id}/years">Browse years</a>
@@ -1009,7 +1012,10 @@
           on:click={(e) => onGridItemClick(e, item)}
         >
           <div class="poster">
-            {#if item.poster_path}
+            {#if item.poster_path && isPhotoLibrary && !isBrowserImage(item.poster_path)}
+              <!-- Camera RAW / HEIC / TIFF: the server renders it. -->
+              <img src={photoImageUrl(item, { w: 300 })} alt={item.title} loading="lazy" />
+            {:else if item.poster_path}
               <img src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)}
                    srcset="{assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}&w=450`)} 450w"
                    sizes="(max-width: 768px) 100px, 180px"

@@ -2,6 +2,8 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
+  import { photoPeopleApi, photoSettingsApi } from '$lib/api';
+  import { confirmAction } from '$lib/native';
   import { libraryApi, subtitleAutoApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode, type EpisodeOrder } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
   import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from '$lib/trickplayProgress';
@@ -57,6 +59,38 @@
   let subAutoLoaded: { mode: '' | 'on' | 'off'; langs: string } | null = null;
   $: subAutoApplies = library?.type === 'movie' || hasEpisodes;
 
+  // Photo libraries: RAW + JPEG pairing (saved with the form, only when
+  // changed; the next scan regroups) and deleting face data.
+  let rawPairing = true;
+  let rawPairingLoaded: boolean | null = null;
+  let deletingFaces = false;
+  let facesMessage = '';
+
+  async function loadPhotoSettings() {
+    if (library?.type !== 'photo') return;
+    try {
+      const s = await photoSettingsApi.get(id);
+      rawPairing = s?.raw_jpeg_pairing ?? true;
+      rawPairingLoaded = rawPairing;
+    } catch {
+      rawPairingLoaded = null; // older server: leave the option hidden
+    }
+  }
+
+  async function deleteFaceData() {
+    if (!(await confirmAction('Delete all face data for this library? Every detected face and every named person is removed. If the face-detection task is on, it finds the faces again on its next run.'))) return;
+    deletingFaces = true;
+    facesMessage = '';
+    try {
+      await photoPeopleApi.deleteFaceData(id);
+      facesMessage = 'Face data deleted.';
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : 'Could not delete face data';
+    } finally {
+      deletingFaces = false;
+    }
+  }
+
   let mounted = false;
   let prevId = '';
   let savedTimeout: ReturnType<typeof setTimeout>;
@@ -92,6 +126,9 @@
     subAutoMode = '';
     subAutoLangs = '';
     subAutoLoaded = null;
+    rawPairing = true;
+    rawPairingLoaded = null;
+    facesMessage = '';
     fetchLibrary();
   }
 
@@ -114,6 +151,7 @@
     } finally { loading = false; }
     void loadTrickplayStatus();
     void loadSubtitleAuto();
+    void loadPhotoSettings();
   }
 
   async function loadSubtitleAuto() {
@@ -190,6 +228,11 @@
         });
         subAutoLangs = o?.languages ?? '';
         subAutoLoaded = { mode: subAutoMode, langs: subAutoLangs };
+      }
+      if (library?.type === 'photo' && rawPairingLoaded !== null && rawPairing !== rawPairingLoaded) {
+        const s = await photoSettingsApi.update(id, rawPairing);
+        rawPairing = s?.raw_jpeg_pairing ?? rawPairing;
+        rawPairingLoaded = rawPairing;
       }
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
@@ -395,6 +438,23 @@
         </section>
       {/if}
 
+      {#if library?.type === 'photo' && rawPairingLoaded !== null}
+        <section>
+          <div class="sec-label">Camera RAW</div>
+          <label class="check-row">
+            <input type="checkbox" bind:checked={rawPairing} data-testid="raw-pairing" />
+            <span>
+              <span class="check-title">Pair RAW files with their JPEGs</span>
+              <span class="check-help">
+                A RAW file (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, PEF) and a JPEG with the same name in the
+                same folder show as one photo: the JPEG is displayed, and "Download original" gives the RAW.
+                Turn off to list them as separate photos. Takes effect on the next scan.
+              </span>
+            </span>
+          </label>
+        </section>
+      {/if}
+
       {#if library?.type === 'movie'}
         <section>
           <div class="sec-label">Collections from NFO files</div>
@@ -471,6 +531,22 @@
         </button>
       </div>
     </form>
+
+    {#if library?.type === 'photo'}
+      <section class="maint">
+        <div class="sec-label">Face data</div>
+        <p class="maint-sub">
+          Faces are found by the opt-in "Photo face detection" task (Settings ▸ Tasks) and named by hand.
+          Deleting removes every detected face and named person in this library; photos are not touched.
+        </p>
+        {#if facesMessage}
+          <div class="banner ok" style="margin-bottom: 0.6rem">{facesMessage}</div>
+        {/if}
+        <button type="button" class="btn-secondary danger" disabled={deletingFaces} on:click={deleteFaceData} data-testid="delete-face-data">
+          {deletingFaces ? 'Deleting…' : 'Delete all face data'}
+        </button>
+      </section>
+    {/if}
 
     {#if library?.type === 'show'}
       <section class="maint">
@@ -690,6 +766,7 @@
   }
   .btn-secondary:hover { background: rgba(124,106,247,0.1); border-color: rgba(124,106,247,0.3); }
   .btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-secondary.danger:hover:not(:disabled) { border-color: var(--error); color: var(--error); background: var(--bg-elevated); }
 
   /* Danger zone */
   .danger-zone {

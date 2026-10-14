@@ -3152,6 +3152,133 @@ export const photoAlbumApi = {
     api.delete(`/photo-albums/${encodeURIComponent(albumId)}/items/${encodeURIComponent(mediaItemId)}`),
 };
 
+/** A face on a photo. The box is normalised to 0..1 of the upright photo. */
+export interface PhotoFace {
+  id: string;
+  item_id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  score: number;
+  source?: 'auto' | 'manual';
+  person_id?: string;
+  person_name?: string;
+}
+
+/** A face shown cropped from its photo (people covers, unnamed faces,
+ *  suggestions). */
+export interface PhotoFaceThumb {
+  id: string;
+  item_id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  score?: number;
+}
+
+export interface PhotoPerson {
+  id: string;
+  library_id: string;
+  name: string;
+  photo_count: number;
+  cover?: PhotoFaceThumb;
+  /** Whether the caller may rename / delete / name faces. */
+  can_edit: boolean;
+}
+
+export interface PhotoListItem {
+  id: string;
+  library_id: string;
+  title: string;
+  poster_path?: string;
+  taken_at?: string;
+  width?: number;
+  height?: number;
+  orientation?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Faces, people and the face-data admin action (migration 00057). Face
+ *  matching is manual: faces are detected, people are named by hand. */
+export const photoPeopleApi = {
+  itemFaces: (itemId: string) =>
+    api.get<{ faces: PhotoFace[]; can_edit: boolean }>(`/items/${encodeURIComponent(itemId)}/faces`),
+  /** Name a face. A name the library already has reuses that person; an
+   *  empty name (or person_id null) unnames it. */
+  nameFace: (faceId: string, name: string) =>
+    api.put<PhotoFace>(`/photos/faces/${encodeURIComponent(faceId)}`, { name }),
+  assignFace: (faceId: string, personId: string | null) =>
+    api.put<PhotoFace>(`/photos/faces/${encodeURIComponent(faceId)}`, { person_id: personId }),
+  deleteFace: (faceId: string) => api.delete(`/photos/faces/${encodeURIComponent(faceId)}`),
+  unnamedFaces: async (libraryId: string, limit = 60, offset = 0) =>
+    (await api.requestList<PhotoFaceThumb>(
+      `/photos/faces?library_id=${encodeURIComponent(libraryId)}&limit=${limit}&offset=${offset}`,
+    )).items,
+  people: async (libraryId: string) =>
+    (await api.requestList<PhotoPerson>(`/photos/people?library_id=${encodeURIComponent(libraryId)}`)).items,
+  person: (id: string) => api.get<PhotoPerson>(`/photos/people/${encodeURIComponent(id)}`),
+  personItems: (id: string, limit = 200, offset = 0) =>
+    api.requestList<PhotoListItem>(`/photos/people/${encodeURIComponent(id)}/items?limit=${limit}&offset=${offset}`),
+  suggestions: async (id: string, limit = 24) =>
+    (await api.requestList<PhotoFaceThumb>(`/photos/people/${encodeURIComponent(id)}/suggestions?limit=${limit}`)).items,
+  renamePerson: (id: string, name: string) =>
+    api.patch<PhotoPerson>(`/photos/people/${encodeURIComponent(id)}`, { name }),
+  deletePerson: (id: string) => api.delete(`/photos/people/${encodeURIComponent(id)}`),
+  /** Admin: delete every face, person and detection record of a library. */
+  deleteFaceData: (libraryId: string) =>
+    api.delete(`/admin/photos/face-data?library_id=${encodeURIComponent(libraryId)}`),
+};
+
+export interface PhotoLibrarySettings {
+  library_id: string;
+  raw_jpeg_pairing: boolean;
+}
+
+/** Admin: per-library photo options. */
+export const photoSettingsApi = {
+  get: (libraryId: string) =>
+    api.get<PhotoLibrarySettings>(`/libraries/${encodeURIComponent(libraryId)}/photo-settings`),
+  update: (libraryId: string, rawJpegPairing: boolean) =>
+    api.put<PhotoLibrarySettings>(`/libraries/${encodeURIComponent(libraryId)}/photo-settings`, {
+      raw_jpeg_pairing: rawJpegPairing,
+    }),
+};
+
+export interface MemoryPhoto {
+  id: string;
+  library_id: string;
+  title: string;
+  poster_path?: string;
+  taken_at: string;
+  width?: number;
+  height?: number;
+  orientation?: number;
+  updated_at: string;
+}
+
+export interface MemoryGroup {
+  kind: 'on_this_day' | 'this_week';
+  year: number;
+  years_ago: number;
+  title: string;
+  total: number;
+  cover: MemoryPhoto;
+  items: MemoryPhoto[];
+}
+
+export interface MemoriesResponse {
+  date: string;
+  groups: MemoryGroup[];
+}
+
+export const memoriesApi = {
+  /** date is the viewer's local YYYY-MM-DD, so "today" follows them. */
+  get: (date: string) => api.get<MemoriesResponse>(`/photos/memories?date=${encodeURIComponent(date)}`),
+};
+
 export interface ManagedProfile {
   id: string;
   username: string;

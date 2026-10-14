@@ -7,7 +7,7 @@
   // album that isn't theirs is simply not found (the server 404s it too).
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { photoAlbumApi, assetUrl, type PhotoAlbum, type PhotoAlbumItem } from '$lib/api';
+  import { photoAlbumApi, type PhotoAlbum, type PhotoAlbumItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import {
@@ -19,6 +19,7 @@
     toggleSelected,
   } from '$lib/photoAlbums';
   import { photoViewerHref } from '$lib/photoViewerContext';
+  import { photoImageUrl } from '$lib/photos';
 
   const albumId = $derived($page.params.id ?? '');
 
@@ -232,7 +233,7 @@
             onclick={(e) => onTileClick(e, it.id)}
           >
             {#if it.poster_path}
-              <img src={assetUrl(`/artwork/${encodeURI(it.poster_path)}?w=300`)} alt="" loading="lazy" />
+              <img src={photoImageUrl(it, { w: 300 })} alt="" loading="lazy" />
             {:else}
               <span class="tile-blank" aria-hidden="true">{it.title[0]?.toUpperCase() ?? '◇'}</span>
             {/if}

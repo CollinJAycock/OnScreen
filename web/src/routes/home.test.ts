@@ -12,6 +12,7 @@ const mockSetHubLayout = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
 const mockDismissCW = vi.hoisted(() => vi.fn());
+const mockMemories = vi.hoisted(() => vi.fn());
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
 vi.mock('$lib/api', async (importOriginal) => {
@@ -27,6 +28,7 @@ vi.mock('$lib/api', async (importOriginal) => {
     hubApi: { get: mockHubGet },
     userApi: { getPreferences: mockGetPreferences, setHubLayout: mockSetHubLayout },
     itemApi: { dismissContinueWatching: mockDismissCW },
+    memoriesApi: { get: mockMemories },
     assetUrl: (p: string) => p,
     trackAuthBootstrap,
     waitForAuthBootstrap,
@@ -527,5 +529,46 @@ describe('Continue Watching remove', () => {
     render(Page);
     await waitFor(() => expect(screen.getByText('Trending Thing')).toBeTruthy());
     expect(screen.queryByRole('button', { name: /from Continue Watching/ })).toBeNull();
+  });
+});
+
+describe('Memories row', () => {
+  const photoLib = { id: 'lib-p', name: 'Photos', type: 'photo', scan_paths: ['/p'] };
+  const group = {
+    kind: 'on_this_day', year: 2023, years_ago: 3, title: '3 years ago today', total: 12,
+    cover: { id: 'p-1', library_id: 'lib-p', title: 'IMG 1', poster_path: '2023/IMG_1.jpg', taken_at: '2023-10-14T10:00:00Z', updated_at: '1' },
+    items: [],
+  };
+
+  beforeEach(() => {
+    localStorage.setItem('onscreen_user', JSON.stringify({ id: '1', username: 'u' }));
+    mockHubGet.mockResolvedValue({ continue_watching: [], recently_added: [] });
+  });
+
+  it('shows memories when the user has a photo library and there are some', async () => {
+    mockListLibraries.mockResolvedValue([photoLib]);
+    mockMemories.mockResolvedValue({ date: '2026-10-14', groups: [group] });
+    render(Page);
+    await waitFor(() => expect(screen.getByText('3 years ago today')).toBeTruthy());
+    expect(screen.getByText('12 photos')).toBeTruthy();
+    const link = screen.getByText('3 years ago today').closest('a');
+    expect(link?.getAttribute('href')).toMatch(/^\/photos\/memories\?date=\d{4}-\d{2}-\d{2}#m0$/);
+    expect(mockMemories).toHaveBeenCalledWith(expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/));
+  });
+
+  it('skips the request without a photo library', async () => {
+    mockListLibraries.mockResolvedValue([{ id: 'lib-m', name: 'Movies', type: 'movie', scan_paths: ['/m'] }]);
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Customize rows')).toBeTruthy());
+    expect(mockMemories).not.toHaveBeenCalled();
+    expect(screen.queryByText('3 years ago today')).toBeNull();
+  });
+
+  it('hides the row when there is nothing to show', async () => {
+    mockListLibraries.mockResolvedValue([photoLib]);
+    mockMemories.mockResolvedValue({ date: '2026-10-14', groups: [] });
+    render(Page);
+    await waitFor(() => expect(mockMemories).toHaveBeenCalled());
+    expect(screen.queryByRole('link', { name: 'Memories' })).toBeNull();
   });
 });

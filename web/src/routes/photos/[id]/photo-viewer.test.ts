@@ -11,6 +11,12 @@ const mockAddItem = vi.hoisted(() => vi.fn());
 const mockRemoveItem = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockToastError = vi.hoisted(() => vi.fn());
+const mockItemFaces = vi.hoisted(() => vi.fn());
+const mockNameFace = vi.hoisted(() => vi.fn());
+const mockDeleteFace = vi.hoisted(() => vi.fn());
+const mockPeople = vi.hoisted(() => vi.fn());
+const mockPersonItems = vi.hoisted(() => vi.fn());
+const caps = vi.hoisted(() => ({ value: null as unknown }));
 const pageUrl = vi.hoisted(() => ({ href: 'http://localhost/photos/p-2' }));
 
 vi.mock('$app/navigation', () => ({ goto: mockGoto }));
@@ -27,7 +33,14 @@ vi.mock('$lib/api', () => ({
   itemApi: { get: mockItemGet, exif: mockExif },
   mediaApi: { listItems: mockListItems },
   photoAlbumApi: { items: mockAlbumItems, list: mockAlbumList, addItem: mockAddItem, removeItem: mockRemoveItem },
+  photoPeopleApi: {
+    itemFaces: mockItemFaces, nameFace: mockNameFace, deleteFace: mockDeleteFace,
+    people: mockPeople, personItems: mockPersonItems,
+  },
   assetUrl: (p: string) => p,
+}));
+vi.mock('$lib/stores/capabilities', () => ({
+  capabilities: { subscribe: (fn: (v: unknown) => void) => readable(caps.value).subscribe(fn) },
 }));
 vi.mock('$lib/stores/toast', () => ({
   toast: { success: mockToastSuccess, error: mockToastError },
@@ -53,6 +66,9 @@ beforeEach(() => {
   mockAlbumList.mockResolvedValue([{ id: 'a-1', name: 'Alps', item_count: 3, created_at: '', updated_at: '' }]);
   mockAddItem.mockResolvedValue(undefined);
   mockRemoveItem.mockResolvedValue(undefined);
+  mockItemFaces.mockResolvedValue({ faces: [], can_edit: false });
+  mockPeople.mockResolvedValue([]);
+  caps.value = null;
 });
 
 describe('Photo viewer', () => {
@@ -152,5 +168,76 @@ describe('Photo viewer', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Remove from album' }));
     await waitFor(() => expect(mockToastError).toHaveBeenCalledWith('HTTP 500'));
     expect(mockGoto).not.toHaveBeenCalled();
+  });
+
+  it('shows face boxes with names and opens a named person', async () => {
+    mockItemFaces.mockResolvedValue({
+      can_edit: false,
+      faces: [
+        { id: 'f-1', item_id: 'p-2', x: 0.1, y: 0.1, w: 0.2, h: 0.2, score: 9, person_id: 'per-1', person_name: 'Alice' },
+        { id: 'f-2', item_id: 'p-2', x: 0.5, y: 0.1, w: 0.2, h: 0.2, score: 8 },
+      ],
+    });
+    render(Page);
+    const alice = await screen.findByRole('button', { name: 'Alice' });
+    expect(screen.getByRole('button', { name: 'Unnamed face' })).toBeTruthy();
+    await fireEvent.click(alice);
+    expect(mockGoto).toHaveBeenLastCalledWith('/photos/people/per-1');
+  });
+
+  it('names a face', async () => {
+    mockItemFaces.mockResolvedValue({
+      can_edit: true,
+      faces: [{ id: 'f-2', item_id: 'p-2', x: 0.5, y: 0.1, w: 0.2, h: 0.2, score: 8 }],
+    });
+    mockPeople.mockResolvedValue([{ id: 'per-1', library_id: 'lib-1', name: 'Alice', photo_count: 3, can_edit: true }]);
+    mockNameFace.mockResolvedValue({ id: 'f-2', item_id: 'p-2', x: 0.5, y: 0.1, w: 0.2, h: 0.2, score: 8, person_id: 'per-2', person_name: 'Bob' });
+    render(Page);
+    await fireEvent.click(await screen.findByRole('button', { name: 'Unnamed face' }));
+    const input = await screen.findByLabelText('Who is this?');
+    // Typing in the name box must not drive the viewer's keys.
+    await fireEvent.keyDown(input, { key: 'ArrowRight' });
+    expect(mockGoto).not.toHaveBeenCalled();
+    await fireEvent.input(input, { target: { value: 'Bob' } });
+    await fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(mockNameFace).toHaveBeenCalledWith('f-2', 'Bob'));
+    expect(await screen.findByRole('button', { name: 'Bob' })).toBeTruthy();
+  });
+
+  it("walks a person's photos and closes to the person", async () => {
+    pageUrl.href = 'http://localhost/photos/p-2?person=per-1';
+    mockPersonItems.mockResolvedValue({ items: [{ id: 'p-2' }, { id: 'p-4' }], total: 2 });
+    render(Page);
+    expect(await screen.findByText('1 / 2')).toBeTruthy();
+    expect(mockPersonItems).toHaveBeenCalledWith('per-1', 500);
+    await fireEvent.click(screen.getByTitle('Next (→)'));
+    expect(mockGoto).toHaveBeenLastCalledWith('/photos/p-4?person=per-1');
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(mockGoto).toHaveBeenLastCalledWith('/photos/people/per-1');
+  });
+
+  it('walks a memory and closes to the memories', async () => {
+    pageUrl.href = 'http://localhost/photos/p-2?memory=2026-10-14-0';
+    sessionStorage.setItem('onscreen_memory:2026-10-14-0', JSON.stringify(['p-1', 'p-2']));
+    render(Page);
+    expect(await screen.findByText('2 / 2')).toBeTruthy();
+    expect(mockListItems).not.toHaveBeenCalled();
+    await fireEvent.click(screen.getByRole('button', { name: 'Close' }));
+    expect(mockGoto).toHaveBeenLastCalledWith('/photos/memories?date=2026-10-14');
+  });
+
+  it('downloads the RAW of a RAW + JPEG pair as the original', async () => {
+    caps.value = { features: { web_downloads: true } };
+    mockItemGet.mockImplementation(async (id: string) => ({
+      ...photo(id),
+      files: [
+        { id: 'jpg-1', container: 'jpg', stream_token: 't1' },
+        { id: 'raw-1', container: 'cr3', stream_token: 't2' },
+      ],
+    }));
+    render(Page);
+    const link = await screen.findByRole('link', { name: 'Download original' });
+    expect(link.getAttribute('href')).toBe('/media/download/raw-1?token=t2');
+    expect(link.getAttribute('title')).toBe('Download original (CR3)');
   });
 });
