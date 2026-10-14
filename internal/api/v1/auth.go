@@ -145,10 +145,11 @@ type RefreshReuseError struct {
 	// presented long after the owner moved on). Empty / nil when the row did
 	// not have them. Never the token or its hash.
 	//
-	// ClientName / Platform copy sessions.client_name / platform, which no
-	// sign-in path records yet (issueTokenPair's CreateSession leaves both
-	// null), so today they are empty. SecondsSinceLastSeen, next to the
-	// request's User-Agent that the handler adds, is the clue that works now.
+	// ClientName / Platform copy sessions.client_name / platform: the device
+	// label recorded at sign-in and refreshed on each refresh (see
+	// CaptureSessionClient). Sessions created before that existed have none.
+	// SecondsSinceLastSeen, next to the request's User-Agent that the handler
+	// adds, is the other clue.
 	ClientName string
 	Platform   string
 	// SecondsSinceLastSeen is how long before detection the session was last
@@ -341,8 +342,8 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 // the spent token: attacker tooling, or one of the user's own clients retrying
 // after it lost a response; how long the session had been idle
 // (seconds_since_last_seen) is what to weigh it against. client_name /
-// platform are added only when the session row has them, which no sign-in path
-// records yet (see RefreshReuseError). Client-supplied strings are bounded.
+// platform are added only when the session row has them (sessions created
+// before sign-ins were labelled don't). Client-supplied strings are bounded.
 // The token and its hash are deliberately not recorded.
 func (h *AuthHandler) auditRefreshReuse(r *http.Request, e *RefreshReuseError) {
 	uid := e.UserID

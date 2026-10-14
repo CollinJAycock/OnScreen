@@ -726,6 +726,11 @@ func run() error {
 		WithSegmentTokenRevoker(segTokenMgr).
 		WithPINThrottle(rateLimiter).
 		WithPinSwitchPolicy(settingsSvc)
+	// Signed-in devices. Primary pool: a revoke must be visible to the auth
+	// middleware's very next session check (sessionEpochAdapter reads rwPool).
+	userSessionsHandler := v1.NewUserSessionsHandler(gen.New(rwPool), logger).
+		WithAudit(auditLogger).
+		WithSegmentTokenRevoker(segTokenMgr)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
@@ -752,7 +757,12 @@ func run() error {
 		WithCollections(gen.New(roPool))
 	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
-	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
+	// Internet streaming limit + extra home networks (Settings ▸ Transcode),
+	// read live. Shared by the play decision / transcode start and the Now
+	// Playing LAN / remote label so the two can't disagree.
+	remotePolicy := remoteStreamPolicyAdapter{svc: settingsSvc}
+	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger).
+		WithRemotePolicy(remotePolicy)
 	// Stable per-server identifier surfaced on the public capabilities endpoint,
 	// UDP discovery, and webhook payloads. Persisted in settings rather than
 	// derived from the master SECRET_KEY (the old approach published a bare hash
@@ -832,8 +842,11 @@ func run() error {
 		WithStreamTokenMaker(tokenMaker).
 		// Prefer an object-storage / CDN signed source URL when configured.
 		WithMediaStore(mediaStoreProvider).
-		// Per-user admin caps (concurrent streams + bitrate), read at start.
-		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)})
+		// Per-user admin caps (concurrent streams + bitrate + internet bitrate),
+		// read at start.
+		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)}).
+		// Server-wide internet streaming limit for remote clients.
+		WithRemotePolicy(remotePolicy)
 
 	// Attach the SECRET_KEY-derived bearer to every API→worker segment/seghead
 	// proxy request, matching what each worker's segment server now requires.
@@ -1498,6 +1511,7 @@ func run() error {
 		Auth:            authHandler,
 		TOTP:            totpHandler,
 		User:            userHandler,
+		UserSessions:    userSessionsHandler,
 		FS:              fsHandler,
 		Settings:        settingsHandler,
 		Analytics:       analyticsHandler,

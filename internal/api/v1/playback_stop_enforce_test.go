@@ -302,17 +302,21 @@ func TestStartReasons(t *testing.T) {
 	}
 	caps := transcode.ParseCapabilities("videoDecoder=h264,audioDecoder=aac")
 
-	if got := startReasons(base(), caps, "transcode", 0, 1080, 8000, true); !reflect.DeepEqual(got, []string{"Over the user's bitrate cap (25 Mbps > 8 Mbps)"}) {
+	if got := startReasons(base(), caps, "transcode", 0, 1080, streamCap{Kbps: 8000}, true); !reflect.DeepEqual(got, []string{"Over the user's bitrate cap (25 Mbps > 8 Mbps)"}) {
 		t.Errorf("cap forced: got %q", got)
 	}
-	if got := startReasons(base(), caps, "transcode", 0, 1080, 0, false); !reflect.DeepEqual(got, []string{"Requested by client"}) {
+	remote := streamCap{Kbps: 4000, Remote: true, RemoteBinding: true}
+	if got := startReasons(base(), caps, "transcode", 0, 1080, remote, false); !reflect.DeepEqual(got, []string{"Over the internet streaming limit (25 Mbps > 4 Mbps)"}) {
+		t.Errorf("remote limit: got %q", got)
+	}
+	if got := startReasons(base(), caps, "transcode", 0, 1080, streamCap{}, false); !reflect.DeepEqual(got, []string{"Requested by client"}) {
 		t.Errorf("nothing visible: got %q", got)
 	}
-	if got := startReasons(base(), caps, "remux", 0, 1080, 0, false); len(got) != 1 || !strings.Contains(got[0], "requested by client") {
+	if got := startReasons(base(), caps, "remux", 0, 1080, streamCap{}, false); len(got) != 1 || !strings.Contains(got[0], "requested by client") {
 		t.Errorf("remux fallback: got %q", got)
 	}
 	// An explicit pick at or above the source isn't a reason.
-	if got := startReasons(base(), caps, "transcode", 1080, 1080, 0, false); !reflect.DeepEqual(got, []string{"Requested by client"}) {
+	if got := startReasons(base(), caps, "transcode", 1080, 1080, streamCap{}, false); !reflect.DeepEqual(got, []string{"Requested by client"}) {
 		t.Errorf("pick == source: got %q", got)
 	}
 	if got := fmtMbps(2534); got != "2.5 Mbps" {

@@ -82,3 +82,38 @@ FROM sessions
 WHERE user_id = $1 AND expires_at > NOW()
 ORDER BY last_seen DESC
 LIMIT 1000;
+
+-- name: ListActiveSessionsForUser :many
+-- Signed-in devices for Settings ▸ Security and the admin user page: one row
+-- per refresh session that can still refresh. Deliberately omits the token
+-- hashes. last_seen moves on sign-in and on every refresh (roughly hourly
+-- while a device is in use), never per request.
+SELECT id, client_name, platform, ip_addr, created_at, last_seen
+FROM sessions
+WHERE user_id = $1
+  AND expires_at > NOW()
+  AND (absolute_expires_at IS NULL OR absolute_expires_at > NOW())
+ORDER BY last_seen DESC
+LIMIT 200;
+
+-- name: DeleteUserSession :one
+-- Revokes one sign-in. Scoped by user_id so a caller can only ever delete a
+-- session of the user the route names; no row = no such session for them.
+-- Returns the device label for the audit entry.
+DELETE FROM sessions WHERE id = $1 AND user_id = $2
+RETURNING id, client_name, platform;
+
+-- name: DeleteOtherSessionsForUser :execrows
+-- "Sign out everywhere else": every session of the user except the caller's.
+DELETE FROM sessions WHERE user_id = $1 AND id <> $2;
+
+-- name: UpdateSessionClient :exec
+-- Records where a refresh came from (trusted client IP, device label). Runs
+-- once per refresh, never per API request. NULL arguments keep the stored
+-- value, so a refresh that can't name its client doesn't erase the label the
+-- sign-in recorded.
+UPDATE sessions
+SET ip_addr     = COALESCE(sqlc.narg('ip_addr')::inet, ip_addr),
+    client_name = COALESCE(sqlc.narg('client_name')::text, client_name),
+    platform    = COALESCE(sqlc.narg('platform')::text, platform)
+WHERE id = sqlc.arg('id');

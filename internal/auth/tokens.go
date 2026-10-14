@@ -88,6 +88,22 @@ type Claims struct {
 	// verify step burns so one challenge can mint at most one session.
 	// Empty on every other token.
 	TokenID string `json:"jti,omitempty"`
+	// SessionID names the refresh session (sessions.id) a token was minted
+	// under — the sign-in a "Signed-in devices" row revokes. Carried by the
+	// access, asset and stream tokens of a session-backed sign-in, so the
+	// auth middleware can reject them the moment that one session is deleted
+	// (see middleware.SessionStateReader) without bumping the user's epoch.
+	// uuid.Nil on tokens with no refresh session behind them (PIN-switch,
+	// devtoken) and on tokens minted before the claim existed; those keep the
+	// epoch-only check.
+	SessionID uuid.UUID `json:"sid,omitempty"`
+}
+
+// setSessionID writes the sid claim when the token belongs to a session.
+func setSessionID(token *paseto.Token, sid uuid.UUID) {
+	if sid != uuid.Nil {
+		token.SetString("sid", sid.String())
+	}
 }
 
 // TokenMaker issues and validates Paseto v4 local tokens.
@@ -125,6 +141,7 @@ func (m *TokenMaker) IssueAccessToken(claims Claims) (string, error) {
 	if claims.Switched {
 		token.SetString("switched", "true")
 	}
+	setSessionID(&token, claims.SessionID)
 
 	return token.V4Encrypt(m.key, nil), nil
 }
@@ -153,6 +170,7 @@ func (m *TokenMaker) IssueStreamToken(claims Claims, fileID uuid.UUID) (string, 
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 	token.SetString("purpose", "stream")
 	token.SetString("file_id", fileID.String())
+	setSessionID(&token, claims.SessionID)
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -185,6 +203,7 @@ func (m *TokenMaker) IssueAssetToken(claims Claims) (string, error) {
 	if claims.Switched {
 		token.SetString("switched", "true")
 	}
+	setSessionID(&token, claims.SessionID)
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -269,6 +288,14 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	}
 	switchedStr, _ := token.GetString("switched")
 	tokenID, _ := token.GetJti()
+	// A malformed sid is ignored rather than fatal: the token decrypted under
+	// our key, so we minted it, and the epoch check still applies.
+	var sessionID uuid.UUID
+	if s, _ := token.GetString("sid"); s != "" {
+		if id, err := uuid.Parse(s); err == nil {
+			sessionID = id
+		}
+	}
 
 	return &Claims{
 		UserID:           userID,
@@ -282,6 +309,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		FileID:           fileID,
 		Switched:         switchedStr == "true",
 		TokenID:          tokenID,
+		SessionID:        sessionID,
 	}, nil
 }
 

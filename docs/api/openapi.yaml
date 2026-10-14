@@ -1830,6 +1830,64 @@ paths:
         '404': { description: Unknown item, no access, over the rating ceiling, or no such file. }
 
   # ── Transcode ──────────────────────────────────────────────────────────────
+  /api/v1/items/{id}/playback-decision:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Server-authoritative play decision
+      tags: [Transcode]
+      description: |
+        Resolves the client's capability profile (`X-Client-Capabilities`,
+        legacy `supports_*` body flags folded in) against the file and
+        returns how to play it: `directPlay` (the direct file URL),
+        `directStream` (a video-copy remux transcode), `transcode`, or
+        `unsupported` / `damaged` (no playback path). Read-only; the
+        transcode start that follows re-validates everything.
+
+        **Internet streaming limit (v2.6).** When the caller is outside
+        the home network — judged from the trusted client IP, see
+        Settings ▸ Transcode `local_networks` — and the source bitrate
+        exceeds its cap (the lowest of the user's bitrate cap, the
+        user's internet cap and the server's internet limit), a
+        `directPlay` / `directStream` verdict becomes `transcode`, with
+        `reason: remote_bitrate_limit` (an internet limit binds) or
+        `user_bitrate_limit` (the user's own cap is lower) and the cap in
+        `max_bitrate_kbps`. Transcode start then clamps the output (and
+        every ABR rung) to that cap. Video only; LAN clients and clients
+        with no internet limit configured get exactly the verdict they
+        got before. Both fields are additive — a client that ignores
+        them still sees `transcode`. A client that skips this endpoint
+        and fetches `/media/stream` directly is not held to the limit.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_id: { type: string, format: uuid, description: 'Decide for this file of the item (default: the best file).' }
+      responses:
+        '200':
+          description: The decision.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      decision: { type: string, enum: [directPlay, directStream, transcode, unsupported, damaged] }
+                      file_id: { type: string, format: uuid }
+                      reason:
+                        type: string
+                        enum: [remote_bitrate_limit, user_bitrate_limit]
+                        description: Set only when the server overrode a capability verdict (v2.6).
+                      max_bitrate_kbps:
+                        type: integer
+                        description: The bitrate cap the transcode will be held to, with `reason` (v2.6).
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/items/{id}/transcode:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     post:
@@ -2769,6 +2827,77 @@ paths:
       responses:
         '204': { description: Saved. }
 
+  /api/v1/users/me/sessions:
+    get:
+      summary: Caller's signed-in devices
+      tags: [Users]
+      description: |
+        One row per sign-in (refresh session) that can still refresh: the
+        device label recorded at sign-in (the optional `X-Device-Name`
+        request header, else derived from the User-Agent), the trusted
+        client IP of its latest sign-in or refresh, and `current: true`
+        on the caller's own. `last_seen_at` is approximate — it moves on
+        sign-in and on each token refresh (about hourly while a device is
+        in use), not per request. PIN-switched profile tokens have no
+        session of their own and don't appear. v2.6.
+      responses:
+        '200':
+          description: Sessions, most recently used first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SignedInSession' }
+    delete:
+      summary: Sign out everywhere else
+      tags: [Users]
+      description: |
+        Revokes every sign-in of the caller except the one making the
+        request. Their refresh tokens stop working at once, and their
+        access / asset / stream tokens are rejected on their next request
+        (tokens carry their sign-in's ID; tokens minted before v2.6 lapse
+        at their own expiry). 409 `CURRENT_SESSION_UNKNOWN` when the
+        caller's token doesn't name its sign-in (minted before v2.6 or a
+        PIN-switch token) — refresh and retry. Audited as
+        `auth.sessions_revoked` (reason `user_signed_out_others`).
+      responses:
+        '200':
+          description: How many sign-ins were revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      revoked: { type: integer }
+        '409':
+          description: The caller's current sign-in can't be identified.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/users/me/sessions/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Sign one device out
+      tags: [Users]
+      description: |
+        Revokes one of the caller's sign-ins. Other devices are not
+        affected (no session-epoch bump). Revoking the caller's own
+        current sign-in is a sign-out: the auth cookies are cleared in the
+        response. A session ID that isn't the caller's is a 404. HLS
+        segment tokens are per user, not per sign-in, so a transcode
+        already streaming to the revoked device runs until it goes idle.
+        Audited as `auth.session_revoked`.
+      responses:
+        '204': { description: Revoked. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/users/me/scrobble:
     get:
       summary: Caller's scrobble links
@@ -3086,6 +3215,88 @@ paths:
                             ok: { type: boolean }
                             error: { type: string }
         '400': { description: Invalid or too wide a date range. }
+
+  /api/v1/users/{id}/sessions:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A user's signed-in devices (admin)
+      tags: [Users]
+      description: Same rows as `GET /users/me/sessions`; `current` marks the admin's own sign-in when they list themselves. v2.6.
+      responses:
+        '200':
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SignedInSession' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      summary: Sign a user out everywhere (admin)
+      tags: [Users]
+      description: |
+        The full wipe a password reset does: every sign-in deleted, the
+        session epoch bumped (all outstanding tokens die), HLS segment
+        tokens revoked. Audited as `auth.sessions_revoked` (reason
+        `admin_signed_out_all`). v2.6.
+      responses:
+        '204': { description: Signed out. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/users/{id}/sessions/{sid}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { name: sid, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      summary: Sign one of a user's devices out (admin)
+      tags: [Users]
+      description: As `DELETE /users/me/sessions/{id}`, for any user. Audited as `auth.session_revoked` with `by_admin`. v2.6.
+      responses:
+        '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/users/{id}/streaming-limits:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A user's streaming caps (admin)
+      tags: [Users]
+      responses:
+        '200':
+          description: The caps; null = no cap.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/StreamingLimits' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Set a user's streaming caps (admin)
+      tags: [Users]
+      description: |
+        Admin-enforced ceilings, read at each play decision / transcode
+        start (no re-login needed). `max_concurrent_streams` and
+        `max_stream_bitrate_kbps` are replaced as sent (null / absent =
+        no cap). `max_remote_stream_bitrate_kbps` (v2.6) is optional:
+        absent keeps the stored value, null clears it. Unknown fields
+        are a 400. Audited as `user.streaming_limits_change`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StreamingLimits' }
+      responses:
+        '204': { description: Saved. }
+        '400':
+          description: Negative cap or unknown field.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
 
   /api/v1/users/{id}/password:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -6781,6 +6992,39 @@ components:
         abr:                 { type: boolean, description: 'Enable multi-rendition HLS ladder (the player picks rungs on real-time bandwidth).' }
         abr_max_height:      { type: integer, description: 'Hard cap on rung height (0 = source).' }
         abr_auto_max_height: { type: integer, description: 'Soft cap on rung height for AUTO playback (0 = source). An explicit quality pick can still exceed this up to abr_max_height.' }
+        # Internet streaming limit (v2.6; read live, no restart)
+        remote_max_bitrate_kbps:
+          type: integer
+          description: >
+            Bitrate ceiling (kbps) for streams to clients outside the home
+            network; 0 / absent = unlimited. A remote client whose video
+            source exceeds it is transcoded down to it. Not restart-required.
+        local_networks:
+          type: array
+          items: { type: string }
+          description: >
+            Extra CIDRs (or bare IPs) treated as the home network, on top of
+            the built-in loopback, RFC 1918 / unique-local, link-local,
+            100.64.0.0/10 (Tailscale / CGNAT) and the server's own IPv6
+            prefixes. An entry that isn't an IP or CIDR is a 400.
+
+    SignedInSession:
+      type: object
+      description: One sign-in (refresh session). Never carries a token or its hash.
+      properties:
+        id:           { type: string, format: uuid }
+        client_name:  { type: string, description: 'Device label ("Chrome on Windows", "Roku", or the X-Device-Name the client sent). Empty for sign-ins made before v2.6 until their next refresh.' }
+        platform:     { type: string, enum: [web, android, ios, roku, tizen, webos, xbox], description: 'Omitted when unrecognised.' }
+        ip_address:   { type: string, description: 'Trusted client IP of the latest sign-in / refresh.' }
+        created_at:   { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time, description: 'Approximate: sign-in or latest refresh.' }
+        current:      { type: boolean, description: "True on the caller's own sign-in." }
+    StreamingLimits:
+      type: object
+      properties:
+        max_concurrent_streams:         { type: integer, nullable: true }
+        max_stream_bitrate_kbps:        { type: integer, nullable: true, description: 'Applies on the home network and over the internet.' }
+        max_remote_stream_bitrate_kbps: { type: integer, nullable: true, description: 'Internet-only cap (v2.6); combined with the server-wide internet limit, lowest wins.' }
 
     ScheduledTask:
       type: object

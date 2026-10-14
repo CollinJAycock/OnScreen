@@ -84,6 +84,9 @@ type mockUserDB struct {
 	// revocation to. Empty in most fixtures.
 	profileIDs []uuid.UUID
 
+	// streamCaps records UpdateUserStreamCaps calls.
+	streamCaps []gen.UpdateUserStreamCapsParams
+
 	hubLayout     []byte
 	listUsersRows []gen.ListUsersRow
 	listUsersErr  error
@@ -172,7 +175,8 @@ func (m *mockUserDB) ListManagedProfileIDs(_ context.Context, _ pgtype.UUID) ([]
 	return m.profileIDs, nil
 }
 
-func (m *mockUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStreamCapsParams) error {
+func (m *mockUserDB) UpdateUserStreamCaps(_ context.Context, arg gen.UpdateUserStreamCapsParams) error {
+	m.streamCaps = append(m.streamCaps, arg)
 	return nil
 }
 

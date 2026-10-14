@@ -119,7 +119,25 @@ const (
 	// server-log line, so an operator asked "why was I logged out everywhere?"
 	// found nothing on the audit page to answer with. user_id and target are
 	// the affected user, not an actor: no admin did this.
+	//
+	// The same action also records the two REQUESTED bulk sign-outs, where
+	// someone did act: reason user_signed_out_others ("sign out everywhere
+	// else" from the signed-in devices list) and admin_signed_out_all (an
+	// admin signing a user out on every device). For those, user_id is the
+	// actor and target the affected user, as for every other admin action.
 	ActionSessionsRevoked = "auth.sessions_revoked"
+
+	// ActionSessionRevoked records one sign-in (refresh session) being
+	// revoked from a signed-in devices list — by its owner or by an admin.
+	// user_id is the actor, target the session owner; detail carries the
+	// session_id, its device label, whether an admin did it (by_admin) and
+	// whether it was the actor's own current session (current, i.e. a
+	// sign-out).
+	ActionSessionRevoked = "auth.session_revoked"
+
+	// ActionUserStreamLimitsChange records an admin changing a user's
+	// streaming caps (concurrent streams, bitrate, internet bitrate).
+	ActionUserStreamLimitsChange = "user.streaming_limits_change"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

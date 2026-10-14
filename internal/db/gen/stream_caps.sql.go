@@ -14,15 +14,17 @@ import (
 const getUserStreamCaps = `-- name: GetUserStreamCaps :one
 SELECT
     COALESCE(u.max_concurrent_streams, p.max_concurrent_streams)   AS max_concurrent_streams,
-    COALESCE(u.max_stream_bitrate_kbps, p.max_stream_bitrate_kbps) AS max_stream_bitrate_kbps
+    COALESCE(u.max_stream_bitrate_kbps, p.max_stream_bitrate_kbps) AS max_stream_bitrate_kbps,
+    COALESCE(u.max_remote_stream_bitrate_kbps, p.max_remote_stream_bitrate_kbps) AS max_remote_stream_bitrate_kbps
 FROM users u
 LEFT JOIN users p ON p.id = u.parent_user_id
 WHERE u.id = $1
 `
 
 type GetUserStreamCapsRow struct {
-	MaxConcurrentStreams *int32 `json:"max_concurrent_streams"`
-	MaxStreamBitrateKbps *int32 `json:"max_stream_bitrate_kbps"`
+	MaxConcurrentStreams       *int32 `json:"max_concurrent_streams"`
+	MaxStreamBitrateKbps       *int32 `json:"max_stream_bitrate_kbps"`
+	MaxRemoteStreamBitrateKbps *int32 `json:"max_remote_stream_bitrate_kbps"`
 }
 
 // Resolves against the EFFECTIVE OWNER: a managed profile with no caps of its
@@ -40,24 +42,39 @@ type GetUserStreamCapsRow struct {
 func (q *Queries) GetUserStreamCaps(ctx context.Context, id uuid.UUID) (GetUserStreamCapsRow, error) {
 	row := q.db.QueryRow(ctx, getUserStreamCaps, id)
 	var i GetUserStreamCapsRow
-	err := row.Scan(&i.MaxConcurrentStreams, &i.MaxStreamBitrateKbps)
+	err := row.Scan(&i.MaxConcurrentStreams, &i.MaxStreamBitrateKbps, &i.MaxRemoteStreamBitrateKbps)
 	return i, err
 }
 
 const updateUserStreamCaps = `-- name: UpdateUserStreamCaps :exec
 UPDATE users
-SET max_concurrent_streams = $2,
-    max_stream_bitrate_kbps = $3
-WHERE id = $1
+SET max_concurrent_streams = $1,
+    max_stream_bitrate_kbps = $2,
+    max_remote_stream_bitrate_kbps = CASE
+        WHEN $3::boolean THEN $4::integer
+        ELSE max_remote_stream_bitrate_kbps
+    END
+WHERE id = $5
 `
 
 type UpdateUserStreamCapsParams struct {
-	ID                   uuid.UUID `json:"id"`
-	MaxConcurrentStreams *int32    `json:"max_concurrent_streams"`
-	MaxStreamBitrateKbps *int32    `json:"max_stream_bitrate_kbps"`
+	MaxConcurrentStreams       *int32    `json:"max_concurrent_streams"`
+	MaxStreamBitrateKbps       *int32    `json:"max_stream_bitrate_kbps"`
+	SetRemote                  bool      `json:"set_remote"`
+	MaxRemoteStreamBitrateKbps *int32    `json:"max_remote_stream_bitrate_kbps"`
+	ID                         uuid.UUID `json:"id"`
 }
 
+// The internet (remote) cap is written only when set_remote is true, so a
+// caller that predates the column (an old web bundle PUTting just the two
+// original fields) leaves an admin's remote cap alone instead of clearing it.
 func (q *Queries) UpdateUserStreamCaps(ctx context.Context, arg UpdateUserStreamCapsParams) error {
-	_, err := q.db.Exec(ctx, updateUserStreamCaps, arg.ID, arg.MaxConcurrentStreams, arg.MaxStreamBitrateKbps)
+	_, err := q.db.Exec(ctx, updateUserStreamCaps,
+		arg.MaxConcurrentStreams,
+		arg.MaxStreamBitrateKbps,
+		arg.SetRemote,
+		arg.MaxRemoteStreamBitrateKbps,
+		arg.ID,
+	)
 	return err
 }

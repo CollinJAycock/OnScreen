@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { authApi, settingsApi } from '$lib/api';
+  import { authApi, settingsApi, userApi } from '$lib/api';
+  import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import type { TLSStatus } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
@@ -240,6 +241,26 @@
       </form>
       <p class="hint">Enter a current authenticator code or a recovery code to turn 2FA off.</p>
     {/if}
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>Signed-in devices</h2>
+        <p class="sub">
+          Browsers and apps signed in to your account. Signing one out ends its
+          session at once; your other devices stay signed in.
+        </p>
+      </div>
+    </div>
+    <SignedInDevices
+      load={() => userApi.listMySessions()}
+      revoke={(id) => userApi.revokeMySession(id)}
+      revokeAll={() => userApi.revokeMyOtherSessions()}
+      revokeAllLabel="Sign out everywhere else"
+      revokeAllConfirm="Sign out every other device signed in to your account? This browser stays signed in."
+      keepCurrent
+    />
   </section>
 
   <section class="card">

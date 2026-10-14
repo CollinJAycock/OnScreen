@@ -423,7 +423,20 @@ ntfy / Gotify server must use `https`.
 - **Single-device logout does not revoke HLS segment tokens**; segment tokens
   are revocable only per user, and revoking them would stop the user's other
   devices. Refresh-token theft, password change/reset, demotion and deletion do
-  revoke them. Per-device revocation needs a session id in the access token.
+  revoke them. Access, asset and stream tokens now carry their sign-in's id
+  (`sid`), and the auth middleware's per-request epoch read also checks that
+  the sign-in still exists (same query, primary pool), so signing one device
+  out from the signed-in devices list kills that device's tokens on their next
+  request without touching the others. A transcode already streaming to it runs
+  on its segment token until the stream goes idle. Tokens minted before the
+  `sid` claim existed, and PIN-switch tokens (no sign-in of their own), have
+  only the epoch check and lapse at their own expiry.
+- **The internet streaming limit trusts the same client address as the audit
+  log.** Behind a trusted proxy that forwards no `X-Forwarded-For` /
+  `X-Real-IP`, every client resolves to the proxy's private address and counts
+  as local, so the limit doesn't apply. It is a bandwidth policy, not an access
+  control; the direct file routes don't enforce it (see
+  docs/capability-profiles.md §12).
 - **The first-run setup gate trusts the peer address.** Behind Docker
   Desktop, rootless Podman, or docker-proxy on the IPv6 path, every client
   appears to come from the (private) bridge gateway, so an internet client can

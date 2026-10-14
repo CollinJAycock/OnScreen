@@ -225,3 +225,37 @@ func TestNewEncryptor_InvalidKeySize(t *testing.T) {
 		t.Fatal("expected error for short key")
 	}
 }
+
+// The sid claim survives every token kind a session mints, and is absent
+// (uuid.Nil) when the claims carry none — PIN-switch tokens have no session.
+func TestSessionIDClaimRoundTrip(t *testing.T) {
+	tm, err := NewTokenMaker(DeriveKey32("test-secret-key-that-is-32-bytes!"))
+	if err != nil {
+		t.Fatalf("NewTokenMaker: %v", err)
+	}
+	sid := uuid.New()
+	claims := Claims{UserID: uuid.New(), Username: "u", SessionID: sid}
+
+	access, _ := tm.IssueAccessToken(claims)
+	asset, _ := tm.IssueAssetToken(claims)
+	stream, _ := tm.IssueStreamToken(claims, uuid.New())
+	for name, tok := range map[string]string{"access": access, "asset": asset, "stream": stream} {
+		got, err := tm.ValidateAccessToken(tok)
+		if err != nil {
+			t.Fatalf("%s: validate: %v", name, err)
+		}
+		if got.SessionID != sid {
+			t.Errorf("%s: SessionID = %v, want %v", name, got.SessionID, sid)
+		}
+	}
+
+	claims.SessionID = uuid.Nil
+	bare, _ := tm.IssueAccessToken(claims)
+	got, err := tm.ValidateAccessToken(bare)
+	if err != nil {
+		t.Fatalf("validate: %v", err)
+	}
+	if got.SessionID != uuid.Nil {
+		t.Errorf("sessionless token: SessionID = %v, want nil", got.SessionID)
+	}
+}
