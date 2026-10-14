@@ -115,6 +115,7 @@ type Handlers struct {
 	Upcoming      *v1.UpcomingHandler // Radarr/Sonarr calendar for the request UI
 	Issues        *v1.IssueHandler    // "Report a problem" + admin Library health / re-grab
 	Labels        *v1.LabelHandler    // admin item labels (label restrictions match them)
+	Music         *v1.MusicHandler    // similar artists, "Appears on", instant mix
 	StreamTracker *streaming.Tracker
 	Artwork       *artwork.Manager
 	ArtworkRoots  func() []ArtworkRoot    // per-library scan_paths for ACL-aware artwork serving
@@ -1247,6 +1248,14 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/studios", h.Studios.List)
 				r.Get("/studios/{id}", h.Studios.Get)
 				r.Get("/studios/{id}/items", h.Studios.Items)
+			}
+			// Music discovery: similar artists, the artist page's "Appears on"
+			// and instant mixes. Library access, the rating ceiling and label
+			// restrictions apply (see v1.MusicHandler).
+			if h.Music != nil {
+				r.Get("/music/artists/{id}/similar", h.Music.Similar)
+				r.Get("/music/artists/{id}/appears-on", h.Music.AppearsOn)
+				r.Get("/music/mix", h.Music.Mix)
 			}
 
 			// Individual media items — player, children, progress, on-demand enrich.

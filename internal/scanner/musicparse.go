@@ -7,6 +7,7 @@ package scanner
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dhowden/tag"
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/mediastore"
@@ -62,6 +64,21 @@ type MusicTags struct {
 	ReplayGainTrackPeak *float64
 	ReplayGainAlbumGain *float64
 	ReplayGainAlbumPeak *float64
+	// Artists is the multi-valued ARTISTS tag (MusicBrainz Picard's list of
+	// every artist credited on the track, without join phrases), and
+	// ArtistMBIDs the multi-valued MUSICBRAINZ_ARTISTID in the same order.
+	// Empty when the file doesn't carry them; trackCredits falls back to
+	// the feat. clauses of Artist and Title.
+	Artists     []string
+	ArtistMBIDs []uuid.UUID
+	// TagsRead is true when the file's embedded tags were read. False means
+	// everything here came from the path, so absent ReplayGain says nothing
+	// about the file's tags (see media.CreateFileParams.ReplayGainKnown).
+	TagsRead bool
+
+	// creditsStored records that processMusicHierarchy stored the track's
+	// artist credits, so processFile can mark the file's credits read.
+	creditsStored bool
 }
 
 // trackNumberRE matches a leading track number like "01 - ", "01. ", "01 ", "1-".
@@ -110,6 +127,9 @@ func ReadMusicTags(filePath string) (*MusicTags, error) {
 // the folder structure (path-only, no read).
 func ReadMusicTagsStore(ctx context.Context, store mediastore.Store, filePath string) (*MusicTags, error) {
 	tags, tagErr := readEmbeddedTags(ctx, store, filePath)
+	if tagErr == nil && tags != nil {
+		tags.TagsRead = true
+	}
 	fb := parseMusicPath(filePath)
 	if tagErr != nil || tags.effectiveArtist() == "" || tags.Title == "" {
 		// Fall back to folder-based parsing. Merge with any partial tag data.
@@ -227,6 +247,18 @@ func readEmbeddedTags(ctx context.Context, store mediastore.Store, filePath stri
 	raw := m.Raw()
 	mt.enrichFromRaw(raw)
 
+	// FLAC: dhowden/tag keeps only the last value of a repeated Vorbis
+	// comment, which loses multi-valued ARTISTS / MUSICBRAINZ_ARTISTID
+	// (and turns a file with two ARTIST fields into a track by the second
+	// artist). Re-read the comment block for those.
+	if m.FileType() == tag.FLAC {
+		if _, err := f.Seek(0, io.SeekStart); err == nil {
+			if c, err := readFLACComments(f); err == nil {
+				mt.applyMultiValued(c)
+			}
+		}
+	}
+
 	return mt, nil
 }
 
@@ -235,6 +267,18 @@ func readEmbeddedTags(ctx context.Context, store mediastore.Store, filePath stri
 // variants for each field (ID3 / Vorbis / MP4 / MP4 freeform) and take the
 // first non-empty hit.
 func (m *MusicTags) enrichFromRaw(raw map[string]interface{}) {
+	raw = withID3UserText(raw)
+
+	// Multi-valued artist credits (Picard's ARTISTS, and the artist MBIDs in
+	// the same order). ID3v2.4 separates values with NUL, MP4 freeform atoms
+	// come back joined with ";".
+	m.Artists = splitMultiValue(rawLookup(raw, "ARTISTS", "----:com.apple.iTunes:ARTISTS"), false)
+	m.ArtistMBIDs = parseMBIDList(rawLookup(raw,
+		"MUSICBRAINZ_ARTISTID",
+		"MusicBrainz Artist Id",
+		"----:com.apple.iTunes:MusicBrainz Artist Id",
+	))
+
 	// MusicBrainz IDs. Vorbis uses UPPERCASE; ID3 uses TXXX:MusicBrainz Xxx
 	// Id (mixed case); MP4 uses ----:com.apple.iTunes:MusicBrainz Xxx Id.
 	m.MBRecordingID = parseMBID(rawLookup(raw,
@@ -361,17 +405,92 @@ func stringifyRaw(v interface{}) string {
 }
 
 // parseMBID parses a MusicBrainz ID (UUID) from a raw tag value. Returns the
-// zero uuid.UUID if parsing fails — callers treat uuid.Nil as "absent".
+// zero uuid.UUID if parsing fails — callers treat uuid.Nil as "absent". A
+// multi-valued tag (a track by two artists carries two artist ids) yields
+// the first.
 func parseMBID(v interface{}) uuid.UUID {
-	s := cleanTag(stringifyRaw(v))
-	if s == "" {
-		return uuid.Nil
+	if ids := parseMBIDList(v); len(ids) > 0 {
+		return ids[0]
 	}
-	id, err := uuid.Parse(s)
-	if err != nil {
-		return uuid.Nil
+	return uuid.Nil
+}
+
+// parseMBIDList parses every MusicBrainz ID in a possibly multi-valued tag
+// value, in order. Values are separated by NUL (ID3v2.4), ";" (MP4, joined
+// by the tag reader) or "/" (ID3v2.3) — none of which occur in a UUID. An
+// unparseable value ends the list there, so a partial list never pairs ids
+// with the wrong names.
+func parseMBIDList(v interface{}) []uuid.UUID {
+	var out []uuid.UUID
+	for _, s := range splitMultiValue(v, true) {
+		id, err := uuid.Parse(s)
+		if err != nil {
+			break
+		}
+		out = append(out, id)
 	}
-	return id
+	return out
+}
+
+// splitMultiValue splits a raw multi-valued tag into its cleaned, non-empty
+// values: a []string as is, a string on NUL and ";" — and on "/" too when
+// slash is set (only for values that can't contain one, like MBIDs: an
+// artist list must keep "AC/DC" whole).
+func splitMultiValue(v interface{}, slash bool) []string {
+	var parts []string
+	switch t := v.(type) {
+	case nil:
+		return nil
+	case []string:
+		parts = t
+	default:
+		parts = []string{stringifyRaw(v)}
+	}
+	seps := "\x00;"
+	if slash {
+		seps += "/"
+	}
+	var out []string
+	for _, p := range parts {
+		for _, q := range strings.FieldsFunc(p, func(r rune) bool { return strings.ContainsRune(seps, r) }) {
+			if q = cleanTag(q); q != "" {
+				out = append(out, q)
+			}
+		}
+	}
+	return out
+}
+
+// withID3UserText returns raw with each ID3 user-defined text frame (TXXX)
+// also keyed by its description. dhowden/tag stores those frames as "TXXX",
+// "TXXX_0", … holding a *tag.Comm, so a lookup by the description every
+// tagger writes ("MusicBrainz Artist Id", "REPLAYGAIN_TRACK_GAIN", "ARTISTS")
+// found nothing: an MP3's MusicBrainz ids and ReplayGain were never read.
+// raw is returned unchanged when it has no such frame.
+func withID3UserText(raw map[string]interface{}) map[string]interface{} {
+	var out map[string]interface{}
+	for k, v := range raw {
+		if !strings.HasPrefix(k, "TXXX") && !strings.HasPrefix(k, "TXX") {
+			continue
+		}
+		c, ok := v.(*tag.Comm)
+		if !ok || c == nil || c.Description == "" {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]interface{}, len(raw)+4)
+			for k2, v2 := range raw {
+				out[k2] = v2
+			}
+		}
+		if _, taken := out[c.Description]; !taken {
+			out[c.Description] = c.Text
+		}
+	}
+	if out == nil {
+		return raw
+	}
+	return out
 }
 
 // parseReplayGain parses a ReplayGain gain value like "-7.89 dB" or "-7.89"

@@ -126,7 +126,10 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	// 1. Find or create the artist (top-level, parent_id=null). Use the
 	//    album artist so compilations group under one parent rather than
 	//    fanning out to one artist per track.
-	artistTitle := s.resolveArtistTitle(ctx, libraryID, tags.AlbumArtist)
+	// A featured clause in the album artist tag ("Jay-Z feat. Rihanna",
+	// common when ALBUMARTIST is missing and defaults to ARTIST) is a
+	// credit on the track, not part of the artist the album hangs under.
+	artistTitle := s.resolveArtistTitle(ctx, libraryID, albumArtistName(tags.AlbumArtist))
 	artistParams := media.CreateItemParams{
 		LibraryID: libraryID,
 		Type:      "artist",
@@ -276,6 +279,10 @@ func (s *Scanner) processMusicHierarchy(ctx context.Context, libraryID uuid.UUID
 	if splitsFold && filled && s.wasFoldedTrack(libraryID, track.ID) {
 		s.retitleTrack(ctx, track, tags)
 	}
+
+	// Featured artists and other credited performers (track_artists): the
+	// album artist stays the track's artist, the rest are credits.
+	tags.creditsStored = s.storeTrackCredits(ctx, libraryID, artist.ID, track, tags)
 
 	// 4. Album art: prefer disk-side cover files (cover.jpg / folder.jpg /
 	// album.jpg / front.jpg / poster.jpg), then fall back to embedded

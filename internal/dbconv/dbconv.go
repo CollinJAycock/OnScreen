@@ -87,6 +87,10 @@ func numericToFloat64Ptr(n pgtype.Numeric) *float64 {
 	return &v
 }
 
+// NumericToFloat64Ptr converts a nullable numeric column to *float64 (nil
+// for NULL).
+func NumericToFloat64Ptr(n pgtype.Numeric) *float64 { return numericToFloat64Ptr(n) }
+
 func Float64PtrToNumeric(f *float64) pgtype.Numeric {
 	if f == nil {
 		return pgtype.Numeric{}
@@ -453,6 +457,7 @@ func GenMediaFileToFile(f gen.MediaFile) media.File {
 		ReplayGainTrackPeak: numericToFloat64Ptr(f.ReplaygainTrackPeak),
 		ReplayGainAlbumGain: numericToFloat64Ptr(f.ReplaygainAlbumGain),
 		ReplayGainAlbumPeak: numericToFloat64Ptr(f.ReplaygainAlbumPeak),
+		ReplayGainSource:    f.ReplaygainSource,
 		Status:              f.Status,
 		MissingSince:        pgtimeTZ(f.MissingSince),
 		ScannedAt:           mustTimeTZ(f.ScannedAt),
@@ -493,5 +498,6 @@ func CreateFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 		ReplaygainTrackPeak: Float64PtrToNumeric(p.ReplayGainTrackPeak),
 		ReplaygainAlbumGain: Float64PtrToNumeric(p.ReplayGainAlbumGain),
 		ReplaygainAlbumPeak: Float64PtrToNumeric(p.ReplayGainAlbumPeak),
+		ReplaygainSource:    p.ReplayGainSource,
 	}
 }

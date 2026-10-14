@@ -49,6 +49,7 @@ import (
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/livetv"
+	"github.com/onscreen/onscreen/internal/loudness"
 	"github.com/onscreen/onscreen/internal/lyrics"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -621,7 +622,10 @@ func run() error {
 	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger).WithMetrics(metrics).
 		// Admin-set missing-file grace (System settings override the env
 		// default); read per scan so a change applies without a restart.
-		WithMissingFileGrace(func() time.Duration { return cfg.MissingFileGracePeriod })
+		WithMissingFileGrace(func() time.Duration { return cfg.MissingFileGracePeriod }).
+		// Featured-artist credits (track_artists): "Appears on" on the
+		// artist page.
+		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)})
 	notifBrokerEarly := notification.NewBroker()
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
@@ -1521,6 +1525,22 @@ func run() error {
 			return rep.Status, rep.Detail, nil
 		},
 		logger))
+	// Loudness analysis for music without ReplayGain tags: measures EBU
+	// R128 loudness + true peak with ffmpeg and writes ReplayGain 2.0 track
+	// and album values, marked 'analyzed' (tag values are never touched).
+	// Runs here, not on the transcode fleet. Object-storage sources are
+	// read through a short-lived signed URL, like the scanner's ffprobe.
+	// Seeded DISABLED below, like the integrity probe.
+	schedRegistry.Register("loudness_analysis", scheduler.NewLoudnessAnalysisHandler(
+		loudnessStore{q: gen.New(rwPool)},
+		func(ctx context.Context, path string) (loudness.Measurement, error) {
+			src := path
+			if u, err := mediaStoreProvider.SignedURL(ctx, path, time.Hour); err == nil && u != "" {
+				src = u
+			}
+			return loudness.Measure(ctx, src)
+		},
+		logger))
 	// Nightly seek-bar thumbnail backfill for trickplay-enabled libraries:
 	// oldest items first within a time budget, through the same single
 	// worker slot as post-scan generation (seeded enabled below).
@@ -1638,6 +1658,7 @@ func run() error {
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
+		Music:           v1.NewMusicHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
 		Audiobook:       v1.NewAudiobookHandler(gen.New(rwPool), libSvc, logger),
 		WatchState:      watchStateHandler,

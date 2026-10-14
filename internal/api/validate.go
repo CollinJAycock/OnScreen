@@ -54,6 +54,7 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("transcode", h.NativeTranscode != nil, h.NativeTranscode)
 	check("trickplay", h.Trickplay != nil, h.Trickplay)
 	check("watch_state", h.WatchState != nil, h.WatchState)
+	check("music", h.Music != nil, h.Music)
 
 	if len(missing) > 0 {
 		sort.Strings(missing)

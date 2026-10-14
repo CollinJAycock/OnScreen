@@ -589,6 +589,11 @@ type ItemFileResponse struct {
 	ReplayGainTrackPeak *float64 `json:"replaygain_track_peak,omitempty"`
 	ReplayGainAlbumGain *float64 `json:"replaygain_album_gain,omitempty"`
 	ReplayGainAlbumPeak *float64 `json:"replaygain_album_peak,omitempty"`
+	// ReplayGainSource says where the replaygain_* values came from: "tags"
+	// (the file's own tags) or "analyzed" (measured by the server's
+	// loudness_analysis task, EBU R128 → ReplayGain 2.0). Omitted when the
+	// file has none (additive, v2.6).
+	ReplayGainSource *string `json:"replaygain_source,omitempty"`
 	// IntegrityStatus is the opt-in deep-decode probe's verdict:
 	// "unchecked" | "ok" | "damaged" (migration 00018). Clients badge
 	// damaged files and pre-empt playback with a clear message instead of
@@ -1042,6 +1047,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			ReplayGainTrackPeak: f.ReplayGainTrackPeak,
 			ReplayGainAlbumGain: f.ReplayGainAlbumGain,
 			ReplayGainAlbumPeak: f.ReplayGainAlbumPeak,
+			ReplayGainSource:    f.ReplayGainSource,
 			IntegrityStatus:     f.IntegrityStatus,
 			AudioStreams:        parseJSONBAudioStreams(f.AudioStreams),
 			SubtitleStreams:     parseJSONBSubtitleStreams(f.SubtitleStreams),

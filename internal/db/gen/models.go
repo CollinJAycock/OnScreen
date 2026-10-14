@@ -349,6 +349,18 @@ type MediaFile struct {
 	DvProfile           *int16             `json:"dv_profile"`
 	Edition             *string            `json:"edition"`
 	PartIndex           *int16             `json:"part_index"`
+	ReplaygainSource    *string            `json:"replaygain_source"`
+}
+
+type MediaFileLoudness struct {
+	FileID         uuid.UUID          `json:"file_id"`
+	IntegratedLufs pgtype.Numeric     `json:"integrated_lufs"`
+	TruePeak       pgtype.Numeric     `json:"true_peak"`
+	DurationMs     *int64             `json:"duration_ms"`
+	FileSize       int64              `json:"file_size"`
+	FileHash       *string            `json:"file_hash"`
+	Error          *string            `json:"error"`
+	AnalyzedAt     pgtype.Timestamptz `json:"analyzed_at"`
 }
 
 type MediaIssue struct {
@@ -712,6 +724,18 @@ type TotpRecoveryCode struct {
 	CodeHash  string             `json:"code_hash"`
 	UsedAt    pgtype.Timestamptz `json:"used_at"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type TrackArtist struct {
+	TrackID  uuid.UUID `json:"track_id"`
+	ArtistID uuid.UUID `json:"artist_id"`
+	Role     string    `json:"role"`
+	Position int16     `json:"position"`
+}
+
+type TrackCreditScan struct {
+	FileID    uuid.UUID          `json:"file_id"`
+	ScannedAt pgtype.Timestamptz `json:"scanned_at"`
 }
 
 type TrickplayStatus struct {
