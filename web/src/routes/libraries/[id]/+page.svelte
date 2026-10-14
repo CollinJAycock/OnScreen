@@ -12,6 +12,7 @@
   import PodcastSubscriptions from '$lib/components/PodcastSubscriptions.svelte';
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';
   import CollectionPicker from '$lib/components/CollectionPicker.svelte';
+  import LabelPicker from '$lib/components/LabelPicker.svelte';
   import { toast } from '$lib/stores/toast';
   import { toggleSelected } from '$lib/photoAlbums';
   import {
@@ -44,6 +45,9 @@
   let selectedIds = new Set<string>();
   let albumPickerOpen = false;
   let collectionPickerOpen = false;
+  // Admins can also label the selection (LabelPicker) — labels drive
+  // per-user label restrictions.
+  let labelPickerOpen = false;
 
   function toggleSelecting() {
     selecting = !selecting;
@@ -1117,8 +1121,25 @@
         on:click={() => collectionPickerOpen = true}
       >Add to collection…</button>
     {/if}
+    {#if isAdmin}
+      <button
+        type="button"
+        class="btn-scan"
+        disabled={selectedIds.size === 0}
+        on:click={() => labelPickerOpen = true}
+      >Add label…</button>
+    {/if}
     <button type="button" class="btn-refresh sel-done" on:click={toggleSelecting}>Done</button>
   </div>
+{/if}
+
+{#if isAdmin && canSelect}
+  <LabelPicker
+    open={labelPickerOpen}
+    mediaItemIds={[...selectedIds]}
+    on:close={() => labelPickerOpen = false}
+    on:applied={() => { selecting = false; selectedIds = new Set(); }}
+  />
 {/if}
 
 {#if isAdmin && collectionLibrary}

@@ -1403,6 +1403,18 @@ export interface User {
   // unlimited.
   request_quota_movies?: number | null;
   request_quota_tv?: number | null;
+  // Label restriction: never shown items carrying a blocked label; when
+  // allowed_labels is non-empty, shown only items carrying one of them.
+  // Older servers omit both — treat absent as [].
+  blocked_labels?: string[];
+  allowed_labels?: string[];
+}
+
+/** Body and response of PUT /users/{id}/label-restrictions. An omitted list
+ *  keeps its stored value; [] clears it. */
+export interface LabelRestrictions {
+  blocked_labels?: string[];
+  allowed_labels?: string[];
 }
 
 /** Body of PUT /users/{id}/request-permissions. Every field is optional (at
@@ -1449,6 +1461,10 @@ export const userApi = {
     api.put<void>('/users/me/hub-layout', { rows }),
   setContentRating: (userId: string, maxContentRating: string | null) =>
     api.put<void>(`/users/${userId}/content-rating`, { max_content_rating: maxContentRating }),
+  /** Blocked / allowed labels for the user and its managed profiles; signs
+   *  them out so the change applies at once. Returns the stored lists. */
+  setLabelRestrictions: (userId: string, r: LabelRestrictions) =>
+    api.put<Required<LabelRestrictions>>(`/users/${userId}/label-restrictions`, r),
   getLibraries: (userId: string) =>
     api.get<UserLibraryAccess[]>(`/users/${userId}/libraries`),
   setLibraries: (userId: string, libraryIds: string[]) =>
@@ -2397,6 +2413,9 @@ export interface ItemDetail {
   collection?: ItemCollectionRef;
   // Movies and shows: the manual (admin-curated) collections the item is in.
   collections?: ItemManualCollectionRef[];
+  // The item's own admin labels (admins only; absent otherwise and when
+  // none). Per-user label restrictions match them.
+  labels?: string[];
 }
 
 export interface FavoriteItem {
@@ -2567,6 +2586,32 @@ export interface CollectionItem {
   poster_path?: string;
   duration_ms?: number;
   position?: number;
+}
+
+// ── Labels (admin) ───────────────────────────────────────────────────────────
+
+export interface LabelInUse {
+  label: string;
+  item_count: number;
+}
+
+/** Admin labels on items — what per-user label restrictions match. The
+ *  server lower-cases labels and collapses whitespace. */
+export const labelApi = {
+  /** Every label on a live item, with its item count (autocomplete). */
+  list: async () => (await api.requestList<LabelInUse>('/labels')).items,
+  /** Replace one item's labels; returns the stored (normalised) list. */
+  setItem: async (itemId: string, labels: string[]) =>
+    (await api.put<{ labels: string[] }>(`/items/${itemId}/labels`, { labels })).labels,
+  /** Add and/or remove labels on up to 500 items. */
+  apply: (itemIds: string[], change: { add?: string[]; remove?: string[] }) =>
+    api.post<{ added: number; removed: number }>('/labels/apply', { item_ids: itemIds, ...change })
+};
+
+/** Mirror of the server's itemlabel.Normalize, so chips show what will be
+ *  stored: lower-case, whitespace collapsed and trimmed. */
+export function normalizeLabel(s: string): string {
+  return s.trim().split(/\s+/).filter(Boolean).join(' ').toLowerCase();
 }
 
 export const collectionApi = {
@@ -2767,6 +2812,9 @@ export interface ManagedProfile {
   // — set explicit grants via userApi.setLibraries(profileId, [...])
   // to narrow what the profile can see.
   inherit_library_access: boolean;
+  // Label restriction, inherited from the owner at creation.
+  blocked_labels?: string[];
+  allowed_labels?: string[];
 }
 
 export const profileApi = {

@@ -26,6 +26,7 @@
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import CollectionPicker from '$lib/components/CollectionPicker.svelte';
+  import ItemLabels from '$lib/components/ItemLabels.svelte';
   import PlayOnButton from '$lib/components/PlayOnButton.svelte';
   import FranchiseShelf from '$lib/components/FranchiseShelf.svelte';
   import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
@@ -4336,6 +4337,11 @@
           <a class="collection-chip" href="/collections/{c.id}">{c.name}</a>
         {/each}
       </div>
+    {/if}
+
+    <!-- Admin labels (what per-user label restrictions match). -->
+    {#if isAdmin}
+      <ItemLabels itemId={item.id} labels={item.labels ?? []} />
     {/if}
 
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
