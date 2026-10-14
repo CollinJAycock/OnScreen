@@ -31,10 +31,11 @@
     {
       label: 'General',
       href: '/settings',
-      matches: ['/settings', '/settings/security', '/settings/scrobble', '/settings/system', '/settings/nodes'],
+      matches: ['/settings', '/settings/security', '/settings/remote-access', '/settings/scrobble', '/settings/system', '/settings/nodes'],
       children: [
         { href: '/settings', label: 'General' },
         { href: '/settings/security', label: 'Security' },
+        { href: '/settings/remote-access', label: 'Remote Access' },
         { href: '/settings/scrobble', label: 'Scrobbling' },
         { href: '/settings/system', label: 'System' },
         { href: '/settings/nodes', label: 'Nodes' },
@@ -43,11 +44,12 @@
     {
       label: 'Library',
       href: '/settings/unmatched',
-      matches: ['/settings/unmatched', '/settings/missing-art', '/settings/library-health', '/settings/tasks', '/settings/maintenance'],
+      matches: ['/settings/unmatched', '/settings/missing-art', '/settings/library-health', '/settings/optimized', '/settings/tasks', '/settings/maintenance'],
       children: [
         { href: '/settings/unmatched', label: 'Fix Match' },
         { href: '/settings/missing-art', label: 'Set Poster' },
         { href: '/settings/library-health', label: 'Library Health' },
+        { href: '/settings/optimized', label: 'Optimized' },
         { href: '/settings/tasks', label: 'Tasks' },
         { href: '/settings/maintenance', label: 'Maintenance' },
       ],
@@ -104,7 +106,7 @@
   // starts with /settings — so plain prefix matching would make General
   // match everything. Enumerate its exact pages instead.
   function groupActive(g: Group, current: string): boolean {
-    if (g.label === 'General') return current === '/settings' || current === '/settings/security' || current === '/settings/scrobble' || current === '/settings/system' || current === '/settings/nodes';
+    if (g.label === 'General') return current === '/settings' || current === '/settings/security' || current === '/settings/remote-access' || current === '/settings/scrobble' || current === '/settings/system' || current === '/settings/nodes';
     return g.matches.some((m) => current === m || current.startsWith(m + '/'));
   }
 

@@ -17,6 +17,14 @@ export function decisionLabel(d: string): string {
   }
 }
 
+/** The chip for a direct play of an optimized version ("Optimized ·
+ *  Mobile · 720p 4 Mbps"), or '' for anything else. */
+export function optimizedLabel(s: Pick<ActiveSession, 'optimized_version'>): string {
+  const v = s.optimized_version;
+  if (!v) return '';
+  return v.label ? `Optimized · ${v.label}` : 'Optimized version';
+}
+
 export function decisionTone(d: string): DecisionTone {
   if (d === 'directPlay') return 'direct';
   if (d === 'directStream' || d === 'remux') return 'stream';

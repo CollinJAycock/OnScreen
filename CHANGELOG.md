@@ -725,6 +725,54 @@ API change lands only when every first-party client moves with it — see
     `GET`/`PUT /settings/digest` and `POST /settings/digest/test`;
     `GET`/`POST /digest/unsubscribe?token=…` (no sign-in).
   - **Migration 00054** adds the per-user digest setting.
+- **Optimize.** Admins can make smaller, universally playable copies of
+  movies and episodes ahead of time, so a phone, a weak TV box or a viewer
+  away from home plays a copy directly instead of holding a live transcode
+  for the whole film.
+  - **Making them:** "Optimize…" on a movie, episode, show or season page,
+    on a library ("Optimize…" next to Scan, for the whole library) or on
+    titles selected in a library. Pick a profile: Mobile (720p, 4 Mbps), TV
+    (1080p, 8 Mbps) or Original quality, compatible (the source's
+    resolution, re-encoded to H.264 + AAC so every device can play it).
+  - **Progress:** a title's page lists its optimized versions with their
+    progress and a delete button; Settings ▸ Library ▸ Optimized lists every
+    one on the server, by status.
+  - **Playing them:** when a player would otherwise need a full transcode —
+    a codec or HDR it can't play, or a bitrate limit away from home — the
+    server hands it an optimized version that fits its profile and its
+    limits, and it plays directly. The web player does this now; Now Playing
+    shows "Optimized" on such a stream. Phone and TV apps keep playing the
+    original (and transcoding) until they are updated to ask for it.
+  - **Storage:** copies live in `CACHE_PATH/optimized`, not in the library
+    folders. They don't expire: they are deleted when the original file is
+    deleted or replaced, or when you delete them.
+  - **Server load:** copies are encoded by the converted-download runner —
+    the same encoder choice, the same `DOWNLOAD_MAX_CONVERSIONS` limit and
+    the same transcode slots — with users' downloads going first.
+  - **API (all additive):** `POST /optimize`, `GET /optimize/profiles`,
+    `GET /optimize/jobs`, `GET`/`DELETE /optimize/jobs/{id}`,
+    `DELETE /optimize/versions/{id}` (admin), `GET /media/optimized/{id}`,
+    `optimized_versions` on item detail (never part of `files`), and for
+    clients that send `optimized=1` in `X-Client-Capabilities`, a play
+    decision of `directPlay` with `reason: optimized_version` and
+    `optimized_version`.
+  - **Migration 00056** lets `download_conversions` hold optimized versions
+    (`purpose`, the source's hash, the output's size and bitrate).
+- **Remote access: map a port on the router automatically.** Settings ▸
+  General ▸ Remote access can ask your router to forward a port to the
+  server, so it can be reached from outside your network without setting up
+  port forwarding by hand.
+  - It speaks UPnP (IGD v1 and v2), PCP and NAT-PMP, keeps the mapping alive
+    while the server runs, and removes it when you turn it off or the server
+    stops. Only the server's own port is mapped (you can choose the public
+    port), never when the server listens on loopback only, and in a cluster
+    only one node maps.
+  - The page shows whether a router was found, the public address and port,
+    the last renewal and any error, with advice on testing from outside —
+    and warns plainly that this opens the server to the internet: turn on
+    HTTPS and two-factor sign-in first. It is off unless you turn it on.
+  - **API (additive, admin, not for API keys):**
+    `GET`/`PUT /settings/remote-access`.
 
 ### Changed
 

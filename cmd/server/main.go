@@ -68,6 +68,7 @@ import (
 	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/plugin"
 	"github.com/onscreen/onscreen/internal/podcast"
+	"github.com/onscreen/onscreen/internal/portmap"
 	"github.com/onscreen/onscreen/internal/preencode"
 	"github.com/onscreen/onscreen/internal/requests"
 	"github.com/onscreen/onscreen/internal/safehttp"
@@ -1296,8 +1297,15 @@ func run() error {
 	downloadTTL := time.Duration(cfg.DownloadCacheTTLHours) * time.Hour
 	downloadEncoder := transcode.BestH264Encoder(configuredEncoders(
 		fleetCfg.EmbeddedEncoder, settingsSvc.TranscodeEncoders(ctx), cfg.TranscodeEncoders, allEncoders))
+	// Optimized versions (Optimize…) are the same encode, run by the same
+	// runner from the same queue, into CACHE_PATH/optimized — the server's
+	// writable data volume, not the libraries: those are often mounted
+	// read-only, and other media servers scanning the same folders would
+	// index the copies. They never expire (see internal/downloads).
+	optimizedRoot := cfg.CacheSubdir("optimized")
 	downloadRunner := downloads.NewRunner(rwPool, mediaSvc, downloads.RunnerConfig{
 		Root:          downloadRoot,
+		OptimizedRoot: optimizedRoot,
 		MaxConcurrent: cfg.DownloadMaxConversions,
 		TTL:           downloadTTL,
 		Encoder:       downloadEncoder,
@@ -1320,6 +1328,32 @@ func run() error {
 		WithWatchLimit(watchLimitStore)
 	logger.Info("converted downloads", "encoder", downloadEncoder,
 		"max_conversions", cfg.DownloadMaxConversions, "cache", downloadRoot)
+	optimizeSvc := downloads.NewOptimizeService(rwPool, mediaSvc, optimizedRoot, logger).WithRunner(downloadRunner)
+	optimizeHandler := v1.NewOptimizeHandler(optimizeSvc, logger).WithAudit(auditLogger)
+	// Playback: item detail lists the versions and /media/optimized serves
+	// them; the play decision hands them to optimized=1 clients; Now
+	// Playing names them.
+	itemHandler.WithOptimizedVersions(optimizeSvc)
+	nativeTranscodeHandler.WithOptimizedVersions(optimizeSvc)
+	nativeSessionsHandler.WithOptimizedVersions(optimizeSvc)
+
+	// ── Remote access: automatic router port mapping ─────────────────────────
+	// Settings ▸ Remote access, off by default. Only the master instance
+	// maps (see the RunIfMaster below), so a cluster opens one port on the
+	// router; the status travels through Valkey to whichever node an admin's
+	// request lands on.
+	remoteAccessStatus := portmap.SharedStatus{KV: valkeyClient}
+	portMapper := portmap.New(portmap.Config{ListenAddr: cfg.ListenAddr, Node: cfg.NodeID},
+		func(ctx context.Context) portmap.Settings {
+			ra := settingsSvc.RemoteAccess(ctx)
+			return portmap.Settings{Enabled: ra.MapPort, ExternalPort: ra.ExternalPort}
+		},
+		portmap.LANDiscoverer{Logger: logger}, logger).
+		WithPublisher(remoteAccessStatus.Publish)
+	remoteAccessHandler := v1.NewRemoteAccessHandler(settingsSvc, portMapper, cfg.ListenAddr,
+		cfg.TLSEnabled() || dbTLSConfig != nil, logger).
+		WithSharedStatus(remoteAccessStatus).
+		WithAudit(auditLogger)
 
 	// ── Email / SMTP (settings-driven) ───────────────────────────────────────
 	// Sender resolves SMTPConfig on every Send so admins can rotate creds and
@@ -1640,7 +1674,8 @@ func run() error {
 	// Converted-download cache: expiry, size limit, orphans (seeded enabled).
 	schedRegistry.Register("download_cache_cleanup",
 		scheduler.NewDownloadCacheCleanupHandler(
-			downloads.NewCleaner(rwPool, downloadRoot, int64(cfg.DownloadCacheMaxGB)<<30, logger)))
+			downloads.NewCleaner(rwPool, downloadRoot, int64(cfg.DownloadCacheMaxGB)<<30, logger).
+				WithOptimized(optimizedRoot)))
 	// Nightly franchise-collection pass: bounded TMDB-collection backfill for
 	// movies enriched before franchise tracking, stale-snapshot refresh, and a
 	// DB-only reconcile (seeded enabled below).
@@ -1803,6 +1838,8 @@ func run() error {
 		ArrServices:     arrServicesHandler,
 		Podcasts:        podcastHandler,
 		Downloads:       downloadsHandler,
+		Optimize:        optimizeHandler,
+		RemoteAccess:    remoteAccessHandler,
 		Imports:         importHandler,
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
@@ -2071,6 +2108,14 @@ func run() error {
 	// worker_fleet_down alerts: one node watches the transcode worker registry.
 	g.Go(func() error {
 		masterLock.RunIfMaster(gCtx, fleetMonitor.Run)
+		return nil
+	})
+
+	// Remote access port mapping: the master keeps the router's mapping (when
+	// the setting is on) and removes it when it stops being master or shuts
+	// down.
+	g.Go(func() error {
+		masterLock.RunIfMaster(gCtx, portMapper.Run)
 		return nil
 	})
 

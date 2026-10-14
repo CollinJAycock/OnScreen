@@ -249,6 +249,9 @@ export function clientCapabilitiesHeader(): string {
     'maxAudioChannels=6',
     `maxbitdepth=${caps.hevc10bit ? 10 : 8}`,
     `hdr=${caps.hdr ? 1 : 0}`,
+    // The watch page plays an optimized version the decision hands it
+    // (optimized_version, reason optimized_version) instead of a transcode.
+    'optimized=1',
   ].join(',');
   return capsHeaderCache;
 }

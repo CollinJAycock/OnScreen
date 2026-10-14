@@ -17,7 +17,10 @@ require (
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/google/uuid v1.6.0
+	github.com/huin/goupnp v1.3.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackpal/gateway v1.2.0
+	github.com/jackpal/go-nat-pmp v1.1.0
 	github.com/mark3labs/mcp-go v0.58.0
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/nwaples/rardecode/v2 v2.3.0

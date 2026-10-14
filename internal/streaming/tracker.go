@@ -43,8 +43,12 @@ type Entry struct {
 	// exact (user, item, device) triple.
 	UserID uuid.UUID
 	// FileID is the media_files row StreamFile served (file-traffic entries
-	// from TouchFile only).
+	// from TouchFile only). For an optimized version it is the source file
+	// the version was made from.
 	FileID uuid.UUID
+	// OptimizedID is the optimized version being served instead of the
+	// source file (TouchOptimized); zero for the source itself.
+	OptimizedID uuid.UUID
 	// FromHeartbeat marks an entry refreshed by the player's progress beacon
 	// rather than byte traffic. Its ClientName is the player's self-reported
 	// device name, which is what the web player matches a playback.stop
@@ -173,6 +177,21 @@ func (t *Tracker) TouchFile(userID uuid.UUID, clientIP string, mediaItemID, file
 	init := Entry{UserID: userID, MediaItemID: mediaItemID, ClientIP: clientIP}
 	t.upsert(bytesEntryKey(userID, clientIP, mediaItemID), init, func(e *Entry) {
 		e.FileID = fileID
+		e.OptimizedID = uuid.Nil
+		e.FilePath = filePath
+		e.ClientName = clientName
+	})
+}
+
+// TouchOptimized is TouchFile for an optimized version of the item (a
+// pre-made MP4 served instead of sourceFileID). Same entry as the item's
+// other byte traffic, so a viewer switching between the source and the
+// optimized version stays one card; the card shows whichever was served last.
+func (t *Tracker) TouchOptimized(userID uuid.UUID, clientIP string, mediaItemID, sourceFileID, optimizedID uuid.UUID, filePath, clientName string) {
+	init := Entry{UserID: userID, MediaItemID: mediaItemID, ClientIP: clientIP}
+	t.upsert(bytesEntryKey(userID, clientIP, mediaItemID), init, func(e *Entry) {
+		e.FileID = sourceFileID
+		e.OptimizedID = optimizedID
 		e.FilePath = filePath
 		e.ClientName = clientName
 	})

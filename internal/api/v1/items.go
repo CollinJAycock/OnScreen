@@ -241,6 +241,9 @@ type ItemHandler struct {
 	// chapterThumbs reports which file's chapters have thumbnails next to
 	// the item's trickplay sprites; nil = chapters carry no thumb_url.
 	chapterThumbs ChapterThumbLookup
+	// optimized lists and serves the item's optimized versions
+	// (optimize.go); nil = detail carries none and /media/optimized 404s.
+	optimized OptimizedLister
 	// optional; movie and show details list their studios / networks
 	// (items_studios.go)
 	studios ItemStudioReader
@@ -734,6 +737,12 @@ type ItemDetailResponse struct {
 	TakenAt *time.Time         `json:"taken_at,omitempty"`
 	Files   []ItemFileResponse `json:"files"`
 	Markers []MarkerJSON       `json:"markers,omitempty"`
+	// OptimizedVersions are the item's pre-made MP4 copies (Optimize…,
+	// migration 00056), highest bitrate first — extra versions a client may
+	// play from their stream_url. Never part of files, so a client that
+	// plays files[0] keeps playing the source. Omitted when there are none
+	// (additive, v2.6).
+	OptimizedVersions []OptimizedVersionJSON `json:"optimized_versions,omitempty"`
 
 	// External IDs surfaced for the manual poster-picker UI: when
 	// tmdb_id is set, the picker can skip the "search TMDB for the
@@ -1135,6 +1144,8 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(r.Context(), "list markers", "item_id", id, "err", err)
 		}
 	}
+
+	out.OptimizedVersions = h.optimizedVersionsFor(r.Context(), claims, item)
 
 	if item.Type == "movie" {
 		out.Collection = h.franchiseRef(r.Context(), claims, id)

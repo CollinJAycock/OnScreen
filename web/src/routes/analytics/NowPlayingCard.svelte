@@ -4,7 +4,7 @@
   // source → output shape and, for a remux/transcode, why.
   import { assetUrl, type ActiveSession } from '$lib/api';
   import {
-    canStop, decisionLabel, decisionTone, fmtClock, locationLabel, sourceOutput,
+    canStop, decisionLabel, decisionTone, fmtClock, locationLabel, optimizedLabel, sourceOutput,
     viewerInitial, viewerLabel,
   } from './now-playing';
 
@@ -23,6 +23,7 @@
   const tone = $derived(decisionTone(s.decision));
   const formats = $derived(sourceOutput(s));
   const reasons = $derived(s.decision !== 'directPlay' ? (s.transcode_reasons ?? []) : []);
+  const optimized = $derived(optimizedLabel(s));
 
   // Artwork paths are filesystem-derived: encode each segment (handles # ? in
   // filenames) while keeping the / separators.
@@ -59,6 +60,7 @@
     </div>
     <div class="stream-meta">
       <span class="chip decision {tone}">{decisionLabel(s.decision)}</span>
+      {#if optimized}<span class="chip optimized" title="Playing a pre-made optimized version instead of the original file">{optimized}</span>{/if}
       {#if s.selected_rendition}<span class="muted">· {s.selected_rendition}</span>{/if}
       {#if formats.source || formats.output}
         <span class="formats" title="Source → what the viewer receives">
@@ -125,6 +127,7 @@
   .chip.decision.direct { color: #3ab8f7; }
   .chip.decision.stream { color: #7c6af7; }
   .chip.decision.transcode { color: #f7a03a; }
+  .chip.optimized { color: var(--accent-text, var(--accent)); }
   .stream-meta {
     font-size: 0.72rem; color: var(--text-muted); margin-bottom: 0.3rem;
     display: flex; align-items: center; flex-wrap: wrap; gap: 0.4rem;

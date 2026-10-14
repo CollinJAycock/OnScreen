@@ -11,7 +11,8 @@
 //   - Runner: claims queued encodes from the database and runs ffmpeg on this
 //     server, at most DOWNLOAD_MAX_CONVERSIONS at once and each holding a
 //     slot of the embedded transcode worker, so conversions count against
-//     the same transcode concurrency as playback.
+//     the same transcode concurrency as playback. The admin's optimized
+//     versions (optimize_profiles.go) run from the same queue.
 //   - Cleaner: the download_cache_cleanup scheduler task — evicts expired
 //     files, then the least recently used ones past the cache size limit,
 //     and removes orphans.

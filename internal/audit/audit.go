@@ -168,6 +168,13 @@ const (
 	// user_id is the actor, target the account exported (the same user, or
 	// another one when an admin answers a data request — detail.by_admin).
 	ActionUserDataExport = "user.data_export"
+	// ActionOptimizeRequest / ActionOptimizeDelete record an admin queueing
+	// optimized versions (Optimize… on items, a library or a collection —
+	// each one an encode that takes server time and disk) and deleting one.
+	// detail carries the profile and the selection's counts, or the deleted
+	// version's id, profile and state.
+	ActionOptimizeRequest = "optimize.request"
+	ActionOptimizeDelete  = "optimize.delete"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

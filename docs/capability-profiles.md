@@ -150,6 +150,7 @@ videoDecoder=h264:h265:vp9,audioDecoder=aac:ac3,protocols=mp4:mkv,maxWidth=3840,
 | `hdr` | boolean | no | HDR10 / HDR10+, and HLG unless `hlg` is sent |
 | `hlg` | boolean | not declared — `hdr` decides HLG | HLG check (below) |
 | `dovi` (alias `dolbyvision`) | boolean | no | Dolby Vision (else `unsupported`) |
+| `optimized` | boolean | no | the client plays an `optimized_version` from the decision (§13) |
 
 **HLG (`hlg`).** An HDR10 display isn't necessarily an HLG one: NVIDIA SHIELD
 outputs HDR10 but sends HLG flagged as SDR (dark, green picture). So for an HLG
@@ -383,3 +384,42 @@ stream into a hard failure on exactly the older first-party builds that don't
 ask for a decision, and throttling a range-served file stalls playback instead
 of lowering quality. Every current first-party client asks for the decision
 first. Downloads (`/media/download`) are deliberately not limited either.
+
+## 13. Optimized versions (2026-10, migration 00056)
+
+An admin can have the server encode a file ahead of time into an *optimized
+version* — a progressive MP4, H.264 + stereo AAC, faststart, at the Mobile
+(720p 4 Mbps), TV (1080p 8 Mbps) or original-resolution profile — with the
+converted-download runner (`internal/downloads`). It is an extra version of
+the item, never one of its `files`: first-party clients that predate it pick
+`files[0]` or the decision's `file_id`, and keep getting the source.
+
+`POST /items/{id}/playback-decision` hands one out only to a client that
+declares **`optimized=1`** in `X-Client-Capabilities` — a protocol capability,
+not a decode one: "I play `optimized_version.stream_url` when you give me
+one". For such a client, when the source's verdict is `transcode` (for any
+reason: codec, HDR, resolution, bit depth, or the internet / user bitrate
+cap of §12), the server looks at the item's playable versions — made from
+that source file, whose content hash still matches the file's — highest
+bitrate first, and picks the first that
+
+- `Decide` judges `directPlay` for the client's profile (the version is
+  described as an `mp4` file with `h264` 8-bit video, `aac` 2.0 audio and its
+  own size and bitrate), and
+- is within the request's bitrate cap (the same `min(user cap, user internet
+  cap, server internet limit)` §12 computes; on the LAN only the user's cap).
+
+The response is then `decision: directPlay`, `reason: optimized_version`,
+`optimized_version: {id, profile, label, stream_url, stream_token, width,
+height, bitrate_kbps, …}`, with `file_id` still the source and the source's
+own verdict in `source_decision` / `source_reason` — the client's fallback,
+e.g. when the viewer picks a non-default audio track the version doesn't
+carry. Direct play and remux verdicts are never replaced: they cost the
+server nothing worth saving. Without `optimized=1` the response is exactly
+what it was before.
+
+The web watch page sends `optimized=1`, keeps judging the source with
+`source_decision`, and plays the version's URL where it would otherwise start
+a full transcode ("Auto" quality included). `/media/optimized/{id}` applies
+`/media/stream`'s gates; Now Playing shows the stream as a direct play with
+`optimized_version` set and the version as its output.

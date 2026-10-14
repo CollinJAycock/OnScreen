@@ -16,6 +16,8 @@
   import LabelPicker from '$lib/components/LabelPicker.svelte';
   import BulkMetadataEditor from '$lib/components/BulkMetadataEditor.svelte';
   import { selectRange, toggleAll, allSelected, runLimited } from '$lib/gridSelection';
+  import OptimizeDialog from '$lib/components/OptimizeDialog.svelte';
+  import { OPTIMIZABLE_LIBRARY_TYPES } from '$lib/optimize';
   import { toast } from '$lib/stores/toast';
   import { toggleSelected } from '$lib/photoAlbums';
   import {
@@ -375,6 +377,11 @@
   let libTab: 'items' | 'collections' | 'subscriptions' = 'items';
   $: hasCollectionsTab = collectionLibrary;
   $: hasSubscriptionsTab = isAdmin && library?.type === 'podcast';
+  // "Optimize…" (admin, video libraries): the whole library, or the
+  // selected titles.
+  $: canOptimize = isAdmin && OPTIMIZABLE_LIBRARY_TYPES.includes(library?.type ?? '');
+  let optimizeOpen = false;
+  let optimizeSelectionOnly = false;
   // Libraries whose movies and shows can go into a manual collection.
   $: collectionLibrary = ['movie', 'show', 'anime', 'cartoons'].includes(library?.type ?? '');
   // Admins can select in any library browsed as the main grid (bulk
@@ -801,6 +808,10 @@
             Scan
           {/if}
         </button>
+        {#if canOptimize}
+          <button class="btn-settings" title="Make smaller copies ahead of time that devices play without a live transcode"
+                  on:click={() => { optimizeSelectionOnly = false; optimizeOpen = true; }}>Optimize…</button>
+        {/if}
         <a href="/libraries/{id}/settings" class="btn-settings">Settings</a>
       </div>
     </div>
@@ -1271,8 +1282,27 @@
       <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(true)}>Mark watched</button>
       <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(false)}>Mark unwatched</button>
     {/if}
+    {#if canOptimize}
+      <button
+        type="button"
+        class="btn-scan"
+        disabled={selectedIds.size === 0 || selectedIds.size > 500}
+        title={selectedIds.size > 500 ? 'Select at most 500 titles, or optimize the whole library' : undefined}
+        on:click={() => { optimizeSelectionOnly = true; optimizeOpen = true; }}
+      >Optimize…</button>
+    {/if}
     <button type="button" class="btn-refresh sel-done" on:click={toggleSelecting}>Done</button>
   </div>
+{/if}
+
+{#if canOptimize}
+  <OptimizeDialog
+    open={optimizeOpen}
+    selection={optimizeSelectionOnly ? { item_ids: [...selectedIds] } : { library_id: id }}
+    what={optimizeSelectionOnly ? (selectedIds.size === 1 ? '1 title' : `${selectedIds.size} titles`) : (library?.name ?? 'this library')}
+    onclose={() => optimizeOpen = false}
+    ondone={() => { if (optimizeSelectionOnly) { selecting = false; selectedIds = new Set(); } }}
+  />
 {/if}
 
 {#if isAdmin && canSelect}

@@ -114,6 +114,12 @@ type Handlers struct {
 	// Downloads: converted (lower-quality) downloads — per-user jobs over a
 	// shared, size-limited encode cache.
 	Downloads *v1.DownloadsHandler
+	// Optimize: the admin's optimized versions (Optimize…) — queue, list,
+	// delete. Their stream route lives on Items.
+	Optimize *v1.OptimizeHandler
+	// RemoteAccess: admin Settings ▸ Remote access — automatic router port
+	// mapping (UPnP IGD / NAT-PMP / PCP) and its status. Optional.
+	RemoteAccess *v1.RemoteAccessHandler
 	// Imports: admin import of watch state, ratings, playlists and play
 	// history from a Plex, Jellyfin or Emby server.
 	Imports       *v1.ImportHandler
@@ -249,6 +255,10 @@ func NewRouter(h *Handlers) http.Handler {
 			// download from a mobile webview that can't carry cookies.
 			r.Get("/media/download/{id}", h.Items.DownloadFile)
 			r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
+			// An optimized version (Optimize…) for direct play. Same gates
+			// as /media/stream; a stream token bound to the version's id
+			// (optimized_versions[].stream_token) authenticates it.
+			r.Get("/media/optimized/{id}", h.Items.StreamOptimized)
 		}
 		if h.Subtitles != nil {
 			r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
@@ -988,6 +998,33 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/settings/node/{nodeID}", h.Settings.GetNode)
 					r.Put("/settings/node/{nodeID}", h.Settings.UpdateNode)
 					r.Delete("/settings/node/{nodeID}", h.Settings.DeleteNode)
+				})
+			}
+
+			// Optimized versions — admin only. Each request can queue an
+			// encode per item of a whole library; the queue shares the
+			// converted-download runner and its transcode slots.
+			if h.Optimize != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/optimize/profiles", h.Optimize.Profiles)
+					r.Post("/optimize", h.Optimize.Create)
+					r.Get("/optimize/jobs", h.Optimize.ListJobs)
+					r.Get("/optimize/jobs/{id}", h.Optimize.GetJob)
+					r.Delete("/optimize/jobs/{id}", h.Optimize.Delete)
+					r.Delete("/optimize/versions/{id}", h.Optimize.Delete)
+				})
+			}
+
+			// Remote access (automatic router port mapping) — admin only,
+			// not for API keys: turning it on exposes the server to the
+			// internet.
+			if h.RemoteAccess != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RefuseAPIKey)
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/settings/remote-access", h.RemoteAccess.Get)
+					r.Put("/settings/remote-access", h.RemoteAccess.Update)
 				})
 			}
 

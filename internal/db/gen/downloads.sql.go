@@ -19,15 +19,17 @@ SET status = 'running', started_at = NOW(), updated_at = NOW(),
 WHERE id = (
     SELECT id FROM download_conversions
     WHERE status = 'queued'
-    ORDER BY created_at
+    ORDER BY (purpose = 'optimize'), created_at
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
-RETURNING id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at
+RETURNING id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at, purpose, requested_by, source_file_hash, width, height, bitrate_kbps, duration_ms
 `
 
 // Moves the oldest queued encode to running for this runner. SKIP LOCKED so
-// two servers sharing the database never claim the same row.
+// two servers sharing the database never claim the same row. Downloads go
+// before optimized versions: a user is waiting on a download, while an
+// admin's library-wide optimize can be thousands of rows deep.
 func (q *Queries) ClaimQueuedDownloadConversion(ctx context.Context) (DownloadConversion, error) {
 	row := q.db.QueryRow(ctx, claimQueuedDownloadConversion)
 	var i DownloadConversion
@@ -46,6 +48,13 @@ func (q *Queries) ClaimQueuedDownloadConversion(ctx context.Context) (DownloadCo
 		&i.CompletedAt,
 		&i.LastUsedAt,
 		&i.ExpiresAt,
+		&i.Purpose,
+		&i.RequestedBy,
+		&i.SourceFileHash,
+		&i.Width,
+		&i.Height,
+		&i.BitrateKbps,
+		&i.DurationMs,
 	)
 	return i, err
 }
@@ -146,7 +155,7 @@ func (q *Queries) DeleteUnreferencedPendingConversion(ctx context.Context, id uu
 }
 
 const getDownloadConversion = `-- name: GetDownloadConversion :one
-SELECT id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at FROM download_conversions WHERE id = $1
+SELECT id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at, purpose, requested_by, source_file_hash, width, height, bitrate_kbps, duration_ms FROM download_conversions WHERE id = $1
 `
 
 func (q *Queries) GetDownloadConversion(ctx context.Context, id uuid.UUID) (DownloadConversion, error) {
@@ -167,6 +176,13 @@ func (q *Queries) GetDownloadConversion(ctx context.Context, id uuid.UUID) (Down
 		&i.CompletedAt,
 		&i.LastUsedAt,
 		&i.ExpiresAt,
+		&i.Purpose,
+		&i.RequestedBy,
+		&i.SourceFileHash,
+		&i.Width,
+		&i.Height,
+		&i.BitrateKbps,
+		&i.DurationMs,
 	)
 	return i, err
 }
@@ -239,7 +255,7 @@ DO UPDATE SET
             THEN GREATEST(download_conversions.expires_at, NOW() + ($4::bigint * INTERVAL '1 second'))
         ELSE download_conversions.expires_at
     END
-RETURNING id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at
+RETURNING id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at, purpose, requested_by, source_file_hash, width, height, bitrate_kbps, duration_ms
 `
 
 type GetOrCreateDownloadConversionParams struct {
@@ -251,6 +267,9 @@ type GetOrCreateDownloadConversionParams struct {
 
 // Converted downloads (migration 00051): per-user download_jobs pointing at
 // shared download_conversions, one live encode per (file, quality).
+// download_conversions also holds the admin's optimized versions (purpose
+// 'optimize', migration 00056; queries in optimize.sql): they share the
+// queue and the runner, never the download cache or its eviction.
 // Returns the live (queued / running / ready) encode of this file at this
 // quality, creating a queued one when there is none. A reused ready file is
 // touched so the cache keeps it: last_used_at moves to now and its expiry
@@ -278,6 +297,13 @@ func (q *Queries) GetOrCreateDownloadConversion(ctx context.Context, arg GetOrCr
 		&i.CompletedAt,
 		&i.LastUsedAt,
 		&i.ExpiresAt,
+		&i.Purpose,
+		&i.RequestedBy,
+		&i.SourceFileHash,
+		&i.Width,
+		&i.Height,
+		&i.BitrateKbps,
+		&i.DurationMs,
 	)
 	return i, err
 }
@@ -381,8 +407,8 @@ func (q *Queries) ListDownloadJobViewsForUser(ctx context.Context, userID uuid.U
 }
 
 const listExpiredDownloadConversions = `-- name: ListExpiredDownloadConversions :many
-SELECT id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at FROM download_conversions
-WHERE status = 'ready' AND expires_at < NOW()
+SELECT id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at, purpose, requested_by, source_file_hash, width, height, bitrate_kbps, duration_ms FROM download_conversions
+WHERE purpose = 'download' AND status = 'ready' AND expires_at < NOW()
 ORDER BY expires_at
 `
 
@@ -411,6 +437,13 @@ func (q *Queries) ListExpiredDownloadConversions(ctx context.Context) ([]Downloa
 			&i.CompletedAt,
 			&i.LastUsedAt,
 			&i.ExpiresAt,
+			&i.Purpose,
+			&i.RequestedBy,
+			&i.SourceFileHash,
+			&i.Width,
+			&i.Height,
+			&i.BitrateKbps,
+			&i.DurationMs,
 		); err != nil {
 			return nil, err
 		}
@@ -424,7 +457,7 @@ func (q *Queries) ListExpiredDownloadConversions(ctx context.Context) ([]Downloa
 
 const listLiveDownloadConversionIDs = `-- name: ListLiveDownloadConversionIDs :many
 SELECT id FROM download_conversions
-WHERE status IN ('queued', 'running', 'ready')
+WHERE purpose = 'download' AND status IN ('queued', 'running', 'ready')
 `
 
 // Ids whose files belong in the cache (queued, running or ready); anything
@@ -450,8 +483,8 @@ func (q *Queries) ListLiveDownloadConversionIDs(ctx context.Context) ([]uuid.UUI
 }
 
 const listReadyDownloadConversionsLRU = `-- name: ListReadyDownloadConversionsLRU :many
-SELECT id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at FROM download_conversions
-WHERE status = 'ready'
+SELECT id, media_item_id, media_file_id, quality, status, progress, error, size_bytes, created_at, updated_at, started_at, completed_at, last_used_at, expires_at, purpose, requested_by, source_file_hash, width, height, bitrate_kbps, duration_ms FROM download_conversions
+WHERE purpose = 'download' AND status = 'ready'
 ORDER BY last_used_at, completed_at
 `
 
@@ -481,6 +514,13 @@ func (q *Queries) ListReadyDownloadConversionsLRU(ctx context.Context) ([]Downlo
 			&i.CompletedAt,
 			&i.LastUsedAt,
 			&i.ExpiresAt,
+			&i.Purpose,
+			&i.RequestedBy,
+			&i.SourceFileHash,
+			&i.Width,
+			&i.Height,
+			&i.BitrateKbps,
+			&i.DurationMs,
 		); err != nil {
 			return nil, err
 		}
@@ -523,18 +563,40 @@ const markDownloadConversionReady = `-- name: MarkDownloadConversionReady :execr
 UPDATE download_conversions
 SET status = 'ready', progress = 1, size_bytes = $1,
     completed_at = NOW(), updated_at = NOW(), last_used_at = NOW(),
-    expires_at = NOW() + ($2::bigint * INTERVAL '1 second'), error = NULL
-WHERE id = $3 AND status = 'running'
+    expires_at = CASE
+        WHEN purpose = 'download'
+            THEN NOW() + ($2::bigint * INTERVAL '1 second')
+        ELSE NULL
+    END,
+    width = $3, height = $4,
+    bitrate_kbps = $5, duration_ms = $6,
+    error = NULL
+WHERE id = $7 AND status = 'running'
 `
 
 type MarkDownloadConversionReadyParams struct {
-	SizeBytes  *int64    `json:"size_bytes"`
-	TtlSeconds int64     `json:"ttl_seconds"`
-	ID         uuid.UUID `json:"id"`
+	SizeBytes   *int64    `json:"size_bytes"`
+	TtlSeconds  int64     `json:"ttl_seconds"`
+	Width       *int32    `json:"width"`
+	Height      *int32    `json:"height"`
+	BitrateKbps *int32    `json:"bitrate_kbps"`
+	DurationMs  *int64    `json:"duration_ms"`
+	ID          uuid.UUID `json:"id"`
 }
 
+// A finished encode. A download gets its cache expiry; an optimized version
+// never expires (expires_at stays NULL). The output's dimensions, average
+// bitrate and duration are recorded for the play decision.
 func (q *Queries) MarkDownloadConversionReady(ctx context.Context, arg MarkDownloadConversionReadyParams) (int64, error) {
-	result, err := q.db.Exec(ctx, markDownloadConversionReady, arg.SizeBytes, arg.TtlSeconds, arg.ID)
+	result, err := q.db.Exec(ctx, markDownloadConversionReady,
+		arg.SizeBytes,
+		arg.TtlSeconds,
+		arg.Width,
+		arg.Height,
+		arg.BitrateKbps,
+		arg.DurationMs,
+		arg.ID,
+	)
 	if err != nil {
 		return 0, err
 	}
@@ -546,8 +608,9 @@ DELETE FROM download_conversions
 WHERE status IN ('failed', 'expired') AND updated_at < $1
 `
 
-// Forgets failed and expired encodes after the retention window. Jobs that
-// pointed at them keep reading as expired (conversion_id goes NULL).
+// Forgets failed and expired encodes after the retention window — failed
+// optimized versions too. Jobs that pointed at them keep reading as expired
+// (conversion_id goes NULL).
 func (q *Queries) PurgeOldDownloadConversions(ctx context.Context, before pgtype.Timestamptz) (int64, error) {
 	result, err := q.db.Exec(ctx, purgeOldDownloadConversions, before)
 	if err != nil {
