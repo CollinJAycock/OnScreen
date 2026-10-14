@@ -4655,7 +4655,7 @@
               class="ep-edit-btn"
               on:click={() => openMetaEditor(ep.id)}
               title="Edit episode metadata"
-              aria-label={`Edit metadata: ${ep.index != null ? `episode ${ep.index}, ` : ''}${ep.title}`}
+              aria-label={`Edit metadata: ${ep.index != null ? `${episodeHeading(ep.index, ep.index_end).toLowerCase()}, ` : ''}${ep.title}`}
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="12" height="12" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
             </button>
