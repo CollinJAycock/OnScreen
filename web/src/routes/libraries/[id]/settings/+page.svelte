@@ -44,6 +44,11 @@
   let episodeOrder: EpisodeOrder = 'aired';
   $: hasEpisodes = library?.type === 'show' || library?.type === 'anime' || library?.type === 'cartoons';
 
+  // Movie / TV libraries: write Kodi-compatible NFO files next to the media.
+  // Sent only when changed.
+  let saveNFO = false;
+  $: canSaveNFO = library?.type === 'movie' || hasEpisodes;
+
   let mounted = false;
   let prevId = '';
   let savedTimeout: ReturnType<typeof setTimeout>;
@@ -73,6 +78,7 @@
     trickplayEnabled = false;
     nfoCollections = 'off';
     episodeOrder = 'aired';
+    saveNFO = false;
     tpStatus = null;
     tpMessage = '';
     fetchLibrary();
@@ -91,6 +97,7 @@
       trickplayEnabled = library.trickplay_enabled ?? false;
       nfoCollections = library.nfo_collections ?? 'off';
       episodeOrder = library.episode_order ?? 'aired';
+      saveNFO = library.save_nfo ?? false;
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally { loading = false; }
@@ -148,6 +155,7 @@
           ? { nfo_collections: nfoCollections } : {}),
         ...(hasEpisodes && episodeOrder !== (library?.episode_order ?? 'aired')
           ? { episode_order: episodeOrder } : {}),
+        ...(canSaveNFO && saveNFO !== (library?.save_nfo ?? false) ? { save_nfo: saveNFO } : {}),
       });
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
@@ -345,6 +353,23 @@
             Sonarr or TMDB scrapers are usually plot keywords, not collections — choose "Sets and tags"
             only if you tagged your movies yourself.
           </p>
+        </section>
+      {/if}
+
+      {#if canSaveNFO}
+        <section>
+          <div class="sec-label">NFO files</div>
+          <label class="check-row">
+            <input type="checkbox" bind:checked={saveNFO} data-testid="save-nfo" />
+            <span>
+              <span class="check-title">Save metadata as NFO files next to media</span>
+              <span class="check-help">
+                Writes Kodi-compatible movie.nfo / tvshow.nfo / episode NFO files beside your media after
+                metadata is fetched, edited or re-matched, so Kodi, Jellyfin and Emby see the same details.
+                NFO files OnScreen didn't write are never replaced. Needs write access to the media folders.
+              </span>
+            </span>
+          </label>
         </section>
       {/if}
 

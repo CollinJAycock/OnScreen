@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit, type EpisodeOrder, type MetadataEditResult } from '$lib/api';
   import { externalRatingChips } from '$lib/externalRatings';
+  import { heroLogoPath, studioKindLabel } from '$lib/studios';
   import { cssUrl } from '$lib/cssurl';
   import { progressUpdates } from '$lib/stores/notifications';
   // Admin stop (Now Playing): playback.stop SSE + PLAYBACK_STOPPED refusals.
@@ -75,6 +76,11 @@
   let prevId = '';
 
   let item: ItemDetail | null = null;
+  // The clear logo replaces the text title on movie / show details; a logo
+  // that fails to load falls back to the title (keyed by item, so the next
+  // item tries its own).
+  let logoFailedFor: string | null = null;
+  $: heroLogo = item && logoFailedFor !== item.id ? heroLogoPath(item) : null;
   let siblings: ChildItem[] = []; // other episodes in the same season
   let cast: Credit[] = [];
   let playRequested = false; // movies: detail page until user hits Play
@@ -4273,7 +4279,15 @@
              alt="{item.title}" />
       {/if}
       <div class="detail-meta">
-        <h1 class="detail-title">{item.title}</h1>
+        {#if heroLogo}
+          <!-- The logo's alt text is the heading's accessible name. -->
+          <h1 class="detail-title detail-title-logo">
+            <img class="detail-logo" src={assetUrl(`/artwork/${encodeURI(heroLogo)}?v=${item.updated_at}`)}
+                 alt={item.title} title={item.title} on:error={() => (logoFailedFor = item?.id ?? null)} />
+          </h1>
+        {:else}
+          <h1 class="detail-title">{item.title}</h1>
+        {/if}
         <div class="detail-tags">
           {#if item.year}<span>{item.year}</span>{/if}
           {#if item.content_rating}<span>{item.content_rating}</span>{/if}
@@ -4311,6 +4325,11 @@
         </div>
         {#if item.genres?.length}
           <div class="detail-genres">{item.genres.join(', ')}</div>
+        {/if}
+        {#if (item.type === 'movie' || item.type === 'show') && item.studios?.length}
+          <div class="detail-studios" aria-label={studioKindLabel(item.studios[0].kind, item.studios.length > 1)}>
+            {#each item.studios.slice(0, 4) as s, i (s.id)}{#if i > 0}<span class="studio-sep">, </span>{/if}<a href="/studios/{s.id}">{s.name}</a>{/each}
+          </div>
         {/if}
         {#if item.summary}
           <p class="detail-summary">{item.summary}</p>
@@ -5769,6 +5788,18 @@
     cursor: help;
   }
   .detail-genres { font-size: 0.78rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+  /* Clear logo in place of the text title: bounded so a tall logo doesn't
+     push the meta down and a wide one doesn't overflow. */
+  .detail-title-logo { line-height: 0; }
+  .detail-logo {
+    display: block;
+    max-width: min(420px, 100%); max-height: 120px;
+    width: auto; height: auto; object-fit: contain;
+    filter: drop-shadow(0 2px 8px rgba(0, 0, 0, 0.45));
+  }
+  .detail-studios { font-size: 0.78rem; color: var(--text-muted); margin: -0.5rem 0 0.75rem; }
+  .detail-studios a { color: var(--text-secondary); text-decoration: none; }
+  .detail-studios a:hover { color: var(--text-primary); text-decoration: underline; }
   .detail-summary {
     font-size: 0.82rem; color: var(--text-secondary);
     line-height: 1.6; margin: 0;

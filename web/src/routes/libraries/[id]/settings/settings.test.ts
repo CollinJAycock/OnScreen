@@ -187,3 +187,35 @@ describe('Library settings — episode order', () => {
     expect(screen.queryByLabelText('Episode order')).toBeNull();
   });
 });
+
+describe('Library settings — NFO files', () => {
+  it('reflects the library and sends a change', async () => {
+    mockGet.mockResolvedValue(lib({ save_nfo: false }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib(body));
+    render(Page);
+    const toggle = (await screen.findByLabelText(/save metadata as nfo files/i)) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await fireEvent.click(toggle);
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].save_nfo).toBe(true);
+  });
+
+  it('leaves an unchanged setting out of the save', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'show', save_nfo: true }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib({ type: 'show', ...body }));
+    render(Page);
+    const toggle = (await screen.findByLabelText(/save metadata as nfo files/i)) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect('save_nfo' in mockUpdate.mock.calls[0][1]).toBe(false);
+  });
+
+  it('is not offered for music libraries', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'music' }));
+    render(Page);
+    await screen.findByRole('button', { name: /save changes/i });
+    expect(screen.queryByLabelText(/save metadata as nfo files/i)).toBeNull();
+  });
+});

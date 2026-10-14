@@ -105,6 +105,26 @@ describe('Settings page', () => {
     expect(arg.trakt).toEqual({ client_id: 'trakt-id', client_secret: '' });
   });
 
+  it('round-trips the fanart.tv key, keeping the mask', async () => {
+    mockSettingsGet.mockResolvedValue({
+      tmdb_api_key: '', tvdb_api_key: '', arr_api_key: '', arr_webhook_url: '', arr_path_mappings: {},
+      fanarttv_api_key: '****',
+    });
+    mockSettingsUpdate.mockResolvedValue(undefined);
+    render(Page);
+
+    const key = (await screen.findByLabelText(/fanart.tv API Key/i)) as HTMLInputElement;
+    await waitFor(() => expect(key.value).toBe('****'));
+    await fireEvent.submit(key.closest('form')!);
+    await waitFor(() => expect(mockSettingsUpdate).toHaveBeenCalled());
+    expect(mockSettingsUpdate.mock.calls[0][0].fanarttv_api_key).toBe('****');
+
+    await fireEvent.input(key, { target: { value: ' new-fanart ' } });
+    await fireEvent.submit(key.closest('form')!);
+    await waitFor(() => expect(mockSettingsUpdate).toHaveBeenCalledTimes(2));
+    expect(mockSettingsUpdate.mock.calls[1][0].fanarttv_api_key).toBe('new-fanart');
+  });
+
   it('does not render email test section when SMTP disabled', async () => {
     render(Page);
     await waitFor(() => {

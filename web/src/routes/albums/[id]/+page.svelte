@@ -9,6 +9,9 @@
   import { albumTrackOrder, discGroups } from '$lib/albumDiscs';
 
   let album: ItemDetail | null = null;
+  // Keyed by album so navigating to another album retries its own disc.
+  let discFailedFor: string | null = null;
+  $: discFailed = !!album && discFailedFor === album.id;
   let tracks: ChildItem[] = [];
   let trackDetails: Map<string, ItemDetail> = new Map(); // trackId -> full detail
   let artist: { id: string; title: string } | null = null;
@@ -163,13 +166,23 @@
     </nav>
 
     <header class="hero">
-      {#if album.poster_path}
-        <img class="hero-poster"
-             src={assetUrl(`/artwork/${encodeURI(album.poster_path)}?v=${album.updated_at}&w=400`)}
-             alt={album.title} />
-      {:else}
-        <div class="hero-poster placeholder">♪</div>
-      {/if}
+      <div class="hero-art" class:with-disc={!!album.disc_art_path && !discFailed}>
+        <!-- Disc art (fanart.tv cdart or the folder's cdart.png) peeks out
+             from behind the cover. Full size: a resize re-encodes as JPEG
+             and would square off the transparent disc. -->
+        {#if album.disc_art_path && !discFailed}
+          <img class="hero-disc" aria-hidden="true" alt=""
+               src={assetUrl(`/artwork/${encodeURI(album.disc_art_path)}?v=${album.updated_at}`)}
+               on:error={() => (discFailedFor = album?.id ?? null)} />
+        {/if}
+        {#if album.poster_path}
+          <img class="hero-poster"
+               src={assetUrl(`/artwork/${encodeURI(album.poster_path)}?v=${album.updated_at}&w=400`)}
+               alt={album.title} />
+        {:else}
+          <div class="hero-poster placeholder">♪</div>
+        {/if}
+      </div>
       <div class="hero-meta">
         <div class="kind">Album</div>
         <h1>{album.title}</h1>
@@ -257,6 +270,13 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 5rem; color: var(--text-muted);
   }
+  .hero-art { position: relative; flex-shrink: 0; }
+  .hero-art.with-disc { padding-right: 70px; }
+  .hero-art .hero-poster { position: relative; z-index: 1; display: block; }
+  .hero-disc {
+    position: absolute; top: 10px; left: 80px; z-index: 0;
+    width: 200px; height: 200px; object-fit: contain;
+  }
   .hero-meta { flex: 1; min-width: 0; }
   .kind { text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 0.5rem; }
   .hero-meta h1 { font-size: 2.5rem; margin: 0 0 0.4rem; line-height: 1.1; }
@@ -334,6 +354,8 @@
     .page { padding: 1.5rem 1rem 6rem; }
     .hero { flex-direction: column; align-items: flex-start; gap: 1rem; }
     .hero-poster { width: 160px; height: 160px; }
+    .hero-art.with-disc { padding-right: 50px; }
+    .hero-disc { top: 8px; left: 60px; width: 144px; height: 144px; }
     .hero-meta h1 { font-size: 1.6rem; }
   }
 </style>
