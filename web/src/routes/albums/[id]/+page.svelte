@@ -7,6 +7,8 @@
   import TrackInfo from '$lib/components/TrackInfo.svelte';
   import { replayGainFromFile } from '$lib/replaygain';
   import { albumTrackOrder, discGroups } from '$lib/albumDiscs';
+  import { startInstantMix } from '$lib/instantMix';
+  import { toast } from '$lib/stores/toast';
 
   let album: ItemDetail | null = null;
   let tracks: ChildItem[] = [];
@@ -119,6 +121,19 @@
     if (firstPlayable >= 0) playTrack(firstPlayable);
   }
 
+  let mixing = false;
+  async function instantMix() {
+    if (!album || mixing) return;
+    mixing = true;
+    try {
+      if ((await startInstantMix(album.id)) === 0) toast.info('Nothing to mix with this album yet.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start an instant mix');
+    } finally {
+      mixing = false;
+    }
+  }
+
   function qualityBadge(file?: ItemFile): { label: string; cls: string } | null {
     if (!file) return null;
     if (!file.lossless) return null;
@@ -184,6 +199,10 @@
         <div class="actions">
           <button class="btn-play" on:click={playAlbum} disabled={trackDetails.size === 0}>
             <span class="ico">▶</span> Play
+          </button>
+          <button class="btn-mix" on:click={instantMix} disabled={mixing || trackDetails.size === 0}
+                  title="Play a mix of this album, its artist and similar music">
+            {mixing ? 'Mixing…' : 'Instant mix'}
           </button>
         </div>
         {#if album.summary}<p class="bio">{album.summary}</p>{/if}
@@ -275,6 +294,13 @@
   .btn-play:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-play:hover:not(:disabled) { filter: brightness(1.1); }
   .btn-play .ico { font-size: 0.7rem; }
+  .btn-mix {
+    margin-left: 0.5rem; background: transparent; color: var(--text-secondary);
+    border: 1px solid var(--border, rgba(255,255,255,0.2)); padding: 0.55rem 1.2rem;
+    border-radius: 999px; font-size: 0.9rem; cursor: pointer;
+  }
+  .btn-mix:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn-mix:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .tracks { list-style: none; padding: 0; margin: 0;
             border-top: 1px solid var(--border, rgba(255,255,255,0.08)); }

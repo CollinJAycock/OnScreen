@@ -1,6 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher, onMount } from 'svelte';
   import { lyricsApi, type ItemDetail, type ItemFile } from '$lib/api';
+  import { replayGainSourceLabel, startInstantMix } from '$lib/instantMix';
+  import { toast } from '$lib/stores/toast';
 
   export let track: ItemDetail;
   export let album: ItemDetail | null = null;
@@ -75,6 +77,24 @@
   }
 
   $: badge = tier(file);
+  $: rgSource = replayGainSourceLabel(file);
+  $: rgSourceHint = rgSource === 'analyzed'
+    ? 'Measured by the server (EBU R128, ReplayGain 2.0)'
+    : "Read from the file's tags";
+
+  let mixing = false;
+  async function instantMix() {
+    if (mixing) return;
+    mixing = true;
+    try {
+      if ((await startInstantMix(track.id)) === 0) toast.info('Nothing to mix with this track yet.');
+      else close();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start an instant mix');
+    } finally {
+      mixing = false;
+    }
+  }
 
   function close() { dispatch('close'); }
 
@@ -100,6 +120,15 @@
       </div>
       <button class="x" on:click={close} aria-label="Close">×</button>
     </header>
+
+    {#if file}
+      <div class="mix-row">
+        <button class="btn-mix" on:click={instantMix} disabled={mixing}
+                title="Play a mix of this track, its artist and similar music">
+          {mixing ? 'Mixing…' : 'Instant mix'}
+        </button>
+      </div>
+    {/if}
 
     {#if file}
       {#if badge}
@@ -141,6 +170,12 @@
             {/if}
             {#if file.replaygain_album_peak !== undefined}
               <dt>Album peak</dt><dd>{formatPeak(file.replaygain_album_peak)}</dd>
+            {/if}
+            {#if rgSource}
+              <dt>Source</dt>
+              <dd title={rgSourceHint}>
+                {rgSource === 'analyzed' ? 'Analyzed' : 'From tags'}
+              </dd>
             {/if}
           </dl>
         </section>
@@ -211,6 +246,15 @@
     font-size: 1.6rem; line-height: 1; cursor: pointer; padding: 0 0.5rem;
   }
   .x:hover { color: var(--text); }
+
+  .mix-row { margin: -0.4rem 0 1rem; }
+  .btn-mix {
+    background: transparent; color: var(--text, #eee);
+    border: 1px solid var(--border, rgba(255,255,255,0.2)); border-radius: 999px;
+    padding: 0.35rem 0.9rem; font-size: 0.8rem; cursor: pointer;
+  }
+  .btn-mix:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn-mix:disabled { opacity: 0.6; cursor: default; }
 
   .badge-row { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.2rem; }
   .badge {

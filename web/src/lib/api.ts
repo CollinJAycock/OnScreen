@@ -2381,6 +2381,10 @@ export interface ItemFile {
   replaygain_track_peak?: number;
   replaygain_album_gain?: number;
   replaygain_album_peak?: number;
+  // Where the replaygain_* values came from: the file's own tags, or the
+  // server's loudness analysis (EBU R128 → ReplayGain 2.0). Absent when the
+  // file has none, or on an older server.
+  replaygain_source?: 'tags' | 'analyzed';
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
   external_subtitles?: ExternalSubtitle[];
@@ -3091,6 +3095,64 @@ export interface OCRJob {
   error?: string;
   subtitle?: ExternalSubtitle;
 }
+
+// ── Music discovery ───────────────────────────────────────────────────────────
+
+/** An artist like another (GET /music/artists/{id}/similar). */
+export interface SimilarArtist {
+  id: string;
+  title: string;
+  poster_path?: string;
+  updated_at: number;
+  score: number;
+  shared_genres: string[];
+  co_listened: boolean;
+}
+
+/** A track an artist is credited on without being its album's artist. */
+export interface ArtistAppearance {
+  id: string;
+  title: string;
+  index?: number;
+  disc_number?: number;
+  duration_ms?: number;
+  role: 'featured' | 'artist';
+  album_id: string;
+  album_title: string;
+  album_year?: number;
+  album_poster_path?: string;
+  album_updated_at: number;
+  album_artist_id?: string;
+  album_artist_title?: string;
+}
+
+/** One instant-mix track: everything a player queue needs. */
+export interface MixTrack {
+  id: string;
+  title: string;
+  duration_ms?: number;
+  index?: number;
+  album_id: string;
+  album_title: string;
+  album_poster_path?: string;
+  artist_id?: string;
+  artist_title?: string;
+  file_id: string;
+  replaygain_track_gain?: number;
+  replaygain_track_peak?: number;
+  replaygain_album_gain?: number;
+  replaygain_album_peak?: number;
+}
+
+export const musicApi = {
+  similarArtists: async (artistId: string, limit = 20) =>
+    (await api.requestList<SimilarArtist>(`/music/artists/${artistId}/similar?limit=${limit}`)).items,
+  appearsOn: async (artistId: string) =>
+    (await api.requestList<ArtistAppearance>(`/music/artists/${artistId}/appears-on`)).items,
+  /** A fresh ~50-track mix seeded with a track, album or artist. */
+  mix: async (seedId: string, limit = 50) =>
+    (await api.requestList<MixTrack>(`/music/mix?seed=${encodeURIComponent(seedId)}&limit=${limit}`)).items
+};
 
 export const favoritesApi = {
   list: (limit = 100, offset = 0) =>
