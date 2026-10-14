@@ -85,6 +85,7 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	// Resolve the file: explicit file_id (with cross-item guard) or the best
 	// file. Mirrors transcode-start's selection.
 	var file *media.File
+	var itemFiles []media.File
 	if body.FileID != nil && *body.FileID != "" {
 		fid, perr := uuid.Parse(*body.FileID)
 		if perr != nil {
@@ -103,7 +104,15 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 			respond.NotFound(w, r)
 			return
 		}
+		itemFiles = files
 		file = &files[0] // sorted best-quality first
+	}
+	// A part of a stacked movie is judged as the movie: from part 1, which
+	// the session will start with whichever part was named.
+	parts := h.stackParts(ctx, itemID, file, itemFiles)
+	if parts != nil {
+		first := parts[0]
+		file = &first
 	}
 
 	// Fill metadata a scan left NULL before deciding — the same lazy re-probe
@@ -116,10 +125,31 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 			"this file is not a playable media container")
 		return
 	}
+	// The other parts get Start's container gate too; a damaged one damages
+	// the movie.
+	damagedPart := false
+	for _, p := range sessionSources(file, parts) {
+		if err := h.refuseReferenceContainer(p); err != nil {
+			respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
+				"this file is not a playable media container")
+			return
+		}
+		if p.IntegrityStatus == media.IntegrityDamaged {
+			damagedPart = true
+		}
+	}
 
 	caps, hasProfile := clientCaps(r, body)
 	serverCaps := transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}
 	decision := transcode.Decide(*file, caps, serverCaps)
+	if parts != nil {
+		// Never directPlay: one file is one part. The session concatenates
+		// them (see transcode.ForStack).
+		decision = transcode.ForStack(decision, *file)
+		if damagedPart {
+			decision = transcode.DecisionDamaged
+		}
+	}
 
 	h.logger.DebugContext(ctx, "playback decision",
 		"item_id", itemID, "file_id", file.ID, "decision", decision.String(),

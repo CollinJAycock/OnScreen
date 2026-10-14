@@ -76,7 +76,12 @@ These differ from prior behavior; operators upgrading should be aware:
     channels. Media requests are capped at 25 pending per user.
 15. **Unsafe library files are skipped.** A "media" file that is really an HLS
     / DASH / concat / SDP playlist is refused at scan and at playback (415
-    `UNSUPPORTED_CONTAINER`), closing ffmpeg reference-following.
+    `UNSUPPORTED_CONTAINER`), closing ffmpeg reference-following. The one
+    concat list ffmpeg ever opens is the one the server writes itself for a
+    multi-part movie (v2.6): it names only the parts' paths or per-part
+    stream URLs taken from the database, is written outside every served
+    directory, and `ffsafe` refuses any entry that isn't an absolute path or
+    an http(s) URL, or a list that mixes the two.
 16. **Operator-facing detail moved off the public port.** `/health/version`
     publicly returns only the version; build time and Go version are on the
     metrics port.

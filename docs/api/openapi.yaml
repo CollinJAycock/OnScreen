@@ -1853,6 +1853,14 @@ paths:
 
         Subject to the per-session `TranscodeStartLimit` rate limit
         (default 10/min, override via `OS_TRANSCODE_START_RATE_LIMIT_PER_MIN`).
+
+        Multi-part movies (v2.6): when the chosen file is one part of a
+        stacked movie (its `part_index` is set), the session streams every
+        part in order as one continuous movie starting from part 1,
+        whichever part's `file_id` was sent. `position_ms` and the stream
+        timeline are on that combined timeline, and the item's
+        `duration_ms` is its length. A damaged, missing or swapped part
+        refuses the whole session with the same codes a single file gets.
       requestBody:
         required: true
         content:
@@ -5877,7 +5885,9 @@ components:
         hdr_type:          { type: string, nullable: true, description: 'What a player without Dolby Vision has to handle: hdr10, hlg, dolby_vision (profile 5 only, no compatible base layer), or absent for SDR. A Dolby Vision file with an HDR10 / HLG / SDR base layer reports that base layer.' }
         dv_profile:        { type: integer, nullable: true, description: 'v2.5.1. Dolby Vision profile from the file''s configuration record (5, 7, 8, ...); absent when the file has none.' }
         frame_rate:        { type: number, format: double, nullable: true, description: 'Video frames per second as probed (e.g. 23.976, 25, 59.94). TV clients match the display refresh rate to it.' }
-        duration_ms:       { type: integer, format: int64, nullable: true }
+        duration_ms:       { type: integer, format: int64, nullable: true, description: 'This file''s own length. For one part of a multi-part movie it is that part''s length; the item''s duration_ms is the whole movie''s.' }
+        edition:           { type: string, nullable: true, description: 'v2.6. Edition label from the file name ("Director''s Cut", "Extended", a Jellyfin "1080p" version suffix, Plex {edition-…}); absent when the name gives none. Show it in a version picker in place of the resolution/codec description.' }
+        part_index:        { type: integer, nullable: true, description: 'v2.6. 1-based part number when this file is one part of a multi-part (stacked) movie, e.g. "cd1" + "cd2"; absent for every other file, including a lone "cd1". The server streams all parts as one movie: a transcode or playback decision for any part''s file_id covers the whole movie from part 1, and such a file is never direct-played. Each part still downloads on its own.' }
         faststart:         { type: boolean }
         bit_depth:             { type: integer, nullable: true, description: 'Audio bit depth (e.g. 16, 24). Music files only.' }
         sample_rate:           { type: integer, nullable: true, description: 'Audio sample rate in Hz (e.g. 44100, 96000). Music files only.' }
@@ -5910,7 +5920,7 @@ components:
             imdb_votes:      { type: integer }
             rotten_tomatoes: { type: integer, minimum: 0, maximum: 100, description: "Critics' Tomatometer, percent." }
             metacritic:      { type: integer, minimum: 0, maximum: 100 }
-        duration_ms:    { type: integer, format: int64, nullable: true }
+        duration_ms:    { type: integer, format: int64, nullable: true, description: 'Running time. For a multi-part movie whose first version is stacked (files[].part_index), the parts'' combined length — the timeline its stream and progress use.' }
         poster_path:    { type: string, nullable: true }
         fanart_path:    { type: string, nullable: true }
         content_rating: { type: string, nullable: true }

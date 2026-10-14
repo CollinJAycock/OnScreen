@@ -251,6 +251,11 @@ func (h *NativeSessionsHandler) collect(ctx context.Context, claims *auth.Claims
 	coveredUserItems := make(map[userItem]bool, len(valkeySessions))
 	for _, s := range valkeySessions {
 		coveredPaths[s.FilePath] = true
+		// A stacked movie's session reads every part, not just the first
+		// (a storage-less worker pulls each through /media/stream).
+		for _, p := range s.Parts {
+			coveredPaths[p.FilePath] = true
+		}
 		coveredItems[s.MediaItemID] = true
 		coveredUserItems[userItem{s.UserID, s.MediaItemID}] = true
 	}

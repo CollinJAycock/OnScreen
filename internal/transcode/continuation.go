@@ -261,7 +261,14 @@ func (w *Worker) continueShortSession(
 		}
 	}()
 
-	sourceDur := probeSourceDuration(ctx, input)
+	// A stacked movie's input is a concat list ffprobe can't read on its
+	// own; its length is the parts' combined length, which the job carries.
+	var sourceDur float64
+	if len(job.Parts) > 1 {
+		sourceDur = PartsDurationSec(job.Parts)
+	} else {
+		sourceDur = probeSourceDuration(ctx, input)
+	}
 	if sourceDur <= 0 {
 		return // can't verify completeness — the deferred close restores ENDLIST
 	}
