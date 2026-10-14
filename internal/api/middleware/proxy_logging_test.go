@@ -406,6 +406,26 @@ func TestRecover_HandlesPanicAfterPartialResponse(t *testing.T) {
 	}
 }
 
+// http.ErrAbortHandler passes through, so net/http drops the connection of a
+// download that failed half way instead of ending it as if it were complete.
+func TestRecover_RepanicsAbortHandler(t *testing.T) {
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, nil))
+	h := Recover(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("partial"))
+		panic(http.ErrAbortHandler)
+	}))
+	defer func() {
+		if v := recover(); v != http.ErrAbortHandler {
+			t.Fatalf("recovered %v, want http.ErrAbortHandler re-panicked", v)
+		}
+		if strings.Contains(buf.String(), "panic recovered") {
+			t.Error("an abort is not an error to log")
+		}
+	}()
+	h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest("GET", "/", nil))
+}
+
 func TestRecover_NoOpWhenHandlerSucceeds(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

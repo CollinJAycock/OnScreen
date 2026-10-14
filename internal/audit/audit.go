@@ -156,6 +156,11 @@ const (
 	// key_id, name, the display prefix and scope — never the key itself.
 	ActionAPIKeyCreate = "api_key.create"
 	ActionAPIKeyDelete = "api_key.delete"
+
+	// ActionUserDataExport records a "Download my data" archive being made.
+	// user_id is the actor, target the account exported (the same user, or
+	// another one when an admin answers a data request — detail.by_admin).
+	ActionUserDataExport = "user.data_export"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.
