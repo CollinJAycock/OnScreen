@@ -309,6 +309,7 @@ re-read the real admin's session.
   capped at 100,000 events). A failure part-way aborts the connection
   (`http.ErrAbortHandler`, which `middleware.Recover` now re-panics) rather
   than ending a truncated ZIP as if it were complete.
+
 **My stats and the digest email** (v2.6; `/api/v1/users/me/stats`,
 `/api/v1/users/me/year-in-review`, `/api/v1/users/me/digest`,
 `/api/v1/settings/digest`, `/api/v1/digest/unsubscribe`)
