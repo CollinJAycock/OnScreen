@@ -14,6 +14,8 @@
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';
   import CollectionPicker from '$lib/components/CollectionPicker.svelte';
   import LabelPicker from '$lib/components/LabelPicker.svelte';
+  import BulkMetadataEditor from '$lib/components/BulkMetadataEditor.svelte';
+  import { selectRange, toggleAll, allSelected, runLimited } from '$lib/gridSelection';
   import { toast } from '$lib/stores/toast';
   import { toggleSelected } from '$lib/photoAlbums';
   import {
@@ -41,24 +43,113 @@
   // Select mode, where a tile click toggles it in or out of the selection
   // instead of opening it. Photo libraries send the selection to an album
   // (AlbumPicker); for admins, movie and show libraries send it to a shared
-  // collection (CollectionPicker).
+  // collection (CollectionPicker). Enter it with the Select button, a tile's
+  // hover checkbox, or a long press on touch; shift-click selects a range.
   let selecting = false;
   let selectedIds = new Set<string>();
+  // The last tile clicked in Select mode: the start of a shift-click range.
+  let selectAnchor: string | null = null;
   let albumPickerOpen = false;
   let collectionPickerOpen = false;
   // Admins can also label the selection (LabelPicker) — labels drive
-  // per-user label restrictions.
+  // per-user label restrictions — and edit its metadata in one go
+  // (BulkMetadataEditor).
   let labelPickerOpen = false;
+  let bulkEditOpen = false;
+  let bulkMarking = false;
 
   function toggleSelecting() {
     selecting = !selecting;
     selectedIds = new Set();
+    selectAnchor = null;
+  }
+
+  function endSelecting() {
+    selecting = false;
+    selectedIds = new Set();
+    selectAnchor = null;
+  }
+
+  // Enter Select mode with this tile selected (hover checkbox, long press).
+  function startSelecting(item: MediaItem) {
+    selecting = true;
+    selectedIds = new Set([item.id]);
+    selectAnchor = item.id;
   }
 
   function onGridItemClick(e: MouseEvent, item: MediaItem) {
+    if (suppressNextClick) {
+      // The click that ends a long press: it already selected the tile.
+      suppressNextClick = false;
+      e.preventDefault();
+      return;
+    }
     if (!selecting || !canSelect || !selectable(item)) return;
     e.preventDefault();
-    selectedIds = toggleSelected(selectedIds, item.id);
+    selectedIds = e.shiftKey
+      ? selectRange(selectedIds, selectableIds, selectAnchor, item.id)
+      : toggleSelected(selectedIds, item.id);
+    selectAnchor = item.id;
+  }
+
+  // Long press (touch) starts Select mode on the pressed tile. Movement or
+  // an early release cancels it, so scrolling and taps behave as before.
+  const LONG_PRESS_MS = 500;
+  let pressTimer: ReturnType<typeof setTimeout> | null = null;
+  let pressStart = { x: 0, y: 0 };
+  let suppressNextClick = false;
+
+  function cancelPress() {
+    if (pressTimer) clearTimeout(pressTimer);
+    pressTimer = null;
+  }
+  function onTilePointerDown(e: PointerEvent, item: MediaItem) {
+    if (e.pointerType !== 'touch' || selecting || !canSelect || !selectable(item)) return;
+    cancelPress();
+    pressStart = { x: e.clientX, y: e.clientY };
+    pressTimer = setTimeout(() => {
+      pressTimer = null;
+      suppressNextClick = true;
+      startSelecting(item);
+    }, LONG_PRESS_MS);
+  }
+  function onTilePointerMove(e: PointerEvent) {
+    if (pressTimer && Math.hypot(e.clientX - pressStart.x, e.clientY - pressStart.y) > 10) cancelPress();
+  }
+  function onTileContextMenu(e: Event) {
+    // A long press opens the browser's link menu on some phones; not when
+    // it just started Select mode.
+    if (suppressNextClick) e.preventDefault();
+  }
+
+  function onSelectCheckClick(e: MouseEvent, item: MediaItem) {
+    e.preventDefault();
+    e.stopPropagation();
+    startSelecting(item);
+  }
+
+  function selectAllOnPage() {
+    selectedIds = toggleAll(selectedIds, selectableIds);
+  }
+
+  // Mark watched / unwatched for the whole selection (per user, like the
+  // card menu). Optimistic, four requests at a time; failures roll back.
+  async function bulkMark(watched: boolean) {
+    const targets = selectedItems.filter((i) => canMarkWatched(i.type));
+    if (bulkMarking || targets.length === 0) return;
+    bulkMarking = true;
+    const before = new Map(targets.map((i) => [i.id, i]));
+    allItems = allItems.map((x) => (before.has(x.id) ? applyWatchedMark(x, watched) : x));
+    const failed = await runLimited(targets, 4, (it) =>
+      watched ? itemApi.markWatched(it.id) : itemApi.markUnwatched(it.id));
+    if (failed.length) {
+      const back = new Map(failed.map((i) => [i.id, before.get(i.id)!]));
+      allItems = allItems.map((x) => back.get(x.id) ?? x);
+      toast.error(`Could not mark ${failed.length} of ${targets.length} ${watched ? 'watched' : 'unwatched'}`);
+    } else {
+      toast.success(`Marked ${targets.length} ${watched ? 'watched' : 'unwatched'}`);
+    }
+    bulkMarking = false;
   }
 
   // Per-tile metadata editor — admin-only, triggered by the ✎ overlay
@@ -286,11 +377,21 @@
   $: hasSubscriptionsTab = isAdmin && library?.type === 'podcast';
   // Libraries whose movies and shows can go into a manual collection.
   $: collectionLibrary = ['movie', 'show', 'anime', 'cartoons'].includes(library?.type ?? '');
-  $: canSelect = isPhotoLibrary || (isAdmin && collectionLibrary);
-  /** Whether Select mode can pick this tile (collections hold movies and shows). */
+  // Admins can select in any library browsed as the main grid (bulk
+  // metadata edit, labels); the month-bucketed home-video grid and the
+  // albums index have no Select mode.
+  $: canSelect = isPhotoLibrary || (isAdmin && !isHomeVideoLibrary && !albumsView);
+  /** Whether Select mode can pick this tile. Admins can pick anything (the
+   *  bulk editor skips what doesn't apply); "Add to collection" takes only
+   *  the movies and shows of the selection. */
   function selectable(item: MediaItem): boolean {
-    return isPhotoLibrary || item.type === 'movie' || item.type === 'show';
+    return isPhotoLibrary || isAdmin || item.type === 'movie' || item.type === 'show';
   }
+  $: selectableIds = canSelect ? filtered.filter(selectable).map((i) => i.id) : [];
+  $: selectedItems = allItems.filter((i) => selectedIds.has(i.id));
+  $: collectionIds = selectedItems.filter((i) => i.type === 'movie' || i.type === 'show').map((i) => i.id);
+  $: markableCount = watchable ? selectedItems.filter((i) => canMarkWatched(i.type)).length : 0;
+  $: pageAllSelected = allSelected(selectedIds, selectableIds);
   function tabFromURL(u: URL): 'items' | 'collections' | 'subscriptions' {
     const tab = u.searchParams.get('tab');
     return tab === 'collections' || tab === 'subscriptions' ? tab : 'items';
@@ -489,8 +590,7 @@
     // new library's URL — nothing carries over from the previous one.
     readFiltersFromURL();
     surpriseMsg = '';
-    selecting = false;
-    selectedIds = new Set();
+    endSelecting();
     loadLibrary().then(() => {
       loadItems();
       loadGenres();
@@ -811,7 +911,7 @@
         class:on={selecting}
         aria-pressed={selecting}
         on:click={toggleSelecting}
-        title={isPhotoLibrary ? 'Select photos to add to an album' : 'Select movies and shows to add to a collection'}
+        title={isPhotoLibrary ? 'Select photos to add to an album' : 'Select titles to edit, label or add to a collection'}
       >{selecting ? 'Done' : 'Select'}</button>
     {/if}
 
@@ -1007,6 +1107,12 @@
           tabindex="0"
           aria-label={selecting && canSelect && selectable(item) ? `${tileSelected ? 'Deselect' : 'Select'} ${item.title}` : undefined}
           on:click={(e) => onGridItemClick(e, item)}
+          on:pointerdown={(e) => onTilePointerDown(e, item)}
+          on:pointermove={onTilePointerMove}
+          on:pointerup={cancelPress}
+          on:pointercancel={cancelPress}
+          on:pointerleave={cancelPress}
+          on:contextmenu={onTileContextMenu}
         >
           <div class="poster">
             {#if item.poster_path}
@@ -1076,6 +1182,19 @@
             <CardMenu label="More actions for {item.title}" actions={cardActions(item)} />
           </div>
         {/if}
+        {#if canSelect && !selecting && selectable(item)}
+          <!-- Hover checkbox: starts Select mode with this tile. A sibling of
+               the card link (not inside it) so the link's name stays the
+               title; out of the tab order — keyboard users have Select. -->
+          <button
+            type="button"
+            class="hover-check"
+            tabindex="-1"
+            aria-label="Select {item.title}"
+            title="Select"
+            on:click={(e) => onSelectCheckClick(e, item)}
+          ></button>
+        {/if}
         </div>
       {/each}
 
@@ -1110,6 +1229,13 @@
 {#if selecting && canSelect}
   <div class="select-bar" role="toolbar" aria-label={isPhotoLibrary ? 'Selected photos' : 'Selected titles'}>
     <span class="sel-count" role="status">{selectedIds.size} selected</span>
+    <button
+      type="button"
+      class="btn-refresh sel-all"
+      disabled={selectableIds.length === 0}
+      title="Shift-click a tile to select everything since the last one you clicked"
+      on:click={selectAllOnPage}
+    >{pageAllSelected ? 'Clear page' : 'Select all on page'}</button>
     {#if isPhotoLibrary}
       <button
         type="button"
@@ -1117,11 +1243,11 @@
         disabled={selectedIds.size === 0}
         on:click={() => albumPickerOpen = true}
       >Add to album…</button>
-    {:else}
+    {:else if isAdmin && collectionLibrary}
       <button
         type="button"
         class="btn-scan"
-        disabled={selectedIds.size === 0}
+        disabled={collectionIds.length === 0}
         on:click={() => collectionPickerOpen = true}
       >Add to collection…</button>
     {/if}
@@ -1132,6 +1258,18 @@
         disabled={selectedIds.size === 0}
         on:click={() => labelPickerOpen = true}
       >Add label…</button>
+      {#if !isPhotoLibrary}
+        <button
+          type="button"
+          class="btn-scan"
+          disabled={selectedIds.size === 0}
+          on:click={() => bulkEditOpen = true}
+        >Edit metadata…</button>
+      {/if}
+    {/if}
+    {#if markableCount > 0}
+      <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(true)}>Mark watched</button>
+      <button type="button" class="btn-refresh sel-mark" disabled={bulkMarking} on:click={() => bulkMark(false)}>Mark unwatched</button>
     {/if}
     <button type="button" class="btn-refresh sel-done" on:click={toggleSelecting}>Done</button>
   </div>
@@ -1142,16 +1280,23 @@
     open={labelPickerOpen}
     mediaItemIds={[...selectedIds]}
     on:close={() => labelPickerOpen = false}
-    on:applied={() => { selecting = false; selectedIds = new Set(); }}
+    on:applied={endSelecting}
   />
+  {#if !isPhotoLibrary}
+    <BulkMetadataEditor
+      bind:open={bulkEditOpen}
+      items={selectedItems.map((i) => ({ id: i.id, type: i.type, title: i.title }))}
+      onapplied={() => { loadGenres(); }}
+    />
+  {/if}
 {/if}
 
 {#if isAdmin && collectionLibrary}
   <CollectionPicker
     open={collectionPickerOpen}
-    mediaItemIds={[...selectedIds]}
+    mediaItemIds={collectionIds}
     on:close={() => collectionPickerOpen = false}
-    on:added={() => { selecting = false; selectedIds = new Set(); }}
+    on:added={endSelecting}
   />
 {/if}
 
@@ -1160,7 +1305,7 @@
     open={albumPickerOpen}
     mediaItemIds={[...selectedIds]}
     onclose={() => albumPickerOpen = false}
-    ondone={() => { selecting = false; selectedIds = new Set(); }}
+    ondone={endSelecting}
   />
 {/if}
 
@@ -1378,6 +1523,18 @@
     color: #fff; font-size: 0.75rem; font-weight: 800;
   }
   .item.photo-selected .select-check { background: var(--accent); border-color: var(--accent); }
+  /* Hover checkbox: an empty circle over the poster's top-left corner that
+     starts Select mode. Shown on hover (and always on touch-less focus of
+     the tile); long press does the same on touch screens. */
+  .hover-check {
+    position: absolute; top: 0.4rem; left: 0.4rem; z-index: 3;
+    width: 22px; height: 22px; border-radius: 50%; padding: 0;
+    border: 2px solid #fff; background: rgba(0,0,0,0.35);
+    cursor: pointer; opacity: 0; transition: opacity 0.12s;
+  }
+  .item-cell:hover .hover-check, .item-cell:focus-within .hover-check { opacity: 1; }
+  .hover-check:hover { border-color: var(--accent); }
+  @media (hover: none) { .hover-check { display: none; } }
   .select-bar {
     position: fixed; left: 50%; bottom: 1.25rem; transform: translateX(-50%);
     z-index: 950;
@@ -1387,7 +1544,8 @@
     border-radius: 12px; box-shadow: 0 12px 32px var(--shadow);
   }
   .sel-count { font-size: 0.8rem; color: var(--text-secondary); margin-right: 0.4rem; white-space: nowrap; }
-  .select-bar .sel-done { width: auto; padding: 0 0.8rem; font-size: 0.78rem; }
+  .select-bar { flex-wrap: wrap; justify-content: center; max-width: calc(100vw - 2rem); }
+  .select-bar .sel-done, .select-bar .sel-all, .select-bar .sel-mark { width: auto; padding: 0 0.8rem; font-size: 0.78rem; }
 
   /* Card + its ⋯ menu. The menu sits in the footer's right edge, outside
      the link, so the title gets room reserved for it. */

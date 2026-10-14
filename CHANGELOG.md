@@ -601,6 +601,25 @@ API change lands only when every first-party client moves with it — see
     and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
   - **Migration 00050** adds the per-library overrides and the
     per-title-and-language attempt log.
+- **Edit many titles at once.** In a library, admins can select titles and
+  change their metadata in one go.
+  - **Selecting:** "Select", the checkbox that appears on a tile on hover, or
+    a long press on a touch screen. Shift-click selects everything between
+    two tiles; "Select all on page" takes every title loaded so far.
+  - **Editing:** "Edit metadata…" sets or clears the content rating; adds,
+    removes or replaces genres; adds or removes labels; and locks or unlocks
+    any field. Every field starts at "leave unchanged".
+  - **Locks work as in the single-title editor.** A field you set is locked,
+    so refreshes and Fix Match keep it. A field a title already has locked is
+    skipped and listed afterwards, unless you unlock it in the same edit.
+    A field that doesn't apply to a title (a content rating on an album, say)
+    is skipped too.
+  - The whole edit succeeds or fails as one, up to 500 titles at a time.
+    Libraries that save NFO files get them rewritten afterwards. The edit is
+    recorded once in the audit log (`item.bulk_edit`).
+  - "Mark watched" and "Mark unwatched" also work on the selection, and "Add
+    to collection…" takes just its movies and shows.
+  - **API (additive, admin):** `PATCH /items/bulk`. No migration.
 
 ### Changed
 
