@@ -31,6 +31,7 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("hub", h.Hub != nil, h.Hub)
 	check("search", h.Search != nil, h.Search)
 	check("history", h.History != nil, h.History)
+	check("user_stats", h.UserStats != nil, h.UserStats)
 	check("favorites", h.Favorites != nil, h.Favorites)
 	check("collections", h.Collections != nil, h.Collections)
 	check("playlists", h.Playlists != nil, h.Playlists)

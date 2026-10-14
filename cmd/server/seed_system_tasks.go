@@ -130,6 +130,17 @@ var requiredSystemTasks = []systemTask{
 		enabled:  true,
 	},
 	{
+		name:     "Send digest emails",
+		taskType: "digest_send",
+		// Hourly at :19: sends the weekly / monthly digest to each opted-in
+		// user once their period's send day and hour (Settings > Email, server
+		// time) have come. A user gets each period at most once, empty digests
+		// are skipped, and sends are paced. While the digest is off server-wide
+		// (the default) or SMTP isn't configured it does nothing.
+		cronExpr: "19 * * * *",
+		enabled:  true,
+	},
+	{
 		name:     "Refresh IMDb, Rotten Tomatoes and Metacritic scores",
 		taskType: "external_ratings",
 		// Hourly at :41: looks up movies' and shows' scores on OMDb, the
