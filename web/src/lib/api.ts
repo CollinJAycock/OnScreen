@@ -1323,6 +1323,63 @@ export interface RegrabResult {
   has_file?: boolean;
 }
 
+/** Converted (lower-quality) download qualities, best first. */
+export type DownloadQualityId = '1080p_8mbps' | '720p_4mbps' | '720p_2mbps' | '480p_1mbps';
+export type DownloadStatus = 'queued' | 'running' | 'ready' | 'failed' | 'expired';
+
+export interface DownloadQuality {
+  id: DownloadQualityId;
+  label: string;
+  bitrate_kbps: number;
+  max_height: number;
+  /** false = above the caller's streaming (or, remotely, internet) limit. */
+  allowed: boolean;
+}
+
+export interface DownloadOptions {
+  file_id: string;
+  qualities: DownloadQuality[];
+  bitrate_cap_kbps?: number;
+}
+
+export interface DownloadJob {
+  id: string;
+  item_id: string;
+  file_id: string;
+  title: string;
+  item_type: string;
+  quality: DownloadQualityId;
+  quality_label: string;
+  status: DownloadStatus;
+  /** Encode progress, 0..1. */
+  progress: number;
+  error?: string;
+  size_bytes?: number;
+  created_at: string;
+  completed_at?: string;
+  expires_at?: string;
+  /** Present when ready: /api/v1/downloads/{id}/file (pass through assetUrl). */
+  file_url?: string;
+}
+
+export const downloadsApi = {
+  /** The converted qualities for an item and which the caller may take. */
+  options: (itemId: string, fileId?: string) =>
+    api.get<DownloadOptions>(
+      `/items/${encodeURIComponent(itemId)}/downloads${fileId ? `?file_id=${encodeURIComponent(fileId)}` : ''}`,
+    ),
+  /** Create (201) or return the existing (200) conversion job. 403
+   *  QUALITY_ABOVE_LIMIT, 429 TOO_MANY_DOWNLOADS, 422 NOT_CONVERTIBLE. */
+  create: (itemId: string, quality: DownloadQualityId, fileId?: string) =>
+    api.post<DownloadJob>(`/items/${encodeURIComponent(itemId)}/downloads`, {
+      quality,
+      ...(fileId ? { file_id: fileId } : {}),
+    }),
+  get: (jobId: string) => api.get<DownloadJob>(`/downloads/${encodeURIComponent(jobId)}`),
+  listMine: () => api.get<DownloadJob[]>('/users/me/downloads'),
+  remove: (jobId: string) => api.del(`/downloads/${encodeURIComponent(jobId)}`),
+};
+
 export const issuesApi = {
   /** The caller's own reports on an item, newest first. */
   listMine: (itemId: string) => api.get<MediaIssue[]>(`/items/${encodeURIComponent(itemId)}/issues`),
@@ -2341,6 +2398,9 @@ export interface Chapter {
   title: string;
   start_ms: number;
   end_ms: number;
+  /** /trickplay/{item}/chapter_NNN.jpg once the item's seek-bar thumbnails
+   *  (and with them the chapter thumbnails) exist; pass through assetUrl. */
+  thumb_url?: string;
 }
 
 export interface ItemFile {

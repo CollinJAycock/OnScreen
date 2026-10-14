@@ -15,7 +15,7 @@
   import { groupVersions, playableDurationMs, promoteVersion, versionLabel } from '$lib/fileVersions';
   import { capabilities } from '$lib/stores/capabilities';
   import { onlineSubtitlesVisible } from '$lib/featureGates';
-  import { confirmAction, isTauri, nativeDownload } from '$lib/native';
+  import { confirmAction } from '$lib/native';
   import {
     sleepTimer,
     startSleepTimer,
@@ -31,6 +31,7 @@
   import PlayOnButton from '$lib/components/PlayOnButton.svelte';
   import FranchiseShelf from '$lib/components/FranchiseShelf.svelte';
   import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
+  import DownloadMenu from '$lib/components/DownloadMenu.svelte';
   import RequestMoreSeasonsButton from '$lib/components/RequestMoreSeasonsButton.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   import ItemMetadataEditor from '$lib/components/ItemMetadataEditor.svelte';
@@ -166,35 +167,6 @@
     { mode: '60m', label: '1 hour' },
     { mode: 'episode', label: 'End of episode' },
   ];
-
-  // Native download (Tauri) — the webview's <a download> doesn't
-  // trigger the OS save dialog, so under Tauri we hand the URL to
-  // the Rust shim which opens a native save-as and streams the
-  // response with ureq. The browser keeps the plain anchor path.
-  async function handleDownloadClick(e: Event) {
-    if (!isTauri()) return; // Browser handles it via the anchor's download attr.
-    e.preventDefault();
-    const f = item?.files?.[0];
-    if (!f?.id || !f.stream_token) return;
-    // assetUrl returns an absolute, token-bearing URL when running
-    // under Tauri (apiBase is the cross-origin server URL); the
-    // ureq fetch on the Rust side hits exactly the same path the
-    // browser anchor would have.
-    const fullUrl = assetUrl(`/media/download/${f.id}?token=${encodeURIComponent(f.stream_token)}`);
-    // Suggested filename — server uses the same logic in the
-    // Content-Disposition header, but Rust can't read that without
-    // a HEAD request, so derive one client-side. Falls back to a
-    // generic name when the title isn't usable.
-    const safeTitle = (item?.title ?? 'download').replace(/[\\/:*?"<>|]/g, '_');
-    const ext = f.container ? '.' + f.container.toLowerCase() : '';
-    const filename = safeTitle + ext;
-    try {
-      const path = await nativeDownload(fullUrl, filename);
-      if (path) toast.success('Saved to ' + path);
-    } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : 'Download failed');
-    }
-  }
 
   // Pause + toast when the duration timer fires. Episode mode never
   // calls this — it gates the auto-next-episode handler instead.
@@ -974,6 +946,9 @@
 
   // Chapters from the source file (already parsed by ffprobe at scan time).
   $: chapters = item?.files?.[0]?.chapters ?? [];
+  // Chapter thumbnails (generated with the seek-bar sprites) — when any
+  // chapter has one, the chapter menu and the detail strip show pictures.
+  $: chapterThumbs = chapters.some((c) => !!c.thumb_url);
   // Versions for the picker: a multi-part movie's parts are one version.
   $: fileVersions = groupVersions(item?.files ?? []);
   // The playing version's edition (and part count) on the movie's tags,
@@ -2081,6 +2056,14 @@
   async function startMoviePlayback() {
     playRequested = true;
     await startPlayback();
+  }
+
+  // The detail page's chapter strip: start the movie at that chapter, the
+  // same way a playback hand-off's ?at= start does (via view_offset_ms).
+  async function playFromChapter(startMs: number) {
+    if (!item) return;
+    item.view_offset_ms = startMs;
+    await startMoviePlayback();
   }
 
   // ── Quality switching ────────────────────────────────────────────────────────
@@ -3725,7 +3708,7 @@
                 </button>
                 {#if showChapterMenu}
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
-                  <div class="quality-menu chapter-menu" on:click|stopPropagation role="menu" aria-label="Chapters">
+                  <div class="quality-menu chapter-menu" class:with-thumbs={chapterThumbs} on:click|stopPropagation role="menu" aria-label="Chapters">
                     {#each chapters as ch, i}
                       <button
                         class="quality-option"
@@ -3733,6 +3716,13 @@
                         on:click={() => { jumpToChapter(ch.start_ms); showChapterMenu = false; }}
                         role="menuitem"
                       >
+                        {#if chapterThumbs}
+                          {#if ch.thumb_url}
+                            <img class="chapter-thumb" src={assetUrl(ch.thumb_url)} alt="" loading="lazy" decoding="async" />
+                          {:else}
+                            <span class="chapter-thumb chapter-thumb-empty" aria-hidden="true"></span>
+                          {/if}
+                        {/if}
                         <span class="chapter-num">{i + 1}.</span>
                         <span class="chapter-title">{ch.title || `Chapter ${i + 1}`}</span>
                         <span class="chapter-time">{fmtTime(ch.start_ms / 1000)}</span>
@@ -4349,27 +4339,21 @@
             </button>
           {/if}
         {/if}
-        <!-- Download for offline playback. Server adds Content-Disposition:
-             attachment so the browser triggers save-as. Stream-token in
-             query so the path works from a mobile browser that can't
-             carry cookies (Android Download Manager, iOS Safari).
-             Gated on the public capabilities flag — admin can disable
-             server-wide via Settings → General. -->
+        <!-- Download for offline playback: the original file, or a smaller
+             converted copy the server prepares first (DownloadMenu). The
+             server adds Content-Disposition: attachment so the browser
+             triggers save-as; the original carries the stream token in the
+             query so it works from a mobile browser that can't carry
+             cookies. Gated on the public capabilities flag — admin can
+             disable server-wide via Settings → General. -->
         {#if $capabilities?.features?.web_downloads && item.files?.[0]?.id && item.files[0].stream_token}
-          <a
-            class="download-btn"
-            href="{assetUrl(`/media/download/${item.files[0].id}?token=${encodeURIComponent(item.files[0].stream_token)}`)}"
-            download
-            on:click={handleDownloadClick}
-            title="Download for offline viewing"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14">
-              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-              <polyline points="7 10 12 15 17 10"/>
-              <line x1="12" y1="15" x2="12" y2="3"/>
-            </svg>
-            Download
-          </a>
+          <DownloadMenu
+            itemId={item.id}
+            title={item.title}
+            fileId={item.files[0].id}
+            streamToken={item.files[0].stream_token}
+            container={item.files[0].container}
+          />
         {/if}
         <!-- Report a problem (any user): broken video/audio/subtitles or
              the wrong title. Admins work reports on Settings ▸ Library health. -->
@@ -4383,6 +4367,27 @@
         {/if}
       </div>
     </div>
+
+    <!-- Chapters with thumbnails (movies): click one to start playing there. -->
+    {#if item.type === 'movie' && chapterThumbs}
+      <div class="chapter-strip">
+        <h3 class="cast-heading">Chapters</h3>
+        <div class="chapter-row">
+          {#each chapters as ch, i}
+            <button type="button" class="chapter-card" on:click={() => playFromChapter(ch.start_ms)}
+              title="Play from {ch.title || `Chapter ${i + 1}`}">
+              {#if ch.thumb_url}
+                <img src={assetUrl(ch.thumb_url)} alt="" loading="lazy" decoding="async" />
+              {:else}
+                <span class="chapter-card-empty" aria-hidden="true"></span>
+              {/if}
+              <span class="chapter-card-title">{i + 1}. {ch.title || `Chapter ${i + 1}`}</span>
+              <span class="chapter-card-time">{fmtTime(ch.start_ms / 1000)}</span>
+            </button>
+          {/each}
+        </div>
+      </div>
+    {/if}
 
     {#if cast.length}
       <div class="cast-strip">
@@ -5409,6 +5414,18 @@
     gap: 0.5rem;
     align-items: baseline;
   }
+  .chapter-menu.with-thumbs { min-width: 320px; max-height: 360px; }
+  .chapter-menu.with-thumbs .quality-option {
+    grid-template-columns: auto auto 1fr auto;
+    align-items: center;
+  }
+  .chapter-thumb {
+    width: 80px; height: 45px;
+    object-fit: cover;
+    border-radius: 3px;
+    background: rgba(255,255,255,0.06);
+    display: block;
+  }
   .chapter-num { color: rgba(255,255,255,0.45); font-variant-numeric: tabular-nums; }
   .chapter-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .chapter-time { color: rgba(255,255,255,0.45); font-size: 0.7rem; font-variant-numeric: tabular-nums; }
@@ -5779,6 +5796,36 @@
   }
 
   .cast-strip { margin-bottom: 2rem; }
+  .chapter-strip { margin-bottom: 2rem; }
+  .chapter-row {
+    display: flex; gap: 0.75rem;
+    overflow-x: auto;
+    padding-bottom: 0.5rem;
+    scrollbar-width: thin;
+  }
+  .chapter-card {
+    flex: 0 0 auto;
+    width: 176px;
+    display: flex; flex-direction: column; gap: 0.25rem;
+    padding: 0; border: none; background: none;
+    color: inherit; font: inherit; text-align: left;
+    cursor: pointer;
+  }
+  .chapter-card img, .chapter-card-empty {
+    width: 176px; height: 99px;
+    object-fit: cover;
+    border-radius: 6px;
+    background: var(--bg-hover);
+    display: block;
+    transition: outline-color 0.12s;
+    outline: 2px solid transparent;
+  }
+  .chapter-card:hover img, .chapter-card:focus-visible img { outline-color: var(--accent); }
+  .chapter-card-title {
+    font-size: 0.78rem; color: var(--text-primary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .chapter-card-time { font-size: 0.7rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
   .cast-heading {
     font-size: 0.85rem; font-weight: 600;
     color: var(--text-secondary);
