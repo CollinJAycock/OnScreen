@@ -4,7 +4,7 @@ import NowPlayingCard from './NowPlayingCard.svelte';
 import StopStreamDialog from './StopStreamDialog.svelte';
 import {
   canStop, channelsLabel, containerLabel, decisionLabel, decisionTone, formatStream, locationLabel,
-  resolutionLabel, sourceOutput, stopMessageError, viewerInitial, viewerLabel, STOP_MESSAGE_MAX,
+  optimizedLabel, resolutionLabel, sourceOutput, stopMessageError, viewerInitial, viewerLabel, STOP_MESSAGE_MAX,
 } from './now-playing';
 
 vi.mock('$lib/api', () => ({ assetUrl: (p: string) => p }));
@@ -24,6 +24,13 @@ describe('now-playing helpers', () => {
       .toEqual(['Direct Play', 'Direct Stream', 'Remux', 'Transcoding']);
     expect(['directPlay', 'remux', 'directStream', 'transcode'].map(decisionTone))
       .toEqual(['direct', 'stream', 'stream', 'transcode']);
+  });
+
+  it('labels an optimized version direct play', () => {
+    expect(optimizedLabel({ optimized_version: { id: 'v', profile: 'mobile_720p', label: 'Mobile · 720p 4 Mbps' } }))
+      .toBe('Optimized · Mobile · 720p 4 Mbps');
+    expect(optimizedLabel({ optimized_version: { id: 'v' } })).toBe('Optimized version');
+    expect(optimizedLabel({})).toBe('');
   });
 
   it('names the viewer, owner first for managed profiles', () => {
@@ -109,6 +116,19 @@ describe('NowPlayingCard', () => {
     expect(screen.queryByRole('list')).toBeNull();
     expect(document.querySelector('.formats')!.textContent).toContain('Original file');
     expect(screen.queryByRole('button', { name: 'Stop' })).toBeNull();
+  });
+
+  it('shows when an optimized version is playing', () => {
+    render(NowPlayingCard, {
+      session: {
+        ...base,
+        source: { video_codec: 'hevc', height: 2160 },
+        output: { container: 'mp4', video_codec: 'h264', height: 720 },
+        optimized_version: { id: 'v1', profile: 'mobile_720p', label: 'Mobile · 720p 4 Mbps' },
+      },
+    });
+    expect(screen.getByText('Direct Play')).toBeTruthy();
+    expect(screen.getByText('Optimized · Mobile · 720p 4 Mbps')).toBeTruthy();
   });
 
   it('renders a bare card from an older server', () => {

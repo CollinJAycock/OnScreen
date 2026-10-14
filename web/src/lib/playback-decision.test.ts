@@ -162,6 +162,10 @@ describe('runtime codec demotion', () => {
     expect(after).toContain('av1');
   });
 
+  it('opts in to optimized versions (optimized=1)', () => {
+    expect(clientCapabilitiesHeader().split(',')).toContain('optimized=1');
+  });
+
   it('demoteCodec("av1") drops only av1', () => {
     clientCapabilitiesHeader();
     demoteCodec('av1');

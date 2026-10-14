@@ -1380,6 +1380,101 @@ export const downloadsApi = {
   remove: (jobId: string) => api.del(`/downloads/${encodeURIComponent(jobId)}`),
 };
 
+// ── Optimized versions (admin "Optimize…") ───────────────────────────────────
+
+export type OptimizeProfileId = 'mobile_720p' | 'tv_1080p' | 'original_compatible';
+export type OptimizeStatus = 'queued' | 'running' | 'ready' | 'failed';
+
+export interface OptimizeProfile {
+  id: OptimizeProfileId;
+  label: string;
+  max_height: number;
+  bitrate_kbps: number;
+  /** The original-quality profile keeps the source resolution. */
+  keep_resolution?: boolean;
+}
+
+/** A playable optimized version (item detail optimized_versions, and the
+ *  play decision's optimized_version). */
+export interface OptimizedVersion {
+  id: string;
+  /** The source file it was made from. */
+  file_id: string;
+  profile: OptimizeProfileId;
+  label: string;
+  container: string;
+  video_codec: string;
+  audio_codec: string;
+  audio_channels: number;
+  width?: number;
+  height?: number;
+  bitrate_kbps?: number;
+  size_bytes?: number;
+  duration_ms?: number;
+  /** /media/optimized/{id} — pass through assetUrl. */
+  stream_url: string;
+  stream_token?: string;
+}
+
+/** One optimized version or the job producing it (admin list). */
+export interface OptimizeJob {
+  id: string;
+  item_id: string;
+  file_id: string;
+  library_id?: string;
+  title?: string;
+  item_type?: string;
+  show_title?: string;
+  season_index?: number;
+  episode_index?: number;
+  profile: OptimizeProfileId;
+  profile_label: string;
+  status: OptimizeStatus;
+  /** Encode progress, 0..1. */
+  progress: number;
+  error?: string;
+  size_bytes?: number;
+  width?: number;
+  height?: number;
+  bitrate_kbps?: number;
+  duration_ms?: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface OptimizeResult {
+  profile: OptimizeProfileId;
+  items: number;
+  queued: number;
+  existing: number;
+  skipped: number;
+  truncated?: boolean;
+  skipped_items?: { item_id: string; reason: string }[];
+}
+
+export type OptimizeSelection =
+  | { item_ids: string[] }
+  | { library_id: string }
+  | { collection_id: string };
+
+export const optimizeApi = {
+  profiles: () => api.get<OptimizeProfile[]>('/optimize/profiles'),
+  /** Queue an optimized version of every video item the selection covers. */
+  create: (selection: OptimizeSelection, profile: OptimizeProfileId) =>
+    api.post<OptimizeResult>('/optimize', { ...selection, profile }),
+  list: (params: { item_id?: string; library_id?: string; status?: OptimizeStatus; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    const q = qs.toString();
+    return api.get<{ jobs: OptimizeJob[]; counts: Partial<Record<OptimizeStatus, number>> }>(`/optimize/jobs${q ? `?${q}` : ''}`);
+  },
+  /** Cancel a job or delete a finished version (same id space). */
+  remove: (id: string) => api.del(`/optimize/jobs/${encodeURIComponent(id)}`),
+};
+
 export const issuesApi = {
   /** The caller's own reports on an item, newest first. */
   listMine: (itemId: string) => api.get<MediaIssue[]>(`/items/${encodeURIComponent(itemId)}/issues`),
@@ -2306,7 +2401,48 @@ export const settingsApi = {
   getNode: (nodeID: string) => api.get<NodeSettings>(`/settings/node/${encodeURIComponent(nodeID)}`),
   updateNode: (nodeID: string, body: NodeSettings) => api.put<void>(`/settings/node/${encodeURIComponent(nodeID)}`, body),
   deleteNode: (nodeID: string) => api.delete(`/settings/node/${encodeURIComponent(nodeID)}`),
+  getRemoteAccess: () => api.get<RemoteAccess>('/settings/remote-access'),
+  updateRemoteAccess: (body: RemoteAccessUpdate) => api.put<RemoteAccess>('/settings/remote-access', body),
 };
+
+/** Settings ▸ Remote access: automatic router port mapping. */
+export interface RemoteAccessUpdate {
+  map_port: boolean;
+  /** 0 = the server's listen port. */
+  external_port: number;
+  protocol: 'TCP';
+}
+
+export type RemoteAccessState = 'disabled' | 'loopback_only' | 'standby' | 'no_gateway' | 'mapped' | 'error';
+
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  state: RemoteAccessState;
+  gateway_found: boolean;
+  method?: 'upnp' | 'pcp' | 'nat-pmp';
+  gateway_addr?: string;
+  local_ip?: string;
+  internal_port?: number;
+  external_ip?: string;
+  external_port?: number;
+  lease_seconds?: number;
+  permanent?: boolean;
+  last_renewal?: string;
+  expires_at?: string;
+  last_error?: string;
+  last_error_at?: string;
+  node?: string;
+  updated_at: string;
+}
+
+export interface RemoteAccess extends RemoteAccessUpdate {
+  listen_addr: string;
+  listen_port?: number;
+  loopback_only: boolean;
+  https: boolean;
+  status: RemoteAccessStatus;
+  reachability_hint?: string;
+}
 
 // ── Filesystem browser ────────────────────────────────────────────────────────
 
@@ -2694,6 +2830,9 @@ export interface ItemDetail {
   // field from this when present.
   taken_at?: string;
   files: ItemFile[];
+  /** Pre-made MP4 copies (admin "Optimize…"), highest bitrate first. Never
+   *  part of files: playing files[0] still plays the source. */
+  optimized_versions?: OptimizedVersion[];
   markers?: Marker[];
   tmdb_id?: number;
   tvdb_id?: number;
@@ -4049,6 +4188,8 @@ export interface ActiveSession {
   transcode_reasons?: string[];
   /** Whether POST /sessions/{id}/stop can act on this card. */
   can_stop?: boolean;
+  /** Set when the direct play is of an optimized version, not the source. */
+  optimized_version?: { id: string; profile?: string; label?: string };
 }
 
 /** One side of a Now Playing card's source → output line. Codec/container
@@ -4222,6 +4363,16 @@ export interface TranscodeSession {
   seg0_audio_gap_sec: number;
 }
 
+export interface PlaybackDecision {
+  decision: string;
+  file_id: string;
+  reason?: string;
+  max_bitrate_kbps?: number;
+  optimized_version?: OptimizedVersion;
+  source_decision?: string;
+  source_reason?: string;
+}
+
 export const transcodeApi = {
   start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean, audioStreamIndex?: number, supportsHEVC?: boolean, supportsAV1?: boolean) =>
     api.post<TranscodeSession>(`/items/${itemId}/transcode`, {
@@ -4235,11 +4386,11 @@ export const transcodeApi = {
     }),
   // Server-authoritative play decision (capability profiles). Returns the
   // server's verdict for a file given the client's X-Client-Capabilities header.
-  // Currently consumed in shadow mode (compared against the local decision) —
-  // see the watch page. docs/capability-profiles.md.
+  // The web sends optimized=1, so a source that would transcode may come back
+  // as directPlay of an optimized_version (reason optimized_version), with the
+  // source's own verdict in source_decision. docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
-    api.post<{ decision: string; file_id: string; reason?: string; max_bitrate_kbps?: number }>(
-      `/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
+    api.post<PlaybackDecision>(`/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)
 };

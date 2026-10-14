@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit, type EpisodeOrder, type MetadataEditResult } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit, type EpisodeOrder, type MetadataEditResult, type OptimizedVersion } from '$lib/api';
   import { externalRatingChips } from '$lib/externalRatings';
   import { heroLogoPath, studioKindLabel } from '$lib/studios';
   import { cssUrl } from '$lib/cssurl';
@@ -33,6 +33,7 @@
   import FranchiseShelf from '$lib/components/FranchiseShelf.svelte';
   import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
   import DownloadMenu from '$lib/components/DownloadMenu.svelte';
+  import OptimizePanel from '$lib/components/OptimizePanel.svelte';
   import RequestMoreSeasonsButton from '$lib/components/RequestMoreSeasonsButton.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   import ItemMetadataEditor from '$lib/components/ItemMetadataEditor.svelte';
@@ -758,7 +759,11 @@
   // can't see (it isn't on media.File). Falls back to the local heuristic when
   // the server verdict isn't available yet (still fetching, fetch failed, or a
   // non-source file). See docs/capability-profiles.md.
-  let serverDecision: { fileId: string; decision: string } | null = null;
+  // decision is the verdict for the SOURCE file (source_decision when the
+  // server offered an optimized version instead), so every helper below keeps
+  // judging the source; optimized is the pre-made version to play in place
+  // of a transcode, when the server chose one (reason optimized_version).
+  let serverDecision: { fileId: string; decision: string; optimized?: OptimizedVersion } | null = null;
   let decisionFetchedFor = '';
 
   function serverDecisionFor(file: ItemFile | undefined): string | null {
@@ -774,6 +779,19 @@
     const d = serverDecisionFor(file);
     if (d !== null) return d === 'directPlay' && (file?.faststart ?? true);
     return canDirectPlayDecision(file, clientCaps); // fallback: no server verdict
+  }
+  /** The optimized version the server chose for this file in place of a
+   *  transcode, if any. It carries only the default audio track. */
+  function optimizedFor(file: ItemFile | undefined): OptimizedVersion | null {
+    if (!file || !serverDecision || serverDecision.fileId !== file.id) return null;
+    return serverDecision.optimized ?? null;
+  }
+  // The optimized version currently on screen (direct play of its MP4).
+  let playingOptimized: OptimizedVersion | null = null;
+  function playOptimized(v: OptimizedVersion) {
+    playingOptimized = v;
+    videoEl.src = assetUrl(v.stream_url);
+    videoEl.load();
   }
   function canRemuxVideo(file: ItemFile | undefined): boolean {
     const d = serverDecisionFor(file);
@@ -830,7 +848,11 @@
     if (!item) return;
     try {
       const srv = await transcodeApi.decide(item.id, file.id);
-      serverDecision = { fileId: srv.file_id || file.id, decision: srv.decision };
+      serverDecision = {
+        fileId: srv.file_id || file.id,
+        decision: srv.source_decision ?? srv.decision,
+        optimized: srv.reason === 'optimized_version' ? srv.optimized_version : undefined,
+      };
       const local = canDirectPlayDecision(file, clientCaps)
         ? 'directPlay'
         : canRemuxVideoDecision(file, clientCaps)
@@ -2076,6 +2098,12 @@
       // Stream-copy the video and only transcode audio → fast, lossless video.
       const posMs = item.view_offset_ms > 0 ? item.view_offset_ms : 0;
       await switchToTranscode(0, posMs, true);
+    } else if (!needsAudioSwitch && optimizedFor(file)) {
+      // The source would need a full transcode (codec, HDR, or over the
+      // streaming limit) and the server has an optimized version that fits:
+      // direct-play the pre-made MP4 instead. Same resume handling as any
+      // direct play (loadedmetadata seeks to view_offset_ms).
+      playOptimized(optimizedFor(file)!);
     } else {
       // Full transcode needed (non-browser video codec like HEVC/VC-1/MPEG-2/AV1).
       // Match source resolution tier: 4K sources default to 4K (server's
@@ -2177,6 +2205,9 @@
       } else if (canRemuxVideo(file)) {
         // "Auto" but can't direct-play → remux (video copy + audio transcode).
         await switchToTranscode(0, posMs, true);
+      } else if (selectedAudioIndex <= 0 && optimizedFor(file)) {
+        // "Auto" and the server has an optimized version: play it directly.
+        await switchToOptimized(optimizedFor(file)!, posMs);
       } else {
         // "Auto" but nothing is browser-compatible → full transcode.
         // Match source resolution so 4K sources stay 4K instead of being
@@ -2208,6 +2239,23 @@
     }
   }
 
+  // switchToOptimized moves playback onto an optimized version's MP4 (direct
+  // play), resuming at posMs.
+  async function switchToOptimized(v: OptimizedVersion, posMs: number) {
+    const wasPlaying = videoEl && !videoEl.paused;
+    destroyHls();
+    await stopTranscodeSession();
+    hlsOffsetSec = 0;
+    hlsActive = false;
+    playOptimized(v);
+    const restore = () => {
+      videoEl.removeEventListener('loadedmetadata', restore);
+      if (posMs > 0) videoEl.currentTime = posMs / 1000;
+      if (wasPlaying) void videoEl.play().catch(() => {});
+    };
+    videoEl.addEventListener('loadedmetadata', restore);
+  }
+
   async function switchToDirectPlay(posMs: number) {
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
@@ -2218,6 +2266,7 @@
     hlsActive = false;
 
     const file = item!.files[0];
+    playingOptimized = null;
     videoEl.src = file.stream_url;
     videoEl.load();
 
@@ -2258,6 +2307,7 @@
     // stopped, holding a stream slot — while its hls.js instance leaked
     // attached to a detached media element.
     if (switchingTranscode) return;
+    playingOptimized = null;
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
     switchingTranscode = true; // gate codec-escalation during the destroy→attach gap
@@ -4009,12 +4059,12 @@
               <button
                 class="icon-btn small quality-btn"
                 on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('quality'); } else { showQualityMenu = !showQualityMenu; showSubtitleMenu = false; showAudioMenu = false; } }}
-                title="Quality"
+                title={playingOptimized ? `Quality — playing the optimized version (${playingOptimized.label})` : 'Quality'}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
                 </svg>
-                <span class="quality-label">{selectedQuality.label === 'Auto (Direct Play)' ? 'Auto' : selectedQuality.label}</span>
+                <span class="quality-label">{playingOptimized ? 'Optimized' : selectedQuality.label === 'Auto (Direct Play)' ? 'Auto' : selectedQuality.label}</span>
               </button>
 
               {#if showQualityMenu}
@@ -4510,6 +4560,12 @@
     <!-- Admin labels (what per-user label restrictions match). -->
     {#if isAdmin}
       <ItemLabels itemId={item.id} labels={item.labels ?? []} />
+    {/if}
+
+    <!-- Optimize… (admin): pre-made lower-bitrate MP4 versions the player
+         direct-plays instead of transcoding; with their progress. -->
+    {#if isAdmin && ['movie', 'episode', 'show', 'season', 'home_video', 'music_video'].includes(item.type)}
+      <OptimizePanel itemId={item.id} itemType={item.type} title={item.title} />
     {/if}
 
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
