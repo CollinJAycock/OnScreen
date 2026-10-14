@@ -376,6 +376,26 @@ API change lands only when every first-party client moves with it — see
     such as an EPUB CFI or a page number, a 0–1 progression, the device name
     and a timestamp; the newest position wins).
   - **Migration 00050** adds the `reading_progress` table.
+- **Automatic subtitle download.** OnScreen can fetch subtitles from
+  OpenSubtitles on its own for new movies and episodes. Off by default; turn
+  it on under Settings ▸ General ▸ Automatic subtitle download and list the
+  languages you want (e.g. `en,es`).
+  - It only downloads a language the file has no subtitle in yet — not
+    embedded, not in a file next to the video, not downloaded before. It
+    prefers a subtitle made for the exact file (OpenSubtitles hash match),
+    then the release name closest to the file's, and can prefer or avoid
+    hearing-impaired subtitles.
+  - The new "Download missing subtitles" task (Settings ▸ Tasks) runs every
+    6 hours, newest titles first. A title with nothing found is tried again
+    after 1, 7 and 30 days, then left alone, so nothing is searched over and
+    over. When the OpenSubtitles daily download limit is reached it stops for
+    the day. Without OpenSubtitles set up it does nothing.
+  - Each movie or TV library can turn it on or off for itself, or use its own
+    languages, on the library's settings page.
+  - **API (additive, admin):** `GET`/`PUT /settings/subtitle-auto-download`
+    and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
+  - **Migration 00050** adds the per-library overrides and the
+    per-title-and-language attempt log.
 
 ### Changed
 

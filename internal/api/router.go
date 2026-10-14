@@ -70,6 +70,7 @@ type Handlers struct {
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
 	ReadingProgress *v1.ReadingProgressHandler // ebook position sync; optional
+	SubtitleAuto    *v1.SubtitleAutoHandler    // automatic subtitle download settings; optional
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
@@ -897,6 +898,18 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/settings/node/{nodeID}", h.Settings.GetNode)
 					r.Put("/settings/node/{nodeID}", h.Settings.UpdateNode)
 					r.Delete("/settings/node/{nodeID}", h.Settings.DeleteNode)
+				})
+			}
+
+			// Automatic subtitle download — admin only: the server-wide
+			// setting and the per-library overrides.
+			if h.SubtitleAuto != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/settings/subtitle-auto-download", h.SubtitleAuto.GetSettings)
+					r.Put("/settings/subtitle-auto-download", h.SubtitleAuto.UpdateSettings)
+					r.Get("/libraries/{id}/subtitle-auto-download", h.SubtitleAuto.GetLibrary)
+					r.Put("/libraries/{id}/subtitle-auto-download", h.SubtitleAuto.UpdateLibrary)
 				})
 			}
 

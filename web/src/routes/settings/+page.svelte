@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { settingsApi, userApi } from '$lib/api';
+  import { settingsApi, subtitleAutoApi, userApi, type HearingImpairedPref } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
   let loading = true;
@@ -24,6 +24,16 @@
   let osPasswordMasked = false;
   let osLanguages = '';
   let osEnabled = false;
+
+  // Automatic subtitle download (the "Download missing subtitles" task). Off
+  // by default; libraries can override it on their own settings page.
+  // subAutoLoaded stays false when the server didn't answer, so save()
+  // doesn't overwrite a setting it never read.
+  let subAutoLoaded = false;
+  let subAutoEnabled = false;
+  let subAutoLangs = 'en';
+  let subAutoHash = true;
+  let subAutoHI: HearingImpairedPref = 'any';
 
   // Scrobbling apps — the operator's Last.fm API account and Trakt app that
   // users' links run under. The secrets arrive as "****" when set and go back
@@ -96,6 +106,14 @@
     } finally {
       loading = false;
     }
+    try {
+      const sa = await subtitleAutoApi.get();
+      subAutoEnabled = !!sa.enabled;
+      subAutoLangs = sa.languages ?? '';
+      subAutoHash = !!sa.prefer_hash_match;
+      subAutoHI = sa.hearing_impaired ?? 'any';
+      subAutoLoaded = true;
+    } catch { /* section stays hidden */ }
     // Load language preferences (also carries the caller's own PIN status).
     // has_pin comes from the self-scoped preferences call, not the switchable
     // list — that list is scoped to the caller's managed children and never
@@ -167,6 +185,15 @@
         },
         web_downloads_enabled: webDownloadsEnabled,
       });
+      if (subAutoLoaded) {
+        const sa = await subtitleAutoApi.update({
+          enabled: subAutoEnabled,
+          languages: subAutoLangs.trim(),
+          prefer_hash_match: subAutoHash,
+          hearing_impaired: subAutoHI,
+        });
+        subAutoLangs = sa?.languages ?? subAutoLangs;
+      }
       // Reload to get updated webhook URL
       const s = await settingsApi.get();
       arrApiKey = s.arr_api_key ?? '';
@@ -518,6 +545,50 @@
           </div>
         </div>
       </section>
+
+      {#if subAutoLoaded}
+        <section>
+          <div class="sec-label">Automatic subtitle download</div>
+          <div class="field">
+            <label class="toggle-row">
+              <input type="checkbox" bind:checked={subAutoEnabled} />
+              <span>Download missing subtitles for new movies and episodes</span>
+            </label>
+            <div class="hint">
+              The "Download missing subtitles" task (Settings › Tasks) searches OpenSubtitles for each
+              language below that a file has no subtitle in yet — embedded, a file next to it, or an earlier
+              download — and saves the best match. Needs OpenSubtitles set up above; the daily download quota
+              is shared with viewers' own downloads. Libraries can turn it on or off for themselves.
+            </div>
+          </div>
+          <div class="field">
+            <label for="sub-auto-langs">Languages</label>
+            <input
+              id="sub-auto-langs"
+              type="text"
+              bind:value={subAutoLangs}
+              placeholder="en,es"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </div>
+          <div class="field">
+            <label class="toggle-row">
+              <input type="checkbox" bind:checked={subAutoHash} />
+              <span>Prefer subtitles made for the exact file (hash match)</span>
+            </label>
+          </div>
+          <div class="field">
+            <label for="sub-auto-hi">Hearing-impaired (SDH) subtitles</label>
+            <select id="sub-auto-hi" value={subAutoHI}
+                    on:change={(e) => subAutoHI = e.currentTarget.value as HearingImpairedPref}>
+              <option value="any">No preference</option>
+              <option value="prefer">Prefer</option>
+              <option value="avoid">Avoid</option>
+            </select>
+          </div>
+        </section>
+      {/if}
 
       <section>
         <div class="sec-label">Scrobbling apps</div>

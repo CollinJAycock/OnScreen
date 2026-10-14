@@ -3164,6 +3164,92 @@ paths:
         '400': { $ref: '#/components/responses/BadRequest' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/settings/subtitle-auto-download:
+    get:
+      summary: Automatic subtitle download setting (admin)
+      tags: [Settings]
+      description: |
+        The server-wide setting for the `subtitle_auto_download` task, which
+        downloads subtitles from OpenSubtitles for movies and episodes that
+        have none in a wanted language. Off by default. v2.6.
+      responses:
+        '200':
+          description: The setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SubtitleAutoSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Update the automatic subtitle download setting (admin)
+      tags: [Settings]
+      description: Every field optional; an omitted one keeps its value. Audited as `settings.update`. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:           { type: boolean }
+                languages:         { type: string, example: 'en,es' }
+                prefer_hash_match: { type: boolean }
+                hearing_impaired:  { type: string, enum: [prefer, avoid, any] }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SubtitleAutoSettings' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/libraries/{id}/subtitle-auto-download:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A library's automatic subtitle download override (admin)
+      tags: [Libraries]
+      description: '`null` fields follow the server-wide setting. v2.6.'
+      responses:
+        '200':
+          description: The override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LibrarySubtitleAuto' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Set a library's automatic subtitle download override (admin)
+      tags: [Libraries]
+      description: Both fields null removes the override. 404 for an unknown library. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:   { type: boolean, nullable: true }
+                languages: { type: string, nullable: true }
+      responses:
+        '200':
+          description: The override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LibrarySubtitleAuto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/users/me/scrobble:
     get:
       summary: Caller's scrobble links
@@ -7539,6 +7625,21 @@ components:
         device_name: { type: string, description: 'Where the position was saved; omitted when unknown.' }
         updated_at:  { type: string, format: date-time, description: 'Client time the position was reached (clamped to the server clock).' }
         applied:     { type: boolean, description: 'PUT only: false when a newer stored position was kept.' }
+    SubtitleAutoSettings:
+      type: object
+      properties:
+        enabled:             { type: boolean }
+        languages:           { type: string, description: 'Comma-separated language codes, normalised (e.g. "en,es,pt-br").' }
+        only_missing:        { type: boolean, description: 'Always true: a language the file already has is never downloaded.' }
+        prefer_hash_match:   { type: boolean }
+        hearing_impaired:    { type: string, enum: [prefer, avoid, any] }
+        provider_configured: { type: boolean, description: 'Read-only: whether OpenSubtitles is set up.' }
+    LibrarySubtitleAuto:
+      type: object
+      properties:
+        library_id: { type: string, format: uuid }
+        enabled:    { type: boolean, nullable: true }
+        languages:  { type: string, nullable: true }
     StreamingLimits:
       type: object
       properties:

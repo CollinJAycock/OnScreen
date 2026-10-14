@@ -1590,6 +1590,39 @@ export const readingProgressApi = {
     apiBeacon('PUT', `/items/${itemId}/reading-progress`, p),
 };
 
+// ── Automatic subtitle download (admin) ───────────────────────────────────────
+
+export type HearingImpairedPref = 'prefer' | 'avoid' | 'any';
+
+export interface SubtitleAutoSettings {
+  enabled: boolean;
+  /** Comma-separated language codes, e.g. "en,es". */
+  languages: string;
+  /** Always true: a language the file already has is never downloaded. */
+  only_missing: boolean;
+  prefer_hash_match: boolean;
+  hearing_impaired: HearingImpairedPref;
+  /** Read-only: whether OpenSubtitles is set up (nothing runs without it). */
+  provider_configured: boolean;
+}
+
+/** A library's override; null fields follow the server-wide setting. */
+export interface LibrarySubtitleAuto {
+  library_id: string;
+  enabled: boolean | null;
+  languages: string | null;
+}
+
+export const subtitleAutoApi = {
+  get: () => api.get<SubtitleAutoSettings>('/settings/subtitle-auto-download'),
+  update: (s: Partial<Omit<SubtitleAutoSettings, 'only_missing' | 'provider_configured'>>) =>
+    api.put<SubtitleAutoSettings>('/settings/subtitle-auto-download', s),
+  getLibrary: (libraryId: string) =>
+    api.get<LibrarySubtitleAuto>(`/libraries/${libraryId}/subtitle-auto-download`),
+  updateLibrary: (libraryId: string, o: { enabled: boolean | null; languages: string | null }) =>
+    api.put<LibrarySubtitleAuto>(`/libraries/${libraryId}/subtitle-auto-download`, o),
+};
+
 export interface SignedInSession {
   id: string;
   /** "Chrome on Windows", "Roku", … — empty for sign-ins made before devices

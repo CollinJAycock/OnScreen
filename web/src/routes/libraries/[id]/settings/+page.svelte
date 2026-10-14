@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode, type EpisodeOrder } from '$lib/api';
+  import { libraryApi, subtitleAutoApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode, type EpisodeOrder } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
   import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from '$lib/trickplayProgress';
 
@@ -44,6 +44,14 @@
   let episodeOrder: EpisodeOrder = 'aired';
   $: hasEpisodes = library?.type === 'show' || library?.type === 'anime' || library?.type === 'cartoons';
 
+  // Automatic subtitle download override (movies and episodes only). ''
+  // follows the server-wide setting (Settings ▸ General ▸ OpenSubtitles).
+  // Saved with the form, only when changed.
+  let subAutoMode: '' | 'on' | 'off' = '';
+  let subAutoLangs = '';
+  let subAutoLoaded: { mode: '' | 'on' | 'off'; langs: string } | null = null;
+  $: subAutoApplies = library?.type === 'movie' || hasEpisodes;
+
   let mounted = false;
   let prevId = '';
   let savedTimeout: ReturnType<typeof setTimeout>;
@@ -75,6 +83,9 @@
     episodeOrder = 'aired';
     tpStatus = null;
     tpMessage = '';
+    subAutoMode = '';
+    subAutoLangs = '';
+    subAutoLoaded = null;
     fetchLibrary();
   }
 
@@ -95,6 +106,20 @@
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally { loading = false; }
     void loadTrickplayStatus();
+    void loadSubtitleAuto();
+  }
+
+  async function loadSubtitleAuto() {
+    if (!(library?.type === 'movie' || library?.type === 'show' || library?.type === 'anime' || library?.type === 'cartoons')) return;
+    try {
+      const o = await subtitleAutoApi.getLibrary(id);
+      subAutoMode = o?.enabled == null ? '' : o.enabled ? 'on' : 'off';
+      subAutoLangs = o?.languages ?? '';
+      subAutoLoaded = { mode: subAutoMode, langs: subAutoLangs };
+    } catch {
+      // Leave the override hidden-as-default; saving won't touch it.
+      subAutoLoaded = null;
+    }
   }
 
   async function loadTrickplayStatus() {
@@ -149,6 +174,15 @@
         ...(hasEpisodes && episodeOrder !== (library?.episode_order ?? 'aired')
           ? { episode_order: episodeOrder } : {}),
       });
+      if (subAutoApplies && subAutoLoaded &&
+          (subAutoMode !== subAutoLoaded.mode || subAutoLangs.trim() !== subAutoLoaded.langs)) {
+        const o = await subtitleAutoApi.updateLibrary(id, {
+          enabled: subAutoMode === '' ? null : subAutoMode === 'on',
+          languages: subAutoLangs.trim() === '' ? null : subAutoLangs.trim(),
+        });
+        subAutoLangs = o?.languages ?? '';
+        subAutoLoaded = { mode: subAutoMode, langs: subAutoLangs };
+      }
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
     } catch (e: unknown) {
@@ -323,6 +357,33 @@
           {#if tpMessage}
             <div class="tp-msg">{tpMessage}</div>
           {/if}
+        </section>
+      {/if}
+
+      {#if subAutoApplies && subAutoLoaded}
+        <section>
+          <div class="sec-label">Automatic subtitles</div>
+          <div class="row2">
+            <div class="field">
+              <label for="sub-auto">Download missing subtitles</label>
+              <select id="sub-auto" value={subAutoMode}
+                      on:change={(e) => subAutoMode = e.currentTarget.value as typeof subAutoMode}>
+                <option value="">Follow server setting</option>
+                <option value="on">On for this library</option>
+                <option value="off">Off for this library</option>
+              </select>
+            </div>
+            <div class="field">
+              <label for="sub-auto-langs">Languages</label>
+              <input id="sub-auto-langs" type="text" bind:value={subAutoLangs}
+                     placeholder="Server's languages" autocomplete="off" spellcheck="false" />
+            </div>
+          </div>
+          <p class="check-help">
+            New movies and episodes without a subtitle in these languages get one from OpenSubtitles
+            (comma-separated codes, e.g. <code>en,es</code>; blank uses the server's list). The server-wide
+            setting and the provider account are under Settings › General.
+          </p>
         </section>
       {/if}
 

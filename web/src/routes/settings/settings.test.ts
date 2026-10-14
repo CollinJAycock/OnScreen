@@ -11,9 +11,12 @@ const mockSetPrefs = vi.hoisted(() => vi.fn());
 const mockSetPin = vi.hoisted(() => vi.fn());
 const mockClearPin = vi.hoisted(() => vi.fn());
 const mockGetUser = vi.hoisted(() => vi.fn());
+const mockSubAutoGet = vi.hoisted(() => vi.fn());
+const mockSubAutoUpdate = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/api', () => ({
   settingsApi: { get: mockSettingsGet, update: mockSettingsUpdate },
+  subtitleAutoApi: { get: mockSubAutoGet, update: mockSubAutoUpdate },
   userApi: {
     listSwitchable: mockListSwitchable,
     getPreferences: mockGetPrefs,
@@ -42,6 +45,11 @@ beforeEach(() => {
   mockGetPrefs.mockResolvedValue({ preferred_audio_lang: null, preferred_subtitle_lang: null });
   mockListSwitchable.mockResolvedValue([]);
   mockGetUser.mockReturnValue({ user_id: 'u1', username: 'admin', is_admin: true });
+  mockSubAutoGet.mockResolvedValue({
+    enabled: false, languages: 'en', only_missing: true, prefer_hash_match: true,
+    hearing_impaired: 'any', provider_configured: true,
+  });
+  mockSubAutoUpdate.mockImplementation(async (s: Record<string, unknown>) => ({ ...s, only_missing: true }));
 });
 
 describe('Settings page', () => {
@@ -103,6 +111,32 @@ describe('Settings page', () => {
     // The mask goes back as-is: the server keeps the stored secret.
     expect(arg.lastfm).toEqual({ api_key: 'lfm-key', shared_secret: '****' });
     expect(arg.trakt).toEqual({ client_id: 'trakt-id', client_secret: '' });
+  });
+
+  it('saves the automatic subtitle download setting with the form', async () => {
+    mockSettingsUpdate.mockResolvedValue(undefined);
+    render(Page);
+    const toggle = (await screen.findByLabelText(/Download missing subtitles/i)) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await fireEvent.click(toggle);
+    await fireEvent.input(screen.getByLabelText(/^Languages$/i), { target: { value: ' en,es ' } });
+    await fireEvent.change(screen.getByLabelText(/Hearing-impaired/i), { target: { value: 'avoid' } });
+    await fireEvent.submit(toggle.closest('form')!);
+    await waitFor(() => expect(mockSubAutoUpdate).toHaveBeenCalled());
+    expect(mockSubAutoUpdate.mock.calls[0][0]).toEqual({
+      enabled: true, languages: 'en,es', prefer_hash_match: true, hearing_impaired: 'avoid',
+    });
+  });
+
+  it('hides the automatic subtitle section and never saves it when it failed to load', async () => {
+    mockSubAutoGet.mockRejectedValueOnce(new Error('nope'));
+    mockSettingsUpdate.mockResolvedValue(undefined);
+    render(Page);
+    const tmdb = (await screen.findByLabelText(/TMDB API Key/i)) as HTMLInputElement;
+    expect(screen.queryByLabelText(/Download missing subtitles/i)).toBeNull();
+    await fireEvent.submit(tmdb.closest('form')!);
+    await waitFor(() => expect(mockSettingsUpdate).toHaveBeenCalled());
+    expect(mockSubAutoUpdate).not.toHaveBeenCalled();
   });
 
   it('does not render email test section when SMTP disabled', async () => {

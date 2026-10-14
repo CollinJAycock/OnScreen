@@ -930,6 +930,31 @@ func run() error {
 	}
 	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
 		WithLibraryAccess(libSvc)
+	// Automatic subtitle download: admin settings (server-wide + per-library)
+	// and the subtitle_auto_download task registered below.
+	subtitleAutoHandler := v1.NewSubtitleAutoHandler(settingsSvc, gen.New(rwPool),
+		subtitleSvc.Configured, logger).WithAudit(auditLogger)
+	subtitleAuto := subtitles.NewAutoDownloader(gen.New(rwPool), subtitleSvc,
+		func(ctx context.Context) subtitles.AutoConfig {
+			c := settingsSvc.SubtitleAutoDownload(ctx)
+			return subtitles.AutoConfig{
+				Enabled:         c.Enabled,
+				Languages:       subtitles.ParseLanguageList(c.Languages),
+				PreferHashMatch: c.PreferHashMatch,
+				HearingImpaired: c.HearingImpaired,
+			}
+		},
+		func(ctx context.Context) ([]uuid.UUID, error) {
+			libs, err := libSvc.List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ids := make([]uuid.UUID, len(libs))
+			for i, l := range libs {
+				ids[i] = l.ID
+			}
+			return ids, nil
+		}, logger)
 
 	// People service has to land here (vs the per-handler section
 	// below) so the items handler can hook the cast/crew refresher
@@ -1459,6 +1484,9 @@ func run() error {
 	schedRegistry.Register("podcast_refresh", scheduler.NewPodcastRefreshHandler(podcastSvc))
 	schedRegistry.Register("external_ratings", scheduler.NewExternalRatingsHandler(
 		externalratings.New(gen.New(rwPool), settingsSvc, logger)))
+	// Missing subtitles for new movies and episodes, from OpenSubtitles, when
+	// an admin turned automatic downloads on (seeded every 6 hours).
+	schedRegistry.Register("subtitle_auto_download", scheduler.NewSubtitleAutoDownloadHandler(subtitleAuto))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the
@@ -1544,6 +1572,7 @@ func run() error {
 		Photos:          photosHandler,
 		Books:           booksHandler,
 		ReadingProgress: v1.NewReadingProgressHandler(gen.New(rwPool), libSvc, logger),
+		SubtitleAuto:    subtitleAutoHandler,
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,
