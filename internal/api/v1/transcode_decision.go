@@ -9,6 +9,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -27,6 +28,13 @@ type playbackDecisionResponse struct {
 	// bitstream undecodable — no playback path exists on any client.
 	Decision string `json:"decision"`
 	FileID   string `json:"file_id"` // the file the decision applies to
+	// Reason is set when the server overrode a capability verdict:
+	// remote_bitrate_limit (or user_bitrate_limit) = the client is outside
+	// the home network and the source exceeds its streaming cap, so it must
+	// transcode. Additive — clients that ignore it just see "transcode".
+	Reason string `json:"reason,omitempty"`
+	// MaxBitrateKbps is the cap the transcode will be held to, with Reason.
+	MaxBitrateKbps int `json:"max_bitrate_kbps,omitempty"`
 }
 
 // Decision handles POST /api/v1/items/{id}/playback-decision. It resolves the
@@ -151,8 +159,25 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// Internet streaming limit: a remote client (judged from the trusted
+	// client IP) must not direct-play or remux a source above its cap — the
+	// verdict becomes transcode and Start clamps the output to the cap. LAN
+	// clients are untouched.
+	var reason string
+	var capKbps int
+	if decision == transcode.DecisionDirectPlay || decision == transcode.DecisionDirectStream {
+		var userCaps StreamCaps
+		if h.userCaps != nil {
+			userCaps, _ = h.userCaps.GetStreamCaps(ctx, claims.UserID)
+		}
+		bc := resolveStreamCap(ctx, userCaps, h.remotePolicy, audit.ClientIP(r), file)
+		if why, ok := remoteDecisionOverride(bc, file); ok {
+			decision, reason, capKbps = transcode.DecisionTranscode, why, bc.Kbps
+		}
+	}
+
 	h.logger.DebugContext(ctx, "playback decision",
-		"item_id", itemID, "file_id", file.ID, "decision", decision.String(),
+		"item_id", itemID, "file_id", file.ID, "decision", decision.String(), "reason", reason,
 		"profile_header", hasProfile, "max_audio_channels", caps.MaxAudioChannels,
 		"supports_hevc", caps.SupportsHEVC, "supports_av1", caps.SupportsAV1)
 	// Echo the resolved profile for debugging (same header transcode-start sets).
@@ -165,7 +190,9 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	// client's ApiResponse<T> parser expects — using respond.JSON here (raw body)
 	// made all clients fail to parse and silently fall back to local decisions.
 	respond.Success(w, r, playbackDecisionResponse{
-		Decision: decision.String(),
-		FileID:   file.ID.String(),
+		Decision:       decision.String(),
+		FileID:         file.ID.String(),
+		Reason:         reason,
+		MaxBitrateKbps: capKbps,
 	})
 }

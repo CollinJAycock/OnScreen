@@ -33,3 +33,18 @@ func (a *sessionEpochAdapter) GetSessionEpoch(ctx context.Context, userID uuid.U
 	}
 	return epoch, nil
 }
+
+// GetSessionState implements middleware.SessionStateReader: the epoch plus
+// whether the token's refresh session still exists, in one primary-pool
+// query (two PK probes). Called instead of GetSessionEpoch for tokens that
+// carry a sid claim, so per-device revocation costs no extra round trip.
+func (a *sessionEpochAdapter) GetSessionState(ctx context.Context, userID, sessionID uuid.UUID) (int64, bool, error) {
+	row, err := a.q.GetSessionState(ctx, gen.GetSessionStateParams{UserID: userID, SessionID: sessionID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, false, middleware.ErrUserNotFound
+		}
+		return 0, false, err
+	}
+	return row.SessionEpoch, row.SessionLive, nil
+}

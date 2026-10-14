@@ -32,22 +32,29 @@ func (m sessionPlaybackMeta) apply(s *transcode.Session) {
 // startReasons explains, in words an admin can act on, why Start is running a
 // remux or transcode instead of a direct play. It combines the capability
 // mismatches Decide sees (transcode.DecisionReasons) with the two things only
-// Start knows: the per-user bitrate cap and an explicit quality pick.
+// Start knows: the bitrate cap (the user's, or for a remote client the
+// internet limit — bitrateCap.RemoteBinding says which) and an explicit
+// quality pick.
 //
 // A remux copies the video, so only audio/container reasons can explain one;
 // video-side mismatches are dropped for it. Never empty: when nothing the
 // server can see explains the request, it says so ("Requested by client" —
 // e.g. the player escalated after a local decode failure).
 func startReasons(file *media.File, caps transcode.ClientCapabilities, decision string,
-	reqHeight, sourceH, userCapKbps int, capForced bool,
+	reqHeight, sourceH int, bitrateCap streamCap, capForced bool,
 ) []string {
 	var out []string
 	srcKbps := 0
 	if file.Bitrate != nil {
 		srcKbps = int(*file.Bitrate / 1000)
 	}
-	if capForced || (decision == "transcode" && userCapKbps > 0 && srcKbps > userCapKbps) {
-		out = append(out, fmt.Sprintf("Over the user's bitrate cap (%s > %s)", fmtMbps(srcKbps), fmtMbps(userCapKbps)))
+	capKbps := bitrateCap.Kbps
+	if capForced || (decision == "transcode" && capKbps > 0 && srcKbps > capKbps) {
+		label := "Over the user's bitrate cap"
+		if bitrateCap.RemoteBinding {
+			label = "Over the internet streaming limit"
+		}
+		out = append(out, fmt.Sprintf("%s (%s > %s)", label, fmtMbps(srcKbps), fmtMbps(capKbps)))
 	}
 	for _, r := range transcode.DecisionReasons(*file, caps) {
 		if decision == "remux" && r.Kind != transcode.ReasonAudio && r.Kind != transcode.ReasonContainer {

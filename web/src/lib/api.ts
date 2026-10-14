@@ -1462,6 +1462,24 @@ export const userApi = {
     api.get<StreamingLimits>(`/users/${userId}/streaming-limits`),
   setStreamingLimits: (userId: string, limits: StreamingLimits) =>
     api.put<void>(`/users/${userId}/streaming-limits`, limits),
+  /** Signed-in devices: the caller's own sign-ins (current one flagged). */
+  listMySessions: () =>
+    api.get<SignedInSession[]>('/users/me/sessions'),
+  /** Sign one of the caller's other devices out. */
+  revokeMySession: (sessionId: string) =>
+    api.del(`/users/me/sessions/${sessionId}`),
+  /** Sign out everywhere except this device. */
+  revokeMyOtherSessions: () =>
+    api.del('/users/me/sessions'),
+  /** Admin: a user's signed-in devices. */
+  listSessions: (userId: string) =>
+    api.get<SignedInSession[]>(`/users/${userId}/sessions`),
+  /** Admin: sign one of a user's devices out. */
+  revokeSession: (userId: string, sessionId: string) =>
+    api.del(`/users/${userId}/sessions/${sessionId}`),
+  /** Admin: sign a user out on every device. */
+  revokeAllSessions: (userId: string) =>
+    api.del(`/users/${userId}/sessions`),
   /** Whether the target user's movie / TV requests skip the admin queue. */
   setRequestPermissions: (userId: string, perms: RequestPermissions) =>
     api.put<void>(`/users/${userId}/request-permissions`, perms),
@@ -1479,6 +1497,23 @@ export const userApi = {
 export interface StreamingLimits {
   max_concurrent_streams: number | null;
   max_stream_bitrate_kbps: number | null;
+  /** Internet-only bitrate cap; omitted on PUT = keep the stored value. */
+  max_remote_stream_bitrate_kbps?: number | null;
+}
+
+/** One sign-in (refresh session) on the signed-in devices list. */
+export interface SignedInSession {
+  id: string;
+  /** "Chrome on Windows", "Roku", … — empty for sign-ins made before devices
+   *  were named, until their next renewal. */
+  client_name: string;
+  platform?: string;
+  ip_address?: string;
+  created_at: string;
+  /** Approximate: sign-in or latest token renewal (about hourly in use). */
+  last_seen_at: string;
+  /** The sign-in this browser is using. */
+  current: boolean;
 }
 
 export interface WatchLimitInfo {
@@ -2031,6 +2066,11 @@ export interface TranscodeConfig {
   abr: boolean;
   abr_max_height: number;        // 0 = no hard ceiling
   abr_auto_max_height: number;   // soft ceiling for AUTO playback
+  // Internet streaming limit (kbps) for clients outside the home network;
+  // 0 / absent = unlimited. Read live, no restart.
+  remote_max_bitrate_kbps?: number;
+  /** Extra CIDRs treated as the home network (besides private / Tailscale). */
+  local_networks?: string[];
 }
 
 export interface WorkerCredentials {
@@ -3834,7 +3874,7 @@ export const transcodeApi = {
   // Currently consumed in shadow mode (compared against the local decision) —
   // see the watch page. docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
-    api.post<{ decision: string; file_id: string }>(
+    api.post<{ decision: string; file_id: string; reason?: string; max_bitrate_kbps?: number }>(
       `/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)

@@ -357,6 +357,21 @@ WHERE id = $1;
 -- Indexed by the existing users PK — no extra index needed.
 SELECT session_epoch FROM users WHERE id = $1;
 
+-- name: GetSessionState :one
+-- GetSessionEpoch plus the per-sign-in check, in the same round trip: the auth
+-- middleware calls this instead when the token names its refresh session
+-- (sid claim), so revoking one device (deleting its sessions row) kills that
+-- device's access / asset / stream tokens on their next request without an
+-- epoch bump that would also cut every other device's in-flight streams.
+-- Both lookups are primary-key probes.
+SELECT u.session_epoch,
+       EXISTS (
+           SELECT 1 FROM sessions s
+           WHERE s.id = sqlc.arg('session_id') AND s.user_id = u.id
+       ) AS session_live
+FROM users u
+WHERE u.id = sqlc.arg('user_id');
+
 -- name: CreateFirstAdmin :one
 -- Atomic "first user is admin" gate — creates the row only if the
 -- users table is empty. Returns (zero, pgx.ErrNoRows) when a user

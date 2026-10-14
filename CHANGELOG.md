@@ -258,6 +258,57 @@ API change lands only when every first-party client moves with it — see
     `POST /items/{id}/transcode` and `/playback-decision` with any part's
     `file_id` start, or judge, the whole movie.
   - **Migration 00045** adds `media_files.edition` and `part_index`.
+- **Separate limits for home and internet streams.** Streams to people
+  outside your home network can be held to a lower bitrate than streams at
+  home.
+  - **Server-wide:** Settings ▸ Transcode ▸ "Internet streaming limit" (off by
+    default). Takes effect on the next stream, no restart.
+  - **Per user:** an "Internet streaming cap" next to the existing bitrate cap
+    under Users ▸ Streaming caps. A remote stream gets the lowest of the
+    user's cap, their internet cap and the server's limit; a stream at home
+    gets only the user's cap, as before.
+  - **What happens:** a remote viewer whose video is over the limit is
+    transcoded down to it instead of playing the original file, and the
+    adaptive quality ladder never goes above it. Now Playing shows "Over the
+    internet streaming limit". Music, audiobooks and podcasts are never
+    limited.
+  - **What counts as home:** loopback, private (192.168.x, 10.x, 172.16–31.x,
+    fd00::/8), link-local, this server's own IPv6 network, and
+    100.64.0.0/10, so Tailscale devices count as home. "Additional local
+    networks" adds more (a VPN or office subnet). The address is the one the
+    server trusts for the audit log, so behind a reverse proxy or Cloudflare
+    it is the viewer's real address only if the proxy forwards it (the bundled
+    nginx sample and cloudflared do); a proxy that doesn't makes everyone look
+    local.
+  - **Not covered:** a client that fetches the original file directly
+    without asking the server how to play it (older app builds) isn't held to
+    the limit. All current OnScreen apps ask first.
+  - **API (additive):** the play decision gains `reason`
+    (`remote_bitrate_limit` / `user_bitrate_limit`) and `max_bitrate_kbps`;
+    `/settings/transcode-config` gains `remote_max_bitrate_kbps` and
+    `local_networks`; `/users/{id}/streaming-limits` gains
+    `max_remote_stream_bitrate_kbps` (leaving it out keeps the stored value).
+    Changing a user's caps is now audited.
+  - **Migration 00046** adds the per-user internet cap.
+- **Signed-in devices.** Settings ▸ Security lists every device signed in to
+  your account (browser or app, its address, when it signed in and was last
+  used) with a "Sign out" button on each and "Sign out everywhere else". On
+  the Users page an admin can see and sign out any user's devices, or sign
+  them out everywhere.
+  - Signing out one device leaves the others alone: no other device has to
+    sign in again or loses its stream. The signed-out device's refresh stops
+    working at once and its other credentials on its next request.
+  - "Last used" is updated when a device renews its sign-in (about hourly
+    while it's in use), not on every request. Devices signed in before this
+    update show no name until their next renewal; their old credentials
+    expire on their own within a day.
+  - Each sign-out is audited (`auth.session_revoked`; the bulk ones as
+    `auth.sessions_revoked`).
+  - **API (additive):** `GET /users/me/sessions`, `DELETE /users/me/sessions`
+    (everywhere else), `DELETE /users/me/sessions/{id}`, and for admins
+    `GET`/`DELETE /users/{id}/sessions` and
+    `DELETE /users/{id}/sessions/{sid}`. Clients may send an `X-Device-Name`
+    header when signing in to name themselves.
 
 ### Changed
 

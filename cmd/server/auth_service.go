@@ -46,6 +46,10 @@ type authQuerier interface {
 	DeleteSession(ctx context.Context, id uuid.UUID) error
 	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
 	TouchSession(ctx context.Context, id uuid.UUID) error
+	// UpdateSessionClient re-labels a session with where its latest refresh
+	// came from (trusted IP, device label) — once per refresh, never per
+	// request. See recordSessionClient.
+	UpdateSessionClient(ctx context.Context, arg gen.UpdateSessionClientParams) error
 	// BumpSessionEpoch increments the user's session_epoch so any
 	// outstanding access / stream tokens get rejected by the auth
 	// middleware. Logout calls it; admin demote and user delete
@@ -498,6 +502,9 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		Username:     user.Username,
 		IsAdmin:      user.IsAdmin,
 		SessionEpoch: user.SessionEpoch,
+		// Rotation keeps the session's ID, so the new tokens name the same
+		// sign-in the old ones did — revoking it still reaches them.
+		SessionID: session.ID,
 	}
 	if user.MaxContentRating != nil {
 		refreshClaims.MaxContentRating = *user.MaxContentRating
@@ -593,7 +600,38 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		return nil, s.refreshReuseError(session, v1.RefreshReuseRotationRace, derr == nil, berr == nil)
 	}
 
+	s.recordSessionClient(ctx, session.ID)
 	return pair, nil
+}
+
+// recordSessionClient stamps the session with the refreshing request's trusted
+// IP and device label, so the signed-in devices list shows where each sign-in
+// was last used. It piggybacks on refresh (about hourly per active device)
+// rather than touching the row on every API request. Best-effort and AFTER
+// the rotation committed: a failure here must never turn a good refresh into
+// an error the client would retry with its now-retired token (which reads as
+// reuse and signs the user out everywhere).
+func (s *authService) recordSessionClient(ctx context.Context, sessionID uuid.UUID) {
+	c, ok := v1.SessionClientFromContext(ctx)
+	if !ok {
+		return
+	}
+	if err := s.db.UpdateSessionClient(ctx, gen.UpdateSessionClientParams{
+		ID:         sessionID,
+		IpAddr:     c.IP,
+		ClientName: nonEmpty(c.ClientName),
+		Platform:   nonEmpty(c.Platform),
+	}); err != nil {
+		s.logger.WarnContext(ctx, "refresh: record session client", "session_id", sessionID, "err", err)
+	}
+}
+
+// nonEmpty maps "" to nil for COALESCE-style "keep the stored value" params.
+func nonEmpty(s string) *string {
+	if s == "" {
+		return nil
+	}
+	return &s
 }
 
 func (s *authService) Logout(ctx context.Context, refreshToken string) error {
@@ -646,7 +684,7 @@ func (s *authService) revokeSegmentTokens(ctx context.Context, userID uuid.UUID)
 // to; deleted / bumped are whether DeleteSessionsForUser / BumpSessionEpoch
 // succeeded. The idle time is computed here, at detection, from the row's
 // last_seen (rotation sets it to NOW()); client_name / platform are copied
-// when set, which issueTokenPair does not do yet (see v1.RefreshReuseError);
+// when set (issueTokenPair / refresh record them; see v1.RefreshReuseError);
 // the token hashes on the row are deliberately not copied.
 func (s *authService) refreshReuseError(row gen.GetSessionByAnyTokenHashRow, trigger string, deleted, bumped bool) *v1.RefreshReuseError {
 	e := &v1.RefreshReuseError{
@@ -915,46 +953,62 @@ func (s *authService) validateSecondFactor(ctx context.Context, user gen.User, c
 }
 
 // issueTokenPair creates an access + refresh token and persists the session.
+//
+// The session row is written first so the access / asset tokens can carry its
+// ID (the sid claim) — what lets one sign-in be revoked on its own. The row is
+// labelled with the requesting device (v1.CaptureSessionClient) for the
+// signed-in devices list. A mint failure after the insert deletes the row
+// again; the raw refresh token never left this function, so nothing could
+// have used it.
 func (s *authService) issueTokenPair(ctx context.Context, user gen.User) (*v1.TokenPair, error) {
-	claims := auth.Claims{
-		UserID:       user.ID,
-		Username:     user.Username,
-		IsAdmin:      user.IsAdmin,
-		SessionEpoch: user.SessionEpoch,
-	}
-	if user.MaxContentRating != nil {
-		claims.MaxContentRating = *user.MaxContentRating
-	}
-	accessToken, err := s.tokens.IssueAccessToken(claims)
-	if err != nil {
-		return nil, fmt.Errorf("issue access token: %w", err)
-	}
-	assetToken, err := s.tokens.IssueAssetToken(claims)
-	if err != nil {
-		return nil, fmt.Errorf("issue asset token: %w", err)
-	}
-
 	raw, hash, err := auth.IssueRefreshToken()
 	if err != nil {
 		return nil, fmt.Errorf("issue refresh token: %w", err)
 	}
 
 	expiry := time.Now().Add(auth.RefreshTokenTTL)
-	if _, err = s.db.CreateSession(ctx, gen.CreateSessionParams{
+	params := gen.CreateSessionParams{
 		UserID:    user.ID,
 		TokenHash: hash,
 		ExpiresAt: pgtype.Timestamptz{Time: expiry, Valid: true},
-	}); err != nil {
+	}
+	if c, ok := v1.SessionClientFromContext(ctx); ok {
+		params.ClientName = nonEmpty(c.ClientName)
+		params.Platform = nonEmpty(c.Platform)
+		params.IpAddr = c.IP
+	}
+	session, err := s.db.CreateSession(ctx, params)
+	if err != nil {
 		return nil, fmt.Errorf("create session: %w", err)
 	}
 
-	return &v1.TokenPair{
-		AccessToken:  accessToken,
-		RefreshToken: raw,
-		AssetToken:   assetToken,
-		ExpiresAt:    expiry,
+	claims := auth.Claims{
 		UserID:       user.ID,
 		Username:     user.Username,
 		IsAdmin:      user.IsAdmin,
-	}, nil
+		SessionEpoch: user.SessionEpoch,
+		SessionID:    session.ID,
+	}
+	if user.MaxContentRating != nil {
+		claims.MaxContentRating = *user.MaxContentRating
+	}
+	accessToken, err := s.tokens.IssueAccessToken(claims)
+	if err == nil {
+		var assetToken string
+		if assetToken, err = s.tokens.IssueAssetToken(claims); err == nil {
+			return &v1.TokenPair{
+				AccessToken:  accessToken,
+				RefreshToken: raw,
+				AssetToken:   assetToken,
+				ExpiresAt:    expiry,
+				UserID:       user.ID,
+				Username:     user.Username,
+				IsAdmin:      user.IsAdmin,
+			}, nil
+		}
+	}
+	if derr := s.db.DeleteSession(ctx, session.ID); derr != nil {
+		s.logger.WarnContext(ctx, "issue token pair: delete orphaned session", "session_id", session.ID, "err", derr)
+	}
+	return nil, fmt.Errorf("issue access/asset token: %w", err)
 }

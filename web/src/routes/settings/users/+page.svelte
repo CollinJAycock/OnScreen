@@ -6,6 +6,7 @@
     type RequestPermissions, type RequestSettings
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import {
     parseUserQuota, parseDefaultQuota, parseWindowDays, quotaDefaultsFrom,
     quotaPlaceholder, quotaInputValue, limitsSummary, windowHint,
@@ -65,6 +66,12 @@
   let concurrentVal = 2;
   let bitrateEnabled = false;
   let bitrateMbps = 8;
+  // Internet-only cap: held to streams from outside the home network.
+  let remoteBitrateEnabled = false;
+  let remoteBitrateMbps = 4;
+
+  // Signed-in devices dialog.
+  let devicesTarget: User | null = null;
 
   // Request auto-approval. Per-user toggles save on click like the admin
   // toggle; ids of rows mid-save block a second click racing the first PUT.
@@ -504,6 +511,10 @@
       bitrateMbps = c.max_stream_bitrate_kbps != null
         ? Math.round((c.max_stream_bitrate_kbps / 1000) * 10) / 10
         : 8;
+      remoteBitrateEnabled = c.max_remote_stream_bitrate_kbps != null;
+      remoteBitrateMbps = c.max_remote_stream_bitrate_kbps != null
+        ? Math.round((c.max_remote_stream_bitrate_kbps / 1000) * 10) / 10
+        : 4;
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to load streaming caps');
       capsTarget = null;
@@ -518,7 +529,8 @@
     try {
       await userApi.setStreamingLimits(capsTarget.id, {
         max_concurrent_streams: concurrentEnabled ? Math.max(1, Math.round(concurrentVal)) : null,
-        max_stream_bitrate_kbps: bitrateEnabled ? Math.max(1, Math.round(bitrateMbps * 1000)) : null
+        max_stream_bitrate_kbps: bitrateEnabled ? Math.max(1, Math.round(bitrateMbps * 1000)) : null,
+        max_remote_stream_bitrate_kbps: remoteBitrateEnabled ? Math.max(1, Math.round(remoteBitrateMbps * 1000)) : null
       });
       toast.success(`Streaming caps updated for "${capsTarget.username}"`);
       capsTarget = null;
@@ -802,6 +814,7 @@
         {#if !isSelf(mu)}
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(viewAsUser, mu)}>View as user</button>
         {/if}
+        <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { devicesTarget = u; }, mu)}>Signed-in devices…</button>
         <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { resetTarget = u; resetPassword = ''; }, mu)}>Reset password…</button>
         {#if !isSelf(mu)}
           <div class="menu-sep"></div>
@@ -1057,12 +1070,53 @@
               <p class="limit-hint">A direct play above this is re-encoded down; transcodes are capped to it.</p>
             {/if}
           </div>
+
+          <div class="limit-section">
+            <label class="limit-toggle">
+              <input type="checkbox" bind:checked={remoteBitrateEnabled} />
+              <span>Limit internet streaming bitrate</span>
+            </label>
+            {#if remoteBitrateEnabled}
+              <div class="limit-field">
+                <input type="number" min="0.5" max="120" step="0.5" bind:value={remoteBitrateMbps} />
+                <span class="unit">Mbps max away from home</span>
+              </div>
+            {/if}
+            <p class="limit-hint">Applies only when they stream from outside your home network, together with the server-wide internet limit (Settings ▸ Transcode) — the lowest wins. Music is never limited.</p>
+          </div>
         {/if}
         <div class="dialog-actions">
           <button class="btn-cancel" on:click={() => capsTarget = null}>Cancel</button>
           <button class="btn-save" disabled={capsLoading || capsSaving} on:click={saveCaps}>
             {capsSaving ? 'Saving...' : 'Save'}
           </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Signed-in devices (admin) dialog -->
+  {#if devicesTarget}
+    {@const target = devicesTarget}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="overlay" on:click={() => devicesTarget = null}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="dialog" on:click|stopPropagation>
+        <h2>Signed-in devices</h2>
+        <p>Devices signed in as <strong>{target.username}</strong>. Signing one out leaves the others alone.</p>
+        <SignedInDevices
+          load={() => userApi.listSessions(target.id)}
+          revoke={(sid) => userApi.revokeSession(target.id, sid)}
+          revokeAll={() => isSelf(target) ? userApi.revokeMyOtherSessions() : userApi.revokeAllSessions(target.id)}
+          revokeAllLabel={isSelf(target) ? 'Sign out everywhere else' : 'Sign out everywhere'}
+          revokeAllConfirm={isSelf(target)
+            ? 'Sign out every other device signed in to your account? This browser stays signed in.'
+            : `Sign ${target.username} out on every device? Streams in progress stop.`}
+          keepCurrent={isSelf(target)}
+          emptyText="Not signed in anywhere."
+        />
+        <div class="dialog-actions">
+          <button class="btn-cancel" on:click={() => devicesTarget = null}>Close</button>
         </div>
       </div>
     </div>

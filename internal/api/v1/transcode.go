@@ -63,6 +63,10 @@ type SessionKiller interface {
 type StreamCaps struct {
 	ConcurrentStreams int
 	BitrateKbps       int
+	// RemoteBitrateKbps is the user's internet-only bitrate cap (migration
+	// 00046): applied, with the server's internet limit, only when the client
+	// is outside the home network. See effectiveStreamCap.
+	RemoteBitrateKbps int
 }
 
 // UserStreamCapsReader reads a user's admin-set streaming caps. Optional on the
@@ -90,6 +94,9 @@ type NativeTranscodeHandler struct {
 	logger   *slog.Logger
 	killer   SessionKiller        // optional — set for embedded worker deployments
 	userCaps UserStreamCapsReader // optional — per-user admin concurrent/bitrate caps
+	// remotePolicy is the server-wide internet streaming limit + extra home
+	// networks (Settings ▸ Transcode). Optional — nil = no internet limit.
+	remotePolicy RemoteStreamPolicyReader
 	// decisions remembers each created session's decision so the item's
 	// progress reports are attributed after the session is gone. Optional.
 	decisions *PlayDecisionRecorder
@@ -159,6 +166,13 @@ func (h *NativeTranscodeHandler) LibraryAccessWired() bool { return h.access != 
 // only the server-wide concurrent + bitrate limits.
 func (h *NativeTranscodeHandler) WithUserCaps(c UserStreamCapsReader) *NativeTranscodeHandler {
 	h.userCaps = c
+	return h
+}
+
+// WithRemotePolicy attaches the internet streaming limit reader used by the
+// play decision and Start to hold remote clients to a lower bitrate.
+func (h *NativeTranscodeHandler) WithRemotePolicy(p RemoteStreamPolicyReader) *NativeTranscodeHandler {
+	h.remotePolicy = p
 	return h
 }
 
@@ -659,13 +673,24 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fold the internet streaming limit into the bitrate cap: a client outside
+	// the home network (judged from the trusted client IP) is held to the
+	// lowest of the user's cap, the user's internet cap and the server's
+	// internet limit; a LAN client keeps just the user's cap. Everything below
+	// — the copy-to-transcode escalation, the output clamp, the ABR ladder
+	// ceiling — reads streamCaps.BitrateKbps, so it all follows.
+	bitrateCap := resolveStreamCap(ctx, streamCaps, h.remotePolicy, audit.ClientIP(r), file)
+	streamCaps.BitrateKbps = bitrateCap.Kbps
+
 	// Serve a pre-encoded ("static") ABR ladder when one exists for this file —
 	// the player gets a master playlist whose segments come from object storage /
 	// CDN, so no live session or ffmpeg is spent (HA roadmap §5). Only when ABR is
 	// enabled (the static ladder is adaptive) and not a video-copy/remux request.
 	// Not for a stacked movie: a pre-encoded ladder covers one file, and
-	// serving part 1's would end the movie there.
-	if h.staticEnabled && h.cfg.TranscodeABR && !body.VideoCopy && parts == nil &&
+	// serving part 1's would end the movie there. Not when the source is over
+	// this request's bitrate cap either: the pre-encoded rungs aren't clamped
+	// to it, so the live ladder below (which is) serves.
+	if h.staticEnabled && h.cfg.TranscodeABR && !body.VideoCopy && parts == nil && !bitrateCap.overCap(file) &&
 		file.FileHash != nil && h.staticAvailable(ctx, file.ID, *file.FileHash) {
 		token := ""
 		if h.tokens != nil {
@@ -916,7 +941,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// isn't a direct play, and the output shape. See playback_reasons.go.
 	playMeta := sessionPlaybackMeta{
 		clientIP:      canonicalIP(audit.ClientIP(r)),
-		reasons:       startReasons(file, caps, decision, body.Height, sourceH, streamCaps.BitrateKbps, capForced),
+		reasons:       startReasons(file, caps, decision, body.Height, sourceH, bitrateCap, capForced),
 		outW:          width,
 		outH:          height,
 		audioCodec:    "aac",

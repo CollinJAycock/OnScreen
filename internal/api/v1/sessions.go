@@ -78,6 +78,9 @@ type NativeSessionsHandler struct {
 	terminator SessionTerminator
 	broker     *notification.Broker
 	audit      *audit.Logger
+	// remotePolicy supplies the admin's extra home networks so the LAN /
+	// remote label agrees with what the internet streaming limit enforces.
+	remotePolicy RemoteStreamPolicyReader
 }
 
 // NewNativeSessionsHandler creates a NativeSessionsHandler.
@@ -129,6 +132,14 @@ func (h *NativeSessionsHandler) WithSyncBroker(b *notification.Broker) *NativeSe
 }
 
 // WithAudit records admin stops (transcode.stop, reason admin_terminated).
+// WithRemotePolicy makes the LAN / remote label honour the admin's extra
+// home networks (Settings ▸ Transcode), the same classifier the internet
+// streaming limit uses.
+func (h *NativeSessionsHandler) WithRemotePolicy(p RemoteStreamPolicyReader) *NativeSessionsHandler {
+	h.remotePolicy = p
+	return h
+}
+
 func (h *NativeSessionsHandler) WithAudit(a *audit.Logger) *NativeSessionsHandler {
 	h.audit = a
 	return h
@@ -546,8 +557,10 @@ func applySessionItem(as *activeSession, mi *gen.SessionMediaItem) {
 }
 
 // attribute fills the card's viewer and address fields. The raw IP is shown
-// to admins only; the LAN/remote label uses isLocalAddr, the classifier the
-// first-run setup gate uses.
+// to admins only; the LAN/remote label uses RemoteStreamPolicy.IsLocal —
+// isLocalAddr (the classifier the first-run setup gate uses) plus the admin's
+// extra home networks — so it matches what the internet streaming limit
+// treats as remote.
 func (h *NativeSessionsHandler) attribute(ctx context.Context, lk *sessionLookups, claims *auth.Claims, as *activeSession, ls *liveSession) {
 	if ls.userID != uuid.Nil {
 		as.UserID = ls.userID.String()
@@ -558,7 +571,7 @@ func (h *NativeSessionsHandler) attribute(ctx context.Context, lk *sessionLookup
 	}
 	if ls.clientIP != "" {
 		as.Location = "remote"
-		if isLocalAddr(ls.clientIP) {
+		if lk.remotePolicy(ctx).IsLocal(ls.clientIP) {
 			as.Location = "lan"
 		}
 		if claims.IsAdmin {
@@ -649,6 +662,17 @@ type sessionLookups struct {
 	users  map[uuid.UUID]*sessionUser
 	files  map[uuid.UUID]*media.File
 	firsts map[uuid.UUID]*media.File
+	// policy is read once per listing (it's a settings read), not per card.
+	policy       RemoteStreamPolicy
+	policyLoaded bool
+}
+
+func (l *sessionLookups) remotePolicy(ctx context.Context) RemoteStreamPolicy {
+	if !l.policyLoaded {
+		l.policy = readRemotePolicy(ctx, l.h.remotePolicy)
+		l.policyLoaded = true
+	}
+	return l.policy
 }
 
 type sessionUser struct{ username, profile string }

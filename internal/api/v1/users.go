@@ -1506,14 +1506,42 @@ func (h *UserHandler) GetStreamingLimits(w http.ResponseWriter, r *http.Request)
 	respond.Success(w, r, map[string]any{
 		"max_concurrent_streams":  row.MaxConcurrentStreams,
 		"max_stream_bitrate_kbps": row.MaxStreamBitrateKbps,
+		// Internet-only cap (migration 00046); null = none of the user's own
+		// (the server-wide internet limit may still apply).
+		"max_remote_stream_bitrate_kbps": row.MaxRemoteStreamBitrateKbps,
 	})
+}
+
+// optionalInt32 tells an absent JSON field from an explicit null: Set is true
+// whenever the key was present, Value is nil for null.
+type optionalInt32 struct {
+	Set   bool
+	Value *int32
+}
+
+func (o *optionalInt32) UnmarshalJSON(b []byte) error {
+	o.Set = true
+	if string(b) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var v int32
+	if err := json.Unmarshal(b, &v); err != nil {
+		return err
+	}
+	o.Value = &v
+	return nil
 }
 
 // SetStreamingLimits sets a user's admin-enforced streaming caps (admin only).
 // PUT /api/v1/users/{id}/streaming-limits with
-// {"max_concurrent_streams": N|null, "max_stream_bitrate_kbps": N|null}.
-// null = remove the cap. Enforced server-side at transcode start (read from the
-// DB), so it takes effect on the user's next stream — no re-login needed.
+// {"max_concurrent_streams": N|null, "max_stream_bitrate_kbps": N|null,
+// "max_remote_stream_bitrate_kbps": N|null}.
+// null = remove the cap. The internet cap is optional in the body: omitted
+// keeps the stored value, so a caller that only knows the first two fields
+// can't clear it. Enforced server-side at play decision / transcode start
+// (read from the DB), so it takes effect on the user's next stream — no
+// re-login needed.
 func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil || !claims.IsAdmin {
@@ -1526,8 +1554,9 @@ func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var body struct {
-		MaxConcurrentStreams *int32 `json:"max_concurrent_streams"`
-		MaxStreamBitrateKbps *int32 `json:"max_stream_bitrate_kbps"`
+		MaxConcurrentStreams       *int32        `json:"max_concurrent_streams"`
+		MaxStreamBitrateKbps       *int32        `json:"max_stream_bitrate_kbps"`
+		MaxRemoteStreamBitrateKbps optionalInt32 `json:"max_remote_stream_bitrate_kbps"`
 	}
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
@@ -1536,18 +1565,33 @@ func (h *UserHandler) SetStreamingLimits(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// Reject negative caps (0/null both mean "no cap").
+	remote := body.MaxRemoteStreamBitrateKbps
 	if (body.MaxConcurrentStreams != nil && *body.MaxConcurrentStreams < 0) ||
-		(body.MaxStreamBitrateKbps != nil && *body.MaxStreamBitrateKbps < 0) {
+		(body.MaxStreamBitrateKbps != nil && *body.MaxStreamBitrateKbps < 0) ||
+		(remote.Value != nil && *remote.Value < 0) {
 		respond.BadRequest(w, r, "caps must be non-negative")
 		return
 	}
 	if err := h.db.UpdateUserStreamCaps(r.Context(), gen.UpdateUserStreamCapsParams{
-		ID:                   targetID,
-		MaxConcurrentStreams: body.MaxConcurrentStreams,
-		MaxStreamBitrateKbps: body.MaxStreamBitrateKbps,
+		ID:                         targetID,
+		MaxConcurrentStreams:       body.MaxConcurrentStreams,
+		MaxStreamBitrateKbps:       body.MaxStreamBitrateKbps,
+		SetRemote:                  remote.Set,
+		MaxRemoteStreamBitrateKbps: remote.Value,
 	}); err != nil {
 		respond.InternalError(w, r)
 		return
+	}
+	if h.audit != nil {
+		detail := map[string]any{
+			"max_concurrent_streams":  body.MaxConcurrentStreams,
+			"max_stream_bitrate_kbps": body.MaxStreamBitrateKbps,
+		}
+		if remote.Set {
+			detail["max_remote_stream_bitrate_kbps"] = remote.Value
+		}
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionUserStreamLimitsChange, targetID.String(),
+			detail, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
 }

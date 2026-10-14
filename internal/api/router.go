@@ -52,6 +52,7 @@ type Handlers struct {
 	Auth            *v1.AuthHandler
 	TOTP            *v1.TOTPHandler
 	User            *v1.UserHandler
+	UserSessions    *v1.UserSessionsHandler // signed-in devices; optional
 	FS              *v1.FSHandler
 	Settings        *v1.SettingsHandler
 	Analytics       *v1.AnalyticsHandler
@@ -513,6 +514,9 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Use(h.Auth_mw.Optional)
 			r.Use(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit,
 				middleware.IPKey("ratelimit:auth")))
+			// Labels the sessions row a sign-in / refresh here creates or
+			// rotates with the requesting device (signed-in devices list).
+			r.Use(v1.CaptureSessionClient)
 
 			r.Post("/auth/login", h.Auth.Login)
 			r.Post("/auth/refresh", h.Auth.Refresh)
@@ -574,6 +578,8 @@ func NewRouter(h *Handlers) http.Handler {
 			r.Group(func(r chi.Router) {
 				r.Use(middleware.RateLimit(h.RateLimiter, middleware.PairLimit,
 					middleware.IPKey("ratelimit:pair")))
+				// The poll that redeems a claimed PIN mints the TV's session.
+				r.Use(v1.CaptureSessionClient)
 				r.Post("/auth/pair/code", h.Pair.CreateCode)
 				r.Get("/auth/pair/poll", h.Pair.Poll)
 			})
@@ -704,6 +710,13 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Put("/users/me/hub-layout", h.User.SetHubLayout)
 				r.Put("/users/me/quality-profile", h.User.SetQualityProfile)
+				// Signed-in devices: list the caller's sign-ins, sign one out,
+				// or sign out everywhere else.
+				if h.UserSessions != nil {
+					r.Get("/users/me/sessions", h.UserSessions.ListMine)
+					r.Delete("/users/me/sessions", h.UserSessions.RevokeOthers)
+					r.Delete("/users/me/sessions/{id}", h.UserSessions.RevokeMine)
+				}
 				r.Get("/users/switchable", h.User.ListSwitchable)
 				// Tight per-session cap on top of the handler's per-target
 				// lockout — bounds how fast one caller can sweep PINs across
@@ -773,6 +786,11 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/users/{id}/streaming-limits", h.User.GetStreamingLimits)
 					r.Put("/users/{id}/streaming-limits", h.User.SetStreamingLimits)
 					r.Put("/users/{id}/request-permissions", h.User.SetRequestPermissions)
+					if h.UserSessions != nil {
+						r.Get("/users/{id}/sessions", h.UserSessions.ListForUser)
+						r.Delete("/users/{id}/sessions", h.UserSessions.RevokeAllForUser)
+						r.Delete("/users/{id}/sessions/{sid}", h.UserSessions.RevokeForUser)
+					}
 					if h.WatchLimit != nil {
 						r.Get("/users/{id}/watch-limit", h.WatchLimit.GetForUser)
 						r.Put("/users/{id}/watch-limit", h.WatchLimit.Set)
