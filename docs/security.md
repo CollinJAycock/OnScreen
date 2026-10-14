@@ -246,6 +246,70 @@ re-read the real admin's session.
 - Cookie / CSRF handling is unchanged: a key is a header credential and is
   never set as a cookie.
 
+**OPDS catalog** (v2.6; `/opds/`; [usage](opds.md))
+
+- The only place HTTP Basic is read (`middleware.OPDSRequired`). The Basic
+  password must be a personal API key; the username is ignored. The account
+  password is **never** accepted over Basic — a reader app polling
+  unattended would otherwise be a password-guessing surface with no second
+  factor — and a non-key password fails before any hashing. Everywhere else
+  `Authorization: Basic` is not a credential, so the `RefuseAPIKey` routes
+  can't be reached with a key this way.
+- Every route is a GET, so a `read_only` key suffices. A key used here acts
+  exactly as in a header: the owner's current library access, rating
+  ceiling and label restriction, revoked on the next request.
+- Failed Basic attempts are counted per client address; ten within 15
+  minutes (counted from the last failure) lock the address out with 429
+  before its key is looked up. Successes aren't counted, so a reader
+  fetching a page of covers at once is never throttled. The whole group also
+  sits behind the per-address session-class limiter.
+- Feeds list only book libraries the caller may open and, in SQL, only books
+  under their rating ceiling and label restriction. Acquisition links point
+  at the existing `/media/download/{fileId}` route (library, rating, label,
+  watch-limit, playback-stop and downloads-toggle checks) with a stream
+  token bound to that one file — the established `?token=` scheme, needed
+  because reader apps don't reliably send credentials on links. Feed
+  responses are `Cache-Control: private, no-store`, since they carry those
+  tokens. The cover route takes the same file-bound token (its `{fileId}`
+  makes the binding check apply); the feed routes take no `?token=` at all.
+- The catalog is a download channel, so while downloads are disabled
+  server-wide (Settings → General) every OPDS route answers 403
+  `DOWNLOADS_DISABLED`.
+- Covers are served only for `book` items, from the poster path the scanner
+  recorded, restricted to image extensions and to the item's library roots.
+
+**M3U playlist import / export** (v2.6; `/api/v1/playlists/import`,
+`/api/v1/playlists/{id}/export.m3u8`)
+
+- An imported playlist's entries are strings matched against the paths the
+  scanner recorded. The server never opens, stats or fetches them; an
+  `http(s)://` entry is reported unmatched. Every lookup applies the
+  caller's library access, rating ceiling and label restriction, so an
+  import can't confirm the existence of (or add) an item the caller can't
+  see.
+- The upload is capped at 1 MB and 10,000 entries (exempt from the general
+  1 MB body cap only so the multipart framing fits; the handler caps its
+  own body). Candidate queries are bounded.
+- Export leaves out items the caller can't see. Its absolute-path option
+  reveals server file paths, but only for the caller's own visible items.
+
+**Personal data export** (v2.6; `POST /api/v1/users/me/export`,
+`POST /api/v1/users/{id}/export`)
+
+- Account data, so API keys are refused (`RefuseAPIKey`, and again in the
+  handler, which also refuses purpose-scoped tokens). The admin route is
+  admin-only. Both are audit-logged as `user.data_export` and rate-limited
+  to five a minute per user.
+- The export queries name their columns, so password hashes, PINs, TOTP
+  secrets and recovery codes, refresh-token hashes, API key hashes and
+  scrobble tokens can't reach the archive by a later column addition.
+- Item references are resolved under the exporting caller's visibility; an
+  item they can't see is written as its id only.
+- The archive streams as it is built (the watch history is keyset-paged and
+  capped at 100,000 events). A failure part-way aborts the connection
+  (`http.ErrAbortHandler`, which `middleware.Recover` now re-panics) rather
+  than ending a truncated ZIP as if it were complete.
+
 ## Deployment, packaging & supply-chain hardening
 
 Changes to the shipped compose files, reverse-proxy sample, installers and CI.

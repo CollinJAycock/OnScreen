@@ -64,6 +64,7 @@ type SmartPlaylistRules struct {
 type PlaylistHandler struct {
 	db     PlaylistDB
 	access LibraryAccessChecker
+	m3u    PlaylistM3UDB // optional; M3U import/export (WithM3U)
 	logger *slog.Logger
 }
 

@@ -37,7 +37,9 @@ info:
     may only make GET/HEAD requests (403 `API_KEY_READ_ONLY` otherwise).
     Keys are refused with 403 `API_KEY_NOT_ALLOWED` on sign-in, refresh,
     2FA, PIN, profile, signed-in device and API key management, device
-    pairing, user administration, invites, server settings and backups. See
+    pairing, user administration, invites, server settings, backups and
+    account data export. The `/opds/` catalog also takes a key as the
+    password of HTTP Basic (and nowhere else accepts Basic). See
     [docs/api/api-keys.md](api-keys.md).
   license:
     name: AGPL-3.0
@@ -97,6 +99,13 @@ tags:
     description: User profile, PIN management, managed profiles, admin user management.
   - name: Settings
     description: Server-wide settings (admin only).
+  - name: OPDS
+    description: |
+      OPDS 1.2 catalog of book libraries for e-reader apps, under `/opds/`
+      (not `/api/v1`). Atom XML. HTTP Basic with a personal API key as the
+      password (never the account password), or any credential the API
+      takes. GET only. While downloads are disabled server-wide every route
+      answers 403 `DOWNLOADS_DISABLED`. See [docs/opds.md](../opds.md). v2.6.
   - name: Audiobooks
     description: Per-user listening speed and bookmarks for audiobooks.
   - name: Scrobbling
@@ -3229,6 +3238,68 @@ paths:
       responses:
         '204': { description: Reordered. }
 
+  /api/v1/playlists/{id}/export.m3u8:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Export a playlist as extended M3U
+      tags: [Playlists]
+      description: |
+        The playlist (static or smart) as an `.m3u8` attachment: `#EXTM3U`,
+        then `#EXTINF:<seconds>,<artist> - <title>` and a path per item.
+        Paths are relative to the item's library root (forward slashes) by
+        default, or the server's absolute paths with `?paths=absolute`.
+        Items the caller can't see (library access, rating ceiling, label
+        restriction) and items without a file are left out. Own playlists
+        only (404 otherwise). v2.6.
+      parameters:
+        - { in: query, name: paths, required: false, schema: { type: string, enum: [relative, absolute], default: relative } }
+      responses:
+        '200':
+          description: The playlist.
+          content:
+            audio/x-mpegurl:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/playlists/import:
+    post:
+      summary: Create a playlist from an M3U file
+      tags: [Playlists]
+      description: |
+        Multipart upload of an `.m3u` (UTF-8 or Latin-1) or `.m3u8` (UTF-8)
+        playlist, at most 1 MB and 10,000 entries (413
+        `PLAYLIST_TOO_LARGE`). Creates a static playlist owned by the caller
+        from the entries that match an item the caller can see, trying in
+        order: the exact absolute path; the path relative to `base_dir` or a
+        library root; the same file name and parent folders under another
+        mount point (case-insensitive, either slash); the `#EXTINF` artist
+        and title against tracks. Entries are only matched as strings —
+        never opened or fetched — so an `http(s)://` entry is reported
+        unmatched with reason `url`. A file listed twice is added once.
+        v2.6.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:     { type: string, format: binary, description: The .m3u / .m3u8 file. }
+                name:     { type: string, description: Playlist name; defaults to the file name. }
+                base_dir: { type: string, description: The server directory the playlist came from, for its relative entries. }
+      responses:
+        '201':
+          description: The new playlist and how each line was matched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/M3UImportResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { description: File over 1 MB or over 10,000 entries (`PLAYLIST_TOO_LARGE`). }
+
   # ── Users / profile ────────────────────────────────────────────────────────
   /api/v1/users/me/pin:
     put:
@@ -3411,6 +3482,50 @@ paths:
         404. Audited as `api_key.delete`. v2.6.
       responses:
         '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/users/me/export:
+    post:
+      summary: Download my data
+      tags: [Users]
+      description: |
+        A ZIP (streamed as an attachment) of JSON files plus a README.txt:
+        profile and preferences, signed-in devices (no token material), API
+        keys (name, prefix, dates — never the key or its hash), scrobble
+        link status (no tokens), watch history (newest 100,000 play
+        events), watch progress and marks, watch-status lists, ratings,
+        favorites, reading progress, audiobook speeds and bookmarks,
+        playlists and other owned collections (with items), requests,
+        reported issues and the in-app notification inbox. Items carry
+        title and external ids (TMDB, TVDB, IMDb, MusicBrainz, AniList); an
+        item the caller can't see now is written as its id with
+        `unavailable: true`. Requires a signed-in session: API keys are
+        refused (403 `API_KEY_NOT_ALLOWED`). Rate-limited to 5 a minute.
+        Audited as `user.data_export`. v2.6.
+      responses:
+        '200':
+          description: The archive.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/users/{id}/export:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Download a user's data (admin)
+      tags: [Users]
+      description: |
+        `POST /users/me/export` for any user, for answering a data request.
+        Admin only; API keys refused. Audited as `user.data_export` with
+        `by_admin: true`. 404 for an unknown user. v2.6.
+      responses:
+        '200':
+          description: The archive.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -6491,6 +6606,113 @@ paths:
       responses:
         '204': { description: Deleted. }
 
+  # ── OPDS (outside /api/v1) ─────────────────────────────────────────────────
+  /opds/:
+    get:
+      summary: OPDS root navigation feed
+      tags: [OPDS]
+      description: |
+        "Recently added" plus one entry per book library the caller can
+        open. Links `search` to `/opds/opensearch.xml`. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      responses:
+        '200':
+          description: Navigation feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=navigation:
+              schema: { type: string }
+        '401': { description: "No or bad credentials; carries `WWW-Authenticate: Basic`." }
+        '403': { description: Downloads are disabled on the server (`DOWNLOADS_DISABLED`). }
+        '429': { description: Too many failed Basic sign-ins from this address. }
+
+  /opds/libraries/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: OPDS acquisition feed of one book library
+      tags: [OPDS]
+      description: |
+        Books by title, 50 per page (`?page=N`, `rel="next"` / `previous`
+        links). Each entry has author, year, genres, summary, an
+        acquisition link to `/media/download/{fileId}?token=…` with the
+        book's media type (EPUB, PDF, CBZ, CBR …), and cover + thumbnail
+        links. The `token` is a stream token bound to that one file (24 h,
+        revoked with the key or session that listed it). Only books under
+        the caller's rating ceiling and label restriction. 404 for a library
+        that isn't a book library the caller can open. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      parameters:
+        - { in: query, name: page, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Acquisition feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=acquisition:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /opds/recent:
+    get:
+      summary: OPDS feed of recently added books
+      tags: [OPDS]
+      description: Newest books across the caller's book libraries, paged like a library feed. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      parameters:
+        - { in: query, name: page, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Acquisition feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=acquisition:
+              schema: { type: string }
+
+  /opds/search:
+    get:
+      summary: OPDS search
+      tags: [OPDS]
+      description: Books matching `q` (title, author, full text), paged like a library feed. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      parameters:
+        - { in: query, name: q, required: true, schema: { type: string, maxLength: 200 } }
+        - { in: query, name: page, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Acquisition feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=acquisition:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /opds/opensearch.xml:
+    get:
+      summary: OpenSearch description for the OPDS catalog
+      tags: [OPDS]
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      responses:
+        '200':
+          description: OpenSearch description (template `/opds/search?q={searchTerms}`).
+          content:
+            application/opensearchdescription+xml:
+              schema: { type: string }
+
+  /opds/files/{fileId}/cover:
+    parameters:
+      - { in: path, name: fileId, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Cover of the book a file belongs to
+      tags: [OPDS]
+      description: |
+        Same library, rating and label checks as the file. Besides the
+        catalog's credentials, accepts the file-bound `?token=` stream
+        token the feed puts on its links. 404 when hidden or missing. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      responses:
+        '200':
+          description: The cover image.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -6509,6 +6731,14 @@ components:
         A personal API key (`osk_…`, v2.6). The same key is also accepted as
         `Authorization: Bearer osk_…`. Not accepted on the credential and
         account-security endpoints (403 `API_KEY_NOT_ALLOWED`).
+    opdsBasic:
+      type: http
+      scheme: basic
+      description: |
+        `/opds/` only (v2.6): HTTP Basic whose password is a personal API key
+        (`osk_…`); the username is ignored. The account password is never
+        accepted. Ten failed attempts from one address lock it out for 15
+        minutes (429).
 
   parameters:
     UUID:
@@ -7872,6 +8102,45 @@ components:
         item_count: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    M3UImportResult:
+      type: object
+      description: Result of POST /playlists/import (v2.6).
+      properties:
+        playlist: { $ref: '#/components/schemas/Playlist' }
+        total:     { type: integer, description: Media lines in the file. }
+        matched:   { type: integer }
+        unmatched: { type: integer }
+        added:     { type: integer, description: Distinct items in the new playlist. }
+        by_method:
+          type: object
+          description: Matched lines per method.
+          properties:
+            path:     { type: integer }
+            relative: { type: integer }
+            suffix:   { type: integer }
+            tags:     { type: integer }
+        matches:
+          type: array
+          description: Matched lines (first 500).
+          items:
+            type: object
+            properties:
+              line:    { type: integer }
+              entry:   { type: string }
+              item_id: { type: string, format: uuid }
+              title:   { type: string }
+              method:  { type: string, enum: [path, relative, suffix, tags] }
+        matches_truncated: { type: boolean }
+        unmatched_entries:
+          type: array
+          description: Unmatched lines (first 500).
+          items:
+            type: object
+            properties:
+              line:   { type: integer }
+              entry:  { type: string }
+              reason: { type: string, enum: [url, not_found] }
+        unmatched_truncated: { type: boolean }
     PlaylistItem:
       type: object
       properties:
