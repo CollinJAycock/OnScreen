@@ -208,10 +208,15 @@ type File struct {
 	ReplayGainTrackPeak *float64
 	ReplayGainAlbumGain *float64
 	ReplayGainAlbumPeak *float64
-	Status              string // "active" | "missing" | "deleted"
-	MissingSince        *time.Time
-	ScannedAt           time.Time
-	CreatedAt           time.Time
+	// ReplayGainSource says where the ReplayGain values came from:
+	// ReplayGainFromTags (the file's own tags) or ReplayGainAnalyzed (the
+	// loudness_analysis task's EBU R128 measurement); nil when the file has
+	// none. Tag values are never overwritten by an analysis.
+	ReplayGainSource *string
+	Status           string // "active" | "missing" | "deleted"
+	MissingSince     *time.Time
+	ScannedAt        time.Time
+	CreatedAt        time.Time
 	// IntegrityStatus is the verdict of the opt-in deep-decode probe (the
 	// "integrity_probe" scheduler task): "unchecked" until the probe runs,
 	// then "ok" or "damaged". Damaged makes Decide return DecisionDamaged and
@@ -367,6 +372,7 @@ type Querier interface {
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
 	UpdateMediaFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error
 	UpdateMediaFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error
+	UpdateMediaFileReplayGain(ctx context.Context, id uuid.UUID, rg ReplayGain) error
 	UpdateMediaFileIntegrity(ctx context.Context, id uuid.UUID, status string, detail *string) error
 	ListFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]File, error)
 	CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error)
@@ -681,7 +687,22 @@ type CreateFileParams struct {
 	ReplayGainTrackPeak *float64
 	ReplayGainAlbumGain *float64
 	ReplayGainAlbumPeak *float64
+	// ReplayGainKnown is set by a caller that read the file's tags: the
+	// ReplayGain fields above are then authoritative, nil meaning "no such
+	// tag". A re-scan of a file whose tags lost their ReplayGain clears the
+	// stored values only then — a failed tag read must not wipe them.
+	ReplayGainKnown bool
+	// ReplayGainSource is filled in by CreateOrUpdateFile for a new file
+	// (ReplayGainFromTags when any value is set); callers leave it nil.
+	ReplayGainSource *string
 }
+
+// Values of File.ReplayGainSource (media_files.replaygain_source, migration
+// 00048).
+const (
+	ReplayGainFromTags = "tags"
+	ReplayGainAnalyzed = "analyzed"
+)
 
 // Service implements media business logic with rw/ro querier split (ADR-021).
 type Service struct {
@@ -973,6 +994,14 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 		if err := s.rw.UpdateMediaFileTechnicalMetadata(ctx, existing.ID, p); err != nil {
 			return nil, false, fmt.Errorf("update file metadata %s: %w", existing.ID, err)
 		}
+		if rg, write := ReplayGainOnRescan(existing, p); write {
+			if err := s.rw.UpdateMediaFileReplayGain(ctx, existing.ID, rg); err != nil {
+				return nil, false, fmt.Errorf("update file replaygain %s: %w", existing.ID, err)
+			}
+			existing.ReplayGainTrackGain, existing.ReplayGainTrackPeak = rg.TrackGain, rg.TrackPeak
+			existing.ReplayGainAlbumGain, existing.ReplayGainAlbumPeak = rg.AlbumGain, rg.AlbumPeak
+			existing.ReplayGainSource = rg.Source
+		}
 		if wasInactive {
 			if err := s.rw.RestoreMediaItemAncestry(ctx, existing.MediaItemID); err != nil {
 				return nil, false, fmt.Errorf("restore ancestry for %s: %w", existing.MediaItemID, err)
@@ -1009,7 +1038,13 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 		}
 	}
 
-	// Genuinely new file.
+	// Genuinely new file. Any ReplayGain it arrives with came from its tags.
+	p.ReplayGainSource = nil
+	if p.ReplayGainTrackGain != nil || p.ReplayGainTrackPeak != nil ||
+		p.ReplayGainAlbumGain != nil || p.ReplayGainAlbumPeak != nil {
+		src := ReplayGainFromTags
+		p.ReplayGainSource = &src
+	}
 	file, err := s.rw.CreateMediaFile(ctx, p)
 	if err != nil {
 		return nil, false, fmt.Errorf("create media file: %w", err)

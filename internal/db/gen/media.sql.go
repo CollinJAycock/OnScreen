@@ -190,7 +190,7 @@ INSERT INTO media_files (
     replaygain_track_gain, replaygain_track_peak,
     replaygain_album_gain, replaygain_album_peak,
     video_bit_depth, dv_profile,
-    edition, part_index
+    edition, part_index, replaygain_source
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -199,7 +199,7 @@ INSERT INTO media_files (
     $21, $22,
     $23, $24,
     $25, $26,
-    $27, $28
+    $27, $28, $29
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -209,7 +209,7 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           replaygain_track_gain, replaygain_track_peak,
           replaygain_album_gain, replaygain_album_peak, video_bit_depth,
           integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-          edition, part_index
+          edition, part_index, replaygain_source
 `
 
 type CreateMediaFileParams struct {
@@ -241,6 +241,7 @@ type CreateMediaFileParams struct {
 	DvProfile           *int16         `json:"dv_profile"`
 	Edition             *string        `json:"edition"`
 	PartIndex           *int16         `json:"part_index"`
+	ReplaygainSource    *string        `json:"replaygain_source"`
 }
 
 // best quality first (ADR-031)
@@ -274,6 +275,7 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		arg.DvProfile,
 		arg.Edition,
 		arg.PartIndex,
+		arg.ReplaygainSource,
 	)
 	var i MediaFile
 	err := row.Scan(
@@ -313,6 +315,7 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		&i.DvProfile,
 		&i.Edition,
 		&i.PartIndex,
+		&i.ReplaygainSource,
 	)
 	return i, err
 }
@@ -1090,7 +1093,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE id = $1
 `
@@ -1136,6 +1139,7 @@ func (q *Queries) GetMediaFile(ctx context.Context, id uuid.UUID) (MediaFile, er
 		&i.DvProfile,
 		&i.Edition,
 		&i.PartIndex,
+		&i.ReplaygainSource,
 	)
 	return i, err
 }
@@ -1149,7 +1153,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE file_hash = $1 AND status = 'missing'
 ORDER BY created_at DESC
@@ -1199,6 +1203,7 @@ func (q *Queries) GetMediaFileByHash(ctx context.Context, fileHash *string) (Med
 		&i.DvProfile,
 		&i.Edition,
 		&i.PartIndex,
+		&i.ReplaygainSource,
 	)
 	return i, err
 }
@@ -1212,7 +1217,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE file_path = $1
 `
@@ -1257,6 +1262,7 @@ func (q *Queries) GetMediaFileByPath(ctx context.Context, filePath string) (Medi
 		&i.DvProfile,
 		&i.Edition,
 		&i.PartIndex,
+		&i.ReplaygainSource,
 	)
 	return i, err
 }
@@ -1643,7 +1649,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
        mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
-       mf.edition, mf.part_index
+       mf.edition, mf.part_index, mf.replaygain_source
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active'
@@ -1695,6 +1701,7 @@ func (q *Queries) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 			&i.DvProfile,
 			&i.Edition,
 			&i.PartIndex,
+			&i.ReplaygainSource,
 		); err != nil {
 			return nil, err
 		}
@@ -2247,7 +2254,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
        mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
-       mf.edition, mf.part_index
+       mf.edition, mf.part_index, mf.replaygain_source
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 JOIN libraries l ON l.id = mi.library_id
@@ -2319,6 +2326,7 @@ func (q *Queries) ListFilesForIntegrityCheck(ctx context.Context, arg ListFilesF
 			&i.DvProfile,
 			&i.Edition,
 			&i.PartIndex,
+			&i.ReplaygainSource,
 		); err != nil {
 			return nil, err
 		}
@@ -2557,7 +2565,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC
@@ -2609,6 +2617,7 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID uuid.UU
 			&i.DvProfile,
 			&i.Edition,
 			&i.PartIndex,
+			&i.ReplaygainSource,
 		); err != nil {
 			return nil, err
 		}
@@ -4772,7 +4781,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000
@@ -4824,6 +4833,7 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 			&i.DvProfile,
 			&i.Edition,
 			&i.PartIndex,
+			&i.ReplaygainSource,
 		); err != nil {
 			return nil, err
 		}
@@ -6160,12 +6170,19 @@ WHERE parent.library_id = $1
       SELECT 1 FROM media_items child
       WHERE child.parent_id = parent.id AND child.deleted_at IS NULL
   )
+  AND NOT (parent.type = 'artist' AND EXISTS (
+      SELECT 1 FROM track_artists ta
+      JOIN media_items t ON t.id = ta.track_id AND t.deleted_at IS NULL
+      WHERE ta.artist_id = parent.id
+  ))
 `
 
 // Soft-delete container items (show, season, artist, album, podcast) whose
 // every child has been soft-deleted. Call twice in sequence to cascade up:
 // the first pass clears empty seasons/albums, the second clears
-// shows/artists whose seasons/albums just died.
+// shows/artists whose seasons/albums just died. An artist credited on a live
+// track (track_artists, migration 00048) stays even with no albums of its
+// own: it is a featured artist, and its page lists what it appears on.
 func (q *Queries) SoftDeleteEmptyContainerItems(ctx context.Context, libraryID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, softDeleteEmptyContainerItems, libraryID)
 	return err
@@ -6389,6 +6406,43 @@ type UpdateMediaFilePathParams struct {
 
 func (q *Queries) UpdateMediaFilePath(ctx context.Context, arg UpdateMediaFilePathParams) error {
 	_, err := q.db.Exec(ctx, updateMediaFilePath, arg.ID, arg.FilePath)
+	return err
+}
+
+const updateMediaFileReplayGain = `-- name: UpdateMediaFileReplayGain :exec
+UPDATE media_files
+SET replaygain_track_gain = $2,
+    replaygain_track_peak = $3,
+    replaygain_album_gain = $4,
+    replaygain_album_peak = $5,
+    replaygain_source     = $6
+WHERE id = $1
+`
+
+type UpdateMediaFileReplayGainParams struct {
+	ID                  uuid.UUID      `json:"id"`
+	ReplaygainTrackGain pgtype.Numeric `json:"replaygain_track_gain"`
+	ReplaygainTrackPeak pgtype.Numeric `json:"replaygain_track_peak"`
+	ReplaygainAlbumGain pgtype.Numeric `json:"replaygain_album_gain"`
+	ReplaygainAlbumPeak pgtype.Numeric `json:"replaygain_album_peak"`
+	ReplaygainSource    *string        `json:"replaygain_source"`
+}
+
+// Writes a file's ReplayGain values and where they came from ('tags',
+// 'analyzed', or NULL with every value NULL). The scanner calls it for a
+// changed file (its tags may have gained, lost or changed ReplayGain); the
+// loudness_analysis task writes its measurements through
+// SetAnalyzedReplayGain instead, which refuses a file whose values came from
+// tags.
+func (q *Queries) UpdateMediaFileReplayGain(ctx context.Context, arg UpdateMediaFileReplayGainParams) error {
+	_, err := q.db.Exec(ctx, updateMediaFileReplayGain,
+		arg.ID,
+		arg.ReplaygainTrackGain,
+		arg.ReplaygainTrackPeak,
+		arg.ReplaygainAlbumGain,
+		arg.ReplaygainAlbumPeak,
+		arg.ReplaygainSource,
+	)
 	return err
 }
 
