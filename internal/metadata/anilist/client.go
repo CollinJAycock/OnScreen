@@ -968,6 +968,7 @@ func mediaToTVShowResult(m anilistMedia) *metadata.TVShowResult {
 		Genres:        m.Genres,
 		PosterURL:     m.CoverImage.ExtraLarge,
 		FanartURL:     m.BannerImage,
+		BannerURL:     m.BannerImage,
 	}
 }
 

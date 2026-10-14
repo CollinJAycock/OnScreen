@@ -65,8 +65,11 @@ type LibraryResponse struct {
 	// show sets its own — "aired" (default), "dvd" or "absolute". Additive
 	// (v2.6); only meaningful for show / anime / cartoons libraries.
 	EpisodeOrder string `json:"episode_order"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	// SaveNFO: write Kodi-compatible NFO files next to the media after
+	// enrichment, a manual edit or Fix Match. Additive (v2.6); default off.
+	SaveNFO   bool   `json:"save_nfo"`
+	CreatedAt string `json:"created_at"`
+	UpdatedAt string `json:"updated_at"`
 }
 
 // toLibraryResponse converts a domain Library into the API response.
@@ -85,6 +88,7 @@ func toLibraryResponse(lib *library.Library, includeScanPaths bool) LibraryRespo
 		TrickplayEnabled:  lib.TrickplayEnabled,
 		NFOCollections:    lib.NFOCollections,
 		EpisodeOrder:      lib.EpisodeOrder,
+		SaveNFO:           lib.SaveNFO,
 		CreatedAt:         lib.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         lib.UpdatedAt.Format(time.RFC3339),
 	}
@@ -370,6 +374,8 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		NFOCollections string `json:"nfo_collections"`
 		// Omitted = "aired".
 		EpisodeOrder string `json:"episode_order"`
+		// Omitted = off.
+		SaveNFO bool `json:"save_nfo"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -421,6 +427,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TrickplayEnabled:        body.TrickplayEnabled,
 		NFOCollections:          body.NFOCollections,
 		EpisodeOrder:            body.EpisodeOrder,
+		SaveNFO:                 body.SaveNFO,
 	})
 	if err != nil {
 		var ve *library.ValidationError
@@ -491,6 +498,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		TrickplayEnabled        *bool          `json:"trickplay_enabled,omitempty"`
 		NFOCollections          *string        `json:"nfo_collections,omitempty"`
 		EpisodeOrder            *string        `json:"episode_order,omitempty"`
+		SaveNFO                 *bool          `json:"save_nfo,omitempty"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -572,6 +580,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		TrickplayEnabled:        body.TrickplayEnabled,
 		NFOCollections:          body.NFOCollections,
 		EpisodeOrder:            body.EpisodeOrder,
+		SaveNFO:                 body.SaveNFO,
 	})
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {

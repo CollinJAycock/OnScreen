@@ -238,6 +238,11 @@ type ItemHandler struct {
 	// chapterThumbs reports which file's chapters have thumbnails next to
 	// the item's trickplay sprites; nil = chapters carry no thumb_url.
 	chapterThumbs ChapterThumbLookup
+	// optional; movie and show details list their studios / networks
+	// (items_studios.go)
+	studios ItemStudioReader
+	// optional; a metadata edit rewrites the item's NFO (items_studios.go)
+	nfoWriter ItemNFOWriter
 }
 
 // ChapterThumbLookup returns the file whose chapters have thumbnails
@@ -667,9 +672,19 @@ type ItemDetailResponse struct {
 	DurationMS      *int64                   `json:"duration_ms,omitempty"`
 	PosterPath      *string                  `json:"poster_path,omitempty"`
 	FanartPath      *string                  `json:"fanart_path,omitempty"`
-	ContentRating   *string                  `json:"content_rating,omitempty"`
-	Genres          []string                 `json:"genres"`
-	ParentID        *string                  `json:"parent_id,omitempty"`
+	// LogoPath, BannerPath and DiscArtPath are extra artwork, served like
+	// poster_path through /artwork/: a transparent clear logo (PNG — fetch
+	// it without ?w=/?h=, which re-encode as JPEG), a wide banner, and disc
+	// / CD art. Each omitted when the item has none (additive, v2.6).
+	LogoPath      *string  `json:"logo_path,omitempty"`
+	BannerPath    *string  `json:"banner_path,omitempty"`
+	DiscArtPath   *string  `json:"disc_art_path,omitempty"`
+	ContentRating *string  `json:"content_rating,omitempty"`
+	Genres        []string `json:"genres"`
+	// Studios are a movie's production companies or a show's networks, in
+	// the provider's order (additive, v2.6; omitted when none).
+	Studios  []ItemStudioRef `json:"studios,omitempty"`
+	ParentID *string         `json:"parent_id,omitempty"`
 	// GrandparentID is the parent of the parent — for an episode it's the
 	// show id (episode → season → show), letting the back button on the
 	// player jump straight to the show page instead of replaying browser
@@ -895,8 +910,12 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		DurationMS:      item.DurationMS,
 		PosterPath:      item.PosterPath,
 		FanartPath:      item.FanartPath,
+		LogoPath:        item.LogoPath,
+		BannerPath:      item.BannerPath,
+		DiscArtPath:     item.DiscArtPath,
 		ContentRating:   item.ContentRating,
 		Genres:          genres,
+		Studios:         h.studiosFor(r.Context(), item.ID, item.Type),
 		Index:           item.Index,
 		IndexEnd:        item.IndexEnd,
 		ViewOffsetMS:    viewOffsetMS,
@@ -1255,6 +1274,8 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	if h.caches != nil {
 		h.caches.InvalidateItemCaches()
 	}
+	// Libraries that save NFO files get the edit written through.
+	h.writeNFOAfterEdit(r.Context(), updated.ID)
 
 	if h.audit != nil {
 		actor := claims.UserID

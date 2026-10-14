@@ -452,6 +452,17 @@ func (c *Client) SearchTV(ctx context.Context, title string, year int) (*metadat
 	}
 
 	best := pickBestTVMatch(resp.Results, title)
+
+	// Upgrade the chosen hit to a full details response, as
+	// SearchMovieWithRuntime does: search rows carry no networks, content
+	// rating or external ids, and fetching those separately costs two
+	// requests where the details call (both appended) costs one. Falls back
+	// to the search row on any error.
+	if full, err := c.RefreshTV(ctx, best.ID); err == nil && full.TMDBID == best.ID {
+		return full, nil
+	} else if ctxErr := ctx.Err(); ctxErr != nil {
+		return nil, fmt.Errorf("tmdb search tv %q: %w", title, ctxErr)
+	}
 	result := c.tvToResult(ctx, best)
 
 	// Fetch external IDs (TVDB) for the show — best-effort, don't fail the search.
@@ -731,6 +742,7 @@ func (c *Client) RefreshMovie(ctx context.Context, tmdbID int) (*metadata.MovieR
 	// A details payload always answers belongs_to_collection (null = none).
 	res.Collection = movie.BelongsToCollection.toRef()
 	res.CollectionChecked = true
+	res.Studios = studiosOf(movie.ProductionCompanies)
 	return res, nil
 }
 
@@ -747,6 +759,8 @@ func (c *Client) RefreshTV(ctx context.Context, tmdbID int) (*metadata.TVShowRes
 		return nil, fmt.Errorf("tmdb refresh tv %d: %w", tmdbID, err)
 	}
 	result := c.tvToResult(ctx, tv)
+	result.Studios = studiosOf(tv.Networks)
+	result.StudiosChecked = true
 
 	if tv.ExternalIDs != nil {
 		result.TVDBID = tv.ExternalIDs.TVDBID
@@ -1116,6 +1130,25 @@ type tmdbMovie struct {
 	ReleaseDates *tmdbReleaseDates `json:"release_dates"`
 	// Present (possibly null) only on detail responses.
 	BelongsToCollection *tmdbCollectionRef `json:"belongs_to_collection"`
+	// Present only on detail responses.
+	ProductionCompanies []tmdbCompany `json:"production_companies"`
+}
+
+// tmdbCompany is a production company (movies) or network (shows).
+type tmdbCompany struct {
+	ID   int    `json:"id"`
+	Name string `json:"name"`
+}
+
+// studiosOf converts TMDB companies or networks, skipping unnamed ones.
+func studiosOf(cs []tmdbCompany) []metadata.Studio {
+	var out []metadata.Studio
+	for _, c := range cs {
+		if name := strings.TrimSpace(c.Name); name != "" {
+			out = append(out, metadata.Studio{Name: name, TMDBID: c.ID})
+		}
+	}
+	return out
 }
 
 type tmdbTV struct {
@@ -1132,6 +1165,8 @@ type tmdbTV struct {
 	// append_to_response=content_ratings,external_ids.
 	ContentRatings *tmdbContentRatings `json:"content_ratings"`
 	ExternalIDs    *tmdbExternalIDs    `json:"external_ids"`
+	// Present only on detail responses.
+	Networks []tmdbCompany `json:"networks"`
 }
 
 type tmdbReleaseDates struct {

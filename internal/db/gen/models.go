@@ -294,6 +294,7 @@ type Library struct {
 	TrickplayEnabled        bool               `json:"trickplay_enabled"`
 	NfoCollections          string             `json:"nfo_collections"`
 	EpisodeOrder            string             `json:"episode_order"`
+	SaveNfo                 bool               `json:"save_nfo"`
 }
 
 type LibraryAccess struct {
@@ -416,6 +417,15 @@ type MediaItem struct {
 	IndexEnd                  *int32             `json:"index_end"`
 	EpisodeOrder              *string            `json:"episode_order"`
 	Labels                    []string           `json:"labels"`
+	LogoPath                  *string            `json:"logo_path"`
+	BannerPath                *string            `json:"banner_path"`
+	DiscArtPath               *string            `json:"disc_art_path"`
+}
+
+type MediaItemStudio struct {
+	MediaItemID uuid.UUID `json:"media_item_id"`
+	StudioID    uuid.UUID `json:"studio_id"`
+	Position    int32     `json:"position"`
 }
 
 type MediaItemTmdbCollection struct {
@@ -665,6 +675,15 @@ type Session struct {
 	LastSeen          pgtype.Timestamptz `json:"last_seen"`
 	PrevTokenHash     *string            `json:"prev_token_hash"`
 	AbsoluteExpiresAt pgtype.Timestamptz `json:"absolute_expires_at"`
+}
+
+type Studio struct {
+	ID        uuid.UUID          `json:"id"`
+	Name      string             `json:"name"`
+	Kind      string             `json:"kind"`
+	TmdbID    *int32             `json:"tmdb_id"`
+	LogoPath  *string            `json:"logo_path"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
 type TaskRun struct {

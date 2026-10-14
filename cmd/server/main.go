@@ -56,6 +56,7 @@ import (
 	"github.com/onscreen/onscreen/internal/metadata/animedb"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/coverartarchive"
+	"github.com/onscreen/onscreen/internal/metadata/fanarttv"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
 	"github.com/onscreen/onscreen/internal/notification"
@@ -73,6 +74,7 @@ import (
 	"github.com/onscreen/onscreen/internal/serverimport"
 	"github.com/onscreen/onscreen/internal/staticabr"
 	"github.com/onscreen/onscreen/internal/streaming"
+	"github.com/onscreen/onscreen/internal/studios"
 	"github.com/onscreen/onscreen/internal/subtitles"
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -588,6 +590,34 @@ func run() error {
 		func() franchise.TMDB { return &franchiseTMDBAdapter{agentFn: agentFn} }, logger)
 	metaAgent.SetFranchiseRecorder(franchiseSvc)
 
+	// Studios / networks, clear logos, banners and disc art, and NFO
+	// writing (libraries.save_nfo) — the enricher's post-write steps.
+	studioSvc := studios.New(gen.New(rwPool))
+	metaAgent.SetItemExtras(&enricherExtrasAdapter{rw: gen.New(rwPool), studios: studioSvc})
+	// fanart.tv: key from the admin UI (Settings ▸ General), read per
+	// enrichment so setting or clearing it applies without a restart. No
+	// key = no lookup; local Kodi-named files and AniList banners still
+	// apply.
+	var (
+		fanartMu    sync.Mutex
+		fanartKey   string
+		fanartCache metadata.ExtraArtAgent
+	)
+	metaAgent.SetExtraArtFn(func() metadata.ExtraArtAgent {
+		key := settingsSvc.FanartTVAPIKey(context.WithoutCancel(ctx))
+		fanartMu.Lock()
+		defer fanartMu.Unlock()
+		if key == "" {
+			fanartKey, fanartCache = "", nil
+			return nil
+		}
+		if key != fanartKey {
+			fanartKey = key
+			fanartCache = fanarttv.New(key)
+		}
+		return fanartCache
+	})
+
 	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger).WithMetrics(metrics).
 		// Admin-set missing-file grace (System settings override the env
 		// default); read per scan so a change applies without a restart.
@@ -824,6 +854,8 @@ func run() error {
 	// so object-storage libraries scan (movies/shows/anime fully; types needing
 	// embedded-tag/cover reads degrade to online enrichment for remote sources).
 	libScanner.WithMediaStore(mediaStoreProvider)
+	// NFO files are only written next to media on local disk.
+	metaAgent.SetLocalMediaFn(func() bool { return mediastore.IsLocal(mediaStoreProvider) })
 
 	// Podcast RSS subscriptions: feeds download episodes into their podcast
 	// library's folder through the media store, rescan that folder when a
@@ -974,6 +1006,9 @@ func run() error {
 		// Chapters carry thumb_url once the sprites (and with them the
 		// chapter thumbnails) exist.
 		WithChapterThumbs(trickplaySvc).
+		WithStudios(studioSvc).
+		// A metadata edit rewrites the item's NFO in save_nfo libraries.
+		WithNFOWriter(metaAgent).
 		// A metadata edit drops the hub's cached trending row, which carries
 		// titles and was rating-filtered when fetched.
 		WithCacheInvalidator(hubHandler)
@@ -1583,6 +1618,7 @@ func run() error {
 		enricher: metaAgent,
 		logger:   logger,
 	}, logger).WithLibraryAccess(libSvc)
+	studioHandler := v1.NewStudioHandler(studioSvc, logger).WithLibraryAccess(libSvc)
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	h := &api.Handlers{
@@ -1632,6 +1668,7 @@ func run() error {
 		Tasks:           tasksHandler,
 		Jobs:            jobsHandler,
 		People:          peopleHandler,
+		Studios:         studioHandler,
 		Plugins:         pluginHandler,
 		Pair:            pairHandler,
 		Logs:            v1.NewLogsHandler(logBuffer),

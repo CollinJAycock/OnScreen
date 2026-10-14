@@ -29,6 +29,7 @@ type maskSpySettings struct {
 	SettingsServiceIface
 	tmdb, tvdb, arr string
 	omdb            string
+	fanart          string
 	opensubsPw      string
 	oidcSecret      string
 	ldapBindPw      string
@@ -43,8 +44,13 @@ func (m *maskSpySettings) ArrAPIKey(context.Context) string  { return "real-arr"
 func (m *maskSpySettings) OMDbAPIKey(context.Context) string { return "real-omdb" }
 
 func (m *maskSpySettings) SetOMDbAPIKey(_ context.Context, v string) error { m.omdb = v; return nil }
-func (m *maskSpySettings) OMDbDailyLimit(context.Context) int              { return 1000 }
-func (m *maskSpySettings) SetOMDbDailyLimit(context.Context, int) error    { return nil }
+func (m *maskSpySettings) FanartTVAPIKey(context.Context) string           { return "real-fanart" }
+func (m *maskSpySettings) SetFanartTVAPIKey(_ context.Context, v string) error {
+	m.fanart = v
+	return nil
+}
+func (m *maskSpySettings) OMDbDailyLimit(context.Context) int           { return 1000 }
+func (m *maskSpySettings) SetOMDbDailyLimit(context.Context, int) error { return nil }
 
 func (m *maskSpySettings) SetTMDBAPIKey(_ context.Context, v string) error { m.tmdb = v; return nil }
 func (m *maskSpySettings) SetTVDBAPIKey(_ context.Context, v string) error { m.tvdb = v; return nil }
@@ -111,9 +117,12 @@ func TestSettingsPatch_MaskSentinelDoesNotOverwriteAPIKeys(t *testing.T) {
 
 	// Exactly what the admin UI sends when the operator opens Settings and
 	// presses Save without touching the key fields.
-	patchSettings(t, h, `{"tmdb_api_key":"****","tvdb_api_key":"****","arr_api_key":"****","omdb_api_key":"****"}`)
+	patchSettings(t, h, `{"tmdb_api_key":"****","tvdb_api_key":"****","arr_api_key":"****","omdb_api_key":"****","fanarttv_api_key":"****"}`)
 	if spy.omdb != "" {
 		t.Errorf("omdb key overwritten with mask: %q", spy.omdb)
+	}
+	if spy.fanart != "" {
+		t.Errorf("fanart.tv key overwritten with mask: %q", spy.fanart)
 	}
 
 	if spy.arr != "" {
@@ -131,9 +140,12 @@ func TestSettingsPatch_RealValuesStillWrite(t *testing.T) {
 	spy := &maskSpySettings{}
 	h := NewSettingsHandler(spy, slog.Default())
 
-	patchSettings(t, h, `{"tmdb_api_key":"new-tmdb","tvdb_api_key":"new-tvdb","arr_api_key":"new-arr","omdb_api_key":" new-omdb "}`)
+	patchSettings(t, h, `{"tmdb_api_key":"new-tmdb","tvdb_api_key":"new-tvdb","arr_api_key":"new-arr","omdb_api_key":" new-omdb ","fanarttv_api_key":" new-fanart "}`)
 	if spy.omdb != "new-omdb" {
 		t.Errorf("omdb key = %q, want it written (trimmed)", spy.omdb)
+	}
+	if spy.fanart != "new-fanart" {
+		t.Errorf("fanart.tv key = %q, want it written (trimmed)", spy.fanart)
 	}
 
 	if spy.tmdb != "new-tmdb" || spy.tvdb != "new-tvdb" || spy.arr != "new-arr" {

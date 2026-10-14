@@ -27,15 +27,16 @@ const createLibrary = `-- name: CreateLibrary :one
 INSERT INTO libraries (name, type, scan_paths, agent, language,
                        scan_interval, metadata_refresh_interval,
                        is_private, auto_grant_new_users, trickplay_enabled,
-                       nfo_collections, episode_order)
+                       nfo_collections, episode_order, save_nfo)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         COALESCE(NULLIF($11::text, ''), 'off'),
-        COALESCE(NULLIF($12::text, ''), 'aired'))
+        COALESCE(NULLIF($12::text, ''), 'aired'),
+        $13::bool)
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
           created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-          trickplay_enabled, nfo_collections, episode_order
+          trickplay_enabled, nfo_collections, episode_order, save_nfo
 `
 
 type CreateLibraryParams struct {
@@ -51,6 +52,7 @@ type CreateLibraryParams struct {
 	TrickplayEnabled        bool          `json:"trickplay_enabled"`
 	NfoCollections          string        `json:"nfo_collections"`
 	EpisodeOrder            string        `json:"episode_order"`
+	SaveNfo                 bool          `json:"save_nfo"`
 }
 
 // trickplay_enabled is resolved by the caller (the library service turns it
@@ -69,6 +71,7 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		arg.TrickplayEnabled,
 		arg.NfoCollections,
 		arg.EpisodeOrder,
+		arg.SaveNfo,
 	)
 	var i Library
 	err := row.Scan(
@@ -90,6 +93,7 @@ func (q *Queries) CreateLibrary(ctx context.Context, arg CreateLibraryParams) (L
 		&i.TrickplayEnabled,
 		&i.NfoCollections,
 		&i.EpisodeOrder,
+		&i.SaveNfo,
 	)
 	return i, err
 }
@@ -99,7 +103,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -126,6 +130,7 @@ func (q *Queries) GetLibrary(ctx context.Context, id uuid.UUID) (Library, error)
 		&i.TrickplayEnabled,
 		&i.NfoCollections,
 		&i.EpisodeOrder,
+		&i.SaveNfo,
 	)
 	return i, err
 }
@@ -141,6 +146,25 @@ func (q *Queries) GetLibraryEpisodeOrder(ctx context.Context, id uuid.UUID) (str
 	var episode_order string
 	err := row.Scan(&episode_order)
 	return episode_order, err
+}
+
+const getLibraryNFOOptions = `-- name: GetLibraryNFOOptions :one
+SELECT save_nfo, language FROM libraries WHERE id = $1 AND deleted_at IS NULL
+`
+
+type GetLibraryNFOOptionsRow struct {
+	SaveNfo  bool   `json:"save_nfo"`
+	Language string `json:"language"`
+}
+
+// What the enricher needs to write NFO files and pick artwork languages:
+// whether the library saves NFOs next to its media (save_nfo) and its
+// metadata language.
+func (q *Queries) GetLibraryNFOOptions(ctx context.Context, id uuid.UUID) (GetLibraryNFOOptionsRow, error) {
+	row := q.db.QueryRow(ctx, getLibraryNFOOptions, id)
+	var i GetLibraryNFOOptionsRow
+	err := row.Scan(&i.SaveNfo, &i.Language)
+	return i, err
 }
 
 const isLibraryAnime = `-- name: IsLibraryAnime :one
@@ -178,7 +202,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE deleted_at IS NULL
 ORDER BY name
@@ -212,6 +236,7 @@ func (q *Queries) ListLibraries(ctx context.Context) ([]Library, error) {
 			&i.TrickplayEnabled,
 			&i.NfoCollections,
 			&i.EpisodeOrder,
+			&i.SaveNfo,
 		); err != nil {
 			return nil, err
 		}
@@ -228,7 +253,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE deleted_at IS NULL
   AND metadata_refresh_interval IS NOT NULL
@@ -264,6 +289,7 @@ func (q *Queries) ListLibrariesDueForMetadataRefresh(ctx context.Context) ([]Lib
 			&i.TrickplayEnabled,
 			&i.NfoCollections,
 			&i.EpisodeOrder,
+			&i.SaveNfo,
 		); err != nil {
 			return nil, err
 		}
@@ -280,7 +306,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE deleted_at IS NULL
   AND scan_interval IS NOT NULL
@@ -316,6 +342,7 @@ func (q *Queries) ListLibrariesDueForScan(ctx context.Context) ([]Library, error
 			&i.TrickplayEnabled,
 			&i.NfoCollections,
 			&i.EpisodeOrder,
+			&i.SaveNfo,
 		); err != nil {
 			return nil, err
 		}
@@ -372,13 +399,14 @@ SET name                      = $2,
     trickplay_enabled         = COALESCE($10::bool, trickplay_enabled),
     nfo_collections           = COALESCE($11::text, nfo_collections),
     episode_order             = COALESCE($12::text, episode_order),
+    save_nfo                  = COALESCE($13::bool, save_nfo),
     updated_at                = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
           created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-          trickplay_enabled, nfo_collections, episode_order
+          trickplay_enabled, nfo_collections, episode_order, save_nfo
 `
 
 type UpdateLibraryParams struct {
@@ -394,6 +422,7 @@ type UpdateLibraryParams struct {
 	TrickplayEnabled        *bool         `json:"trickplay_enabled"`
 	NfoCollections          *string       `json:"nfo_collections"`
 	EpisodeOrder            *string       `json:"episode_order"`
+	SaveNfo                 *bool         `json:"save_nfo"`
 }
 
 // is_private uses COALESCE so admins can update other fields without
@@ -414,6 +443,7 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		arg.TrickplayEnabled,
 		arg.NfoCollections,
 		arg.EpisodeOrder,
+		arg.SaveNfo,
 	)
 	var i Library
 	err := row.Scan(
@@ -435,6 +465,7 @@ func (q *Queries) UpdateLibrary(ctx context.Context, arg UpdateLibraryParams) (L
 		&i.TrickplayEnabled,
 		&i.NfoCollections,
 		&i.EpisodeOrder,
+		&i.SaveNfo,
 	)
 	return i, err
 }

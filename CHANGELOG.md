@@ -445,6 +445,56 @@ API change lands only when every first-party client moves with it — see
   - **API (additive):** each chapter in the item detail gains `thumb_url`
     when it has a thumbnail.
   - **Migration 00051** adds `trickplay_status.chapter_thumb_count`.
+- **Clear logos, banners and disc art.** Movie and show pages show the
+  title's clear logo in place of the text title, and album pages show the disc
+  peeking out behind the cover.
+  - **Where art comes from:** first, files already next to your media with
+    Kodi's names (`clearlogo.png` / `logo.png`, `banner.jpg` / `banner.png`,
+    `disc.png` / `discart.png` / `cdart.png`); then fanart.tv (movies by TMDB
+    or IMDb id, shows by TheTVDB id, artists and albums by MusicBrainz id),
+    preferring the library's language, then English, then language-free art,
+    then the most liked; then, for anime, AniList's banner. Downloads are saved
+    next to the media under the same Kodi names.
+  - **Setup:** paste a free personal fanart.tv API key into Settings ▸ General.
+    Without one, local files and AniList banners are still used.
+  - **When:** as titles are enriched, refreshed or re-matched with Fix Match
+    (which replaces the old title's art). Answers, including "none", are
+    remembered for a few hours, so a refresh doesn't ask fanart.tv again.
+  - **API (additive):** `logo_path`, `banner_path` and `disc_art_path` on item
+    details, served through `/artwork/` like posters (fetch the logo without
+    `?w=`, which turns its transparent background black); `fanarttv_api_key`
+    (masked, encrypted at rest) in `/settings`.
+- **Studio and network pages.** Movie pages list the studios that made the
+  film and show pages the networks that aired it, each linking to a page of
+  its titles, sortable by title, year, rating or date added. Movie and TV
+  libraries get "Browse studios" / "Browse networks" next to genres and years.
+  - **Where they come from:** TMDB's production companies (movies) and
+    networks (shows); an NFO file's `<studio>` tags win when it has any.
+  - **Who sees what:** a studio appears only through titles the user can see —
+    library access, the content-rating limit and label restrictions apply to
+    the lists, the counts and the studio pages.
+  - **API (all additive):** `GET /studios` (`library_id`, `kind`),
+    `GET /studios/{id}`, `GET /studios/{id}/items` (paged and sorted like
+    library browse); `studios` on movie and show details.
+- **Save metadata as NFO files.** A new library setting, "Save metadata as NFO
+  files next to media" (movie and TV libraries, off by default), writes
+  Kodi-compatible `<file>.nfo` (or the `movie.nfo` already there),
+  `tvshow.nfo` and episode NFO files after a title is enriched, edited or
+  re-matched, so Kodi, Jellyfin and Emby see the same details. They carry the
+  title, original and sort titles, year, plot, tagline, rating, content rating,
+  genres, studios, TMDB / IMDb / TheTVDB ids, season and episode numbers, air
+  date and runtime.
+  - **Safe:** files are written whole (through a temporary file), only NFO
+    files OnScreen wrote — marked `<!-- written by OnScreen -->` — are ever
+    replaced, and a read-only media folder just logs a warning. Not available
+    with object storage.
+  - **No refresh loops:** the folder watcher ignores these writes, and when
+    OnScreen reads its own NFO back it takes only the ids from it, so newer
+    provider data still lands and locked fields still win.
+  - **API (additive):** `save_nfo` on libraries.
+- **Migration 00049** adds `media_items.logo_path` / `banner_path` /
+  `disc_art_path`, `libraries.save_nfo`, and the `studios` and
+  `media_item_studios` tables.
 
 ### Changed
 

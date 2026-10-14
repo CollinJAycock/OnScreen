@@ -1044,7 +1044,10 @@ WHERE library_id = $1
   AND deleted_at IS NULL
   AND (lower(poster_path) = lower($2)
        OR lower(fanart_path) = lower($2)
-       OR lower(thumb_path) = lower($2))
+       OR lower(thumb_path) = lower($2)
+       OR lower(logo_path) = lower($2)
+       OR lower(banner_path) = lower($2)
+       OR lower(disc_art_path) = lower($2))
 LIMIT 1
 `
 
@@ -1054,7 +1057,8 @@ type GetArtworkContentRatingParams struct {
 }
 
 // Resolves the content_rating of the item that owns a given artwork file,
-// matched by its library-relative poster/fanart/thumb path (slash-separated,
+// matched by its library-relative poster/fanart/thumb (or logo/banner/disc
+// art) path (slash-separated,
 // the form stored at scan time). Used by the /artwork/* server to enforce the
 // per-user content-rating ceiling so a restricted profile with library access
 // can't pull an over-ceiling item's poster by direct URL. Scoped to the owning
@@ -1271,7 +1275,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
        parent_id, index, index_end, episode_order, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at,
-       locked_fields
+       locked_fields, logo_path, banner_path, disc_art_path
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -1323,6 +1327,9 @@ type GetMediaItemRow struct {
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt                 pgtype.Timestamptz `json:"deleted_at"`
 	LockedFields              []string           `json:"locked_fields"`
+	LogoPath                  *string            `json:"logo_path"`
+	BannerPath                *string            `json:"banner_path"`
+	DiscArtPath               *string            `json:"disc_art_path"`
 }
 
 func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemRow, error) {
@@ -1375,6 +1382,9 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.UpdatedAt,
 		&i.DeletedAt,
 		&i.LockedFields,
+		&i.LogoPath,
+		&i.BannerPath,
+		&i.DiscArtPath,
 	)
 	return i, err
 }
@@ -6102,6 +6112,37 @@ func (q *Queries) SetEpisodeIndexEnd(ctx context.Context, arg SetEpisodeIndexEnd
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const setMediaItemExtraArt = `-- name: SetMediaItemExtraArt :exec
+UPDATE media_items
+SET logo_path     = COALESCE($1::text, logo_path),
+    banner_path   = COALESCE($2::text, banner_path),
+    disc_art_path = COALESCE($3::text, disc_art_path),
+    updated_at    = NOW()
+WHERE id = $4 AND deleted_at IS NULL
+`
+
+type SetMediaItemExtraArtParams struct {
+	LogoPath    *string   `json:"logo_path"`
+	BannerPath  *string   `json:"banner_path"`
+	DiscArtPath *string   `json:"disc_art_path"`
+	ID          uuid.UUID `json:"id"`
+}
+
+// Sets an item's clear logo, banner and disc art paths (migration 00049).
+// A NULL argument keeps the stored path, the same COALESCE rule
+// UpdateMediaItemMetadata applies to poster and fanart, so a provider that
+// has no logo this time doesn't wipe the one a previous pass (or the
+// operator's own clearlogo.png) supplied. Artwork isn't lockable.
+func (q *Queries) SetMediaItemExtraArt(ctx context.Context, arg SetMediaItemExtraArtParams) error {
+	_, err := q.db.Exec(ctx, setMediaItemExtraArt,
+		arg.LogoPath,
+		arg.BannerPath,
+		arg.DiscArtPath,
+		arg.ID,
+	)
+	return err
 }
 
 const setMediaItemKind = `-- name: SetMediaItemKind :exec

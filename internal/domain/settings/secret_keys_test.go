@@ -20,3 +20,10 @@ func TestOMDbKeyIsEncryptedAtRest(t *testing.T) {
 		t.Error("omdb_api_key must be in secretKeys")
 	}
 }
+
+// The fanart.tv key is a credential like the OMDb key.
+func TestFanartTVKeyIsEncryptedAtRest(t *testing.T) {
+	if !(&Service{}).isSecretKey(keyFanartTVAPIKey) {
+		t.Error("fanarttv_api_key must be in secretKeys")
+	}
+}

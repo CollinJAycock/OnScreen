@@ -94,6 +94,7 @@ type Handlers struct {
 	Tasks           *v1.TasksHandler
 	Jobs            *v1.JobsHandler
 	People          *v1.PeopleHandler
+	Studios         *v1.StudioHandler // studio / network browse
 	Plugins         *v1.PluginHandler
 	Pair            *v1.PairHandler
 	Logs            *v1.LogsHandler
@@ -1239,6 +1240,13 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/people/{id}", h.People.GetPerson)
 				r.Get("/people/{id}/filmography", h.People.Filmography)
 				r.Get("/people", h.People.Search)
+			}
+
+			// Studios and networks — browse by who made a title.
+			if h.Studios != nil {
+				r.Get("/studios", h.Studios.List)
+				r.Get("/studios/{id}", h.Studios.Get)
+				r.Get("/studios/{id}/items", h.Studios.Items)
 			}
 
 			// Individual media items — player, children, progress, on-demand enrich.

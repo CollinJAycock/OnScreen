@@ -1729,6 +1729,9 @@ export interface Library {
   // The order the library's shows are numbered in unless a show sets its
   // own. Optional: servers before v2.6 don't send it (aired).
   episode_order?: EpisodeOrder;
+  // Write Kodi-compatible NFO files next to the media. Optional: servers
+  // before v2.6 don't send it (off).
+  save_nfo?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -2014,6 +2017,8 @@ export interface ServerSettings {
   tvdb_api_key: string;
   /** OMDb key for IMDb / Rotten Tomatoes / Metacritic scores. */
   omdb_api_key?: string;
+  /** fanart.tv key for clear logos, banners and disc art. */
+  fanarttv_api_key?: string;
   /** OMDb lookups the key allows a day (1000 for a free key). */
   omdb_daily_limit?: number;
   arr_api_key: string;
@@ -2360,6 +2365,47 @@ export interface FilmographyEntry {
   job?: string;
 }
 
+// ── Studios / networks ───────────────────────────────────────────────────────
+
+/** A studio (movies) or network (shows) on an item's details. */
+export interface StudioRef {
+  id: string;
+  name: string;
+  kind: 'studio' | 'network';
+}
+
+/** A studio with how many of its titles the caller can see. */
+export interface Studio extends StudioRef {
+  tmdb_id?: number;
+  item_count: number;
+}
+
+export interface StudioItemsParams {
+  sort?: 'title' | 'year' | 'rating' | 'created_at';
+  sort_dir?: 'asc' | 'desc';
+  library_id?: string;
+}
+
+export const studiosApi = {
+  list: async (params?: { library_id?: string; kind?: 'studio' | 'network' }) => {
+    const qs = new URLSearchParams();
+    if (params?.library_id) qs.set('library_id', params.library_id);
+    if (params?.kind) qs.set('kind', params.kind);
+    const q = qs.toString();
+    return (await api.requestList<Studio>(`/studios${q ? `?${q}` : ''}`)).items;
+  },
+  get: (id: string) => api.get<Studio>(`/studios/${id}`),
+  items: (id: string, limit = 50, offset = 0, params?: StudioItemsParams) => {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    qs.set('offset', String(offset));
+    if (params?.sort) qs.set('sort', params.sort);
+    if (params?.sort_dir) qs.set('sort_dir', params.sort_dir);
+    if (params?.library_id) qs.set('library_id', params.library_id);
+    return api.requestList<MediaItem>(`/studios/${id}/items?${qs.toString()}`);
+  }
+};
+
 export const peopleApi = {
   credits: (itemId: string) => api.get<Credit[]>(`/items/${itemId}/credits`),
   get: (id: string) => api.get<Person>(`/people/${id}`),
@@ -2509,6 +2555,15 @@ export interface ItemDetail {
   duration_ms?: number;
   poster_path?: string;
   fanart_path?: string;
+  /** Transparent clear logo (PNG). Fetch it without ?w=/?h= — a resize
+   *  re-encodes as JPEG and loses the transparency. */
+  logo_path?: string;
+  /** Wide banner strip. */
+  banner_path?: string;
+  /** Disc / CD art. */
+  disc_art_path?: string;
+  /** Movies: production companies; shows: networks. Provider order. */
+  studios?: StudioRef[];
   content_rating?: string;
   genres: string[];
   parent_id?: string;

@@ -70,7 +70,10 @@ WHERE library_id = sqlc.arg(library_id)
   AND deleted_at IS NULL
   AND (lower(poster_path) = lower(sqlc.arg(art_path))
        OR lower(fanart_path) = lower(sqlc.arg(art_path))
-       OR lower(thumb_path) = lower(sqlc.arg(art_path)));
+       OR lower(thumb_path) = lower(sqlc.arg(art_path))
+       OR lower(logo_path) = lower(sqlc.arg(art_path))
+       OR lower(banner_path) = lower(sqlc.arg(art_path))
+       OR lower(disc_art_path) = lower(sqlc.arg(art_path)));
 
 -- name: UpdateUserLabelRestrictions :exec
 -- Sets a user's blocked / allowed labels on the target AND every managed

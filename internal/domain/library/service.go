@@ -59,6 +59,12 @@ type Library struct {
 	// order, the default), "dvd" or "absolute". See ValidEpisodeOrder.
 	EpisodeOrder string
 
+	// SaveNFO writes Kodi-compatible NFO files (movie.nfo, tvshow.nfo,
+	// <episode>.nfo) next to the media after enrichment, a manual metadata
+	// edit or Fix Match. Off by default; only files OnScreen wrote are ever
+	// replaced.
+	SaveNFO bool
+
 	ScanInterval            *time.Duration
 	ScanLastCompletedAt     *time.Time
 	MetadataRefreshInterval *time.Duration
@@ -91,6 +97,8 @@ type CreateLibraryParams struct {
 	NFOCollections string
 	// EpisodeOrder: "" means "aired".
 	EpisodeOrder string
+	// SaveNFO: write NFO files next to the media (default off).
+	SaveNFO bool
 }
 
 // ValidNFOCollections reports whether s is a library's NFO collection import
@@ -140,6 +148,7 @@ type UpdateLibraryParams struct {
 	TrickplayEnabled  *bool
 	NFOCollections    *string
 	EpisodeOrder      *string
+	SaveNFO           *bool
 }
 
 // Querier is the subset of gen.Querier that this service needs.
