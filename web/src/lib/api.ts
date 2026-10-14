@@ -143,6 +143,19 @@ export function assetUrl(path: string): string {
   return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(assetTokenStore);
 }
 
+/** The file name a Content-Disposition header gives: the UTF-8
+ *  `filename*` form when present, else the plain `filename`. */
+export function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+  if (star) {
+    try { return decodeURIComponent(star[1].trim()); } catch { /* fall through */ }
+  }
+  const plain = /filename\s*=\s*"([^"]*)"|filename\s*=\s*([^;]+)/i.exec(header);
+  const name = plain ? (plain[1] ?? plain[2] ?? '').trim() : '';
+  return name || null;
+}
+
 /** Build the request headers, attaching Authorization when a bearer
  *  token is cached. Browser builds skip the bearer (cookies cover
  *  auth there). */
@@ -939,6 +952,64 @@ export class ApiClient {
       },
     );
   }
+  /** POST a multipart form (a file upload with fields). The browser sets
+   *  the multipart Content-Type with its boundary, so ours is dropped. */
+  async postForm<T>(path: string, form: FormData): Promise<T> {
+    const finalPath = this.withViewAs('POST', path);
+    return this.requestWithRetry(
+      finalPath,
+      () => {
+        const headers = authHeaders();
+        delete headers['Content-Type'];
+        return fetch(apiBase + finalPath, {
+          method: 'POST',
+          headers,
+          credentials: credentialsMode(),
+          body: form,
+        });
+      },
+      async (resp) => {
+        const json = (await resp.json()) as ApiResponse<T> | ApiError;
+        if (!resp.ok) {
+          const err = json as ApiError;
+          throw new ApiRequestError(err.error?.message ?? `HTTP ${resp.status}`, resp.status, err.error?.code ?? '');
+        }
+        return (json as ApiResponse<T>).data;
+      },
+    );
+  }
+
+  /** Fetch a file the server sends as an attachment (an export), with the
+   *  same auth and refresh handling as the JSON calls. Returns the body and
+   *  the filename from Content-Disposition (or `fallbackName`). */
+  async fetchFile(method: 'GET' | 'POST', path: string, fallbackName: string): Promise<{ blob: Blob; filename: string }> {
+    const finalPath = this.withViewAs(method, path);
+    return this.requestWithRetry(
+      finalPath,
+      () => fetch(apiBase + finalPath, {
+        method,
+        headers: authHeaders(),
+        credentials: credentialsMode(),
+      }),
+      async (resp) => {
+        if (!resp.ok) {
+          let message = `HTTP ${resp.status}`;
+          let code = '';
+          try {
+            const err = (await resp.json()) as ApiError;
+            message = err.error?.message ?? message;
+            code = err.error?.code ?? '';
+          } catch { /* not JSON */ }
+          throw new ApiRequestError(message, resp.status, code);
+        }
+        return {
+          blob: await resp.blob(),
+          filename: filenameFromDisposition(resp.headers.get('Content-Disposition')) ?? fallbackName,
+        };
+      },
+    );
+  }
+
   /** POST that does NOT attempt the 401→refresh→logout cascade. For
    *  pre-session auth steps (TOTP verify) where a 401 means "wrong
    *  code, retry", not "session dead, bounce to /login". */
@@ -1511,6 +1582,11 @@ export const userApi = {
     captureTokens(await api.post<TokenPair>('/auth/pin-switch', { user_id: userId, pin })),
   getPreferences: () =>
     api.get<UserPreferences>('/users/me/preferences'),
+  /** "Download my data": a ZIP of everything the server keeps about the
+   *  signed-in user. */
+  exportMyData: () => api.fetchFile('POST', '/users/me/export', 'onscreen-data.zip'),
+  /** Admin: the same archive for another user (a data request). */
+  exportUserData: (userId: string) => api.fetchFile('POST', `/users/${userId}/export`, 'onscreen-data.zip'),
   setPreferences: (prefs: UserPreferences) =>
     api.put<void>('/users/me/preferences', prefs),
   // Full ordered hub layout; empty array resets to the default layout.
@@ -3064,8 +3140,36 @@ export const playlistApi = {
   removeItem: (playlistId: string, itemId: string) =>
     api.delete(`/playlists/${playlistId}/items/${itemId}`),
   reorder: (playlistId: string, itemIds: string[]) =>
-    api.put<void>(`/playlists/${playlistId}/items/order`, { item_ids: itemIds })
+    api.put<void>(`/playlists/${playlistId}/items/order`, { item_ids: itemIds }),
+  /** The playlist as an .m3u8 download: paths relative to the library
+   *  root, or the server's absolute paths. */
+  exportM3U: (id: string, absolute = false) =>
+    api.fetchFile('GET', `/playlists/${id}/export.m3u8${absolute ? '?paths=absolute' : ''}`, 'playlist.m3u8'),
+  /** Create a playlist from an .m3u / .m3u8 file. */
+  importM3U: (file: File, name?: string) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    if (name && name.trim()) form.append('name', name.trim());
+    return api.postForm<M3UImportResult>('/playlists/import', form);
+  },
 };
+
+/** How one imported playlist line was matched. */
+export type M3UMatchMethod = 'path' | 'relative' | 'suffix' | 'tags';
+
+/** POST /playlists/import result. */
+export interface M3UImportResult {
+  playlist: Playlist;
+  total: number;
+  matched: number;
+  unmatched: number;
+  added: number;
+  by_method: Record<M3UMatchMethod, number>;
+  matches: { line: number; entry: string; item_id: string; title: string; method: M3UMatchMethod }[];
+  matches_truncated: boolean;
+  unmatched_entries: { line: number; entry: string; reason: 'url' | 'not_found' }[];
+  unmatched_truncated: boolean;
+}
 
 // ── Photos: map + albums ─────────────────────────────────────────────────────
 

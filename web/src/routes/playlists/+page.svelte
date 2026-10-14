@@ -1,8 +1,15 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
-  import { playlistApi, type Playlist, type SmartPlaylistRules } from '$lib/api';
+  import { playlistApi, type M3UImportResult, type Playlist, type SmartPlaylistRules } from '$lib/api';
   import { confirmAction } from '$lib/native';
+  import {
+    MAX_PLAYLIST_BYTES,
+    importSummary,
+    isPlaylistFileName,
+    playlistNameFromFile,
+    unmatchedReason,
+  } from '$lib/playlistM3U';
 
   let playlists: Playlist[] = [];
   let loading = true;
@@ -17,6 +24,46 @@
   let smartMode = false;
   let smartRulesJSON = '{\n  "types": ["movie"],\n  "year_min": 2015,\n  "rating_min": 7.0,\n  "limit": 50\n}';
   let creating = false;
+
+  // Import from an .m3u / .m3u8 file. The server matches each line to an
+  // item you can see and reports what it couldn't place.
+  let showImport = false;
+  let importFile: File | null = null;
+  let importName = '';
+  let importing = false;
+  let importResult: M3UImportResult | null = null;
+
+  function onPickPlaylist(e: Event) {
+    const f = (e.target as HTMLInputElement).files?.[0] ?? null;
+    error = '';
+    importResult = null;
+    if (f && !isPlaylistFileName(f.name)) {
+      error = 'Choose an .m3u or .m3u8 playlist file.';
+      importFile = null;
+      return;
+    }
+    if (f && f.size > MAX_PLAYLIST_BYTES) {
+      error = 'Playlist files are limited to 1 MB.';
+      importFile = null;
+      return;
+    }
+    importFile = f;
+    if (f && !importName.trim()) importName = playlistNameFromFile(f.name);
+  }
+
+  async function importPlaylist() {
+    if (!importFile) return;
+    importing = true;
+    error = '';
+    try {
+      importResult = await playlistApi.importM3U(importFile, importName);
+      importFile = null;
+      importName = '';
+      showImport = false;
+      await load();
+    } catch (e: unknown) { error = e instanceof Error ? e.message : 'Import failed'; }
+    finally { importing = false; }
+  }
 
   onMount(async () => {
     if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
@@ -73,7 +120,10 @@
 <div class="page">
   <div class="header">
     <h1>My Playlists</h1>
-    <button class="btn-create" on:click={() => (showCreate = !showCreate)}>+ New Playlist</button>
+    <div class="header-actions">
+      <button class="btn-create" on:click={() => { showImport = !showImport; showCreate = false; }}>Import playlist</button>
+      <button class="btn-create" on:click={() => { showCreate = !showCreate; showImport = false; }}>+ New Playlist</button>
+    </div>
   </div>
 
   {#if error}<div class="error-bar">{error}</div>{/if}
@@ -104,6 +154,47 @@
         <button type="button" class="btn-cancel" on:click={() => (showCreate = false)}>Cancel</button>
       </div>
     </form>
+  {/if}
+
+  {#if showImport}
+    <form class="create-form" on:submit|preventDefault={importPlaylist}>
+      <p class="smart-hint">
+        Pick an .m3u or .m3u8 playlist exported from another player. Each line is matched to
+        something in your libraries by its path, its folder and file name, or its artist and title.
+        Web addresses in the file are never opened.
+      </p>
+      <input class="file-input" type="file" accept=".m3u,.m3u8,audio/x-mpegurl,audio/mpegurl" on:change={onPickPlaylist} />
+      <input bind:value={importName} placeholder="Playlist name (defaults to the file name)" />
+      <div class="form-row">
+        <button type="submit" class="btn-save" disabled={importing || !importFile}>
+          {importing ? 'Importing…' : 'Import'}
+        </button>
+        <button type="button" class="btn-cancel" on:click={() => (showImport = false)}>Cancel</button>
+      </div>
+    </form>
+  {/if}
+
+  {#if importResult}
+    <div class="import-result" role="status">
+      <div class="import-head">
+        <span>
+          Created <a href="/playlists/{importResult.playlist.id}">{importResult.playlist.name}</a>.
+          {importSummary(importResult)}
+        </span>
+        <button class="btn-cancel" on:click={() => (importResult = null)} aria-label="Dismiss">×</button>
+      </div>
+      {#if importResult.unmatched > 0}
+        <details>
+          <summary>{importResult.unmatched} {importResult.unmatched === 1 ? 'line' : 'lines'} not added</summary>
+          <ul class="unmatched">
+            {#each importResult.unmatched_entries as u (u.line)}
+              <li><span class="line-no">Line {u.line}</span> <code>{u.entry}</code> — {unmatchedReason(u.reason)}</li>
+            {/each}
+          </ul>
+          {#if importResult.unmatched_truncated}<p class="smart-hint">Only the first 500 are listed.</p>{/if}
+        </details>
+      {/if}
+    </div>
   {/if}
 
   {#if loading}
@@ -152,6 +243,33 @@
     cursor: pointer;
   }
   .btn-create:hover { background: rgba(124,106,247,0.2); }
+  .header-actions { display: flex; gap: 0.5rem; }
+
+  .create-form input.file-input {
+    flex: none;
+    background: none;
+    border: none;
+    padding: 0.2rem 0;
+    color: var(--text-secondary);
+  }
+  .import-result {
+    max-width: 600px;
+    margin-bottom: 1.5rem;
+    padding: 0.8rem 1rem;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+  }
+  .import-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.75rem; }
+  .import-head a { color: var(--accent-text); font-weight: 600; }
+  .import-result details { margin-top: 0.6rem; }
+  .import-result summary { cursor: pointer; color: var(--text-primary); }
+  .unmatched { margin: 0.5rem 0 0; padding-left: 1rem; max-height: 240px; overflow-y: auto; }
+  .unmatched li { margin: 0.2rem 0; word-break: break-all; color: var(--text-muted); }
+  .unmatched code { color: var(--text-secondary); font-size: 0.75rem; }
+  .line-no { color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
   .create-form {
     display: flex; flex-direction: column; gap: 0.5rem;
@@ -194,7 +312,9 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .create-form input {
+  /* Text fields only: the smart-playlist checkbox and the file picker keep
+     their own sizing. */
+  .create-form input:not([type='checkbox']):not([type='file']) {
     background: var(--bg-hover);
     border: 1px solid var(--border-strong);
     border-radius: 7px;
