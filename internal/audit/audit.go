@@ -156,6 +156,14 @@ const (
 	// key_id, name, the display prefix and scope — never the key itself.
 	ActionAPIKeyCreate = "api_key.create"
 	ActionAPIKeyDelete = "api_key.delete"
+
+	// ActionOptimizeRequest / ActionOptimizeDelete record an admin queueing
+	// optimized versions (Optimize… on items, a library or a collection —
+	// each one an encode that takes server time and disk) and deleting one.
+	// detail carries the profile and the selection's counts, or the deleted
+	// version's id, profile and state.
+	ActionOptimizeRequest = "optimize.request"
+	ActionOptimizeDelete  = "optimize.delete"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

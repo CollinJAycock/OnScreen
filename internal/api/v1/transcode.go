@@ -130,6 +130,10 @@ type NativeTranscodeHandler struct {
 	// match the encoder's. Off unless WithStaticABR is called.
 	staticEnabled bool
 	staticRoot    string
+
+	// optimized lets the play decision hand an optimized=1 client a pre-made
+	// optimized version instead of a transcode (optimize.go). Optional.
+	optimized OptimizedLister
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.

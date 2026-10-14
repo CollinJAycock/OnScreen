@@ -34,6 +34,12 @@ type ClientCapabilities struct {
 	SupportsDV   bool // Dolby Vision
 	SupportsHEVC bool // H.265
 	SupportsAV1  bool
+	// AcceptsOptimized (optimized=1) says the client plays the
+	// optimized_version a play decision may hand it — a pre-made MP4 at its
+	// own URL — instead of the source file. Not a decode capability but a
+	// protocol one: a client that doesn't send it never gets that verdict,
+	// so builds that only know file_id keep their exact old decisions.
+	AcceptsOptimized bool
 }
 
 // ParseCapabilities parses the X-Client-Capabilities header value. Keys are
@@ -105,6 +111,8 @@ func ParseCapabilities(header string) ClientCapabilities {
 			caps.SupportsHLG = &hlg
 		case "dovi", "dolbyvision":
 			caps.SupportsDV = parseInt(val) > 0 || strings.EqualFold(val, "true")
+		case "optimized":
+			caps.AcceptsOptimized = parseInt(val) > 0 || strings.EqualFold(val, "true")
 		}
 	}
 	// Safe no-profile defaults: a client that declared no codecs still gets the
