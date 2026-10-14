@@ -3108,6 +3108,62 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/items/{id}/reading-progress:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Caller's reading position in an ebook
+      tags: [Items]
+      description: |
+        Where the caller is in a book (EPUB, CBZ, CBR, PDF), synced across
+        their devices. `data` is null when nothing is saved. The item must be
+        a book the caller can see (library access, rating ceiling, label
+        restriction), else 404. Audiobooks use playback progress instead. v2.6.
+      responses:
+        '200':
+          description: The saved position, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf: [{ $ref: '#/components/schemas/ReadingProgress' }]
+                    nullable: true
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Save the caller's reading position
+      tags: [Items]
+      description: |
+        The newest position wins, by the client's `updated_at` (omitted =
+        now; a time ahead of the server's clock is clamped to it), so a device
+        flushing a stale position late can't rewind a newer one. The response
+        is the position the server now holds; `applied: false` means a newer
+        one was kept. Progression 0.98 or more marks the book read (the same
+        mark as `POST /items/{id}/watched`). v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locator, progression]
+              properties:
+                locator:     { type: string, maxLength: 4096, description: 'Opaque to the server: an EPUB CFI, or a page number.' }
+                progression: { type: number, minimum: 0, maximum: 1 }
+                device_name: { type: string, maxLength: 100 }
+                updated_at:  { type: string, format: date-time }
+      responses:
+        '200':
+          description: The stored position.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReadingProgress' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/users/me/scrobble:
     get:
       summary: Caller's scrobble links
@@ -7475,6 +7531,14 @@ components:
         - type: object
           properties:
             key: { type: string, description: 'The key itself, shown only in this response.' }
+    ReadingProgress:
+      type: object
+      properties:
+        locator:     { type: string }
+        progression: { type: number, minimum: 0, maximum: 1 }
+        device_name: { type: string, description: 'Where the position was saved; omitted when unknown.' }
+        updated_at:  { type: string, format: date-time, description: 'Client time the position was reached (clamped to the server clock).' }
+        applied:     { type: boolean, description: 'PUT only: false when a newer stored position was kept.' }
     StreamingLimits:
       type: object
       properties:

@@ -2,7 +2,10 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, assetUrl, getBearerToken, type ItemDetail } from '$lib/api';
+  import {
+    itemApi, assetUrl, getBearerToken, getClientName, readingProgressApi,
+    type ItemDetail, type ReadingProgress, type ReadingProgressSave,
+  } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
   import {
@@ -13,6 +16,16 @@
     type ReadingDirection,
     type LayoutMode,
   } from './reader-nav';
+  import {
+    readLocalPosition,
+    writeLocalPosition,
+    decideStart,
+    pageLocator,
+    pageFromLocator,
+    pageProgression,
+    describePosition,
+    debounce,
+  } from './reading-sync';
 
   // v2.1 reader for CBZ / CBR / EPUB.
   //
@@ -25,6 +38,12 @@
   //
   // Pagination state lives in the URL query (?p=N) so a refresh /
   // share preserves the current page (CBZ/CBR) or chapter (EPUB).
+  //
+  // The reading position is also synced to the server
+  // (/items/{id}/reading-progress) so another device opens where this one
+  // left off, with a localStorage copy as the fallback. Saves are debounced
+  // while reading and flushed with a keepalive request when the page is
+  // hidden or closed.
 
   let book: ItemDetail | null = null;
   let pageNum = 1;
@@ -66,6 +85,29 @@
   // Preload the next page invisibly so a click feels instant. CBZ/CBR only.
   let preload: HTMLImageElement | null = null;
 
+  // ── Reading-position sync ──
+  // positionReady gates the EPUB mount until the start position is known.
+  let positionReady = false;
+  // An EPUB CFI to open at (from the saved position), instead of ?p=.
+  let startCfi: string | null = null;
+  // A newer position from another device, offered rather than jumped to.
+  let offer: ReadingProgress | null = null;
+  // The latest position not yet sent to the server.
+  let unsaved: ReadingProgressSave | null = null;
+  // epub.js reports the initial display as a relocation too. Opening a book
+  // isn't reading it: saving that would stamp the opening spot as the newest
+  // position and bury a further one from another device.
+  let skipInitialRelocate = false;
+  const saver = debounce(() => {
+    if (!unsaved || !book) return;
+    const p = unsaved;
+    unsaved = null;
+    readingProgressApi.save(book.id, p).catch(() => {
+      // Offline or server error: keep it for the next save / page hide.
+      if (!unsaved) unsaved = p;
+    });
+  }, 2000);
+
   $: id = $page.params.id!;
 
   onMount(async () => {
@@ -74,7 +116,78 @@
     try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     pageNum = parseInt($page.url.searchParams.get('p') ?? '1', 10) || 1;
     await load();
+    window.addEventListener('pagehide', flushOnLeave);
+    document.addEventListener('visibilitychange', onVisibility);
   });
+
+  function onVisibility() {
+    if (document.visibilityState === 'hidden') flushOnLeave();
+  }
+
+  /** Send the pending position with a keepalive request, which outlives the
+   *  page (closing the tab, navigating away, a phone backgrounding it). */
+  function flushOnLeave() {
+    saver.cancel();
+    if (unsaved && book) {
+      readingProgressApi.beacon(book.id, unsaved);
+      unsaved = null;
+    }
+  }
+
+  /** Record where the reader is: locally at once, on the server debounced. */
+  function recordPosition(locator: string, progression: number) {
+    if (!book || !positionReady) return;
+    const at = new Date().toISOString();
+    writeLocalPosition(book.id, { locator, progression, updated_at: at });
+    unsaved = { locator, progression, device_name: getClientName(), updated_at: at };
+    saver.call();
+  }
+
+  /** Pick the start position from the server's and this browser's saved
+   *  ones (see decideStart), before the first page renders. */
+  async function resolveStart(explicitPage: boolean) {
+    if (!book) return;
+    const local = readLocalPosition(book.id);
+    let server: ReadingProgress | null = null;
+    try {
+      server = await readingProgressApi.get(book.id);
+    } catch {
+      // Unreachable server: the local copy is the fallback.
+    }
+    const d = decideStart(local, server, explicitPage);
+    if (d.kind === 'open') applyStart(d.position.locator);
+    else if (d.kind === 'offer') {
+      if (d.position) applyStart(d.position.locator);
+      offer = d.offer;
+    }
+    positionReady = true;
+  }
+
+  function applyStart(locator: string) {
+    const page = pageFromLocator(locator);
+    if (page !== null) {
+      pageNum = Math.min(Math.max(page, 1), pageCount);
+      startCfi = null;
+    } else if (locator.startsWith('epubcfi(')) {
+      startCfi = locator;
+    }
+  }
+
+  function acceptOffer() {
+    if (!offer) return;
+    const target = offer;
+    offer = null;
+    const page = pageFromLocator(target.locator);
+    if (isEpub) {
+      if (epubRendition && target.locator.startsWith('epubcfi(')) {
+        epubRendition.display(target.locator);
+      } else if (page !== null) {
+        go(page);
+      }
+      return;
+    }
+    if (page !== null) go(Math.min(page, pageCount));
+  }
 
   async function removeItem() {
     if (!book) return;
@@ -92,6 +205,11 @@
   }
 
   onDestroy(() => {
+    flushOnLeave();
+    if (typeof window !== 'undefined') {
+      window.removeEventListener('pagehide', flushOnLeave);
+      document.removeEventListener('visibilitychange', onVisibility);
+    }
     preload = null;
     if (epubRendition) { try { epubRendition.destroy(); } catch { /* swallow */ } epubRendition = null; }
     if (epubBook) { try { epubBook.destroy(); } catch { /* swallow */ } epubBook = null; }
@@ -136,6 +254,10 @@
       // declarations don't update mid-function, so reading isEpub
       // would see the stale false from initial render and the
       // prefetcher would 404 against /book/page/N for an EPUB.
+      positionReady = false;
+      offer = null;
+      startCfi = null;
+      await resolveStart($page.url.searchParams.has('p'));
       if (format !== 'epub') {
         schedulePreload();
       }
@@ -151,7 +273,7 @@
   // URL the player uses for video — we add the bearer token as a
   // query param fallback because epub.js doesn't expose a header
   // hook on its internal XHR. The token is short-lived per session.
-  $: if (book && isEpub && epubViewerEl && !epubRendition) {
+  $: if (book && isEpub && epubViewerEl && !epubRendition && positionReady) {
     void mountEpub();
   }
 
@@ -221,8 +343,31 @@
           window.history.replaceState({}, '', url.toString());
         }
         if (epubBook?.spine?.length) pageCount = epubBook.spine.length;
+        // Sync the exact spot (CFI). Progression: the book's own percentage
+        // once locations are generated, else the section's place in the
+        // spine; the last screen counts as finished.
+        const cfi: string | undefined = loc?.start?.cfi;
+        if (skipInitialRelocate) {
+          skipInitialRelocate = false;
+        } else if (cfi) {
+          let prog = typeof loc?.start?.percentage === 'number' && loc.start.percentage > 0
+            ? loc.start.percentage
+            : (idx - 1) / Math.max(1, pageCount);
+          if (loc?.atEnd) prog = 1;
+          recordPosition(cfi, Math.min(1, Math.max(0, prog)));
+        }
       });
-      // Initial display — honour ?p= when present (1-indexed spine).
+      // Initial display — the synced CFI when there is one, else ?p=
+      // (1-indexed spine).
+      skipInitialRelocate = true;
+      if (startCfi) {
+        try {
+          await epubRendition.display(startCfi);
+          return;
+        } catch {
+          // A CFI from a different edition of the file: fall back.
+        }
+      }
       const start = Math.max(1, pageNum) - 1;
       const target = epubBook.spine?.get?.(start) ?? undefined;
       await epubRendition.display(target?.href);
@@ -264,6 +409,9 @@
     url.searchParams.set('p', String(n));
     window.history.replaceState({}, '', url.toString());
     schedulePreload();
+    // In spread mode the right-hand page is read too.
+    const lastVisible = effectiveLayout === 'spread' ? Math.min(n + 1, pageCount) : n;
+    recordPosition(pageLocator(n), pageProgression(lastVisible, pageCount));
   }
 
   // Best-effort preload of the next page. setTimeout defers past the
@@ -316,6 +464,18 @@
       <span>/</span>
       <span>{book.title}</span>
     </nav>
+
+    {#if offer}
+      <div class="resume-offer" role="status">
+        <span>
+          You're further along on {offer.device_name || 'another device'}.
+        </span>
+        <button class="resume-btn" on:click={acceptOffer}>
+          Continue from {describePosition(offer)}{offer.device_name ? ` on ${offer.device_name}` : ''}
+        </button>
+        <button class="resume-dismiss" on:click={() => (offer = null)} aria-label="Stay here">Stay here</button>
+      </div>
+    {/if}
 
     <header class="topbar">
       <h1>{book.title}</h1>
@@ -448,6 +608,28 @@
   .crumb a { color: var(--text-muted); text-decoration: none; }
   .crumb a:hover { color: var(--text-secondary); }
   .crumb span { margin: 0 0.4rem; }
+
+  .resume-offer {
+    display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 0.75rem;
+    margin-bottom: 0.75rem;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+  }
+  .resume-btn {
+    background: var(--accent);
+    color: var(--accent-contrast, #fff);
+    border: none; border-radius: 6px;
+    padding: 0.3rem 0.7rem; font-size: 0.8rem; cursor: pointer;
+  }
+  .resume-dismiss {
+    background: none; border: none; color: var(--text-muted);
+    font-size: 0.78rem; cursor: pointer; padding: 0.3rem 0.4rem;
+  }
+  .resume-dismiss:hover { color: var(--text-secondary); }
 
   .topbar {
     display: flex; justify-content: space-between; align-items: center;

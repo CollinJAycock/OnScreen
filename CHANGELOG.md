@@ -365,6 +365,17 @@ API change lands only when every first-party client moves with it — see
     `DELETE /users/me/api-keys/{id}`, and for admins `GET /admin/api-keys`
     and `DELETE /admin/api-keys/{id}`.
   - **Migration 00050** adds the `api_keys` table.
+- **Reading position syncs between devices.** The web book reader (EPUB, CBZ,
+  CBR) now saves where you are to the server as you read, and when the page is
+  closed or hidden, so another browser opens the book at the same place. If
+  another device got further than this one, the reader offers "Continue from
+  page 40 on Phone" instead of jumping. Without a connection it falls back to
+  the position saved in the browser. Reaching the end marks the book read.
+  Audiobooks keep their own playback position as before.
+  - **API (additive):** `GET`/`PUT /items/{id}/reading-progress` (a locator,
+    such as an EPUB CFI or a page number, a 0–1 progression, the device name
+    and a timestamp; the newest position wins).
+  - **Migration 00050** adds the `reading_progress` table.
 
 ### Changed
 

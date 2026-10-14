@@ -1558,6 +1558,38 @@ export const apiKeyApi = {
   adminRevoke: (id: string) => api.del(`/admin/api-keys/${id}`),
 };
 
+// ── Ebook reading position ────────────────────────────────────────────────────
+
+/** Where the user is in an ebook, synced across their devices. `locator` is
+ *  an EPUB CFI or a page number; `progression` runs 0–1 through the book. */
+export interface ReadingProgress {
+  locator: string;
+  progression: number;
+  /** The device the position was saved on. */
+  device_name?: string;
+  /** When the position was reached (the saving client's clock). */
+  updated_at: string;
+  /** PUT only: false when the server kept a newer position (returned here). */
+  applied?: boolean;
+}
+
+export interface ReadingProgressSave {
+  locator: string;
+  progression: number;
+  device_name?: string;
+  updated_at?: string;
+}
+
+export const readingProgressApi = {
+  /** null when nothing is saved for the book. */
+  get: (itemId: string) => api.get<ReadingProgress | null>(`/items/${itemId}/reading-progress`),
+  save: (itemId: string, p: ReadingProgressSave) =>
+    api.put<ReadingProgress>(`/items/${itemId}/reading-progress`, p),
+  /** Fire-and-forget save that survives the page closing. */
+  beacon: (itemId: string, p: ReadingProgressSave) =>
+    apiBeacon('PUT', `/items/${itemId}/reading-progress`, p),
+};
+
 export interface SignedInSession {
   id: string;
   /** "Chrome on Windows", "Roku", … — empty for sign-ins made before devices

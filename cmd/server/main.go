@@ -1543,6 +1543,7 @@ func run() error {
 		WatchState:      watchStateHandler,
 		Photos:          photosHandler,
 		Books:           booksHandler,
+		ReadingProgress: v1.NewReadingProgressHandler(gen.New(rwPool), libSvc, logger),
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,

@@ -69,6 +69,7 @@ type Handlers struct {
 	WatchState      *v1.WatchStateHandler    // manual played/unplayed marks, CW dismiss, up-next
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
+	ReadingProgress *v1.ReadingProgressHandler // ebook position sync; optional
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
@@ -1393,6 +1394,12 @@ func NewRouter(h *Handlers) http.Handler {
 				if h.Books != nil {
 					r.Get("/items/{id}/book/page/{n}", h.Books.Page)
 				}
+			}
+
+			// Ebook reading position, synced across the user's devices.
+			if h.ReadingProgress != nil {
+				r.Get("/items/{id}/reading-progress", h.ReadingProgress.Get)
+				r.Put("/items/{id}/reading-progress", h.ReadingProgress.Put)
 			}
 
 			// Trickplay (seekbar thumbnail previews).
