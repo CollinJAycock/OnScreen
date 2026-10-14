@@ -129,20 +129,27 @@ type ContinueWatchingDismissal struct {
 }
 
 type DownloadConversion struct {
-	ID          uuid.UUID          `json:"id"`
-	MediaItemID uuid.UUID          `json:"media_item_id"`
-	MediaFileID uuid.UUID          `json:"media_file_id"`
-	Quality     string             `json:"quality"`
-	Status      string             `json:"status"`
-	Progress    float32            `json:"progress"`
-	Error       *string            `json:"error"`
-	SizeBytes   *int64             `json:"size_bytes"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt   pgtype.Timestamptz `json:"started_at"`
-	CompletedAt pgtype.Timestamptz `json:"completed_at"`
-	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	ID             uuid.UUID          `json:"id"`
+	MediaItemID    uuid.UUID          `json:"media_item_id"`
+	MediaFileID    uuid.UUID          `json:"media_file_id"`
+	Quality        string             `json:"quality"`
+	Status         string             `json:"status"`
+	Progress       float32            `json:"progress"`
+	Error          *string            `json:"error"`
+	SizeBytes      *int64             `json:"size_bytes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	Purpose        string             `json:"purpose"`
+	RequestedBy    pgtype.UUID        `json:"requested_by"`
+	SourceFileHash *string            `json:"source_file_hash"`
+	Width          *int32             `json:"width"`
+	Height         *int32             `json:"height"`
+	BitrateKbps    *int32             `json:"bitrate_kbps"`
+	DurationMs     *int64             `json:"duration_ms"`
 }
 
 type DownloadJob struct {
