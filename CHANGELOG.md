@@ -343,6 +343,39 @@ API change lands only when every first-party client moves with it — see
     on the admin user and profile lists.
   - **Migration 00047** adds `media_items.labels` and the users'
     `blocked_labels` / `allowed_labels`.
+- **Lower-quality downloads.** The Download button on a movie or episode is
+  now a menu: Original (the file as it is, as before) or a smaller copy at
+  1080p 8 Mbps, 720p 4 Mbps, 720p 2 Mbps or 480p 1 Mbps, for a phone, a
+  tablet or a slow connection.
+  - **How it works:** the server converts the file once into an MP4 (H.264
+    video, stereo AAC audio, text subtitles kept, nothing burned in) and the
+    page shows its progress, then starts the download. A multi-part movie
+    becomes one file. The same file at the same quality is converted once and
+    shared: anyone else who asks for it gets the finished copy straight away.
+  - **Your downloads:** the Account page lists them with their progress, a
+    download link once ready, and a remove button (which also stops a
+    conversion nobody else is waiting for).
+  - **Limits:** a user's streaming limit, and from outside the home network
+    the internet limit, bounds the qualities offered — someone held to 4 Mbps
+    can't take the 1080p 8 Mbps copy — checked again when the file is
+    fetched. The server-wide downloads switch, library access, content
+    rating, labels, watch limits and admin stops apply as they do to the
+    original. Up to three of a user's downloads can be in preparation at once.
+  - **Server load:** conversions run on the server with its configured
+    H.264 encoder (hardware where Settings ▸ Transcode says so, falling back
+    to software), one at a time by default (`DOWNLOAD_MAX_CONVERSIONS`, at
+    most 2), and each takes one of the embedded worker's transcode slots, so
+    they wait while playback is using every slot.
+  - **Cache:** finished files live in `CACHE_PATH/downloads` and are kept 7
+    days after they were last asked for or fetched
+    (`DOWNLOAD_CACHE_TTL_HOURS`). The new hourly "Converted download cache
+    cleanup" task evicts expired files, then the least recently used ones
+    while the cache is over `DOWNLOAD_CACHE_MAX_GB` (50 GB).
+  - **API (all additive):** `GET`/`POST /items/{id}/downloads`,
+    `GET`/`DELETE /downloads/{job}`, `GET /downloads/{job}/file` (Range,
+    asset-token auth) and `GET /users/me/downloads`. The original download is
+    unchanged; phone and TV apps need no update.
+  - **Migration 00051** adds `download_conversions` and `download_jobs`.
 
 ### Changed
 

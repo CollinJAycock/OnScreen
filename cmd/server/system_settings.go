@@ -8,6 +8,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/domain/settings"
+	"github.com/onscreen/onscreen/internal/transcode"
 )
 
 // applySystemSettings overrides the env-derived config with any cluster-wide
@@ -190,6 +191,25 @@ func transcodeEffective(cfg *config.Config) settings.TranscodeConfig {
 		ABRMaxHeight:     intPtr(cfg.TranscodeABRMaxHeight),
 		ABRAutoMaxHeight: intPtr(cfg.TranscodeABRAutoMaxHeight),
 	}
+}
+
+// configuredEncoders resolves the encoders a node encodes with: the fleet's
+// per-node override, else Settings ▸ Transcode's encoder list, else the
+// TRANSCODE_ENCODERS env, else everything detected — and never an encoder
+// that wasn't actually detected.
+func configuredEncoders(fleetOverride, dbOverride, envOverride string, detected []transcode.Encoder) []transcode.Encoder {
+	override := fleetOverride
+	if override == "" {
+		override = dbOverride
+	}
+	if override == "" {
+		override = envOverride
+	}
+	encoders := detected
+	if override != "" {
+		encoders = transcode.ParseOverride(override)
+	}
+	return transcode.FilterAvailable(encoders, detected)
 }
 
 func strPtr(s string) *string { return &s }

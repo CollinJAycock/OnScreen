@@ -187,6 +187,16 @@ type Config struct {
 	// default; only fires on boxes that actually have a second provider, so it's a
 	// no-op on single-GPU workers. Set false to force a hard failure instead.
 	TranscodeEncoderFailover bool `env:"TRANSCODE_ENCODER_FAILOVER" envDefault:"true"`
+	// Converted downloads (lower-quality copies a user can take offline) are
+	// encoded into CACHE_PATH/downloads. DownloadCacheMaxGB caps that cache's
+	// total size — past it the cleanup task evicts the least recently used
+	// files — and DownloadCacheTTLHours is how long a finished file is kept
+	// after it was last requested or fetched. DownloadMaxConversions is how
+	// many encode at once on this server (1 or 2); each also holds one of the
+	// embedded transcode worker's session slots while it runs.
+	DownloadCacheMaxGB     int `env:"DOWNLOAD_CACHE_MAX_GB"    envDefault:"50"`
+	DownloadCacheTTLHours  int `env:"DOWNLOAD_CACHE_TTL_HOURS" envDefault:"168"`
+	DownloadMaxConversions int `env:"DOWNLOAD_MAX_CONVERSIONS" envDefault:"1"`
 	// AutoMigrate runs pending embedded DB migrations on startup, before serving.
 	// Off by default — most deploys apply migrations as an explicit step (Docker
 	// migrate service, installer migrate.sh, `server migrate`). Set true for
@@ -321,6 +331,17 @@ func (c *Config) applyDefaults() error {
 	}
 	if c.TranscodeNVENCRC == "" {
 		c.TranscodeNVENCRC = "vbr"
+	}
+	if c.DownloadCacheMaxGB <= 0 {
+		c.DownloadCacheMaxGB = 50
+	}
+	if c.DownloadCacheTTLHours <= 0 {
+		c.DownloadCacheTTLHours = 168
+	}
+	if c.DownloadMaxConversions < 1 {
+		c.DownloadMaxConversions = 1
+	} else if c.DownloadMaxConversions > 2 {
+		c.DownloadMaxConversions = 2
 	}
 	// Reject half-set TLS so an admin doesn't deploy thinking HTTPS is on
 	// when only one half of the pair landed in their environment.

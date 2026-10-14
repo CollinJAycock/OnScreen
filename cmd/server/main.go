@@ -42,6 +42,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/domain/watchstatus"
+	"github.com/onscreen/onscreen/internal/downloads"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/externalratings"
 	"github.com/onscreen/onscreen/internal/franchise"
@@ -1126,21 +1127,7 @@ func run() error {
 	var embeddedWorker *transcode.Worker
 	if embeddedEnabled {
 		// Encoder priority: fleet config > DB transcode_encoders > env > auto-detect.
-		encoderOverride := fleetCfg.EmbeddedEncoder
-		if encoderOverride == "" {
-			encoderOverride = settingsSvc.TranscodeEncoders(ctx)
-		}
-		if encoderOverride == "" {
-			encoderOverride = cfg.TranscodeEncoders
-		}
-		var encoders []transcode.Encoder
-		if encoderOverride != "" {
-			encoders = transcode.ParseOverride(encoderOverride)
-		} else {
-			encoders = allEncoders
-		}
-		// Safety: never use an encoder that wasn't actually detected.
-		encoders = transcode.FilterAvailable(encoders, allEncoders)
+		encoders := configuredEncoders(fleetCfg.EmbeddedEncoder, settingsSvc.TranscodeEncoders(ctx), cfg.TranscodeEncoders, allEncoders)
 		logger.Info("transcode encoders", "active", transcode.EncoderNames(encoders), "detected", transcode.EncoderNames(allEncoders))
 		// Session cap: admin fleet override (set live + persisted via the UI)
 		// wins over the TRANSCODE_MAX_SESSIONS env default.
@@ -1179,6 +1166,44 @@ func run() error {
 	} else {
 		logger.Info("embedded transcode worker disabled — using remote workers only")
 	}
+
+	// ── Converted downloads ───────────────────────────────────────────────────
+	// Lower-quality download copies (1080p 8 Mbps … 480p 1 Mbps), encoded on
+	// this server into CACHE_PATH/downloads with the same encoder choice as the
+	// embedded worker (H.264 only; a failing hardware encoder retries on
+	// libx264). The worker fleet's job protocol is built around live HLS
+	// sessions (segment server, watchdog, playlist handoff), so a one-shot file
+	// encode runs here instead — but each conversion holds one of the embedded
+	// worker's session slots, so it counts against the same transcode
+	// concurrency as playback and the dispatcher steers streams elsewhere.
+	downloadRoot := cfg.CacheSubdir("downloads")
+	downloadTTL := time.Duration(cfg.DownloadCacheTTLHours) * time.Hour
+	downloadEncoder := transcode.BestH264Encoder(configuredEncoders(
+		fleetCfg.EmbeddedEncoder, settingsSvc.TranscodeEncoders(ctx), cfg.TranscodeEncoders, allEncoders))
+	downloadRunner := downloads.NewRunner(rwPool, mediaSvc, downloads.RunnerConfig{
+		Root:          downloadRoot,
+		MaxConcurrent: cfg.DownloadMaxConversions,
+		TTL:           downloadTTL,
+		Encoder:       downloadEncoder,
+		EncoderOpts: transcode.EncoderOpts{
+			NVENCPreset:  cfg.TranscodeNVENCPreset,
+			NVENCTune:    cfg.TranscodeNVENCTune,
+			NVENCRC:      cfg.TranscodeNVENCRC,
+			MaxrateRatio: cfg.TranscodeMaxrateRatio,
+		},
+		HasZscale: transcode.ProbeFilter(ctx, "zscale"),
+	}, logger)
+	if embeddedWorker != nil {
+		downloadRunner.WithSlots(embeddedWorker)
+	}
+	downloadSvc := downloads.NewService(rwPool, downloadRoot, downloadTTL).WithRunner(downloadRunner)
+	downloadsHandler := v1.NewDownloadsHandler(downloadSvc, mediaSvc, logger).
+		WithLibraryAccess(libSvc).
+		WithDownloadGate(settingsSvc).
+		WithStreamCaps(streamCapsAdapter{q: gen.New(roPool)}, remotePolicy).
+		WithWatchLimit(watchLimitStore)
+	logger.Info("converted downloads", "encoder", downloadEncoder,
+		"max_conversions", cfg.DownloadMaxConversions, "cache", downloadRoot)
 
 	// ── Email / SMTP (settings-driven) ───────────────────────────────────────
 	// Sender resolves SMTPConfig on every Send so admins can rotate creds and
@@ -1268,6 +1293,7 @@ func run() error {
 	playbackStops := v1.NewPlaybackStopGuard(valkeyClient, logger)
 	itemHandler.WithPlaybackStops(playbackStops)
 	nativeTranscodeHandler.WithPlaybackStops(playbackStops)
+	downloadsHandler.WithPlaybackStops(playbackStops)
 	nativeSessionsHandler.
 		WithUsers(gen.New(roPool)).
 		WithFiles(mediaSvc).
@@ -1429,6 +1455,10 @@ func run() error {
 	// worker slot as post-scan generation (seeded enabled below).
 	schedRegistry.Register("trickplay_backfill",
 		scheduler.NewTrickplayBackfillHandler(trickplayPlanner, logger))
+	// Converted-download cache: expiry, size limit, orphans (seeded enabled).
+	schedRegistry.Register("download_cache_cleanup",
+		scheduler.NewDownloadCacheCleanupHandler(
+			downloads.NewCleaner(rwPool, downloadRoot, int64(cfg.DownloadCacheMaxGB)<<30, logger)))
 	// Nightly franchise-collection pass: bounded TMDB-collection backfill for
 	// movies enriched before franchise tracking, stale-snapshot refresh, and a
 	// DB-only reconcile (seeded enabled below).
@@ -1569,6 +1599,7 @@ func run() error {
 		Capabilities:    capabilitiesHandler,
 		ArrServices:     arrServicesHandler,
 		Podcasts:        podcastHandler,
+		Downloads:       downloadsHandler,
 		Imports:         importHandler,
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
@@ -1852,6 +1883,13 @@ func run() error {
 	// item has been cancelled and its row reset, before the pools close.
 	g.Go(func() error {
 		trickplayQueue.Run(gCtx)
+		return nil
+	})
+
+	g.Go(func() error {
+		if err := downloadRunner.Run(gCtx); err != nil {
+			logger.Warn("download conversion runner exited", "err", err)
+		}
 		return nil
 	})
 

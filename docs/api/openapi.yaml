@@ -70,6 +70,8 @@ tags:
     description: External subtitle search, download, and OCR.
   - name: Trickplay
     description: Seekbar thumbnail previews.
+  - name: Downloads
+    description: Converted (lower-quality) downloads — per-user jobs over a shared encode cache.
   - name: Transcode
     description: HLS transcode sessions (start, stop, segments).
   - name: Notifications
@@ -2173,8 +2175,8 @@ paths:
         `filename*=UTF-8''<percent-encoded>` form are emitted so non-ASCII
         titles survive on every browser.
 
-        Direct-play files only — transcoded-for-download (re-encode to a
-        smaller / device-specific format) is a future feature.
+        The original file only. Lower-quality copies are converted downloads:
+        `POST /api/v1/items/{id}/downloads`.
       tags: [Items]
       responses:
         '200':
@@ -2196,6 +2198,145 @@ paths:
             `features.web_downloads` capabilities flag so clients hide
             the UI without needing to probe with a real download.
         '404': { description: File not found or soft-deleted. }
+
+  # ── Converted downloads ────────────────────────────────────────────────────
+  /api/v1/items/{id}/downloads:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Converted-download qualities for an item
+      description: |
+        The lower-quality copies this user may download (the original is
+        always `GET /media/download/{file_id}`). `allowed` is false for a
+        quality above the user's bitrate cap — and, from outside the home
+        network, the internet limit — following the playback rule: the
+        highest ladder rung that fits, or the lowest rung when none does.
+        Empty `qualities` when the file can't be converted (audio-only,
+        damaged, Dolby Vision profile 5).
+      tags: [Downloads]
+      parameters:
+        - { in: query, name: file_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Options.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadOptions' }
+        '403': { description: '`DOWNLOADS_DISABLED`, over the rating ceiling / label restriction, watch limit, or an admin stop.' }
+        '404': { description: Unknown item, no library access, or no such file. }
+    post:
+      summary: Request a converted download
+      description: |
+        Creates the user's conversion job, or returns their existing one for
+        this file and quality (200 instead of 201). The file is encoded once
+        into a progressive MP4 (H.264 + stereo AAC, `+faststart`; text
+        subtitles carried as mov_text) and the result is shared: another user
+        asking for the same file at the same quality gets the ready file
+        without a second encode. A stacked (multi-part) movie converts into
+        one joined file whichever part's `file_id` is given. Poll
+        `GET /api/v1/downloads/{job}` until `status` is `ready`, then fetch
+        `file_url`. Rate-limited like transcode start; at most 3 of a user's
+        jobs may be waiting on an encode at once.
+      tags: [Downloads]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quality]
+              properties:
+                quality: { type: string, enum: [1080p_8mbps, 720p_4mbps, 720p_2mbps, 480p_1mbps] }
+                file_id: { type: string, format: uuid, description: "Default: the item's best file." }
+      responses:
+        '200':
+          description: The existing job.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadJob' }
+        '201':
+          description: Job created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadJob' }
+        '400': { description: 'Bad body, or `quality: original` (use `/media/download/{file_id}`).' }
+        '403': { description: '`DOWNLOADS_DISABLED`, `QUALITY_ABOVE_LIMIT`, over the rating ceiling / label restriction, watch limit, or an admin stop.' }
+        '404': { description: Unknown item, no library access, or a `file_id` not of this item. }
+        '422': { description: '`NOT_CONVERTIBLE` (audio-only, damaged, a playlist container, Dolby Vision profile 5) or an unknown quality.' }
+        '429': { description: "`TOO_MANY_DOWNLOADS` — three of the user's downloads are already being prepared." }
+
+  /api/v1/downloads/{job}:
+    parameters:
+      - { in: path, name: job, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Converted-download status and progress
+      tags: [Downloads]
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadJob' }
+        '404': { description: "No such job, or not the caller's." }
+    delete:
+      summary: Cancel or remove a converted download
+      description: |
+        Removes the job. An encode nobody else is waiting for is cancelled;
+        a ready file stays in the shared cache for anyone who asks next,
+        until the cleanup task evicts it.
+      tags: [Downloads]
+      responses:
+        '204': { description: Removed. }
+        '404': { description: "No such job, or not the caller's." }
+
+  /api/v1/downloads/{job}/file:
+    parameters:
+      - { in: path, name: job, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Fetch a ready converted download
+      description: |
+        The MP4, `Content-Type: video/mp4`, with `Content-Disposition:
+        attachment` (title + quality) and `Range` support. Auth: Bearer /
+        cookie, or a `purpose=asset` `?token=` (a browser save-as link). Only
+        the job's owner; the item gates (library ACL, rating ceiling, labels,
+        watch limit, admin stop, `DOWNLOADS_DISABLED`) and the bitrate cap
+        are re-checked at fetch time. Fetching moves the file's expiry out.
+      tags: [Downloads]
+      responses:
+        '200':
+          description: The file.
+          content:
+            video/mp4: {}
+        '206': { description: Partial content (range request). }
+        '403': { description: '`QUALITY_ABOVE_LIMIT` from here, or an item gate.' }
+        '404': { description: "No such job, or not the caller's." }
+        '409': { description: '`DOWNLOAD_NOT_READY` — still encoding, failed, or expired.' }
+
+  /api/v1/users/me/downloads:
+    get:
+      summary: My converted downloads
+      description: The caller's jobs, newest first (at most 100).
+      tags: [Downloads]
+      responses:
+        '200':
+          description: Jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DownloadJob' } }
 
   /media/subtitles/{fileId}/{streamIndex}:
     parameters:
@@ -6722,6 +6863,39 @@ components:
         release:          { type: string }
         downloads:        { type: integer }
         rating:           { type: number, format: float }
+    DownloadOptions:
+      type: object
+      properties:
+        file_id: { type: string, format: uuid, description: "The file a conversion would encode (a stacked movie's first part)." }
+        bitrate_cap_kbps: { type: integer, description: 'The cap applied to this request; absent = none.' }
+        qualities:
+          type: array
+          items:
+            type: object
+            properties:
+              id:           { type: string, enum: [1080p_8mbps, 720p_4mbps, 720p_2mbps, 480p_1mbps] }
+              label:        { type: string, example: '720p · 4 Mbps' }
+              bitrate_kbps: { type: integer }
+              max_height:   { type: integer }
+              allowed:      { type: boolean }
+    DownloadJob:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        item_id:       { type: string, format: uuid }
+        file_id:       { type: string, format: uuid }
+        title:         { type: string }
+        item_type:     { type: string }
+        quality:       { type: string }
+        quality_label: { type: string }
+        status:        { type: string, enum: [queued, running, ready, failed, expired] }
+        progress:      { type: number, description: 'Encode progress, 0..1.' }
+        error:         { type: string }
+        size_bytes:    { type: integer, format: int64 }
+        created_at:    { type: string, format: date-time }
+        completed_at:  { type: string, format: date-time }
+        expires_at:    { type: string, format: date-time, description: 'When a ready file may leave the cache.' }
+        file_url:      { type: string, description: 'Present when ready: `/api/v1/downloads/{id}/file`.' }
     TrickplayStatus:
       type: object
       description: |
