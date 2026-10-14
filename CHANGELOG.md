@@ -548,6 +548,59 @@ API change lands only when every first-party client moves with it — see
     last).
   - **API (additive):** `GET /music/artists/{id}/appears-on`.
   - **Migration 00048** adds the track–artist credit table.
+- **Personal API keys** for scripts and integrations such as Home Assistant
+  and Kometa, which can't sign in the way an app does.
+  - **Making one:** Account ▸ API keys (Settings ▸ Security for admins) ▸
+    "Create API key". Name it, choose full access or read-only, and optionally
+    an expiry. The key (`osk_…`) is shown once with a Copy button; the server
+    keeps only a hash of it.
+  - **Using it:** send `Authorization: Bearer osk_…` or `X-Api-Key: osk_…`.
+    Never in a URL. See [docs/api/api-keys.md](docs/api/api-keys.md).
+  - **What it can do:** whatever its owner can, with their libraries, rating
+    limit and labels as they are at that moment — a restriction an admin adds
+    applies to the key straight away. Read-only keys can only read. No key can
+    sign in, refresh, change a password, PIN or 2FA, pair a TV, switch
+    profiles, manage devices, keys or users, or touch server settings and
+    backups.
+  - **Revoking:** "Revoke" stops a key on its next request. Admins see every
+    user's keys under Settings ▸ Security ▸ All API keys and can revoke any of
+    them. Deleting a user deletes their keys. Creating and revoking keys is
+    audited (`api_key.create`, `api_key.delete`).
+  - **API (additive):** `GET`/`POST /users/me/api-keys`,
+    `DELETE /users/me/api-keys/{id}`, and for admins `GET /admin/api-keys`
+    and `DELETE /admin/api-keys/{id}`.
+  - **Migration 00050** adds the `api_keys` table.
+- **Reading position syncs between devices.** The web book reader (EPUB, CBZ,
+  CBR) now saves where you are to the server as you read, and when the page is
+  closed or hidden, so another browser opens the book at the same place. If
+  another device got further than this one, the reader offers "Continue from
+  page 40 on Phone" instead of jumping. Without a connection it falls back to
+  the position saved in the browser. Reaching the end marks the book read.
+  Audiobooks keep their own playback position as before.
+  - **API (additive):** `GET`/`PUT /items/{id}/reading-progress` (a locator,
+    such as an EPUB CFI or a page number, a 0–1 progression, the device name
+    and a timestamp; the newest position wins).
+  - **Migration 00050** adds the `reading_progress` table.
+- **Automatic subtitle download.** OnScreen can fetch subtitles from
+  OpenSubtitles on its own for new movies and episodes. Off by default; turn
+  it on under Settings ▸ General ▸ Automatic subtitle download and list the
+  languages you want (e.g. `en,es`).
+  - It only downloads a language the file has no subtitle in yet — not
+    embedded, not in a file next to the video, not downloaded before. It
+    prefers a subtitle made for the exact file (OpenSubtitles hash match),
+    then the release name closest to the file's, and can prefer or avoid
+    hearing-impaired subtitles.
+  - The new "Download missing subtitles" task (Settings ▸ Tasks) runs every
+    6 hours, newest titles first. A title with nothing found is tried again
+    after 1, 7 and 30 days, then left alone, so nothing is searched over and
+    over. When the OpenSubtitles daily download limit is reached it stops for
+    the day. Without OpenSubtitles set up it does nothing.
+  - Each movie or TV library can turn it on or off for itself, or use its own
+    languages, on the library's settings page.
+  - **API (additive, admin):** `GET`/`PUT /settings/subtitle-auto-download`
+    and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
+  - **Migration 00050** adds the per-library overrides and the
+    per-title-and-language attempt log.
 
 ### Changed
 

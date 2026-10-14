@@ -40,6 +40,11 @@ var ErrCircuitOpen = errors.New("opensubtitles circuit open (rate limit or auth 
 // ErrNotConfigured is returned when no API key has been supplied.
 var ErrNotConfigured = errors.New("opensubtitles client not configured")
 
+// ErrRateLimited wraps the error for an upstream 429 / 406 — the API's "too
+// many requests" and "download quota used up" answers. The automatic
+// download task stops for the day on it.
+var ErrRateLimited = errors.New("opensubtitles rate limit or quota reached")
+
 // Client is the OpenSubtitles API client.
 type Client struct {
 	apiKey    string
@@ -119,6 +124,14 @@ type SearchOpts struct {
 	IMDBID    string // numeric IMDB id without the "tt" prefix; preferred when known
 	TMDBID    int
 	Languages string
+	// ParentIMDBID / ParentTMDBID identify an episode's SHOW; with Season +
+	// Episode they find the episode more reliably than a title query.
+	ParentIMDBID string
+	ParentTMDBID int
+	// MovieHash is the OpenSubtitles hash of the video file (see
+	// subtitles.MovieHash). Results cut from this exact release come back
+	// with MovieHashMatch set.
+	MovieHash string
 }
 
 // SearchResult is one subtitle file returned by /subtitles search.
@@ -134,6 +147,9 @@ type SearchResult struct {
 	Rating          float32 `json:"rating"`
 	DownloadCount   int32   `json:"download_count"`
 	UploaderName    string  `json:"uploader_name"`
+	// MovieHashMatch: the subtitle was timed against this exact file (only
+	// when the search sent a MovieHash).
+	MovieHashMatch bool `json:"moviehash_match"`
 }
 
 // Search queries the /subtitles endpoint. Caller is responsible for narrowing
@@ -169,6 +185,15 @@ func (c *Client) Search(ctx context.Context, opts SearchOpts) ([]SearchResult, e
 	if opts.Languages != "" {
 		params.Set("languages", opts.Languages)
 	}
+	if opts.ParentIMDBID != "" {
+		params.Set("parent_imdb_id", strings.TrimPrefix(opts.ParentIMDBID, "tt"))
+	}
+	if opts.ParentTMDBID > 0 {
+		params.Set("parent_tmdb_id", strconv.Itoa(opts.ParentTMDBID))
+	}
+	if opts.MovieHash != "" {
+		params.Set("moviehash", opts.MovieHash)
+	}
 
 	var raw struct {
 		Data []struct {
@@ -180,6 +205,7 @@ func (c *Client) Search(ctx context.Context, opts SearchOpts) ([]SearchResult, e
 				FromTrusted     bool    `json:"from_trusted"`
 				Ratings         float32 `json:"ratings"`
 				DownloadCount   int32   `json:"download_count"`
+				MovieHashMatch  bool    `json:"moviehash_match"`
 				Uploader        struct {
 					Name string `json:"name"`
 				} `json:"uploader"`
@@ -211,6 +237,7 @@ func (c *Client) Search(ctx context.Context, opts SearchOpts) ([]SearchResult, e
 			Rating:          d.Attributes.Ratings,
 			DownloadCount:   d.Attributes.DownloadCount,
 			UploaderName:    d.Attributes.Uploader.Name,
+			MovieHashMatch:  d.Attributes.MovieHashMatch,
 		})
 	}
 	return results, nil
@@ -387,7 +414,7 @@ func (c *Client) do(ctx context.Context, method, path string, params url.Values,
 	}
 	if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusNotAcceptable {
 		c.tripCircuit(resp.StatusCode)
-		return fmt.Errorf("unexpected status %d", resp.StatusCode)
+		return fmt.Errorf("unexpected status %d: %w", resp.StatusCode, ErrRateLimited)
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("unexpected status %d", resp.StatusCode)

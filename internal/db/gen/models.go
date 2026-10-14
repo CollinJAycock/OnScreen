@@ -12,6 +12,18 @@ import (
 	"time"
 )
 
+type ApiKey struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	Name       string             `json:"name"`
+	KeyHash    string             `json:"key_hash"`
+	KeyPrefix  string             `json:"key_prefix"`
+	Scope      string             `json:"scope"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+}
+
 type ArrService struct {
 	ID                      uuid.UUID          `json:"id"`
 	Name                    string             `json:"name"`
@@ -301,6 +313,13 @@ type LibraryAccess struct {
 	UserID    uuid.UUID          `json:"user_id"`
 	LibraryID uuid.UUID          `json:"library_id"`
 	GrantedAt pgtype.Timestamptz `json:"granted_at"`
+}
+
+type LibrarySubtitleAutoDownload struct {
+	LibraryID uuid.UUID          `json:"library_id"`
+	Enabled   *bool              `json:"enabled"`
+	Languages *string            `json:"languages"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type MediaCredit struct {
@@ -613,6 +632,16 @@ type PodcastFeedEpisode struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ReadingProgress struct {
+	UserID          uuid.UUID          `json:"user_id"`
+	MediaID         uuid.UUID          `json:"media_id"`
+	Locator         string             `json:"locator"`
+	Progression     float64            `json:"progression"`
+	DeviceName      *string            `json:"device_name"`
+	ClientUpdatedAt pgtype.Timestamptz `json:"client_updated_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Recording struct {
 	ID         uuid.UUID          `json:"id"`
 	ScheduleID pgtype.UUID        `json:"schedule_id"`
@@ -696,6 +725,16 @@ type Studio struct {
 	TmdbID    *int32             `json:"tmdb_id"`
 	LogoPath  *string            `json:"logo_path"`
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type SubtitleAutoAttempt struct {
+	MediaID       uuid.UUID          `json:"media_id"`
+	Language      string             `json:"language"`
+	Attempts      int32              `json:"attempts"`
+	Status        string             `json:"status"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	LastResult    *string            `json:"last_result"`
 }
 
 type TaskRun struct {

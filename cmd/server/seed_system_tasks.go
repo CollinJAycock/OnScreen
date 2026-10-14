@@ -232,6 +232,21 @@ var requiredSystemTasks = []systemTask{
 		cronExpr: "53 4 * * *",
 		enabled:  true,
 	},
+	{
+		name:     "Download missing subtitles",
+		taskType: "subtitle_auto_download",
+		// Every 6 hours at :47. For movies and episodes (newest first) with
+		// no subtitle in a wanted language, searches OpenSubtitles and
+		// downloads the best match — at most 40 searches a run, a miss
+		// retried after 1, 7 and 30 days, and a day's pause once the
+		// provider's daily download quota runs out. Seeded ENABLED because
+		// it does nothing at all until an admin turns automatic downloads
+		// on (Settings ▸ Subtitles, off by default) and OpenSubtitles is
+		// set up; every 6 hours spreads the small free-tier quota over the
+		// day instead of spending it in one burst.
+		cronExpr: "47 */6 * * *",
+		enabled:  true,
+	},
 }
 
 // seedSystemTasks inserts any missing required task rows. Idempotent —

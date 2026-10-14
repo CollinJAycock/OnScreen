@@ -105,12 +105,35 @@ type Claims struct {
 	// devtoken) and on tokens minted before the claim existed; those keep the
 	// epoch-only check.
 	SessionID uuid.UUID `json:"sid,omitempty"`
+	// APIKeyID names the personal API key (api_keys.id) a request was
+	// authenticated with. Set by the auth middleware on the claims it builds
+	// from a key, and carried by the stream tokens such a request mints (as
+	// the akid claim) so the middleware can reject them once the key is
+	// deleted. uuid.Nil for every session-based credential.
+	APIKeyID uuid.UUID `json:"akid,omitempty"`
+	// APIKeyScope is the key's scope (APIKeyScopeFull / APIKeyScopeReadOnly)
+	// when APIKeyID is set. Never written into a token.
+	APIKeyScope string `json:"-"`
+}
+
+// IsAPIKey reports whether the claims came from a personal API key (or from
+// a token minted by a request that did).
+func (c *Claims) IsAPIKey() bool {
+	return c != nil && c.APIKeyID != uuid.Nil
 }
 
 // setSessionID writes the sid claim when the token belongs to a session.
 func setSessionID(token *paseto.Token, sid uuid.UUID) {
 	if sid != uuid.Nil {
 		token.SetString("sid", sid.String())
+	}
+}
+
+// setAPIKeyID writes the akid claim when the token was minted by a request
+// authenticated with a personal API key.
+func setAPIKeyID(token *paseto.Token, id uuid.UUID) {
+	if id != uuid.Nil {
+		token.SetString("akid", id.String())
 	}
 }
 
@@ -202,6 +225,7 @@ func (m *TokenMaker) IssueStreamToken(claims Claims, fileID uuid.UUID) (string, 
 	token.SetString("purpose", "stream")
 	token.SetString("file_id", fileID.String())
 	setSessionID(&token, claims.SessionID)
+	setAPIKeyID(&token, claims.APIKeyID)
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -236,6 +260,7 @@ func (m *TokenMaker) IssueAssetToken(claims Claims) (string, error) {
 		token.SetString("switched", "true")
 	}
 	setSessionID(&token, claims.SessionID)
+	setAPIKeyID(&token, claims.APIKeyID)
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -328,6 +353,12 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 			sessionID = id
 		}
 	}
+	var apiKeyID uuid.UUID
+	if s, _ := token.GetString("akid"); s != "" {
+		if id, err := uuid.Parse(s); err == nil {
+			apiKeyID = id
+		}
+	}
 	var blockedLabels, allowedLabels []string
 	_ = token.Get("blocked_labels", &blockedLabels)
 	_ = token.Get("allowed_labels", &allowedLabels)
@@ -347,6 +378,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		Switched:         switchedStr == "true",
 		TokenID:          tokenID,
 		SessionID:        sessionID,
+		APIKeyID:         apiKeyID,
 	}, nil
 }
 

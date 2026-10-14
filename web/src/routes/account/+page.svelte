@@ -5,6 +5,7 @@
   import { userApi } from '$lib/api';
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import MyDownloads from '$lib/components/MyDownloads.svelte';
+  import ApiKeys from '$lib/components/ApiKeys.svelte';
 </script>
 
 <svelte:head><title>Account — OnScreen</title></svelte:head>
@@ -35,6 +36,16 @@
       for a while after you last downloaded it, then removed to save space.
     </p>
     <MyDownloads />
+  </section>
+
+  <section class="card">
+    <h2>API keys</h2>
+    <p class="sub">
+      Long-lived keys for scripts and integrations such as Home Assistant or
+      Kometa. A key can do what you can, except sign in or change your account's
+      security. Revoking one stops it at once.
+    </p>
+    <ApiKeys />
   </section>
 </div>
 

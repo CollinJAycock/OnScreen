@@ -1575,6 +1575,111 @@ export interface StreamingLimits {
 }
 
 /** One sign-in (refresh session) on the signed-in devices list. */
+// ── Personal API keys ─────────────────────────────────────────────────────────
+
+/** A personal API key as listed. The key itself is shown once, at creation;
+ *  `prefix` is its first characters, enough to tell keys apart. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  /** 'read_only' keys can only make GET requests. */
+  scope: 'full' | 'read_only';
+  created_at: string;
+  /** Approximate (written at most every few minutes); null = never used. */
+  last_used_at: string | null;
+  expires_at: string | null;
+  expired: boolean;
+  /** Owner, on the admin list only. */
+  user_id?: string;
+  username?: string;
+}
+
+/** The creation response: the row plus the full key, shown this once. */
+export interface CreatedApiKey extends ApiKey {
+  key: string;
+}
+
+export const apiKeyApi = {
+  listMine: () => api.get<ApiKey[]>('/users/me/api-keys'),
+  create: (name: string, scope: ApiKey['scope'], expiresAt?: string | null) =>
+    api.post<CreatedApiKey>('/users/me/api-keys', {
+      name,
+      scope,
+      ...(expiresAt ? { expires_at: expiresAt } : {}),
+    }),
+  revoke: (id: string) => api.del(`/users/me/api-keys/${id}`),
+  /** Admin: every user's keys. */
+  adminList: () => api.get<ApiKey[]>('/admin/api-keys'),
+  /** Admin: revoke any user's key. */
+  adminRevoke: (id: string) => api.del(`/admin/api-keys/${id}`),
+};
+
+// ── Ebook reading position ────────────────────────────────────────────────────
+
+/** Where the user is in an ebook, synced across their devices. `locator` is
+ *  an EPUB CFI or a page number; `progression` runs 0–1 through the book. */
+export interface ReadingProgress {
+  locator: string;
+  progression: number;
+  /** The device the position was saved on. */
+  device_name?: string;
+  /** When the position was reached (the saving client's clock). */
+  updated_at: string;
+  /** PUT only: false when the server kept a newer position (returned here). */
+  applied?: boolean;
+}
+
+export interface ReadingProgressSave {
+  locator: string;
+  progression: number;
+  device_name?: string;
+  updated_at?: string;
+}
+
+export const readingProgressApi = {
+  /** null when nothing is saved for the book. */
+  get: (itemId: string) => api.get<ReadingProgress | null>(`/items/${itemId}/reading-progress`),
+  save: (itemId: string, p: ReadingProgressSave) =>
+    api.put<ReadingProgress>(`/items/${itemId}/reading-progress`, p),
+  /** Fire-and-forget save that survives the page closing. */
+  beacon: (itemId: string, p: ReadingProgressSave) =>
+    apiBeacon('PUT', `/items/${itemId}/reading-progress`, p),
+};
+
+// ── Automatic subtitle download (admin) ───────────────────────────────────────
+
+export type HearingImpairedPref = 'prefer' | 'avoid' | 'any';
+
+export interface SubtitleAutoSettings {
+  enabled: boolean;
+  /** Comma-separated language codes, e.g. "en,es". */
+  languages: string;
+  /** Always true: a language the file already has is never downloaded. */
+  only_missing: boolean;
+  prefer_hash_match: boolean;
+  hearing_impaired: HearingImpairedPref;
+  /** Read-only: whether OpenSubtitles is set up (nothing runs without it). */
+  provider_configured: boolean;
+}
+
+/** A library's override; null fields follow the server-wide setting. */
+export interface LibrarySubtitleAuto {
+  library_id: string;
+  enabled: boolean | null;
+  languages: string | null;
+}
+
+export const subtitleAutoApi = {
+  get: () => api.get<SubtitleAutoSettings>('/settings/subtitle-auto-download'),
+  update: (s: Partial<Omit<SubtitleAutoSettings, 'only_missing' | 'provider_configured'>>) =>
+    api.put<SubtitleAutoSettings>('/settings/subtitle-auto-download', s),
+  getLibrary: (libraryId: string) =>
+    api.get<LibrarySubtitleAuto>(`/libraries/${libraryId}/subtitle-auto-download`),
+  updateLibrary: (libraryId: string, o: { enabled: boolean | null; languages: string | null }) =>
+    api.put<LibrarySubtitleAuto>(`/libraries/${libraryId}/subtitle-auto-download`, o),
+};
+
 export interface SignedInSession {
   id: string;
   /** "Chrome on Windows", "Roku", … — empty for sign-ins made before devices

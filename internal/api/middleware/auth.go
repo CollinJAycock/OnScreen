@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -65,10 +66,13 @@ type SessionStateReader interface {
 	GetSessionState(ctx context.Context, userID, sessionID uuid.UUID) (epoch int64, sessionLive bool, err error)
 }
 
-// Authenticator validates Paseto access tokens.
+// Authenticator validates Paseto access tokens and personal API keys.
 type Authenticator struct {
 	tokens *auth.TokenMaker
 	epochs SessionEpochReader // optional; when nil the middleware skips the epoch check
+	keys   APIKeyResolver     // optional; when nil API keys are refused (401)
+	// touched throttles the last_used_at write per key (see touchAPIKey).
+	touched sync.Map // uuid.UUID → time.Time
 }
 
 // NewAuthenticator creates an Authenticator.
@@ -83,6 +87,53 @@ func NewAuthenticator(tokens *auth.TokenMaker) *Authenticator {
 func (a *Authenticator) WithEpochReader(r SessionEpochReader) *Authenticator {
 	a.epochs = r
 	return a
+}
+
+// WithAPIKeys enables personal API keys (`Authorization: Bearer osk_…` or
+// `X-Api-Key: osk_…`). Without it a presented key is simply not a valid
+// credential.
+func (a *Authenticator) WithAPIKeys(r APIKeyResolver) *Authenticator {
+	a.keys = r
+	return a
+}
+
+// admit authenticates the request the way Required does: an API key when one
+// is presented, otherwise the Bearer / cookie PASETO token (plus the ?token=
+// carrier when allowQuery), with the revocation check applied. A nil claims
+// result with a nil error means "no credential".
+func (a *Authenticator) admit(r *http.Request, allowQuery bool) (*auth.Claims, error) {
+	if key, ok := presentedAPIKey(r); ok {
+		return a.admitAPIKey(r, key)
+	}
+	var claims *auth.Claims
+	var err error
+	if allowQuery {
+		claims, err = a.extractClaimsAllowQuery(r)
+	} else {
+		claims, err = a.extractClaims(r)
+	}
+	if err != nil || claims == nil {
+		return nil, err
+	}
+	if !a.epochValid(r.Context(), claims) {
+		return nil, errRevoked
+	}
+	return claims, nil
+}
+
+// errRevoked is admit's answer for a token that decrypted but has been
+// revoked (epoch moved, session signed out, key deleted).
+var errRevoked = errors.New("auth: credential revoked")
+
+// writeAdmitError maps an admit failure onto the response: a read-only key
+// on a write is a 403 the caller can act on, everything else a plain 401.
+func writeAdmitError(w http.ResponseWriter, r *http.Request, err error) {
+	if errors.Is(err, errAPIKeyReadOnly) {
+		respond.Error(w, r, http.StatusForbidden, "API_KEY_READ_ONLY",
+			"this API key is read-only; only GET requests are allowed")
+		return
+	}
+	respond.Unauthorized(w, r)
 }
 
 // RequiredAllowQueryToken is `Required` plus a `?token=` query
@@ -101,13 +152,9 @@ func (a *Authenticator) WithEpochReader(r SessionEpochReader) *Authenticator {
 // the existing path with no URL pollution.
 func (a *Authenticator) RequiredAllowQueryToken(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, err := a.extractClaimsAllowQuery(r)
+		claims, err := a.admit(r, true)
 		if err != nil || claims == nil {
-			respond.Unauthorized(w, r)
-			return
-		}
-		if !a.epochValid(r.Context(), claims) {
-			respond.Unauthorized(w, r)
+			writeAdmitError(w, r, err)
 			return
 		}
 		ctx := context.WithValue(r.Context(), claimsKey{}, claims)
@@ -191,13 +238,9 @@ func (a *Authenticator) extractClaimsAllowQuery(r *http.Request) (*auth.Claims, 
 // or user delete take effect before the token's 1h TTL.
 func (a *Authenticator) Required(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		claims, err := a.extractClaims(r)
+		claims, err := a.admit(r, false)
 		if err != nil || claims == nil {
-			respond.Unauthorized(w, r)
-			return
-		}
-		if !a.epochValid(r.Context(), claims) {
-			respond.Unauthorized(w, r)
+			writeAdmitError(w, r, err)
 			return
 		}
 		ctx := context.WithValue(r.Context(), claimsKey{}, claims)
@@ -207,6 +250,11 @@ func (a *Authenticator) Required(next http.Handler) http.Handler {
 }
 
 // Optional parses the token if present but does not reject unauthenticated requests.
+//
+// Personal API keys are deliberately NOT read here: Optional fronts only the
+// sign-in endpoints (login, refresh, register…), which refuse keys outright
+// (RefuseAPIKey) — an admin's key must never be able to create users through
+// /auth/register's "admin creates a user" path.
 func (a *Authenticator) Optional(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		claims, _ := a.extractClaims(r)
@@ -246,6 +294,11 @@ func (a *Authenticator) SessionStillValid(ctx context.Context, claims *auth.Clai
 // they age out within 1h via TTL, and after a single demote/delete
 // the DB row's epoch diverges so they're rejected anyway.
 func (a *Authenticator) epochValid(ctx context.Context, claims *auth.Claims) bool {
+	if claims.APIKeyID != uuid.Nil {
+		// Minted under (or built from) a personal API key: valid only while
+		// the key exists and the user's epoch hasn't moved.
+		return a.apiKeyStillValid(ctx, claims)
+	}
 	if a.epochs == nil {
 		return true
 	}

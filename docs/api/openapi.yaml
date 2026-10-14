@@ -29,6 +29,16 @@ info:
     authenticate. Since v2.4 that token must be a purpose-scoped one: the
     `asset_token` returned by login and refresh, or a file's `stream_token`.
     An access token in the query string is refused.
+
+    **Personal API keys** (v2.6) are long-lived credentials for scripts and
+    integrations: `Authorization: Bearer osk_…` or `X-Api-Key: osk_…`, never
+    in a query string. A key acts as its user with that user's current
+    library access, rating ceiling and label restriction; a `read_only` key
+    may only make GET/HEAD requests (403 `API_KEY_READ_ONLY` otherwise).
+    Keys are refused with 403 `API_KEY_NOT_ALLOWED` on sign-in, refresh,
+    2FA, PIN, profile, signed-in device and API key management, device
+    pairing, user administration, invites, server settings and backups. See
+    [docs/api/api-keys.md](api-keys.md).
   license:
     name: AGPL-3.0
 servers:
@@ -40,6 +50,7 @@ servers:
 security:
   - bearerAuth: []
   - cookieAuth: []
+  - apiKeyHeader: []
 
 tags:
   - name: Auth
@@ -3335,6 +3346,245 @@ paths:
         '204': { description: Revoked. }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/users/me/api-keys:
+    get:
+      summary: Caller's personal API keys
+      tags: [Users]
+      description: |
+        The caller's keys, newest first. The key itself is never returned
+        after creation; `prefix` is its first characters. Requires a signed-in
+        session — an API key can't list, create or delete keys (403
+        `API_KEY_NOT_ALLOWED`). v2.6.
+      responses:
+        '200':
+          description: Keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create a personal API key
+      tags: [Users]
+      description: |
+        Creates a key and returns it once, in `key` (`osk_` + 43 base62
+        characters). Only its SHA-256 is stored. `scope` defaults to `full`;
+        `expires_at` is optional and must be in the future. At most 50 keys
+        per user (409 `API_KEY_LIMIT`). Audited as `api_key.create`. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:       { type: string, maxLength: 100 }
+                scope:      { type: string, enum: [full, read_only], default: full }
+                expires_at: { type: string, format: date-time, nullable: true }
+      responses:
+        '201':
+          description: The new key, with the secret shown this once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/CreatedAPIKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/users/me/api-keys/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Revoke one of the caller's API keys
+      tags: [Users]
+      description: |
+        The key stops working on its next request, on every server instance
+        (keys are looked up per request, not cached), and so do the stream
+        tokens requests made with it were handed. Another user's key id is a
+        404. Audited as `api_key.delete`. v2.6.
+      responses:
+        '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/api-keys:
+    get:
+      summary: Every user's API keys (admin)
+      tags: [Users]
+      description: Same rows as `GET /users/me/api-keys`, plus `user_id` and `username`. v2.6.
+      responses:
+        '200':
+          description: Keys, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/api-keys/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Revoke any user's API key (admin)
+      tags: [Users]
+      description: Audited as `api_key.delete` with `by_admin`. v2.6.
+      responses:
+        '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/items/{id}/reading-progress:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Caller's reading position in an ebook
+      tags: [Items]
+      description: |
+        Where the caller is in a book (EPUB, CBZ, CBR, PDF), synced across
+        their devices. `data` is null when nothing is saved. The item must be
+        a book the caller can see (library access, rating ceiling, label
+        restriction), else 404. Audiobooks use playback progress instead. v2.6.
+      responses:
+        '200':
+          description: The saved position, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf: [{ $ref: '#/components/schemas/ReadingProgress' }]
+                    nullable: true
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Save the caller's reading position
+      tags: [Items]
+      description: |
+        The newest position wins, by the client's `updated_at` (omitted =
+        now; a time ahead of the server's clock is clamped to it), so a device
+        flushing a stale position late can't rewind a newer one. The response
+        is the position the server now holds; `applied: false` means a newer
+        one was kept. Progression 0.98 or more marks the book read (the same
+        mark as `POST /items/{id}/watched`). v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locator, progression]
+              properties:
+                locator:     { type: string, maxLength: 4096, description: 'Opaque to the server: an EPUB CFI, or a page number.' }
+                progression: { type: number, minimum: 0, maximum: 1 }
+                device_name: { type: string, maxLength: 100 }
+                updated_at:  { type: string, format: date-time }
+      responses:
+        '200':
+          description: The stored position.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReadingProgress' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/settings/subtitle-auto-download:
+    get:
+      summary: Automatic subtitle download setting (admin)
+      tags: [Settings]
+      description: |
+        The server-wide setting for the `subtitle_auto_download` task, which
+        downloads subtitles from OpenSubtitles for movies and episodes that
+        have none in a wanted language. Off by default. v2.6.
+      responses:
+        '200':
+          description: The setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SubtitleAutoSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Update the automatic subtitle download setting (admin)
+      tags: [Settings]
+      description: Every field optional; an omitted one keeps its value. Audited as `settings.update`. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:           { type: boolean }
+                languages:         { type: string, example: 'en,es' }
+                prefer_hash_match: { type: boolean }
+                hearing_impaired:  { type: string, enum: [prefer, avoid, any] }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SubtitleAutoSettings' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/libraries/{id}/subtitle-auto-download:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A library's automatic subtitle download override (admin)
+      tags: [Libraries]
+      description: '`null` fields follow the server-wide setting. v2.6.'
+      responses:
+        '200':
+          description: The override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LibrarySubtitleAuto' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Set a library's automatic subtitle download override (admin)
+      tags: [Libraries]
+      description: Both fields null removes the override. 404 for an unknown library. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:   { type: boolean, nullable: true }
+                languages: { type: string, nullable: true }
+      responses:
+        '200':
+          description: The override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LibrarySubtitleAuto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/users/me/scrobble:
     get:
       summary: Caller's scrobble links
@@ -6251,6 +6501,14 @@ components:
       type: apiKey
       in: cookie
       name: onscreen_at
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        A personal API key (`osk_…`, v2.6). The same key is also accepted as
+        `Authorization: Bearer osk_…`. Not accepted on the credential and
+        account-security endpoints (403 `API_KEY_NOT_ALLOWED`).
 
   parameters:
     UUID:
@@ -7916,6 +8174,49 @@ components:
         created_at:   { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time, description: 'Approximate: sign-in or latest refresh.' }
         current:      { type: boolean, description: "True on the caller's own sign-in." }
+    APIKey:
+      type: object
+      description: A personal API key. Never carries the key or its hash.
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string }
+        prefix:       { type: string, description: 'The first characters of the key, e.g. "osk_AbC12xYz".' }
+        scope:        { type: string, enum: [full, read_only] }
+        created_at:   { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time, nullable: true, description: 'Approximate: written at most every 5 minutes.' }
+        expires_at:   { type: string, format: date-time, nullable: true }
+        expired:      { type: boolean }
+        user_id:      { type: string, format: uuid, description: 'Admin list only.' }
+        username:     { type: string, description: 'Admin list only.' }
+    CreatedAPIKey:
+      allOf:
+        - { $ref: '#/components/schemas/APIKey' }
+        - type: object
+          properties:
+            key: { type: string, description: 'The key itself, shown only in this response.' }
+    ReadingProgress:
+      type: object
+      properties:
+        locator:     { type: string }
+        progression: { type: number, minimum: 0, maximum: 1 }
+        device_name: { type: string, description: 'Where the position was saved; omitted when unknown.' }
+        updated_at:  { type: string, format: date-time, description: 'Client time the position was reached (clamped to the server clock).' }
+        applied:     { type: boolean, description: 'PUT only: false when a newer stored position was kept.' }
+    SubtitleAutoSettings:
+      type: object
+      properties:
+        enabled:             { type: boolean }
+        languages:           { type: string, description: 'Comma-separated language codes, normalised (e.g. "en,es,pt-br").' }
+        only_missing:        { type: boolean, description: 'Always true: a language the file already has is never downloaded.' }
+        prefer_hash_match:   { type: boolean }
+        hearing_impaired:    { type: string, enum: [prefer, avoid, any] }
+        provider_configured: { type: boolean, description: 'Read-only: whether OpenSubtitles is set up.' }
+    LibrarySubtitleAuto:
+      type: object
+      properties:
+        library_id: { type: string, format: uuid }
+        enabled:    { type: boolean, nullable: true }
+        languages:  { type: string, nullable: true }
     StreamingLimits:
       type: object
       properties:

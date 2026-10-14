@@ -34,6 +34,7 @@ const keyWorkerFleet = "worker_fleet"
 const keyTranscodeConfig = "transcode_config"
 const keyIntroDetectionMode = "intro_detection_mode"
 const keyOpenSubtitlesConfig = "opensubtitles_config"
+const keySubtitleAutoDownload = "subtitle_auto_download"
 const keyWebDownloadsEnabled = "web_downloads_enabled"
 const keyPinSwitchEnabled = "pin_switch_enabled"
 const keyMachineID = "machine_id"
@@ -538,6 +539,44 @@ func (s *Service) SetOpenSubtitles(ctx context.Context, cfg OpenSubtitlesConfig)
 		return err
 	}
 	return s.set(ctx, keyOpenSubtitlesConfig, string(b))
+}
+
+// SubtitleAutoDownloadConfig is the server-wide automatic subtitle download
+// setting (the subtitle_auto_download task). Off by default. Languages is a
+// comma-separated ISO-639-1 list ("en,es"); a download only ever happens for
+// a language the file has no subtitle in yet. PreferHashMatch ranks a
+// subtitle timed for the exact file (OpenSubtitles moviehash) first.
+// HearingImpaired is "prefer", "avoid" or "any". Libraries can override
+// Enabled and Languages (library_subtitle_auto_download, migration 00050).
+type SubtitleAutoDownloadConfig struct {
+	Enabled         bool   `json:"enabled"`
+	Languages       string `json:"languages"`
+	PreferHashMatch bool   `json:"prefer_hash_match"`
+	HearingImpaired string `json:"hearing_impaired"`
+}
+
+// SubtitleAutoDownload returns the automatic download setting, defaulting to
+// off, English, hash matches preferred and the hearing-impaired flag ignored.
+func (s *Service) SubtitleAutoDownload(ctx context.Context) SubtitleAutoDownloadConfig {
+	cfg := SubtitleAutoDownloadConfig{Languages: "en", PreferHashMatch: true, HearingImpaired: "any"}
+	s.getJSON(ctx, keySubtitleAutoDownload, &cfg)
+	switch cfg.HearingImpaired {
+	case "prefer", "avoid", "any":
+	default:
+		cfg.HearingImpaired = "any"
+	}
+	return cfg
+}
+
+// SetSubtitleAutoDownload persists the automatic download setting. An
+// unknown HearingImpaired value is ErrInvalidSetting.
+func (s *Service) SetSubtitleAutoDownload(ctx context.Context, cfg SubtitleAutoDownloadConfig) error {
+	switch cfg.HearingImpaired {
+	case "prefer", "avoid", "any":
+	default:
+		return ErrInvalidSetting
+	}
+	return s.setJSON(ctx, keySubtitleAutoDownload, cfg)
 }
 
 // LastFMConfig is the operator's Last.fm API account, which users' Last.fm

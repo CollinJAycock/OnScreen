@@ -123,6 +123,11 @@ type SearchOpts struct {
 	IMDBID    string
 	TMDBID    int
 	Languages string
+	// ParentIMDBID / ParentTMDBID: an episode's show (see opensubtitles).
+	ParentIMDBID string
+	ParentTMDBID int
+	// MovieHash: the file's OpenSubtitles hash (MovieHash), when known.
+	MovieHash string
 }
 
 // Search proxies to the provider, memoizing identical queries for
@@ -131,8 +136,9 @@ func (s *Service) Search(ctx context.Context, opts SearchOpts) ([]opensubtitles.
 	if s.provider == nil || !s.provider.Configured() {
 		return nil, ErrNoProvider
 	}
-	key := fmt.Sprintf("%s|%d|%d|%d|%s|%d|%s",
-		opts.Query, opts.Year, opts.Season, opts.Episode, opts.IMDBID, opts.TMDBID, opts.Languages)
+	key := fmt.Sprintf("%s|%d|%d|%d|%s|%d|%s|%s|%d|%s",
+		opts.Query, opts.Year, opts.Season, opts.Episode, opts.IMDBID, opts.TMDBID, opts.Languages,
+		opts.ParentIMDBID, opts.ParentTMDBID, opts.MovieHash)
 	if cached, ok := s.searchCacheGet(key); ok {
 		return cached, nil
 	}
@@ -144,6 +150,10 @@ func (s *Service) Search(ctx context.Context, opts SearchOpts) ([]opensubtitles.
 		IMDBID:    opts.IMDBID,
 		TMDBID:    opts.TMDBID,
 		Languages: opts.Languages,
+
+		ParentIMDBID: opts.ParentIMDBID,
+		ParentTMDBID: opts.ParentTMDBID,
+		MovieHash:    opts.MovieHash,
 	})
 	if err != nil {
 		return nil, err

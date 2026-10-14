@@ -55,6 +55,7 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("trickplay", h.Trickplay != nil, h.Trickplay)
 	check("watch_state", h.WatchState != nil, h.WatchState)
 	check("music", h.Music != nil, h.Music)
+	check("reading_progress", h.ReadingProgress != nil, h.ReadingProgress)
 
 	if len(missing) > 0 {
 		sort.Strings(missing)
