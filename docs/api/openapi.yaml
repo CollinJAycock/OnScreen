@@ -2150,6 +2150,84 @@ paths:
       responses:
         '204': { description: Deleted. }
 
+  /api/v1/subtitles/{id}/offset:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid }, description: 'External subtitle id.' }
+    put:
+      summary: Set an external subtitle's timing offset (admin)
+      tags: [Subtitles]
+      description: |
+        *(v2.6, migration 00055)* A server-wide correction for a mistimed
+        subtitle, applied for everyone: `/media/external-subtitles/{id}`
+        serves every cue shifted by it (positive = later; a cue pushed
+        before 0 starts at 0, one that also ends at or before 0 is
+        dropped). Clients need no change. 0 removes the correction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offset_ms]
+              properties:
+                offset_ms: { type: integer, minimum: -600000, maximum: 600000 }
+      responses:
+        '200':
+          description: The updated subtitle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ExternalSubtitle' }
+        '400': { description: 'Missing or malformed offset_ms.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: 'offset_ms outside ±600000 (10 minutes).' }
+
+  /api/v1/files/{file_id}/subtitle-streams/{index}/offset:
+    parameters:
+      - { in: path, name: file_id, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: index, required: true, schema: { type: integer, minimum: 0 }, description: 'Absolute stream index, as in subtitle_streams[].index.' }
+    put:
+      summary: Set an embedded subtitle stream's timing offset (admin)
+      tags: [Subtitles]
+      description: |
+        *(v2.6, migration 00055)* The same correction for an embedded text
+        subtitle stream; `/media/subtitles/{fileId}/{streamIndex}` serves
+        the shifted cues. Image-based streams (PGS, VobSub, DVB) are 415 —
+        they're never served as text; set the offset on their OCR'd copy.
+        Converted downloads still carry the embedded stream's original
+        timing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offset_ms]
+              properties:
+                offset_ms: { type: integer, minimum: -600000, maximum: 600000 }
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      file_id:      { type: string, format: uuid }
+                      stream_index: { type: integer }
+                      offset_ms:    { type: integer }
+        '400': { description: 'Bad file id, stream index or body.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 'No such file, or the file has no subtitle stream at that index.' }
+        '415': { description: 'IMAGE_SUBTITLE: the stream is image-based.' }
+        '422': { description: 'offset_ms outside ±600000 (10 minutes).' }
+
   # ── Trickplay ──────────────────────────────────────────────────────────────
   /api/v1/items/{id}/trickplay:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -2638,11 +2716,17 @@ paths:
     get:
       summary: Serve an embedded subtitle as VTT
       tags: [Subtitles]
+      description: |
+        Cues are shifted by the stream's admin offset (v2.6). Sent with an
+        ETag and `Cache-Control: private, no-cache`, so an offset change
+        reaches clients on their next load; an unchanged track revalidates
+        with 304.
       responses:
         '200':
           description: Subtitle.
           content:
             text/vtt: {}
+        '304': { description: 'If-None-Match matched the current ETag.' }
 
   /media/external-subtitles/{subId}:
     parameters:
@@ -2650,11 +2734,15 @@ paths:
     get:
       summary: Serve a downloaded external subtitle
       tags: [Subtitles]
+      description: |
+        Cues are shifted by the subtitle's admin offset (v2.6); same ETag
+        and revalidation behaviour as /media/subtitles.
       responses:
         '200':
           description: Subtitle.
           content:
             text/vtt: {}
+        '304': { description: 'If-None-Match matched the current ETag.' }
 
   /artwork/{path}:
     parameters:
@@ -7106,6 +7194,13 @@ components:
             Clients with no subtitle-language preference show it. False on
             files probed before the field until a metadata reprobe
             (POST /api/v1/maintenance/reprobe-metadata).
+        offset_ms:
+          type: integer
+          description: |
+            v2.6. The admin's server-wide timing correction in ms
+            (positive = later), already applied to the cues
+            /media/subtitles/{fileId}/{index} serves. Informational:
+            clients must not shift by it again. 0 when none.
     ExternalSubtitle:
       type: object
       properties:
@@ -7113,6 +7208,12 @@ components:
         language: { type: string }
         format:   { type: string }
         url:      { type: string }
+        offset_ms:
+          type: integer
+          description: |
+            v2.6. The admin's server-wide timing correction in ms
+            (positive = later), already applied to the cues `url` serves.
+            Informational: clients must not shift by it again.
     Chapter:
       type: object
       properties:

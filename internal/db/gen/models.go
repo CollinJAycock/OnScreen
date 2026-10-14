@@ -226,6 +226,7 @@ type ExternalSubtitle struct {
 	Rating        *float32           `json:"rating"`
 	DownloadCount *int32             `json:"download_count"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	OffsetMs      int32              `json:"offset_ms"`
 }
 
 type HubRecentlyAdded struct {
@@ -735,6 +736,13 @@ type SubtitleAutoAttempt struct {
 	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
 	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
 	LastResult    *string            `json:"last_result"`
+}
+
+type SubtitleStreamOffset struct {
+	FileID      uuid.UUID          `json:"file_id"`
+	StreamIndex int32              `json:"stream_index"`
+	OffsetMs    int32              `json:"offset_ms"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
 type TaskRun struct {

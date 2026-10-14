@@ -1489,6 +1489,13 @@ func NewRouter(h *Handlers) http.Handler {
 					Post("/items/{id}/subtitles/ocr", h.Subtitles.OCR)
 				r.Get("/items/{id}/subtitles/ocr/{jobId}", h.Subtitles.OCRStatus)
 				r.Delete("/items/{id}/subtitles/{subId}", h.Subtitles.Delete)
+				// Server-wide subtitle timing offsets (admin). The WebVTT
+				// routes shift the cues, so every client gets them.
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Put("/subtitles/{id}/offset", h.Subtitles.SetOffset)
+					r.Put("/files/{file_id}/subtitle-streams/{index}/offset", h.Subtitles.SetStreamOffset)
+				})
 			}
 
 			// Favorites — per-user.

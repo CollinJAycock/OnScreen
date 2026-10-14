@@ -967,7 +967,10 @@ func run() error {
 		logger.Info("subtitle OCR enabled (ffmpeg + tesseract on PATH)")
 	}
 	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
-		WithLibraryAccess(libSvc)
+		WithLibraryAccess(libSvc).
+		// Admin timing offsets for external subtitles and embedded streams.
+		WithOffsets(gen.New(rwPool)).
+		WithAudit(auditLogger)
 	// Automatic subtitle download: admin settings (server-wide + per-library)
 	// and the subtitle_auto_download task registered below.
 	subtitleAutoHandler := v1.NewSubtitleAutoHandler(settingsSvc, gen.New(rwPool),
@@ -1024,6 +1027,9 @@ func run() error {
 		WithCommercials(commercialMarkerLister{q: gen.New(roPool)}).
 		WithExternalSubtitles(subtitleSvc).
 		WithSubtitleCache(subtitleCacheRoot).
+		// Embedded subtitle streams' admin timing offsets: read from the
+		// primary so a change applies on the very next cue fetch.
+		WithSubtitleOffsets(gen.New(rwPool)).
 		WithSyncBroker(notifBrokerEarly).
 		WithAudit(auditLogger).
 		WithStreamTokenMaker(tokenMaker).
