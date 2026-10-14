@@ -34,6 +34,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	dbmigrations "github.com/onscreen/onscreen/internal/db/migrations"
+	"github.com/onscreen/onscreen/internal/digest"
 	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -81,6 +82,7 @@ import (
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/trickplay"
+	"github.com/onscreen/onscreen/internal/userstats"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
 
@@ -1336,6 +1338,52 @@ func run() error {
 	})
 
 	emailHandler := v1.NewEmailHandler(emailSender, logger)
+
+	// ── A user's own stats + the digest email ────────────────────────────────
+	// My stats / Year in review read the watch_plays matview per user (read
+	// pool). The digest composes from the same queries and sends hourly-checked
+	// weekly / monthly emails; posters ride inline, resized by the artwork
+	// manager, so no asset URL or token ever goes into an email.
+	userStatsSvc := userstats.New(gen.New(roPool))
+	userStatsHandler := v1.NewUserStatsHandler(userStatsSvc, logger).WithLibraryAccess(libSvc)
+	digestSigner := digest.NewSigner(cfg.SecretKey)
+	// Links in emails: the admin's Base URL, else the startup default (which
+	// is only right on a single-host setup; the settings page says so).
+	digestBaseURL := func(ctx context.Context) string {
+		if b := settingsSvc.General(ctx).BaseURL; b != "" {
+			return b
+		}
+		return baseURL
+	}
+	digestSvc := digest.New(digest.Deps{
+		Store:  gen.New(rwPool),
+		Access: libSvc,
+		Stats:  userStatsSvc,
+		Posters: digest.ArtworkPosters{
+			ScanPaths: func(ctx context.Context, libraryID uuid.UUID) []string {
+				lib, err := libSvc.Get(ctx, libraryID)
+				if err != nil {
+					return nil
+				}
+				return lib.Paths
+			},
+			Exists: func(ctx context.Context, absPath string) bool {
+				_, err := artworkMgr.Store().Stat(ctx, absPath)
+				return err == nil
+			},
+			Resizer: artworkMgr,
+		},
+		Mailer:   emailSender,
+		Signer:   digestSigner,
+		Config:   settingsSvc.Digest,
+		BaseURL:  digestBaseURL,
+		Location: time.Local,
+		Logger:   logger,
+	})
+	digestHandler := v1.NewDigestHandler(gen.New(rwPool), settingsSvc, digestSvc, emailSender, digestSigner,
+		func(ctx context.Context) string { return settingsSvc.General(ctx).BaseURL }, logger).
+		WithAudit(auditLogger)
+
 	passwordResetDB := &passwordResetAdapter{q: gen.New(rwPool)}
 	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, baseURL, logger).
 		WithSegmentTokenRevoker(segTokenMgr).
@@ -1616,6 +1664,7 @@ func run() error {
 	// Podcast subscriptions: re-read every feed, download new episodes where
 	// auto-download is on, apply retention (seeded hourly).
 	schedRegistry.Register("podcast_refresh", scheduler.NewPodcastRefreshHandler(podcastSvc))
+	schedRegistry.Register("digest_send", scheduler.NewDigestSendHandler(digestSvc))
 	schedRegistry.Register("external_ratings", scheduler.NewExternalRatingsHandler(
 		externalratings.New(gen.New(rwPool), settingsSvc, logger)))
 	// Missing subtitles for new movies and episodes, from OpenSubtitles, when
@@ -1698,6 +1747,8 @@ func run() error {
 		Hub:             hubHandler,
 		Search:          searchHandler,
 		History:         historyHandler,
+		UserStats:       userStatsHandler,
+		Digest:          digestHandler,
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),

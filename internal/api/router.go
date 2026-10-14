@@ -62,6 +62,8 @@ type Handlers struct {
 	Hub             *v1.HubHandler
 	Search          *v1.SearchHandler
 	History         *v1.HistoryHandler
+	UserStats       *v1.UserStatsHandler // the caller's own stats + Year in review; optional
+	Digest          *v1.DigestHandler    // digest email opt-in, admin settings, unsubscribe; optional
 	Items           *v1.ItemHandler
 	ItemsAdmin      *v1.ItemBulkAdminHandler // admin bulk re-enrich / cleanup
 	WatchStatus     *v1.WatchStatusHandler   // per-user Plan to Watch / Watching / etc.
@@ -654,6 +656,19 @@ func NewRouter(h *Handlers) http.Handler {
 			})
 		}
 
+		// Digest email unsubscribe link — no sign-in; the HMAC-signed token
+		// in the link is the credential and can only turn that user's digest
+		// off. GET shows a confirm page, POST (the button, or a mail client's
+		// RFC 8058 one-click) unsubscribes.
+		if h.Digest != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RateLimit(h.RateLimiter, middleware.DigestUnsubscribeLimit,
+					middleware.IPKey("ratelimit:digestunsub")))
+				r.Get("/digest/unsubscribe", h.Digest.Unsubscribe)
+				r.Post("/digest/unsubscribe", h.Digest.Unsubscribe)
+			})
+		}
+
 		// SSE notification stream — sibling to the authenticated API
 		// group below so it gets RequiredAllowQueryToken instead of
 		// Required. EventSource can't carry an Authorization header
@@ -791,6 +806,16 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Put("/users/me/hub-layout", h.User.SetHubLayout)
 				r.Put("/users/me/quality-profile", h.User.SetQualityProfile)
+				// The caller's own stats (My stats) and Year in review.
+				if h.UserStats != nil {
+					r.Get("/users/me/stats", h.UserStats.Stats)
+					r.Get("/users/me/year-in-review", h.UserStats.YearInReview)
+				}
+				// The caller's digest email opt-in.
+				if h.Digest != nil {
+					r.Get("/users/me/digest", h.Digest.GetMine)
+					r.Put("/users/me/digest", h.Digest.SetMine)
+				}
 				// Signed-in devices: list the caller's sign-ins, sign one out,
 				// or sign out everywhere else.
 				if h.UserSessions != nil {
@@ -945,6 +970,11 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/settings/worker-credentials", h.Settings.WorkerCredentials)
 					r.Get("/settings/dvr", h.Settings.GetDVR)
 					r.Put("/settings/dvr", h.Settings.UpdateDVR)
+					if h.Digest != nil {
+						r.Get("/settings/digest", h.Digest.GetSettings)
+						r.Put("/settings/digest", h.Digest.UpdateSettings)
+						r.Post("/settings/digest/test", h.Digest.SendTest)
+					}
 					r.Get("/settings/transcode-config", h.Settings.GetTranscodeConfig)
 					r.Put("/settings/transcode-config", h.Settings.UpdateTranscodeConfig)
 					r.Get("/settings/storage", h.Settings.GetStorage)

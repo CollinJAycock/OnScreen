@@ -309,6 +309,29 @@ re-read the real admin's session.
   capped at 100,000 events). A failure part-way aborts the connection
   (`http.ErrAbortHandler`, which `middleware.Recover` now re-panics) rather
   than ending a truncated ZIP as if it were complete.
+**My stats and the digest email** (v2.6; `/api/v1/users/me/stats`,
+`/api/v1/users/me/year-in-review`, `/api/v1/users/me/digest`,
+`/api/v1/settings/digest`, `/api/v1/digest/unsubscribe`)
+
+- Stats are only ever the caller's own (no user parameter). Every aggregate,
+  and every title in a digest email, passes the viewer's library access,
+  rating ceiling and label restriction. The digest builds that viewer from the
+  recipient's stored user row and library grants, the same values their tokens
+  carry.
+- Digest posters are inline (CID) attachments resized on the server. The email
+  carries no `/artwork` URL and no asset or stream token, so a forwarded or
+  leaked digest grants nothing. Titles and every other stored string are
+  HTML-escaped; links are built only from the admin's Base URL (http/https
+  only) and item UUIDs.
+- The unsubscribe link needs no sign-in. Its token is the user id plus an
+  HMAC-SHA256 under a key derived from `SECRET_KEY` (domain-separated), so it
+  can't be guessed or forged for another user and can only turn that user's
+  digest off. `GET` shows a confirmation page and changes nothing (mail
+  scanners prefetch links); `POST` unsubscribes and is the RFC 8058
+  `List-Unsubscribe-Post` one-click target. The route is rate-limited per IP.
+  Rotating `SECRET_KEY` invalidates links in digests already sent.
+- Admin digest settings sit in the settings group (admin only, no API keys)
+  and are audit-logged as `settings.update`.
 
 ## Deployment, packaging & supply-chain hardening
 

@@ -86,6 +86,10 @@ var (
 	// (a season pack fires one event per episode) while turning online guessing
 	// of the X-Api-Key into a slow crawl.
 	ArrWebhookLimit = RateLimitConfig{Limit: 120, Window: time.Minute}
+	// DigestUnsubscribeLimit bounds the sign-in-free digest unsubscribe link
+	// per source IP. A person clicks it once or twice; the token is an HMAC,
+	// so this only keeps a flood of bad tokens cheap.
+	DigestUnsubscribeLimit = RateLimitConfig{Limit: 30, Window: time.Minute}
 )
 
 // resolveLimit reads the named env var at package init. Falls back to the

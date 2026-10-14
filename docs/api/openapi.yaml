@@ -6293,6 +6293,187 @@ paths:
       responses:
         '204': { description: Sent. }
 
+  /api/v1/users/me/stats:
+    get:
+      summary: The caller's own viewing and listening stats
+      description: >
+        Aggregated from the caller's plays (the analytics play history,
+        refreshed every few minutes). Only ever the caller's own; a managed
+        profile sees its own. Titles the caller can't see (library access,
+        content-rating ceiling, label restrictions) are left out of every
+        number. Time is how far into each title a play got (its final
+        position, capped at the title's length); a play counts as finished at
+        90%. Days, months and the heatmap bucket in `tz`. v2.6.
+      tags: [Users]
+      parameters:
+        - name: range
+          in: query
+          schema: { type: string, default: 30d, example: 'year:2026' }
+          description: '`30d`, `90d`, `365d`, `all` or `year:YYYY` (2000 to the current year).'
+        - name: tz
+          in: query
+          schema: { type: string, default: UTC, example: America/Detroit }
+          description: IANA time zone; anything unknown falls back to UTC.
+      responses:
+        '200':
+          description: Stats.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UserStats' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/users/me/year-in-review:
+    get:
+      summary: The caller's year in review
+      description: >
+        A curated summary of one calendar year (in `tz`) for the caller, with
+        the same visibility rules as `/users/me/stats`. `previous_year` is
+        present only when the year before has plays; `first_play`,
+        `busiest_day` and `top_device` are null when the year has none.
+        "New artists" are artists whose first play by the caller falls in the
+        year, as far back as the play history reaches. v2.6.
+      tags: [Users]
+      parameters:
+        - { name: year, in: query, schema: { type: integer, example: 2026 }, description: Defaults to the current year. }
+        - { name: tz, in: query, schema: { type: string, default: UTC } }
+      responses:
+        '200':
+          description: Year in review.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/YearInReview' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/users/me/digest:
+    get:
+      summary: The caller's digest email setting
+      description: >
+        `available` is false while an admin has digests off or SMTP isn't
+        configured; `has_email` is false when the account has no email
+        address (nothing can be sent until one is added). v2.6.
+      tags: [Users, Email]
+      responses:
+        '200':
+          description: Setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MyDigest' }
+    put:
+      summary: Set the caller's digest frequency
+      tags: [Users, Email]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [frequency]
+              properties:
+                frequency: { type: string, enum: [off, weekly, monthly] }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MyDigest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/settings/digest:
+    get:
+      summary: Get the digest email settings (admin)
+      description: >
+        Off by default. `weekday` (0 = Sunday) and `hour` are in the server's
+        time zone (`server_timezone`): weekly digests go out then and cover
+        the seven days before; monthly ones go out on the 1st at `hour` and
+        cover the previous month. `smtp_configured`, `base_url` (Settings ▸
+        General, used for links) and `server_timezone` are read-only. v2.6.
+      tags: [Settings, Email]
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DigestSettings' }
+    put:
+      summary: Replace the digest email settings (admin)
+      description: Read-only fields in the body are ignored. Audit-logged as `settings.update`.
+      tags: [Settings, Email]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DigestSettings' }
+      responses:
+        '200':
+          description: The saved settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DigestSettings' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/settings/digest/test:
+    post:
+      summary: Send the calling admin a test digest now (admin)
+      description: >
+        Sends the caller's own digest of the current period to their account's
+        email address, even if nothing is new, digests are off, or they haven't
+        opted in. Doesn't count as their digest for the period. 400 when SMTP
+        isn't configured or the account has no email address.
+      tags: [Settings, Email]
+      responses:
+        '200': { description: 'Sent. Body `{"data": {"message": "Test digest sent to …"}}`.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/digest/unsubscribe:
+    get:
+      summary: Digest unsubscribe confirmation page (no sign-in)
+      description: >
+        The link in every digest email. Returns a small HTML page with an
+        Unsubscribe button; it does not unsubscribe by itself (mail scanners
+        fetch links). The token is an HMAC-signed user id that can only turn
+        that user's digest off. 400 page for an invalid token. Rate-limited per
+        IP.
+      tags: [Email]
+      security: []
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Confirmation page (text/html). }
+        '400': { description: Invalid token (text/html). }
+    post:
+      summary: Unsubscribe from the digest (no sign-in)
+      description: >
+        Turns the token's user's digest off. Also the target of the email's
+        `List-Unsubscribe` / `List-Unsubscribe-Post: List-Unsubscribe=One-Click`
+        headers (RFC 8058), so mail apps can unsubscribe in one click.
+      tags: [Email]
+      security: []
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Done page (text/html). }
+        '400': { description: Invalid token (text/html). }
+
   /api/v1/fs/browse:
     get:
       summary: Browse server filesystem (admin)
@@ -9004,3 +9185,158 @@ components:
               free_bytes:  { type: integer, format: int64 }
               total_bytes: { type: integer, format: int64 }
         queue_count: { type: integer, nullable: true, description: Downloads the instance is tracking; null when the queue could not be read. }
+
+    StatsTotals:
+      type: object
+      properties:
+        plays:          { type: integer, format: int64 }
+        watch_ms:       { type: integer, format: int64, description: 'Time watched: movies, episodes, music videos, home videos.' }
+        listen_ms:      { type: integer, format: int64, description: 'Time listened: tracks, audiobooks, podcasts.' }
+        hours_watched:  { type: number, description: watch_ms in hours, one decimal. }
+        hours_listened: { type: number, description: listen_ms in hours, one decimal. }
+        items_finished: { type: integer, format: int64, description: Distinct titles played to 90% or more. }
+        books_read:     { type: integer, format: int64, description: Ebooks/comics marked read plus audiobooks finished. }
+        active_days:    { type: integer, format: int64 }
+
+    StatsTitle:
+      type: object
+      properties:
+        id:           { type: string, format: uuid, description: 'The movie, show, artist or album (never the episode or track).' }
+        title:        { type: string }
+        year:         { type: integer }
+        poster_path:  { type: string, description: 'Artwork path for /artwork/{path}.' }
+        parent_title: { type: string, description: "An album's artist." }
+        plays:        { type: integer, format: int64, description: 'Plays (for a show, episodes played).' }
+        ms:           { type: integer, format: int64 }
+
+    StatsCount:
+      type: object
+      properties:
+        plays: { type: integer, format: int64 }
+        ms:    { type: integer, format: int64 }
+
+    UserStats:
+      type: object
+      properties:
+        range:    { type: string, example: 30d }
+        since:    { type: string, format: date-time }
+        until:    { type: string, format: date-time }
+        timezone: { type: string }
+        totals:   { $ref: '#/components/schemas/StatsTotals' }
+        by_type:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { type: { type: string, example: episode } } }
+        top_genres:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { genre: { type: string } } }
+        top_titles:
+          type: object
+          description: Up to 10 per list, by plays then time.
+          properties:
+            movies:  { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+            shows:   { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+            artists: { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+            albums:  { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+        by_month:
+          type: array
+          description: Every month of the range (zero-filled); for `all`, from the first month with plays.
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { month: { type: string, example: '2026-10' } } }
+        heatmap:
+          type: array
+          description: Sparse; cells without plays are absent.
+          items:
+            type: object
+            properties:
+              weekday: { type: integer, minimum: 1, maximum: 7, description: 1 = Monday. }
+              hour:    { type: integer, minimum: 0, maximum: 23 }
+              plays:   { type: integer, format: int64 }
+        longest_streak:
+          type: object
+          properties:
+            days:  { type: integer }
+            start: { type: string, format: date }
+            end:   { type: string, format: date }
+        devices:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { device: { type: string } } }
+
+    YearInReview:
+      type: object
+      properties:
+        year:           { type: integer }
+        timezone:       { type: string }
+        has_data:       { type: boolean }
+        totals:         { $ref: '#/components/schemas/StatsTotals' }
+        longest_streak: { $ref: '#/components/schemas/UserStats/properties/longest_streak' }
+        top_movies:     { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_shows:      { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_artists:    { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_albums:     { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_genres:     { $ref: '#/components/schemas/UserStats/properties/top_genres' }
+        top_device:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/StatsCount' }
+            - { type: object, properties: { device: { type: string } } }
+        first_play:
+          type: object
+          nullable: true
+          properties:
+            id:           { type: string, format: uuid }
+            type:         { type: string }
+            title:        { type: string }
+            year:         { type: integer }
+            parent_title: { type: string }
+            poster_path:  { type: string }
+            occurred_at:  { type: string, format: date-time }
+        busiest_day:
+          type: object
+          nullable: true
+          properties:
+            date:  { type: string, format: date }
+            plays: { type: integer, format: int64 }
+            ms:    { type: integer, format: int64 }
+        new_artists:
+          type: object
+          properties:
+            count: { type: integer, format: int64 }
+            top:   { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        by_month: { $ref: '#/components/schemas/UserStats/properties/by_month' }
+        previous_year:
+          type: object
+          nullable: true
+          properties:
+            year:   { type: integer }
+            totals: { $ref: '#/components/schemas/StatsTotals' }
+
+    MyDigest:
+      type: object
+      properties:
+        frequency:    { type: string, enum: [off, weekly, monthly] }
+        last_sent_at: { type: string, format: date-time }
+        has_email:    { type: boolean }
+        available:    { type: boolean, description: False while digests are off server-wide or SMTP isn't configured. }
+
+    DigestSettings:
+      type: object
+      properties:
+        enabled:                   { type: boolean, default: false }
+        weekday:                   { type: integer, minimum: 0, maximum: 6, default: 1, description: 0 = Sunday. Weekly send day. }
+        hour:                      { type: integer, minimum: 0, maximum: 23, default: 8 }
+        include_continue_watching: { type: boolean, default: true }
+        include_stats:             { type: boolean, default: true }
+        smtp_configured:           { type: boolean, readOnly: true }
+        base_url:                  { type: string, readOnly: true, description: 'Settings ▸ General Base URL; "" when unset.' }
+        server_timezone:           { type: string, readOnly: true }

@@ -866,6 +866,14 @@ type UserAudiobookRate struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type UserDigestPref struct {
+	UserID     uuid.UUID          `json:"user_id"`
+	Frequency  string             `json:"frequency"`
+	LastPeriod *string            `json:"last_period"`
+	LastSentAt pgtype.Timestamptz `json:"last_sent_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
+}
+
 type UserFavorite struct {
 	UserID    uuid.UUID          `json:"user_id"`
 	MediaID   uuid.UUID          `json:"media_id"`
