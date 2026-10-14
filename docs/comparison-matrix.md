@@ -14,7 +14,7 @@
 
 **Addendum 2026-10-06 (v2.5.0 cut):** an Xbox row is added at ⚠. The server now serves a TV web app at `/tvapp/` (the webOS app plus controller handling), and a UWP shell in `clients/xbox` loads it from the server the user enters; it has run only on a Windows PC, not yet on a console, and isn't in the Microsoft Store. Every other cell is as of the 2026-10-01 and 2026-10-06 addenda; v2.5.0 changes no other row. Later the same day Amazon published Fire TV 1.4.2, which replaces the June 1.0.x build in the Appstore; the Fire TV cell was already ✅.
 
-**Addendum 2026-10-14 (v2.6, unreleased):** the work merged since v2.5.1 is in the rows: admin-curated, smart and home-row collections (the manual-collections row moves to Non-differentiators, since all four have it), podcast RSS subscriptions (Podcasts (RSS) ❌→✅), importing another server's watch history (new row, OnScreen-only), and IMDb / Rotten Tomatoes / Metacritic scores from OMDb (new row). Every client note was re-checked against the tree. One was stale: Tizen 1.1.0, built on the webOS code, receives "Play on…" transfers. Xbox is now listed wherever it has the feature (Live TV / Recordings, OpenSubtitles search, scrobble linking, transfer receive, collection home rows). Store cells are unchanged; Samsung (Tizen 1.1.0) and LG (webOS 0.2.1) are still in review. The same day the gaps every competitor covers in core were closed (branch `claude/v26-tier1`, migrations 00043–00047): metadata editing with field locks, multi-episode files, multi-part (stacked) movies, aired / DVD / absolute episode order, separate internet streaming limits, per-device sign-out and label-based restrictions. All seven are common ground, so they join Non-differentiators; named movie editions get a row, since Plex keeps editions behind Plex Pass.
+**Addendum 2026-10-14 (v2.6, unreleased):** the work merged since v2.5.1 is in the rows: admin-curated, smart and home-row collections (the manual-collections row moves to Non-differentiators, since all four have it), podcast RSS subscriptions (Podcasts (RSS) ❌→✅), importing another server's watch history (new row, OnScreen-only), and IMDb / Rotten Tomatoes / Metacritic scores from OMDb (new row). Every client note was re-checked against the tree. One was stale: Tizen 1.1.0, built on the webOS code, receives "Play on…" transfers. Xbox is now listed wherever it has the feature (Live TV / Recordings, OpenSubtitles search, scrobble linking, transfer receive, collection home rows). Store cells are unchanged; Samsung (Tizen 1.1.0) and LG (webOS 0.2.1) are still in review. The same day the gaps every competitor covers in core were closed (branch `claude/v26-tier1`, migrations 00043–00047): metadata editing with field locks, multi-episode files, multi-part (stacked) movies, aired / DVD / absolute episode order, separate internet streaming limits, per-device sign-out and label-based restrictions. All seven are common ground, so they join Non-differentiators; named movie editions get a row, since Plex keeps editions behind Plex Pass. A second batch followed (branch `claude/v26-tier2`, built on Tier 1, migrations 00048–00052). New rows cover loudness analysis for untagged music, DVR commercial detection and post-processing, automatic subtitle download, converted (lower-quality) downloads, writing NFO files, and clear logos / banners / disc art. Instant mix and similar artists, featured-artist credits, studio / network pages, chapter thumbnails, long-lived API keys and ebook reading position kept on the server are common ground, so they join Non-differentiators. The competitor cells in the new rows come from their published feature lists and were not re-tested.
 
 **Legend** — ✅ in core · 💎 paid tier · 🧩 official plugin · ⚠ partial · ❌ not supported
 
@@ -108,6 +108,7 @@ OnScreen runs Tesseract on PGS / VOBSUB / DVB / XSUB streams and persists the re
 | WASAPI exclusive (Windows, bit-perfect)                         |    ✅    |  💎  |  ❌  |    ❌    |
 | DSD-via-DoP playback                                            |    ✅    |  💎  |  ❌  |    ❌    |
 | ReplayGain (track + album, with preamp)                         |    ⚠    |  ⚠   |  ⚠   |    ⚠    |
+| Loudness analysis for files with no ReplayGain tags             |    ✅    |  ✅  |  ❌  |    ✅    |
 | Bit depth / sample rate / channel layout API surface            |    ✅    |  ⚠   |  ⚠   |    ⚠    |
 | MusicBrainz ID set (recording / release / artist / album-artist)|    ✅    |  ⚠   |  ⚠   |    ✅    |
 | Cover Art Archive fallback                                      |    ✅    |  ❌  |  ✅  |    ✅    |
@@ -138,8 +139,12 @@ Lyrics: scanner extracts ID3 USLT and Vorbis-comment LYRICS frames during the mu
 | Retention purge (auto-delete after N days)                    |    ✅    |  💎  |  💎  |    ✅    |
 | Stream-copy capture (zero CPU)                                |    ✅    |  ✅  |  ✅  |    ✅    |
 | Refcounted shared sessions (multiple viewers, one tuner slot) |    ✅    |  ⚠   |  ⚠   |    ⚠    |
+| Commercial detection + Skip Ad (comskip or built-in)          |    ✅    |  💎  |  💎  |    🧩    |
+| Post-processing (remux / transcode / custom script)           |    ✅    |  💎  |  💎  |    ⚠    |
 
 Plex and Emby gate the entire Live TV / DVR feature set behind paid tiers (Plex Pass / Emby Premiere). OnScreen and Jellyfin are core. On the client side, Live TV and Recordings screens are in the web app, the Android TV app, Tizen, webOS and Xbox; the Android phone app and Roku have none yet. From 1.4.1 (1.4.2 is the live Amazon build) the Fire TV flavor leaves them out after an Amazon policy rejection (the Google TV build keeps them); the server feature is unchanged.
+
+Post-processing and commercial detection (unreleased, on `claude/v26-tier2`; migration 00052) are off until an admin turns them on in Settings ▸ Live TV. A finished recording can be remuxed to MKV / MP4, re-encoded to save space, and have its original deleted, but only after the new file is checked. Commercials are found with comskip when `ONSCREEN_COMSKIP_PATH` is set, and otherwise by where black frames and silence coincide. They are then either marked, so the web player shows Skip Ad, or cut out. A custom script can only be set by environment variable, never from the web UI. Commercials are a separate field rather than a marker type, because the Android, Roku and TV apps show every marker as Skip intro / Skip credits; only the web player offers Skip Ad today.
 
 **Live broadcast ingest ("go live") is OnScreen-only.** An embedded RTMP server accepts a push from OBS / ffmpeg / any RTMP encoder at `rtmp://host:1935/live/<stream-key>`; the stream is authenticated by a per-broadcast key (constant-time compare) and surfaces as a Live TV channel through the same Driver → HLS proxy → player path tuners use — so it plays in every client with a Live TV screen and is **recordable by the DVR** with no extra plumbing. Ingest is codec-agnostic: the server frames the raw RTMP payloads into FLV and lets ffmpeg transcode whatever came in (legacy H.264 **and** enhanced-RTMP HEVC / AV1) to browser-safe H.264, caching the sequence headers + last keyframe so a viewer can join mid-broadcast. Multiple keys = multiple simultaneous broadcasters, each its own channel. Plex, Emby, and Jellyfin consume *pull* sources (tuners, IPTV playlists) only — none accepts a push/restream, so this replaces a standalone Owncast install rather than competing with the tuner rows above.
 
@@ -182,6 +187,7 @@ IMDb / Rotten Tomatoes (critics) / Metacritic scores come from OMDb by IMDb ID (
 | -------------------------------------------------- | :------: | :--: | :--: | :------: |
 | Skip intro / skip credits button on player         |    ✅    |  💎  |  🧩  |    🧩    |
 | OpenSubtitles search + download (in-player)        |    ✅    |  ❌  |  💎  |    🧩    |
+| Automatic subtitle download for new items          |    ✅    |  ❌  |  ✅  |    🧩    |
 | Cross-device "play on…" transfer (own ecosystem)   |    ⚠    |  ✅  |  ✅  |    ❌    |
 | Sleep timer                                        |    ✅    |  ✅  |  ✅  |    ✅    |
 | On-screen subtitle styling (size/color/background/outline) |  ✅ |  ✅  |  ✅  |    ✅    |
@@ -190,6 +196,7 @@ IMDb / Rotten Tomatoes (critics) / Metacritic scores come from OMDb by IMDb ID (
 | DLNA / UPnP server                                 |    ❌    |  ✅  |  ✅  |    ✅    |
 | Web + desktop file download (server-wide admin toggle, default off) | ✅ | ⚠   |  ⚠   |    ⚠    |
 | Mobile offline downloads                           |    ⚠    |  💎  |  💎  |    ✅    |
+| Converted (lower-quality) downloads                |    ✅    |  💎  |  💎  |    ❌    |
 | Sync watch / watch parties                         |    ❌    |  ❌  |  ❌  |    ✅    |
 | ListenBrainz scrobbling (one-way, per-user, opt-in)|    ✅    |  ⚠   |  🧩  |    🧩    |
 | Last.fm scrobbling (per-user, opt-in)              |    ✅    |  ⚠   |  🧩  |    🧩    |
@@ -337,6 +344,8 @@ Operator-facing tools for fixing the metadata that auto-enrichment couldn't get 
 | Feature                                            | OnScreen | Plex | Emby | Jellyfin |
 | -------------------------------------------------- | :------: | :--: | :--: | :------: |
 | NFO sidecar override (`<uniqueid type="tmdb">`)    |    ✅    |  🧩  |  ✅  |    ✅    |
+| Write NFO files next to media (Kodi-compatible, opt-in) | ✅  |  ❌  |  ✅  |    ✅    |
+| Clear logos / banners / disc art (fanart.tv + local files) | ✅ |  ⚠   |  ✅  |    🧩    |
 | Per-item Fix Match (search TMDB → apply specific ID) |  ✅    |  ✅  |  ✅  |    ✅    |
 | Bulk Fix Match tray (every unmatched row, paged)   |    ✅    |  ⚠   |  ⚠   |    ⚠    |
 | Set Poster tray (TMDB variants + paste-URL fallback) |  ✅    |  ⚠   |  ⚠   |    ⚠    |
@@ -439,7 +448,7 @@ Features competitors ship that OnScreen doesn't, but where the gap is mitigated 
 
 ## Non-differentiators
 
-Movies / TV / music / photo scanning and metadata enrichment, embedded + disk artwork, TMDB + TVDB + MusicBrainz agents, HLS streaming, direct play, resume position, manual mark watched / unwatched (item, season, show), a Next Up row, automatic TMDB franchise (box-set) collections, admin-curated movie / TV collections, a Now Playing dashboard with transcode reasons, multi-user, parental content ratings, chapter markers, audit-safe session management, code-based native client device pairing (Plex PIN, Jellyfin Quick Connect), metadata editing with per-field locks, multi-episode files (`S01E01-E02`), multi-part movies (`cd1` / `part2`) played as one, aired / DVD / absolute episode order, separate home-network and internet streaming limits, signing out one device, and per-user label (tag) restrictions.
+Movies / TV / music / photo scanning and metadata enrichment, embedded + disk artwork, TMDB + TVDB + MusicBrainz agents, HLS streaming, direct play, resume position, manual mark watched / unwatched (item, season, show), a Next Up row, automatic TMDB franchise (box-set) collections, admin-curated movie / TV collections, a Now Playing dashboard with transcode reasons, multi-user, parental content ratings, chapter markers, audit-safe session management, code-based native client device pairing (Plex PIN, Jellyfin Quick Connect), metadata editing with per-field locks, multi-episode files (`S01E01-E02`), multi-part movies (`cd1` / `part2`) played as one, aired / DVD / absolute episode order, separate home-network and internet streaming limits, signing out one device, per-user label (tag) restrictions, instant mix and similar artists, featured-artist credits, studio / network pages, chapter thumbnails, long-lived API keys, and ebook reading position kept on the server.
 
 ---
 
