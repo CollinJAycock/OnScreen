@@ -235,6 +235,23 @@ type ItemHandler struct {
 	subtitleExtractSem chan struct{}
 	logger             *slog.Logger
 	labels             ItemLabelReader // admin-only labels on detail; nil = omitted
+	// chapterThumbs reports which file's chapters have thumbnails next to
+	// the item's trickplay sprites; nil = chapters carry no thumb_url.
+	chapterThumbs ChapterThumbLookup
+}
+
+// ChapterThumbLookup returns the file whose chapters have thumbnails
+// (/trickplay/{item}/chapter_NNN.jpg, generated with the seek-bar sprites)
+// and how many; uuid.Nil / 0 when none. Satisfied by *trickplay.Service.
+type ChapterThumbLookup interface {
+	ChapterThumbs(ctx context.Context, itemID uuid.UUID) (uuid.UUID, int, error)
+}
+
+// WithChapterThumbs wires the chapter-thumbnail lookup behind each chapter's
+// thumb_url in the item detail.
+func (h *ItemHandler) WithChapterThumbs(l ChapterThumbLookup) *ItemHandler {
+	h.chapterThumbs = l
+	return h
 }
 
 // DownloadGate decides whether the /media/download/{id} endpoint is open
@@ -606,6 +623,11 @@ type ChapterJSON struct {
 	Title   string `json:"title"`
 	StartMS int64  `json:"start_ms"`
 	EndMS   int64  `json:"end_ms"`
+	// ThumbURL is the chapter's thumbnail (/trickplay/{item_id}/chapter_NNN.jpg),
+	// present once the item's seek-bar sprites — which generate chapter
+	// thumbnails with them — exist. Same auth as the sprites: cookie, Bearer
+	// or an asset ?token=.
+	ThumbURL string `json:"thumb_url,omitempty"`
 }
 
 // MarkerJSON is the API representation of an intro/credits marker.
@@ -940,6 +962,18 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Chapter thumbnails exist for one file — the one the trickplay sprites
+	// were cut from — and are served beside the sprites with the same auth.
+	var thumbFileID uuid.UUID
+	var thumbCount int
+	if h.chapterThumbs != nil && len(files) > 0 {
+		if fid, n, err := h.chapterThumbs.ChapterThumbs(r.Context(), id); err != nil {
+			h.logger.WarnContext(r.Context(), "chapter thumbs lookup", "item_id", id, "err", err)
+		} else {
+			thumbFileID, thumbCount = fid, n
+		}
+	}
+
 	for _, f := range files {
 		if f.Status != "active" {
 			continue
@@ -993,6 +1027,14 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			AudioStreams:        parseJSONBAudioStreams(f.AudioStreams),
 			SubtitleStreams:     parseJSONBSubtitleStreams(f.SubtitleStreams),
 			Chapters:            parseJSONBChapters(f.Chapters),
+		}
+		if thumbCount > 0 && f.ID == thumbFileID {
+			for i := range fr.Chapters {
+				if i >= thumbCount {
+					break
+				}
+				fr.Chapters[i].ThumbURL = fmt.Sprintf("/trickplay/%s/chapter_%03d.jpg", id, i)
+			}
 		}
 		if claims != nil && claims.IsAdmin {
 			fr.IntegrityDetail = f.IntegrityDetail

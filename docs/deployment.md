@@ -125,6 +125,16 @@ An empty, zero or unparseable value falls back to the default.
 | `TRANSCODE_VAAPI_VRAM` | `true` | Standalone worker: the VAAPI equivalent of `TRANSCODE_QSV_VRAM`. |
 | `TRANSCODE_ENCODER_FAILOVER` | `true` | When the hardware encoder can't get the GPU (for example GeForce NVENC's session cap), retry the job on the next encoder the box has (QSV, then software). No effect on single-GPU boxes. |
 
+### Converted downloads
+
+Lower-quality download copies are encoded on the server into `CACHE_PATH/downloads`, with the server's configured H.264 encoder. Each conversion also holds one of the embedded worker's transcode slots while it runs.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DOWNLOAD_MAX_CONVERSIONS` | `1` | How many conversions encode at once on this server (1 or 2). |
+| `DOWNLOAD_CACHE_MAX_GB` | `50` | Size limit of the download cache. The hourly cleanup task evicts the least recently used files past it. |
+| `DOWNLOAD_CACHE_TTL_HOURS` | `168` | How long a finished file is kept after it was last requested or fetched. |
+
 ### Scanning
 
 These are the initial defaults; the effective values are editable in the admin UI

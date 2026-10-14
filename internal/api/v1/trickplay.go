@@ -345,14 +345,15 @@ func (h *TrickplayHandler) requireAdminLibrary(w http.ResponseWriter, r *http.Re
 }
 
 // trickplayFilePattern restricts /trickplay/{id}/* to known filenames so a
-// bad path component can't escape the item's directory.
-var trickplayFilePattern = regexp.MustCompile(`^(index\.vtt|sprite_\d{3}\.jpg)$`)
+// bad path component can't escape the item's directory: the VTT index, the
+// sprite sheets, and the chapter thumbnails generated with them.
+var trickplayFilePattern = regexp.MustCompile(`^(index\.vtt|sprite_\d{3}\.jpg|chapter_\d{3}\.jpg)$`)
 
 // ServeFile handles GET /trickplay/{id}/{file}. Requires auth + library
 // ACL — sprites can leak adult-library thumbnails into a kids-restricted
 // session if served openly. The route is wrapped in Auth_mw.Required by
 // the router; this handler additionally enforces the per-library ACL.
-// The filename is whitelisted to index.vtt or sprite_NNN.jpg.
+// The filename is whitelisted to index.vtt, sprite_NNN.jpg or chapter_NNN.jpg.
 func (h *TrickplayHandler) ServeFile(w http.ResponseWriter, r *http.Request) {
 	if h.svc == nil {
 		http.NotFound(w, r)

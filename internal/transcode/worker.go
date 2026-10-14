@@ -145,6 +145,34 @@ func (w *Worker) SetMaxSessions(n int) {
 	}
 }
 
+// TryReserveSlot claims one of the worker's session slots for an encode that
+// runs outside the job queue — a converted download (internal/downloads) —
+// so it counts against the same transcode concurrency as playback: while it
+// holds the slot, jobLoop dequeues one fewer session and the heartbeat
+// reports the slot busy, so the dispatcher routes playback to an idle worker.
+// costCenti is added to the weighted-dispatch load the same way a job's is.
+// Returns ok=false, taking nothing, when every slot is in use; otherwise
+// release must be called exactly once when the encode ends.
+func (w *Worker) TryReserveSlot(costCenti int) (release func(), ok bool) {
+	for {
+		cur := w.activeSessions.Load()
+		if cur >= w.maxSessions.Load() {
+			return nil, false
+		}
+		if w.activeSessions.CompareAndSwap(cur, cur+1) {
+			break
+		}
+	}
+	w.activeCostCenti.Add(int64(costCenti))
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			w.activeSessions.Add(-1)
+			w.activeCostCenti.Add(-int64(costCenti))
+		})
+	}, true
+}
+
 // SetQSVDecode enables Intel QSV hardware HEVC decode on this worker
 // (TRANSCODE_QSV_DECODE). Off by default; the worker falls back to software
 // decode if a QSV-decode ffmpeg fails before producing its first segment.

@@ -71,6 +71,38 @@ func (s *PgStore) MarkSkipped(ctx context.Context, itemID uuid.UUID, reason stri
 	})
 }
 
+// SetChapterThumbs records how many chapter thumbnails the item has
+// (ChapterThumbStore).
+func (s *PgStore) SetChapterThumbs(ctx context.Context, itemID uuid.UUID, count int) error {
+	n := int32(count)
+	return gen.New(s.pool).SetTrickplayChapterThumbs(ctx, gen.SetTrickplayChapterThumbsParams{
+		ItemID:            itemID,
+		ChapterThumbCount: &n,
+	})
+}
+
+// ChapterThumbs returns the file whose chapters have thumbnails and how
+// many, or uuid.Nil / 0 when the item has none.
+func (s *PgStore) ChapterThumbs(ctx context.Context, itemID uuid.UUID) (uuid.UUID, int, error) {
+	row, err := gen.New(s.pool).GetTrickplayChapterThumbs(ctx, itemID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return uuid.Nil, 0, nil
+		}
+		return uuid.Nil, 0, err
+	}
+	if !row.FileID.Valid || row.ChapterThumbCount == nil {
+		return uuid.Nil, 0, nil
+	}
+	return uuid.UUID(row.FileID.Bytes), int(*row.ChapterThumbCount), nil
+}
+
+// ListChapterThumbCandidates returns items whose finished sprites predate
+// chapter thumbnails and whose sprite file has chapters, oldest first.
+func (s *PgStore) ListChapterThumbCandidates(ctx context.Context, limit int) ([]uuid.UUID, error) {
+	return gen.New(s.pool).ListChapterThumbCandidates(ctx, int32(limit))
+}
+
 // ResetInterrupted clears the 'pending' row a cancelled generation leaves
 // behind so the item reads as not-started again.
 func (s *PgStore) ResetInterrupted(ctx context.Context, itemID uuid.UUID) error {

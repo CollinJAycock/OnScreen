@@ -46,6 +46,7 @@ func (h Handlers) ValidateLibraryAccess() error {
 	// (UserHandler also has a WithLibraryAccess method, but it takes a
 	// UserLibraryAccessService for admin grant management, not a content ACL,
 	// so it is deliberately not asserted here.)
+	check("downloads", h.Downloads != nil, h.Downloads)
 	check("lyrics", h.Lyrics != nil, h.Lyrics)
 	check("people", h.People != nil, h.People)
 	check("subtitles", h.Subtitles != nil, h.Subtitles)

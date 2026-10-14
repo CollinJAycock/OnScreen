@@ -116,6 +116,33 @@ type ContinueWatchingDismissal struct {
 	DismissedAt pgtype.Timestamptz `json:"dismissed_at"`
 }
 
+type DownloadConversion struct {
+	ID          uuid.UUID          `json:"id"`
+	MediaItemID uuid.UUID          `json:"media_item_id"`
+	MediaFileID uuid.UUID          `json:"media_file_id"`
+	Quality     string             `json:"quality"`
+	Status      string             `json:"status"`
+	Progress    float32            `json:"progress"`
+	Error       *string            `json:"error"`
+	SizeBytes   *int64             `json:"size_bytes"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+}
+
+type DownloadJob struct {
+	ID           uuid.UUID          `json:"id"`
+	UserID       uuid.UUID          `json:"user_id"`
+	MediaItemID  uuid.UUID          `json:"media_item_id"`
+	MediaFileID  uuid.UUID          `json:"media_file_id"`
+	Quality      string             `json:"quality"`
+	ConversionID pgtype.UUID        `json:"conversion_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
 type DvrPostprocessJob struct {
 	RecordingID      uuid.UUID          `json:"recording_id"`
 	Kind             string             `json:"kind"`
@@ -669,18 +696,19 @@ type TotpRecoveryCode struct {
 }
 
 type TrickplayStatus struct {
-	ItemID          uuid.UUID          `json:"item_id"`
-	FileID          pgtype.UUID        `json:"file_id"`
-	Status          string             `json:"status"`
-	SpriteCount     int32              `json:"sprite_count"`
-	IntervalSec     int32              `json:"interval_sec"`
-	ThumbWidth      int32              `json:"thumb_width"`
-	ThumbHeight     int32              `json:"thumb_height"`
-	GridCols        int32              `json:"grid_cols"`
-	GridRows        int32              `json:"grid_rows"`
-	LastAttemptedAt pgtype.Timestamptz `json:"last_attempted_at"`
-	LastError       *string            `json:"last_error"`
-	GeneratedAt     pgtype.Timestamptz `json:"generated_at"`
+	ItemID            uuid.UUID          `json:"item_id"`
+	FileID            pgtype.UUID        `json:"file_id"`
+	Status            string             `json:"status"`
+	SpriteCount       int32              `json:"sprite_count"`
+	IntervalSec       int32              `json:"interval_sec"`
+	ThumbWidth        int32              `json:"thumb_width"`
+	ThumbHeight       int32              `json:"thumb_height"`
+	GridCols          int32              `json:"grid_cols"`
+	GridRows          int32              `json:"grid_rows"`
+	LastAttemptedAt   pgtype.Timestamptz `json:"last_attempted_at"`
+	LastError         *string            `json:"last_error"`
+	GeneratedAt       pgtype.Timestamptz `json:"generated_at"`
+	ChapterThumbCount *int32             `json:"chapter_thumb_count"`
 }
 
 type TunerDevice struct {

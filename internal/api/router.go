@@ -103,6 +103,9 @@ type Handlers struct {
 	// Podcasts: admin podcast RSS subscriptions — subscribe, episodes,
 	// downloads, auto-download and retention.
 	Podcasts *v1.PodcastHandler
+	// Downloads: converted (lower-quality) downloads — per-user jobs over a
+	// shared, size-limited encode cache.
+	Downloads *v1.DownloadsHandler
 	// Imports: admin import of watch state, ratings, playlists and play
 	// history from a Plex, Jellyfin or Emby server.
 	Imports       *v1.ImportHandler
@@ -666,6 +669,13 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/transcode/static/{fileID}/master.m3u8", h.NativeTranscode.StaticMaster)
 				r.Get("/transcode/static/{fileID}/{rung}/index.m3u8", h.NativeTranscode.StaticRung)
 				r.Get("/transcode/static/{fileID}/{rung}/seg/{name}", h.NativeTranscode.StaticSegment)
+			}
+			// A ready converted download. The browser fetches it through a
+			// plain link (save-as), so the cookie or an asset ?token= has to
+			// authenticate it; the handler checks the job is the caller's and
+			// re-applies the item gates + bitrate limit.
+			if h.Downloads != nil {
+				r.Get("/downloads/{job}/file", h.Downloads.File)
 			}
 		})
 
@@ -1361,6 +1371,20 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Trickplay != nil {
 				r.Get("/items/{id}/trickplay", h.Trickplay.Status)
 				r.Post("/items/{id}/trickplay", h.Trickplay.Generate)
+			}
+
+			// Converted downloads: the quality menu, job create/status/list/
+			// cancel. Creating a job can start an encode, so it is frequency-
+			// capped like transcode start (the handler also caps how many of
+			// a user's jobs may wait on an encode at once).
+			if h.Downloads != nil {
+				r.Get("/items/{id}/downloads", h.Downloads.Options)
+				r.With(middleware.RateLimit(h.RateLimiter, middleware.TranscodeStartLimit,
+					middleware.SessionKey("ratelimit:download_create"))).
+					Post("/items/{id}/downloads", h.Downloads.Create)
+				r.Get("/downloads/{job}", h.Downloads.Get)
+				r.Delete("/downloads/{job}", h.Downloads.Delete)
+				r.Get("/users/me/downloads", h.Downloads.ListMine)
 			}
 
 			// External subtitle search and download (OpenSubtitles, etc.).
