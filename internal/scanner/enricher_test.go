@@ -1596,6 +1596,43 @@ func TestEnrichMovie_MergesWhenTitleYearSiblingExists(t *testing.T) {
 	}
 }
 
+// TestEnrichMovie_LockedRowIsNotMergedAway: the auto-merge deletes the
+// loser row, so a row carrying an admin's locked edits stays put (for Fix
+// Match) instead of silently losing them.
+func TestEnrichMovie_LockedRowIsNotMergedAway(t *testing.T) {
+	libraryID := uuid.New()
+	loserID := uuid.New()
+	survivorID := uuid.New()
+	updater := newMockUpdater()
+	year := 2010
+	updater.items[loserID] = &media.Item{
+		ID: loserID, LibraryID: libraryID, Type: "movie",
+		Title: "The Way", LockedFields: []string{"summary"},
+	}
+	updater.items[survivorID] = &media.Item{
+		ID: survivorID, LibraryID: libraryID, Type: "movie",
+		Title: "The Way", Year: &year,
+	}
+	updater.titleYearMatch = updater.items[survivorID]
+	updater.files[loserID] = []media.File{
+		{ID: uuid.New(), MediaItemID: loserID, FilePath: "/movies/The Way (2010)/movie.mkv", Status: "active"},
+	}
+
+	agent := &mockAgent{
+		searchMovieResult: &metadata.MovieResult{
+			TMDBID: 41442, Title: "The Way", Year: 2010,
+		},
+	}
+	e := newTestEnricher(agent, updater, nil)
+
+	if err := e.enrichMovie(context.Background(), agent, updater.items[loserID], &updater.files[loserID][0]); err != nil {
+		t.Fatalf("enrichMovie: %v", err)
+	}
+	if len(updater.mergeCalls) != 0 {
+		t.Fatalf("merge calls: got %d, want 0 (locked row)", len(updater.mergeCalls))
+	}
+}
+
 // TestMatchItem_Movie_MergesWhenTitleYearSiblingExists guards the
 // second pre-flight: an NFO-only sibling already owns the canonical
 // (title, year) tuple but has no TMDB id, so the by-tmdb pre-flight

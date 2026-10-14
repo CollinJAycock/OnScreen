@@ -791,6 +791,13 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 				survivorOrig = *survivor.OriginalTitle
 			}
 			canonOrig := result.OriginalTitle
+			// A merge keeps the survivor's row and deletes this one, so an
+			// admin's locked edits here would be lost. Leave it for Fix Match.
+			if len(item.LockedFields) > 0 {
+				e.logger.WarnContext(ctx, "enrich: skipping auto-merge — this row has admin-locked fields a merge would drop; resolve via Fix Match if appropriate",
+					"loser_id", item.ID, "survivor_id", survivor.ID, "locked_fields", item.LockedFields)
+				return nil
+			}
 			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, canonOrig) {
 				e.logger.InfoContext(ctx, "enrich: merging movie into existing canonical row",
 					"loser_id", item.ID, "survivor_id", survivor.ID,
@@ -825,6 +832,13 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 			survivorOrig := ""
 			if survivor.OriginalTitle != nil {
 				survivorOrig = *survivor.OriginalTitle
+			}
+			// A merge keeps the survivor's row and deletes this one, so an
+			// admin's locked edits here would be lost. Leave it for Fix Match.
+			if len(item.LockedFields) > 0 {
+				e.logger.WarnContext(ctx, "enrich: skipping auto-merge — this row has admin-locked fields a merge would drop; resolve via Fix Match if appropriate",
+					"loser_id", item.ID, "survivor_id", survivor.ID, "locked_fields", item.LockedFields)
+				return nil
 			}
 			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, result.OriginalTitle) {
 				e.logger.InfoContext(ctx, "enrich: merging into NFO-canonical sibling (movie)",
@@ -1176,6 +1190,13 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				survivorOrig = *survivor.OriginalTitle
 			}
 			canonOrig := result.OriginalTitle
+			// A merge keeps the survivor's row and deletes this one, so an
+			// admin's locked edits here would be lost. Leave it for Fix Match.
+			if len(item.LockedFields) > 0 {
+				e.logger.WarnContext(ctx, "enrich: skipping auto-merge — this row has admin-locked fields a merge would drop; resolve via Fix Match if appropriate",
+					"loser_id", item.ID, "survivor_id", survivor.ID, "locked_fields", item.LockedFields)
+				return nil
+			}
 			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, canonOrig) {
 				e.logger.InfoContext(ctx, "enrich: merging into existing canonical row",
 					"loser_id", item.ID, "survivor_id", survivor.ID,
@@ -1207,6 +1228,13 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 			survivorOrig := ""
 			if survivor.OriginalTitle != nil {
 				survivorOrig = *survivor.OriginalTitle
+			}
+			// A merge keeps the survivor's row and deletes this one, so an
+			// admin's locked edits here would be lost. Leave it for Fix Match.
+			if len(item.LockedFields) > 0 {
+				e.logger.WarnContext(ctx, "enrich: skipping auto-merge — this row has admin-locked fields a merge would drop; resolve via Fix Match if appropriate",
+					"loser_id", item.ID, "survivor_id", survivor.ID, "locked_fields", item.LockedFields)
+				return nil
 			}
 			if mergeIsSafe(item.Title, survivor.Title, survivorOrig, result.OriginalTitle) {
 				e.logger.InfoContext(ctx, "enrich: merging into NFO-canonical sibling (show)",
