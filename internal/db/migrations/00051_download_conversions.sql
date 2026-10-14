@@ -70,8 +70,20 @@ CREATE INDEX download_jobs_item ON public.download_jobs USING btree (media_item_
 CREATE INDEX download_jobs_file ON public.download_jobs USING btree (media_file_id);
 -- +goose StatementEnd
 
+-- +goose StatementBegin
+-- Chapter thumbnails, generated with an item's seek-bar sprites into the same
+-- trickplay directory (chapter_000.jpg, …), one per chapter of the file the
+-- sprites were cut from (trickplay_status.file_id). NULL = not generated yet
+-- (items whose sprites predate chapter thumbnails, which the opt-in
+-- chapter_thumbnails task backfills); 0 = generated, the file has no chapters.
+ALTER TABLE public.trickplay_status
+    ADD COLUMN chapter_thumb_count integer;
+-- +goose StatementEnd
+
 -- +goose Down
 -- +goose StatementBegin
+ALTER TABLE public.trickplay_status
+    DROP COLUMN IF EXISTS chapter_thumb_count;
 DROP TABLE IF EXISTS public.download_jobs;
 DROP TABLE IF EXISTS public.download_conversions;
 -- +goose StatementEnd

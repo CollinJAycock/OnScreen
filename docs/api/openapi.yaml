@@ -69,7 +69,7 @@ tags:
   - name: Subtitles
     description: External subtitle search, download, and OCR.
   - name: Trickplay
-    description: Seekbar thumbnail previews.
+    description: Seekbar thumbnail previews and chapter thumbnails.
   - name: Downloads
     description: Converted (lower-quality) downloads — per-user jobs over a shared encode cache.
   - name: Transcode
@@ -1891,8 +1891,10 @@ paths:
         `?token=` (sprites are loaded where no Authorization header can be
         sent; a general access token is rejected in the URL). The item's
         library ACL and the caller's content-rating ceiling apply (404 when
-        either fails). `file` is whitelisted to `index.vtt` or
-        `sprite_NNN.jpg`; the VTT's cues name sprites relative to it.
+        either fails). `file` is whitelisted to `index.vtt`,
+        `sprite_NNN.jpg` or `chapter_NNN.jpg` (a chapter thumbnail, linked
+        from the item detail's `chapters[].thumb_url`); the VTT's cues name
+        sprites relative to it.
       tags: [Trickplay]
       responses:
         '200':
@@ -6485,6 +6487,15 @@ components:
         title:    { type: string }
         start_ms: { type: integer, format: int64 }
         end_ms:   { type: integer, format: int64 }
+        thumb_url:
+          type: string
+          description: |
+            The chapter's thumbnail, `/trickplay/{item_id}/chapter_NNN.jpg`
+            (320 px wide, taken at the chapter start plus min(5 s, 10% of
+            its length)). Present only on the chapters of the file the item's
+            seek-bar sprites were cut from, once they exist; same auth as the
+            sprites (Bearer / cookie, or an asset `?token=`). Added in
+            migration 00051.
     Marker:
       type: object
       properties:

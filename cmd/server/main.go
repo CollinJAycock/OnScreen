@@ -970,6 +970,9 @@ func run() error {
 		WithExternalRatings(gen.New(roPool)).
 		WithEpisodeOrder(mediaSvc).
 		WithLabels(gen.New(roPool)).
+		// Chapters carry thumb_url once the sprites (and with them the
+		// chapter thumbnails) exist.
+		WithChapterThumbs(trickplaySvc).
 		// A metadata edit drops the hub's cached trending row, which carries
 		// titles and was rating-filtered when fetched.
 		WithCacheInvalidator(hubHandler)
@@ -1455,6 +1458,10 @@ func run() error {
 	// worker slot as post-scan generation (seeded enabled below).
 	schedRegistry.Register("trickplay_backfill",
 		scheduler.NewTrickplayBackfillHandler(trickplayPlanner, logger))
+	// Chapter thumbnails for items whose sprites predate them (opt-in, seeded
+	// disabled below); new and regenerated sprites get them with the run.
+	schedRegistry.Register("chapter_thumbnails",
+		scheduler.NewChapterThumbsHandler(trickplaySvc, logger))
 	// Converted-download cache: expiry, size limit, orphans (seeded enabled).
 	schedRegistry.Register("download_cache_cleanup",
 		scheduler.NewDownloadCacheCleanupHandler(

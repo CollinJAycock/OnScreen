@@ -139,8 +139,16 @@ func (g *Generator) Generate(ctx context.Context, itemID uuid.UUID) error {
 			"item_id", itemID, "error", err)
 		return err
 	}
+	// Chapter thumbnails ride along with the sprites (the run just wiped the
+	// old ones with the directory). Best-effort: the sprites are done either
+	// way, and a failure only means the chapter list shows no pictures.
+	chapterThumbs, err := g.GenerateChapterThumbs(ctx, itemID, fileID)
+	if err != nil {
+		g.logger.WarnContext(ctx, "trickplay chapter thumbnails failed",
+			"item_id", itemID, "error", err)
+	}
 	g.logger.InfoContext(ctx, "trickplay generated",
-		"item_id", itemID, "sprites", len(names), "duration_sec", duration)
+		"item_id", itemID, "sprites", len(names), "chapter_thumbs", chapterThumbs, "duration_sec", duration)
 	return nil
 }
 

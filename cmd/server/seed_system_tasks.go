@@ -181,6 +181,18 @@ var requiredSystemTasks = []systemTask{
 		enabled:  true,
 	},
 	{
+		name:     "Chapter thumbnails backfill",
+		taskType: "chapter_thumbnails",
+		// Nightly at 2:47am local, after the sprite backfill. Adds chapter
+		// thumbnails to items whose seek-bar sprites were generated before
+		// chapter thumbnails existed (new and regenerated sprites get them in
+		// the same run) — one seek-and-decode per chapter, oldest items
+		// first, within a 30-minute budget. Seeded DISABLED: an opt-in sweep
+		// of the back catalogue, never run unprompted.
+		cronExpr: "47 2 * * *",
+		enabled:  false,
+	},
+	{
 		name:     "Converted download cache cleanup",
 		taskType: "download_cache_cleanup",
 		// Hourly at :13. Evicts converted downloads past their expiry, then

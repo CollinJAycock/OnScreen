@@ -23,10 +23,30 @@ func (q *Queries) DeleteTrickplayStatus(ctx context.Context, itemID uuid.UUID) e
 	return err
 }
 
+const getTrickplayChapterThumbs = `-- name: GetTrickplayChapterThumbs :one
+SELECT file_id, chapter_thumb_count
+FROM trickplay_status
+WHERE item_id = $1 AND status = 'done' AND chapter_thumb_count > 0
+`
+
+type GetTrickplayChapterThumbsRow struct {
+	FileID            pgtype.UUID `json:"file_id"`
+	ChapterThumbCount *int32      `json:"chapter_thumb_count"`
+}
+
+// The file whose chapters have thumbnails and how many, for the item detail
+// response's chapter thumb_url. Only a finished run counts.
+func (q *Queries) GetTrickplayChapterThumbs(ctx context.Context, itemID uuid.UUID) (GetTrickplayChapterThumbsRow, error) {
+	row := q.db.QueryRow(ctx, getTrickplayChapterThumbs, itemID)
+	var i GetTrickplayChapterThumbsRow
+	err := row.Scan(&i.FileID, &i.ChapterThumbCount)
+	return i, err
+}
+
 const getTrickplayStatus = `-- name: GetTrickplayStatus :one
 SELECT item_id, file_id, status, sprite_count, interval_sec,
        thumb_width, thumb_height, grid_cols, grid_rows,
-       last_attempted_at, last_error, generated_at
+       last_attempted_at, last_error, generated_at, chapter_thumb_count
 FROM trickplay_status
 WHERE item_id = $1
 `
@@ -49,8 +69,47 @@ func (q *Queries) GetTrickplayStatus(ctx context.Context, itemID uuid.UUID) (Tri
 		&i.LastAttemptedAt,
 		&i.LastError,
 		&i.GeneratedAt,
+		&i.ChapterThumbCount,
 	)
 	return i, err
+}
+
+const listChapterThumbCandidates = `-- name: ListChapterThumbCandidates :many
+SELECT ts.item_id
+FROM trickplay_status ts
+JOIN media_items mi ON mi.id = ts.item_id
+JOIN media_files mf ON mf.id = ts.file_id
+WHERE ts.status = 'done'
+  AND ts.chapter_thumb_count IS NULL
+  AND mi.deleted_at IS NULL
+  AND mf.status = 'active'
+  AND jsonb_typeof(mf.chapters) = 'array'
+  AND jsonb_array_length(mf.chapters) > 0
+ORDER BY ts.generated_at, ts.item_id
+LIMIT $1::int
+`
+
+// Items whose sprites predate chapter thumbnails (chapter_thumb_count NULL on
+// a finished run) and whose sprite file has chapters, oldest first: the
+// chapter_thumbnails task's work list.
+func (q *Queries) ListChapterThumbCandidates(ctx context.Context, lim int32) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listChapterThumbCandidates, lim)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var item_id uuid.UUID
+		if err := rows.Scan(&item_id); err != nil {
+			return nil, err
+		}
+		items = append(items, item_id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const markTrickplayDone = `-- name: MarkTrickplayDone :exec
@@ -93,6 +152,24 @@ func (q *Queries) MarkTrickplayFailed(ctx context.Context, arg MarkTrickplayFail
 	return err
 }
 
+const setTrickplayChapterThumbs = `-- name: SetTrickplayChapterThumbs :exec
+UPDATE trickplay_status
+SET chapter_thumb_count = $2
+WHERE item_id = $1
+`
+
+type SetTrickplayChapterThumbsParams struct {
+	ItemID            uuid.UUID `json:"item_id"`
+	ChapterThumbCount *int32    `json:"chapter_thumb_count"`
+}
+
+// Records how many chapter thumbnails (chapter_000.jpg, ...) sit next to the
+// item's sprites; 0 = the file has no chapters. Migration 00051.
+func (q *Queries) SetTrickplayChapterThumbs(ctx context.Context, arg SetTrickplayChapterThumbsParams) error {
+	_, err := q.db.Exec(ctx, setTrickplayChapterThumbs, arg.ItemID, arg.ChapterThumbCount)
+	return err
+}
+
 const upsertTrickplayPending = `-- name: UpsertTrickplayPending :exec
 INSERT INTO trickplay_status (
     item_id, file_id, status, interval_sec, thumb_width, thumb_height,
@@ -109,7 +186,9 @@ ON CONFLICT (item_id) DO UPDATE SET
     grid_cols         = EXCLUDED.grid_cols,
     grid_rows         = EXCLUDED.grid_rows,
     last_attempted_at = NOW(),
-    last_error        = NULL
+    last_error        = NULL,
+    -- The run wipes the item's directory, chapter thumbnails included.
+    chapter_thumb_count = NULL
 `
 
 type UpsertTrickplayPendingParams struct {

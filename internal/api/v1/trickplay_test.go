@@ -362,6 +362,8 @@ func TestTrickplay_ServeFile_RejectsBadFilenames(t *testing.T) {
 		"index.vtt.bak",
 		"INDEX.VTT", // case-sensitive whitelist
 		"sprite_abc.jpg",
+		"chapter_1.jpg", // chapter thumbs are 3-digit zero-padded too
+		"chapter_001.png",
 		"random.txt",
 		"",
 	}
@@ -428,6 +430,27 @@ func TestTrickplay_ServeFile_ServesSprite(t *testing.T) {
 	}
 	if rec.Header().Get("Cache-Control") == "" {
 		t.Error("expected Cache-Control header on sprite")
+	}
+	if rec.Body.Len() != len(body) {
+		t.Errorf("served %d bytes, wrote %d", rec.Body.Len(), len(body))
+	}
+}
+
+// Chapter thumbnails sit next to the sprites and are served by the same
+// handler, behind the same item gates.
+func TestTrickplay_ServeFile_ServesChapterThumb(t *testing.T) {
+	dir := t.TempDir()
+	body := []byte{0xff, 0xd8, 0xff, 0xe0}
+	if err := os.WriteFile(filepath.Join(dir, "chapter_012.jpg"), body, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	svc := &fakeTrickplayService{itemDir: dir}
+	h := NewTrickplayHandler(svc, &fakeTrickplayMedia{}, silentLogger())
+	req := tpReq(http.MethodGet, "/", nil, uuid.New().String(), "chapter_012.jpg")
+	rec := httptest.NewRecorder()
+	h.ServeFile(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("got %d, want 200", rec.Code)
 	}
 	if rec.Body.Len() != len(body) {
 		t.Errorf("served %d bytes, wrote %d", rec.Body.Len(), len(body))

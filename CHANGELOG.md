@@ -376,6 +376,20 @@ API change lands only when every first-party client moves with it — see
     asset-token auth) and `GET /users/me/downloads`. The original download is
     unchanged; phone and TV apps need no update.
   - **Migration 00051** adds `download_conversions` and `download_jobs`.
+- **Chapter thumbnails.** The player's chapter menu shows a picture of each
+  chapter, and a title's page shows a chapter strip you can start playing
+  from.
+  - Thumbnails are made with the seek-bar thumbnails (trickplay): one frame
+    per chapter, a few seconds in, from the file the seek-bar thumbnails come
+    from. New and regenerated seek-bar thumbnails get them automatically;
+    for titles that already have seek-bar thumbnails, enable the new
+    "Chapter thumbnails backfill" task (off by default) or regenerate the
+    library's seek-bar thumbnails. Nothing is regenerated at startup.
+  - They are served beside the seek-bar thumbnails with the same access
+    checks (library, content rating, labels).
+  - **API (additive):** each chapter in the item detail gains `thumb_url`
+    when it has a thumbnail.
+  - **Migration 00051** adds `trickplay_status.chapter_thumb_count`.
 
 ### Changed
 
