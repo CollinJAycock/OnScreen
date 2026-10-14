@@ -2,11 +2,13 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, photoAlbumApi, assetUrl, type ItemDetail, type PhotoEXIF } from '$lib/api';
+  import { itemApi, mediaApi, photoAlbumApi, photoPeopleApi, assetUrl, type ItemDetail, type PhotoEXIF, type PhotoFace } from '$lib/api';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   import AlbumPicker from '$lib/components/AlbumPicker.svelte';
   import { toast } from '$lib/stores/toast';
+  import { capabilities } from '$lib/stores/capabilities';
   import { loadMapSelection } from '$lib/photoMap';
+  import { loadMemorySelection, originalFile, photoImageUrl, isRawPath } from '$lib/photos';
   import {
     contextKey,
     photoViewerHref,
@@ -21,6 +23,21 @@
   let error = '';
   let isAdmin = false;
   let editMetadataOpen = false;
+
+  // Faces on this photo (detected by the opt-in face-detection task, named
+  // by hand). Boxes show while the pointer is over the photo, or always
+  // when "Faces" is on; names show on hover.
+  let faces: PhotoFace[] = [];
+  let canEditFaces = false;
+  let showFaces = false;
+  let editingFace: PhotoFace | null = null;
+  let faceName = '';
+  let faceSaving = false;
+  let peopleNames: string[] = [];
+  let peopleLoadedFor = '';
+
+  // "Download original": the RAW of a RAW + JPEG pair, else the photo's file.
+  $: original = originalFile(item?.files);
 
   // Sibling photos for prev/next nav: the library's photos, or the album's /
   // the map spot's when the viewer was opened from there (?album= / ?map=,
@@ -56,11 +73,19 @@
     error = '';
     exif = null;
     item = null;
+    faces = [];
+    editingFace = null;
     resetZoom();
     try {
       item = await itemApi.get(currentId);
       // EXIF is optional — 404 just means no EXIF block on this image.
       itemApi.exif(currentId).then(e => { if (id === currentId) exif = e; }).catch(() => {});
+      // Faces are optional too (older servers have no face endpoint).
+      photoPeopleApi.itemFaces(currentId).then(r => {
+        if (id !== currentId) return;
+        faces = r?.faces ?? [];
+        canEditFaces = !!r?.can_edit;
+      }).catch(() => {});
       // Load siblings whenever the context changed or the current photo
       // isn't already in the cached list (first visit, or jumped to a photo
       // in a different library).
@@ -92,6 +117,14 @@
         if (sel && sel.libraryId === c.libraryId && sel.ids.includes(currentId)) {
           return sel.ids.map(sid => ({ id: sid }));
         }
+      }
+      if (c.kind === 'person') {
+        return (await photoPeopleApi.personItems(c.personId, 500)).items;
+      }
+      if (c.kind === 'memory') {
+        // The memory's photos, remembered when it was opened.
+        const ids = loadMemorySelection(c.key);
+        if (ids && ids.includes(currentId)) return ids.map(sid => ({ id: sid }));
       }
       // Photo libraries default to taken_at desc, matching browse order.
       const r = await mediaApi.listItems(libraryId, 500, 0, { sort: 'taken_at', sort_dir: 'desc' });
@@ -134,6 +167,65 @@
       removing = false;
     }
   }
+
+  // ── Faces ────────────────────────────────────────────────────────────────
+  // Matching is manual: a detected face is named here (or on the People
+  // page). A name the library already has joins that person.
+
+  async function loadPeopleNames() {
+    if (!item || peopleLoadedFor === item.library_id) return;
+    peopleLoadedFor = item.library_id;
+    try {
+      peopleNames = (await photoPeopleApi.people(item.library_id)).map(p => p.name);
+    } catch {
+      peopleNames = [];
+    }
+  }
+
+  function openFace(f: PhotoFace) {
+    if (!canEditFaces) {
+      if (f.person_id) goto(`/photos/people/${encodeURIComponent(f.person_id)}`);
+      return;
+    }
+    editingFace = f;
+    faceName = f.person_name ?? '';
+    void loadPeopleNames();
+  }
+
+  async function saveFace() {
+    if (!editingFace || faceSaving) return;
+    faceSaving = true;
+    try {
+      const updated = await photoPeopleApi.nameFace(editingFace.id, faceName.trim());
+      faces = faces.map(f => (f.id === updated.id ? { ...f, person_id: updated.person_id, person_name: updated.person_name } : f));
+      if (updated.person_name && !peopleNames.includes(updated.person_name)) {
+        peopleNames = [...peopleNames, updated.person_name];
+      }
+      editingFace = null;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error && e.message ? e.message : 'Could not name the face');
+    } finally {
+      faceSaving = false;
+    }
+  }
+
+  async function removeFace() {
+    if (!editingFace || faceSaving) return;
+    faceSaving = true;
+    try {
+      await photoPeopleApi.deleteFace(editingFace.id);
+      const gone = editingFace.id;
+      faces = faces.filter(f => f.id !== gone);
+      editingFace = null;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error && e.message ? e.message : 'Could not remove the face');
+    } finally {
+      faceSaving = false;
+    }
+  }
+
+  $: namedPeople = faces.filter(f => f.person_id && f.person_name);
+  $: unnamedCount = faces.filter(f => !f.person_id).length;
 
   function clearSlideTimer() {
     if (slideTimer) { clearTimeout(slideTimer); slideTimer = null; }
@@ -259,6 +351,7 @@
     // defaultPrevented covers the album dialog's own Escape when its window
     // listener ran first and has already closed it.
     if (albumPickerOpen || editMetadataOpen || e.defaultPrevented) return;
+    if (editingFace && e.key === 'Escape') { editingFace = null; return; }
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT' || t.isContentEditable)) return;
     if (e.key === 'ArrowLeft') { e.preventDefault(); go(prevPhoto); }
@@ -269,6 +362,7 @@
       else close();
     }
     else if (e.key === 'i' || e.key === 'I') { showInfo = !showInfo; }
+    else if (e.key === 'f' || e.key === 'F') { showFaces = !showFaces; }
     else if (e.key === '+' || e.key === '=') { e.preventDefault(); zoomIn(); }
     else if (e.key === '-') { e.preventDefault(); zoomOut(); }
     else if (e.key === '0') { resetZoom(); }
@@ -281,6 +375,11 @@
     try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { /* keep false */ }
     load(id);
     window.addEventListener('keydown', onKey);
+    // Opened as a slideshow (a memory's Play button).
+    if ($page.url.searchParams.get('slideshow') === '1') {
+      slideshow = true;
+      scheduleNextSlide();
+    }
   });
   onDestroy(() => {
     window.removeEventListener('keydown', onKey);
@@ -335,6 +434,34 @@
       title="Slideshow (Space)"
     >{slideshow ? '⏸' : '▶'}</button>
     <button class="icon-btn" class:on={showInfo} on:click={() => showInfo = !showInfo} title="Info (i)">i</button>
+    {#if faces.length > 0}
+      <button
+        class="icon-btn"
+        class:on={showFaces}
+        on:click={() => showFaces = !showFaces}
+        title="Show faces (f)"
+        aria-label="Show faces"
+        aria-pressed={showFaces}
+      >
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" aria-hidden="true">
+          <path d="M1.75 5V2.75a1 1 0 0 1 1-1H5M11 1.75h2.25a1 1 0 0 1 1 1V5M14.25 11v2.25a1 1 0 0 1-1 1H11M5 14.25H2.75a1 1 0 0 1-1-1V11" />
+          <circle cx="8" cy="7" r="2.25" />
+          <path d="M4.5 12.25c.6-1.6 2-2.5 3.5-2.5s2.9.9 3.5 2.5" />
+        </svg>
+      </button>
+    {/if}
+    {#if $capabilities?.features?.web_downloads && original?.stream_token}
+      <a
+        class="icon-btn"
+        href={assetUrl(`/media/download/${original.id}?token=${encodeURIComponent(original.stream_token)}`)}
+        title={isRawPath(`x.${original.container ?? ''}`) ? `Download original (${(original.container ?? '').toUpperCase()})` : 'Download original'}
+        aria-label="Download original"
+      >
+        <svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M8 2v8M4.75 7 8 10.25 11.25 7M2.75 13.25h10.5" />
+        </svg>
+      </a>
+    {/if}
     <button
       class="icon-btn"
       on:click={() => albumPickerOpen = true}
@@ -383,13 +510,59 @@
       on:touchend={onTouchEnd}
       role="presentation"
     >
-      <img
-        src={assetUrl(`/artwork/${encodeURI(item.poster_path)}?v=${item.updated_at}`)}
-        alt={item.title}
-        draggable="false"
+      <div
+        class="stage"
+        class:faces-on={showFaces}
         style="transform: translate({panX}px, {panY}px) scale({zoom}); cursor: {zoom > 1 ? (isDragging ? 'grabbing' : 'grab') : 'zoom-in'};"
-      />
+      >
+        <img
+          src={photoImageUrl(item)}
+          alt={item.title}
+          draggable="false"
+        />
+        {#each faces as f (f.id)}
+          <button
+            class="face"
+            class:named={!!f.person_name}
+            class:active={editingFace?.id === f.id}
+            style="left:{f.x * 100}%;top:{f.y * 100}%;width:{f.w * 100}%;height:{f.h * 100}%"
+            title={f.person_name ?? (canEditFaces ? 'Name this person' : 'Unnamed')}
+            aria-label={f.person_name ?? 'Unnamed face'}
+            on:mousedown|stopPropagation
+            on:dblclick|stopPropagation
+            on:click|stopPropagation={() => openFace(f)}
+          >
+            <span class="face-name">{f.person_name ?? (canEditFaces ? 'Who is this?' : 'Unnamed')}</span>
+          </button>
+        {/each}
+      </div>
     </div>
+
+    {#if editingFace}
+      <form class="face-editor" on:submit|preventDefault={saveFace}>
+        <label for="face-name">Who is this?</label>
+        <!-- svelte-ignore a11y_autofocus -->
+        <input
+          id="face-name"
+          type="text"
+          list="face-people"
+          maxlength="100"
+          placeholder="Name"
+          autocomplete="off"
+          autofocus
+          bind:value={faceName}
+          on:keydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); editingFace = null; } }}
+        />
+        <datalist id="face-people">
+          {#each peopleNames as n}<option value={n}></option>{/each}
+        </datalist>
+        <div class="face-editor-actions">
+          <button type="submit" class="fe-primary" disabled={faceSaving}>{faceName.trim() ? 'Save' : 'Clear name'}</button>
+          <button type="button" class="fe-secondary" disabled={faceSaving} on:click={removeFace} title="Remove this box: it isn't a face">Not a face</button>
+          <button type="button" class="fe-secondary" on:click={() => editingFace = null}>Cancel</button>
+        </div>
+      </form>
+    {/if}
 
     {#if prevPhoto}
       <button class="nav-btn left" on:click={() => go(prevPhoto)} title="Previous (←)">‹</button>
@@ -426,6 +599,19 @@
             <span class="k">Location</span>
             <span class="v">
               <a href="https://www.openstreetmap.org/?mlat={exif.gps_lat}&mlon={exif.gps_lon}#map=15/{exif.gps_lat}/{exif.gps_lon}" target="_blank" rel="noopener noreferrer">{fmtGPS(exif.gps_lat, exif.gps_lon)}</a>
+            </span>
+          </div>
+        {/if}
+        {#if namedPeople.length > 0 || unnamedCount > 0}
+          <div class="row">
+            <span class="k">People</span>
+            <span class="v people-list">
+              {#each namedPeople as f (f.id)}
+                <a href="/photos/people/{encodeURIComponent(f.person_id ?? '')}">{f.person_name}</a>
+              {/each}
+              {#if unnamedCount > 0}
+                <span class="unnamed">{unnamedCount} unnamed</span>
+              {/if}
             </span>
           </div>
         {/if}
@@ -539,15 +725,108 @@
     overflow: hidden;
     touch-action: none;
   }
-  .frame img {
+  /* The stage is the photo's own box: face boxes are positioned in % of it,
+     and zoom / pan transform it as one. */
+  .stage {
+    position: relative;
+    display: block;
+    line-height: 0;
+    transition: transform 0.18s ease-out;
+    will-change: transform;
+  }
+  .stage img {
     max-width: 100vw;
     max-height: 100vh;
     object-fit: contain;
     display: block;
-    transition: transform 0.18s ease-out;
-    will-change: transform;
   }
-  .page.dragging .frame img { transition: none; }
+  .page.dragging .stage { transition: none; }
+
+  /* Face boxes: hidden until the pointer is over the photo (or Faces is
+     on). They sit on the photo itself, so they're drawn light-on-dark with
+     a dark halo to read on any image, like the viewer's other chrome. */
+  .face {
+    position: absolute;
+    padding: 0;
+    background: transparent;
+    border: 2px solid rgba(255, 255, 255, 0.85);
+    border-radius: 4px;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.15s;
+    line-height: 1.2;
+  }
+  .stage:hover .face,
+  .stage.faces-on .face,
+  .face:focus-visible,
+  .face.active { opacity: 1; }
+  .face:not(.named) { border-style: dashed; }
+  .face.active { border-color: var(--accent); }
+  .face-name {
+    position: absolute;
+    left: 50%;
+    top: 100%;
+    transform: translate(-50%, 4px);
+    white-space: nowrap;
+    font-size: 0.72rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.12s;
+  }
+  .face:hover .face-name,
+  .face:focus-visible .face-name,
+  .stage.faces-on .face.named .face-name { opacity: 1; }
+
+  .face-editor {
+    position: absolute;
+    left: 50%;
+    bottom: 3.5rem;
+    transform: translateX(-50%);
+    z-index: 12;
+    width: min(360px, calc(100vw - 32px));
+    background: var(--bg-elevated);
+    color: var(--text-primary);
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    padding: 0.8rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.35);
+  }
+  .face-editor label { font-size: 0.75rem; color: var(--text-secondary); }
+  .face-editor input {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 0.45rem 0.6rem;
+    border-radius: 6px;
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
+    color: var(--text-primary);
+    font-size: 0.85rem;
+  }
+  .face-editor-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; }
+  .face-editor-actions button {
+    padding: 0.35rem 0.7rem;
+    border-radius: 6px;
+    font-size: 0.78rem;
+    cursor: pointer;
+    border: 1px solid var(--border-strong);
+  }
+  .fe-primary { background: var(--accent); color: #fff; border-color: var(--accent) !important; }
+  .fe-secondary { background: transparent; color: var(--text-primary); }
+  .face-editor-actions button:hover:not(:disabled) { filter: brightness(1.1); }
+  .face-editor-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .people-list { display: flex; flex-wrap: wrap; gap: 0.35rem 0.6rem; }
+  .people-list .unnamed { color: rgba(255,255,255,0.45); }
+  a.icon-btn { text-decoration: none; }
 
   .nav-btn {
     position: absolute;

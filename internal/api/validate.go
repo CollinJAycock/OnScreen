@@ -37,6 +37,7 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("playlists", h.Playlists != nil, h.Playlists)
 	check("photo_albums", h.PhotoAlbums != nil, h.PhotoAlbums)
 	check("photos", h.Photos != nil, h.Photos)
+	check("photo_people", h.PhotoPeople != nil, h.PhotoPeople)
 	check("books", h.Books != nil, h.Books)
 	// These five also take a .WithLibraryAccess checker and also fail open
 	// without it, but were missing from the assertion — so the guarantee this

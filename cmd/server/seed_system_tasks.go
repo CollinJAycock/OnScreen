@@ -192,6 +192,17 @@ var requiredSystemTasks = []systemTask{
 		enabled:  false,
 	},
 	{
+		name:     "Photo face detection",
+		taskType: "face_detection",
+		// Nightly at 1:53am local (prime-offset, clear of the 2-4am block).
+		// Finds faces in photos not yet looked at — a downscaled decode and
+		// a cascade pass per photo, newest first, up to 500 photos within a
+		// 30-minute budget — so people can be named. Seeded DISABLED: face
+		// data is personal, so collecting it is the operator's decision.
+		cronExpr: "53 1 * * *",
+		enabled:  false,
+	},
+	{
 		name:     "Seek-bar thumbnail backfill",
 		taskType: "trickplay_backfill",
 		// Nightly at 2:29am local (prime-offset, and clear of the 3am

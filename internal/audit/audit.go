@@ -175,6 +175,10 @@ const (
 	// version's id, profile and state.
 	ActionOptimizeRequest = "optimize.request"
 	ActionOptimizeDelete  = "optimize.delete"
+	// ActionPhotoFaceDataDelete records an admin deleting all face data
+	// (faces, people, detection records) of one photo library, or of every
+	// library. Target is the library ID or "all"; detail carries the counts.
+	ActionPhotoFaceDataDelete = "photo.face_data_delete"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.
