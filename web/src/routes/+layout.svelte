@@ -793,6 +793,10 @@
   }
 
   :global(*, *::before, *::after) { box-sizing: border-box; margin: 0; padding: 0; }
+  /* The reset above also zeroes <dialog>'s auto margin, which is what centres
+     a modal dialog in the viewport; without it every showModal() dialog
+     (metadata editor, report a problem, season picker) sat in the top-left. */
+  :global(dialog) { margin: auto; }
   :global(body) {
     font-family: -apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', sans-serif;
     background: var(--bg-primary);

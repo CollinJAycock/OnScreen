@@ -4600,7 +4600,7 @@
             : 0}
           <!-- Row link + a sibling quick toggle (not nested in the link, so
                it's its own tab stop and doesn't navigate). -->
-          <div class="episode-row-wrap">
+          <div class="episode-row-wrap" class:has-edit={isAdmin}>
           <a href="/watch/{ep.id}" class="episode-row has-watch-toggle" class:ep-watched={ep.watched}>
             <div class="ep-number">{ep.index != null ? episodeNumberLabel(ep.index, ep.index_end) : '—'}</div>
             <div class="ep-info">
@@ -5986,11 +5986,13 @@
   .ep-watch-toggle.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   .ep-watch-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .ep-watch-toggle:disabled { opacity: 0.6; cursor: progress; }
-  /* Admin: edit an episode's metadata, under the watched toggle. */
+  /* Admin: edit an episode's metadata, left of the watched toggle (the row
+     reserves room for both; under it overflowed rows without a thumbnail). */
+  .episode-row-wrap.has-edit .episode-row.has-watch-toggle { padding-right: 4.8rem; }
   .ep-edit-btn {
     position: absolute;
-    top: 2.55rem;
-    right: 0.6rem;
+    top: 0.8rem;
+    right: 2.55rem;
     display: flex; align-items: center; justify-content: center;
     width: 26px; height: 26px;
     padding: 0;

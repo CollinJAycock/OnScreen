@@ -1504,17 +1504,19 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog {
-    background: #16161f; border: 1px solid var(--border-strong);
+    /* Theme surface: the text inside uses theme colours, so a fixed dark
+       background hid it in light mode. */
+    background: var(--bg-elevated); border: 1px solid var(--border-strong);
     border-radius: 12px; padding: 1.5rem; max-width: 400px; width: 90%;
   }
   .dialog h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin: 0 0 0.6rem 0; }
-  .dialog p { font-size: 0.85rem; color: #88889a; margin: 0 0 1.25rem 0; line-height: 1.5; }
+  .dialog p { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 1.25rem 0; line-height: 1.5; }
   .dialog strong { color: var(--text-primary); }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
   .btn-cancel {
     padding: 0.4rem 0.8rem; background: var(--border);
     border: 1px solid var(--border-strong); border-radius: 7px;
-    color: #ccccd8; font-size: 0.8rem; cursor: pointer; transition: background 0.15s;
+    color: var(--text-secondary); font-size: 0.8rem; cursor: pointer; transition: background 0.15s;
   }
   .btn-cancel:hover { background: var(--border-strong); }
   .btn-confirm-delete {
