@@ -66,6 +66,8 @@ tags:
     description: User-owned ordered playlists.
   - name: People
     description: Cast and crew.
+  - name: Studios
+    description: Studios (production companies) and TV networks, and the titles they made.
   - name: Subtitles
     description: External subtitle search, download, and OCR.
   - name: Trickplay
@@ -1733,6 +1735,81 @@ paths:
                   data:
                     type: array
                     items: { $ref: '#/components/schemas/FilmographyEntry' }
+
+  # ── Studios / networks ───────────────────────────────────────────────────────
+  /api/v1/studios:
+    get:
+      summary: List studios and networks
+      description: |
+        *(v2.6)* Studios (movies' TMDB production companies) and networks
+        (shows' TMDB networks); an NFO's `<studio>` tags win over TMDB's.
+        Only studios with at least one title the caller can see are listed,
+        each with how many — library grants, the content-rating ceiling and
+        label restrictions all apply. Ordered by name.
+      tags: [Studios]
+      parameters:
+        - { in: query, name: library_id, schema: { type: string, format: uuid }, description: 'Count only this library''s titles. 404 when the caller can''t open it.' }
+        - { in: query, name: kind, schema: { type: string, enum: [studio, network] } }
+      responses:
+        '200':
+          description: Studios with visible titles.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Studio' }
+                  meta: { type: object, properties: { total: { type: integer } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/studios/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Studio detail
+      description: '*(v2.6)* A studio and how many of its titles the caller can see. 404 when that is none, the same as an unknown id.'
+      tags: [Studios]
+      responses:
+        '200':
+          description: Studio.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Studio' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/studios/{id}/items:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { $ref: '#/components/parameters/Limit' }
+      - { $ref: '#/components/parameters/Offset' }
+      - { in: query, name: library_id, schema: { type: string, format: uuid }, description: 'Only this library''s titles. 404 when the caller can''t open it.' }
+      - { in: query, name: sort, schema: { type: string, enum: [title, year, rating, created_at] } }
+      - in: query
+        name: sort_dir
+        schema: { type: string, enum: [asc, desc] }
+        description: Defaults to `desc` for year, rating and created_at; `asc` for title.
+    get:
+      summary: A studio's titles
+      description: |
+        *(v2.6)* The studio's movies or shows the caller can see, paged and
+        sorted like library browse, in the same item shape (watch state is
+        not included). 404 when the caller can see none of them (without
+        `library_id`) or the id is unknown.
+      tags: [Studios]
+      responses:
+        '200':
+          description: One page of titles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItemListEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ── Subtitles ──────────────────────────────────────────────────────────────
   /api/v1/items/{id}/subtitles/search:
@@ -3780,6 +3857,10 @@ paths:
           - `omdb_daily_limit` *(v2.6)* — lookups the key allows a day
             (1–1000000, default 1000); the task never exceeds it in any
             24 hours. Out of range is a 422.
+          - `fanarttv_api_key` *(v2.6, masked)* — the fanart.tv key used
+            for clear logos, banners and disc art at enrichment
+            (`ItemDetail.logo_path` / `banner_path` / `disc_art_path`).
+            Empty = no fanart.tv lookups.
           - `arr_webhook_url`, `arr_path_mappings`
           - `transcode_encoders`
           - `web_downloads_enabled` *(v2.2)* — admin toggle for the
@@ -6185,6 +6266,15 @@ components:
             sets its own (`PUT /items/{id}/episode-order`): `aired` (default),
             `dvd` or `absolute`. Only meaningful for show / anime / cartoons
             libraries.
+        save_nfo:
+          type: boolean
+          description: |
+            v2.6. Write Kodi-compatible NFO files next to the media after
+            enrichment, a manual metadata edit or Fix Match: `<file>.nfo` (or
+            the `movie.nfo` already there) for movies, `tvshow.nfo` for shows,
+            `<episode file>.nfo` for episodes. Only files OnScreen wrote
+            (marked `<!-- written by OnScreen -->`) are replaced; local
+            storage only. Default off.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:
@@ -6212,6 +6302,7 @@ components:
           description: Omit for the per-type default (on for video library types, off otherwise).
         nfo_collections: { type: string, enum: ['off', sets, sets_and_tags], default: 'off' }
         episode_order:   { type: string, enum: [aired, dvd, absolute], default: aired }
+        save_nfo:        { type: boolean, default: false }
     LibraryUpdate:
       type: object
       description: |
@@ -6249,6 +6340,10 @@ components:
           type: string
           enum: [aired, dvd, absolute]
           description: Omit to preserve. Changing it on a show / anime / cartoons library re-enriches, in the background, every show that follows the library's order.
+        save_nfo:
+          type: boolean
+          nullable: true
+          description: Omit to preserve. NFO files are written as titles are next enriched, edited or re-matched.
     GenreCount:
       type: object
       properties:
@@ -6421,6 +6516,18 @@ components:
         duration_ms:    { type: integer, format: int64, nullable: true, description: 'Running time. For a multi-part movie whose first version is stacked (files[].part_index), the parts'' combined length — the timeline its stream and progress use.' }
         poster_path:    { type: string, nullable: true }
         fanart_path:    { type: string, nullable: true }
+        logo_path:      { type: string, description: 'v2.6, omitted when none. A transparent clear logo (PNG), served via /artwork/ like poster_path. Fetch it without ?w=/?h=: a resize re-encodes as JPEG and loses the transparency.' }
+        banner_path:    { type: string, description: 'v2.6, omitted when none. A wide banner image (movies, shows, artists).' }
+        disc_art_path:  { type: string, description: 'v2.6, omitted when none. Disc / CD art (movies, albums), usually a transparent PNG.' }
+        studios:
+          type: array
+          description: 'v2.6. Movies: production companies; shows: networks; in the provider''s order. Omitted when none.'
+          items:
+            type: object
+            properties:
+              id:   { type: string, format: uuid }
+              name: { type: string }
+              kind: { type: string, enum: [studio, network] }
         content_rating: { type: string, nullable: true }
         genres:         { type: array, items: { type: string } }
         parent_id:      { type: string, nullable: true, format: uuid }
@@ -6702,6 +6809,15 @@ components:
         biography:  { type: string, nullable: true }
         birth_date: { type: string, format: date, nullable: true }
         photo_path: { type: string, nullable: true }
+    Studio:
+      type: object
+      description: v2.6. A studio (production company) or TV network.
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        kind:       { type: string, enum: [studio, network] }
+        tmdb_id:    { type: integer, description: 'TMDB company / network id, when known.' }
+        item_count: { type: integer, format: int64, description: 'Titles the caller can see (within library_id when given).' }
     FilmographyEntry:
       type: object
       properties:
