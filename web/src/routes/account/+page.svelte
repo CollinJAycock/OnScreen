@@ -4,6 +4,7 @@
   // devices are signed in and signs one out.
   import { userApi } from '$lib/api';
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
+  import ApiKeys from '$lib/components/ApiKeys.svelte';
 </script>
 
 <svelte:head><title>Account — OnScreen</title></svelte:head>
@@ -26,11 +27,22 @@
       keepCurrent
     />
   </section>
+
+  <section class="card">
+    <h2>API keys</h2>
+    <p class="sub">
+      Long-lived keys for scripts and integrations such as Home Assistant or
+      Kometa. A key can do what you can, except sign in or change your account's
+      security. Revoking one stops it at once.
+    </p>
+    <ApiKeys />
+  </section>
 </div>
 
 <style>
   .account { max-width: 640px; }
   h1 { font-size: 1.25rem; font-weight: 700; color: var(--text-primary); margin: 0 0 1.25rem; }
+  .card + .card { margin-top: 1rem; }
   .card {
     background: var(--bg-elevated);
     border: 1px solid var(--border);

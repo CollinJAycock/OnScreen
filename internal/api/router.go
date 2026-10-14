@@ -54,6 +54,7 @@ type Handlers struct {
 	TOTP            *v1.TOTPHandler
 	User            *v1.UserHandler
 	UserSessions    *v1.UserSessionsHandler // signed-in devices; optional
+	APIKeys         *v1.APIKeyHandler       // personal API keys; optional
 	FS              *v1.FSHandler
 	Settings        *v1.SettingsHandler
 	Analytics       *v1.AnalyticsHandler
@@ -536,6 +537,9 @@ func NewRouter(h *Handlers) http.Handler {
 		// Optional auth is applied so /auth/register can read admin claims
 		// when an admin creates a new user after initial setup.
 		r.Group(func(r chi.Router) {
+			// A personal API key can't sign in, refresh or register: those
+			// mint sessions, and a key must never be parlayed into one.
+			r.Use(middleware.RefuseAPIKey)
 			r.Use(h.Auth_mw.Optional)
 			r.Use(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit,
 				middleware.IPKey("ratelimit:auth")))
@@ -686,10 +690,13 @@ func NewRouter(h *Handlers) http.Handler {
 			// public auth group above). Setup stages a secret, activate
 			// confirms + returns recovery codes, disable turns it off.
 			if h.TOTP != nil {
-				r.Get("/auth/totp/status", h.TOTP.Status)
-				r.Post("/auth/totp/setup", h.TOTP.Setup)
-				r.Post("/auth/totp/activate", h.TOTP.Activate)
-				r.Post("/auth/totp/disable", h.TOTP.Disable)
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RefuseAPIKey)
+					r.Get("/auth/totp/status", h.TOTP.Status)
+					r.Post("/auth/totp/setup", h.TOTP.Setup)
+					r.Post("/auth/totp/activate", h.TOTP.Activate)
+					r.Post("/auth/totp/disable", h.TOTP.Disable)
+				})
 			}
 
 			// Libraries — reads are open to all authenticated users.
@@ -728,9 +735,11 @@ func NewRouter(h *Handlers) http.Handler {
 
 			// User profile — PIN management + user switching + preferences.
 			if h.User != nil {
-				r.Delete("/users/me", h.User.DeleteSelf)
-				r.Put("/users/me/pin", h.User.SetPIN)
-				r.Delete("/users/me/pin", h.User.ClearPIN)
+				// Account security: deleting the account and its PIN are
+				// out of an API key's reach.
+				r.With(middleware.RefuseAPIKey).Delete("/users/me", h.User.DeleteSelf)
+				r.With(middleware.RefuseAPIKey).Put("/users/me/pin", h.User.SetPIN)
+				r.With(middleware.RefuseAPIKey).Delete("/users/me/pin", h.User.ClearPIN)
 				r.Get("/users/me/preferences", h.User.GetPreferences)
 				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Put("/users/me/hub-layout", h.User.SetHubLayout)
@@ -738,16 +747,37 @@ func NewRouter(h *Handlers) http.Handler {
 				// Signed-in devices: list the caller's sign-ins, sign one out,
 				// or sign out everywhere else.
 				if h.UserSessions != nil {
-					r.Get("/users/me/sessions", h.UserSessions.ListMine)
-					r.Delete("/users/me/sessions", h.UserSessions.RevokeOthers)
-					r.Delete("/users/me/sessions/{id}", h.UserSessions.RevokeMine)
+					r.Group(func(r chi.Router) {
+						r.Use(middleware.RefuseAPIKey)
+						r.Get("/users/me/sessions", h.UserSessions.ListMine)
+						r.Delete("/users/me/sessions", h.UserSessions.RevokeOthers)
+						r.Delete("/users/me/sessions/{id}", h.UserSessions.RevokeMine)
+					})
 				}
 				r.Get("/users/switchable", h.User.ListSwitchable)
 				// Tight per-session cap on top of the handler's per-target
 				// lockout — bounds how fast one caller can sweep PINs across
-				// many targets.
-				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pinswitch"))).
+				// many targets. PIN switching mints a session for another
+				// profile, so no API key.
+				r.With(middleware.RefuseAPIKey,
+					middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pinswitch"))).
 					Post("/auth/pin-switch", h.User.PINSwitch)
+			}
+
+			// Personal API keys. Managing keys needs a signed-in session:
+			// a key can neither mint more keys nor revoke its siblings.
+			if h.APIKeys != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RefuseAPIKey)
+					r.Get("/users/me/api-keys", h.APIKeys.ListMine)
+					r.Post("/users/me/api-keys", h.APIKeys.CreateMine)
+					r.Delete("/users/me/api-keys/{id}", h.APIKeys.DeleteMine)
+					r.Group(func(r chi.Router) {
+						r.Use(h.Auth_mw.AdminRequired)
+						r.Get("/admin/api-keys", h.APIKeys.AdminList)
+						r.Delete("/admin/api-keys/{id}", h.APIKeys.AdminDelete)
+					})
+				})
 			}
 
 			// External scrobbling — per-user ListenBrainz / Last.fm / Trakt
@@ -777,13 +807,17 @@ func NewRouter(h *Handlers) http.Handler {
 			// Native client device pairing — claim binds a PIN to the
 			// browser-authenticated user, authorising the waiting device.
 			if h.Pair != nil {
+				// Claiming a PIN signs a new device in as the caller, so it
+				// takes a signed-in session, never an API key.
 				// Rate-limit PIN-claim guessing (6-digit code) per session.
-				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pairclaim"))).
+				r.With(middleware.RefuseAPIKey,
+					middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pairclaim"))).
 					Post("/auth/pair/claim", h.Pair.Claim)
 				// Attestation read for the confirmation screen: what device
 				// asked for this PIN. Same bucket as the claim itself, since it
 				// also answers "does this PIN exist".
-				r.With(middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pairclaim"))).
+				r.With(middleware.RefuseAPIKey,
+					middleware.RateLimit(h.RateLimiter, middleware.AuthLimit, middleware.SessionKey("pairclaim"))).
 					Get("/auth/pair/pending", h.Pair.Pending)
 			}
 
@@ -802,6 +836,7 @@ func NewRouter(h *Handlers) http.Handler {
 			// User admin management — admin only.
 			if h.User != nil {
 				r.Group(func(r chi.Router) {
+					r.Use(middleware.RefuseAPIKey)
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/users", h.User.ListUsers)
 					r.Delete("/users/{id}", h.User.DeleteUser)
@@ -837,6 +872,9 @@ func NewRouter(h *Handlers) http.Handler {
 			// Server-wide settings — admin only.
 			if h.Settings != nil {
 				r.Group(func(r chi.Router) {
+					// Server settings hold the sign-in configuration (SSO,
+					// LDAP, SMTP) and the worker credentials: not for keys.
+					r.Use(middleware.RefuseAPIKey)
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/settings", h.Settings.Get)
 					r.Patch("/settings", h.Settings.Update)
@@ -902,6 +940,8 @@ func NewRouter(h *Handlers) http.Handler {
 			// Backup / restore — admin only.
 			if h.Backup != nil {
 				r.Group(func(r chi.Router) {
+					// A backup holds every credential hash on the server.
+					r.Use(middleware.RefuseAPIKey)
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/admin/backup", h.Backup.Download)
 					r.Post("/admin/restore", h.Backup.Restore)
@@ -977,6 +1017,8 @@ func NewRouter(h *Handlers) http.Handler {
 			// Invites — admin only.
 			if h.Invite != nil {
 				r.Group(func(r chi.Router) {
+					// Invites create accounts: user administration.
+					r.Use(middleware.RefuseAPIKey)
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Post("/invites", h.Invite.Create)
 					r.Get("/invites", h.Invite.List)
@@ -1127,10 +1169,11 @@ func NewRouter(h *Handlers) http.Handler {
 			// Managed profiles — any authenticated user can manage their own.
 			if h.User != nil {
 				r.Get("/profiles", h.User.ListProfiles)
-				r.Post("/profiles", h.User.CreateProfile)
-				r.Patch("/profiles/{id}", h.User.UpdateProfile)
-				r.Delete("/profiles/{id}", h.User.DeleteProfile)
-				r.Put("/profiles/{id}/library-inherit", h.User.SetProfileLibraryInherit)
+				// Managed profiles are accounts (with PINs): reads only for keys.
+				r.With(middleware.RefuseAPIKey).Post("/profiles", h.User.CreateProfile)
+				r.With(middleware.RefuseAPIKey).Patch("/profiles/{id}", h.User.UpdateProfile)
+				r.With(middleware.RefuseAPIKey).Delete("/profiles/{id}", h.User.DeleteProfile)
+				r.With(middleware.RefuseAPIKey).Put("/profiles/{id}/library-inherit", h.User.SetProfileLibraryInherit)
 			}
 
 			// Collections & playlists.

@@ -1518,6 +1518,46 @@ export interface StreamingLimits {
 }
 
 /** One sign-in (refresh session) on the signed-in devices list. */
+// ── Personal API keys ─────────────────────────────────────────────────────────
+
+/** A personal API key as listed. The key itself is shown once, at creation;
+ *  `prefix` is its first characters, enough to tell keys apart. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  /** 'read_only' keys can only make GET requests. */
+  scope: 'full' | 'read_only';
+  created_at: string;
+  /** Approximate (written at most every few minutes); null = never used. */
+  last_used_at: string | null;
+  expires_at: string | null;
+  expired: boolean;
+  /** Owner, on the admin list only. */
+  user_id?: string;
+  username?: string;
+}
+
+/** The creation response: the row plus the full key, shown this once. */
+export interface CreatedApiKey extends ApiKey {
+  key: string;
+}
+
+export const apiKeyApi = {
+  listMine: () => api.get<ApiKey[]>('/users/me/api-keys'),
+  create: (name: string, scope: ApiKey['scope'], expiresAt?: string | null) =>
+    api.post<CreatedApiKey>('/users/me/api-keys', {
+      name,
+      scope,
+      ...(expiresAt ? { expires_at: expiresAt } : {}),
+    }),
+  revoke: (id: string) => api.del(`/users/me/api-keys/${id}`),
+  /** Admin: every user's keys. */
+  adminList: () => api.get<ApiKey[]>('/admin/api-keys'),
+  /** Admin: revoke any user's key. */
+  adminRevoke: (id: string) => api.del(`/admin/api-keys/${id}`),
+};
+
 export interface SignedInSession {
   id: string;
   /** "Chrome on Windows", "Roku", … — empty for sign-ins made before devices

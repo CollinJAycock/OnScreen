@@ -343,6 +343,28 @@ API change lands only when every first-party client moves with it — see
     on the admin user and profile lists.
   - **Migration 00047** adds `media_items.labels` and the users'
     `blocked_labels` / `allowed_labels`.
+- **Personal API keys** for scripts and integrations such as Home Assistant
+  and Kometa, which can't sign in the way an app does.
+  - **Making one:** Account ▸ API keys (Settings ▸ Security for admins) ▸
+    "Create API key". Name it, choose full access or read-only, and optionally
+    an expiry. The key (`osk_…`) is shown once with a Copy button; the server
+    keeps only a hash of it.
+  - **Using it:** send `Authorization: Bearer osk_…` or `X-Api-Key: osk_…`.
+    Never in a URL. See [docs/api/api-keys.md](docs/api/api-keys.md).
+  - **What it can do:** whatever its owner can, with their libraries, rating
+    limit and labels as they are at that moment — a restriction an admin adds
+    applies to the key straight away. Read-only keys can only read. No key can
+    sign in, refresh, change a password, PIN or 2FA, pair a TV, switch
+    profiles, manage devices, keys or users, or touch server settings and
+    backups.
+  - **Revoking:** "Revoke" stops a key on its next request. Admins see every
+    user's keys under Settings ▸ Security ▸ All API keys and can revoke any of
+    them. Deleting a user deletes their keys. Creating and revoking keys is
+    audited (`api_key.create`, `api_key.delete`).
+  - **API (additive):** `GET`/`POST /users/me/api-keys`,
+    `DELETE /users/me/api-keys/{id}`, and for admins `GET /admin/api-keys`
+    and `DELETE /admin/api-keys/{id}`.
+  - **Migration 00050** adds the `api_keys` table.
 
 ### Changed
 

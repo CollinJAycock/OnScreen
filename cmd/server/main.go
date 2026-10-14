@@ -694,8 +694,10 @@ func run() error {
 	}
 
 	// Epoch reads go to the PRIMARY: a replica would delay revocation by its lag.
+	// API key lookups too: a deleted key must stop working on the next request.
 	authMiddleware := middleware.NewAuthenticator(tokenMaker).
-		WithEpochReader(&sessionEpochAdapter{q: gen.New(rwPool)})
+		WithEpochReader(&sessionEpochAdapter{q: gen.New(rwPool)}).
+		WithAPIKeys(&apiKeyAdapter{q: gen.New(rwPool)})
 
 	auditLogger := audit.New(gen.New(rwPool), logger)
 	libHandler := v1.NewLibraryHandler(libSvc, logger).
@@ -736,6 +738,9 @@ func run() error {
 	userSessionsHandler := v1.NewUserSessionsHandler(gen.New(rwPool), logger).
 		WithAudit(auditLogger).
 		WithSegmentTokenRevoker(segTokenMgr)
+	// Personal API keys. Primary pool for the same reason: a deleted key must
+	// fail the middleware's very next lookup (apiKeyAdapter reads rwPool).
+	apiKeyHandler := v1.NewAPIKeyHandler(gen.New(rwPool), logger).WithAudit(auditLogger)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
@@ -1522,6 +1527,7 @@ func run() error {
 		TOTP:            totpHandler,
 		User:            userHandler,
 		UserSessions:    userSessionsHandler,
+		APIKeys:         apiKeyHandler,
 		FS:              fsHandler,
 		Settings:        settingsHandler,
 		Analytics:       analyticsHandler,

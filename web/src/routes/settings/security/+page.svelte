@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { authApi, settingsApi, userApi } from '$lib/api';
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
+  import ApiKeys from '$lib/components/ApiKeys.svelte';
   import type { TLSStatus } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
@@ -261,6 +262,33 @@
       revokeAllConfirm="Sign out every other device signed in to your account? This browser stays signed in."
       keepCurrent
     />
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>API keys</h2>
+        <p class="sub">
+          Your long-lived keys for scripts and integrations (Home Assistant,
+          Kometa). A key acts as you, but can't sign in or change account
+          security. See docs/api/api-keys.md for usage.
+        </p>
+      </div>
+    </div>
+    <ApiKeys />
+  </section>
+
+  <section class="card">
+    <div class="card-head">
+      <div>
+        <h2>All API keys</h2>
+        <p class="sub">
+          Every user's API keys. Revoke one that is leaked or no longer needed;
+          it stops working on its next request.
+        </p>
+      </div>
+    </div>
+    <ApiKeys admin />
   </section>
 
   <section class="card">

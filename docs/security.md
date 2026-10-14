@@ -215,6 +215,37 @@ re-read the real admin's session.
 - The page signs in through the same API as every other client and gets the
   same nonce-based Content-Security-Policy as the main web app.
 
+**Personal API keys** (v2.6; `/api/v1/users/me/api-keys`, `/api/v1/admin/api-keys`; [usage](api/api-keys.md))
+
+- `osk_` + 256 random bits. Only the SHA-256 is stored (`api_keys.key_hash`,
+  unique); the key is returned once, at creation. Lists carry an 8-character
+  display prefix, never the key or its hash; audit records (`api_key.create`,
+  `api_key.delete`) likewise.
+- Accepted as `Authorization: Bearer osk_…` or `X-Api-Key`, never in a query
+  string. A Bearer value that isn't key-shaped is still a PASETO token, so
+  existing clients are unaffected.
+- A key carries no policy. Every request resolves the hash on the primary
+  pool to the key and its owner's current admin flag, rating ceiling, label
+  restriction and session epoch — one indexed lookup, the same cost as the
+  epoch check — so a deleted key, an expired key or a deleted user fails on
+  the next request on every instance, and a restriction change applies at
+  once. Unlike the epoch check, the key lookup fails closed on a DB error.
+- Stream tokens minted by a key-authenticated request carry the key id
+  (`akid`) and die with the key; long-lived SSE streams re-check it.
+  `last_used_at` is written at most every five minutes per key (in-process
+  throttle plus a guard in the UPDATE).
+- `read_only` keys get 403 on anything but GET / HEAD / OPTIONS.
+- Keys are refused (403 `API_KEY_NOT_ALLOWED`) wherever a key could be turned
+  into an account takeover: sign-in, refresh, register, password reset,
+  invite acceptance, TOTP verify / setup / activate / disable, the account
+  PIN and self-delete, managed-profile writes, signed-in device and API key
+  management, pairing claims, PIN switch, user administration, invites,
+  server settings and backups. `Optional` auth (the sign-in group) never
+  resolves keys, so an admin's key can't create users through
+  `/auth/register`.
+- Cookie / CSRF handling is unchanged: a key is a header credential and is
+  never set as a cookie.
+
 ## Deployment, packaging & supply-chain hardening
 
 Changes to the shipped compose files, reverse-proxy sample, installers and CI.
