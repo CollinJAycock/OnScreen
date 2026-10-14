@@ -54,6 +54,11 @@ type Library struct {
 	// <tag>). See ValidNFOCollections.
 	NFOCollections string
 
+	// EpisodeOrder is the episode order the library's shows are numbered
+	// in unless a show sets its own: "aired" (the provider's broadcast
+	// order, the default), "dvd" or "absolute". See ValidEpisodeOrder.
+	EpisodeOrder string
+
 	ScanInterval            *time.Duration
 	ScanLastCompletedAt     *time.Time
 	MetadataRefreshInterval *time.Duration
@@ -84,12 +89,26 @@ type CreateLibraryParams struct {
 	TrickplayEnabled *bool
 	// NFOCollections: "" means "off".
 	NFOCollections string
+	// EpisodeOrder: "" means "aired".
+	EpisodeOrder string
 }
 
 // ValidNFOCollections reports whether s is a library's NFO collection import
 // setting.
 func ValidNFOCollections(s string) bool {
 	return s == "off" || s == "sets" || s == "sets_and_tags"
+}
+
+// ValidEpisodeOrder reports whether s is a library's default episode order:
+// "aired", "dvd" or "absolute" (the libraries_episode_order_check values).
+func ValidEpisodeOrder(s string) bool {
+	return s == "aired" || s == "dvd" || s == "absolute"
+}
+
+// HasEpisodes reports whether a library type holds shows with numbered
+// episodes — the libraries an episode order applies to.
+func HasEpisodes(libraryType string) bool {
+	return libraryType == "show" || libraryType == "anime" || libraryType == "cartoons"
 }
 
 // DefaultTrickplayEnabled reports whether a new library of the given type
@@ -120,6 +139,7 @@ type UpdateLibraryParams struct {
 	AutoGrantNewUsers *bool
 	TrickplayEnabled  *bool
 	NFOCollections    *string
+	EpisodeOrder      *string
 }
 
 // Querier is the subset of gen.Querier that this service needs.

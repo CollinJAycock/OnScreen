@@ -93,6 +93,12 @@ func (a *libraryAdapter) IsLibraryManga(ctx context.Context, libraryID uuid.UUID
 	return a.q.IsLibraryManga(ctx, libraryID)
 }
 
+// GetLibraryEpisodeOrder implements scanner.LibraryEpisodeOrderer: the
+// episode order a library's shows follow unless they set their own.
+func (a *libraryAdapter) GetLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) (string, error) {
+	return a.q.GetLibraryEpisodeOrder(ctx, libraryID)
+}
+
 func (a *libraryAdapter) ListLibraries(ctx context.Context) ([]library.Library, error) {
 	gs, err := a.q.ListLibraries(ctx)
 	if err != nil {

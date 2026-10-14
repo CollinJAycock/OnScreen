@@ -564,6 +564,9 @@ func run() error {
 	// libraryAdapter satisfies scanner.LibraryAnimeChecker via its
 	// IsLibraryAnime method.
 	metaAgent.SetLibraryAnimeCheckerFn(func() scanner.LibraryAnimeChecker { return roQ })
+	// Library default episode order (aired / DVD / absolute) for shows
+	// without one of their own. Same read-replica reasoning as above.
+	metaAgent.SetLibraryEpisodeOrderFn(func() scanner.LibraryEpisodeOrderer { return roQ })
 
 	// Wire TheAudioDB for music enrichment — no API key required.
 	audiodbClient := audiodb.New()
@@ -700,7 +703,8 @@ func run() error {
 		WithAudit(auditLogger).
 		WithWatchState(gen.New(roPool)).
 		WithParentTitles(gen.New(roPool)).
-		WithNFOSweeper(nfoCollections)
+		WithNFOSweeper(nfoCollections).
+		WithEpisodeOrderReenrich(mediaSvc, metaAgent)
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 
@@ -948,7 +952,8 @@ func run() error {
 		WithMediaStore(mediaStoreProvider).
 		WithFranchise(gen.New(roPool)).
 		WithManualCollections(gen.New(roPool)).
-		WithExternalRatings(gen.New(roPool))
+		WithExternalRatings(gen.New(roPool)).
+		WithEpisodeOrder(mediaSvc)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)

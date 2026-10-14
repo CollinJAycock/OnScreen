@@ -6,7 +6,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
+       parent_id, index, index_end, episode_order, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL;
@@ -501,7 +501,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        anilist_id, mal_id, kind,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
+       parent_id, index, index_end, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE parent_id = $1 AND deleted_at IS NULL
@@ -669,6 +669,41 @@ UPDATE media_items
 SET kind = NULLIF(@kind::text, ''),
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: SetEpisodeIndexEnd :execrows
+-- Records the last episode a multi-episode file covers (index_end; NULL for
+-- a single episode). The scanner calls this when it files or re-reads an
+-- episode. Unchanged rows are left alone (0 rows), so a rescan of a library
+-- that is already right writes nothing.
+UPDATE media_items
+SET index_end = sqlc.narg('index_end')::int,
+    updated_at = NOW()
+WHERE id = sqlc.arg('id')::uuid
+  AND type = 'episode'
+  AND deleted_at IS NULL
+  AND index_end IS DISTINCT FROM sqlc.narg('index_end')::int;
+
+-- name: SetShowEpisodeOrder :execrows
+-- Sets (or, with NULL, clears) a show's own episode order. 0 rows means the
+-- item is not a live show.
+UPDATE media_items
+SET episode_order = sqlc.narg('episode_order')::text,
+    updated_at = NOW()
+WHERE id = sqlc.arg('id')::uuid
+  AND type = 'show'
+  AND deleted_at IS NULL;
+
+-- name: ListShowsFollowingLibraryEpisodeOrder :many
+-- The live shows of a library that follow its default episode order (no
+-- order of their own): the shows to re-enrich when that default changes.
+SELECT id
+FROM media_items
+WHERE library_id = $1
+  AND type = 'show'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+  AND episode_order IS NULL
+ORDER BY id;
 
 -- name: SoftDeleteMediaItem :exec
 UPDATE media_items SET deleted_at = NOW(), updated_at = NOW()

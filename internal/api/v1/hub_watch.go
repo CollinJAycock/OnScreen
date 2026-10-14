@@ -47,19 +47,20 @@ func nextUpHubItem(row gen.ListNextUpRow) HubItem {
 		thumb = row.ShowThumbPath
 	}
 	return HubItem{
-		ID:            row.ID.String(),
-		Title:         row.Title,
-		ShowTitle:     &showTitle,
-		ShowID:        &showID,
-		Type:          "episode",
-		Year:          intPtrFrom32(row.ShowYear),
-		PosterPath:    row.ShowPosterPath,
-		FanartPath:    row.ShowFanartPath,
-		ThumbPath:     thumb,
-		DurationMS:    row.DurationMs,
-		UpdatedAt:     timestamptzToMilli(row.UpdatedAt),
-		SeasonNumber:  intOrZero32(row.SeasonNumber),
-		EpisodeNumber: intOrZero32(row.EpisodeNumber),
+		ID:               row.ID.String(),
+		Title:            row.Title,
+		ShowTitle:        &showTitle,
+		ShowID:           &showID,
+		Type:             "episode",
+		Year:             intPtrFrom32(row.ShowYear),
+		PosterPath:       row.ShowPosterPath,
+		FanartPath:       row.ShowFanartPath,
+		ThumbPath:        thumb,
+		DurationMS:       row.DurationMs,
+		UpdatedAt:        timestamptzToMilli(row.UpdatedAt),
+		SeasonNumber:     intOrZero32(row.SeasonNumber),
+		EpisodeNumber:    intOrZero32(row.EpisodeNumber),
+		EpisodeNumberEnd: intPtrFrom32(row.EpisodeNumberEnd),
 	}
 }
 

@@ -142,6 +142,7 @@ type EpisodeAncestry struct {
 	ContainerID   pgtype.UUID `json:"container_id"`
 	EpisodeID     uuid.UUID   `json:"episode_id"`
 	ContentRating *string     `json:"content_rating"`
+	EpisodeSpan   int32       `json:"episode_span"`
 }
 
 type ExternalRating struct {
@@ -246,6 +247,7 @@ type Library struct {
 	AutoGrantNewUsers       bool               `json:"auto_grant_new_users"`
 	TrickplayEnabled        bool               `json:"trickplay_enabled"`
 	NfoCollections          string             `json:"nfo_collections"`
+	EpisodeOrder            string             `json:"episode_order"`
 }
 
 type LibraryAccess struct {
@@ -362,6 +364,8 @@ type MediaItem struct {
 	ReadingDirection          *string            `json:"reading_direction"`
 	FranchiseID               *int32             `json:"franchise_id"`
 	DiscNumber                *int32             `json:"disc_number"`
+	IndexEnd                  *int32             `json:"index_end"`
+	EpisodeOrder              *string            `json:"episode_order"`
 }
 
 type MediaItemTmdbCollection struct {

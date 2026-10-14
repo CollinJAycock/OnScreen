@@ -261,6 +261,15 @@ func (m *mockQuerier) UpdateMediaItemTitle(_ context.Context, id uuid.UUID, titl
 func (m *mockQuerier) SetMediaItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
+func (m *mockQuerier) SetEpisodeIndexEnd(_ context.Context, _ uuid.UUID, _ *int) (bool, error) {
+	return false, nil
+}
+func (m *mockQuerier) SetShowEpisodeOrder(_ context.Context, _ uuid.UUID, _ *string) (bool, error) {
+	return false, nil
+}
+func (m *mockQuerier) ListShowsFollowingLibraryEpisodeOrder(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
+}
 func (m *mockQuerier) SoftDeleteMediaItem(_ context.Context, id uuid.UUID) error {
 	delete(m.items, id)
 	return nil

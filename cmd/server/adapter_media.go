@@ -181,6 +181,26 @@ func (a *mediaAdapter) SetMediaItemKind(ctx context.Context, id uuid.UUID, kind 
 	})
 }
 
+func (a *mediaAdapter) SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error) {
+	n, err := a.q.SetEpisodeIndexEnd(ctx, gen.SetEpisodeIndexEndParams{
+		ID:       id,
+		IndexEnd: intPtrToInt32Ptr(indexEnd),
+	})
+	return n > 0, err
+}
+
+func (a *mediaAdapter) SetShowEpisodeOrder(ctx context.Context, id uuid.UUID, order *string) (bool, error) {
+	n, err := a.q.SetShowEpisodeOrder(ctx, gen.SetShowEpisodeOrderParams{
+		ID:           id,
+		EpisodeOrder: order,
+	})
+	return n > 0, err
+}
+
+func (a *mediaAdapter) ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListShowsFollowingLibraryEpisodeOrder(ctx, libraryID)
+}
+
 func (a *mediaAdapter) SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error {
 	return a.q.SoftDeleteMediaItem(ctx, id)
 }

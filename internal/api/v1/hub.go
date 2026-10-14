@@ -257,6 +257,9 @@ type HubItem struct {
 	ShowID        *string `json:"show_id,omitempty"`
 	SeasonNumber  *int    `json:"season_number,omitempty"`
 	EpisodeNumber *int    `json:"episode_number,omitempty"`
+	// EpisodeNumberEnd is the last episode a multi-episode file covers
+	// ("S01E01-E02" → 2); omitted for a single episode (additive, v2.6).
+	EpisodeNumberEnd *int `json:"episode_number_end,omitempty"`
 }
 
 // Get handles GET /api/v1/hub.

@@ -76,6 +76,14 @@ type Item struct {
 	ParentID   *uuid.UUID
 	Index      *int
 	DiscNumber *int
+	// IndexEnd is set on an episode whose file holds several episodes:
+	// "S01E01-E02" is one item with Index 1, IndexEnd 2. nil for a single
+	// episode and every other type.
+	IndexEnd *int
+	// EpisodeOrder is a show's own episode order (EpisodeOrderAired /
+	// EpisodeOrderDVD / EpisodeOrderAbsolute); nil follows the library.
+	// Read by GetMediaItem only.
+	EpisodeOrder *string
 
 	// Artwork (paths relative to the media file)
 	PosterPath *string
@@ -283,6 +291,15 @@ type Querier interface {
 	// GetTrackDiscNumber reads a track's stored disc (nil: none stored).
 	GetTrackDiscNumber(ctx context.Context, id uuid.UUID) (*int, error)
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
+	// SetEpisodeIndexEnd records the last episode of a multi-episode file
+	// (nil: a single episode). Reports whether the row changed.
+	SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error)
+	// SetShowEpisodeOrder sets or (nil) clears a show's own episode order.
+	// Reports whether a live show was updated.
+	SetShowEpisodeOrder(ctx context.Context, id uuid.UUID, order *string) (bool, error)
+	// ListShowsFollowingLibraryEpisodeOrder lists a library's shows with no
+	// episode order of their own.
+	ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
 	// PurgeExpiredMissingFiles atomically hard-deletes fileIDs and soft-deletes
@@ -1179,6 +1196,59 @@ func (s *Service) SetItemKind(ctx context.Context, id uuid.UUID, kind string) er
 		return fmt.Errorf("set item kind %s: %w", id, err)
 	}
 	return nil
+}
+
+// SetEpisodeIndexEnd records the last episode a multi-episode file covers
+// on its episode row ("S01E01-E02" → 2), or clears it (nil) for a single
+// episode. Reports whether the row changed: an unchanged row is not
+// rewritten. Used by the scanner when it files or re-reads an episode.
+func (s *Service) SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error) {
+	changed, err := s.rw.SetEpisodeIndexEnd(ctx, id, indexEnd)
+	if err != nil {
+		return false, fmt.Errorf("set episode index end %s: %w", id, err)
+	}
+	return changed, nil
+}
+
+// EpisodeOrder values: the order a show's episodes are numbered in. A show
+// with none of its own follows its library's (libraries.episode_order).
+const (
+	EpisodeOrderAired    = "aired"
+	EpisodeOrderDVD      = "dvd"
+	EpisodeOrderAbsolute = "absolute"
+)
+
+// ValidEpisodeOrder reports whether s is an episode order.
+func ValidEpisodeOrder(s string) bool {
+	return s == EpisodeOrderAired || s == EpisodeOrderDVD || s == EpisodeOrderAbsolute
+}
+
+// SetShowEpisodeOrder sets a show's own episode order, or clears it (nil)
+// so the show follows its library's default. ErrNotFound when id is not a
+// live show.
+func (s *Service) SetShowEpisodeOrder(ctx context.Context, id uuid.UUID, order *string) error {
+	if order != nil && !ValidEpisodeOrder(*order) {
+		return fmt.Errorf("invalid episode order %q", *order)
+	}
+	ok, err := s.rw.SetShowEpisodeOrder(ctx, id, order)
+	if err != nil {
+		return fmt.Errorf("set show episode order %s: %w", id, err)
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListShowsFollowingLibraryEpisodeOrder lists the shows of a library that
+// have no episode order of their own — the ones a change to the library's
+// default re-numbers.
+func (s *Service) ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := s.rw.ListShowsFollowingLibraryEpisodeOrder(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list shows following library episode order %s: %w", libraryID, err)
+	}
+	return ids, nil
 }
 
 // UpsertPhotoMetadata writes the per-photo EXIF row, replacing any prior data

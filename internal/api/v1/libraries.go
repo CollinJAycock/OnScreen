@@ -60,8 +60,12 @@ type LibraryResponse struct {
 	// NFOCollections: which movie.nfo groupings scans import as manual
 	// collections — "off", "sets" or "sets_and_tags". Additive (v2.6).
 	NFOCollections string `json:"nfo_collections"`
-	CreatedAt      string `json:"created_at"`
-	UpdatedAt      string `json:"updated_at"`
+	// EpisodeOrder: the order the library's shows are numbered in unless a
+	// show sets its own — "aired" (default), "dvd" or "absolute". Additive
+	// (v2.6); only meaningful for show / anime / cartoons libraries.
+	EpisodeOrder string `json:"episode_order"`
+	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 // toLibraryResponse converts a domain Library into the API response.
@@ -79,6 +83,7 @@ func toLibraryResponse(lib *library.Library, includeScanPaths bool) LibraryRespo
 		AutoGrantNewUsers: lib.AutoGrantNewUsers,
 		TrickplayEnabled:  lib.TrickplayEnabled,
 		NFOCollections:    lib.NFOCollections,
+		EpisodeOrder:      lib.EpisodeOrder,
 		CreatedAt:         lib.CreatedAt.Format(time.RFC3339),
 		UpdatedAt:         lib.UpdatedAt.Format(time.RFC3339),
 	}
@@ -92,6 +97,9 @@ func toLibraryResponse(lib *library.Library, includeScanPaths bool) LibraryRespo
 	if lib.ScanInterval != nil {
 		mins := int(lib.ScanInterval.Minutes())
 		r.ScanIntervalMinutes = &mins
+	}
+	if r.EpisodeOrder == "" {
+		r.EpisodeOrder = "aired"
 	}
 	return r
 }
@@ -179,6 +187,55 @@ type LibraryHandler struct {
 	watchDB  LibraryWatchDB       // optional; per-item watch fields + GET /libraries/:id/random (WithWatchState)
 	parentDB LibraryParentDB      // optional; parent_title on child rows of the listing (WithParentTitles)
 	nfoSweep NFOCollectionSweeper // optional; catch-up import when NFO collections are turned on (WithNFOSweeper)
+	// optional; re-enrich of the shows that follow the library's episode
+	// order when it changes (WithEpisodeOrderReenrich)
+	orderShows    LibraryOrderShowLister
+	orderEnricher ItemEnricher
+}
+
+// LibraryOrderShowLister lists the shows of a library that follow its
+// default episode order. Satisfied by *media.Service.
+type LibraryOrderShowLister interface {
+	ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
+}
+
+// WithEpisodeOrderReenrich makes a change to a library's episode_order
+// re-enrich, in the background, every show that follows it, so their
+// episodes pick up titles and summaries in the new order.
+func (h *LibraryHandler) WithEpisodeOrderReenrich(shows LibraryOrderShowLister, enricher ItemEnricher) *LibraryHandler {
+	h.orderShows = shows
+	h.orderEnricher = enricher
+	return h
+}
+
+// reenrichForEpisodeOrder re-enriches the shows following a library's
+// episode order, one at a time, detached from the request (it calls the
+// metadata providers for every episode). Logs the outcome.
+func (h *LibraryHandler) reenrichForEpisodeOrder(libraryID uuid.UUID) {
+	if h.orderShows == nil || h.orderEnricher == nil {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 6*time.Hour)
+		defer cancel()
+		ids, err := h.orderShows.ListShowsFollowingLibraryEpisodeOrder(ctx, libraryID)
+		if err != nil {
+			h.logger.Warn("episode order: list library shows failed", "library_id", libraryID, "err", err)
+			return
+		}
+		failed := 0
+		for _, id := range ids {
+			if ctx.Err() != nil {
+				break
+			}
+			if err := h.orderEnricher.EnrichItem(ctx, id); err != nil {
+				failed++
+				h.logger.Warn("episode order: show re-enrich failed", "library_id", libraryID, "show_id", id, "err", err)
+			}
+		}
+		h.logger.Info("episode order: library shows re-enriched", "library_id", libraryID,
+			"shows", len(ids), "failed", failed)
+	}()
 }
 
 // NFOCollectionSweeper imports a library's movie.nfo groupings as manual
@@ -310,6 +367,8 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		TrickplayEnabled *bool `json:"trickplay_enabled"`
 		// Omitted = "off".
 		NFOCollections string `json:"nfo_collections"`
+		// Omitted = "aired".
+		EpisodeOrder string `json:"episode_order"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
@@ -317,6 +376,10 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.NFOCollections != "" && !library.ValidNFOCollections(body.NFOCollections) {
 		respond.BadRequest(w, r, "nfo_collections must be off, sets or sets_and_tags")
+		return
+	}
+	if body.EpisodeOrder != "" && !library.ValidEpisodeOrder(body.EpisodeOrder) {
+		respond.BadRequest(w, r, "episode_order must be aired, dvd or absolute")
 		return
 	}
 
@@ -356,6 +419,7 @@ func (h *LibraryHandler) Create(w http.ResponseWriter, r *http.Request) {
 		AutoGrantNewUsers:       autoGrant,
 		TrickplayEnabled:        body.TrickplayEnabled,
 		NFOCollections:          body.NFOCollections,
+		EpisodeOrder:            body.EpisodeOrder,
 	})
 	if err != nil {
 		var ve *library.ValidationError
@@ -425,6 +489,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		AutoGrantNewUsers       *bool          `json:"auto_grant_new_users,omitempty"`
 		TrickplayEnabled        *bool          `json:"trickplay_enabled,omitempty"`
 		NFOCollections          *string        `json:"nfo_collections,omitempty"`
+		EpisodeOrder            *string        `json:"episode_order,omitempty"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -434,6 +499,10 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.NFOCollections != nil && !library.ValidNFOCollections(*body.NFOCollections) {
 		respond.BadRequest(w, r, "nfo_collections must be off, sets or sets_and_tags")
+		return
+	}
+	if body.EpisodeOrder != nil && !library.ValidEpisodeOrder(*body.EpisodeOrder) {
+		respond.BadRequest(w, r, "episode_order must be aired, dvd or absolute")
 		return
 	}
 
@@ -501,6 +570,7 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 		AutoGrantNewUsers:       body.AutoGrantNewUsers,
 		TrickplayEnabled:        body.TrickplayEnabled,
 		NFOCollections:          body.NFOCollections,
+		EpisodeOrder:            body.EpisodeOrder,
 	})
 	if err != nil {
 		if errors.Is(err, library.ErrNotFound) {
@@ -513,6 +583,10 @@ func (h *LibraryHandler) Update(w http.ResponseWriter, r *http.Request) {
 	}
 	if body.NFOCollections != nil && *body.NFOCollections != "off" {
 		h.sweepNFOCollections(lib.ID)
+	}
+	// A new default episode order re-numbers every show that follows it.
+	if body.EpisodeOrder != nil && *body.EpisodeOrder != existing.EpisodeOrder && library.HasEpisodes(lib.Type) {
+		h.reenrichForEpisodeOrder(lib.ID)
 	}
 	// Update is admin-only at the router; admins always see scan_paths.
 	respond.Success(w, r, toLibraryResponse(lib, true))

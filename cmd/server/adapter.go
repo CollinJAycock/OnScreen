@@ -89,6 +89,7 @@ func genLibToLib(g gen.Library) library.Library {
 		AutoGrantNewUsers:       g.AutoGrantNewUsers,
 		TrickplayEnabled:        g.TrickplayEnabled,
 		NFOCollections:          g.NfoCollections,
+		EpisodeOrder:            g.EpisodeOrder,
 		ScanInterval:            durationToPtr(g.ScanInterval),
 		ScanLastCompletedAt:     pgtimeTZ(g.ScanLastCompletedAt),
 		MetadataRefreshInterval: durationToPtr(g.MetadataRefreshInterval),
@@ -119,6 +120,7 @@ func libCreateParamsToGen(p library.CreateLibraryParams) gen.CreateLibraryParams
 		AutoGrantNewUsers:       p.AutoGrantNewUsers,
 		TrickplayEnabled:        trickplay,
 		NfoCollections:          p.NFOCollections,
+		EpisodeOrder:            p.EpisodeOrder,
 	}
 }
 
@@ -135,6 +137,7 @@ func libUpdateParamsToGen(p library.UpdateLibraryParams) gen.UpdateLibraryParams
 		AutoGrantNewUsers:       p.AutoGrantNewUsers,
 		TrickplayEnabled:        p.TrickplayEnabled,
 		NfoCollections:          p.NFOCollections,
+		EpisodeOrder:            p.EpisodeOrder,
 	}
 }
 
