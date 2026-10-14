@@ -566,7 +566,9 @@
     display: flex; align-items: flex-start; gap: 0.6rem;
     cursor: pointer; padding: 0.4rem 0;
   }
-  .check-row input[type="checkbox"] { margin-top: 0.2rem; flex-shrink: 0; }
+  /* width: auto — the form-wide `input { width: 100% }` below would make the
+     box 100% wide and crush the label text beside it. */
+  .check-row input[type="checkbox"] { margin-top: 0.2rem; flex-shrink: 0; width: auto; }
   .check-row.sub { margin-top: 0.5rem; padding-left: 1.4rem; border-left: 2px solid var(--border); margin-left: 0.4rem; }
   .check-row > span { display: flex; flex-direction: column; gap: 0.2rem; }
   .check-title { font-size: 0.85rem; font-weight: 500; color: var(--text-primary); }

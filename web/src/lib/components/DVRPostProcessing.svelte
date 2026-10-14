@@ -76,7 +76,7 @@
       <label class="check">
         <input type="checkbox" bind:checked={cfg.remux} />
         <span>
-          Remux recordings <em class="rec">recommended</em>
+          <span class="name">Remux recordings <em class="rec">recommended</em></span>
           <small>Copies the streams into a new container with clean timestamps, so seeking is reliable. Fast; no quality change.</small>
         </span>
       </label>
@@ -172,6 +172,8 @@
   .check { display: flex; gap: 0.6rem; align-items: flex-start; font-size: 0.85rem; color: var(--text-primary); cursor: pointer; }
   .check input { margin-top: 0.2rem; accent-color: var(--accent); }
   .check span { display: flex; flex-direction: column; gap: 0.15rem; }
+  /* Title + badge on one line (the badge would stretch as a column item). */
+  .check .name { display: block; }
   small { color: var(--text-muted); font-size: 0.74rem; line-height: 1.4; }
   .rec {
     font-style: normal; font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.04em;

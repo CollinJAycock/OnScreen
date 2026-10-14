@@ -230,18 +230,20 @@
     gap: 0.4rem;
     padding: 0.5rem 0.9rem;
     border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.9);
+    /* Theme tokens, like the Play on / Report a problem pills beside it:
+       fixed white text vanished on the light theme. */
+    border: 1px solid var(--border-strong);
+    background: var(--input-bg);
+    color: var(--text-secondary);
     font-size: 0.85rem;
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease;
   }
-  .dl-btn:hover { background: rgba(255, 255, 255, 0.12); border-color: rgba(255, 255, 255, 0.32); }
+  .dl-btn:hover { background: var(--bg-hover); color: var(--text-primary); }
   .dl-btn.busy { font-variant-numeric: tabular-nums; }
   .dl-progress {
     position: absolute; left: 2px; right: 2px; bottom: 1px; height: 2px;
-    background: rgba(255, 255, 255, 0.1); border-radius: 1px; overflow: hidden;
+    background: var(--border-strong); border-radius: 1px; overflow: hidden;
   }
   .dl-progress div { height: 100%; background: var(--accent, #7c6af7); transition: width 300ms ease; }
   .dl-menu {
