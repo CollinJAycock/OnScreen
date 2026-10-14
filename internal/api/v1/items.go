@@ -217,6 +217,8 @@ type ItemHandler struct {
 	externalRatings ItemExternalRatingsDB
 	// optional; caches a metadata edit invalidates (items_metadata.go)
 	caches ItemCacheInvalidator
+	// optional; when set, PATCH /items/bulk is admin-served (items_bulk.go)
+	bulk BulkMetadataEditor
 	// optional; when set, PUT /items/{id}/episode-order is admin-served
 	// (items_episode_order.go)
 	episodeOrder ItemEpisodeOrderSetter

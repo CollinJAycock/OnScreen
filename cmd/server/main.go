@@ -28,6 +28,7 @@ import (
 	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/bulkedit"
 	"github.com/onscreen/onscreen/internal/collections"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db"
@@ -1043,6 +1044,8 @@ func run() error {
 		WithStudios(studioSvc).
 		// A metadata edit rewrites the item's NFO in save_nfo libraries.
 		WithNFOWriter(metaAgent).
+		// PATCH /items/bulk — one transaction on the read-write pool.
+		WithBulkEditor(bulkedit.New(rwPool)).
 		// A metadata edit drops the hub's cached trending row, which carries
 		// titles and was rating-filtered when fetched.
 		WithCacheInvalidator(hubHandler)

@@ -726,6 +726,19 @@ RETURNING id, library_id, type, title, sort_title, original_title, year,
           originally_available_at, created_at, updated_at, deleted_at,
           locked_fields;
 
+-- name: LockMediaItemsForBulkEdit :many
+-- The rows a bulk metadata edit (PATCH /api/v1/items/bulk) works on, read
+-- inside its transaction and row-locked so an enrichment can't land between
+-- this read and the per-item EditMediaItemMetadata writes (the add / remove
+-- genre lists are merged in Go from what this returns). Deleted items are
+-- left out; the caller reports them. Ordered by id so two overlapping bulk
+-- edits take their row locks in the same order.
+SELECT id, library_id, type, title, content_rating, genres, locked_fields
+FROM media_items
+WHERE id = ANY(sqlc.arg('ids')::uuid[]) AND deleted_at IS NULL
+ORDER BY id
+FOR UPDATE;
+
 -- name: SetMediaItemKind :exec
 -- Sets the subtype on a media item. The scanner calls this on episode
 -- rows after detecting OVA / ONA / special keywords in the filename

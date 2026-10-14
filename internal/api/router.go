@@ -1320,6 +1320,9 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}", h.Items.Get)
 				r.Get("/items/{id}/children", h.Items.Children)
 				r.Patch("/items/{id}", h.Items.UpdateMetadata) // admin-gated inside the handler
+				// Bulk metadata edit for a library selection. chi matches the
+				// static segment before {id}. Admin-gated inside the handler.
+				r.Patch("/items/bulk", h.Items.BulkUpdateMetadata)
 				r.Put("/items/{id}/progress", h.Items.Progress)
 				r.Post("/items/{id}/enrich", h.Items.Enrich)
 				r.Put("/items/{id}/episode-order", h.Items.SetEpisodeOrder) // admin-gated inside the handler
