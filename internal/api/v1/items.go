@@ -187,6 +187,7 @@ type ItemHandler struct {
 	favorites   ItemFavoriteChecker
 	ratings     ItemRatingService // optional; per-user + community ratings (WithRatings)
 	markers     ItemMarkerService
+	commercials ItemCommercialLister // optional; DVR ad breaks per file (WithCommercials)
 	access      LibraryAccessChecker
 	watchLimit  ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
 	usageAccrue *usageAccruer  // byte-serving accrual companion to watchLimit (see WithWatchLimit)
@@ -260,6 +261,13 @@ func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions Ite
 // response omits markers and the Markers endpoints are not served.
 func (h *ItemHandler) WithMarkers(m ItemMarkerService) *ItemHandler {
 	h.markers = m
+	return h
+}
+
+// WithCommercials attaches the DVR commercial-break lister. When nil the
+// files in the Get response carry no commercials.
+func (h *ItemHandler) WithCommercials(c ItemCommercialLister) *ItemHandler {
+	h.commercials = c
 	return h
 }
 
@@ -572,6 +580,25 @@ type ItemFileResponse struct {
 	SubtitleStreams   []SubtitleStreamJSON   `json:"subtitle_streams"`
 	ExternalSubtitles []ExternalSubtitleJSON `json:"external_subtitles,omitempty"`
 	Chapters          []ChapterJSON          `json:"chapters"`
+	// Commercials are the ad breaks DVR commercial detection found in this
+	// file (migration 00052); absent when none were stored. A separate field
+	// rather than item markers: first-party clients show every entry of
+	// markers as Skip intro / Skip credits without checking its kind.
+	Commercials []CommercialMarkerJSON `json:"commercials,omitempty"`
+}
+
+// CommercialMarkerJSON is one detected ad break in a recording's file.
+// source is "comskip" or "heuristic".
+type CommercialMarkerJSON struct {
+	StartMS int64  `json:"start_ms"`
+	EndMS   int64  `json:"end_ms"`
+	Source  string `json:"source"`
+}
+
+// ItemCommercialLister returns an item's stored commercial breaks grouped by
+// media file id.
+type ItemCommercialLister interface {
+	ListCommercialsByItem(ctx context.Context, itemID uuid.UUID) (map[uuid.UUID][]CommercialMarkerJSON, error)
 }
 
 // ChapterJSON is the API representation of a chapter marker.
@@ -904,6 +931,15 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// standard access token in that case.
 	claims := middleware.ClaimsFromContext(r.Context())
 
+	var commercials map[uuid.UUID][]CommercialMarkerJSON
+	if h.commercials != nil {
+		if c, err := h.commercials.ListCommercialsByItem(r.Context(), id); err == nil {
+			commercials = c
+		} else {
+			h.logger.WarnContext(r.Context(), "list commercials", "item_id", id, "err", err)
+		}
+	}
+
 	for _, f := range files {
 		if f.Status != "active" {
 			continue
@@ -963,6 +999,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		if media.IsStacked(files, f) {
 			fr.PartIndex = f.PartIndex
+		}
+		if c := commercials[f.ID]; len(c) > 0 {
+			fr.Commercials = c
 		}
 		if h.subs != nil {
 			if rows, err := h.subs.List(r.Context(), f.ID); err == nil && len(rows) > 0 {

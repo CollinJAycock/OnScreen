@@ -167,6 +167,8 @@ tags:
     description: TMDB-backed search for the request workflow.
   - name: Requests
     description: Media request workflow (user submit, admin approve/decline).
+  - name: DVR
+    description: DVR recordings post-processing and commercial detection.
 
 paths:
   # ── Health ─────────────────────────────────────────────────────────────────
@@ -3906,6 +3908,82 @@ paths:
       responses:
         '204': { description: Saved. }
 
+  /api/v1/settings/dvr:
+    get:
+      summary: Get DVR post-processing settings (admin)
+      description: >
+        Everything defaults to off (the capture is left as the tuner wrote
+        it). `script_configured`, `script_path`, `comskip_configured` and
+        `commercial_detector` are read-only: the post-processing script and
+        comskip are executables, set only through the environment
+        (`ONSCREEN_DVR_POSTPROCESS_SCRIPT`, `ONSCREEN_COMSKIP_PATH`,
+        `ONSCREEN_COMSKIP_INI`) and never through the API.
+      tags: [Settings, DVR]
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DVRSettings' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Replace DVR post-processing settings (admin)
+      description: >
+        Applies to the next recording that finishes; no restart. Read-only
+        fields in the body are ignored. `commercials: cut` needs `remux` or
+        `transcode` (400 otherwise).
+      tags: [Settings, DVR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DVRSettings' }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/tv/recordings/{id}/detect-commercials:
+    post:
+      summary: Queue commercial detection for a recording (admin)
+      description: >
+        Runs commercial detection (comskip when configured, otherwise the
+        built-in black + silence detector) on a completed recording and
+        stores the breaks; the file is not changed. Progress shows on
+        `GET /api/v1/tv/recordings` as `postprocess_status`
+        (queued | processing | processed | failed) and `postprocess_message`;
+        both are absent for recordings never post-processed. The breaks
+        reach players as `files[].commercials` on the item detail.
+      tags: [DVR]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202': { description: 'Queued. Body `{"data": {"postprocess_status": "queued"}}`.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: DVR or post-processing is not enabled on this server. }
+
+  /api/v1/tv/recordings/{id}/postprocess:
+    post:
+      summary: Re-run post-processing for a recording (admin)
+      description: >
+        Queues the full post-processing pipeline (remux / transcode,
+        commercials, script) with the current settings. Refused (400) for a
+        recording already processed, so a file is never transcoded twice; use
+        it after a failed run.
+      tags: [DVR]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202': { description: 'Queued. Body `{"data": {"postprocess_status": "queued"}}`.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: DVR or post-processing is not enabled on this server. }
+
   /api/v1/settings/system:
     get:
       summary: Get cluster-wide System settings (admin)
@@ -6399,6 +6477,33 @@ components:
         subtitle_streams:  { type: array, items: { $ref: '#/components/schemas/SubtitleStream' } }
         external_subtitles: { type: array, items: { $ref: '#/components/schemas/ExternalSubtitle' } }
         chapters:          { type: array, items: { $ref: '#/components/schemas/Chapter' } }
+        commercials:
+          type: array
+          description: >
+            Ad breaks DVR commercial detection found in this file; absent when
+            none are stored. Kept out of the item's `markers` on purpose:
+            clients render every marker as Skip intro / Skip credits.
+          items: { $ref: '#/components/schemas/CommercialMarker' }
+    CommercialMarker:
+      type: object
+      properties:
+        start_ms: { type: integer, format: int64 }
+        end_ms:   { type: integer, format: int64 }
+        source:   { type: string, enum: [comskip, heuristic] }
+    DVRSettings:
+      type: object
+      properties:
+        remux:               { type: boolean, description: 'Stream-copy the capture into remux_container with regenerated timestamps.' }
+        remux_container:     { type: string, enum: [mkv, mp4], default: mkv }
+        transcode:           { type: boolean, description: 'Re-encode video to save space (audio copied). Hardware encoders the transcode settings allow are tried first; software is the fallback.' }
+        transcode_codec:     { type: string, enum: [h264, hevc], default: h264 }
+        transcode_quality:   { type: string, enum: [high, balanced, small], default: balanced }
+        delete_original:     { type: boolean, description: 'Delete the capture once the processed copy passes verification (duration within 2%, streams present). Off keeps it in a .dvr-originals folder the scanner skips.' }
+        commercials:         { type: string, enum: ['off', mark, cut], default: 'off' }
+        script_configured:   { type: boolean, readOnly: true }
+        script_path:         { type: string, readOnly: true }
+        comskip_configured:  { type: boolean, readOnly: true }
+        commercial_detector: { type: string, enum: [comskip, builtin], readOnly: true }
     ItemDetail:
       type: object
       properties:

@@ -343,6 +343,61 @@ API change lands only when every first-party client moves with it — see
     on the admin user and profile lists.
   - **Migration 00047** adds `media_items.labels` and the users'
     `blocked_labels` / `allowed_labels`.
+- **DVR post-processing.** Settings ▸ Live TV ▸ "Recording post-processing"
+  decides what happens to a recording once it finishes. Everything is off by
+  default, on new installs and upgrades alike, so recordings stay exactly as
+  the tuner wrote them until you opt in. Turning on remux is recommended.
+  - **Remux** copies the recording into MKV (or MP4) with clean timestamps, so
+    seeking is reliable. It is fast and doesn't change quality.
+  - **Transcode to save space** re-encodes the video to H.264 or HEVC at a
+    high, balanced or small-file quality, and copies the audio. It uses the
+    hardware encoders your Transcode settings allow and falls back to
+    software.
+  - **Delete original** removes the tuner's file, but only after the new file
+    has been checked: same length to within 2%, video and audio both present.
+    When it is off, the original moves to a hidden `.dvr-originals` folder
+    beside the recording. The scanner skips that folder, and the retention
+    clean-up removes the kept file with its recording.
+  - **Post-processing script:** set `ONSCREEN_DVR_POSTPROCESS_SCRIPT` to a
+    program to run after each recording, with the recording's path as its
+    only argument. It runs with a 30-minute timeout and its output goes to
+    the server log. It can only be set in the environment, never in the web
+    UI; the settings page shows it read-only.
+  - **How it runs:** recordings are processed one at a time, after the
+    capture finishes. The Recordings page shows "Queued for processing",
+    "Processing", "Processed" or "Processing failed", with a note saying what
+    was done or what went wrong. A failure leaves the original recording
+    untouched and playable, and admins can re-run it from the recording's
+    "⋯" menu. The library item keeps its watch state: the same file entry
+    points at the new file, so a rescan doesn't add a duplicate.
+- **Commercial detection and Skip Ad for DVR recordings.** Set
+  "Commercials" in the same panel to "Mark" to get a "Skip Ad" button
+  during ad breaks in the web player, or "Cut" to remove the breaks from the
+  file during post-processing (Cut needs remux or transcode).
+  - **Detection:** if `ONSCREEN_COMSKIP_PATH` (and optionally
+    `ONSCREEN_COMSKIP_INI`) is set, OnScreen runs comskip. Otherwise a
+    built-in detector looks for black frames that coincide with silence. It
+    is deliberately conservative: a break must hold at least two ads, last
+    30 seconds to 6 minutes, and sit between at least 3 minutes of programme
+    on each side, so some ads are missed rather than any of the show
+    skipped.
+  - **On demand:** admins can run "Detect commercials" on any finished
+    recording from its "⋯" menu on the Recordings page. This never changes
+    the file.
+  - **Player:** "Skip Ad" (or the S key) jumps to the end of the break.
+    "Always skip ads" next to the button skips breaks automatically in that
+    browser. It is off by default and separate from "Always skip intros".
+  - **Apps:** breaks are a new `commercials` list on each file of the item,
+    not part of the intro/credits `markers`. The TV and phone apps show every
+    marker as Skip Intro or Skip Credits, so putting ads there would have
+    mislabelled them. Current apps ignore the new field.
+  - **API (all additive):** `GET`/`PUT /settings/dvr`;
+    `POST /tv/recordings/{id}/detect-commercials` and
+    `POST /tv/recordings/{id}/postprocess` (admins, 202); recordings gain
+    `postprocess_status` and `postprocess_message`; item files gain
+    `commercials`.
+  - **Migration 00052** adds the post-processing job table and
+    `commercial_markers`.
 
 ### Changed
 

@@ -101,11 +101,15 @@ type Recording struct {
 
 // RecordingWithChannel adds denormalized channel info for list UIs
 // (logo + name + number) so the client doesn't have to cross-reference.
+// PostProcessStatus / PostProcessMessage are nil when post-processing never
+// ran for the recording.
 type RecordingWithChannel struct {
 	Recording
-	ChannelNumber string
-	ChannelName   string
-	ChannelLogo   *string
+	ChannelNumber      string
+	ChannelName        string
+	ChannelLogo        *string
+	PostProcessStatus  *string
+	PostProcessMessage *string
 }
 
 // UpsertRecordingParams is the matcher → DB bridge. user_id +
@@ -164,6 +168,9 @@ type ExpiredRecording struct {
 	ID       uuid.UUID
 	ItemID   *uuid.UUID
 	FilePath *string
+	// OriginalFilePath is the capture post-processing kept aside
+	// (delete-original off); removed together with FilePath.
+	OriginalFilePath *string
 }
 
 // ── DVR service ──────────────────────────────────────────────────────────────
@@ -348,10 +355,13 @@ func (s *DVRService) PurgeExpiredRecordings(ctx context.Context) (int, error) {
 	}
 	purged := 0
 	for _, r := range expired {
-		if r.FilePath != nil && *r.FilePath != "" {
-			if err := os.Remove(*r.FilePath); err != nil && !os.IsNotExist(err) {
+		for _, path := range []*string{r.FilePath, r.OriginalFilePath} {
+			if path == nil || *path == "" {
+				continue
+			}
+			if err := os.Remove(*path); err != nil && !os.IsNotExist(err) {
 				s.logger.WarnContext(ctx, "retention: remove file failed",
-					"recording_id", r.ID, "path", *r.FilePath, "err", err)
+					"recording_id", r.ID, "path", *path, "err", err)
 			}
 		}
 		// The linked media_items row isn't hard-deleted here — the

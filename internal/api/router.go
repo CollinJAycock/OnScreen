@@ -845,6 +845,8 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Get("/settings/fleet", h.Settings.GetFleet)
 					r.Put("/settings/fleet", h.Settings.UpdateFleet)
 					r.Post("/settings/worker-credentials", h.Settings.WorkerCredentials)
+					r.Get("/settings/dvr", h.Settings.GetDVR)
+					r.Put("/settings/dvr", h.Settings.UpdateDVR)
 					r.Get("/settings/transcode-config", h.Settings.GetTranscodeConfig)
 					r.Put("/settings/transcode-config", h.Settings.UpdateTranscodeConfig)
 					r.Get("/settings/storage", h.Settings.GetStorage)
@@ -1196,6 +1198,9 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Group(func(r chi.Router) {
 					r.Use(h.Auth_mw.AdminRequired)
 					r.Get("/tv/tuners", h.LiveTV.ListTuners)
+					// DVR post-processing actions on a recording.
+					r.Post("/tv/recordings/{id}/detect-commercials", h.LiveTV.DetectCommercials)
+					r.Post("/tv/recordings/{id}/postprocess", h.LiveTV.ReprocessRecording)
 					r.Post("/tv/tuners", h.LiveTV.CreateTuner)
 					r.Post("/tv/tuners/discover", h.LiveTV.DiscoverTuners)
 					r.Get("/tv/tuners/{id}", h.LiveTV.GetTuner)

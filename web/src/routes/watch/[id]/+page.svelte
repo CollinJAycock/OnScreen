@@ -65,6 +65,7 @@
   // map, isCastable predicate) live in $lib/cast and are unit-tested
   // there; the SDK glue is local to this page.
   import { buildCastMediaInfo, isCastable } from '$lib/cast';
+  import { AUTO_SKIP_ADS_KEY, commercialAt, commercialId, fileCommercials } from '$lib/commercials';
 
   let showPlaylistPicker = false;
   let showCollectionPicker = false;
@@ -1052,6 +1053,37 @@
       if (id !== lastAutoSkippedIntroId) {
         lastAutoSkippedIntroId = id;
         skipMarker();
+      }
+    }
+  }
+
+  // DVR ad breaks (files[].commercials, from commercial detection) for the
+  // playing file. "Skip Ad" works like Skip Intro; intro/credits win when
+  // they overlap. Auto-skip is its own per-browser preference, off by
+  // default, next to the button like the intro one.
+  $: commercials = fileCommercials(item?.files);
+  $: currentCommercial = commercials.length === 0 ? null : commercialAt(commercials, contentTimeSec * 1000);
+  function skipCommercial() {
+    if (!currentCommercial) return;
+    seekToContentTime(currentCommercial.end_ms / 1000);
+  }
+  let autoSkipAds = false;
+  if (typeof window !== 'undefined') {
+    try { autoSkipAds = window.localStorage.getItem(AUTO_SKIP_ADS_KEY) === '1'; } catch {}
+  }
+  function toggleAutoSkipAds() {
+    autoSkipAds = !autoSkipAds;
+    try { window.localStorage.setItem(AUTO_SKIP_ADS_KEY, autoSkipAds ? '1' : '0'); } catch {}
+  }
+  // Skip each break once: a seek back into one the player already skipped
+  // plays it.
+  let lastAutoSkippedAdId = '';
+  $: {
+    if (autoSkipAds && currentCommercial && !currentMarker) {
+      const id = commercialId(currentCommercial);
+      if (id !== lastAutoSkippedAdId) {
+        lastAutoSkippedAdId = id;
+        skipCommercial();
       }
     }
   }
@@ -2833,6 +2865,9 @@
         if (currentMarker) {
           e.preventDefault();
           skipMarker();
+        } else if (currentCommercial) {
+          e.preventDefault();
+          skipCommercial();
         }
         break;
     }
@@ -4098,6 +4133,20 @@
             {autoSkipIntros ? '✓ Always skip intros' : 'Always skip intros'}
           </button>
         {/if}
+      </div>
+    {:else if currentCommercial}
+      <div class="skip-marker-wrap">
+        <button class="skip-marker" on:click={skipCommercial} title="Skip Ad (S)">
+          Skip Ad →
+        </button>
+        <button
+          class="skip-marker-pref"
+          class:active={autoSkipAds}
+          on:click={toggleAutoSkipAds}
+          title={autoSkipAds ? 'Auto-skip ads: on' : 'Auto-skip ads: off'}
+        >
+          {autoSkipAds ? '✓ Always skip ads' : 'Always skip ads'}
+        </button>
       </div>
     {/if}
 

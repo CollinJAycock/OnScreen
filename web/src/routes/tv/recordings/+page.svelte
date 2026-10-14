@@ -4,6 +4,7 @@
   import { liveTvApi, type LiveTVRecording, type LiveTVSchedule } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import CardMenu from '$lib/components/CardMenu.svelte';
 
   let recordings: LiveTVRecording[] = [];
   let schedules: LiveTVSchedule[] = [];
@@ -12,6 +13,8 @@
   let error = '';
   let ready = false;
   let busyId = '';
+  // Admins get the post-processing actions on finished recordings.
+  let isAdmin = false;
 
   // Map status → friendly label for the row.
   const statusLabel: Record<LiveTVRecording['status'], string> = {
@@ -23,8 +26,18 @@
     superseded: 'Superseded',
   };
 
+  // Post-processing status → label for the second chip.
+  const postLabel: Record<NonNullable<LiveTVRecording['postprocess_status']>, string> = {
+    queued: 'Queued for processing',
+    processing: 'Processing',
+    processed: 'Processed',
+    failed: 'Processing failed',
+  };
+
   onMount(async () => {
-    if (!localStorage.getItem('onscreen_user')) { goto('/login'); return; }
+    const raw = localStorage.getItem('onscreen_user');
+    if (!raw) { goto('/login'); return; }
+    try { isAdmin = !!JSON.parse(raw)?.is_admin; } catch { isAdmin = false; }
     ready = true;
     await load();
   });
@@ -76,6 +89,31 @@
       await load();
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Delete failed');
+    } finally { busyId = ''; }
+  }
+
+  // Admin menu: commercial detection works on any finished recording with a
+  // library item; a full re-run only after a failed (or no) run.
+  function adminActions(r: LiveTVRecording) {
+    const busy = r.postprocess_status === 'queued' || r.postprocess_status === 'processing';
+    const actions: { label: string; onSelect: () => void }[] = [];
+    if (r.status !== 'completed' || busy) return actions;
+    if (r.item_id) actions.push({ label: 'Detect commercials', onSelect: () => runPost(r, 'detect') });
+    if (r.postprocess_status === undefined || r.postprocess_status === 'failed') {
+      actions.push({ label: 'Run post-processing', onSelect: () => runPost(r, 'full') });
+    }
+    return actions;
+  }
+
+  async function runPost(r: LiveTVRecording, kind: 'detect' | 'full') {
+    busyId = r.id;
+    try {
+      if (kind === 'detect') await liveTvApi.detectCommercials(r.id);
+      else await liveTvApi.reprocessRecording(r.id);
+      toast.success(kind === 'detect' ? 'Commercial detection queued' : 'Post-processing queued');
+      await load();
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Could not queue the job');
     } finally { busyId = ''; }
   }
 
@@ -171,8 +209,14 @@
               {#if r.subtitle}<div class="rec-sub">{r.subtitle}</div>{/if}
               <div class="rec-meta">
                 <span class="status-chip">{statusLabel[r.status]}</span>
+                {#if r.postprocess_status}
+                  <span class="status-chip post-chip" class:post-failed={r.postprocess_status === 'failed'}>{postLabel[r.postprocess_status]}</span>
+                {/if}
                 {r.channel_name} · {fmtTime(r.starts_at)}
                 {#if r.error}<div class="rec-err">Error: {r.error}</div>{/if}
+                {#if r.postprocess_message}
+                  <div class="rec-post" class:rec-err={r.postprocess_status === 'failed'}>{r.postprocess_message}</div>
+                {/if}
               </div>
             </div>
           </div>
@@ -182,6 +226,9 @@
             {/if}
             {#if r.status === 'scheduled' || r.status === 'recording'}
               <button class="btn btn-danger" disabled={busyId === r.id} on:click={() => cancel(r)}>Cancel</button>
+            {/if}
+            {#if isAdmin && busyId !== r.id && adminActions(r).length > 0}
+              <CardMenu label="More actions for {r.title}" actions={adminActions(r)} />
             {/if}
           </div>
         </li>
@@ -238,6 +285,9 @@
     font-size: 0.68rem; text-transform: uppercase; font-weight: 600; letter-spacing: 0.03em;
   }
   .status-recording .status-chip { background: #e74c3c; color: white; }
+  .post-chip { background: var(--accent-bg); color: var(--accent-text); }
+  .post-chip.post-failed { background: var(--error-bg); color: var(--error); }
+  .rec-post { margin-top: 0.2rem; }
 
   .rec-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
 

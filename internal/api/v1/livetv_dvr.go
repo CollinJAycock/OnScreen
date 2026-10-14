@@ -76,6 +76,11 @@ type RecordingResponse struct {
 	EndsAt        time.Time  `json:"ends_at"`
 	ItemID        *uuid.UUID `json:"item_id,omitempty"`
 	Error         *string    `json:"error,omitempty"`
+	// PostProcessStatus is queued | processing | processed | failed, absent
+	// when post-processing never ran. PostProcessMessage says what was done
+	// or why it failed.
+	PostProcessStatus  *string `json:"postprocess_status,omitempty"`
+	PostProcessMessage *string `json:"postprocess_message,omitempty"`
 }
 
 // ── Schedules ────────────────────────────────────────────────────────────────
@@ -271,6 +276,69 @@ func (h *LiveTVHandler) CancelRecording(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// ── Post-processing (admin) ──────────────────────────────────────────────────
+
+// LiveTVPostProcessor queues DVR post-processing jobs. *livetv.PostProcessor
+// satisfies it.
+type LiveTVPostProcessor interface {
+	Enqueue(ctx context.Context, recordingID uuid.UUID, kind livetv.PostProcessJobKind) error
+}
+
+// WithPostProcess enables the recording post-processing actions.
+func (h *LiveTVHandler) WithPostProcess(p LiveTVPostProcessor) *LiveTVHandler {
+	h.post = p
+	return h
+}
+
+// DetectCommercials handles POST /api/v1/tv/recordings/{id}/detect-commercials.
+// Admin only. Queues commercial detection for a completed recording; the
+// file itself is not changed. 202 when queued, 409 when a job is already
+// queued or running.
+func (h *LiveTVHandler) DetectCommercials(w http.ResponseWriter, r *http.Request) {
+	h.enqueuePostProcess(w, r, livetv.PostProcessDetect)
+}
+
+// ReprocessRecording handles POST /api/v1/tv/recordings/{id}/postprocess.
+// Admin only. Re-runs the whole post-processing pipeline for a recording
+// whose last run failed (or never ran); a processed recording is refused so
+// it can't be transcoded twice.
+func (h *LiveTVHandler) ReprocessRecording(w http.ResponseWriter, r *http.Request) {
+	h.enqueuePostProcess(w, r, livetv.PostProcessFull)
+}
+
+func (h *LiveTVHandler) enqueuePostProcess(w http.ResponseWriter, r *http.Request, kind livetv.PostProcessJobKind) {
+	if !h.dvrAvailable(w, r) {
+		return
+	}
+	if h.post == nil {
+		respond.Error(w, r, http.StatusServiceUnavailable,
+			"DVR_NOT_CONFIGURED", "DVR post-processing is not enabled on this server")
+		return
+	}
+	id, err := parseUUID(r, "id")
+	if err != nil {
+		respond.BadRequest(w, r, "invalid recording id")
+		return
+	}
+	if _, err := h.dvr.GetRecording(r.Context(), id); err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if err := h.post.Enqueue(r.Context(), id, kind); err != nil {
+		switch {
+		case errors.Is(err, livetv.ErrPostProcessBusy):
+			respond.Error(w, r, http.StatusConflict, "POSTPROCESS_BUSY", err.Error())
+		case errors.Is(err, livetv.ErrPostProcessIneligible):
+			respond.BadRequest(w, r, err.Error())
+		default:
+			h.logger.ErrorContext(r.Context(), "enqueue dvr post-process", "id", id, "kind", kind, "err", err)
+			respond.InternalError(w, r)
+		}
+		return
+	}
+	respond.Accepted(w, r, map[string]string{"postprocess_status": string(livetv.PostProcessQueued)})
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 func (h *LiveTVHandler) dvrAvailable(w http.ResponseWriter, r *http.Request) bool {
@@ -305,5 +373,7 @@ func recordingToResponse(r livetv.RecordingWithChannel) RecordingResponse {
 		Status:   string(r.Status),
 		StartsAt: r.StartsAt, EndsAt: r.EndsAt,
 		ItemID: r.ItemID, Error: r.Error,
+		PostProcessStatus:  r.PostProcessStatus,
+		PostProcessMessage: r.PostProcessMessage,
 	}
 }

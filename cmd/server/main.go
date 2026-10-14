@@ -953,6 +953,7 @@ func run() error {
 		WithSegmentTokenRevoker(segTokenMgr).
 		WithPlayDecisions(playDecisions).
 		WithMarkers(intromarker.NewStore(rwPool)).
+		WithCommercials(commercialMarkerLister{q: gen.New(roPool)}).
 		WithExternalSubtitles(subtitleSvc).
 		WithSubtitleCache(subtitleCacheRoot).
 		WithSyncBroker(notifBrokerEarly).
@@ -1091,11 +1092,43 @@ func run() error {
 		},
 		&dvrMediaCreator{svc: mediaSvc},
 		logger)
+
+	// DVR post-processing (remux / transcode / commercials / script). Queued
+	// by the worker when a capture completes; the admin settings decide
+	// whether there is any work (all off by default). Executables come only
+	// from the environment.
+	dvrPost := livetv.NewPostProcessor(livetv.PostProcessConfig{
+		ScriptPath:  cfg.DVRPostProcessScript,
+		ComskipPath: cfg.ComskipPath,
+		ComskipINI:  cfg.ComskipINI,
+		Settings:    dvrPostProcessSettings(settingsSvc),
+		// Same encoder choice as the embedded transcoder: the admin's
+		// override (DB, then env) filtered to what was detected, else
+		// everything detected. Software is always the last resort.
+		Encoders: func() []string {
+			override := settingsSvc.TranscodeEncoders(context.Background())
+			if override == "" {
+				override = cfg.TranscodeEncoders
+			}
+			if override == "" {
+				return transcode.EncoderNames(allEncoders)
+			}
+			return transcode.EncoderNames(transcode.FilterAvailable(transcode.ParseOverride(override), allEncoders))
+		},
+	}, newDVRPostProcessAdapter(rwPool), logger)
+	dvrWorker.WithPostProcessor(dvrPost)
+	go func() { _ = dvrPost.Run(ctx) }()
+	settingsHandler.SetDVRSettings(settingsSvc, v1.DVREnvInfo{
+		ScriptPath:  cfg.DVRPostProcessScript,
+		ComskipPath: cfg.ComskipPath,
+		ComskipINI:  cfg.ComskipINI,
+	})
+
 	go func() {
 		// Run forever; context cancellation on server shutdown stops it.
 		_ = dvrWorker.Run(ctx, 5*time.Second)
 	}()
-	liveTVHandler.WithDVR(dvrSvc)
+	liveTVHandler.WithDVR(dvrSvc).WithPostProcess(dvrPost)
 
 	// Lyrics: tag-sourced at scan time, LRCLIB fallback on first GET.
 	lyricsHandler := v1.NewLyricsHandler(

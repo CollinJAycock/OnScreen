@@ -134,6 +134,10 @@ type SettingsHandler struct {
 	// the current node and fill its unset fields with running (env) values.
 	nodeID       string
 	nodeDefaults settings.NodeSettings
+	// dvr backs GET/PUT /settings/dvr (nil = endpoints 404); dvrEnv is the
+	// env-only part shown read-only. See settings_dvr.go.
+	dvr    DVRSettingsStore
+	dvrEnv DVREnvInfo
 }
 
 // SetSystemDefaults records the env-effective System config so the System

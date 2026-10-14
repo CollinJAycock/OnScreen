@@ -409,6 +409,7 @@ func TestShouldSkipDir(t *testing.T) {
 	}{
 		// OnScreen-own convention.
 		{".artwork", true},
+		{".dvr-originals", true},
 
 		// Samba vfs_recycle module variants. .recycle is the default
 		// repository name; #recycle and .recycle.bin appear on some

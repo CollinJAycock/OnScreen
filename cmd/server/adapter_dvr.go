@@ -163,9 +163,11 @@ func (a *dvrAdapter) ListRecordingsForUser(ctx context.Context, userID uuid.UUID
 				ItemID:     pgUUIDToPtr(r.ItemID),
 				Error:      r.Error,
 			},
-			ChannelNumber: r.ChannelNumber,
-			ChannelName:   r.ChannelName,
-			ChannelLogo:   r.LogoUrl,
+			ChannelNumber:      r.ChannelNumber,
+			ChannelName:        r.ChannelName,
+			ChannelLogo:        r.LogoUrl,
+			PostProcessStatus:  r.PostprocessStatus,
+			PostProcessMessage: r.PostprocessMessage,
 		}
 		if r.CreatedAt.Valid {
 			out[i].CreatedAt = r.CreatedAt.Time
@@ -229,7 +231,7 @@ func (a *dvrAdapter) ListExpiredRecordings(ctx context.Context) ([]livetv.Expire
 	}
 	out := make([]livetv.ExpiredRecording, 0, len(rows))
 	for _, r := range rows {
-		er := livetv.ExpiredRecording{ID: r.ID, FilePath: r.FilePath}
+		er := livetv.ExpiredRecording{ID: r.ID, FilePath: r.FilePath, OriginalFilePath: r.OriginalFilePath}
 		if r.ItemID.Valid {
 			id := uuid.UUID(r.ItemID.Bytes)
 			er.ItemID = &id

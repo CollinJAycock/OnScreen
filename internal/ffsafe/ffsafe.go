@@ -99,9 +99,15 @@ func Whitelist(input string) string {
 // ConcatPart is one entry of a server-built concat list: a part file's local
 // path or its http(s) source URL, and its duration in seconds (0 = unknown,
 // ffmpeg then reads it from the file).
+//
+// InPointSec / OutPointSec trim the entry to a window of the file (0 = from
+// the start / to the end). The DVR commercial cut uses them to list the
+// programme segments of ONE recording; stacked movies leave them unset.
 type ConcatPart struct {
 	Input       string
 	DurationSec float64
+	InPointSec  float64
+	OutPointSec float64
 }
 
 // ConcatInputArgs returns the input options to place IMMEDIATELY before
@@ -140,6 +146,12 @@ func WriteConcatList(path string, parts []ConcatPart) error {
 		b.WriteString("file '" + strings.ReplaceAll(p.Input, "'", `'\''`) + "'\n")
 		if p.DurationSec > 0 {
 			b.WriteString("duration " + strconv.FormatFloat(p.DurationSec, 'f', 3, 64) + "\n")
+		}
+		if p.InPointSec > 0 {
+			b.WriteString("inpoint " + strconv.FormatFloat(p.InPointSec, 'f', 3, 64) + "\n")
+		}
+		if p.OutPointSec > 0 {
+			b.WriteString("outpoint " + strconv.FormatFloat(p.OutPointSec, 'f', 3, 64) + "\n")
 		}
 	}
 	return os.WriteFile(path, []byte(b.String()), 0o600)
