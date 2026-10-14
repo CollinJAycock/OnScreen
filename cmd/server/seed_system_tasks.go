@@ -167,6 +167,20 @@ var requiredSystemTasks = []systemTask{
 		enabled:  false,
 	},
 	{
+		name:     "Music loudness analysis",
+		taskType: "loudness_analysis",
+		// Nightly at 4:13am local (prime-offset, clear of the integrity
+		// probe at 3:41). Measures EBU R128 loudness of music files with no
+		// ReplayGain tags — a full decode per file, a few seconds each — and
+		// writes ReplayGain 2.0 track and album gain, so normalisation works
+		// for them too. Each run measures a bounded batch (default 500
+		// files) and continues the next night. Seeded DISABLED per the
+		// integrity-probe precedent: a heavy opt-in sweep, one click to
+		// enable in the Tasks UI.
+		cronExpr: "13 4 * * *",
+		enabled:  false,
+	},
+	{
 		name:     "Seek-bar thumbnail backfill",
 		taskType: "trickplay_backfill",
 		// Nightly at 2:29am local (prime-offset, and clear of the 3am
