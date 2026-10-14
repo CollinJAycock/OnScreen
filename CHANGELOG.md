@@ -620,6 +620,28 @@ API change lands only when every first-party client moves with it — see
   - "Mark watched" and "Mark unwatched" also work on the selection, and "Add
     to collection…" takes just its movies and shows.
   - **API (additive, admin):** `PATCH /items/bulk`. No migration.
+- **Fix subtitle timing for everyone.** When a subtitle is out of sync, an
+  admin can correct it on the server once, and every player and app gets the
+  corrected timing — the TV and phone apps included, without an update.
+  - **In the web player:** the subtitle menu's Sync control now moves the
+    subtitles in steps of 0.1 s and 1 s and shows the current value. This
+    adjustment only affects your own session. Admins also get "Save for
+    everyone", which stores the adjustment on the server and resets their
+    local one.
+  - It works for downloaded and OCR'd subtitles and for text subtitles inside
+    the video file, up to 10 minutes either way. Subtitles that would start
+    before the beginning start at 0; ones that would end before it are
+    dropped.
+  - Players fetch subtitles fresh enough to see a change straight away.
+  - **Not covered yet:** converted downloads still carry an embedded
+    subtitle's original timing. Image-based subtitles (PGS, VobSub) are never
+    sent as text; correct the OCR'd copy instead.
+  - **API (additive, admin):** `PUT /subtitles/{id}/offset` and
+    `PUT /files/{file_id}/subtitle-streams/{index}/offset`. Subtitle tracks in
+    item details gain `offset_ms`, for information only: the server has
+    already applied it.
+  - **Migration 00055** adds the offset to downloaded subtitles and a table
+    for embedded subtitle offsets.
 
 ### Changed
 

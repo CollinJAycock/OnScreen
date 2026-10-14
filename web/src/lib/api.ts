@@ -2537,6 +2537,9 @@ export interface SubtitleStream {
   sdh?: boolean;
   /** The file marks this track default (absent from older servers). */
   default?: boolean;
+  /** The admin's server-wide timing correction in ms (positive = later),
+   *  already applied to the served cues. Absent from older servers. */
+  offset_ms?: number;
 }
 
 export interface ExternalSubtitle {
@@ -2549,6 +2552,8 @@ export interface ExternalSubtitle {
   source: string;
   source_id?: string;
   url: string;
+  /** Server-wide timing correction in ms, already applied to `url`'s cues. */
+  offset_ms?: number;
 }
 
 export interface SubtitleSearchResult {
@@ -3363,6 +3368,14 @@ export const subtitleApi = {
   }) => api.post<OCRJob>(`/items/${itemId}/subtitles/ocr`, body),
   ocrStatus: (itemId: string, jobId: string) =>
     api.get<OCRJob>(`/items/${itemId}/subtitles/ocr/${jobId}`),
+  // Admin: the server-wide timing correction (ms, positive = later) of an
+  // external subtitle or an embedded stream. The server shifts the cues it
+  // serves, so every client gets corrected timing.
+  setOffset: (subId: string, offsetMs: number) =>
+    api.put<ExternalSubtitle>(`/subtitles/${subId}/offset`, { offset_ms: offsetMs }),
+  setStreamOffset: (fileId: string, streamIndex: number, offsetMs: number) =>
+    api.put<{ file_id: string; stream_index: number; offset_ms: number }>(
+      `/files/${fileId}/subtitle-streams/${streamIndex}/offset`, { offset_ms: offsetMs }),
 };
 
 export interface OCRJob {
