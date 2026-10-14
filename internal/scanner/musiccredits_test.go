@@ -119,7 +119,7 @@ func TestTrackCredits(t *testing.T) {
 
 func TestAlbumArtistName(t *testing.T) {
 	for in, want := range map[string]string{
-		"Jay-Z feat. Rihanna": "Jay-Z",
+		"Jay-Z feat. Rihanna":   "Jay-Z",
 		"Jay-Z (feat. Rihanna)": "Jay-Z",
 		"Earth, Wind & Fire":    "Earth, Wind & Fire",
 		"Various Artists":       "Various Artists",

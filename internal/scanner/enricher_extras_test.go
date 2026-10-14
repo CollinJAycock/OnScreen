@@ -335,6 +335,50 @@ func TestMovieInLibraryRootGetsNoFolderArt(t *testing.T) {
 	}
 }
 
+// A movie with no metadata match — no agent configured, or the search found
+// nothing — still uses the Kodi-named art next to it, like a local poster.
+func TestUnmatchedMovieStillGetsLocalExtraArt(t *testing.T) {
+	for name, agent := range map[string]metadata.Agent{
+		"no agent": nil,
+		"no match": &mockAgent{},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, "Home Video (2020)")
+			_ = os.MkdirAll(dir, 0o755)
+			for _, f := range []string{"clearlogo.png", "banner.jpg"} {
+				if err := os.WriteFile(filepath.Join(dir, f), []byte("mine"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			itemID := uuid.New()
+			updater := newMockUpdater()
+			updater.items[itemID] = &media.Item{ID: itemID, Type: "movie", Title: "Home Video"}
+			updater.files[itemID] = []media.File{{MediaItemID: itemID, FilePath: filepath.Join(dir, "Home Video (2020).mkv"), Status: "active"}}
+			art := &extrasArtwork{}
+			extras := newFakeExtras(true)
+			fan := &fakeExtraArtAgent{movie: metadata.ExtraArt{DiscURL: "https://assets.fanart.tv/disc.png"}}
+			e := newExtrasEnricher(t, root, agent, updater, art, extras, fan)
+			if err := e.Enrich(context.Background(), updater.items[itemID], &updater.files[itemID][0]); err != nil {
+				t.Fatal(err)
+			}
+			got := extras.art[itemID]
+			if got[0] == nil || *got[0] != "Home Video (2020)/clearlogo.png" {
+				t.Errorf("logo = %v, want the local clearlogo.png", strp(got[0]))
+			}
+			if got[1] == nil || *got[1] != "Home Video (2020)/banner.jpg" {
+				t.Errorf("banner = %v, want the local banner.jpg", strp(got[1]))
+			}
+			if fan.calls != 0 || len(art.downloads) != 0 {
+				t.Errorf("an unmatched movie asked fanart.tv (%d calls, downloads %v)", fan.calls, art.downloads)
+			}
+			if _, err := os.Stat(filepath.Join(dir, "Home Video (2020).nfo")); err == nil {
+				t.Error("wrote an NFO for an unmatched movie")
+			}
+		})
+	}
+}
+
 func TestArtExt(t *testing.T) {
 	for in, want := range map[string]string{
 		"https://x/a.PNG":         ".png",

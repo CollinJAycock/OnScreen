@@ -411,6 +411,8 @@ func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.Fil
 		if item.Type == "movie" && e.nfoCollections != nil {
 			e.importNFOCollections(ctx, item.LibraryID, item.ID, e.readMovieNFO(ctx, file))
 		}
+		// Kodi-named logo / banner / disc files are local too.
+		e.localExtraArt(ctx, item, file)
 		return nil
 	}
 	switch item.Type {
@@ -713,6 +715,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		if nfoMovie != nil {
 			return e.writeNFOOnly(ctx, item.ID, file, nfoMovie)
 		}
+		e.localExtraArt(ctx, item, file)
 		return nil
 	}
 
@@ -1083,8 +1086,10 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				e.finishShow(ctx, item.ID, file, nil, nfoShow, false)
 				e.logger.InfoContext(ctx, "show enriched from NFO (no TMDB/TVDB match)",
 					"item_id", item.ID, "title", nfoShow.Title)
+				return nil
 			}
 		}
+		e.localExtraArt(ctx, item, file)
 		return nil
 	}
 	if result.PosterURL == "" {

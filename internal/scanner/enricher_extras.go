@@ -96,7 +96,10 @@ type extrasInput struct {
 	// noLocal skips the Kodi-name lookup (the folder is shared with other
 	// items, so a bare disc.png there can't be told apart).
 	noLocal bool
-	slots   []*artSlot
+	// localOnly reads the Kodi-named files and never asks fanart.tv (an
+	// item with no metadata match has no ids to ask with).
+	localOnly bool
+	slots     []*artSlot
 
 	tmdbID, tvdbID   int
 	imdbID           string
@@ -169,7 +172,7 @@ func (e *Enricher) applyExtraArt(ctx context.Context, in extrasInput) {
 	}
 
 	var remote metadata.ExtraArt
-	if len(found) < len(in.slots) {
+	if len(found) < len(in.slots) && !in.localOnly {
 		remote = e.lookupExtraArt(ctx, in)
 		if remote.BannerURL == "" {
 			remote.BannerURL = in.bannerFallback
@@ -385,6 +388,31 @@ func (e *Enricher) finishMovie(ctx context.Context, itemID uuid.UUID, file *medi
 	in.studioKind = studioKindStudio
 	e.applyExtras(ctx, in)
 	e.WriteItemNFO(ctx, itemID)
+}
+
+// localExtraArt reads the Kodi-named logo / banner / disc files next to a
+// movie or show that has no metadata match (no agent configured, or nothing
+// found), the same way a local poster.jpg is used without one. Nothing is
+// downloaded, studios are left alone and no NFO is written.
+func (e *Enricher) localExtraArt(ctx context.Context, item *media.Item, file *media.File) {
+	if e.extras == nil || item == nil || file == nil {
+		return
+	}
+	in := extrasInput{item: item, localOnly: true}
+	switch item.Type {
+	case "movie":
+		in.dir = filepath.Dir(file.FilePath)
+		in.slots = []*artSlot{&logoSlot, &bannerSlot, &discSlot}
+	case "show":
+		in.dir = showDirFromFile(file.FilePath)
+		in.slots = []*artSlot{&logoSlot, &bannerSlot}
+	default:
+		return
+	}
+	if e.isScanRoot(in.dir) {
+		return
+	}
+	e.applyExtras(ctx, in)
 }
 
 // finishShow is finishMovie for shows: networks, logo and banner (fanart.tv
