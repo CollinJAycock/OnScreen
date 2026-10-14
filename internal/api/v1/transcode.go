@@ -783,7 +783,19 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if caps.MaxHeight > 0 && (reqHeight == 0 || reqHeight > caps.MaxHeight) {
 			reqHeight = caps.MaxHeight
 		}
-		quality := transcode.SelectQuality(0, caps.MaxWidth, reqHeight, sourceW, sourceH, serverCaps)
+		reqWidth := caps.MaxWidth
+		// A per-user or internet cap also bounds the resolution, to the
+		// largest profile that fits it (720p at 4 Mbps, 1080p from 8 Mbps).
+		if streamCaps.BitrateKbps > 0 {
+			fit := transcode.ProfileForBitrate(streamCaps.BitrateKbps)
+			if reqHeight == 0 || reqHeight > fit.MaxHeight {
+				reqHeight = fit.MaxHeight
+			}
+			if reqWidth == 0 || reqWidth > fit.MaxWidth {
+				reqWidth = fit.MaxWidth
+			}
+		}
+		quality := transcode.SelectQuality(0, reqWidth, reqHeight, sourceW, sourceH, serverCaps)
 
 		// SelectQuality leaves MaxWidth at the server cap when the client only
 		// specified height. Recalculate it from the source aspect ratio so FFmpeg

@@ -268,8 +268,9 @@ API change lands only when every first-party client moves with it — see
     user's cap, their internet cap and the server's limit; a stream at home
     gets only the user's cap, as before.
   - **What happens:** a remote viewer whose video is over the limit is
-    transcoded down to it instead of playing the original file, and the
-    adaptive quality ladder never goes above it. Now Playing shows "Over the
+    transcoded down to it instead of playing the original file, at a
+    resolution that suits the rate (720p at 4 Mbps, 1080p from 8 Mbps), and
+    the adaptive quality ladder never goes above it. Now Playing shows "Over the
     internet streaming limit". Music, audiobooks and podcasts are never
     limited.
   - **What counts as home:** loopback, private (192.168.x, 10.x, 172.16–31.x,
@@ -278,8 +279,9 @@ API change lands only when every first-party client moves with it — see
     networks" adds more (a VPN or office subnet). The address is the one the
     server trusts for the audit log, so behind a reverse proxy or Cloudflare
     it is the viewer's real address only if the proxy forwards it (the bundled
-    nginx sample and cloudflared do); a proxy that doesn't makes everyone look
-    local.
+    nginx sample and cloudflared do) AND its address is in `TRUSTED_PROXIES`.
+    Otherwise every viewer looks like the proxy, which is usually on your
+    network, so the internet limit never applies.
   - **Not covered:** a client that fetches the original file directly
     without asking the server how to play it (older app builds) isn't held to
     the limit. All current OnScreen apps ask first.
@@ -290,8 +292,8 @@ API change lands only when every first-party client moves with it — see
     `max_remote_stream_bitrate_kbps` (leaving it out keeps the stored value).
     Changing a user's caps is now audited.
   - **Migration 00046** adds the per-user internet cap.
-- **Signed-in devices.** Settings ▸ Security lists every device signed in to
-  your account (browser or app, its address, when it signed in and was last
+- **Signed-in devices.** Settings ▸ Security (admins) or the new Account page
+  (everyone else) lists every device signed in to your account (browser or app, its address, when it signed in and was last
   used) with a "Sign out" button on each and "Sign out everywhere else". On
   the Users page an admin can see and sign out any user's devices, or sign
   them out everywhere.

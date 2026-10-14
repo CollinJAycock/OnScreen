@@ -565,6 +565,14 @@
             </svg>
             Settings
           </a>
+        {:else}
+          <!-- Admins find their devices under Settings ▸ Security. -->
+          <a href="/account" class="nav-link" class:active={path.startsWith('/account')}>
+            <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+              <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-5.5-2.5a2.5 2.5 0 11-5 0 2.5 2.5 0 015 0zM10 12a4.978 4.978 0 00-3.462 1.393A5.99 5.99 0 0010 15a5.99 5.99 0 003.462-1.607A4.978 4.978 0 0010 12z" clip-rule="evenodd"/>
+            </svg>
+            Account
+          </a>
         {/if}
       </nav>
 

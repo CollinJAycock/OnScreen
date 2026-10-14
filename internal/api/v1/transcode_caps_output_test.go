@@ -99,3 +99,33 @@ func TestStart_AudioOnlySourceBuildsAudioJob(t *testing.T) {
 			"hard-maps 0:v:0 and ffmpeg dies on 'matches no streams'")
 	}
 }
+
+// TestStart_BitrateCapBoundsResolution: a per-user cap of 4 Mbps on a 4K
+// source yields 720p output, not 4K starved to 4 Mbps.
+func TestStart_BitrateCapBoundsResolution(t *testing.T) {
+	h, store := newTestHandlerWithCodec(t, "h264")
+	w4k, h4k := 3840, 2160
+	h.media.(*mockTranscodeMedia).files[0].ResolutionW = &w4k
+	h.media.(*mockTranscodeMedia).files[0].ResolutionH = &h4k
+	h.WithUserCaps(staticCaps{BitrateKbps: 4000})
+
+	body, _ := json.Marshal(transcodeStartRequest{Height: 0}) // Auto
+	req := httptest.NewRequest("POST", "/api/v1/items/"+uuid.New().String()+"/transcode", bytes.NewReader(body))
+	req.Header.Set("X-Client-Capabilities", "videoDecoder=h264,audioDecoder=aac")
+	req = withChiParam(req, "id", uuid.New().String())
+	req = withClaims(req)
+
+	rec := httptest.NewRecorder()
+	h.Start(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("Start: %d\n%s", rec.Code, rec.Body.String())
+	}
+
+	job := drainJob(t, store)
+	if job.Height != 720 || job.Width != 1280 {
+		t.Errorf("output %dx%d under a 4 Mbps cap, want 1280x720", job.Width, job.Height)
+	}
+	if job.BitrateKbps > 4000 {
+		t.Errorf("output bitrate %d over the 4 Mbps cap", job.BitrateKbps)
+	}
+}
