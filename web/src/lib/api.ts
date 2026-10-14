@@ -2613,6 +2613,9 @@ export interface SubtitleStream {
   sdh?: boolean;
   /** The file marks this track default (absent from older servers). */
   default?: boolean;
+  /** The admin's server-wide timing correction in ms (positive = later),
+   *  already applied to the served cues. Absent from older servers. */
+  offset_ms?: number;
 }
 
 export interface ExternalSubtitle {
@@ -2625,6 +2628,8 @@ export interface ExternalSubtitle {
   source: string;
   source_id?: string;
   url: string;
+  /** Server-wide timing correction in ms, already applied to `url`'s cues. */
+  offset_ms?: number;
 }
 
 export interface SubtitleSearchResult {
@@ -2827,6 +2832,33 @@ export interface MetadataEdit {
   content_rating?: string;
   genres?: string[];
   unlock_fields?: string[];
+}
+
+/** PATCH /items/bulk body (admin): one edit for up to 500 items. */
+export interface BulkEditRequest {
+  item_ids: string[];
+  set?: { content_rating?: string | null; genres?: string[] };
+  add_genres?: string[];
+  remove_genres?: string[];
+  add_labels?: string[];
+  remove_labels?: string[];
+  lock?: string[];
+  unlock?: string[];
+}
+
+export interface BulkEditSkip {
+  item_id: string;
+  title?: string;
+  field?: string;
+  reason: 'locked' | 'not_applicable' | 'not_found';
+}
+
+export interface BulkEditResult {
+  matched: number;
+  updated: number;
+  labels_added: number;
+  labels_removed: number;
+  skipped: BulkEditSkip[];
 }
 
 export interface MetadataEditResult {
@@ -3329,6 +3361,11 @@ export const itemApi = {
   // unlock_fields releases locks.
   editMetadata: (id: string, fields: MetadataEdit) =>
     api.patch<MetadataEditResult>(`/items/${id}`, fields),
+  // Admin bulk edit for a library selection: content rating, genres,
+  // labels and locks on up to 500 items in one transaction. Locked fields
+  // are skipped (and reported) unless the request unlocks them.
+  bulkEdit: (body: BulkEditRequest) =>
+    api.patch<BulkEditResult>('/items/bulk', body),
   remove: (id: string) => api.delete(`/items/${id}`),
   // Cross-device transfer — list distinct clients the user has
   // recently scrobbled from (drives the "Play on…" picker), and
@@ -3435,6 +3472,14 @@ export const subtitleApi = {
   }) => api.post<OCRJob>(`/items/${itemId}/subtitles/ocr`, body),
   ocrStatus: (itemId: string, jobId: string) =>
     api.get<OCRJob>(`/items/${itemId}/subtitles/ocr/${jobId}`),
+  // Admin: the server-wide timing correction (ms, positive = later) of an
+  // external subtitle or an embedded stream. The server shifts the cues it
+  // serves, so every client gets corrected timing.
+  setOffset: (subId: string, offsetMs: number) =>
+    api.put<ExternalSubtitle>(`/subtitles/${subId}/offset`, { offset_ms: offsetMs }),
+  setStreamOffset: (fileId: string, streamIndex: number, offsetMs: number) =>
+    api.put<{ file_id: string; stream_index: number; offset_ms: number }>(
+      `/files/${fileId}/subtitle-streams/${streamIndex}/offset`, { offset_ms: offsetMs }),
 };
 
 export interface OCRJob {

@@ -53,6 +53,9 @@
     type SubtitleOutline,
   } from './subtitle-style';
   import { pickPreferredSubtitle } from './subtitle-select';
+  // Subtitle sync: the session-only adjustment and the admin's
+  // "Save for everyone" server offset. Tested in subtitle-offset.test.ts.
+  import { OFFSET_STEPS_MS, stepDelay, formatOffset, offsetToSave } from './subtitle-offset';
   // Watched marks + the show / season Play target. Pure helpers, tested
   // in $lib/watchState.test.ts.
   import type { UpNext } from '$lib/api';
@@ -211,6 +214,12 @@
     sdh: boolean;
     url: string;
     origin: 'embedded' | 'external';
+    // Where an admin's "Save for everyone" sends the offset, and the
+    // server offset already baked into the cues at url.
+    fileId: string;
+    streamIndex?: number; // embedded
+    subId?: string;       // external
+    offsetMs: number;
   };
   let selectedSubtitle: PickedSubtitle | null = null;
   const subtitleSizes = ['small', 'medium', 'large'] as const satisfies readonly SubtitleSize[];
@@ -229,7 +238,43 @@
     saveSubtitleStyle(subtitleStyle);
   }
   // Subtitle delay in seconds (positive = subs appear later, negative = earlier).
+  // Session-only and local to this player; it applies on top of the cues the
+  // server sends, which already carry any saved server offset.
   let subtitleDelay = 0;
+  // Server offsets saved from this page, by picked-subtitle key — the item
+  // payload behind textSubtitles still has the old value.
+  let savedSubtitleOffsets: Record<string, number> = {};
+  let savingSubtitleOffset = false;
+  $: selectedServerOffset = selectedSubtitle
+    ? (savedSubtitleOffsets[selectedSubtitle.key] ?? selectedSubtitle.offsetMs)
+    : 0;
+
+  // Admin "Save for everyone": fold the local adjustment into the server
+  // offset, reload the (now server-shifted) cues, then drop the local
+  // adjustment so the timing on screen doesn't jump.
+  async function saveSubtitleOffset() {
+    const sel = selectedSubtitle;
+    if (!sel || savingSubtitleOffset || subtitleDelay === 0) return;
+    const next = offsetToSave(selectedServerOffset, subtitleDelay);
+    savingSubtitleOffset = true;
+    try {
+      if (sel.origin === 'external' && sel.subId) {
+        await subtitleApi.setOffset(sel.subId, next);
+      } else if (sel.streamIndex !== undefined) {
+        await subtitleApi.setStreamOffset(sel.fileId, sel.streamIndex, next);
+      } else {
+        return;
+      }
+      savedSubtitleOffsets = { ...savedSubtitleOffsets, [sel.key]: next };
+      await loadSubtitleCues(sel.url);
+      subtitleDelay = 0;
+      toast.success(`Subtitle timing saved for everyone (${formatOffset(next)})`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the subtitle timing');
+    } finally {
+      savingSubtitleOffset = false;
+    }
+  }
 
   // ── Cast / Chromecast ──────────────────────────────────────────────
   // SDK loaded asynchronously via cast_sender.js — only available on
@@ -412,7 +457,9 @@
   async function loadSubtitleCues(url: string) {
     const fetchId = ++subtitleFetchId;
     try {
-      const resp = await fetch(url);
+      // no-cache: revalidate (a 304 when unchanged) so a server offset an
+      // admin just saved is picked up instead of a cached copy.
+      const resp = await fetch(url, { cache: 'no-cache' });
       if (!resp.ok || fetchId !== subtitleFetchId) return;
       const vtt = await resp.text();
       allCues = parseWebVTT(vtt);
@@ -554,6 +601,9 @@
       sdh: s.sdh ?? false,
       url: assetUrl(`/media/subtitles/${file.id}/${s.index}`),
       origin: 'embedded',
+      fileId: file.id,
+      streamIndex: s.index,
+      offsetMs: s.offset_ms ?? 0,
     };
   }
   function externalToPicked(ext: ExternalSubtitle): PickedSubtitle {
@@ -569,6 +619,9 @@
       // get the URL back unchanged and rely on the auth cookie.
       url: assetUrl(ext.url),
       origin: 'external',
+      fileId: ext.file_id,
+      subId: ext.id,
+      offsetMs: ext.offset_ms ?? 0,
     };
   }
 
@@ -3882,15 +3935,31 @@
                           >{o[0].toUpperCase() + o.slice(1)}</button>
                         {/each}
                       </div>
-                      <div class="subtitle-size-row">
+                      <div class="subtitle-size-row subtitle-sync-row">
                         <span class="subtitle-size-label">Sync</span>
-                        <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay -= 0.5}>-0.5s</button>
-                        <span class="subtitle-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-                        <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay += 0.5}>+0.5s</button>
+                        {#each OFFSET_STEPS_MS.slice(0, 2) as step}
+                          <button class="subtitle-size-btn" aria-label="Subtitles {Math.abs(step) >= 1000 ? '1 second' : '100 milliseconds'} earlier"
+                            on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step <= -1000 ? '−1s' : '−0.1'}</button>
+                        {/each}
+                        <span class="subtitle-delay-value" aria-live="polite">{formatOffset(subtitleDelay * 1000)}</span>
+                        {#each OFFSET_STEPS_MS.slice(2) as step}
+                          <button class="subtitle-size-btn" aria-label="Subtitles {step >= 1000 ? '1 second' : '100 milliseconds'} later"
+                            on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step >= 1000 ? '+1s' : '+0.1'}</button>
+                        {/each}
                         {#if subtitleDelay !== 0}
                           <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>Reset</button>
                         {/if}
                       </div>
+                      {#if isAdmin}
+                        <div class="subtitle-size-row subtitle-sync-row">
+                          <span class="subtitle-size-label">Server</span>
+                          <span class="subtitle-delay-value" title="Saved for everyone; already applied to the cues">{formatOffset(selectedServerOffset)}</span>
+                          <button class="subtitle-size-btn"
+                            disabled={subtitleDelay === 0 || savingSubtitleOffset}
+                            title="Store this timing on the server so every player and app gets it"
+                            on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? 'Saving…' : 'Save for everyone'}</button>
+                        </div>
+                      {/if}
                     {/if}
                   </div>
                 {/if}
@@ -4257,15 +4326,30 @@
                   >{o[0].toUpperCase() + o.slice(1)}</button>
                 {/each}
               </div>
-              <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
+              <div class="subtitle-size-row subtitle-sync-row" style="padding: 0.5rem 1.25rem;">
                 <span class="subtitle-size-label">Sync</span>
-                <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay -= 0.5}>-0.5s</button>
-                <span class="subtitle-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-                <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay += 0.5}>+0.5s</button>
+                {#each OFFSET_STEPS_MS.slice(0, 2) as step}
+                  <button class="subtitle-size-btn" aria-label="Subtitles {Math.abs(step) >= 1000 ? '1 second' : '100 milliseconds'} earlier"
+                    on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step <= -1000 ? '−1s' : '−0.1'}</button>
+                {/each}
+                <span class="subtitle-delay-value" aria-live="polite">{formatOffset(subtitleDelay * 1000)}</span>
+                {#each OFFSET_STEPS_MS.slice(2) as step}
+                  <button class="subtitle-size-btn" aria-label="Subtitles {step >= 1000 ? '1 second' : '100 milliseconds'} later"
+                    on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step >= 1000 ? '+1s' : '+0.1'}</button>
+                {/each}
                 {#if subtitleDelay !== 0}
                   <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>Reset</button>
                 {/if}
               </div>
+              {#if isAdmin && selectedSubtitle}
+                <div class="subtitle-size-row subtitle-sync-row" style="padding: 0.5rem 1.25rem;">
+                  <span class="subtitle-size-label">Server</span>
+                  <span class="subtitle-delay-value" title="Saved for everyone; already applied to the cues">{formatOffset(selectedServerOffset)}</span>
+                  <button class="subtitle-size-btn"
+                    disabled={subtitleDelay === 0 || savingSubtitleOffset}
+                    on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? 'Saving…' : 'Save for everyone'}</button>
+                </div>
+              {/if}
             {/if}
           {:else if showBottomSheet === 'audio'}
             <div class="bottom-sheet-title">Audio Track</div>
@@ -5779,7 +5863,11 @@
     color: rgba(255,255,255,0.7);
     min-width: 2.5rem;
     text-align: center;
+    font-variant-numeric: tabular-nums;
   }
+  /* Sync: four steps, the value, Reset, and the admin's server row. */
+  .subtitle-sync-row { flex-wrap: wrap; }
+  .subtitle-size-btn:disabled { opacity: 0.45; cursor: default; }
 
   /* ── Detail view (shows / seasons) ───────────────── */
   .detail-page {

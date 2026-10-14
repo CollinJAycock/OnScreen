@@ -28,6 +28,7 @@ import (
 	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/bulkedit"
 	"github.com/onscreen/onscreen/internal/collections"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db"
@@ -966,7 +967,10 @@ func run() error {
 		logger.Info("subtitle OCR enabled (ffmpeg + tesseract on PATH)")
 	}
 	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
-		WithLibraryAccess(libSvc)
+		WithLibraryAccess(libSvc).
+		// Admin timing offsets for external subtitles and embedded streams.
+		WithOffsets(gen.New(rwPool)).
+		WithAudit(auditLogger)
 	// Automatic subtitle download: admin settings (server-wide + per-library)
 	// and the subtitle_auto_download task registered below.
 	subtitleAutoHandler := v1.NewSubtitleAutoHandler(settingsSvc, gen.New(rwPool),
@@ -1023,6 +1027,9 @@ func run() error {
 		WithCommercials(commercialMarkerLister{q: gen.New(roPool)}).
 		WithExternalSubtitles(subtitleSvc).
 		WithSubtitleCache(subtitleCacheRoot).
+		// Embedded subtitle streams' admin timing offsets: read from the
+		// primary so a change applies on the very next cue fetch.
+		WithSubtitleOffsets(gen.New(rwPool)).
 		WithSyncBroker(notifBrokerEarly).
 		WithAudit(auditLogger).
 		WithStreamTokenMaker(tokenMaker).
@@ -1043,6 +1050,8 @@ func run() error {
 		WithStudios(studioSvc).
 		// A metadata edit rewrites the item's NFO in save_nfo libraries.
 		WithNFOWriter(metaAgent).
+		// PATCH /items/bulk — one transaction on the read-write pool.
+		WithBulkEditor(bulkedit.New(rwPool)).
 		// A metadata edit drops the hub's cached trending row, which carries
 		// titles and was rating-filtered when fetched.
 		WithCacheInvalidator(hubHandler)

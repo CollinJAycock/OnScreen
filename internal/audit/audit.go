@@ -59,6 +59,13 @@ const (
 	// ActionItemEpisodeOrder is an admin setting (or clearing) a show's
 	// episode order — aired / DVD / absolute — on /items/{id}/episode-order.
 	ActionItemEpisodeOrder = "item.episode_order"
+	// ActionItemBulkEdit is one admin bulk metadata edit (PATCH
+	// /items/bulk): a single event carrying the item count and the fields
+	// set, merged, locked and unlocked.
+	ActionItemBulkEdit = "item.bulk_edit"
+	// ActionSubtitleOffset is an admin setting the server-wide timing offset
+	// of an external subtitle or an embedded subtitle stream.
+	ActionSubtitleOffset = "subtitle.offset"
 
 	// Webhook CRUD audit actions. Webhooks carry an encrypted secret
 	// and an outbound URL — both privileged config — so create/update/

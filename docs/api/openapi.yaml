@@ -1203,6 +1203,94 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
+  /api/v1/items/bulk:
+    patch:
+      summary: Edit metadata of many items at once (admin)
+      tags: [Items]
+      description: |
+        *(v2.6)* One edit applied to up to 500 items in a single
+        transaction: if any item's write fails, none is changed. Item
+        types may be mixed. Unknown fields are rejected with 400.
+
+        - `set.content_rating` applies to movies, shows, episodes, music
+          videos, home videos, audiobooks, books and podcasts.
+        - `set.genres` (replace) or `add_genres` / `remove_genres` (merge,
+          case-insensitive; removes first) apply to movies, shows, albums,
+          artists, music videos, audiobooks, books and podcasts. Sending
+          `set.genres` with a merge list is a 400. A merge that leaves an
+          item's genres as they were doesn't touch (or lock) it.
+        - `add_labels` / `remove_labels` work like
+          `POST /api/v1/labels/apply` on every item.
+        - `lock` / `unlock` add or drop field locks (lock names as for
+          `PATCH /api/v1/items/{id}`) without changing values.
+
+        As in the single-item editor, every field written is locked. A
+        field an item's type doesn't carry is skipped and reported
+        (`not_applicable`), and so is a field the item has locked
+        (`locked`) — unless the same request lists it in `unlock`: the
+        unlock comes first, the new value is written and locked again. Ids
+        without a live item are reported as `not_found`. NFO files of the
+        updated items are rewritten in the background in libraries that
+        save them. Audited as one `item.bulk_edit` event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_ids]
+              properties:
+                item_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { type: string, format: uuid }
+                set:
+                  type: object
+                  properties:
+                    content_rating: { type: string, nullable: true, maxLength: 32, description: 'Empty string or null clears.' }
+                    genres:
+                      type: array
+                      maxItems: 50
+                      items: { type: string, maxLength: 100 }
+                      description: 'The full list; [] clears.'
+                add_genres:    { type: array, maxItems: 50, items: { type: string, maxLength: 100 } }
+                remove_genres: { type: array, maxItems: 50, items: { type: string, maxLength: 100 } }
+                add_labels:    { type: array, items: { type: string } }
+                remove_labels: { type: array, items: { type: string } }
+                lock:          { type: array, items: { type: string }, description: 'Lock names to add. Can''t overlap unlock.' }
+                unlock:        { type: array, items: { type: string }, description: 'Lock names to drop, applied before the writes.' }
+      responses:
+        '200':
+          description: Applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      matched:        { type: integer, description: 'Live items among item_ids.' }
+                      updated:        { type: integer, description: 'Items whose metadata or locks were written.' }
+                      labels_added:   { type: integer, description: 'Items the label add changed.' }
+                      labels_removed: { type: integer, description: 'Items the label remove changed.' }
+                      skipped:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            item_id: { type: string, format: uuid }
+                            title:   { type: string }
+                            field:   { type: string, description: 'Absent for not_found.' }
+                            reason:  { type: string, enum: [locked, not_applicable, not_found] }
+        '400':
+          description: 'Invalid body: no or too many ids, a duplicate or malformed id, nothing to change, an unknown field or lock name, set.genres with a merge list, a lock name in both lock and unlock.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/items/{id}/children:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -2071,6 +2159,84 @@ paths:
       responses:
         '204': { description: Deleted. }
 
+  /api/v1/subtitles/{id}/offset:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid }, description: 'External subtitle id.' }
+    put:
+      summary: Set an external subtitle's timing offset (admin)
+      tags: [Subtitles]
+      description: |
+        *(v2.6, migration 00055)* A server-wide correction for a mistimed
+        subtitle, applied for everyone: `/media/external-subtitles/{id}`
+        serves every cue shifted by it (positive = later; a cue pushed
+        before 0 starts at 0, one that also ends at or before 0 is
+        dropped). Clients need no change. 0 removes the correction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offset_ms]
+              properties:
+                offset_ms: { type: integer, minimum: -600000, maximum: 600000 }
+      responses:
+        '200':
+          description: The updated subtitle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ExternalSubtitle' }
+        '400': { description: 'Missing or malformed offset_ms.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: 'offset_ms outside ±600000 (10 minutes).' }
+
+  /api/v1/files/{file_id}/subtitle-streams/{index}/offset:
+    parameters:
+      - { in: path, name: file_id, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: index, required: true, schema: { type: integer, minimum: 0 }, description: 'Absolute stream index, as in subtitle_streams[].index.' }
+    put:
+      summary: Set an embedded subtitle stream's timing offset (admin)
+      tags: [Subtitles]
+      description: |
+        *(v2.6, migration 00055)* The same correction for an embedded text
+        subtitle stream; `/media/subtitles/{fileId}/{streamIndex}` serves
+        the shifted cues. Image-based streams (PGS, VobSub, DVB) are 415 —
+        they're never served as text; set the offset on their OCR'd copy.
+        Converted downloads still carry the embedded stream's original
+        timing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offset_ms]
+              properties:
+                offset_ms: { type: integer, minimum: -600000, maximum: 600000 }
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      file_id:      { type: string, format: uuid }
+                      stream_index: { type: integer }
+                      offset_ms:    { type: integer }
+        '400': { description: 'Bad file id, stream index or body.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 'No such file, or the file has no subtitle stream at that index.' }
+        '415': { description: 'IMAGE_SUBTITLE: the stream is image-based.' }
+        '422': { description: 'offset_ms outside ±600000 (10 minutes).' }
+
   # ── Trickplay ──────────────────────────────────────────────────────────────
   /api/v1/items/{id}/trickplay:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -2559,11 +2725,17 @@ paths:
     get:
       summary: Serve an embedded subtitle as VTT
       tags: [Subtitles]
+      description: |
+        Cues are shifted by the stream's admin offset (v2.6). Sent with an
+        ETag and `Cache-Control: private, no-cache`, so an offset change
+        reaches clients on their next load; an unchanged track revalidates
+        with 304.
       responses:
         '200':
           description: Subtitle.
           content:
             text/vtt: {}
+        '304': { description: 'If-None-Match matched the current ETag.' }
 
   /media/external-subtitles/{subId}:
     parameters:
@@ -2571,11 +2743,15 @@ paths:
     get:
       summary: Serve a downloaded external subtitle
       tags: [Subtitles]
+      description: |
+        Cues are shifted by the subtitle's admin offset (v2.6); same ETag
+        and revalidation behaviour as /media/subtitles.
       responses:
         '200':
           description: Subtitle.
           content:
             text/vtt: {}
+        '304': { description: 'If-None-Match matched the current ETag.' }
 
   /artwork/{path}:
     parameters:
@@ -7248,6 +7424,13 @@ components:
             Clients with no subtitle-language preference show it. False on
             files probed before the field until a metadata reprobe
             (POST /api/v1/maintenance/reprobe-metadata).
+        offset_ms:
+          type: integer
+          description: |
+            v2.6. The admin's server-wide timing correction in ms
+            (positive = later), already applied to the cues
+            /media/subtitles/{fileId}/{index} serves. Informational:
+            clients must not shift by it again. 0 when none.
     ExternalSubtitle:
       type: object
       properties:
@@ -7255,6 +7438,12 @@ components:
         language: { type: string }
         format:   { type: string }
         url:      { type: string }
+        offset_ms:
+          type: integer
+          description: |
+            v2.6. The admin's server-wide timing correction in ms
+            (positive = later), already applied to the cues `url` serves.
+            Informational: clients must not shift by it again.
     Chapter:
       type: object
       properties:
