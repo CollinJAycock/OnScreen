@@ -227,6 +227,7 @@ func GenGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
 	item.ReadingDirection = r.ReadingDirection
 	item.FranchiseID = int32PtrToIntPtr(r.FranchiseID)
 	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
+	item.LockedFields = r.LockedFields
 	return item
 }
 
@@ -303,6 +304,36 @@ func GenUpdateItemRowToItem(r gen.UpdateMediaItemMetadataRow) media.Item {
 		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
 		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+
+func GenEditItemRowToItem(r gen.EditMediaItemMetadataRow) media.Item {
+	item := ItemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+	item.LockedFields = r.LockedFields
+	return item
+}
+
+func EditItemMetadataParamsToGen(p media.EditItemMetadataParams) gen.EditMediaItemMetadataParams {
+	return gen.EditMediaItemMetadataParams{
+		ID:                    p.ID,
+		SetFields:             p.Set,
+		LockFields:            p.Lock,
+		UnlockFields:          p.Unlock,
+		Title:                 p.Title,
+		SortTitle:             p.SortTitle,
+		OriginalTitle:         p.OriginalTitle,
+		Year:                  IntPtrToInt32Ptr(p.Year),
+		OriginallyAvailableAt: timePtrToPGDate(p.OriginallyAvailableAt),
+		Summary:               p.Summary,
+		Tagline:               p.Tagline,
+		Rating:                Float64PtrToNumeric(p.Rating),
+		ContentRating:         p.ContentRating,
+		Genres:                p.Genres,
+	}
 }
 
 func CreateItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {

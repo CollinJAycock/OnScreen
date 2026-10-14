@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -18,7 +19,8 @@ type mockQuerier struct {
 	restoredAuthors []string   // RestoreMergedAudiobooks' result
 	reimportAuthors [][]string // ForceReimportAudiobookFiles' calls
 	items           map[uuid.UUID]Item
-	files           map[uuid.UUID][]File // keyed by MediaItemID
+	lastEdit        *EditItemMetadataParams // EditMediaItemMetadata's last call
+	files           map[uuid.UUID][]File    // keyed by MediaItemID
 	fileByPath      map[string]File
 	fileByHash      map[string]File
 
@@ -181,6 +183,20 @@ func (m *mockQuerier) UpdateMediaItemMetadata(_ context.Context, p UpdateItemMet
 		return Item{}, pgx.ErrNoRows
 	}
 	it.Title = p.Title
+	m.items[p.ID] = it
+	return it, nil
+}
+
+func (m *mockQuerier) EditMediaItemMetadata(_ context.Context, p EditItemMetadataParams) (Item, error) {
+	m.lastEdit = &p
+	it, ok := m.items[p.ID]
+	if !ok {
+		return Item{}, pgx.ErrNoRows
+	}
+	if slices.Contains(p.Set, FieldTitle) {
+		it.Title = p.Title
+	}
+	it.LockedFields = append(slices.Clone(it.LockedFields), p.Lock...)
 	m.items[p.ID] = it
 	return it, nil
 }
