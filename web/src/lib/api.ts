@@ -2089,6 +2089,23 @@ export interface TranscodeConfig {
   local_networks?: string[];
 }
 
+// DVR post-processing settings (Settings ▸ Live TV). Everything defaults to
+// off. The script / comskip fields are read-only: those executables are set
+// only through the server's environment, never through the API.
+export interface DVRSettings {
+  remux: boolean;
+  remux_container: 'mkv' | 'mp4';
+  transcode: boolean;
+  transcode_codec: 'h264' | 'hevc';
+  transcode_quality: 'high' | 'balanced' | 'small';
+  delete_original: boolean;
+  commercials: 'off' | 'mark' | 'cut';
+  readonly script_configured?: boolean;
+  readonly script_path?: string;
+  readonly comskip_configured?: boolean;
+  readonly commercial_detector?: 'comskip' | 'builtin';
+}
+
 export interface WorkerCredentials {
   database_url: string;
   valkey_url: string;
@@ -2104,6 +2121,8 @@ export const settingsApi = {
   updateFleet: (body: FleetConfig) => api.put<void>('/settings/fleet', body),
   revealWorkerCredentials: (password: string, totpCode: string) =>
     api.post<WorkerCredentials>('/settings/worker-credentials', { password, totp_code: totpCode }),
+  getDVR: () => api.get<DVRSettings>('/settings/dvr'),
+  updateDVR: (body: DVRSettings) => api.put<void>('/settings/dvr', body),
   getTranscodeConfig: () => api.get<TranscodeConfig>('/settings/transcode-config'),
   updateTranscodeConfig: (body: TranscodeConfig) => api.put<void>('/settings/transcode-config', body),
   testEmail: (to: string) => api.post<{ message: string }>('/email/test', { to }),
@@ -2385,11 +2404,20 @@ export interface ItemFile {
   subtitle_streams: SubtitleStream[];
   external_subtitles?: ExternalSubtitle[];
   chapters: Chapter[];
+  // Ad breaks DVR commercial detection found in this file (absent when
+  // none). Separate from the item's markers, which are intro/credits only.
+  commercials?: CommercialMarker[];
   // Per-file 24h PASETO bound to the requesting user. Used in the
   // `?token=` query of the download URL on clients that can't carry
   // cookies (mobile browser save-as, Android Download Manager). Omitted
   // by the server when the stream-token maker isn't wired.
   stream_token?: string;
+}
+
+export interface CommercialMarker {
+  start_ms: number;
+  end_ms: number;
+  source: 'comskip' | 'heuristic';
 }
 
 export interface Marker {
@@ -3215,6 +3243,9 @@ export const liveTvApi = {
   listRecordings: (status?: string) =>
     api.requestList<LiveTVRecording>('/tv/recordings' + (status ? `?status=${status}` : '')),
   cancelRecording: (id: string) => api.delete(`/tv/recordings/${id}`),
+  // Admin: queue commercial detection / re-run post-processing (202).
+  detectCommercials: (id: string) => api.post<{ postprocess_status: string }>(`/tv/recordings/${id}/detect-commercials`),
+  reprocessRecording: (id: string) => api.post<{ postprocess_status: string }>(`/tv/recordings/${id}/postprocess`),
 };
 
 export interface LiveTVBroadcast {
@@ -3260,6 +3291,9 @@ export interface LiveTVRecording {
   ends_at: string;
   item_id?: string;
   error?: string;
+  // DVR post-processing; both absent when it never ran for this recording.
+  postprocess_status?: 'queued' | 'processing' | 'processed' | 'failed';
+  postprocess_message?: string;
 }
 
 export interface LiveTVEPGSource {
