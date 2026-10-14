@@ -8,7 +8,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
        parent_id, index, index_end, episode_order, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at,
-       locked_fields
+       locked_fields, logo_path, banner_path, disc_art_path
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -583,6 +583,19 @@ UPDATE media_items
 SET poster_path = sqlc.arg(poster_path),
     updated_at  = NOW()
 WHERE id = sqlc.arg(id);
+
+-- name: SetMediaItemExtraArt :exec
+-- Sets an item's clear logo, banner and disc art paths (migration 00049).
+-- A NULL argument keeps the stored path, the same COALESCE rule
+-- UpdateMediaItemMetadata applies to poster and fanart, so a provider that
+-- has no logo this time doesn't wipe the one a previous pass (or the
+-- operator's own clearlogo.png) supplied. Artwork isn't lockable.
+UPDATE media_items
+SET logo_path     = COALESCE(sqlc.narg(logo_path)::text, logo_path),
+    banner_path   = COALESCE(sqlc.narg(banner_path)::text, banner_path),
+    disc_art_path = COALESCE(sqlc.narg(disc_art_path)::text, disc_art_path),
+    updated_at    = NOW()
+WHERE id = sqlc.arg(id) AND deleted_at IS NULL;
 
 -- name: UpdateMediaItemTakenAt :exec
 -- Sets only an item's originally_available_at: a photo's EXIF capture date.
@@ -2119,7 +2132,8 @@ LIMIT 1;
 
 -- name: GetArtworkContentRating :one
 -- Resolves the content_rating of the item that owns a given artwork file,
--- matched by its library-relative poster/fanart/thumb path (slash-separated,
+-- matched by its library-relative poster/fanart/thumb (or logo/banner/disc
+-- art) path (slash-separated,
 -- the form stored at scan time). Used by the /artwork/* server to enforce the
 -- per-user content-rating ceiling so a restricted profile with library access
 -- can't pull an over-ceiling item's poster by direct URL. Scoped to the owning
@@ -2144,5 +2158,8 @@ WHERE library_id = sqlc.arg(library_id)
   AND deleted_at IS NULL
   AND (lower(poster_path) = lower(sqlc.arg(art_path))
        OR lower(fanart_path) = lower(sqlc.arg(art_path))
-       OR lower(thumb_path) = lower(sqlc.arg(art_path)))
+       OR lower(thumb_path) = lower(sqlc.arg(art_path))
+       OR lower(logo_path) = lower(sqlc.arg(art_path))
+       OR lower(banner_path) = lower(sqlc.arg(art_path))
+       OR lower(disc_art_path) = lower(sqlc.arg(art_path)))
 LIMIT 1;

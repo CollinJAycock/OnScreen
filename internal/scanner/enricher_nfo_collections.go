@@ -41,6 +41,9 @@ func (e *Enricher) readMovieNFO(ctx context.Context, file *media.File) *nfo.Movi
 		e.logger.WarnContext(ctx, "nfo parse failed; falling through to TMDB", "path", nfoPath, "err", err)
 		return nil
 	}
+	if nfo.IsOurs(nfoPath) {
+		return ownMovieNFO(parsed)
+	}
 	return parsed
 }
 

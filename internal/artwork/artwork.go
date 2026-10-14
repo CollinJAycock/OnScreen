@@ -215,6 +215,20 @@ func (m *Manager) ReplaceShowFanart(ctx context.Context, _ uuid.UUID, url string
 	return m.download(ctx, url, filepath.Join(absDir, "fanart.jpg"), true)
 }
 
+// DownloadArtFile downloads url to absPath (an absolute file path chosen by
+// the caller: clear logos, banners and disc art use Kodi's names next to the
+// media). Like DownloadPoster it keeps an existing file unless force is set.
+func (m *Manager) DownloadArtFile(ctx context.Context, url, absPath string, force bool) (string, error) {
+	return m.download(ctx, url, absPath, force)
+}
+
+// ArtFileExists reports whether an artwork file exists at absPath in the
+// configured media store (local disk unless object storage is set up).
+func (m *Manager) ArtFileExists(ctx context.Context, absPath string) bool {
+	info, err := m.Store().Stat(ctx, absPath)
+	return err == nil && info.Size > 0
+}
+
 // download fetches url and writes to absPath (absolute file path).
 // Returns the absolute path. When force is false, skips re-download if a
 // file already exists at absPath (the common cache-miss case). When force

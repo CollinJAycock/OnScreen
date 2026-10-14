@@ -25,6 +25,7 @@ var ErrInvalidSetting = errors.New("invalid setting value")
 const keyTMDBAPIKey = "tmdb_api_key"
 const keyTVDBAPIKey = "tvdb_api_key"
 const keyOMDbAPIKey = "omdb_api_key"
+const keyFanartTVAPIKey = "fanarttv_api_key"
 const keyOMDbDailyLimit = "omdb_daily_limit"
 const keyArrAPIKey = "arr_api_key"
 const keyArrPathMappings = "arr_path_mappings"
@@ -114,6 +115,7 @@ var secretKeys = map[string]struct{}{
 	keyTMDBAPIKey:          {},
 	keyTVDBAPIKey:          {},
 	keyOMDbAPIKey:          {},
+	keyFanartTVAPIKey:      {},
 	keyArrAPIKey:           {},
 	keyOpenSubtitlesConfig: {}, // contains user/password
 	keyOIDCConfig:          {}, // contains client_secret
@@ -155,6 +157,17 @@ func (s *Service) SetTVDBAPIKey(ctx context.Context, key string) error {
 // Metacritic scores), or "" if not set.
 func (s *Service) OMDbAPIKey(ctx context.Context) string {
 	return s.get(ctx, keyOMDbAPIKey)
+}
+
+// FanartTVAPIKey returns the stored fanart.tv API key (clear logos,
+// banners, disc art), or "" if not set.
+func (s *Service) FanartTVAPIKey(ctx context.Context) string {
+	return s.get(ctx, keyFanartTVAPIKey)
+}
+
+// SetFanartTVAPIKey persists the fanart.tv API key (empty string clears it).
+func (s *Service) SetFanartTVAPIKey(ctx context.Context, key string) error {
+	return s.set(ctx, keyFanartTVAPIKey, key)
 }
 
 // SetOMDbAPIKey persists the OMDb API key (empty string clears it).

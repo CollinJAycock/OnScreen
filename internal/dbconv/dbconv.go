@@ -230,6 +230,9 @@ func GenGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
 	item.LockedFields = r.LockedFields
 	item.IndexEnd = int32PtrToIntPtr(r.IndexEnd)
 	item.EpisodeOrder = r.EpisodeOrder
+	item.LogoPath = r.LogoPath
+	item.BannerPath = r.BannerPath
+	item.DiscArtPath = r.DiscArtPath
 	return item
 }
 

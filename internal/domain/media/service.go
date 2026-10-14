@@ -91,6 +91,11 @@ type Item struct {
 	PosterPath *string
 	FanartPath *string
 	ThumbPath  *string
+	// Extra artwork (migration 00049): a transparent clear logo, a wide
+	// banner and disc / CD art. Read by GetMediaItem only.
+	LogoPath    *string
+	BannerPath  *string
+	DiscArtPath *string
 
 	// Music-specific. DiscTotal/TrackTotal describe the containing album;
 	// OriginalYear is the work's first-release year distinct from Year (the

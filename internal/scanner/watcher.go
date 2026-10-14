@@ -5,11 +5,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/metadata/nfo"
 )
 
 // WatchTrigger is called when fsnotify detects a change in a watched directory.
@@ -106,6 +109,13 @@ func (w *Watcher) Run(ctx context.Context, libraryID uuid.UUID) {
 			if event.Op == fsnotify.Chmod {
 				continue
 			}
+			// Ignore OnScreen's own NFO writes (libraries with save_nfo):
+			// the temp file they go through and the NFO it becomes. A
+			// rescan of the folder would find nothing changed, so the
+			// event is pure noise.
+			if isOwnNFOWrite(event.Name) {
+				continue
+			}
 
 			// When a new directory appears, add it (and its subtree) to the
 			// watcher so files dropped inside it are also detected.
@@ -156,6 +166,15 @@ func (w *Watcher) Close() error {
 		err = w.inner.Close()
 	})
 	return err
+}
+
+// isOwnNFOWrite reports whether path is a file the NFO writer produces: its
+// temporary file, or an .nfo carrying OnScreen's marker.
+func isOwnNFOWrite(path string) bool {
+	if strings.HasSuffix(path, nfo.TempSuffix) {
+		return true
+	}
+	return strings.EqualFold(filepath.Ext(path), ".nfo") && nfo.IsOurs(path)
 }
 
 func dirOf(path string) string {

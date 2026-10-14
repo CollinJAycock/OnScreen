@@ -30,6 +30,7 @@ type mockSettingsService struct {
 	key            string
 	tvdbKey        string
 	omdbKey        string
+	fanartKey      string
 	omdbLimit      int
 	setErr         error
 	setTVDBErr     error
@@ -79,6 +80,13 @@ func (m *mockSettingsService) SetTVDBAPIKey(_ context.Context, key string) error
 	return nil
 }
 func (m *mockSettingsService) OMDbAPIKey(_ context.Context) string { return m.omdbKey }
+func (m *mockSettingsService) FanartTVAPIKey(_ context.Context) string {
+	return m.fanartKey
+}
+func (m *mockSettingsService) SetFanartTVAPIKey(_ context.Context, key string) error {
+	m.fanartKey = key
+	return nil
+}
 func (m *mockSettingsService) OMDbDailyLimit(_ context.Context) int {
 	if m.omdbLimit == 0 {
 		return settings.DefaultOMDbDailyLimit

@@ -48,6 +48,7 @@ func (h Handlers) ValidateLibraryAccess() error {
 	// so it is deliberately not asserted here.)
 	check("lyrics", h.Lyrics != nil, h.Lyrics)
 	check("people", h.People != nil, h.People)
+	check("studios", h.Studios != nil, h.Studios)
 	check("subtitles", h.Subtitles != nil, h.Subtitles)
 	check("transcode", h.NativeTranscode != nil, h.NativeTranscode)
 	check("trickplay", h.Trickplay != nil, h.Trickplay)
