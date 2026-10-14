@@ -246,6 +246,61 @@ re-read the real admin's session.
 - Cookie / CSRF handling is unchanged: a key is a header credential and is
   never set as a cookie.
 
+**Automatic router port mapping** (v2.6; Settings ▸ General ▸ Remote access,
+`/api/v1/settings/remote-access`)
+
+- Off by default. Turned on, the server asks the home router — UPnP IGD
+  (v1/v2, WANIPConnection / WANPPPConnection), PCP or NAT-PMP — to forward a
+  public TCP port to its API listen port, which exposes OnScreen to the whole
+  internet. The settings page says so and recommends HTTPS (Settings ▸
+  Security, or a TLS reverse proxy) and two-factor sign-in for every admin
+  before it is enabled.
+- Only the API listen port is ever mapped (the admin chooses only the public
+  port), TCP only. Nothing is mapped when the server listens on loopback only
+  (`127.0.0.0/8`, `::1`, `localhost`). The lease is 1 hour, renewed at half
+  its granted lifetime; the mapping is removed when the setting is turned
+  off, when the public port changes (the old one first), when the node stops
+  being master and on shutdown. A crashed server's mapping ends when its
+  lease does.
+- In a cluster only the master instance (the Valkey master lock that runs
+  the other singletons) maps, so one router port is opened; the status is
+  shared through Valkey.
+- Every add, renewal and removal is logged with the router, method, public
+  port and internal address; changing the setting is audit-logged
+  (`settings.update`). The endpoints are admin-only and refused to personal
+  API keys.
+- Discovery stays on the LAN: SSDP multicast for UPnP, and PCP / NAT-PMP only
+  to a default gateway on a private network. The URLs an SSDP answer names
+  (device description, SOAP control URL) are fetched with a client that only
+  connects to private-network addresses — never the internet and never this
+  host's loopback, where the unauthenticated metrics / pprof port lives —
+  follows no redirects, times out after 5 s and reads at most 1 MiB.
+- The server never checks its own reachability through an outside service;
+  the status shows the router's public address and port and advises testing
+  from outside the network, and flags a private "public" address (carrier-
+  grade NAT or a second router), where the mapping can't help.
+
+**Optimized versions** (v2.6; admin "Optimize…", `/api/v1/optimize`,
+`/media/optimized/{id}`)
+
+- Admin-only to create, list and delete; each request and delete is
+  audit-logged (`optimize.request`, `optimize.delete`). A request is capped
+  at 500 item ids or 5000 expanded items.
+- Encodes run through the converted-download runner, so every input passes
+  the same checks: inactive, damaged, Dolby Vision profile 5 and
+  playlist / reference-container sources are refused, ffmpeg opens inputs
+  through `internal/ffsafe`, and a stacked movie is joined from a
+  server-written concat list.
+- Output goes to `CACHE_PATH/optimized`, never into a library folder.
+- `/media/optimized/{id}` applies every gate `/media/stream` applies to the
+  item — library ACL, rating ceiling, label restriction, parental watch
+  limit and an admin's playback stop — on every request, Range continuations
+  included. A stream token for it is bound to the version's id, like a file's.
+- A version is never served for a source that was replaced in place (its
+  content hash no longer matches), even before the cleanup task deletes it.
+- The play decision offers a version only to clients that declare
+  `optimized=1` and only within the viewer's bitrate cap and internet limit.
+
 ## Deployment, packaging & supply-chain hardening
 
 Changes to the shipped compose files, reverse-proxy sample, installers and CI.
@@ -522,6 +577,10 @@ ntfy / Gotify server must use `https`.
 - [ ] Set the same `SECRET_KEY` on every fleet worker; never use a dev placeholder.
 - [ ] Use a TLS SMTP relay (port 465 or STARTTLS); cleartext to a remote relay is refused.
 - [ ] Disable LAN discovery on untrusted segments.
+- [ ] Before turning on Remote access ▸ "Map a port on my router
+      automatically": serve HTTPS, turn on two-factor sign-in for every admin,
+      and test from outside your network. Prefer a VPN (Tailscale, WireGuard)
+      when you don't need the server open to the internet.
 - [ ] Leave LDAP `skip_tls_verify` off in production.
 - [ ] Turn on a notification agent's "Allow private network" only for a
       self-hosted ntfy / Gotify on your LAN.

@@ -87,6 +87,8 @@ tags:
     description: Seekbar thumbnail previews and chapter thumbnails.
   - name: Downloads
     description: Converted (lower-quality) downloads — per-user jobs over a shared encode cache.
+  - name: Optimize
+    description: Optimized versions (admin) — pre-made MP4 copies players direct-play instead of a live transcode.
   - name: Transcode
     description: HLS transcode sessions (start, stop, segments).
   - name: Notifications
@@ -2158,6 +2160,18 @@ paths:
         got before. Both fields are additive — a client that ignores
         them still sees `transcode`. A client that skips this endpoint
         and fetches `/media/stream` directly is not held to the limit.
+
+        **Optimized versions (v2.6).** A client that declares
+        `optimized=1` in `X-Client-Capabilities` may get `decision:
+        directPlay` with `reason: optimized_version` and an
+        `optimized_version` to play from its `stream_url`, when the source
+        would otherwise need a video transcode (any cause, the internet
+        limit included) and an admin-made optimized version fits the
+        client's profile and bitrate cap. `file_id` stays the source's;
+        `source_decision` / `source_reason` carry the source's own verdict
+        for the client's fallback (the version has only the default audio
+        track). Clients that don't send `optimized=1` never get this
+        verdict.
       requestBody:
         required: false
         content:
@@ -2181,11 +2195,20 @@ paths:
                       file_id: { type: string, format: uuid }
                       reason:
                         type: string
-                        enum: [remote_bitrate_limit, user_bitrate_limit]
-                        description: Set only when the server overrode a capability verdict (v2.6).
+                        enum: [remote_bitrate_limit, user_bitrate_limit, optimized_version]
+                        description: Set only when the server overrode a capability verdict (v2.6). `optimized_version` only for `optimized=1` clients.
                       max_bitrate_kbps:
                         type: integer
                         description: The bitrate cap the transcode will be held to, with `reason` (v2.6).
+                      optimized_version:
+                        allOf: [{ $ref: '#/components/schemas/OptimizedVersion' }]
+                        description: With `reason optimized_version` — the version to direct-play (v2.6).
+                      source_decision:
+                        type: string
+                        description: The source file's own verdict, when an optimized version replaced it (v2.6).
+                      source_reason:
+                        type: string
+                        description: The source file's own reason (e.g. `remote_bitrate_limit`), when an optimized version replaced it (v2.6).
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -2542,6 +2565,173 @@ paths:
                 type: object
                 properties:
                   data: { type: array, items: { $ref: '#/components/schemas/DownloadJob' } }
+
+  # ── Optimized versions ─────────────────────────────────────────────────────
+  /media/optimized/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - in: query
+        name: token
+        required: false
+        schema: { type: string }
+        description: |
+          Optional stream token bound to this optimized version
+          (`optimized_versions[].stream_token`), or an asset token.
+    get:
+      summary: Direct-play an optimized version
+      description: |
+        The optimized version's MP4 (H.264 + AAC, faststart) with `Range`
+        support. Same gates as `/media/stream/{id}` on the item: library
+        ACL, rating ceiling, label restriction, parental watch limit, admin
+        playback stop. 404 once the version is deleted, or its source file
+        was deleted or replaced in place. Shows on Now Playing as a direct
+        play with `optimized_version` set (v2.6).
+      tags: [Optimize, Items]
+      responses:
+        '200': { description: The file., content: { video/mp4: {} } }
+        '206': { description: Partial content (range request). }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/optimize/profiles:
+    get:
+      summary: The "Optimize…" profiles (admin)
+      tags: [Optimize]
+      responses:
+        '200':
+          description: Profiles, smallest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:              { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+                        label:           { type: string, example: 'Mobile · 720p 4 Mbps' }
+                        max_height:      { type: integer }
+                        bitrate_kbps:    { type: integer }
+                        keep_resolution: { type: boolean, description: 'The original-quality profile keeps the source resolution and picks the bitrate per file.' }
+
+  /api/v1/optimize:
+    post:
+      summary: Queue optimized versions (admin)
+      description: |
+        Queues an optimized version at `profile` for every video item the
+        selection covers — set exactly one of `item_ids` (movies,
+        episodes; shows and seasons expand to their episodes; at most 500),
+        `library_id` or `collection_id`. At most 5000 items per request
+        (`truncated` says the rest were left out). Each item's best file is
+        encoded (a stacked movie's parts as one file) by the converted-
+        download runner, sharing its queue, encoder and transcode slots
+        (downloads go first). Items that already have the version are left
+        alone; items that can't be converted (no video, damaged, Dolby
+        Vision profile 5, a playlist container) are reported as skipped.
+        Versions never expire: they are removed when the source file is
+        deleted or replaced, or by `DELETE /api/v1/optimize/versions/{id}`.
+        Audited as `optimize.request`.
+      tags: [Optimize]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profile]
+              properties:
+                profile:       { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+                item_ids:      { type: array, items: { type: string, format: uuid } }
+                library_id:    { type: string, format: uuid }
+                collection_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: What the request did.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      profile:   { type: string }
+                      items:     { type: integer, description: Video items the selection expanded to. }
+                      queued:    { type: integer }
+                      existing:  { type: integer, description: Already optimized, or queued / encoding. }
+                      skipped:   { type: integer }
+                      truncated: { type: boolean }
+                      skipped_items:
+                        type: array
+                        description: Up to 50 skips, with the reason.
+                        items:
+                          type: object
+                          properties:
+                            item_id: { type: string, format: uuid }
+                            reason:  { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such collection. }
+        '422': { description: 'Bad profile, or not exactly one selector.' }
+
+  /api/v1/optimize/jobs:
+    get:
+      summary: Optimized versions and their jobs (admin)
+      description: Newest first, with per-status totals under the item/library filter.
+      tags: [Optimize]
+      parameters:
+        - { in: query, name: item_id,    schema: { type: string, format: uuid } }
+        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+        - { in: query, name: status,     schema: { type: string, enum: [queued, running, ready, failed] } }
+        - { in: query, name: limit,      schema: { type: integer, default: 100, maximum: 500 } }
+        - { in: query, name: offset,     schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      jobs:   { type: array, items: { $ref: '#/components/schemas/OptimizeJob' } }
+                      counts: { type: object, additionalProperties: { type: integer }, example: { queued: 3, running: 1, ready: 40 } }
+
+  /api/v1/optimize/jobs/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: One optimized version or job (admin)
+      tags: [Optimize]
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OptimizeJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Cancel an optimize job, or delete its version (admin)
+      description: Same as `DELETE /api/v1/optimize/versions/{id}` (one id space). Audited as `optimize.delete`.
+      tags: [Optimize]
+      responses:
+        '204': { description: Removed. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/optimize/versions/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Delete an optimized version (admin)
+      description: Removes the version and its file; a queued or running job is cancelled. Players go back to the source.
+      tags: [Optimize]
+      responses:
+        '204': { description: Removed. }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   /media/subtitles/{fileId}/{streamIndex}:
     parameters:
@@ -4570,6 +4760,57 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { description: DVR or post-processing is not enabled on this server. }
+
+  /api/v1/settings/remote-access:
+    get:
+      summary: Remote access — automatic router port mapping (admin)
+      description: |
+        `map_port` ("Map a port on my router automatically", default off),
+        `external_port` (0 = the listen port) and `protocol` (TCP), plus
+        the mapping's live status from the node that maps (only the master
+        node of a cluster does): router found, method (UPnP IGD, PCP,
+        NAT-PMP), external IP and port, lease, last renewal, last error.
+        `reachability_hint` suggests what to test next; the server never
+        checks its own reachability through an outside service. Not
+        available to API keys.
+      tags: [Settings]
+      responses:
+        '200':
+          description: Setting and status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/RemoteAccess' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Change remote access (admin)
+      description: |
+        Turning `map_port` on exposes the server to the internet. The
+        mapping node adds, changes or removes the mapping within seconds.
+        Audited as `settings.update`. Not available to API keys.
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                map_port:      { type: boolean }
+                external_port: { type: integer, minimum: 0, maximum: 65535, description: '0 = the listen port.' }
+                protocol:      { type: string, enum: [TCP] }
+      responses:
+        '200':
+          description: The saved setting and current status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/RemoteAccess' }
+        '422': { description: Port out of range, or a protocol other than TCP. }
 
   /api/v1/settings/system:
     get:
@@ -7178,6 +7419,10 @@ components:
         updated_at:     { type: integer, format: int64 }
         files:          { type: array, items: { $ref: '#/components/schemas/ItemFile' } }
         markers:        { type: array, items: { $ref: '#/components/schemas/Marker' } }
+        optimized_versions:
+          type: array
+          items: { $ref: '#/components/schemas/OptimizedVersion' }
+          description: Pre-made MP4 copies (admin "Optimize…"), highest bitrate first. Never part of `files`. Omitted when none (v2.6).
         musicbrainz_id:               { type: string, format: uuid, nullable: true, description: 'Primary MBID for the row''s type (recording for tracks, release-group for albums, artist for artists).' }
         musicbrainz_release_id:       { type: string, format: uuid, nullable: true }
         musicbrainz_release_group_id: { type: string, format: uuid, nullable: true }
@@ -7557,6 +7802,81 @@ components:
         completed_at:  { type: string, format: date-time }
         expires_at:    { type: string, format: date-time, description: 'When a ready file may leave the cache.' }
         file_url:      { type: string, description: 'Present when ready: `/api/v1/downloads/{id}/file`.' }
+    OptimizedVersion:
+      type: object
+      description: A playable optimized version (item detail, play decision).
+      properties:
+        id:             { type: string, format: uuid }
+        file_id:        { type: string, format: uuid, description: The source file it was made from. }
+        profile:        { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+        label:          { type: string }
+        container:      { type: string, example: mp4 }
+        video_codec:    { type: string, example: h264 }
+        audio_codec:    { type: string, example: aac }
+        audio_channels: { type: integer, example: 2 }
+        width:          { type: integer }
+        height:         { type: integer }
+        bitrate_kbps:   { type: integer }
+        size_bytes:     { type: integer, format: int64 }
+        duration_ms:    { type: integer, format: int64 }
+        stream_url:     { type: string, description: '`/media/optimized/{id}`' }
+        stream_token:   { type: string, description: 24 h token bound to this version, for players that authenticate through the URL. }
+    OptimizeJob:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        item_id:       { type: string, format: uuid }
+        file_id:       { type: string, format: uuid }
+        library_id:    { type: string, format: uuid }
+        title:         { type: string }
+        item_type:     { type: string }
+        show_title:    { type: string }
+        season_index:  { type: integer }
+        episode_index: { type: integer }
+        profile:       { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+        profile_label: { type: string }
+        status:        { type: string, enum: [queued, running, ready, failed] }
+        progress:      { type: number, description: 'Encode progress, 0..1.' }
+        error:         { type: string }
+        size_bytes:    { type: integer, format: int64 }
+        width:         { type: integer }
+        height:        { type: integer }
+        bitrate_kbps:  { type: integer }
+        duration_ms:   { type: integer, format: int64 }
+        created_at:    { type: string, format: date-time }
+        started_at:    { type: string, format: date-time }
+        completed_at:  { type: string, format: date-time }
+    RemoteAccess:
+      type: object
+      properties:
+        map_port:          { type: boolean }
+        external_port:     { type: integer, description: 0 = the listen port. }
+        protocol:          { type: string, enum: [TCP] }
+        listen_addr:       { type: string, example: ':7070' }
+        listen_port:       { type: integer }
+        loopback_only:     { type: boolean, description: The server listens on loopback only; nothing is ever mapped. }
+        https:             { type: boolean, description: This server serves HTTPS itself. }
+        reachability_hint: { type: string }
+        status:
+          type: object
+          properties:
+            enabled:       { type: boolean }
+            state:         { type: string, enum: [disabled, loopback_only, standby, no_gateway, mapped, error] }
+            gateway_found: { type: boolean }
+            method:        { type: string, enum: [upnp, pcp, nat-pmp] }
+            gateway_addr:  { type: string }
+            local_ip:      { type: string }
+            internal_port: { type: integer }
+            external_ip:   { type: string }
+            external_port: { type: integer }
+            lease_seconds: { type: integer }
+            permanent:     { type: boolean, description: The router only grants permanent mappings (re-asserted every 30 min). }
+            last_renewal:  { type: string, format: date-time }
+            expires_at:    { type: string, format: date-time }
+            last_error:    { type: string }
+            last_error_at: { type: string, format: date-time }
+            node:          { type: string, description: The cluster node doing the mapping. }
+            updated_at:    { type: string, format: date-time }
     TrickplayStatus:
       type: object
       description: |
@@ -7745,6 +8065,13 @@ components:
         can_stop:
           type: boolean
           description: Whether POST /api/v1/sessions/{id}/stop can act on this card.
+        optimized_version:
+          type: object
+          description: Set when the direct play is of an optimized version, not the source; `output` is then the version (v2.6).
+          properties:
+            id:      { type: string, format: uuid }
+            profile: { type: string }
+            label:   { type: string }
     StreamFormat:
       type: object
       description: One side of a Now Playing card's source → output. Codec/container values are scanner identifiers ("hevc", "truehd", "matroska"; "hls" for a server session's output).
