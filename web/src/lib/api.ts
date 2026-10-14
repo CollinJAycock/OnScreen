@@ -2291,7 +2291,16 @@ export interface ItemFile {
   resolution_h?: number;
   bitrate?: number;
   hdr_type?: string;
+  // This file's own length — for one part of a multi-part movie, that
+  // part's. The item's duration_ms is the whole movie's.
   duration_ms?: number;
+  // Edition label from the file name ("Director's Cut", "Extended",
+  // "1080p"). Undefined when the name gives none.
+  edition?: string;
+  // 1-based part number when this file is one part of a multi-part movie
+  // ("cd1" + "cd2"). The server streams all parts as one movie and never
+  // direct-plays a part. Undefined for every other file.
+  part_index?: number;
   faststart: boolean;
   // Video bit depth (8/10/12) of the primary video stream, from pix_fmt.
   // Distinct from bit_depth (audio). Undefined until the file is (re)probed.
