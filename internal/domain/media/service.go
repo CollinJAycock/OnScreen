@@ -174,8 +174,17 @@ type File struct {
 	// DVProfile is the profile from the file's Dolby Vision configuration
 	// record (5, 7, 8, ...), nil when it has none. It comes from the
 	// container and can claim Dolby Vision the video doesn't carry.
-	DVProfile       *int
-	FrameRate       *float64
+	DVProfile *int
+	FrameRate *float64
+	// Edition is the label the file's name gives it ("Director's Cut",
+	// "Extended", Jellyfin's "1080p" version suffix), nil when it gives none.
+	// A label only — files still group into items by title and year.
+	Edition *string
+	// PartIndex is the 1-based part number of a stacked rip ("cd1",
+	// "part2", "-b"), nil for an ordinary file. Whether a file actually plays
+	// as part of a multi-part sequence is decided by Stack, which needs at
+	// least two parts; a lone "cd1" plays like any other file.
+	PartIndex       *int
 	AudioStreams    []byte // JSONB
 	SubtitleStreams []byte // JSONB
 	Chapters        []byte // JSONB
@@ -354,6 +363,7 @@ type Querier interface {
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
 	UpdateMediaFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error
+	UpdateMediaFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error
 	UpdateMediaFileIntegrity(ctx context.Context, id uuid.UUID, status string, detail *string) error
 	ListFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]File, error)
 	CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error)
@@ -643,6 +653,8 @@ type CreateFileParams struct {
 	HDRType         *string
 	DVProfile       *int
 	FrameRate       *float64
+	Edition         *string // see File.Edition
+	PartIndex       *int    // see File.PartIndex
 	AudioStreams    []byte
 	SubtitleStreams []byte
 	Chapters        []byte
@@ -835,12 +847,17 @@ func (s *Service) SearchItems(ctx context.Context, libraryID uuid.UUID, query st
 }
 
 // GetFiles returns all files for a media item, sorted by quality descending.
+//
+// Best quality first (ADR-031), except that the parts of a stacked rip are
+// kept together in part order at their best part's place (see OrderFiles): a
+// client that plays files[0] then starts at part 1, and the stack reads as
+// one version.
 func (s *Service) GetFiles(ctx context.Context, itemID uuid.UUID) ([]File, error) {
 	files, err := s.ro.ListMediaFilesForItem(ctx, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("list files for item %s: %w", itemID, err)
 	}
-	return files, nil
+	return OrderFiles(files), nil
 }
 
 // GetFileByPath returns the media file record for a given filesystem path.
@@ -862,6 +879,15 @@ func (s *Service) MarkFileActive(ctx context.Context, id uuid.UUID) error {
 func (s *Service) SetFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error {
 	if err := s.rw.UpdateMediaFileDynamicRange(ctx, id, hdrType, dvProfile); err != nil {
 		return fmt.Errorf("set file dynamic range %s: %w", id, err)
+	}
+	return nil
+}
+
+// SetFileNaming records what a file's name says about it (edition label,
+// stacked-part number) and nothing else; see migration 00045.
+func (s *Service) SetFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error {
+	if err := s.rw.UpdateMediaFileNaming(ctx, id, edition, partIndex); err != nil {
+		return fmt.Errorf("set file naming %s: %w", id, err)
 	}
 	return nil
 }
@@ -956,6 +982,15 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 			}
 			if err := s.rw.RestoreMediaItemAncestry(ctx, moved.MediaItemID); err != nil {
 				return nil, false, fmt.Errorf("restore ancestry for %s: %w", moved.MediaItemID, err)
+			}
+			// The new name may say something else about the file ("cd1"
+			// added, an edition tag dropped); the move keeps every other
+			// stored field, so carry the naming across explicitly.
+			if !samePtr(moved.Edition, p.Edition) || !samePtr(moved.PartIndex, p.PartIndex) {
+				if err := s.rw.UpdateMediaFileNaming(ctx, moved.ID, p.Edition, p.PartIndex); err != nil {
+					return nil, false, fmt.Errorf("update file naming (move): %w", err)
+				}
+				moved.Edition, moved.PartIndex = p.Edition, p.PartIndex
 			}
 			s.logger.InfoContext(ctx, "file move detected",
 				"old_path", moved.FilePath, "new_path", p.FilePath)

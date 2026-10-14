@@ -60,7 +60,11 @@ func DefaultEncoderOpts() EncoderOpts {
 // BuildArgs holds the inputs needed to construct an FFmpeg HLS transcode command.
 type BuildArgs struct {
 	// Input
-	InputPath   string
+	InputPath string
+	// ConcatParts, when set, makes InputPath a concat list the worker wrote
+	// from exactly these parts (a stacked movie): the input is opened with
+	// ffsafe.ConcatInputArgs instead of the single-file allowlist.
+	ConcatParts []ffsafe.ConcatPart
 	StartOffset float64 // seconds (seek to this position)
 
 	// Video
@@ -560,7 +564,7 @@ func BuildHLS(a BuildArgs) []string {
 	// http(s) (SSRF) while transcoding. Input option — must precede -i. A local
 	// source gets file-family only; the HTTP source additionally gets the http
 	// stack. See internal/ffsafe.
-	args = append(args, ffsafe.InputProtocolArgs(a.InputPath)...)
+	args = append(args, inputArgs(a.InputPath, a.ConcatParts)...)
 
 	args = append(args, "-i", a.InputPath)
 
@@ -949,8 +953,20 @@ func BuildHLS(a BuildArgs) []string {
 	return args
 }
 
+// inputArgs are the options guarding `-i input`: the single-file protocol
+// allowlist, or — for a stacked movie's server-written concat list — the
+// forced concat demuxer with the allowlist its entries need. Must precede -i.
+func inputArgs(input string, concatParts []ffsafe.ConcatPart) []string {
+	if len(concatParts) > 0 {
+		return ffsafe.ConcatInputArgs(concatParts)
+	}
+	return ffsafe.InputProtocolArgs(input)
+}
+
 // BuildDirectStream constructs FFmpeg argv for a container-remux (no video transcode).
-func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []string {
+// concatParts is BuildArgs.ConcatParts: set when inputPath is a stacked
+// movie's concat list.
+func BuildDirectStream(inputPath, sessionDir string, startOffset float64, concatParts ...ffsafe.ConcatPart) []string {
 	args := []string{
 		"-hide_banner",
 		"-loglevel", "warning",
@@ -981,7 +997,7 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64) []stri
 	// Confine the demuxer to the protocols this input needs (input option —
 	// must precede -i). Direct-stream is `-c copy` throughout, the same class of
 	// input as BuildHLS. See internal/ffsafe.
-	args = append(args, ffsafe.InputProtocolArgs(inputPath)...)
+	args = append(args, inputArgs(inputPath, concatParts)...)
 	args = append(args,
 		"-i", inputPath,
 		"-c", "copy", // copy all streams

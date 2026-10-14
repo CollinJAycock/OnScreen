@@ -12,6 +12,7 @@
   import { isStopForPlayer, adminStopText, PLAYBACK_STOPPED_CODE } from '$lib/playback-stop';
   import { parseAtParam } from '$lib/playback-transfer';
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
+  import { groupVersions, playableDurationMs, promoteVersion, versionLabel } from '$lib/fileVersions';
   import { capabilities } from '$lib/stores/capabilities';
   import { onlineSubtitlesVisible } from '$lib/featureGates';
   import { confirmAction, isTauri, nativeDownload } from '$lib/native';
@@ -972,6 +973,15 @@
 
   // Chapters from the source file (already parsed by ffprobe at scan time).
   $: chapters = item?.files?.[0]?.chapters ?? [];
+  // Versions for the picker: a multi-part movie's parts are one version.
+  $: fileVersions = groupVersions(item?.files ?? []);
+  // The playing version's edition (and part count) on the movie's tags,
+  // when its name gives one or it has parts; plain files show nothing.
+  $: primaryVersionTag = (() => {
+    const v = fileVersions[0];
+    if (!v || item?.type !== 'movie' || (!v.primary.edition && v.files.length < 2)) return '';
+    return versionLabel(v, fileLabel);
+  })();
   // currentTime already includes hlsOffsetSec (set in onTimeUpdate +
   // line 1518 "currentTime is content-relative"). Don't add the offset
   // again — that double-counted in HLS-with-offset sessions and
@@ -2074,9 +2084,10 @@
 
   // ── Quality switching ────────────────────────────────────────────────────────
 
-  // Short human label for a file version, built from its tech specs. Same-spec
-  // editions (e.g. Theatrical vs Director's Cut, both 1080p H.264) read
-  // identically until a scanner-inferred edition label lands (follow-up).
+  // Short human label for a file version, built from its tech specs. The
+  // version picker shows the file's edition instead when its name gives one
+  // (versionLabel), so same-spec editions (Theatrical vs Director's Cut, both
+  // 1080p H.264) read apart.
   function fileLabel(f: ItemFile): string {
     const parts: string[] = [];
     const h = f.resolution_h ?? 0;
@@ -2097,7 +2108,9 @@
   async function selectVersion(f: ItemFile) {
     showVersionMenu = false;
     if (!item || !item.files?.length || f.id === item.files[0].id) return;
-    item = { ...item, files: [f, ...item.files.filter(x => x.id !== f.id)] };
+    // A multi-part version moves to the front whole, part 1 leading; the
+    // server streams every part from any of them.
+    item = { ...item, files: promoteVersion(item.files, f) };
     selectedQuality = qualityOptions[0];
     decisionFetchedFor = ''; // force the server play-decision to refetch for the new file
     serverSaidDamaged = false; // the gate verdict belonged to the previous file
@@ -2332,8 +2345,10 @@
     mediaErrorRecoveries = 0;
 
     // Use file-level duration (from ffprobe) first, then fall back to item-level.
+    // A multi-part movie's stream runs through every part: its length is
+    // the parts' total.
     const file = item?.files?.[0];
-    const fileDurMs = file?.duration_ms ?? item?.duration_ms;
+    const fileDurMs = (file && item ? playableDurationMs(item.files, file) : undefined) ?? item?.duration_ms;
     if (fileDurMs) duration = fileDurMs / 1000;
 
     if (Hls.isSupported()) {
@@ -3928,7 +3943,7 @@
             {/if}
 
             <!-- Version picker (multiple files/editions of this item) -->
-            {#if (item?.files?.length ?? 0) > 1}
+            {#if fileVersions.length > 1}
               <div class="quality-picker" on:click|stopPropagation>
                 <button
                   class="icon-btn small quality-btn"
@@ -3944,13 +3959,13 @@
                 {#if showVersionMenu}
                   <!-- svelte-ignore a11y-no-static-element-interactions -->
                   <div class="quality-menu" on:click|stopPropagation role="menu" aria-label="Versions">
-                    {#each item.files as f}
+                    {#each fileVersions as v (v.primary.id)}
                       <button
                         class="quality-option"
-                        class:active={f.id === item.files[0].id}
-                        on:click={() => selectVersion(f)}
+                        class:active={v.files.some(f => f.id === item?.files?.[0]?.id)}
+                        on:click={() => selectVersion(v.primary)}
                         role="menuitem"
-                      >{fileLabel(f)}</button>
+                      >{versionLabel(v, fileLabel)}</button>
                     {/each}
                   </div>
                 {/if}
@@ -4271,6 +4286,9 @@
               <span class="ext-rating" title={chip.title}>{chip.label}</span>
             {/if}
           {/each}
+          {#if primaryVersionTag}
+            <span title="Version">{primaryVersionTag}</span>
+          {/if}
           {#if fileDamaged}
             <span class="damaged-pill"
               title={sourceFile?.integrity_detail ?? 'The integrity check could not decode parts of this file'}>

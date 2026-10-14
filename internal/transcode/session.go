@@ -68,6 +68,10 @@ type Session struct {
 	SourceIsHEVC bool `json:"source_is_hevc,omitempty"`
 	SourceIsAV1  bool `json:"source_is_av1,omitempty"`
 	SourceIsH264 bool `json:"source_is_h264,omitempty"`
+	// Parts lists every file of a stacked movie in play order when this
+	// session streams one (see parts.go); FileID / FilePath / SourceURL
+	// then describe part 1. Carried so ABR rung children read all parts.
+	Parts []SourcePart `json:"parts,omitempty"`
 
 	// ── Adaptive-bitrate (on-demand ladder) ───────────────────────────────
 	// On an ABR PARENT session, ABR=true and the fields below describe the
@@ -1054,6 +1058,12 @@ type TranscodeJob struct {
 	// DispatchJob so the worker can decrement the right amount on Ack.
 	CostCenti  int       `json:"cost_centi,omitempty"`
 	EnqueuedAt time.Time `json:"enqueued_at"`
+
+	// Parts, when it holds two or more files, makes the job stream a
+	// stacked movie: the worker concatenates the parts in order (see
+	// parts.go) and FilePath / SourceURL, which describe part 1, are not read.
+	// A worker built before stacking ignores Parts and plays part 1.
+	Parts []SourcePart `json:"parts,omitempty"`
 }
 
 // NewSessionID generates a new transcode session ID.

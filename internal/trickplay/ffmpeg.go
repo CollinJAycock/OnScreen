@@ -21,7 +21,11 @@ import (
 //
 // ffmpeg is shelled out with a single command; we trust its tile filter to
 // handle tail padding for the last partial sheet.
-func generateSprites(ctx context.Context, inputPath, outDir string, spec Spec) ([]string, error) {
+//
+// parts, when it names two or more files, is a stacked movie: the sprites are
+// cut from all of them in order, through a concat list written to a private
+// temp file (never into outDir, which is served).
+func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.ConcatPart, outDir string, spec Spec) ([]string, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return nil, fmt.Errorf("trickplay mkdir %s: %w", outDir, err)
 	}
@@ -32,18 +36,36 @@ func generateSprites(ctx context.Context, inputPath, outDir string, spec Spec) (
 	// sprite_001.jpg, … which sort lexicographically.
 	outPattern := filepath.Join(outDir, "sprite_%03d.jpg")
 
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	// Confine the demuxer to this input's protocols so a crafted source
+	// can't reach the network (must precede -i). See internal/ffsafe.
+	inArgs := []string{"-protocol_whitelist", ffsafe.Whitelist(inputPath)}
+	if len(parts) > 1 {
+		list, err := os.CreateTemp("", "onscreen-trickplay-*.ffconcat")
+		if err != nil {
+			return nil, fmt.Errorf("trickplay concat list: %w", err)
+		}
+		listPath := list.Name()
+		_ = list.Close()
+		defer func() { _ = os.Remove(listPath) }()
+		if err := ffsafe.WriteConcatList(listPath, parts); err != nil {
+			return nil, fmt.Errorf("trickplay concat list: %w", err)
+		}
+		inputPath = listPath
+		inArgs = ffsafe.ConcatInputArgs(parts)
+	}
+
+	args := append([]string{
 		"-nostdin", "-hide_banner", "-loglevel", "error",
 		"-y",
-		// Confine the demuxer to this input's protocols so a crafted source
-		// can't reach the network (must precede -i). See internal/ffsafe.
-		"-protocol_whitelist", ffsafe.Whitelist(inputPath),
+	}, inArgs...)
+	args = append(args,
 		"-i", inputPath,
 		"-an", "-sn",
 		"-vf", vf,
 		"-qscale:v", "5",
 		outPattern,
 	)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	stderr := &strings.Builder{}
 	cmd.Stderr = stderr
 	if err := cmd.Run(); err != nil {

@@ -594,6 +594,16 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		Chapters:        p.Chapters,
 		DurationMs:      p.DurationMS,
 		VideoBitDepth:   intPtrToInt32Ptr(p.VideoBitDepth),
+		Edition:         p.Edition,
+		PartIndex:       dbconv.IntPtrToInt16Ptr(p.PartIndex),
+	})
+}
+
+func (a *mediaAdapter) UpdateMediaFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error {
+	return a.q.UpdateMediaFileNaming(ctx, gen.UpdateMediaFileNamingParams{
+		ID:        id,
+		Edition:   edition,
+		PartIndex: dbconv.IntPtrToInt16Ptr(partIndex),
 	})
 }
 

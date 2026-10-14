@@ -523,9 +523,19 @@ type ItemFileResponse struct {
 	// DVProfile is the file's Dolby Vision profile (5, 7, 8, ...). hdr_type
 	// still names what a player without Dolby Vision gets — the base layer,
 	// or "dolby_vision" for profile 5, which has none.
-	DVProfile           *int     `json:"dv_profile,omitempty"`
-	FrameRate           *float64 `json:"frame_rate,omitempty"` // as probed; TV clients match the display's refresh rate to it
-	DurationMS          *int64   `json:"duration_ms,omitempty"`
+	DVProfile  *int     `json:"dv_profile,omitempty"`
+	FrameRate  *float64 `json:"frame_rate,omitempty"` // as probed; TV clients match the display's refresh rate to it
+	DurationMS *int64   `json:"duration_ms,omitempty"`
+	// Edition is the label the file's name gives it ("Director's Cut",
+	// "Extended", "1080p"); absent when it gives none. Clients show it in
+	// the version picker in place of the resolution/codec description.
+	Edition *string `json:"edition,omitempty"`
+	// PartIndex is the file's 1-based part number when it is one part of a
+	// stacked movie ("cd1" + "cd2"); absent for every other file, including
+	// a lone "cd1". duration_ms stays the part's own length; the item's
+	// duration_ms is the whole movie's. A transcode started with any part's
+	// file_id streams all the parts as one continuous movie.
+	PartIndex           *int     `json:"part_index,omitempty"`
 	Faststart           bool     `json:"faststart"`
 	BitDepth            *int     `json:"bit_depth,omitempty"`
 	VideoBitDepth       *int     `json:"video_bit_depth,omitempty"`
@@ -914,6 +924,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			DVProfile:           f.DVProfile,
 			FrameRate:           f.FrameRate,
 			DurationMS:          f.DurationMS,
+			Edition:             f.Edition,
 			Faststart:           h.faststart(r.Context(), f.FilePath),
 			BitDepth:            f.BitDepth,
 			VideoBitDepth:       f.VideoBitDepth,
@@ -932,6 +943,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		if claims != nil && claims.IsAdmin {
 			fr.IntegrityDetail = f.IntegrityDetail
 		}
+		if media.IsStacked(files, f) {
+			fr.PartIndex = f.PartIndex
+		}
 		if h.subs != nil {
 			if rows, err := h.subs.List(r.Context(), f.ID); err == nil && len(rows) > 0 {
 				fr.ExternalSubtitles = make([]ExternalSubtitleJSON, 0, len(rows))
@@ -943,6 +957,17 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out.Files = append(out.Files, fr)
+	}
+
+	// A stacked movie plays as one stream, so its running time is the sum of
+	// its parts (the primary version's). The metadata runtime would do too,
+	// but only the parts' lengths line up with the stream's timeline.
+	if len(files) > 0 {
+		if parts := media.Stack(files, files[0]); parts != nil {
+			if total := media.StackDurationMS(parts); total != nil {
+				out.DurationMS = total
+			}
+		}
 	}
 
 	// Audiobook resume: snap view_offset_ms to the start of the
@@ -1988,7 +2013,7 @@ func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uui
 			playing = indexOf(h.activeSessionFileID(ctx, userID, itemID))
 		}
 		if playing >= 0 {
-			if d := known(files[playing].DurationMS); d != nil {
+			if d := known(playableDurationMS(files, files[playing])); d != nil {
 				return d
 			}
 			// GetFiles lists only active files: more than one means other
@@ -1996,7 +2021,7 @@ func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uui
 			if len(files) > 1 {
 				return nil
 			}
-		} else if d := known(files[0].DurationMS); d != nil {
+		} else if d := known(playableDurationMS(files, files[0])); d != nil {
 			return d
 		}
 	}
@@ -2010,6 +2035,16 @@ func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uui
 		return known(item.DurationMS)
 	}
 	return nil
+}
+
+// playableDurationMS is the length of what playing f plays: the whole stack
+// when f is one part of a stacked movie (the stream runs through every part,
+// and clients report positions on that combined timeline), else f's own.
+func playableDurationMS(files []media.File, f media.File) *int64 {
+	if parts := media.Stack(files, f); parts != nil {
+		return media.StackDurationMS(parts)
+	}
+	return f.DurationMS
 }
 
 // activeSessionFileID is the file of the newest live transcode session userID

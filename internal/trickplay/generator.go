@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/ffsafe"
 )
 
 // Store is the minimal DB surface the generator needs. It's implemented by
@@ -107,7 +108,14 @@ func (g *Generator) Generate(ctx context.Context, itemID uuid.UUID) error {
 		return err
 	}
 
-	names, err := generateSprites(ctx, path, outDir, g.spec)
+	var parts []ffsafe.ConcatPart
+	if pl, ok := g.lookup.(PartsLookup); ok {
+		if parts, err = pl.PrimaryParts(ctx, itemID); err != nil {
+			g.markFailed(ctx, itemID, fmt.Sprintf("list parts: %v", err))
+			return err
+		}
+	}
+	names, err := generateSprites(ctx, path, parts, outDir, g.spec)
 	if err != nil {
 		g.markFailed(ctx, itemID, err.Error())
 		return err
@@ -167,7 +175,43 @@ func (m mediaServiceLookup) PrimaryFile(ctx context.Context, itemID uuid.UUID) (
 	if f.DurationMS != nil {
 		durationSec = int(*f.DurationMS / 1000)
 	}
+	// A stacked movie's thumbnails cover the whole movie, on the combined
+	// timeline its stream plays (see PrimaryParts).
+	if parts := media.Stack(files, f); parts != nil {
+		durationSec = 0
+		if d := media.StackDurationMS(parts); d != nil {
+			durationSec = int(*d / 1000)
+		}
+	}
 	return f.FilePath, f.ID, durationSec, nil
+}
+
+// PrimaryParts returns the files, in order, whose frames the item's thumbnails
+// come from when its primary file is part of a stacked movie, nil otherwise.
+func (m mediaServiceLookup) PrimaryParts(ctx context.Context, itemID uuid.UUID) ([]ffsafe.ConcatPart, error) {
+	files, err := m.svc.GetFiles(ctx, itemID)
+	if err != nil || len(files) == 0 {
+		return nil, err
+	}
+	parts := media.Stack(files, files[0])
+	if parts == nil {
+		return nil, nil
+	}
+	out := make([]ffsafe.ConcatPart, len(parts))
+	for i, p := range parts {
+		var dur float64
+		if p.DurationMS != nil {
+			dur = float64(*p.DurationMS) / 1000
+		}
+		out[i] = ffsafe.ConcatPart{Input: p.FilePath, DurationSec: dur}
+	}
+	return out, nil
+}
+
+// PartsLookup is the optional MediaLookup extension for stacked movies: the
+// parts the thumbnails are cut from, in order, or nil for a single file.
+type PartsLookup interface {
+	PrimaryParts(ctx context.Context, itemID uuid.UUID) ([]ffsafe.ConcatPart, error)
 }
 
 // NewWithService is a convenience for the common case where the caller has

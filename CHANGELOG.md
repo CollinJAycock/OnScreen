@@ -225,6 +225,39 @@ API change lands only when every first-party client moves with it — see
     `episode_order` on libraries (create, update, read) and on show details.
 - **Migration 00044** adds `media_items.index_end`,
   `media_items.episode_order` and `libraries.episode_order`.
+- **Movie editions and multi-part movies.**
+  - **Editions:** a movie file's name can now say which edition it is, and
+    the version picker shows that name ("Director's Cut", "Extended") instead
+    of only its resolution and codec. Read from Plex's
+    `{edition-Director's Cut}` (in the file or folder name), Jellyfin's
+    `Movie (2010) - Director's Cut.mkv` suffix (also `- 1080p`), and common
+    tags after the year: `[Extended]`, Director's Cut, Extended Edition,
+    Theatrical, Unrated, Uncut, IMAX, Remastered and a few more. A label only:
+    which movie a file belongs to doesn't change.
+  - **Multi-part movies:** `Movie (2001) cd1.mkv` + `cd2.mkv` (also
+    `part`, `pt`, `disc`, `disk`, `dvd` with a number, or `-a`/`-b`) now play
+    as one movie, start to finish, on every client — the server joins the
+    parts into one stream, so apps that know nothing about parts play all of
+    it. Its length is the parts added up, and resume, seeking, thumbnails and
+    progress all use that combined timeline. A lone `cd1` plays like any
+    other file. Part words in a title ("Dune Part One (2021)", "Harry Potter
+    and the Deathly Hallows Part 1 (2010)") are left alone, and TV episodes
+    are never stacked. Each part still downloads on its own.
+  - **Playback:** a multi-part movie is never direct-played (one file is
+    one part); it is remuxed, or transcoded when the video needs it. Fleet
+    workers without shared storage pull each part over HTTP with its own
+    stream token. The server writes the list of parts itself; a file in a
+    library that is such a list is still refused.
+  - **Existing libraries:** the next scan fills in editions and parts from
+    the file names without re-reading the files. A yearless
+    `Kill Bill part1.mkv` in `Kill Bill (2003)/` needs its file touched (or
+    re-added) to move into the right movie.
+  - **API (all additive):** item `files[]` gain `edition` and `part_index`
+    (both omitted when empty; `part_index` only for a real multi-part
+    movie); a multi-part movie's `duration_ms` is the parts' total.
+    `POST /items/{id}/transcode` and `/playback-decision` with any part's
+    `file_id` start, or judge, the whole movie.
+  - **Migration 00045** adds `media_files.edition` and `part_index`.
 
 ### Changed
 

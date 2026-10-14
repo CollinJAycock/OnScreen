@@ -19,6 +19,15 @@ function f(o: Partial<ItemFile>): ItemFile {
   return { id: 'x', stream_url: '/s', faststart: true, ...o } as ItemFile;
 }
 
+describe('multi-part movies', () => {
+  it('a part is never direct-played, but still remuxes', () => {
+    const part = f({ container: 'mp4', video_codec: 'h264', audio_codec: 'aac', part_index: 1 });
+    expect(canDirectPlay(part, FULL)).toBe(false);
+    expect(canRemuxVideo(part, FULL)).toBe(true);
+    expect(canDirectPlay({ ...part, part_index: undefined }, FULL)).toBe(true);
+  });
+});
+
 describe('videoBitDepthOK', () => {
   it('8-bit always passes', () => {
     expect(videoBitDepthOK(f({ video_codec: 'h264', video_bit_depth: 8 }), BASIC)).toBe(true);

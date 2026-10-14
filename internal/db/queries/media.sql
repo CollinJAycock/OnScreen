@@ -1567,7 +1567,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE id = $1;
 
@@ -1579,7 +1580,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE file_path = $1;
 
@@ -1591,7 +1593,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 -- Move detection only matches against status='missing' rows now —
 -- the 'deleted' arm went away when "delete = hard delete" landed
@@ -1608,7 +1611,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best quality first (ADR-031)
@@ -1621,7 +1625,8 @@ INSERT INTO media_files (
     bit_depth, sample_rate, channel_layout, lossless,
     replaygain_track_gain, replaygain_track_peak,
     replaygain_album_gain, replaygain_album_peak,
-    video_bit_depth, dv_profile
+    video_bit_depth, dv_profile,
+    edition, part_index
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -1629,7 +1634,8 @@ INSERT INTO media_files (
     $17, $18, $19, $20,
     $21, $22,
     $23, $24,
-    $25, $26
+    $25, $26,
+    $27, $28
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -1638,7 +1644,8 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           bit_depth, sample_rate, channel_layout, lossless,
           replaygain_track_gain, replaygain_track_peak,
           replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-          integrity_status, integrity_checked_at, integrity_detail, dv_profile;
+          integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+          edition, part_index;
 
 -- name: UpdateMediaFilePath :exec
 UPDATE media_files
@@ -1704,6 +1711,8 @@ SET container            = $2,
     duration_ms          = $13,
     video_bit_depth      = $14,
     dv_profile           = $15,
+    edition              = $16,
+    part_index           = $17,
     integrity_status     = 'unchecked',
     integrity_checked_at = NULL,
     integrity_detail     = NULL,
@@ -1719,6 +1728,17 @@ WHERE id = $1;
 UPDATE media_files
 SET hdr_type   = $2,
     dv_profile = $3
+WHERE id = $1;
+
+-- name: UpdateMediaFileNaming :exec
+-- Sets what a file's NAME says about it — its edition label and its part
+-- number in a stacked rip (migration 00045) — and nothing else. Used for an
+-- unchanged file whose stored naming predates the columns or disagrees with
+-- its name, and for a file moved to a new name: the bytes are the same, so
+-- the integrity verdict and scanned_at stay.
+UPDATE media_files
+SET edition    = $2,
+    part_index = $3
 WHERE id = $1;
 
 -- name: UpdateMediaFileIntegrity :exec
@@ -1746,7 +1766,8 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
+       mf.edition, mf.part_index
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 JOIN libraries l ON l.id = mi.library_id
@@ -1778,7 +1799,8 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
+       mf.edition, mf.part_index
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';
@@ -1928,7 +1950,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000;
