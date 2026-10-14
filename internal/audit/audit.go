@@ -156,6 +156,11 @@ const (
 	// key_id, name, the display prefix and scope — never the key itself.
 	ActionAPIKeyCreate = "api_key.create"
 	ActionAPIKeyDelete = "api_key.delete"
+
+	// ActionPhotoFaceDataDelete records an admin deleting all face data
+	// (faces, people, detection records) of one photo library, or of every
+	// library. Target is the library ID or "all"; detail carries the counts.
+	ActionPhotoFaceDataDelete = "photo.face_data_delete"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

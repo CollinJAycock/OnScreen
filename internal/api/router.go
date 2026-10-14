@@ -76,6 +76,7 @@ type Handlers struct {
 	Collections     *v1.CollectionHandler
 	Playlists       *v1.PlaylistHandler
 	PhotoAlbums     *v1.PhotoAlbumHandler
+	PhotoPeople     *v1.PhotoPeopleHandler // photo settings, faces, people, memories; optional
 	LiveTV          *v1.LiveTVHandler
 	Lyrics          *v1.LyricsHandler
 	Subtitles       *v1.SubtitleHandler
@@ -927,6 +928,17 @@ func NewRouter(h *Handlers) http.Handler {
 				})
 			}
 
+			// Photo libraries — admin only: per-library photo options (RAW +
+			// JPEG pairing) and deleting face data.
+			if h.PhotoPeople != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/libraries/{id}/photo-settings", h.PhotoPeople.GetSettings)
+					r.Put("/libraries/{id}/photo-settings", h.PhotoPeople.UpdateSettings)
+					r.Delete("/admin/photos/face-data", h.PhotoPeople.DeleteFaceData)
+				})
+			}
+
 			// Maintenance — admin only one-shot operations (artwork backfill, etc.).
 			if h.Maintenance != nil {
 				r.Group(func(r chi.Router) {
@@ -1439,6 +1451,24 @@ func NewRouter(h *Handlers) http.Handler {
 				if h.Books != nil {
 					r.Get("/items/{id}/book/page/{n}", h.Books.Page)
 				}
+			}
+
+			// Faces, people and memories in photo libraries. Every route
+			// applies the photos' library ACL, rating ceiling and label
+			// restriction; naming needs an unrestricted account (see
+			// PhotoPeopleHandler).
+			if h.PhotoPeople != nil {
+				r.Get("/photos/memories", h.PhotoPeople.Memories)
+				r.Get("/photos/people", h.PhotoPeople.People)
+				r.Get("/photos/people/{id}", h.PhotoPeople.Person)
+				r.Get("/photos/people/{id}/items", h.PhotoPeople.PersonItems)
+				r.Get("/photos/people/{id}/suggestions", h.PhotoPeople.PersonSuggestions)
+				r.Patch("/photos/people/{id}", h.PhotoPeople.UpdatePerson)
+				r.Delete("/photos/people/{id}", h.PhotoPeople.DeletePerson)
+				r.Get("/photos/faces", h.PhotoPeople.UnnamedFaces)
+				r.Put("/photos/faces/{id}", h.PhotoPeople.UpdateFace)
+				r.Delete("/photos/faces/{id}", h.PhotoPeople.DeleteFace)
+				r.Get("/items/{id}/faces", h.PhotoPeople.ItemFaces)
 			}
 
 			// Ebook reading position, synced across the user's devices.

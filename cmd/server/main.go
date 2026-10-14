@@ -45,6 +45,7 @@ import (
 	"github.com/onscreen/onscreen/internal/downloads"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/externalratings"
+	"github.com/onscreen/onscreen/internal/faces"
 	"github.com/onscreen/onscreen/internal/franchise"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/itemlabel"
@@ -1051,6 +1052,9 @@ func run() error {
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
+	// Faces, people, memories and photo-library settings (migration 00057).
+	photoPeopleHandler := v1.NewPhotoPeopleHandler(gen.New(rwPool), logger).
+		WithLibraryAccess(libSvc).WithAudit(auditLogger)
 
 	// A manual "mark watched" also goes to the user's Trakt history.
 	watchStateHandler := v1.NewWatchStateHandler(gen.New(rwPool), libSvc, logger).
@@ -1578,6 +1582,35 @@ func run() error {
 	// worker slot as post-scan generation (seeded enabled below).
 	schedRegistry.Register("trickplay_backfill",
 		scheduler.NewTrickplayBackfillHandler(trickplayPlanner, logger))
+	// Face detection in photo libraries (opt-in, seeded disabled below):
+	// each photo's display file is decoded upright at 1024 px and searched
+	// with the pure-Go cascade in internal/faces. Matching is manual.
+	if faceDetector, err := faces.New(faces.Options{}); err != nil {
+		logger.Warn("face detector unavailable", "err", err)
+	} else {
+		schedRegistry.Register("face_detection", scheduler.NewFaceDetectionHandler(
+			photoFaceStore{q: gen.New(rwPool)},
+			func(ctx context.Context, itemID uuid.UUID) ([]faces.Box, error) {
+				files, err := mediaSvc.GetFiles(ctx, itemID)
+				if err != nil {
+					return nil, err
+				}
+				paths := make([]string, len(files))
+				for i, f := range files {
+					paths[i] = f.FilePath
+				}
+				src := scanner.PhotoDisplayPath(paths)
+				if src == "" {
+					return nil, fmt.Errorf("photo %s has no file", itemID)
+				}
+				img, err := photoImageSrv.DecodeUpright(ctx, src, 1024)
+				if err != nil {
+					return nil, err
+				}
+				return faceDetector.Detect(img)
+			},
+			logger))
+	}
 	// Chapter thumbnails for items whose sprites predate them (opt-in, seeded
 	// disabled below); new and regenerated sprites get them with the run.
 	schedRegistry.Register("chapter_thumbnails",
@@ -1708,6 +1741,7 @@ func run() error {
 		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc).WithManual(gen.New(rwPool), smartCollections),
 		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		PhotoAlbums:     v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		PhotoPeople:     photoPeopleHandler,
 		LiveTV:          liveTVHandler,
 		Lyrics:          lyricsHandler,
 		Arr:             arrHandler,
