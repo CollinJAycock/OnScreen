@@ -70,6 +70,8 @@ type Handlers struct {
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
 	ReadingProgress *v1.ReadingProgressHandler // ebook position sync; optional
+	OPDS            *v1.OPDSHandler            // OPDS catalog of book libraries at /opds/; optional
+	UserExport      *v1.UserExportHandler      // "Download my data" ZIP; optional
 	SubtitleAuto    *v1.SubtitleAutoHandler    // automatic subtitle download settings; optional
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
@@ -513,11 +515,42 @@ func NewRouter(h *Handlers) http.Handler {
 		})
 	}
 
+	// ── OPDS catalog (/opds/) ────────────────────────────────────────────────
+	// Book libraries for e-reader apps. OPDSRequired adds HTTP Basic with a
+	// personal API key as the password (never the account password) to the
+	// usual carriers; it is mounted nowhere else. Every route is a GET. The
+	// cover route alone also takes the file-bound ?token= stream token the
+	// feed puts on its links. See docs/opds.md.
+	if h.OPDS != nil {
+		r.Route("/opds", func(r chi.Router) {
+			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
+				middleware.IPKey("ratelimit:opds")))
+			var failures middleware.FailureCounter
+			if h.RateLimiter != nil {
+				failures = h.RateLimiter
+			}
+			r.Group(func(r chi.Router) {
+				r.Use(h.Auth_mw.OPDSRequired(failures, false))
+				r.Get("/", h.OPDS.Root)
+				r.Get("/recent", h.OPDS.Recent)
+				r.Get("/search", h.OPDS.Search)
+				r.Get("/opensearch.xml", h.OPDS.OpenSearch)
+				r.Get("/libraries/{id}", h.OPDS.Library)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(h.Auth_mw.OPDSRequired(failures, true))
+				r.Get("/files/{fileId}/cover", h.OPDS.Cover)
+			})
+		})
+	}
+
 	// ── OnScreen native API (/api/v1/) ────────────────────────────────────────
 	r.Route("/api/v1", func(r chi.Router) {
 		// Limit request bodies to 1 MB to prevent memory exhaustion. The DB
-		// restore endpoint is exempt — it streams a large dump and caps itself.
-		r.Use(middleware.MaxBytesBody(1<<20, "/admin/restore"))
+		// restore endpoint is exempt — it streams a large dump and caps itself
+		// — and so is the M3U import, whose 1 MB file plus multipart framing
+		// would not fit; it caps its own body.
+		r.Use(middleware.MaxBytesBody(1<<20, "/admin/restore", "/playlists/import"))
 		// Public status endpoints — no rate limit (read-only, cheap).
 		r.Group(func(r chi.Router) {
 			r.Get("/setup/status", h.Auth.SetupStatus)
@@ -791,6 +824,19 @@ func NewRouter(h *Handlers) http.Handler {
 						r.Get("/admin/api-keys", h.APIKeys.AdminList)
 						r.Delete("/admin/api-keys/{id}", h.APIKeys.AdminDelete)
 					})
+				})
+			}
+
+			// "Download my data". Account data: a signed-in session only, never
+			// an API key. A small bucket, since each export pages through the
+			// whole watch history. Admins can export anyone (data requests).
+			if h.UserExport != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RefuseAPIKey)
+					r.Use(middleware.RateLimit(h.RateLimiter, userExportLimit,
+						middleware.SessionKey("ratelimit:user_export")))
+					r.Post("/users/me/export", h.UserExport.ExportMine)
+					r.With(h.Auth_mw.AdminRequired).Post("/users/{id}/export", h.UserExport.ExportUser)
 				})
 			}
 
@@ -1233,6 +1279,11 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/playlists/{id}/items", h.Playlists.AddItem)
 				r.Delete("/playlists/{id}/items/{itemId}", h.Playlists.RemoveItem)
 				r.Put("/playlists/{id}/items/order", h.Playlists.Reorder)
+				// M3U export (a download) and import (a multipart upload,
+				// exempt from the 1 MB body cap above; the handler caps the
+				// file itself at 1 MB and 10,000 entries).
+				r.Get("/playlists/{id}/export.m3u8", h.Playlists.ExportM3U)
+				r.Post("/playlists/import", h.Playlists.ImportM3U)
 			}
 
 			// Photo albums — ownership-checked, per-user. Items must be type='photo'.
@@ -1673,6 +1724,10 @@ func serveEmbeddedFile(fsys fs.FS, w http.ResponseWriter, req *http.Request, nam
 // single click, so 60/min is far above real use while bounding the per-episode
 // write fan-out of show and season marks.
 var watchMarkLimit = middleware.RateLimitConfig{Limit: 60, Window: time.Minute}
+
+// userExportLimit caps "Download my data" archives per user. One is a click;
+// five a minute leaves room for a retry while bounding the history paging.
+var userExportLimit = middleware.RateLimitConfig{Limit: 5, Window: time.Minute}
 
 var artworkImageExts = map[string]string{
 	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".tbn": "image/jpeg",

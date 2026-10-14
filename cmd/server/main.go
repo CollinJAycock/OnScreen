@@ -1699,12 +1699,21 @@ func run() error {
 		Photos:          photosHandler,
 		Books:           booksHandler,
 		ReadingProgress: v1.NewReadingProgressHandler(gen.New(rwPool), libSvc, logger),
+		// OPDS catalog for e-reader apps; gated by the same downloads toggle
+		// as /media/download, which its acquisition links point at.
+		OPDS: v1.NewOPDSHandler(gen.New(roPool), tokenMaker, logger).
+			WithLibraryAccess(libSvc).
+			WithDownloadGate(settingsSvc).
+			WithArtworkStore(artworkMgr.Store),
+		UserExport: v1.NewUserExportHandler(gen.New(rwPool), logger).
+			WithLibraryAccess(libSvc).
+			WithAudit(auditLogger),
 		SubtitleAuto:    subtitleAutoHandler,
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,
 		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc).WithManual(gen.New(rwPool), smartCollections),
-		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithM3U(gen.New(rwPool)),
 		PhotoAlbums:     v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
 		LiveTV:          liveTVHandler,
 		Lyrics:          lyricsHandler,

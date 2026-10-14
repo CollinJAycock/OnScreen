@@ -601,6 +601,47 @@ API change lands only when every first-party client moves with it — see
     and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
   - **Migration 00050** adds the per-library overrides and the
     per-title-and-language attempt log.
+- **Playlists to and from other players (M3U).** A playlist page has an
+  "Export .m3u8" button, and the Playlists page an "Import playlist" one.
+  - **Export** writes an extended M3U with each item's length, artist and
+    title. Paths are relative to the library folder, so a player that mounts
+    the same music elsewhere can use it; tick "Full server paths" for a
+    player on the server itself. Only items you can see are written.
+  - **Import** takes an `.m3u` or `.m3u8` file (up to 1 MB and 10,000 lines)
+    and makes a new playlist of the lines it can place: by exact path, by path
+    relative to a library folder, by the same folders and file name on another
+    drive or mount (`M:\Music\…` and `/mnt/music/…` match, in any letter
+    case), and finally by the artist and title on the `#EXTINF` line. It then
+    lists the lines it couldn't place. Web addresses in a playlist are never
+    opened, and only items you can see are matched.
+  - **API (additive):** `GET /playlists/{id}/export.m3u8` (`?paths=absolute`
+    for server paths) and `POST /playlists/import` (multipart `file`, optional
+    `name`). No migration.
+- **Read your books in an e-reader app (OPDS).** Book libraries are published
+  as an OPDS catalog at `/opds/`, so KOReader, Moon+ Reader, Panels, Chunky
+  and other reader apps can browse, search and download your EPUB, PDF, CBZ
+  and CBR books, with covers, authors and "Recently added".
+  - **Signing in:** make a read-only key under Account ▸ API keys and enter
+    it as the password (any user name). Your account password is not
+    accepted there. The Account page shows the catalog's address.
+  - **What you see** follows your library access, content-rating limit and
+    labels, as in the web app.
+  - The catalog hands out book files, so it is only open while "Allow web
+    downloads" is on (Settings ▸ General).
+  - Guide: [docs/opds.md](docs/opds.md). No migration.
+- **Download my data.** Account ▸ Your data ▸ "Download my data" gives you a
+  ZIP of what the server keeps about your account, as JSON files with a
+  README: profile and preferences, watch history and progress, ratings,
+  favorites, playlists, reading positions, audiobook bookmarks, requests,
+  reported problems, notifications, signed-in devices and API key names.
+  Titles carry their TMDB, TVDB, IMDb and MusicBrainz ids so the data means
+  something elsewhere. Passwords, PINs, two-factor secrets, keys and sign-in
+  tokens are never included.
+  - Admins can download any user's data to answer a data request.
+  - Every export is recorded in the audit log (`user.data_export`). API keys
+    can't make one; it needs a signed-in session.
+  - **API (additive):** `POST /users/me/export`, and for admins
+    `POST /users/{id}/export`. No migration.
 
 ### Changed
 
