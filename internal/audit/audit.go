@@ -48,6 +48,9 @@ const (
 	// from a re-match. Distinct action so retention/alerting on
 	// destructive ops actually works.
 	ActionItemDelete = "item.delete"
+	// ActionItemEpisodeOrder is an admin setting (or clearing) a show's
+	// episode order — aired / DVD / absolute — on /items/{id}/episode-order.
+	ActionItemEpisodeOrder = "item.episode_order"
 
 	// Webhook CRUD audit actions. Webhooks carry an encrypted secret
 	// and an outbound URL — both privileged config — so create/update/

@@ -3,18 +3,24 @@
 // optimistic "mark watched" updates. No Svelte, no network — everything
 // here is unit-tested in watchState.test.ts.
 import type { HubItem, MediaItem, UpNext, WatchFilter } from '$lib/api';
+import { episodeShortCode } from '$lib/episodeRange';
 
-/** "S2 · E5". Missing halves are dropped ("E5", "S2"); both missing → "". */
-export function episodeCode(season?: number | null, episode?: number | null): string {
+/**
+ * "S2 · E5", or "S1 · E1–E2" for a multi-episode file (episodeEnd past
+ * episode). Missing halves are dropped ("E5", "S2"); both missing → "".
+ */
+export function episodeCode(season?: number | null, episode?: number | null, episodeEnd?: number | null): string {
   const parts: string[] = [];
   if (season != null) parts.push(`S${season}`);
-  if (episode != null) parts.push(`E${episode}`);
+  if (episode != null) parts.push(episodeShortCode(episode, episodeEnd));
   return parts.join(' · ');
 }
 
 /** Second line of a Next Up tile: "S2 · E5 — Episode title". */
-export function nextUpSubtitle(item: Pick<HubItem, 'title' | 'season_number' | 'episode_number'>): string {
-  const code = episodeCode(item.season_number, item.episode_number);
+export function nextUpSubtitle(
+  item: Pick<HubItem, 'title' | 'season_number' | 'episode_number' | 'episode_number_end'>
+): string {
+  const code = episodeCode(item.season_number, item.episode_number, item.episode_number_end);
   return code ? `${code} — ${item.title}` : item.title;
 }
 
@@ -28,7 +34,7 @@ export function nextUpSubtitle(item: Pick<HubItem, 'title' | 'season_number' | '
  */
 export function upNextLabel(u: UpNext | null | undefined): string | null {
   if (!u || u.mode === 'none' || !u.episode) return null;
-  const code = episodeCode(u.episode.season_number, u.episode.episode_number);
+  const code = episodeCode(u.episode.season_number, u.episode.episode_number, u.episode.episode_number_end);
   switch (u.mode) {
     case 'resume':
       return code ? `Resume ${code}` : 'Resume';

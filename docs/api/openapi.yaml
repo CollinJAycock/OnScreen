@@ -1124,6 +1124,50 @@ paths:
       responses:
         '202': { description: Enqueued. }
 
+  /api/v1/items/{id}/episode-order:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Set a show's episode order (admin)
+      description: |
+        v2.6. Picks the order a show's episode files are numbered in, overriding
+        the library's `episode_order`: `aired` (the provider's broadcast order),
+        `dvd` or `absolute`. `null` (or an empty string) clears the show's own
+        order so it follows the library again. When the order changes the show
+        is re-enriched in the background (children forced), so its episodes take
+        their titles, summaries and stills from the new order: TMDB episode
+        groups for a show matched on TMDB, TVDB season types for one matched on
+        TVDB. A show whose providers have no such order stays on aired order (a
+        warning is logged). Admin only; audit-logged as `item.episode_order`.
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                episode_order:
+                  type: string
+                  nullable: true
+                  enum: [aired, dvd, absolute, null]
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:            { type: string, format: uuid }
+                      episode_order: { type: string, nullable: true, enum: [aired, dvd, absolute, null] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: The item is not a show. }
+
   /api/v1/items/{id}/match/search:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -5734,6 +5778,14 @@ components:
             ones in the background. Membership is only ever added. A `<set>`
             that is a TMDB collection the server already tracks as a film series
             (by its `tmdbSet` / `tmdbcolid` id or name) is skipped. Default off.
+        episode_order:
+          type: string
+          enum: [aired, dvd, absolute]
+          description: |
+            v2.6. The order the library's shows are numbered in unless a show
+            sets its own (`PUT /items/{id}/episode-order`): `aired` (default),
+            `dvd` or `absolute`. Only meaningful for show / anime / cartoons
+            libraries.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:
@@ -5760,6 +5812,7 @@ components:
           type: boolean
           description: Omit for the per-type default (on for video library types, off otherwise).
         nfo_collections: { type: string, enum: ['off', sets, sets_and_tags], default: 'off' }
+        episode_order:   { type: string, enum: [aired, dvd, absolute], default: aired }
     LibraryUpdate:
       type: object
       description: |
@@ -5793,6 +5846,10 @@ components:
           type: string
           enum: ['off', sets, sets_and_tags]
           description: Omit to preserve. Changing it to sets or sets_and_tags starts a background import of the library's movie.nfo files.
+        episode_order:
+          type: string
+          enum: [aired, dvd, absolute]
+          description: Omit to preserve. Changing it on a show / anime / cartoons library re-enriches, in the background, every show that follows the library's order.
     GenreCount:
       type: object
       properties:
@@ -5968,6 +6025,8 @@ components:
         parent_id:      { type: string, nullable: true, format: uuid }
         grandparent_id: { type: string, nullable: true, format: uuid, description: 'Parent of the parent: for an episode this is the show id (episode -> season -> show), so a client can open the show page directly instead of replaying history. Best-effort; may be unset when unresolved.' }
         index:          { type: integer, nullable: true }
+        index_end:      { type: integer, description: 'v2.6. Episodes only, omitted for a single episode: the last episode a multi-episode file covers ("S01E01-E02" is one episode with index 1, index_end 2).' }
+        episode_order:  { type: string, enum: [aired, dvd, absolute], description: 'v2.6. Shows only: the show''s own episode order. Omitted when the show follows its library''s episode_order.' }
         view_offset_ms: { type: integer, format: int64, description: 'Resume point, including a rewatch in progress of a watched title.' }
         watch_state:    { type: string, enum: [watched, in_progress, unwatched], description: 'Playable videos only (omitted otherwise). The caller''s watch state, manual marks included.' }
         is_favorite:    { type: boolean }
@@ -6019,6 +6078,7 @@ components:
         poster_path:    { type: string, nullable: true }
         thumb_path:     { type: string, nullable: true }
         index:          { type: integer, nullable: true }
+        index_end:      { type: integer, description: 'v2.6. Episodes only, omitted for a single episode: the last episode a multi-episode file covers.' }
         disc_number:
           type: integer
           nullable: true
@@ -6158,6 +6218,7 @@ components:
         show_title:     { type: string }
         season_number:  { type: integer, description: '0 when unknown.' }
         episode_number: { type: integer, description: '0 when unknown.' }
+        episode_number_end: { type: integer, description: 'v2.6. The last episode of a multi-episode file; omitted for a single episode.' }
         year:           { type: integer, nullable: true, description: Show year. }
         poster_path:    { type: string, nullable: true }
         fanart_path:    { type: string, nullable: true }
@@ -6177,6 +6238,7 @@ components:
             season_id:      { type: string, format: uuid }
             season_number:  { type: integer }
             episode_number: { type: integer }
+            episode_number_end: { type: integer, description: 'v2.6. The last episode of a multi-episode file; omitted for a single episode.' }
             view_offset_ms: { type: integer, format: int64, description: 'Set in resume mode.' }
             duration_ms:    { type: integer, format: int64 }
             thumb_path:     { type: string }

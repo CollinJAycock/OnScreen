@@ -203,6 +203,15 @@ type Enricher struct {
 	aniListEpsSF    singleflight.Group
 	aniListEpsCache sync.Map // map[int]aniListEpsCacheEntry — key = anilist_id
 
+	// libOrderFn reads a library's default episode order; nil = every
+	// show follows aired order unless it has its own (see
+	// enricher_episodes.go). orderingSF + orderingCache collapse and
+	// memoize a show's DVD / absolute ordering the same way the AniList
+	// episode list is, so a season cascade fetches it once.
+	libOrderFn    func() LibraryEpisodeOrderer
+	orderingSF    singleflight.Group
+	orderingCache sync.Map // map[string]episodeOrderingEntry — key = show id + order
+
 	// franchise, when set, is told which TMDB collection each enriched
 	// movie belongs to (see enricher_franchise.go). nil = not wired.
 	franchise FranchiseRecorder
@@ -1420,14 +1429,16 @@ func (e *Enricher) enrichSeasonChildren(ctx context.Context, agent metadata.Agen
 		// wrong data — e.g. Season 1 episodes that picked up Season
 		// 2 titles before the per-season anilist_id wiring landed —
 		// gets replaced.
-		if !shouldForceReenrich(ctx) && ep.Summary != nil && ep.ThumbPath != nil {
+		// A multi-episode item a rescan just gave its range still carries
+		// the range default title and must be re-enriched for its joined
+		// title (see applyEpisodeRange / itemNeedsEnrich).
+		if !shouldForceReenrich(ctx) && ep.Summary != nil && ep.ThumbPath != nil && !hasRangeDefaultTitle(ep) {
 			continue
 		}
-		var prefetched *metadata.EpisodeResult
-		if ep.Index != nil {
-			prefetched = preloadedByNum[*ep.Index]
-		}
-		if err := e.enrichEpisode(ctx, agent, ep, file, prefetched); err != nil {
+		// The season's bulk fetch covers every episode of a multi-episode
+		// item, not just its first.
+		prefetch := func(n int) *metadata.EpisodeResult { return preloadedByNum[n] }
+		if err := e.enrichEpisodeWith(ctx, agent, ep, file, prefetch); err != nil {
 			e.logger.WarnContext(ctx, "episode enrich in cascade failed",
 				"episode_id", ep.ID, "err", err)
 		}
@@ -1475,6 +1486,29 @@ func applyEpisodeNFO(p *media.UpdateItemMetadataParams, e *nfo.Episode) {
 // passes prefetched=nil and pays the round-trip — fine because it's a
 // one-off, not the bulk scan path.
 func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File, prefetched *metadata.EpisodeResult) error {
+	return e.enrichEpisodeWith(ctx, agent, item, file, func(n int) *metadata.EpisodeResult {
+		if item.Index != nil && n == *item.Index {
+			return prefetched
+		}
+		return nil
+	})
+}
+
+// enrichEpisodeWith is enrichEpisode with the season's bulk data handed in
+// per episode number (prefetch returns nil for a number it doesn't hold),
+// so a multi-episode item can take every episode it covers from it.
+//
+// A multi-episode item (IndexEnd set: "S01E01-E02") is looked up episode by
+// episode and named by joinEpisodeTitles; summary, air date, rating and
+// thumbnail come from its first episode (mergeEpisodeResults). Its runtime
+// is the file's, never a provider's single-episode runtime: an NFO runtime
+// is not applied to it.
+//
+// A show numbered in DVD or absolute order (episodeOrderFor) is looked up
+// in that order first (episodeOrdering); the season's bulk data is aired
+// data and only used when the order isn't available, together with the
+// rest of the aired chain.
+func (e *Enricher) enrichEpisodeWith(ctx context.Context, agent metadata.Agent, item *media.Item, file *media.File, prefetch func(n int) *metadata.EpisodeResult) error {
 	if item.ParentID == nil || item.Index == nil {
 		return nil
 	}
@@ -1537,108 +1571,27 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 		}
 	}
 
-	// Episode metadata sources, in order:
-	//   1. TMDB by `show.TMDBID`         (best for mainstream shows + cross-anime)
-	//   2. TVDB by `show.TVDBID`         (anime episode data; mainstream-show fallback)
-	//
-	// AniList isn't in the chain — its `streamingEpisodes` field carries
-	// only title/thumbnail/url, not the per-episode summaries detail
-	// pages need. AniList catches the show match (so the scanner records
-	// `anilist_id` and the cross-harvested TMDB / TVDB ID); per-episode
-	// enrichment then runs against whichever of those two IDs is set.
-	//
-	// The pre-fix logic returned early when `show.TMDBID == nil` —
-	// orphaning episodes on anime libraries that AniList matched (and
-	// for which we cross-harvested only TVDB). Now: TVDB stands alone
-	// as a primary source when TMDB ID is absent, instead of being
-	// gated behind a failed TMDB call.
-	var (
-		result   *metadata.EpisodeResult
-		usedTVDB bool
-	)
-
-	var tvdbClient TVDBFallback
-	if e.tvdbFn != nil {
-		tvdbClient = e.tvdbFn()
+	// The episodes this item covers: one, or first..last of a
+	// multi-episode file. Each is looked up through lookupEpisode's
+	// provider chain.
+	last := *item.Index
+	if item.IndexEnd != nil && *item.IndexEnd > last {
+		last = *item.IndexEnd
 	}
-
-	switch {
-	case prefetched != nil:
-		// Bulk path: data came from the parent season's GetSeason call.
-		// No network round-trip.
-		result = prefetched
-	case show.TMDBID != nil:
-		// Standalone path (no preloaded season data). Pay the per-
-		// episode round-trip.
-		result, err = agent.GetEpisode(ctx, *show.TMDBID, *season.Index, *item.Index)
-		if err != nil {
-			e.logger.InfoContext(ctx, "tmdb get episode found no result",
-				"show_tmdb_id", *show.TMDBID,
-				"season", *season.Index,
-				"episode", *item.Index,
-				"err", err)
-			result = nil // fall through to TVDB
-		}
+	var ordering *metadata.EpisodeOrdering
+	if order := e.episodeOrderFor(ctx, show); order != metadata.EpisodeOrderAired {
+		ordering = e.episodeOrdering(ctx, agent, show, order)
 	}
-	if result == nil && tvdbClient != nil && show.TVDBID != nil {
-		result, err = tvdbClient.GetEpisode(ctx, *show.TVDBID, *season.Index, *item.Index)
-		if err != nil {
-			e.logger.InfoContext(ctx, "tvdb get episode found no result",
-				"show_tvdb_id", *show.TVDBID,
-				"season", *season.Index,
-				"episode", *item.Index,
-				"err", err)
-			result = nil // fall through to AniList
-		}
-		if result != nil {
-			usedTVDB = true
-			e.logger.InfoContext(ctx, "tvdb episode lookup",
-				"show_tvdb_id", *show.TVDBID,
-				"season", *season.Index,
-				"episode", *item.Index,
-				"title", result.Title)
-		}
+	results := make([]*metadata.EpisodeResult, 0, last-*item.Index+1)
+	for n := *item.Index; n <= last; n++ {
+		results = append(results, e.lookupEpisode(ctx, agent, show, season, n, ordering, prefetch(n)))
 	}
-	// AniList streamingEpisodes — last-resort fallback when neither TMDB
-	// nor TVDB returned data, but the show has an anilist_id (anime
-	// libraries where the operator has not configured a TMDB / TVDB
-	// key, which is the common case post-AniList primary). Gives users
-	// at least a title + thumbnail per episode; AniList doesn't carry
-	// per-episode summaries.
-	// Prefer the season's anilist_id when set: anime franchises split
-	// each cour into its own AniList Media row (Solo Leveling S1 =
-	// 153406, S2 = 151807), and the show row holds whichever cour
-	// matched the title search — usually the wrong one for at least
-	// one season. attachAniListFranchiseToSeasons populates per-
-	// season IDs at show-match time so this lookup hits the right
-	// streamingEpisodes list per season.
-	anilistLookupID := show.AniListID
-	if season.AniListID != nil {
-		anilistLookupID = season.AniListID
-	}
-	if result == nil && anilistLookupID != nil && e.anilistFn != nil {
-		if al := e.anilistFn(); al != nil {
-			eps, alErr := e.fetchAniListEpisodes(ctx, al, *anilistLookupID)
-			if alErr != nil {
-				e.logger.InfoContext(ctx, "anilist get episodes failed",
-					"anilist_id", *anilistLookupID,
-					"err", alErr)
-			} else if matched := pickAniListEpisode(eps, *item.Index); matched != nil {
-				result = matched
-				e.logger.InfoContext(ctx, "anilist episode fallback",
-					"anilist_id", *anilistLookupID,
-					"episode", *item.Index,
-					"title", result.Title,
-					"has_thumb", result.ThumbURL != "")
-			}
-		}
-	}
+	result := mergeEpisodeResults(results)
 	if result == nil {
-		// All three providers returned nothing usable; episode stays
-		// at its filename-derived title.
+		// All providers returned nothing usable; episode stays at its
+		// filename-derived title.
 		return nil
 	}
-	_ = usedTVDB // reserved for future provider-attribution metrics
 
 	p := media.UpdateItemMetadataParams{
 		ID:        item.ID,
@@ -1682,7 +1635,12 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 		}
 	}
 
-	// Apply NFO last so user-curated fields beat TMDB/TVDB.
+	// Apply NFO last so user-curated fields beat TMDB/TVDB. A
+	// multi-episode file's NFO runtime is one episode's; its runtime is
+	// the file's.
+	if nfoEpisode != nil && last > *item.Index {
+		nfoEpisode.RuntimeMin = 0
+	}
 	applyEpisodeNFO(&p, nfoEpisode)
 
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
@@ -1694,9 +1652,125 @@ func (e *Enricher) enrichEpisode(ctx context.Context, agent metadata.Agent, item
 		"title", p.Title,
 		"season", *season.Index,
 		"episode", *item.Index,
+		"episode_end", last,
 		"from_nfo", nfoEpisode != nil,
 	)
 	return nil
+}
+
+// lookupEpisode finds the metadata for episode n of season (the file's
+// numbering) of show. With ordering (a DVD or absolute order the show is
+// numbered in) the episode is looked up there first; when the ordering
+// doesn't have it, or there is none, the aired chain runs. nil when no
+// provider has it.
+//
+// Aired chain, in order:
+//  1. prefetched — the season's bulk TMDB fetch; no network round-trip.
+//  2. TMDB by `show.TMDBID`         (best for mainstream shows + cross-anime)
+//  3. TVDB by `show.TVDBID`         (anime episode data; mainstream-show fallback)
+//  4. AniList streamingEpisodes     (title + thumbnail only; last resort)
+//
+// AniList catches the show match (so the scanner records `anilist_id` and
+// the cross-harvested TMDB / TVDB ID); per-episode enrichment runs against
+// whichever of TMDB / TVDB is set, and AniList's list only when neither
+// has the episode.
+//
+// The pre-fix logic returned early when `show.TMDBID == nil` — orphaning
+// episodes on anime libraries that AniList matched (and for which we
+// cross-harvested only TVDB). Now: TVDB stands alone as a primary source
+// when TMDB ID is absent, instead of being gated behind a failed TMDB
+// call.
+func (e *Enricher) lookupEpisode(ctx context.Context, agent metadata.Agent, show, season *media.Item, n int, ordering *metadata.EpisodeOrdering, prefetched *metadata.EpisodeResult) *metadata.EpisodeResult {
+	if ordering != nil {
+		if r := ordering.Lookup(*season.Index, n); r != nil {
+			return r
+		}
+		e.logger.InfoContext(ctx, "episode not in the show's episode order; using aired order",
+			"show_id", show.ID, "episode_order", ordering.Order,
+			"season", *season.Index, "episode", n)
+	}
+
+	var (
+		result *metadata.EpisodeResult
+		err    error
+	)
+
+	var tvdbClient TVDBFallback
+	if e.tvdbFn != nil {
+		tvdbClient = e.tvdbFn()
+	}
+
+	switch {
+	case prefetched != nil:
+		// Bulk path: data came from the parent season's GetSeason call.
+		// No network round-trip.
+		result = prefetched
+	case show.TMDBID != nil:
+		// Standalone path (no preloaded season data). Pay the per-
+		// episode round-trip.
+		result, err = agent.GetEpisode(ctx, *show.TMDBID, *season.Index, n)
+		if err != nil {
+			e.logger.InfoContext(ctx, "tmdb get episode found no result",
+				"show_tmdb_id", *show.TMDBID,
+				"season", *season.Index,
+				"episode", n,
+				"err", err)
+			result = nil // fall through to TVDB
+		}
+	}
+	if result == nil && tvdbClient != nil && show.TVDBID != nil {
+		result, err = tvdbClient.GetEpisode(ctx, *show.TVDBID, *season.Index, n)
+		if err != nil {
+			e.logger.InfoContext(ctx, "tvdb get episode found no result",
+				"show_tvdb_id", *show.TVDBID,
+				"season", *season.Index,
+				"episode", n,
+				"err", err)
+			result = nil // fall through to AniList
+		}
+		if result != nil {
+			e.logger.InfoContext(ctx, "tvdb episode lookup",
+				"show_tvdb_id", *show.TVDBID,
+				"season", *season.Index,
+				"episode", n,
+				"title", result.Title)
+		}
+	}
+	// AniList streamingEpisodes — last-resort fallback when neither TMDB
+	// nor TVDB returned data, but the show has an anilist_id (anime
+	// libraries where the operator has not configured a TMDB / TVDB
+	// key, which is the common case post-AniList primary). Gives users
+	// at least a title + thumbnail per episode; AniList doesn't carry
+	// per-episode summaries.
+	// Prefer the season's anilist_id when set: anime franchises split
+	// each cour into its own AniList Media row (Solo Leveling S1 =
+	// 153406, S2 = 151807), and the show row holds whichever cour
+	// matched the title search — usually the wrong one for at least
+	// one season. attachAniListFranchiseToSeasons populates per-
+	// season IDs at show-match time so this lookup hits the right
+	// streamingEpisodes list per season.
+	anilistLookupID := show.AniListID
+	if season.AniListID != nil {
+		anilistLookupID = season.AniListID
+	}
+	if result == nil && anilistLookupID != nil && e.anilistFn != nil {
+		if al := e.anilistFn(); al != nil {
+			eps, alErr := e.fetchAniListEpisodes(ctx, al, *anilistLookupID)
+			if alErr != nil {
+				e.logger.InfoContext(ctx, "anilist get episodes failed",
+					"anilist_id", *anilistLookupID,
+					"err", alErr)
+			} else if matched := pickAniListEpisode(eps, n); matched != nil {
+				result = matched
+				e.logger.InfoContext(ctx, "anilist episode fallback",
+					"anilist_id", *anilistLookupID,
+					"episode", n,
+					"title", result.Title,
+					"has_thumb", result.ThumbURL != "")
+			}
+		}
+	}
+	return result
 }
 
 // attachAniListFranchiseToSeasons maps AniList franchise rows onto

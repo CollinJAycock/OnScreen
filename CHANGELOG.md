@@ -192,6 +192,39 @@ API change lands only when every first-party client moves with it — see
     already has the title and year. Item details gain `sort_title`, `tagline`
     and `locked_fields`.
   - **Migration 00043** adds `locked_fields` to media items.
+- **Multi-episode files.** A file holding two or more episodes —
+  `S01E01E02`, `S01E01-E02`, `S01E01-02`, `S01E01.S01E02`, `1x01-1x02`,
+  `1x01-02` — is now one episode covering episodes 1–2, instead of episode 1
+  with episode 2 shown as missing.
+  - **Shown as** "E1–E2" / "Episodes 1–2" on the episode list, the player and
+    Next Up. Its title joins the episodes' titles ("Pilot / The Train Job",
+    or "The Best of Both Worlds (1–2)" for a two-parter); summary, still and
+    air date come from the first episode, the runtime from the file.
+  - **Counted as every episode it covers:** season and show episode counts,
+    unwatched badges, a season request's "episodes you have", Next Up and the
+    player's next episode (after E01–E02 comes E03).
+  - **Existing libraries:** the next scan converts an episode filed as E01
+    whose file is really E01–E02 and re-fetches its metadata; no second item
+    is created. The anime-style unspaced `Title-01-02` is still not read as
+    a range.
+  - **API (additive):** episodes gain `index_end` (detail and children),
+    Next Up items and `GET /items/{id}/up-next` gain `episode_number_end`;
+    omitted for a single episode.
+- **Episode order: aired, DVD or absolute.** A show whose files are numbered
+  by their DVD release, or by one running number ("Show - 123"), can use
+  that order to get the right titles and summaries.
+  - **Where:** Settings for a TV, anime or cartoons library sets the default
+    ("Aired" unless changed); an admin can override it on a show's page.
+    Changing either refreshes the affected shows' episode metadata in the
+    background.
+  - **Providers:** TMDB episode groups for shows matched on TMDB, TheTVDB's
+    DVD and absolute orders for shows matched on TheTVDB. A show whose
+    provider has no such order keeps aired order (noted in the server log).
+    Anime libraries keep their current behaviour unless you change the order.
+  - **API (additive):** `PUT /items/{id}/episode-order` (admins, audited);
+    `episode_order` on libraries (create, update, read) and on show details.
+- **Migration 00044** adds `media_items.index_end`,
+  `media_items.episode_order` and `libraries.episode_order`.
 
 ### Changed
 

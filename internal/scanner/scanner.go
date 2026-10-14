@@ -126,6 +126,7 @@ type MediaService interface {
 	UpdateItemTakenAt(ctx context.Context, id uuid.UUID, takenAt time.Time) error
 	StoredTrackDisc(ctx context.Context, id uuid.UUID) (*int, error)
 	SetItemKind(ctx context.Context, id uuid.UUID, kind string) error
+	SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error)
 	MarkFileActive(ctx context.Context, id uuid.UUID) error
 	SetFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error
 	MarkMissing(ctx context.Context, id uuid.UUID) error
@@ -1367,6 +1368,9 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryID uuid.UUID,
 	if libraryType == "audiobook" {
 		s.healUnchangedChapter(ctx, item, existing, path)
 	}
+	// And an episode filed before multi-episode names were read gains its
+	// range ("S01E01-E02" → index_end 2).
+	s.healUnchangedEpisode(ctx, libraryType, item, path)
 	// A file an older scan tagged Dolby Vision is re-read once; most of them
 	// have a base layer every client can play (see healDynamicRange).
 	s.healDynamicRange(ctx, existing, path)
@@ -1614,8 +1618,11 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 	}
 
 	// 3. Find or create the "episode" item (parent_id=season.ID, index=episodeNum).
+	//    A multi-episode file ("S01E01-E02") is one item keyed by its first
+	//    episode; applyEpisodeRange records the last one on it below, so no
+	//    separate E02 item is ever created for the file.
 	if episodeTitle == "" {
-		episodeTitle = fmt.Sprintf("Episode %d", episodeNum)
+		episodeTitle = defaultEpisodeTitle(episodeNum, identity.episodeEnd)
 	}
 	episode, err := s.media.FindOrCreateHierarchyItem(ctx, media.CreateItemParams{
 		LibraryID: libraryID,
@@ -1629,6 +1636,7 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 		return nil, fmt.Errorf("find or create episode %d for season %d of %q: %w",
 			episodeNum, seasonNum, showTitle, err)
 	}
+	s.applyEpisodeRange(ctx, episode, identity, path)
 
 	// 4. Detect OVA / ONA / special / etc. subtype from the
 	// filename + folder + season-0 convention. Set the row's `kind`
@@ -1643,6 +1651,105 @@ func (s *Scanner) processShowHierarchy(ctx context.Context, libraryID uuid.UUID,
 	}
 
 	return episode, nil
+}
+
+// defaultEpisodeTitle is the title an episode gets before enrichment:
+// "Episode 3", or "Episodes 1–2" for a multi-episode file (end > n).
+func defaultEpisodeTitle(n, end int) string {
+	if end > n {
+		return fmt.Sprintf("Episodes %d–%d", n, end)
+	}
+	return fmt.Sprintf("Episode %d", n)
+}
+
+// hasRangeDefaultTitle reports whether a multi-episode item still carries
+// the scanner's default range title ("Episodes 1–2"): it has not been
+// enriched for its range yet.
+func hasRangeDefaultTitle(item *media.Item) bool {
+	return item.Type == "episode" && item.Index != nil && item.IndexEnd != nil &&
+		item.Title == defaultEpisodeTitle(*item.Index, *item.IndexEnd)
+}
+
+// applyEpisodeRange records on an episode item the last episode its file
+// covers (media_items.index_end): "S01E01-E02" is one item, index 1,
+// index_end 2. It runs for every file processShowHierarchy files and, via
+// healUnchangedEpisode, for unchanged files on a rescan — which is what
+// converts an E01 item filed before multi-episode names were read.
+//
+// An item can hold several versions of the episode. Dropping a range is
+// only done when none of the item's other active files names one either,
+// so a single-episode version can't undo the multi-episode one beside it.
+//
+// When the range changes and the item still carries the scanner's default
+// title, or gains a range, it is retitled to the new default ("Episodes
+// 1–2"): itemNeedsEnrich reads that title as "not enriched for this range"
+// so the episode is re-enriched and gets its joined title ("Pilot / Part
+// 2"). Best-effort: a failure is logged and the scan goes on.
+func (s *Scanner) applyEpisodeRange(ctx context.Context, ep *media.Item, identity episodeIdentity, path string) {
+	if ep == nil || ep.Type != "episode" || ep.Index == nil || identity.episode != *ep.Index {
+		return
+	}
+	n := *ep.Index
+	want := identity.episodeEnd
+	if want <= n {
+		want = 0
+	}
+	have := 0
+	if ep.IndexEnd != nil {
+		have = *ep.IndexEnd
+	}
+	if want == have {
+		return
+	}
+	if want < have {
+		if files, err := s.media.GetFiles(ctx, ep.ID); err == nil {
+			for _, f := range files {
+				if f.Status != "active" || f.FilePath == path {
+					continue
+				}
+				if other, ok := parseEpisodeIdentity(f.FilePath); ok && other.episode == n && other.episodeEnd > want {
+					want = other.episodeEnd
+				}
+			}
+		}
+		if want == have {
+			return
+		}
+	}
+	var end *int
+	if want > 0 {
+		end = &want
+	}
+	if _, err := s.media.SetEpisodeIndexEnd(ctx, ep.ID, end); err != nil {
+		s.logger.WarnContext(ctx, "set episode range failed", "episode_id", ep.ID, "path", path, "err", err)
+		return
+	}
+	s.logger.InfoContext(ctx, "episode range updated", "episode_id", ep.ID, "path", path,
+		"episode", n, "index_end", want)
+	ep.IndexEnd = end
+	if want > 0 || ep.Title == defaultEpisodeTitle(n, have) {
+		title := defaultEpisodeTitle(n, want)
+		if err := s.media.UpdateItemTitle(ctx, ep.ID, title, title); err != nil {
+			s.logger.WarnContext(ctx, "retitle episode for its range failed", "episode_id", ep.ID, "err", err)
+			return
+		}
+		ep.Title, ep.SortTitle = title, title
+	}
+}
+
+// healUnchangedEpisode re-reads the episode range of an unchanged file's
+// episode in a show-like library (see applyEpisodeRange). Like
+// healUnchangedTrack it needs no slow path: nothing is re-parented, the
+// row just gains (or loses) its range end.
+func (s *Scanner) healUnchangedEpisode(ctx context.Context, libraryType string, item *media.Item, path string) {
+	if !isShowLikeLibrary(libraryType) || item == nil || item.Type != "episode" || item.ParentID == nil {
+		return
+	}
+	identity, ok := parseEpisodeIdentity(path)
+	if !ok {
+		return
+	}
+	s.applyEpisodeRange(ctx, item, identity, path)
 }
 
 // showFolderHint returns the FolderPath hint processShowHierarchy hands
@@ -1987,6 +2094,13 @@ func itemNeedsEnrich(item *media.Item) bool {
 	case "photo":
 		return false
 	case "episode":
+		// A multi-episode item still titled with the scanner's default
+		// ("Episodes 1–2") has not been enriched for its range yet — a
+		// rescan just found the range on an item enriched as a single
+		// episode (see applyEpisodeRange).
+		if hasRangeDefaultTitle(item) {
+			return true
+		}
 		if item.ThumbPath != nil {
 			return badPosterPath(*item.ThumbPath)
 		}

@@ -2,7 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { libraryApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode } from '$lib/api';
+  import { libraryApi, type Library, type LibraryTrickplayStatus, type NFOCollectionsMode, type EpisodeOrder } from '$lib/api';
   import DirPicker from '$lib/DirPicker.svelte';
   import { isVideoLibraryType, formatTrickplayProgress, trickplayQueuedMessage } from '$lib/trickplayProgress';
 
@@ -38,6 +38,12 @@
   // only when changed — turning it on starts a catch-up import.
   let nfoCollections: NFOCollectionsMode = 'off';
 
+  // TV / anime / cartoons libraries: the episode order shows follow unless
+  // they set their own. Sent only when changed — a change re-enriches the
+  // library's shows in the background.
+  let episodeOrder: EpisodeOrder = 'aired';
+  $: hasEpisodes = library?.type === 'show' || library?.type === 'anime' || library?.type === 'cartoons';
+
   let mounted = false;
   let prevId = '';
   let savedTimeout: ReturnType<typeof setTimeout>;
@@ -66,6 +72,7 @@
     scanIntervalMinutes = 60;
     trickplayEnabled = false;
     nfoCollections = 'off';
+    episodeOrder = 'aired';
     tpStatus = null;
     tpMessage = '';
     fetchLibrary();
@@ -83,6 +90,7 @@
       autoGrantNewUsers = library.auto_grant_new_users ?? false;
       trickplayEnabled = library.trickplay_enabled ?? false;
       nfoCollections = library.nfo_collections ?? 'off';
+      episodeOrder = library.episode_order ?? 'aired';
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load';
     } finally { loading = false; }
@@ -138,6 +146,8 @@
         ...(isVideoLibraryType(library?.type) ? { trickplay_enabled: trickplayEnabled } : {}),
         ...(library?.type === 'movie' && nfoCollections !== (library?.nfo_collections ?? 'off')
           ? { nfo_collections: nfoCollections } : {}),
+        ...(hasEpisodes && episodeOrder !== (library?.episode_order ?? 'aired')
+          ? { episode_order: episodeOrder } : {}),
       });
       saved = true;
       savedTimeout = setTimeout(() => saved = false, 3000);
@@ -257,6 +267,23 @@
             </select>
           </div>
         </div>
+        {#if hasEpisodes}
+          <div class="field">
+            <label for="episode-order">Episode order</label>
+            <select id="episode-order" value={episodeOrder}
+                    on:change={(e) => episodeOrder = e.currentTarget.value as EpisodeOrder}>
+              <option value="aired">Aired</option>
+              <option value="dvd">DVD</option>
+              <option value="absolute">Absolute</option>
+            </select>
+          </div>
+          <p class="check-help">
+            How your episode files are numbered. Aired follows the broadcast order; DVD and absolute
+            (one running number, "Show - 123") look episodes up in that order instead, where the show's
+            metadata provider has one. A show can override this from its page. Changing it refreshes
+            the library's episode metadata in the background.
+          </p>
+        {/if}
       </section>
 
       <section>

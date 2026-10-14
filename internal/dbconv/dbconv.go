@@ -228,6 +228,8 @@ func GenGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
 	item.FranchiseID = int32PtrToIntPtr(r.FranchiseID)
 	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
 	item.LockedFields = r.LockedFields
+	item.IndexEnd = int32PtrToIntPtr(r.IndexEnd)
+	item.EpisodeOrder = r.EpisodeOrder
 	return item
 }
 
@@ -285,6 +287,7 @@ func GenListChildrenRowToItem(r gen.ListMediaItemChildrenRow) media.Item {
 	item.MalID = int32PtrToIntPtr(r.MalID)
 	item.Kind = r.Kind
 	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
+	item.IndexEnd = int32PtrToIntPtr(r.IndexEnd)
 	return item
 }
 

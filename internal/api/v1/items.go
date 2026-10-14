@@ -216,6 +216,9 @@ type ItemHandler struct {
 	externalRatings ItemExternalRatingsDB
 	// optional; caches a metadata edit invalidates (items_metadata.go)
 	caches ItemCacheInvalidator
+	// optional; when set, PUT /items/{id}/episode-order is admin-served
+	// (items_episode_order.go)
+	episodeOrder ItemEpisodeOrderSetter
 	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
 	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
 	// disables caching (extract on every request — the old behaviour).
@@ -601,7 +604,15 @@ type ItemDetailResponse struct {
 	// history (which would land on the previously-played episode).
 	GrandparentID *string `json:"grandparent_id,omitempty"`
 	Index         *int    `json:"index,omitempty"`
-	ViewOffsetMS  int64   `json:"view_offset_ms"`
+	// IndexEnd is the last episode a multi-episode file covers: an
+	// "S01E01-E02" episode has index 1, index_end 2. Omitted for a single
+	// episode and every other type (additive, v2.6).
+	IndexEnd *int `json:"index_end,omitempty"`
+	// EpisodeOrder is a show's own episode order — "aired", "dvd" or
+	// "absolute". Omitted when the show follows its library's
+	// (libraries.episode_order). Shows only (additive, v2.6).
+	EpisodeOrder *string `json:"episode_order,omitempty"`
+	ViewOffsetMS int64   `json:"view_offset_ms"`
 	// WatchState is the caller's state for a playable video — "watched",
 	// "in_progress" or "unwatched" (user_watch_state, manual marks
 	// included). Omitted for other types; shows and seasons roll up
@@ -681,6 +692,9 @@ type ChildItemResponse struct {
 	PosterPath *string  `json:"poster_path,omitempty"`
 	ThumbPath  *string  `json:"thumb_path,omitempty"`
 	Index      *int     `json:"index,omitempty"`
+	// IndexEnd is the last episode a multi-episode file covers (see
+	// ItemDetailResponse.IndexEnd). Omitted when null.
+	IndexEnd *int `json:"index_end,omitempty"`
 	// DiscNumber is a track's disc within its album (with Index, its
 	// position). Absent for non-tracks and for tracks with no disc tag,
 	// which read as disc 1; children already arrive in (disc, track) order.
@@ -807,6 +821,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ContentRating:   item.ContentRating,
 		Genres:          genres,
 		Index:           item.Index,
+		IndexEnd:        item.IndexEnd,
 		ViewOffsetMS:    viewOffsetMS,
 		WatchState:      watchState,
 		LastClientName:  lastClientName,
@@ -838,6 +853,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.MalID = item.MalID
 	out.Kind = item.Kind
 	out.ReadingDirection = item.ReadingDirection
+	if item.Type == "show" {
+		out.EpisodeOrder = item.EpisodeOrder
+	}
 	out.MusicBrainzID = uuidPtrToStringPtr(item.MusicBrainzID)
 	out.MusicBrainzReleaseID = uuidPtrToStringPtr(item.MusicBrainzReleaseID)
 	out.MusicBrainzReleaseGroupID = uuidPtrToStringPtr(item.MusicBrainzReleaseGroupID)
@@ -1243,6 +1261,7 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 			PosterPath:            c.PosterPath,
 			ThumbPath:             c.ThumbPath,
 			Index:                 c.Index,
+			IndexEnd:              c.IndexEnd,
 			DiscNumber:            c.DiscNumber,
 			Kind:                  c.Kind,
 			OriginallyAvailableAt: dateString(c.OriginallyAvailableAt),

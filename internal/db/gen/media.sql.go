@@ -1246,7 +1246,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
+       parent_id, index, index_end, episode_order, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at,
        locked_fields
 FROM media_items
@@ -1289,6 +1289,8 @@ type GetMediaItemRow struct {
 	FranchiseID               *int32             `json:"franchise_id"`
 	ParentID                  pgtype.UUID        `json:"parent_id"`
 	Index                     *int32             `json:"index"`
+	IndexEnd                  *int32             `json:"index_end"`
+	EpisodeOrder              *string            `json:"episode_order"`
 	DiscNumber                *int32             `json:"disc_number"`
 	PosterPath                *string            `json:"poster_path"`
 	FanartPath                *string            `json:"fanart_path"`
@@ -1339,6 +1341,8 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.FranchiseID,
 		&i.ParentID,
 		&i.Index,
+		&i.IndexEnd,
+		&i.EpisodeOrder,
 		&i.DiscNumber,
 		&i.PosterPath,
 		&i.FanartPath,
@@ -2571,7 +2575,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        anilist_id, mal_id, kind,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
+       parent_id, index, index_end, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE parent_id = $1 AND deleted_at IS NULL
@@ -2604,6 +2608,7 @@ type ListMediaItemChildrenRow struct {
 	Kind                  *string            `json:"kind"`
 	ParentID              pgtype.UUID        `json:"parent_id"`
 	Index                 *int32             `json:"index"`
+	IndexEnd              *int32             `json:"index_end"`
 	DiscNumber            *int32             `json:"disc_number"`
 	PosterPath            *string            `json:"poster_path"`
 	FanartPath            *string            `json:"fanart_path"`
@@ -2652,6 +2657,7 @@ func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUI
 			&i.Kind,
 			&i.ParentID,
 			&i.Index,
+			&i.IndexEnd,
 			&i.DiscNumber,
 			&i.PosterPath,
 			&i.FanartPath,
@@ -5031,6 +5037,39 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 	return items, nil
 }
 
+const listShowsFollowingLibraryEpisodeOrder = `-- name: ListShowsFollowingLibraryEpisodeOrder :many
+SELECT id
+FROM media_items
+WHERE library_id = $1
+  AND type = 'show'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+  AND episode_order IS NULL
+ORDER BY id
+`
+
+// The live shows of a library that follow its default episode order (no
+// order of their own): the shows to re-enrich when that default changes.
+func (q *Queries) ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listShowsFollowingLibraryEpisodeOrder, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listTopLevelItemsWithArt = `-- name: ListTopLevelItemsWithArt :many
 SELECT id, type, poster_path, fanart_path
 FROM media_items
@@ -5872,6 +5911,33 @@ func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaIte
 	return items, nil
 }
 
+const setEpisodeIndexEnd = `-- name: SetEpisodeIndexEnd :execrows
+UPDATE media_items
+SET index_end = $1::int,
+    updated_at = NOW()
+WHERE id = $2::uuid
+  AND type = 'episode'
+  AND deleted_at IS NULL
+  AND index_end IS DISTINCT FROM $1::int
+`
+
+type SetEpisodeIndexEndParams struct {
+	IndexEnd *int32    `json:"index_end"`
+	ID       uuid.UUID `json:"id"`
+}
+
+// Records the last episode a multi-episode file covers (index_end; NULL for
+// a single episode). The scanner calls this when it files or re-reads an
+// episode. Unchanged rows are left alone (0 rows), so a rescan of a library
+// that is already right writes nothing.
+func (q *Queries) SetEpisodeIndexEnd(ctx context.Context, arg SetEpisodeIndexEndParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setEpisodeIndexEnd, arg.IndexEnd, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setMediaItemKind = `-- name: SetMediaItemKind :exec
 UPDATE media_items
 SET kind = NULLIF($2::text, ''),
@@ -5892,6 +5958,30 @@ type SetMediaItemKindParams struct {
 func (q *Queries) SetMediaItemKind(ctx context.Context, arg SetMediaItemKindParams) error {
 	_, err := q.db.Exec(ctx, setMediaItemKind, arg.ID, arg.Kind)
 	return err
+}
+
+const setShowEpisodeOrder = `-- name: SetShowEpisodeOrder :execrows
+UPDATE media_items
+SET episode_order = $1::text,
+    updated_at = NOW()
+WHERE id = $2::uuid
+  AND type = 'show'
+  AND deleted_at IS NULL
+`
+
+type SetShowEpisodeOrderParams struct {
+	EpisodeOrder *string   `json:"episode_order"`
+	ID           uuid.UUID `json:"id"`
+}
+
+// Sets (or, with NULL, clears) a show's own episode order. 0 rows means the
+// item is not a live show.
+func (q *Queries) SetShowEpisodeOrder(ctx context.Context, arg SetShowEpisodeOrderParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setShowEpisodeOrder, arg.EpisodeOrder, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const softDeleteEmptyContainerItems = `-- name: SoftDeleteEmptyContainerItems :exec

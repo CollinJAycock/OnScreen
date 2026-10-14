@@ -1189,6 +1189,7 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Patch("/items/{id}", h.Items.UpdateMetadata) // admin-gated inside the handler
 				r.Put("/items/{id}/progress", h.Items.Progress)
 				r.Post("/items/{id}/enrich", h.Items.Enrich)
+				r.Put("/items/{id}/episode-order", h.Items.SetEpisodeOrder) // admin-gated inside the handler
 				r.Get("/items/{id}/match/search", h.Items.SearchMatch)
 				r.Post("/items/{id}/match", h.Items.ApplyMatch)
 				r.Get("/items/{id}/posters", h.Items.ListPosters)

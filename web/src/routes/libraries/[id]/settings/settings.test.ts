@@ -155,3 +155,35 @@ describe('Library settings — NFO collections', () => {
     expect(screen.queryByLabelText('Import from movie.nfo')).toBeNull();
   });
 });
+
+describe('Library settings — episode order', () => {
+  it('shows the current order on TV libraries and sends a change', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'show', episode_order: 'dvd' }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib({ type: 'show', ...body }));
+    render(Page);
+    const select = (await screen.findByLabelText('Episode order')) as HTMLSelectElement;
+    expect(select.value).toBe('dvd');
+    await fireEvent.change(select, { target: { value: 'absolute' } });
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].episode_order).toBe('absolute');
+  });
+
+  it('defaults to aired and leaves an unchanged order out of the save (no re-enrich)', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'anime' }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib({ type: 'anime', ...body }));
+    render(Page);
+    const select = (await screen.findByLabelText('Episode order')) as HTMLSelectElement;
+    expect(select.value).toBe('aired');
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect('episode_order' in mockUpdate.mock.calls[0][1]).toBe(false);
+  });
+
+  it('is not offered for movie libraries', async () => {
+    mockGet.mockResolvedValue(lib());
+    render(Page);
+    await screen.findByRole('button', { name: /save changes/i });
+    expect(screen.queryByLabelText('Episode order')).toBeNull();
+  });
+});
