@@ -625,7 +625,9 @@ func run() error {
 		WithMissingFileGrace(func() time.Duration { return cfg.MissingFileGracePeriod }).
 		// Featured-artist credits (track_artists): "Appears on" on the
 		// artist page.
-		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)})
+		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)}).
+		// Photo items keyed by file, and RAW + JPEG pairing.
+		WithPhotoStore(photoScanStore{q: gen.New(rwPool)})
 	notifBrokerEarly := notification.NewBroker()
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{

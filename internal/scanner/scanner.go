@@ -28,6 +28,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/observability"
+	"github.com/onscreen/onscreen/internal/rawpreview"
 )
 
 var tracer = otel.Tracer("onscreen/scanner")
@@ -52,6 +53,10 @@ var imageExtensions = map[string]bool{
 	".jpg": true, ".jpeg": true, ".png": true, ".gif": true,
 	".webp": true, ".bmp": true, ".tiff": true, ".tif": true,
 	".heic": true, ".avif": true,
+	// Camera RAW (see internal/rawpreview): shown from the embedded
+	// camera-rendered JPEG, paired with a same-named JPEG when present.
+	".cr2": true, ".cr3": true, ".nef": true, ".arw": true, ".dng": true,
+	".raf": true, ".orf": true, ".rw2": true, ".pef": true,
 }
 
 // bookExtensions: comic archives (CBZ + CBR) and reflowable EPUB.
@@ -217,6 +222,18 @@ type Scanner struct {
 	// has looked at this process, so the credits-read lookup runs once per
 	// file per process. Keyed by media_files.id; values are unused.
 	creditsChecked sync.Map
+
+	// photos resolves photo items by file and reads the photo options
+	// (WithPhotoStore); nil keeps title-keyed photo items.
+	photos PhotoStore
+	// photoLocks serialise item resolution per RAW + JPEG pair key.
+	photoLocks [photoLockStripes]sync.Mutex
+	// pairingCache holds each photo library's pairing option, read at the
+	// start of its scan. Keyed by library ID; values are bool.
+	pairingCache sync.Map
+	// photoChecked holds unchanged photo files photoNeedsRegroup has
+	// checked this process, keyed by file ID and pairing setting.
+	photoChecked sync.Map
 
 	// probeFile replaces ProbeFile in healDynamicRange; tests set it. nil
 	// uses ProbeFile.
@@ -532,6 +549,15 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	if fullScan && libraryType == "music" {
 		if folded := s.loadFoldedTracks(ctx, libraryID); folded != nil {
 			defer s.foldedTracks.CompareAndDelete(libraryID, folded)
+		}
+	}
+
+	// Photos: read the RAW + JPEG pairing option once for this scan.
+	if libraryType == "photo" && s.photos != nil {
+		if on, err := s.photos.RawJPEGPairing(ctx, libraryID); err == nil {
+			s.pairingCache.Store(libraryID, on)
+		} else {
+			s.pairingCache.Delete(libraryID)
 		}
 	}
 
@@ -1072,7 +1098,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	}
 
 	var probe *ProbeResult
-	if isImageFile(path) {
+	if rawpreview.IsRAW(path) {
+		probe = s.probeRAW(ctx, path)
+	} else if isImageFile(path) {
 		if f, oerr := s.mediaStore().Open(ctx, path); oerr == nil {
 			probe = ProbeImageReader(f, path)
 			_ = f.Close()
@@ -1130,6 +1158,9 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 	// flat filename parser.
 	var item *media.Item
 	var musicTags *MusicTags
+	// prevPhotoItem is the item an indexed photo file was on before this
+	// scan, so the item it leaves can show its remaining file.
+	var prevPhotoItem uuid.UUID
 	// naming is the edition label and stacked-part number a movie file's
 	// name carries (migration 00045); zero for every other kind of file.
 	var naming MovieNaming
@@ -1203,10 +1234,28 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		if showErr != nil {
 			return nil, nil, false, fmt.Errorf("show hierarchy for %s: %w", path, showErr)
 		}
+	} else if libraryType == "photo" && s.photos != nil {
+		// Photos: each file is its own item, except a RAW and the JPEG it
+		// was shot with, which pair (see photoItemFor). The lock is held
+		// until the file row is written so the pair's other file sees it.
+		mu := s.photoLock(path)
+		mu.Lock()
+		defer mu.Unlock()
+		var ex *media.File
+		if haveExisting {
+			ex = existing
+			prevPhotoItem = existing.MediaItemID
+		}
+		var resolveErr error
+		item, resolveErr = s.resolvePhotoItem(ctx, libraryID, path, ex)
+		if resolveErr != nil {
+			return nil, nil, false, fmt.Errorf("photo item for %s: %w", path, resolveErr)
+		}
 	} else if libraryType == "photo" {
-		// Photos: each file is its own item. Use the raw filename stem
-		// (no year extraction) to avoid title-based deduplication collapsing
-		// IMG_2024.jpg and IMG_2025.jpg into the same item.
+		// Photos without a PhotoStore: each file is its own item. Use the
+		// raw filename stem (no year extraction) to avoid title-based
+		// deduplication collapsing IMG_2024.jpg and IMG_2025.jpg into the
+		// same item.
 		stem := filepath.Base(path)
 		stem = stem[:len(stem)-len(filepath.Ext(stem))]
 		title := strings.ReplaceAll(strings.ReplaceAll(stem, "_", " "), ".", " ")
@@ -1332,6 +1381,17 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		}
 	}
 
+	// Photos with a PhotoStore: the item shows its display file (the JPEG
+	// of a RAW + JPEG pair) as the poster and takes EXIF from it; an item a
+	// file just left is pointed at what remains.
+	if libraryType == "photo" && s.photos != nil {
+		s.refreshPhotoDisplay(ctx, item.ID, roots, path)
+		if prevPhotoItem != uuid.Nil && prevPhotoItem != item.ID {
+			s.refreshPhotoDisplay(ctx, prevPhotoItem, roots, "")
+		}
+		return item, file, isNew, nil
+	}
+
 	// Photos use the file itself as the poster. Set poster_path to the
 	// relative path from the library root so /artwork/* can resolve it.
 	if libraryType == "photo" && item.PosterPath == nil {
@@ -1380,6 +1440,11 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryID uuid.UUID,
 	if s.orphanEpisodeNowParses(libraryType, item, path) {
 		s.logger.InfoContext(ctx, "orphan episode now parses — re-parenting",
 			"path", path, "orphan_item_id", item.ID)
+		return nil, nil, false
+	}
+	if libraryType == "photo" && s.photoNeedsRegroup(ctx, libraryID, path, existing) {
+		s.logger.DebugContext(ctx, "photo file belongs on another item — re-reading to regroup",
+			"path", path, "item_id", item.ID)
 		return nil, nil, false
 	}
 	if libraryType == "music" && s.rereadFoldedTrack(libraryID, item, existing) {
@@ -1513,7 +1578,13 @@ func (s *Scanner) persistPhotoEXIF(ctx context.Context, item *media.Item, path s
 		s.logger.WarnContext(ctx, "exif open failed", "path", path, "err", oerr)
 		return
 	}
-	ex, err := ExtractEXIFReader(f)
+	var ex *PhotoEXIF
+	var err error
+	if rawpreview.IsRAW(path) {
+		ex, err = ExtractRAWEXIF(f)
+	} else {
+		ex, err = ExtractEXIFReader(f)
+	}
 	_ = f.Close()
 	if err != nil {
 		s.logger.WarnContext(ctx, "exif extract failed", "path", path, "err", err)

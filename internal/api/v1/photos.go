@@ -18,6 +18,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/photoimage"
+	"github.com/onscreen/onscreen/internal/scanner"
 )
 
 // Per-request caps on the on-the-fly resize endpoint. Without these a
@@ -582,10 +583,17 @@ func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 	}
 	quality := snapQuality(parseInt(q.Get("q"), defaultImageQty))
 
+	// A RAW + JPEG pair shows its JPEG; a RAW alone shows its embedded
+	// preview (photoimage decodes it). Audiobooks have one file.
+	source := files[0].FilePath
+	if item.Type == "photo" {
+		source = photoDisplayFile(files)
+	}
+
 	w.Header().Set("Content-Type", "image/jpeg")
 	w.Header().Set("Cache-Control", "private, max-age=3600, immutable")
 
-	if err := h.images.Serve(r.Context(), w, files[0].FilePath, photoimage.Options{
+	if err := h.images.Serve(r.Context(), w, source, photoimage.Options{
 		Width:   width,
 		Height:  height,
 		Fit:     fit,
@@ -598,10 +606,10 @@ func (h *PhotosHandler) Image(w http.ResponseWriter, r *http.Request) {
 		// failures still log at warn so they show up in /admin/logs.
 		if respond.IsClientGone(err) {
 			h.logger.DebugContext(r.Context(), "serve photo image: client gone",
-				"id", id, "path", files[0].FilePath, "err", err)
+				"id", id, "path", source, "err", err)
 		} else {
 			h.logger.WarnContext(r.Context(), "serve photo image",
-				"id", id, "path", files[0].FilePath, "err", err)
+				"id", id, "path", source, "err", err)
 		}
 		// Headers may already be flushed; best we can do is stop writing.
 		return
@@ -631,6 +639,16 @@ func (h *PhotosHandler) checkLibraryAccess(w http.ResponseWriter, r *http.Reques
 		return false
 	}
 	return true
+}
+
+// photoDisplayFile is the file a photo item shows: the JPEG of a RAW + JPEG
+// pair (see scanner.PhotoDisplayPath). The RAW stays the original download.
+func photoDisplayFile(files []media.File) string {
+	paths := make([]string, len(files))
+	for i, f := range files {
+		paths[i] = f.FilePath
+	}
+	return scanner.PhotoDisplayPath(paths)
 }
 
 func parseInt(s string, def int) int {
