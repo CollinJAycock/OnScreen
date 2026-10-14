@@ -91,7 +91,9 @@ func (f *fakePeopleDB) ListPhotoLibraryIDs(context.Context) ([]uuid.UUID, error)
 	return append([]uuid.UUID(nil), f.photoLibs...), nil
 }
 
-func (f *fakePeopleDB) CountDatedPhotos(context.Context, []uuid.UUID) (int64, error) { return f.dated, nil }
+func (f *fakePeopleDB) CountDatedPhotos(context.Context, []uuid.UUID) (int64, error) {
+	return f.dated, nil
+}
 
 func (f *fakePeopleDB) ListPhotoMemoryCandidates(_ context.Context, a gen.ListPhotoMemoryCandidatesParams) ([]gen.ListPhotoMemoryCandidatesRow, error) {
 	f.memArgs = &a

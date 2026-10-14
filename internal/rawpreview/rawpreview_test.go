@@ -397,6 +397,54 @@ func TestExtract_HostileStructures(t *testing.T) {
 	}
 }
 
+func TestExtractMetadata_ReadsHeadersOnly(t *testing.T) {
+	data := cr2Like(t, binary.LittleEndian)
+	res, err := ExtractMetadata(bytes.NewReader(data), int64(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Preview.Width != 1600 || res.Preview.JPEG != nil {
+		t.Fatalf("preview %dx%d, %d JPEG bytes; want the dimensions only", res.Preview.Width, res.Preview.Height, len(res.Preview.JPEG))
+	}
+	if res.Meta.Model != "Canon EOS R6" {
+		t.Fatalf("meta %+v", res.Meta)
+	}
+}
+
+// countingReader records how many bytes were read.
+type countingReader struct {
+	r *bytes.Reader
+	n int64
+}
+
+func (c *countingReader) ReadAt(p []byte, off int64) (int, error) {
+	n, err := c.r.ReadAt(p, off)
+	c.n += int64(n)
+	return n, err
+}
+
+func TestExtract_ManyCandidatesAreBounded(t *testing.T) {
+	// One real preview named by 200 sub-IFDs at shifted offsets: only a
+	// bounded number of headers is read, and the body once.
+	b := newTB(binary.LittleEndian, "II*\x00")
+	big := makeJPEG(t, 1400, 1000)
+	off := b.blob(big)
+	var subs []byte
+	for i := 0; i < 200; i++ {
+		sub := b.ifd([]tent{b.long(tagJPEGOffset, off+uint32(i%3)), b.long(tagJPEGLength, uint32(len(big)))}, 0)
+		subs = b.bo.AppendUint32(subs, sub)
+	}
+	b.setFirst(b.ifd([]tent{{tag: tagSubIFDs, typ: 4, count: uint32(len(subs) / 4), data: subs}}, 0))
+	cr := &countingReader{r: bytes.NewReader(b.buf)}
+	res, err := Extract(cr, int64(len(b.buf)))
+	if err != nil || res.Preview.Width != 1400 {
+		t.Fatalf("Extract = %+v, %v", res, err)
+	}
+	if limit := int64(len(b.buf)) * 4; cr.n > limit {
+		t.Fatalf("read %d bytes of a %d-byte file", cr.n, len(b.buf))
+	}
+}
+
 func TestExtract_NotRAW(t *testing.T) {
 	if _, err := extractBytes(t, makeJPEG(t, 16, 16)); !errors.Is(err, ErrNotRAW) {
 		t.Fatalf("err = %v, want ErrNotRAW", err)

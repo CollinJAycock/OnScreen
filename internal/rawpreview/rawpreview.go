@@ -81,7 +81,8 @@ var ErrNoPreview = errors.New("rawpreview: no embedded preview")
 // ErrNotRAW is returned for data that isn't a recognised RAW container.
 var ErrNotRAW = errors.New("rawpreview: unrecognised RAW container")
 
-// Preview is the embedded JPEG chosen for display.
+// Preview is the embedded JPEG chosen for display. ExtractMetadata leaves
+// JPEG nil: it reads only the preview's header, for the dimensions.
 type Preview struct {
 	JPEG   []byte
 	Width  int
@@ -151,10 +152,23 @@ func extract(r io.ReaderAt, size int64, carve bool) (*Result, error) {
 		return nil, ErrNotRAW
 	}
 
-	best := pickBest(r, size, cands)
+	// Candidates are compared by their headers alone; only the winner is
+	// read in full, so a file naming many (or huge) ranges costs a few
+	// header reads, not a read of each range.
+	var best *Preview
+	var previewHead []byte
+	if p := pickBest(r, size, cands); p != nil {
+		previewHead = p.head
+		if !carve {
+			best = &Preview{Width: p.w, Height: p.h}
+		} else {
+			best = readCandidate(r, size, p.c)
+		}
+	}
 	if carve && (best == nil || longEdge(best) < minGoodLongEdge) {
 		if c := carveBest(r, size); c != nil && (best == nil || area(c) > area(best)) {
 			best = c
+			previewHead = c.JPEG
 		}
 	}
 	if best == nil {
@@ -164,7 +178,7 @@ func extract(r io.ReaderAt, size int64, carve bool) (*Result, error) {
 	// A preview's own EXIF orientation only counts when the container
 	// carried none (RAF keeps its EXIF inside the preview).
 	if res.Meta.Orientation == 0 {
-		if m, ok := exifFromJPEG(best.JPEG); ok {
+		if m, ok := exifFromJPEG(previewHead); ok {
 			res.Meta.Orientation = m.Orientation
 		}
 	}
@@ -185,26 +199,82 @@ func longEdge(p *Preview) int {
 
 func area(p *Preview) int64 { return int64(p.Width) * int64(p.Height) }
 
-// pickBest validates each candidate and returns the largest decodable one.
-func pickBest(r io.ReaderAt, size int64, cands []candidate) *Preview {
-	var best *Preview
+// maxProbedCandidates bounds the candidates whose headers one file may make
+// us read.
+const maxProbedCandidates = 32
+
+// probed is a candidate whose JPEG header has been read and checked.
+type probed struct {
+	c    candidate
+	w, h int
+	head []byte // the bytes read: SOI, APP segments (EXIF), frame header
+}
+
+func (p *probed) area() int64 { return int64(p.w) * int64(p.h) }
+
+// pickBest probes each candidate's header and returns the largest one that
+// is a JPEG Go can decode.
+func pickBest(r io.ReaderAt, size int64, cands []candidate) *probed {
+	var best *probed
 	seen := map[int64]bool{}
+	tried := 0
 	for _, c := range cands {
-		if seen[c.off] {
+		if seen[c.off] || tried >= maxProbedCandidates {
 			continue
 		}
 		seen[c.off] = true
-		p := readCandidate(r, size, c)
-		if p != nil && (best == nil || area(p) > area(best)) {
+		tried++
+		if p := probeCandidate(r, size, c); p != nil && (best == nil || p.area() > best.area()) {
 			best = p
 		}
 	}
 	return best
 }
 
-// readCandidate reads and validates one candidate range.
+// headerChunks are the prefix sizes probeCandidate reads to find a JPEG's
+// frame header: most sit in the first few KB, a preview behind a large
+// EXIF / maker-note APP segment needs more.
+var headerChunks = []int64{256 << 10, 4 << 20}
+
+// probeCandidate reads the start of a candidate range and checks it is a
+// JPEG within the pixel ceiling, without reading the rest.
+func probeCandidate(r io.ReaderAt, size int64, c candidate) *probed {
+	if !candidateInFile(c, size) {
+		return nil
+	}
+	for _, chunk := range headerChunks {
+		n := chunk
+		if n > c.n {
+			n = c.n
+		}
+		buf := make([]byte, n)
+		if _, err := r.ReadAt(buf, c.off); err != nil && !errors.Is(err, io.EOF) {
+			return nil
+		}
+		if buf[0] != 0xFF || buf[1] != 0xD8 {
+			return nil
+		}
+		cfg, err := jpeg.DecodeConfig(bytes.NewReader(buf))
+		if err == nil {
+			if cfg.Width <= 0 || cfg.Height <= 0 || int64(cfg.Width)*int64(cfg.Height) > MaxPreviewPixels {
+				return nil
+			}
+			return &probed{c: c, w: cfg.Width, h: cfg.Height, head: buf}
+		}
+		if n == c.n {
+			return nil
+		}
+	}
+	return nil
+}
+
+func candidateInFile(c candidate, size int64) bool {
+	return c.off > 0 && c.n >= 128 && c.n <= MaxPreviewBytes && c.off <= size && c.n <= size-c.off
+}
+
+// readCandidate reads and validates one candidate range in full.
 func readCandidate(r io.ReaderAt, size int64, c candidate) *Preview {
-	if c.off <= 0 || c.n < 128 || c.n > MaxPreviewBytes || c.off > size || c.n > size-c.off {
+	if !candidateInFile(c, size) {
 		return nil
 	}
 	buf := make([]byte, c.n)
@@ -246,8 +316,8 @@ func extractRAF(r io.ReaderAt, size int64, meta *Meta) []candidate {
 	off := int64(binary.BigEndian.Uint32(hdr[84:88]))
 	n := int64(binary.BigEndian.Uint32(hdr[88:92]))
 	c := candidate{off: off, n: n}
-	if p := readCandidate(r, size, c); p != nil {
-		if m, ok := exifFromJPEG(p.JPEG); ok {
+	if p := probeCandidate(r, size, c); p != nil {
+		if m, ok := exifFromJPEG(p.head); ok {
 			*meta = m
 		}
 	}
