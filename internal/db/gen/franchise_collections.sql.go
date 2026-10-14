@@ -239,6 +239,7 @@ WHERE c.type = 'franchise'
   AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
 GROUP BY c.id, tc.poster_url
 ORDER BY c.name, c.id
 `
@@ -246,6 +247,8 @@ ORDER BY c.name, c.id
 type ListLibraryFranchiseCollectionsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListLibraryFranchiseCollectionsRow struct {
@@ -262,7 +265,12 @@ type ListLibraryFranchiseCollectionsRow struct {
 // visible item in this library, with that visible count and a fallback cover
 // (the first visible member's poster) for collections without TMDB art.
 func (q *Queries) ListLibraryFranchiseCollections(ctx context.Context, arg ListLibraryFranchiseCollectionsParams) ([]ListLibraryFranchiseCollectionsRow, error) {
-	rows, err := q.db.Query(ctx, listLibraryFranchiseCollections, arg.LibraryID, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listLibraryFranchiseCollections,
+		arg.LibraryID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -408,18 +416,26 @@ WHERE c.type = 'franchise'
        OR mi.library_id = ANY($1::uuid[]))
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
 `
 
 type ListVisibleFranchiseCollectionIDsParams struct {
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 // Franchise collections with at least one item the caller may see. The
 // collections listing drops the rest so a restricted profile isn't handed
 // franchise names from libraries it has no grant on, or above its ceiling.
 func (q *Queries) ListVisibleFranchiseCollectionIDs(ctx context.Context, arg ListVisibleFranchiseCollectionIDsParams) ([]uuid.UUID, error) {
-	rows, err := q.db.Query(ctx, listVisibleFranchiseCollectionIDs, arg.LibraryIds, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listVisibleFranchiseCollectionIDs,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -19,7 +19,8 @@ SELECT p.id, p.tmdb_id, p.name, p.profile_path
 FROM people p
 WHERE LOWER(p.name) LIKE LOWER(@prefix::text) || '%'
   AND (
-        (sqlc.narg('library_ids')::uuid[] IS NULL AND sqlc.narg('max_rating_rank')::int IS NULL)
+        (sqlc.narg('library_ids')::uuid[] IS NULL AND sqlc.narg('max_rating_rank')::int IS NULL
+         AND sqlc.narg('blocked_labels')::text[] IS NULL AND sqlc.narg('allowed_labels')::text[] IS NULL)
      OR EXISTS (
             SELECT 1
             FROM media_credits mc
@@ -30,6 +31,7 @@ WHERE LOWER(p.name) LIKE LOWER(@prefix::text) || '%'
                    OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
               AND (sqlc.narg('max_rating_rank')::int IS NULL
                    OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+              AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
         )
   )
 ORDER BY p.name

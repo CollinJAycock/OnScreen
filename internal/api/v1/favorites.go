@@ -102,6 +102,8 @@ func (h *FavoritesHandler) List(w http.ResponseWriter, r *http.Request) {
 		Limit:         limit,
 		Offset:        offset,
 		MaxRatingRank: maxRank,
+		BlockedLabels: claims.LabelFilter().BlockedArg(),
+		AllowedLabels: claims.LabelFilter().AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "list favorites", "err", err)
@@ -135,6 +137,8 @@ func (h *FavoritesHandler) List(w http.ResponseWriter, r *http.Request) {
 	total, _ := h.db.CountFavorites(r.Context(), gen.CountFavoritesParams{
 		UserID:        claims.UserID,
 		MaxRatingRank: maxRank,
+		BlockedLabels: claims.LabelFilter().BlockedArg(),
+		AllowedLabels: claims.LabelFilter().AllowedArg(),
 	})
 	respond.List(w, r, out, total, "")
 }
@@ -184,7 +188,7 @@ func (h *FavoritesHandler) Add(w http.ResponseWriter, r *http.Request) {
 	if item.ContentRating != nil {
 		cr = *item.ContentRating
 	}
-	if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+	if !itemPermitted(r.Context(), claims, item.ID, cr) {
 		respond.NotFound(w, r)
 		return
 	}

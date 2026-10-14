@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // trendingCache memoizes ListTrending output. Trending is global
@@ -32,10 +33,13 @@ type trendingCache struct {
 // trendingCacheKey separates "no ceiling" (admin) from "ceiling 0"
 // (a rare but valid configured rank) by carrying a presence flag.
 // Without it both cases would key on rank=0 and contaminate each
-// other.
+// other. labels is the viewer's label restriction (itemlabel.Filter.Key),
+// which filters the rows in SQL just like the ceiling, so two viewers
+// differing only in labels must never share an entry.
 type trendingCacheKey struct {
-	rank int32
-	has  bool
+	rank   int32
+	has    bool
+	labels string
 }
 
 type trendingCacheEntry struct {
@@ -50,14 +54,14 @@ func newTrendingCache(ttl time.Duration) *trendingCache {
 	}
 }
 
-func trendingKeyFor(maxRank *int32) trendingCacheKey {
+func trendingKeyFor(maxRank *int32, labels itemlabel.Filter) trendingCacheKey {
 	if maxRank == nil {
-		return trendingCacheKey{}
+		return trendingCacheKey{labels: labels.Key()}
 	}
-	return trendingCacheKey{rank: *maxRank, has: true}
+	return trendingCacheKey{rank: *maxRank, has: true, labels: labels.Key()}
 }
 
-// get returns cached rows if a fresh entry exists for maxRank,
+// get returns cached rows if a fresh entry exists for maxRank and labels,
 // otherwise calls fetch and stores the result. Errors are not
 // cached — a failed fetch retries on the next call.
 //
@@ -69,9 +73,10 @@ func trendingKeyFor(maxRank *int32) trendingCacheKey {
 func (c *trendingCache) get(
 	ctx context.Context,
 	maxRank *int32,
+	labels itemlabel.Filter,
 	fetch func(context.Context) ([]gen.ListTrendingRow, error),
 ) ([]gen.ListTrendingRow, error) {
-	k := trendingKeyFor(maxRank)
+	k := trendingKeyFor(maxRank, labels)
 
 	c.mu.Lock()
 	e, ok := c.entries[k]

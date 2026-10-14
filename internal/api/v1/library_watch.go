@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/dbconv"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // LibraryWatchDB is the optional watch-state store behind the library grid:
@@ -116,7 +117,7 @@ func parseItemFilterParams(q url.Values) media.FilterParams {
 // attachWatchState fills the caller's watch fields on one listing page with a
 // single batched query (no per-item round trips). Failures only drop the
 // fields — the listing itself already succeeded.
-func (h *LibraryHandler) attachWatchState(ctx context.Context, userID uuid.UUID, maxRank *int, items []media.Item, out []MediaItemResponse) {
+func (h *LibraryHandler) attachWatchState(ctx context.Context, userID uuid.UUID, maxRank *int, labels itemlabel.Filter, items []media.Item, out []MediaItemResponse) {
 	if h.watchDB == nil || len(items) == 0 {
 		return
 	}
@@ -132,6 +133,8 @@ func (h *LibraryHandler) attachWatchState(ctx context.Context, userID uuid.UUID,
 	rows, err := h.watchDB.ListItemWatchSummaries(ctx, gen.ListItemWatchSummariesParams{
 		UserID:        userID,
 		MaxRatingRank: dbconv.IntPtrToInt32Ptr(maxRank),
+		BlockedLabels: labels.BlockedArg(),
+		AllowedLabels: labels.AllowedArg(),
 		MediaIds:      ids,
 	})
 	if err != nil {
@@ -241,6 +244,8 @@ func (h *LibraryHandler) Random(w http.ResponseWriter, r *http.Request) {
 		YearMax:       dbconv.IntPtrToInt32Ptr(fp.YearMax),
 		RatingMin:     dbconv.Float64PtrToNumeric(fp.RatingMin),
 		MaxRatingRank: dbconv.IntPtrToInt32Ptr(contentrating.MaxRatingRank(claims.MaxContentRating)),
+		BlockedLabels: claims.LabelFilter().BlockedArg(),
+		AllowedLabels: claims.LabelFilter().AllowedArg(),
 		Watch:         nonEmptyStringPtr(watch),
 		WatchUserID:   claims.UserID,
 	})

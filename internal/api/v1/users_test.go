@@ -104,6 +104,10 @@ type mockUserDB struct {
 	lastReqPerms *gen.SetUserRequestPermissionsParams
 	reqPermsRows int64
 	reqPermsErr  error
+
+	labelRestrictions     gen.GetUserLabelRestrictionsRow
+	labelRestrictionsErr  error
+	lastLabelRestrictions *gen.UpdateUserLabelRestrictionsParams
 }
 
 func (m *mockUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) {
@@ -170,6 +174,18 @@ func (m *mockUserDB) UpdateUserContentRating(_ context.Context, _ gen.UpdateUser
 // SetContentRating tests that need it, which set profileIDs directly.
 func (m *mockUserDB) ListManagedProfileIDs(_ context.Context, _ pgtype.UUID) ([]uuid.UUID, error) {
 	return m.profileIDs, nil
+}
+
+func (m *mockUserDB) GetUserLabelRestrictions(_ context.Context, _ uuid.UUID) (gen.GetUserLabelRestrictionsRow, error) {
+	if m.labelRestrictionsErr != nil {
+		return gen.GetUserLabelRestrictionsRow{}, m.labelRestrictionsErr
+	}
+	return m.labelRestrictions, nil
+}
+
+func (m *mockUserDB) UpdateUserLabelRestrictions(_ context.Context, arg gen.UpdateUserLabelRestrictionsParams) error {
+	m.lastLabelRestrictions = &arg
+	return nil
 }
 
 func (m *mockUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStreamCapsParams) error {

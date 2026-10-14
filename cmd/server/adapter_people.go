@@ -143,6 +143,8 @@ func (a *peopleAdapter) SearchPeople(ctx context.Context, prefix string, limit i
 		Prefix:        prefix,
 		LibraryIds:    scope.LibraryIDs,
 		MaxRatingRank: scope.MaxRatingRank,
+		BlockedLabels: scope.Labels.BlockedArg(),
+		AllowedLabels: scope.Labels.AllowedArg(),
 		LimitN:        limit,
 	})
 	if err != nil {

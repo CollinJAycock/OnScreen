@@ -16,6 +16,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
@@ -208,8 +210,9 @@ type FilterParams struct {
 	YearMin       *int
 	YearMax       *int
 	RatingMin     *float64
-	MaxRatingRank *int   // content_rating_rank() ceiling for parental filtering
-	Sort          string // title, year, rating, created_at, taken_at, artist (the parent's title)
+	MaxRatingRank *int             // content_rating_rank() ceiling for parental filtering
+	Labels        itemlabel.Filter // viewer's label restriction; zero = none
+	Sort          string           // title, year, rating, created_at, taken_at, artist (the parent's title)
 	SortAsc       bool
 	// Watch narrows to the caller's watch bucket — "unwatched",
 	// "in_progress" or "watched" (see media_watch_bucket, migration 00023);
@@ -293,8 +296,8 @@ type Querier interface {
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
-	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]GenreCount, error)
-	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]YearCount, error)
+	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]GenreCount, error)
+	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]YearCount, error)
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
 	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
 	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
@@ -352,9 +355,9 @@ type Querier interface {
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*PhotoMetadata, error)
 	ListPhotosByLibrary(ctx context.Context, p ListPhotosParams) ([]PhotoListItem, error)
 	CountPhotosByLibrary(ctx context.Context, p ListPhotosParams) (int64, error)
-	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]PhotoTimelineBucket, error)
+	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) ([]PhotoTimelineBucket, error)
 	ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsParams) ([]PhotoMapPoint, error)
-	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error)
+	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) (int64, error)
 	SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error)
 	CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error)
 }
@@ -380,6 +383,8 @@ type ListPhotosParams struct {
 	Limit         int32
 	Offset        int32
 	MaxRatingRank *int // content_rating_rank() ceiling; nil = unrestricted
+	// Labels is the viewer's label restriction; zero = none.
+	Labels itemlabel.Filter
 }
 
 // PhotoListItem is the join of media_items + photo_metadata returned to
@@ -421,6 +426,8 @@ type ListPhotoMapPointsParams struct {
 	MaxLon        *float64
 	Limit         int32
 	MaxRatingRank *int // content_rating_rank() ceiling; nil = unrestricted
+	// Labels is the viewer's label restriction; zero = none.
+	Labels itemlabel.Filter
 }
 
 // PhotoMapPoint is one geotagged photo as plotted on a map. PosterPath is
@@ -460,6 +467,8 @@ type SearchPhotosByExifParams struct {
 	Offset      int32
 	// MaxRatingRank is the content_rating_rank() ceiling; nil = unrestricted.
 	MaxRatingRank *int
+	// Labels is the viewer's label restriction; zero = none.
+	Labels itemlabel.Filter
 }
 
 // PhotoSearchResult is one row returned by SearchPhotosByExif. Carries the
@@ -782,8 +791,8 @@ func (s *Service) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 
 // ListGenresWithCounts returns each genre and the number of root-type items
 // carrying it, suitable for a browse page.
-func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]GenreCount, error) {
-	rows, err := s.ro.ListGenresWithCounts(ctx, libraryID, itemType, maxRatingRank)
+func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]GenreCount, error) {
+	rows, err := s.ro.ListGenresWithCounts(ctx, libraryID, itemType, maxRatingRank, labels)
 	if err != nil {
 		return nil, fmt.Errorf("list genres with counts: %w", err)
 	}
@@ -791,8 +800,8 @@ func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID,
 }
 
 // ListYearsWithCounts returns each release year and item count for a library.
-func (s *Service) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]YearCount, error) {
-	rows, err := s.ro.ListYearsWithCounts(ctx, libraryID, itemType, maxRatingRank)
+func (s *Service) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]YearCount, error) {
+	rows, err := s.ro.ListYearsWithCounts(ctx, libraryID, itemType, maxRatingRank, labels)
 	if err != nil {
 		return nil, fmt.Errorf("list years with counts: %w", err)
 	}
@@ -1245,8 +1254,8 @@ func (s *Service) CountPhotos(ctx context.Context, p ListPhotosParams) (int64, e
 // ListPhotoTimeline returns (year, month, count) buckets for the timeline
 // sidebar. Always returns the full library — pagination would defeat the
 // purpose of a sticky-section index.
-func (s *Service) ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]PhotoTimelineBucket, error) {
-	rows, err := s.ro.ListPhotoTimelineBuckets(ctx, libraryID, maxRatingRank)
+func (s *Service) ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) ([]PhotoTimelineBucket, error) {
+	rows, err := s.ro.ListPhotoTimelineBuckets(ctx, libraryID, maxRatingRank, labels)
 	if err != nil {
 		return nil, fmt.Errorf("list photo timeline: %w", err)
 	}
@@ -1268,8 +1277,8 @@ func (s *Service) ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsPa
 // CountPhotoMapPoints returns the total number of geotagged photos in the
 // library (ignoring any bbox). Used to surface "you have X mappable photos"
 // even when the current view is empty.
-func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error) {
-	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID, maxRatingRank)
+func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) (int64, error) {
+	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID, maxRatingRank, labels)
 	if err != nil {
 		return 0, fmt.Errorf("count photo map points: %w", err)
 	}

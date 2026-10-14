@@ -226,6 +226,7 @@ type ItemHandler struct {
 	// in WithSubtitleCache; nil disables caching/extraction-throttling.
 	subtitleExtractSem chan struct{}
 	logger             *slog.Logger
+	labels             ItemLabelReader // admin-only labels on detail; nil = omitted
 }
 
 // DownloadGate decides whether the /media/download/{id} endpoint is open
@@ -252,6 +253,18 @@ func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions Ite
 // response omits markers and the Markers endpoints are not served.
 func (h *ItemHandler) WithMarkers(m ItemMarkerService) *ItemHandler {
 	h.markers = m
+	return h
+}
+
+// ItemLabelReader reads an item's own admin labels for the detail response.
+// Satisfied by *gen.Queries.
+type ItemLabelReader interface {
+	GetMediaItemLabels(ctx context.Context, id uuid.UUID) ([]string, error)
+}
+
+// WithLabels adds the admin-only labels field to item detail.
+func (h *ItemHandler) WithLabels(l ItemLabelReader) *ItemHandler {
+	h.labels = l
 	return h
 }
 
@@ -655,6 +668,11 @@ type ItemDetailResponse struct {
 	// Collections are the manual (admin-curated) collections a movie or
 	// show belongs to (additive; omitted when none).
 	Collections []ItemManualCollectionRef `json:"collections,omitempty"`
+	// Labels are the item's own admin labels (not inherited ones), which
+	// per-user label restrictions match. Admin only, as on Plex: a label
+	// names a restriction policy, which is the admin's business. Omitted
+	// for everyone else and when the item has none.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
@@ -716,7 +734,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -947,6 +965,13 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if item.Type == "movie" || item.Type == "show" {
 		out.Collections = h.manualCollectionRefs(r.Context(), id)
 	}
+	if h.labels != nil && claims != nil && claims.IsAdmin {
+		if labels, err := h.labels.GetMediaItemLabels(r.Context(), id); err == nil {
+			out.Labels = labels
+		} else {
+			h.logger.WarnContext(r.Context(), "get item labels", "item_id", id, "err", err)
+		}
+	}
 
 	// Episode-poster substitution. Single-item endpoint; only matters
 	// for type=='episode'. Honours the per-user pref via the helper.
@@ -1172,16 +1197,21 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 	// by the caller's ceiling — every other listing (libraries.Items, hub,
 	// search, collections) injects MaxRatingRank, so a restricted profile must
 	// not be able to enumerate an over-ceiling parent's children here.
+	// The label restriction is applied the same way: the parent through
+	// itemPermitted, the children through one batched query (a child carries
+	// its parent's labels by inheritance, but a label on one episode hides
+	// that episode alone).
+	claims := middleware.ClaimsFromContext(r.Context())
 	var maxRating string
 	var userID uuid.UUID
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+	if claims != nil {
 		maxRating = claims.MaxContentRating
 		userID = claims.UserID
 		pcr := ""
 		if parent.ContentRating != nil {
 			pcr = *parent.ContentRating
 		}
-		if !contentrating.IsAllowed(pcr, maxRating) {
+		if !itemPermitted(r.Context(), claims, parent.ID, pcr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -1205,13 +1235,22 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		states, _ = h.watch.GetStates(r.Context(), userID, ids)
 	}
 
+	var labelOK map[uuid.UUID]struct{}
+	if claims.LabelFilter().Active() {
+		ids := make([]uuid.UUID, len(children))
+		for i, c := range children {
+			ids[i] = c.ID
+		}
+		labelOK = labelPermittedSet(r.Context(), claims, ids)
+	}
+
 	out := make([]ChildItemResponse, 0, len(children))
 	for _, c := range children {
 		cr := ""
 		if c.ContentRating != nil {
 			cr = *c.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, maxRating) {
+		if !contentrating.IsAllowed(cr, maxRating) || !inLabelSet(labelOK, c.ID) {
 			continue
 		}
 		var viewOffsetMS int64
@@ -1307,7 +1346,7 @@ func (h *ItemHandler) ratingItemVisible(w http.ResponseWriter, r *http.Request, 
 	if item.ContentRating != nil {
 		cr = *item.ContentRating
 	}
-	if claims != nil && !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+	if claims != nil && !itemPermitted(r.Context(), claims, item.ID, cr) {
 		respond.NotFound(w, r)
 		return false
 	}
@@ -1445,12 +1484,12 @@ func (h *ItemHandler) GetEXIF(w http.ResponseWriter, r *http.Request) {
 	// carries GPS coordinates, so a profile refused the image must not get the
 	// location it was taken at either. 404 keeps denial indistinguishable from
 	// absence.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}
@@ -1512,12 +1551,12 @@ func (h *ItemHandler) ListMarkers(w http.ResponseWriter, r *http.Request) {
 	// Content-rating ceiling, as on EXIF/lyrics: a profile that can't stream
 	// the item gets 404, not its intro/credits timings (unrated = most
 	// restrictive).
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}
@@ -1660,7 +1699,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 
 	// Kept for the duration fill below, which would otherwise fetch it again.
 	var item *media.Item
-	if h.access != nil || claims.MaxContentRating != "" {
+	if h.access != nil || viewerRestricted(claims) {
 		item, err = h.media.GetItem(r.Context(), id)
 		if err != nil {
 			if errors.Is(err, media.ErrNotFound) {
@@ -1681,7 +1720,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}
@@ -2414,12 +2453,12 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -2558,12 +2597,12 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -2816,12 +2855,12 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}

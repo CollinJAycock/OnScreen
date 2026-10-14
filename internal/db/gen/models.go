@@ -362,6 +362,7 @@ type MediaItem struct {
 	ReadingDirection          *string            `json:"reading_direction"`
 	FranchiseID               *int32             `json:"franchise_id"`
 	DiscNumber                *int32             `json:"disc_number"`
+	Labels                    []string           `json:"labels"`
 }
 
 type MediaItemTmdbCollection struct {
@@ -709,6 +710,8 @@ type User struct {
 	CanRequest            bool               `json:"can_request"`
 	RequestQuotaMovies    *int32             `json:"request_quota_movies"`
 	RequestQuotaTv        *int32             `json:"request_quota_tv"`
+	BlockedLabels         []string           `json:"blocked_labels"`
+	AllowedLabels         []string           `json:"allowed_labels"`
 }
 
 type UserAudiobookRate struct {

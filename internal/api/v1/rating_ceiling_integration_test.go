@@ -38,6 +38,7 @@ import (
 	"github.com/onscreen/onscreen/internal/dbconv"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/testdb"
 	"github.com/onscreen/onscreen/internal/testvalkey"
@@ -113,6 +114,8 @@ func (m rcMedia) ListItemsFiltered(ctx context.Context, libraryID uuid.UUID, ite
 		YearMax:       dbconv.IntPtrToInt32Ptr(f.YearMax),
 		RatingMin:     dbconv.Float64PtrToNumeric(f.RatingMin),
 		MaxRatingRank: dbconv.IntPtrToInt32Ptr(f.MaxRatingRank),
+		BlockedLabels: f.Labels.BlockedArg(),
+		AllowedLabels: f.Labels.AllowedArg(),
 		Watch:         nonEmptyStringPtr(f.Watch),
 		WatchUserID:   f.WatchUserID,
 	})
@@ -135,6 +138,8 @@ func (m rcMedia) CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, it
 		YearMax:       dbconv.IntPtrToInt32Ptr(f.YearMax),
 		RatingMin:     dbconv.Float64PtrToNumeric(f.RatingMin),
 		MaxRatingRank: dbconv.IntPtrToInt32Ptr(f.MaxRatingRank),
+		BlockedLabels: f.Labels.BlockedArg(),
+		AllowedLabels: f.Labels.AllowedArg(),
 		Watch:         nonEmptyStringPtr(f.Watch),
 		WatchUserID:   f.WatchUserID,
 	})
@@ -147,10 +152,10 @@ func (m rcMedia) CountItems(ctx context.Context, libraryID uuid.UUID, itemType s
 	return m.CountItemsFiltered(ctx, libraryID, itemType, media.FilterParams{Sort: "title", SortAsc: true})
 }
 func (rcMedia) ListDistinctGenres(context.Context, uuid.UUID) ([]string, error) { return nil, nil }
-func (rcMedia) ListGenresWithCounts(context.Context, uuid.UUID, string, *int) ([]media.GenreCount, error) {
+func (rcMedia) ListGenresWithCounts(context.Context, uuid.UUID, string, *int, itemlabel.Filter) ([]media.GenreCount, error) {
 	return nil, nil
 }
-func (rcMedia) ListYearsWithCounts(context.Context, uuid.UUID, string, *int) ([]media.YearCount, error) {
+func (rcMedia) ListYearsWithCounts(context.Context, uuid.UUID, string, *int, itemlabel.Filter) ([]media.YearCount, error) {
 	return nil, nil
 }
 func (rcMedia) ListEventCollectionsForLibrary(context.Context, uuid.UUID) ([]media.EventCollection, error) {

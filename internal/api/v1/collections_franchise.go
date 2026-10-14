@@ -15,6 +15,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/franchise"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/requests"
 )
 
@@ -79,21 +80,28 @@ type franchisePartResponse struct {
 }
 
 // viewerScope is the caller's visibility: allowedLibIDs nil = every library
-// (admin / no ACL wired); maxRank nil = no rating ceiling.
+// (admin / no ACL wired); maxRank nil = no rating ceiling; labels zero = no
+// label restriction.
 type viewerScope struct {
 	claims        *auth.Claims
 	allowedLibIDs []uuid.UUID
 	maxRank       *int32
+	labels        itemlabel.Filter
 }
 
-func (v viewerScope) restricted() bool { return v.allowedLibIDs != nil || v.maxRank != nil }
+func (v viewerScope) restricted() bool {
+	return v.allowedLibIDs != nil || v.maxRank != nil || v.labels.Active()
+}
 
 // missingPartsVisible reports whether the caller may see parts that aren't
 // in the server. TMDB collection parts carry no certification, so they rank
 // as unrated — the most restrictive rank — and only a profile without a
-// content-rating ceiling sees them.
+// content-rating ceiling sees them. They carry no labels either, so a profile
+// limited to allowed labels never sees them (a blocked-labels list can't
+// match them and doesn't hide them).
 func (v viewerScope) missingPartsVisible() bool {
-	return v.claims != nil && contentrating.IsAllowed("", v.claims.MaxContentRating)
+	return v.claims != nil && contentrating.IsAllowed("", v.claims.MaxContentRating) &&
+		len(v.claims.AllowedLabels) == 0
 }
 
 // scopeFor resolves the caller's visibility. ok=false means a response was
@@ -104,7 +112,7 @@ func scopeFor(w http.ResponseWriter, r *http.Request, access LibraryAccessChecke
 		respond.Unauthorized(w, r)
 		return viewerScope{}, false
 	}
-	v := viewerScope{claims: claims, maxRank: maxRatingRankFromClaims(claims.MaxContentRating)}
+	v := viewerScope{claims: claims, maxRank: maxRatingRankFromClaims(claims.MaxContentRating), labels: claims.LabelFilter()}
 	if access != nil {
 		allowed, err := access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
 		if err != nil {
@@ -138,6 +146,8 @@ func franchiseParts(ctx context.Context, db tmdbItemLister, reqs FranchiseReques
 		TmdbIds:       ids,
 		LibraryIds:    v.allowedLibIDs,
 		MaxRatingRank: v.maxRank,
+		BlockedLabels: v.labels.BlockedArg(),
+		AllowedLabels: v.labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, 0, err
@@ -220,6 +230,8 @@ func (h *CollectionHandler) visibleFranchiseSet(ctx context.Context, v viewerSco
 	ids, err := h.franchise.ListVisibleFranchiseCollectionIDs(ctx, gen.ListVisibleFranchiseCollectionIDsParams{
 		LibraryIds:    v.allowedLibIDs,
 		MaxRatingRank: v.maxRank,
+		BlockedLabels: v.labels.BlockedArg(),
+		AllowedLabels: v.labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err
@@ -410,6 +422,8 @@ func (h *CollectionHandler) LibraryCollections(w http.ResponseWriter, r *http.Re
 	rows, err := h.franchise.ListLibraryFranchiseCollections(r.Context(), gen.ListLibraryFranchiseCollectionsParams{
 		LibraryID:     libID,
 		MaxRatingRank: maxRank,
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "library collections", "library_id", libID, "err", err)

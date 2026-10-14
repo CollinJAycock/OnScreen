@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/dbconv"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // ── Type conversion helpers ───────────────────────────────────────────────────
@@ -787,11 +788,11 @@ func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UU
 	return nil, nil
 }
 
-func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int) ([]media.GenreCount, error) {
+func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int, _ itemlabel.Filter) ([]media.GenreCount, error) {
 	return nil, nil
 }
 
-func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int) ([]media.YearCount, error) {
+func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int, _ itemlabel.Filter) ([]media.YearCount, error) {
 	return nil, nil
 }
 
@@ -803,13 +804,13 @@ func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, _ media.ListPhot
 func (a *mediaAdapter) CountPhotosByLibrary(ctx context.Context, _ media.ListPhotosParams) (int64, error) {
 	return 0, nil
 }
-func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, _ uuid.UUID, _ *int) ([]media.PhotoTimelineBucket, error) {
+func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) ([]media.PhotoTimelineBucket, error) {
 	return nil, nil
 }
 func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, _ media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error) {
 	return nil, nil
 }
-func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID, _ *int) (int64, error) {
+func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) (int64, error) {
 	return 0, nil
 }
 func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, _ media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error) {

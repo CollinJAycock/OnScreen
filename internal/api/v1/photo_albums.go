@@ -130,6 +130,8 @@ func (h *PhotoAlbumHandler) List(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListMyPhotoAlbums(r.Context(), gen.ListMyPhotoAlbumsParams{
 		UserID:        pgtype.UUID{Bytes: [16]byte(claims.UserID), Valid: true},
 		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		LibraryIds:    libs,
 	})
 	if err != nil {
@@ -257,6 +259,8 @@ func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 		Lim:           respond.ParseLimit(r, photoAlbumPageDefault, photoAlbumPageDefault),
 		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
 		MaxRatingRank: maxRank,
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		LibraryIds:    libs,
 	})
 	if err != nil {
@@ -285,7 +289,10 @@ func (h *PhotoAlbumHandler) Items(w http.ResponseWriter, r *http.Request) {
 			AddedAt:     row.AddedAt.Time,
 		})
 	}
-	total, _ := h.db.CountPhotoAlbumItems(r.Context(), gen.CountPhotoAlbumItemsParams{CollectionID: id, MaxRatingRank: maxRank, LibraryIds: libs})
+	total, _ := h.db.CountPhotoAlbumItems(r.Context(), gen.CountPhotoAlbumItemsParams{
+		CollectionID: id, MaxRatingRank: maxRank, LibraryIds: libs,
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(), AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
+	})
 	respond.List(w, r, out, total, "")
 }
 

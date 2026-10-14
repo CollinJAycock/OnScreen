@@ -3150,6 +3150,178 @@ paths:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '403': { $ref: '#/components/responses/Forbidden' }
 
+  /api/v1/users/{id}/label-restrictions:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Set a user's label restriction (admin)
+      tags: [Users]
+      description: |
+        *(v2.6)* Per-user label filters (Plex's label restrictions,
+        Jellyfin's blocked / allowed tags). `blocked_labels`: the user
+        never sees an item carrying one of these labels. `allowed_labels`:
+        when non-empty, the user sees ONLY items carrying at least one of
+        them. An item's labels are its own plus its ancestors' — labelling
+        a show covers its seasons and episodes, an artist or album its
+        tracks; a label on one episode affects that episode alone. Matched
+        against admin labels only (PUT /api/v1/items/{id}/labels), never
+        provider keywords, so a metadata refresh can't change who sees what.
+
+        Enforced everywhere the content-rating ceiling is, with the same
+        response: refused single items look exactly like over-ceiling ones,
+        and listings, counts and search filter in SQL.
+
+        An omitted list keeps its stored value; `[]` clears it. Labels are
+        lower-cased and whitespace-collapsed; at most 32 per list, 64
+        characters each. Applies to the user and every managed profile
+        beneath it, and signs them all out (session epoch bump, as for a
+        rating change) so the change takes effect immediately. Unknown
+        fields return 400. Audited as user.label_restriction_change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                blocked_labels: { type: array, items: { type: string } }
+                allowed_labels: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: The stored lists.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      blocked_labels: { type: array, items: { type: string } }
+                      allowed_labels: { type: array, items: { type: string } }
+        '400': { description: Malformed body or unknown field. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such user. }
+        '422': { description: A label too long, a control character, or too many labels. }
+
+  /api/v1/labels:
+    get:
+      summary: Labels in use (admin)
+      tags: [Items]
+      description: >
+        *(v2.6)* Every admin label on a live item with how many items carry
+        it, alphabetical — for autocomplete.
+      responses:
+        '200':
+          description: Labels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label:      { type: string }
+                        item_count: { type: integer, format: int64 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/labels/apply:
+    post:
+      summary: Add / remove labels on many items (admin)
+      tags: [Items]
+      description: >
+        *(v2.6)* Bulk label edit for a library selection. Removes first, then
+        adds, so a label in both lists ends up present. At most 500 item ids
+        (no duplicates). Labels are normalised as for PUT
+        /api/v1/items/{id}/labels; an item the add would push past 50 labels
+        is left without the added ones. Responds with how many items each
+        step changed. Audited as item.labels_change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_ids]
+              additionalProperties: false
+              properties:
+                item_ids: { type: array, maxItems: 500, items: { type: string, format: uuid } }
+                add:      { type: array, items: { type: string } }
+                remove:   { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Items changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      added:   { type: integer, format: int64 }
+                      removed: { type: integer, format: int64 }
+        '400': { description: 'No ids, too many, a malformed / duplicate id, unknown field, or nothing to add or remove.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { description: A label too long or containing a control character. }
+
+  /api/v1/items/{id}/labels:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: An item's own labels (admin)
+      tags: [Items]
+      description: '*(v2.6)* The item''s own labels, not those it inherits.'
+      responses:
+        '200':
+          description: Labels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      labels: { type: array, items: { type: string } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such item. }
+    put:
+      summary: Replace an item's labels (admin)
+      tags: [Items]
+      description: >
+        *(v2.6)* Labels are admin-owned (never written by scans or metadata
+        refreshes) and are what per-user label restrictions match. Values are
+        lower-cased and whitespace-collapsed, de-duplicated and sorted; at
+        most 50, 64 characters each. Audited as item.labels_change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                labels: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: The stored labels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      labels: { type: array, items: { type: string } }
+        '400': { description: Malformed body or unknown field. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such item. }
+        '422': { description: A label too long, a control character, or too many labels. }
+
   /api/v1/users/{id}/libraries:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -5548,6 +5720,14 @@ components:
         id:       { type: string, format: uuid }
         username: { type: string }
         is_admin: { type: boolean }
+        blocked_labels:
+          type: array
+          items: { type: string }
+          description: 'GET /api/v1/users only *(v2.6)*: the user never sees an item carrying one of these labels (its own or inherited). Always present, [] when none.'
+        allowed_labels:
+          type: array
+          items: { type: string }
+          description: 'GET /api/v1/users only *(v2.6)*: when non-empty, the user sees only items carrying one of these labels. Always present, [] when none.'
 
     # ── Pairing ────────────────────────────────────────────────────────────
     PairCodeResponse:
@@ -5950,6 +6130,10 @@ components:
             properties:
               id:   { type: string, format: uuid }
               name: { type: string }
+        labels:
+          type: array
+          items: { type: string }
+          description: 'Admins only, omitted otherwise and when the item has none *(v2.6)*: the item''s own admin labels (not those inherited from its show / album), which per-user label restrictions match. See PUT /api/v1/items/{id}/labels.'
     ChildItem:
       type: object
       properties:
@@ -6423,6 +6607,14 @@ components:
             uses its own `library_access` rows so admins can narrow
             per-profile (kid sees Family Movies only even though parent
             has 4K Movies too).
+        blocked_labels:
+          type: array
+          items: { type: string }
+          description: '*(v2.6)* Label restriction, inherited from the owner at creation and cascaded on the owner''s changes. See PUT /api/v1/users/{id}/label-restrictions.'
+        allowed_labels:
+          type: array
+          items: { type: string }
+          description: '*(v2.6)* See blocked_labels.'
         created_at: { type: string, format: date-time }
 
     # ── Collections / Playlists ────────────────────────────────────────────

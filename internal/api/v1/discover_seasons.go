@@ -170,6 +170,8 @@ func (h *DiscoverHandler) ownedSeasons(ctx context.Context, ids []int32) map[int
 		TmdbIds:       ids,
 		LibraryIds:    libIDs,
 		MaxRatingRank: maxRank,
+		BlockedLabels: ctxLabels(ctx).BlockedArg(),
+		AllowedLabels: ctxLabels(ctx).AllowedArg(),
 	})
 	if err != nil {
 		h.logger.WarnContext(ctx, "discover: library season counts", "err", err)

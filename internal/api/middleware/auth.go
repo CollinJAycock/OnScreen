@@ -310,6 +310,10 @@ type ImpersonatedUser struct {
 	Username         string
 	IsAdmin          bool
 	MaxContentRating string
+	// BlockedLabels / AllowedLabels: the target's label restriction, so
+	// "view as" shows exactly what the label filter leaves them.
+	BlockedLabels []string
+	AllowedLabels []string
 }
 
 // ViewAs returns a middleware that, when an admin appends
@@ -385,6 +389,8 @@ func (a *Authenticator) ViewAs(lookup ImpersonationLookup, auditor ViewAsAuditor
 			synth.Username = target.Username
 			synth.IsAdmin = target.IsAdmin
 			synth.MaxContentRating = target.MaxContentRating
+			synth.BlockedLabels = target.BlockedLabels
+			synth.AllowedLabels = target.AllowedLabels
 			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), &synth)))
 		})
 	}

@@ -502,6 +502,7 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 	if user.MaxContentRating != nil {
 		refreshClaims.MaxContentRating = *user.MaxContentRating
 	}
+	refreshClaims.BlockedLabels, refreshClaims.AllowedLabels = user.BlockedLabels, user.AllowedLabels
 	accessToken, err := s.tokens.IssueAccessToken(refreshClaims)
 	if err != nil {
 		return nil, fmt.Errorf("refresh: issue access token: %w", err)
@@ -925,6 +926,7 @@ func (s *authService) issueTokenPair(ctx context.Context, user gen.User) (*v1.To
 	if user.MaxContentRating != nil {
 		claims.MaxContentRating = *user.MaxContentRating
 	}
+	claims.BlockedLabels, claims.AllowedLabels = user.BlockedLabels, user.AllowedLabels
 	accessToken, err := s.tokens.IssueAccessToken(claims)
 	if err != nil {
 		return nil, fmt.Errorf("issue access token: %w", err)

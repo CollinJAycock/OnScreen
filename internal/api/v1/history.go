@@ -94,6 +94,8 @@ func (h *HistoryHandler) List(w http.ResponseWriter, r *http.Request) {
 		Lim:           limit,
 		Off:           offset,
 		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "history: list", "err", err)

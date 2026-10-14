@@ -146,5 +146,6 @@ func (s *userService) VerifyPIN(ctx context.Context, callerID, targetID uuid.UUI
 	if user.MaxContentRating != nil {
 		result.MaxContentRating = *user.MaxContentRating
 	}
+	result.BlockedLabels, result.AllowedLabels = user.BlockedLabels, user.AllowedLabels
 	return result, nil
 }

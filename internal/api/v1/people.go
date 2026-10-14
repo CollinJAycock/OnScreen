@@ -118,7 +118,7 @@ func (h *PeopleHandler) Credits(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	if !h.allowItem(w, r, libID, contentRating) {
+	if !h.allowItem(w, r, id, libID, contentRating) {
 		return
 	}
 	itemType, tmdbID, err := h.items.GetItemTypeAndTMDB(r.Context(), id)
@@ -158,8 +158,9 @@ func (h *PeopleHandler) Credits(w http.ResponseWriter, r *http.Request) {
 // allowItem enforces the per-library ACL and the per-user content-rating ceiling
 // for a single item, writing a 404 and returning false when the caller may not
 // see it (404 not 403 so it can't be used as an existence oracle). A nil access
-// checker (dev/test) skips the ACL; an empty MaxContentRating skips the ceiling.
-func (h *PeopleHandler) allowItem(w http.ResponseWriter, r *http.Request, libraryID uuid.UUID, contentRating string) bool {
+// checker (dev/test) skips the ACL; an empty MaxContentRating skips the ceiling
+// (and no label restriction skips the label check).
+func (h *PeopleHandler) allowItem(w http.ResponseWriter, r *http.Request, itemID, libraryID uuid.UUID, contentRating string) bool {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if h.access != nil {
 		if claims == nil {
@@ -176,7 +177,7 @@ func (h *PeopleHandler) allowItem(w http.ResponseWriter, r *http.Request, librar
 			return false
 		}
 	}
-	if claims != nil && !contentrating.IsAllowed(contentRating, claims.MaxContentRating) {
+	if !itemPermitted(r.Context(), claims, itemID, contentRating) {
 		respond.NotFound(w, r)
 		return false
 	}
@@ -244,6 +245,15 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	var labelOK map[uuid.UUID]struct{}
+	if claims.LabelFilter().Active() {
+		ids := make([]uuid.UUID, len(entries))
+		for i, e := range entries {
+			ids[i] = e.ItemID
+		}
+		labelOK = labelPermittedSet(r.Context(), claims, ids)
+	}
+
 	out := make([]filmographyEntryResponse, 0, len(entries))
 	for _, e := range entries {
 		if allowed != nil { // nil = admin / unrestricted; non-nil = explicit grant set
@@ -255,7 +265,7 @@ func (h *PeopleHandler) Filmography(w http.ResponseWriter, r *http.Request) {
 		if e.ContentRating != nil {
 			cr = *e.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, maxRating) {
+		if !contentrating.IsAllowed(cr, maxRating) || !inLabelSet(labelOK, e.ItemID) {
 			continue
 		}
 		out = append(out, filmographyEntryResponse{
@@ -284,6 +294,7 @@ func (h *PeopleHandler) Search(w http.ResponseWriter, r *http.Request) {
 	var scope people.SearchScope
 	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
 		scope.MaxRatingRank = maxRatingRankFromClaims(claims.MaxContentRating)
+		scope.Labels = claims.LabelFilter()
 		if h.access != nil {
 			allowed, err := h.access.AllowedLibraryIDs(r.Context(), claims.UserID, claims.IsAdmin)
 			if err != nil {

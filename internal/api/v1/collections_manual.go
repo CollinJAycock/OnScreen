@@ -132,6 +132,8 @@ func (h *CollectionHandler) visibleManualCovers(ctx context.Context, v viewerSco
 	rows, err := h.manual.ListVisibleManualCollections(ctx, gen.ListVisibleManualCollectionsParams{
 		LibraryIds:    v.allowedLibIDs,
 		MaxRatingRank: v.maxRank,
+		BlockedLabels: v.labels.BlockedArg(),
+		AllowedLabels: v.labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err
@@ -567,6 +569,8 @@ func (h *CollectionHandler) libraryManualCollections(ctx context.Context, libID 
 	rows, err := h.manual.ListLibraryManualCollections(ctx, gen.ListLibraryManualCollectionsParams{
 		LibraryID:     libID,
 		MaxRatingRank: maxRank,
+		BlockedLabels: ctxLabels(ctx).BlockedArg(),
+		AllowedLabels: ctxLabels(ctx).AllowedArg(),
 	})
 	if err != nil {
 		return nil, err

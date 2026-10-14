@@ -18,6 +18,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // ── mock library service ─────────────────────────────────────────────────────
@@ -136,11 +137,11 @@ func (m *mockMediaLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ s
 func (m *mockMediaLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
 }
-func (m *mockMediaLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, t string, rank *int) ([]media.GenreCount, error) {
+func (m *mockMediaLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, t string, rank *int, _ itemlabel.Filter) ([]media.GenreCount, error) {
 	m.gotFacetRank, m.gotFacetRankSet, m.gotFacetType = rank, true, t
 	return nil, nil
 }
-func (m *mockMediaLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, t string, rank *int) ([]media.YearCount, error) {
+func (m *mockMediaLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, t string, rank *int, _ itemlabel.Filter) ([]media.YearCount, error) {
 	m.gotFacetRank, m.gotFacetRankSet, m.gotFacetType = rank, true, t
 	return nil, nil
 }

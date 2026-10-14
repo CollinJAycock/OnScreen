@@ -46,6 +46,7 @@ import (
 	"github.com/onscreen/onscreen/internal/externalratings"
 	"github.com/onscreen/onscreen/internal/franchise"
 	"github.com/onscreen/onscreen/internal/intromarker"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/lyrics"
 	"github.com/onscreen/onscreen/internal/mediastore"
@@ -948,7 +949,8 @@ func run() error {
 		WithMediaStore(mediaStoreProvider).
 		WithFranchise(gen.New(roPool)).
 		WithManualCollections(gen.New(roPool)).
-		WithExternalRatings(gen.New(roPool))
+		WithExternalRatings(gen.New(roPool)).
+		WithLabels(gen.New(roPool))
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
@@ -1507,6 +1509,7 @@ func run() error {
 		History:         historyHandler,
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
+		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
 		Audiobook:       v1.NewAudiobookHandler(gen.New(rwPool), libSvc, logger),
 		WatchState:      watchStateHandler,
@@ -1573,6 +1576,18 @@ func run() error {
 			// '' means "known but unrated", which ranks most-restrictive.
 			return rating, true
 		},
+		// Label half of the artwork gate. A query error refuses, like the
+		// rating hook above, so a database blip can't lift a restriction.
+		ArtworkLabelsPermitted: func(ctx context.Context, libraryID uuid.UUID, relPath string, labels itemlabel.Filter) bool {
+			ok, err := gen.New(roPool).ArtworkLabelsPermitted(ctx, gen.ArtworkLabelsPermittedParams{
+				LibraryID:     libraryID,
+				ArtPath:       relPath,
+				BlockedLabels: labels.BlockedArg(),
+				AllowedLabels: labels.AllowedArg(),
+			})
+			return err == nil && ok
+		},
+		LabelGate: gen.New(roPool),
 		// Closure (not a static bool copy) so the artwork handler picks
 		// up admin-UI toggles of public_asset_cache without a restart —
 		// system_settings.applyToConfig mutates cfg.PublicAssetCache on

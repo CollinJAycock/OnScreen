@@ -10,6 +10,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // ── mock ──────────────────────────────────────────────────────────────────────
@@ -443,10 +445,10 @@ func (m *mockQuerier) CountMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ 
 func (m *mockQuerier) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
 }
-func (m *mockQuerier) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int) ([]GenreCount, error) {
+func (m *mockQuerier) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int, _ itemlabel.Filter) ([]GenreCount, error) {
 	return nil, nil
 }
-func (m *mockQuerier) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int) ([]YearCount, error) {
+func (m *mockQuerier) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int, _ itemlabel.Filter) ([]YearCount, error) {
 	return nil, nil
 }
 func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]File, error) {
@@ -534,7 +536,7 @@ func (m *mockQuerier) CountPhotosByLibrary(_ context.Context, _ ListPhotosParams
 	return int64(len(m.photoList)), m.photoCountErr
 }
 
-func (m *mockQuerier) ListPhotoTimelineBuckets(_ context.Context, _ uuid.UUID, _ *int) ([]PhotoTimelineBucket, error) {
+func (m *mockQuerier) ListPhotoTimelineBuckets(_ context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) ([]PhotoTimelineBucket, error) {
 	return m.photoTimeline, m.photoTimelineErr
 }
 
@@ -542,7 +544,7 @@ func (m *mockQuerier) ListPhotoMapPoints(_ context.Context, _ ListPhotoMapPoints
 	return m.photoMapPts, m.photoMapErr
 }
 
-func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID, _ *int) (int64, error) {
+func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) (int64, error) {
 	return m.photoMapCount, m.photoMapCountErr
 }
 
@@ -1706,7 +1708,7 @@ func TestCountPhotos_Error(t *testing.T) {
 func TestListPhotoTimeline_PassesThrough(t *testing.T) {
 	svc, q := newService(t)
 	q.photoTimeline = []PhotoTimelineBucket{{Year: 2024, Month: 12, Count: 47}}
-	got, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil)
+	got, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil, itemlabel.Filter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1718,7 +1720,7 @@ func TestListPhotoTimeline_PassesThrough(t *testing.T) {
 func TestListPhotoTimeline_Error(t *testing.T) {
 	svc, q := newService(t)
 	q.photoTimelineErr = errors.New("db down")
-	if _, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil); err == nil {
+	if _, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil, itemlabel.Filter{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -1746,7 +1748,7 @@ func TestListPhotoMapPoints_Error(t *testing.T) {
 func TestCountPhotoMapPoints_PassesThrough(t *testing.T) {
 	svc, q := newService(t)
 	q.photoMapCount = 23107
-	n, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil)
+	n, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil, itemlabel.Filter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1758,7 +1760,7 @@ func TestCountPhotoMapPoints_PassesThrough(t *testing.T) {
 func TestCountPhotoMapPoints_Error(t *testing.T) {
 	svc, q := newService(t)
 	q.photoMapCountErr = errors.New("db down")
-	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil); err == nil {
+	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil, itemlabel.Filter{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
