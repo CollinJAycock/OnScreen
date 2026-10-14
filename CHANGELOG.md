@@ -601,6 +601,61 @@ API change lands only when every first-party client moves with it — see
     and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
   - **Migration 00050** adds the per-library overrides and the
     per-title-and-language attempt log.
+- **Camera RAW photos.** Photo libraries now pick up CR2, CR3, NEF, ARW, DNG,
+  RAF, ORF, RW2 and PEF files.
+  - **Showing them:** thumbnails and the viewer use the full-size JPEG the
+    camera embeds in the RAW, read directly from the file, so nothing extra
+    needs installing. A RAW without one falls back to `exiftool`, `dcraw`,
+    `dcraw_emu` or `ffmpeg` when one is on the server's PATH.
+  - **Date, camera, lens, exposure and GPS** are read from the RAW, so RAW
+    photos land on the timeline and the map like JPEGs.
+  - **RAW + JPEG pairs:** when a RAW and a JPEG with the same name sit in the
+    same folder, they are one photo. The JPEG is shown, and "Download
+    original" in the viewer gives you the RAW. A new option on a photo
+    library's settings page, "Pair RAW files with their JPEGs" (on by
+    default), lists them separately instead; the next scan regroups.
+  - **Photos are now told apart by file, not by name:** two folders' IMG_0001.JPG
+    are two photos. Before, every photo with the same file name in a library
+    was one photo. Existing libraries are sorted out on their next scan.
+  - HEIC and TIFF photos now show in the web app's grid, albums, map and
+    viewer too.
+- **Faces and people in photo libraries.** OnScreen can find the faces in
+  your photos so you can name the people in them.
+  - **Finding faces** is a new task, "Photo face detection" (Settings ▸ Tasks),
+    **off by default**: face data is personal, so turning it on is your call.
+    It runs nightly, looking at up to 500 new photos within 30 minutes each
+    time, with a face detector built into OnScreen (nothing is sent anywhere).
+  - **Naming:** hover over a photo in the viewer to see its faces, and click
+    one to name it; a name the library already has adds the photo to that
+    person. Admins and regular members name faces; managed profiles with a
+    rating or label limit only see the names.
+  - **Matching is manual.** OnScreen finds faces but doesn't recognise who is
+    who: there's no face-recognition model it can ship that is good enough
+    and free to redistribute. To speed naming up, a person's page suggests
+    unnamed faces taken around the same time as their photos.
+  - **People pages:** "People" in a photo library lists everyone named, with
+    the unnamed faces to work through; a person's page shows their photos
+    and can rename or remove them.
+  - **Privacy:** face data belongs to its library and is shown only to people
+    who can see the photo — library access, rating limits and labels all
+    apply, and a person whose photos you can't see doesn't appear. "Delete
+    all face data" on a photo library's settings page removes every face and
+    name in it (recorded in the audit log).
+- **Memories.** "On this day" for your photos: the home screen shows a
+  Memories row — "3 years ago today", or "This week 5 years ago" when a year
+  has nothing on the day — whenever there is something to show, and only if
+  you have a photo library. Each memory opens as a slideshow; up to 30 photos
+  are picked across the day rather than from one burst. Small libraries
+  count the day either side too.
+  - **API (all additive):** `GET /photos/memories`, `GET /photos/people`,
+    `GET`/`PATCH`/`DELETE /photos/people/{id}`, `GET /photos/people/{id}/items`
+    and `/suggestions`, `GET /photos/faces`, `PUT`/`DELETE /photos/faces/{id}`,
+    `GET /items/{id}/faces`; admin `GET`/`PUT /libraries/{id}/photo-settings`
+    and `DELETE /admin/photos/face-data`. `GET /items/{id}/image` shows the
+    JPEG of a RAW + JPEG pair and decodes RAW files.
+  - **Migration 00057** adds `library_photo_settings`, `photo_people`,
+    `photo_faces` and `photo_face_scans`, and takes photos out of the
+    title-uniqueness index on `media_items`.
 
 ### Changed
 

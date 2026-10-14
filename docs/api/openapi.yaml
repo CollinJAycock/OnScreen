@@ -2786,6 +2786,300 @@ paths:
                             thumb_url: { type: string }
                       total: { type: integer }
 
+  /api/v1/photos/memories:
+    get:
+      summary: Memories — photos from this day in earlier years
+      description: |
+        Groups the caller's photos (every photo library they can open, with
+        their rating ceiling and label restriction) by past year: photos
+        taken on this month-day become "N years ago today" (±1 day when the
+        libraries hold under 2000 dated photos); a year with none that day
+        but at least three within three days becomes "This week N years
+        ago". Most recent year first, at most 10 groups, each with a cover
+        (the photo with the most faces, else the middle one) and up to 30
+        photos in time order, spread across the day rather than one burst.
+        Matching uses the EXIF taken date in the server's time zone. An
+        empty `groups` means nothing to show. Added in v2.6 (migration
+        00057).
+      tags: [Photos]
+      parameters:
+        - in: query
+          name: date
+          description: The viewer's local day; defaults to today on the server.
+          schema: { type: string, format: date, example: '2026-10-14' }
+      responses:
+        '200':
+          description: Memories.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      date: { type: string, format: date }
+                      groups:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:      { type: string, enum: [on_this_day, this_week] }
+                            year:      { type: integer }
+                            years_ago: { type: integer }
+                            title:     { type: string, example: '3 years ago today' }
+                            total:     { type: integer, description: Photos in the group before the 30-photo pick. }
+                            cover:     { $ref: '#/components/schemas/MemoryPhoto' }
+                            items:
+                              type: array
+                              items: { $ref: '#/components/schemas/MemoryPhoto' }
+        '400': { description: date is not YYYY-MM-DD. }
+
+  /api/v1/photos/people:
+    get:
+      summary: People named in a photo library
+      description: |
+        People with at least one photo the caller may see (library grant,
+        rating ceiling, label restriction), most photos first, each with
+        the largest visible face as `cover`. Faces come from the opt-in
+        `face_detection` task; who is who is named by hand (no automatic
+        matching). Added in v2.6 (migration 00057).
+      tags: [Photos]
+      parameters:
+        - { in: query, name: library_id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: People.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PhotoPerson' }
+        '404': { description: No access to the library. }
+
+  /api/v1/photos/people/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: One person
+      description: 404 when none of their photos is visible to the caller (unless the caller may edit people).
+      tags: [Photos]
+      responses:
+        '200':
+          description: The person.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoPerson' }
+        '404': { description: Not found or not visible. }
+    patch:
+      summary: Rename a person
+      description: Admins and unrestricted users with access to the library.
+      tags: [Photos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100 }
+      responses:
+        '200': { description: Renamed. }
+        '403': { description: The caller may not edit people. }
+        '409': { description: Another person in the library has this name. }
+        '422': { description: Empty or invalid name. }
+    delete:
+      summary: Remove a person (their faces stay, unnamed)
+      tags: [Photos]
+      responses:
+        '204': { description: Removed. }
+        '403': { description: The caller may not edit people. }
+
+  /api/v1/photos/people/{id}/items:
+    get:
+      summary: A person's photos the caller may see, newest first
+      tags: [Photos]
+      parameters:
+        - { in: path,  name: id,     required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit,  schema: { type: integer, default: 100, maximum: 500 } }
+        - { in: query, name: offset, schema: { type: integer, default: 0 } }
+      responses:
+        '200': { description: Photos, same shape as GET /api/v1/photos rows; meta.total is the visible count. }
+
+  /api/v1/photos/people/{id}/suggestions:
+    get:
+      summary: Unnamed faces that may be this person
+      description: |
+        Unnamed faces on photos taken within twelve hours of one of the
+        person's photos, photos with fewer faces first, then larger faces.
+        A heuristic to narrow manual naming, not face matching.
+      tags: [Photos]
+      parameters:
+        - { in: path,  name: id,    required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, default: 24, maximum: 100 } }
+      responses:
+        '200':
+          description: Faces.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PhotoFaceThumb' }
+
+  /api/v1/photos/faces:
+    get:
+      summary: Unnamed faces in a photo library
+      tags: [Photos]
+      parameters:
+        - { in: query, name: library_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit,      schema: { type: integer, default: 60, maximum: 200 } }
+        - { in: query, name: offset,     schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Faces, larger and more confident first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PhotoFaceThumb' }
+
+  /api/v1/photos/faces/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Name (or unname) a face
+      description: |
+        `{"name": "Alice"}` assigns the library's person called Alice,
+        creating them if new (names are unique per library, case-
+        insensitively). `{"person_id": "<uuid>"}` assigns an existing person
+        of the same library. `{"person_id": null}` or `{"name": ""}`
+        unnames the face. Admins and unrestricted users with access to the
+        photo's library.
+      tags: [Photos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:      { type: string, nullable: true, maxLength: 100 }
+                person_id: { type: string, format: uuid, nullable: true }
+      responses:
+        '200':
+          description: The face.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoFace' }
+        '403': { description: The caller may not name faces. }
+        '404': { description: Face not found, or its photo isn't visible. }
+        '422': { description: Invalid name, or person_id is not a person of this library. }
+    delete:
+      summary: Remove a box that isn't a face
+      tags: [Photos]
+      responses:
+        '204': { description: Removed. }
+        '403': { description: The caller may not edit faces. }
+
+  /api/v1/items/{id}/faces:
+    get:
+      summary: Face boxes on a photo
+      description: Boxes are normalised to 0..1 of the upright photo. 404 when the photo isn't visible to the caller.
+      tags: [Photos]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Faces, and whether the caller may name them.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      faces:
+                        type: array
+                        items: { $ref: '#/components/schemas/PhotoFace' }
+                      can_edit: { type: boolean }
+
+  /api/v1/libraries/{id}/photo-settings:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Photo-library options (admin)
+      tags: [Photos]
+      responses:
+        '200':
+          description: Options; defaults when never set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoLibrarySettings' }
+        '404': { description: Not a photo library. }
+    put:
+      summary: Set photo-library options (admin)
+      description: |
+        `raw_jpeg_pairing` (default true): a camera RAW and a JPEG (or other
+        image) with the same name in the same folder are one photo showing
+        the JPEG, with the RAW as a second file served by the original
+        download. A change regroups the library on its next scan.
+        Audit-logged.
+      tags: [Photos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhotoLibrarySettings' }
+      responses:
+        '200': { description: Saved. }
+        '404': { description: Not a photo library. }
+
+  /api/v1/admin/photos/face-data:
+    delete:
+      summary: Delete all face data (admin)
+      description: |
+        Deletes every face, person and face-detection record in one photo
+        library (`library_id`) or in all of them. Audit-logged. With the
+        `face_detection` task still enabled, photos are detected again on
+        its next run.
+      tags: [Photos]
+      parameters:
+        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Counts deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      faces:  { type: integer }
+                      people: { type: integer }
+                      scans:  { type: integer }
+
   # ── Collections ────────────────────────────────────────────────────────────
   /api/v1/collections:
     get:
@@ -7790,6 +8084,59 @@ components:
           items: { type: string }
           description: '*(v2.6)* See blocked_labels.'
         created_at: { type: string, format: date-time }
+
+    # ── Photos: faces, people, memories (v2.6, migration 00057) ────────────
+    PhotoFace:
+      type: object
+      description: A face on a photo; the box is normalised to 0..1 of the upright photo.
+      properties:
+        id:          { type: string, format: uuid }
+        item_id:     { type: string, format: uuid }
+        x:           { type: number }
+        y:           { type: number }
+        w:           { type: number }
+        h:           { type: number }
+        score:       { type: number, description: Detector confidence. }
+        source:      { type: string, enum: [auto, manual] }
+        person_id:   { type: string, format: uuid, nullable: true }
+        person_name: { type: string, nullable: true }
+    PhotoFaceThumb:
+      type: object
+      description: A face to show cropped from its photo (GET /api/v1/items/{item_id}/image).
+      properties:
+        id:      { type: string, format: uuid }
+        item_id: { type: string, format: uuid }
+        x:       { type: number }
+        y:       { type: number }
+        w:       { type: number }
+        h:       { type: number }
+        score:   { type: number }
+    PhotoPerson:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        library_id:  { type: string, format: uuid }
+        name:        { type: string }
+        photo_count: { type: integer, description: Photos visible to the caller. }
+        cover:       { $ref: '#/components/schemas/PhotoFaceThumb' }
+        can_edit:    { type: boolean, description: Whether the caller may rename / remove people and name faces. }
+    PhotoLibrarySettings:
+      type: object
+      properties:
+        library_id:       { type: string, format: uuid, readOnly: true }
+        raw_jpeg_pairing: { type: boolean, default: true }
+    MemoryPhoto:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        library_id:  { type: string, format: uuid }
+        title:       { type: string }
+        poster_path: { type: string, nullable: true }
+        taken_at:    { type: string, format: date-time }
+        width:       { type: integer, nullable: true }
+        height:      { type: integer, nullable: true }
+        orientation: { type: integer, nullable: true }
+        updated_at:  { type: string, format: date-time }
 
     # ── Collections / Playlists ────────────────────────────────────────────
     Collection:
