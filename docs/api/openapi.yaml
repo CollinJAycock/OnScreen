@@ -52,6 +52,8 @@ tags:
     description: Library CRUD plus item browsing inside a library.
   - name: Items
     description: Per-item metadata, playback progress, markers, EXIF, enrichment.
+  - name: Music
+    description: Music discovery — similar artists, an artist's "Appears on", instant mixes.
   - name: Search
     description: Full-text search across media items.
   - name: Hub
@@ -902,6 +904,117 @@ paths:
                       data:
                         type: array
                         items: { $ref: '#/components/schemas/WatchHistoryItem' }
+
+  # ── Music discovery ────────────────────────────────────────────────────────
+  /api/v1/music/artists/{id}/similar:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Artists similar to an artist
+      description: |
+        Artists from the same library, ranked by co-listening (people who
+        play one play the other, from the nightly item co-occurrence table,
+        aggregated to artists and normalised by track counts) blended with
+        shared genres. With no listening history, genre overlap ranks alone
+        with era as a tie-breaker; an artist with no genres falls back to
+        artists of its era. Library access, the content-rating ceiling and
+        label restrictions apply to the artist asked about (404 / 403) and to
+        every suggestion. Additive (v2.6).
+      tags: [Music]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        '200':
+          description: Similar artists, best first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/SimilarArtist' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/music/artists/{id}/appears-on:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Tracks an artist appears on
+      description: |
+        Tracks on other artists' albums this artist is credited on: featured
+        artists (a "feat." clause or a multi-valued ARTISTS tag), and the
+        performer of a compilation track. Newest album first, tracks in album
+        order. Each track passes the content-rating ceiling and label
+        restrictions (a label on its album or album artist hides it).
+        Additive (v2.6).
+      tags: [Music]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: Appearances.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ArtistAppearance' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/music/mix:
+    get:
+      summary: Instant mix from a track, album or artist
+      description: |
+        An ordered list of about `limit` tracks to play: the seed's own
+        tracks first (a seed track leads), then tracks by similar artists
+        (most similar first in each round), then tracks sharing the seed
+        artist's genres. Tracks by one artist are spaced apart while other
+        artists remain; tracks the caller rated 2 or lower (one star) are
+        left out, except a seed track; every call is shuffled afresh. Each
+        entry carries the file to stream and its ReplayGain values, so it
+        can go straight into a player queue. Library access, the
+        content-rating ceiling and label restrictions apply to the seed and
+        to every track. Additive (v2.6).
+      tags: [Music]
+      parameters:
+        - in: query
+          name: seed
+          required: true
+          schema: { type: string, format: uuid }
+          description: A track, album or artist id.
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: The mix, in play order.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/MixTrack' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ── Favorites ──────────────────────────────────────────────────────────────
   /api/v1/favorites:
@@ -6395,6 +6508,15 @@ components:
         replaygain_track_peak: { type: number, format: double, nullable: true, description: 'ReplayGain track peak (linear; can exceed 1.0). Music files only.' }
         replaygain_album_gain: { type: number, format: double, nullable: true, description: 'ReplayGain album gain in dB. Music files only.' }
         replaygain_album_peak: { type: number, format: double, nullable: true, description: 'ReplayGain album peak (linear; can exceed 1.0). Music files only.' }
+        replaygain_source:
+          type: string
+          enum: [tags, analyzed]
+          description: |
+            Where the replaygain_* values came from: the file's own tags, or
+            the opt-in loudness_analysis task (EBU R128 integrated loudness and
+            true peak, ReplayGain 2.0 at −18 LUFS; album gain from the album's
+            tracks together). Tag values are never replaced by an analysis.
+            Omitted when the file has no ReplayGain. Additive (v2.6).
         audio_streams:     { type: array, items: { $ref: '#/components/schemas/AudioStream' } }
         subtitle_streams:  { type: array, items: { $ref: '#/components/schemas/SubtitleStream' } }
         external_subtitles: { type: array, items: { $ref: '#/components/schemas/ExternalSubtitle' } }
@@ -6470,6 +6592,55 @@ components:
           type: array
           items: { type: string }
           description: 'Admins only, omitted otherwise and when the item has none *(v2.6)*: the item''s own admin labels (not those inherited from its show / album), which per-user label restrictions match. See PUT /api/v1/items/{id}/labels.'
+    SimilarArtist:
+      type: object
+      required: [id, title, updated_at, score, shared_genres, co_listened]
+      properties:
+        id:            { type: string, format: uuid }
+        title:         { type: string }
+        poster_path:   { type: string }
+        updated_at:    { type: integer, format: int64, description: 'Unix ms; artwork cache-buster.' }
+        score:         { type: number, format: double, minimum: 0, maximum: 1 }
+        shared_genres: { type: array, items: { type: string }, description: 'Genres shared with the artist asked about (lower-case).' }
+        co_listened:   { type: boolean, description: 'People who listen to one listen to the other.' }
+
+    ArtistAppearance:
+      type: object
+      required: [id, title, role, album_id, album_title, album_updated_at]
+      properties:
+        id:                 { type: string, format: uuid, description: 'The track.' }
+        title:              { type: string }
+        index:              { type: integer }
+        disc_number:        { type: integer }
+        duration_ms:        { type: integer, format: int64 }
+        role:               { type: string, enum: [featured, artist], description: '"featured" for a feat. credit; "artist" for another credit (a compilation track''s performer).' }
+        album_id:           { type: string, format: uuid }
+        album_title:        { type: string }
+        album_year:         { type: integer }
+        album_poster_path:  { type: string }
+        album_updated_at:   { type: integer, format: int64 }
+        album_artist_id:    { type: string, format: uuid }
+        album_artist_title: { type: string }
+
+    MixTrack:
+      type: object
+      required: [id, title, album_id, album_title, file_id]
+      properties:
+        id:                    { type: string, format: uuid }
+        title:                 { type: string }
+        duration_ms:           { type: integer, format: int64 }
+        index:                 { type: integer }
+        album_id:              { type: string, format: uuid }
+        album_title:           { type: string }
+        album_poster_path:     { type: string }
+        artist_id:             { type: string, format: uuid, description: 'The album artist.' }
+        artist_title:          { type: string }
+        file_id:               { type: string, format: uuid, description: 'The file to stream (/media/stream/{file_id}): lossless first, then highest bitrate.' }
+        replaygain_track_gain: { type: number, format: double }
+        replaygain_track_peak: { type: number, format: double }
+        replaygain_album_gain: { type: number, format: double }
+        replaygain_album_peak: { type: number, format: double }
+
     ChildItem:
       type: object
       properties:

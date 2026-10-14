@@ -343,6 +343,59 @@ API change lands only when every first-party client moves with it — see
     on the admin user and profile lists.
   - **Migration 00047** adds `media_items.labels` and the users'
     `blocked_labels` / `allowed_labels`.
+- **Loudness analysis for music without ReplayGain tags.** Tracks whose
+  files carry no ReplayGain tags now get volume normalisation too. A new task,
+  "Music loudness analysis" (Settings ▸ Tasks, off until you enable it),
+  measures each such file's loudness and peak the way ReplayGain 2.0 does
+  (EBU R128, −18 LUFS reference, true peak) and stores the track gain, plus
+  an album gain worked out from the album's tracks together. Every player
+  that already applies ReplayGain picks the values up with no update.
+  - **Tags always win:** a file's own ReplayGain tags are never replaced. If
+    you later tag a file, the tags take over; if its audio changes, it is
+    measured again.
+  - **Cost:** each file is decoded once in full on the server (a few seconds
+    for a CD-length track). A run measures up to 500 files (set `max_files`
+    in the task's config, or `library_id` to do one library) and carries on
+    the next night. A silent track gets no gain; a file that can't be
+    decoded is skipped until it changes.
+  - **Where it shows:** a track's info panel says whether its ReplayGain is
+    "From tags" or "Analyzed". API (additive): `replaygain_source`
+    (`tags` / `analyzed`) on item files.
+  - **Also fixed:** MP3 files' MusicBrainz IDs and ReplayGain tags (stored in
+    ID3 `TXXX` frames) were never read; they are now, from the next time the
+    file is scanned.
+  - **Migration 00048** adds `media_files.replaygain_source` (existing values
+    are marked as from tags) and the measurement table.
+- **Instant mix and similar artists.** "Instant mix" on a track (its info
+  panel), an album or an artist starts about 50 tracks: some of its own
+  first, then tracks by similar artists, then others from the same genres —
+  never the same artist twice in a row while there is anyone else to play,
+  without tracks you rated one star, and shuffled afresh each time.
+  - **Similar artists:** a new row on the artist page. Artists come first
+    when people who listen to one also listen to the other (from play history
+    across all users), then by shared genres; a library with no play history
+    yet ranks by genre and era.
+  - Library access, content-rating limits and label restrictions apply to
+    both, for the artist or track you start from and every suggestion.
+  - **API (additive):** `GET /music/artists/{id}/similar`,
+    `GET /music/mix?seed=<track, album or artist id>` (each track comes with
+    the file to stream and its ReplayGain).
+- **Featured artists.** "Jay-Z feat. Rihanna" is now Jay-Z's track with
+  Rihanna credited, instead of an artist of its own. Credits come from
+  MusicBrainz Picard's multi-valued `ARTISTS` tag when a file has one, and
+  otherwise from "feat.", "ft." and "featuring" in the artist or title,
+  including "(feat. X)". Only the featured part is split into names, so
+  "Earth, Wind & Fire" and "Simon & Garfunkel" stay one artist.
+  - **Appears on:** an artist's page lists the albums of other artists it is
+    featured on, and the compilation tracks it performs, with the tracks. An
+    artist known only from features gets a page of its own; it is matched by
+    MusicBrainz ID first, then by name, so it is never created twice.
+  - **Existing libraries:** the next scan reads the credits of files it has
+    already imported, once, without re-probing them. FLAC files with several
+    `ARTIST` fields are now filed under the first (they used to go under the
+    last).
+  - **API (additive):** `GET /music/artists/{id}/appears-on`.
+  - **Migration 00048** adds the track–artist credit table.
 
 ### Changed
 
