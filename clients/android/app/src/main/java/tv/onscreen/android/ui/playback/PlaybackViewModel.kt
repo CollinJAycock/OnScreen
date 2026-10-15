@@ -15,6 +15,8 @@ import tv.onscreen.android.data.model.ItemFile
 import tv.onscreen.android.data.model.Marker
 import retrofit2.HttpException
 import tv.onscreen.android.data.api.PlaybackStop
+import tv.onscreen.android.data.api.StreamLimit
+import tv.onscreen.android.data.api.TooManyStreamsException
 import tv.onscreen.android.data.api.apiError
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.prefs.ServerPrefs
@@ -25,13 +27,26 @@ import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.data.repository.WatchLimitRepository
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.MediaVersions
 import tv.onscreen.android.playback.NowPlaying
 import tv.onscreen.android.playback.StreamSession
 import tv.onscreen.android.playback.StreamTokenVault
 import javax.inject.Inject
 
 sealed class PlaybackSource {
-    data class DirectPlay(val url: String, val startMs: Long) : PlaybackSource()
+    /**
+     * A file played as-is over HTTP range requests.
+     *
+     * @property optimized the item's optimized version (v2.6) rather than one
+     *   of its files: an MP4 with one AAC track and no subtitle tracks, so
+     *   every subtitle is side-loaded as on a server session.
+     */
+    data class DirectPlay(val url: String, val startMs: Long, val optimized: Boolean = false) : PlaybackSource()
+
+    /** Whether every subtitle track is side-loaded (none is in the stream):
+     *  a server session, or an optimized version. */
+    val sideLoadsAllSubtitles: Boolean
+        get() = this is Hls || (this is DirectPlay && optimized)
     /**
      * Server-issued HLS session.
      *
@@ -99,6 +114,9 @@ data class SubtitleTrackSource(
 data class PlaybackUiState(
     val source: PlaybackSource? = null,
     val item: ItemDetail? = null,
+    /** The item's file being played (the picked version, a stacked movie's
+     *  first part): its chapters, frame rate and length. */
+    val file: ItemFile? = null,
     val audioStreams: List<AudioStream> = emptyList(),
     val subtitles: List<SubtitleStream> = emptyList(),
     /** Side-load sources matching [subtitles], in the same order. Empty when
@@ -197,12 +215,41 @@ class PlaybackViewModel @Inject constructor(
     )
 
     /**
+     * Set while the active source is the item's optimized version (v2.6): the
+     * source file and the server's verdict for it ([sourceVerdict], the
+     * decision's source_decision), so a version that fails to play — or a
+     * pick of an audio track it doesn't carry — falls back to the source the
+     * way the server judged it. One-shot, like [directPlayContext].
+     */
+    private var optimizedFallback: OptimizedFallback? = null
+
+    private data class OptimizedFallback(
+        val itemId: String,
+        val file: ItemFile,
+        val sourceVerdict: String?,
+        val serverUrl: String,
+    )
+
+    /** The file [prepare] picked (a version, a stack's first part): the one
+     *  whose tracks the player lists. */
+    var playingFileId: String? = null
+        private set
+
+    /** Whether the active source is an optimized version that can still fall
+     *  back to its source ([fallbackFromOptimized]). */
+    val playsOptimized: Boolean
+        get() = optimizedFallback != null
+
+    /**
      * Load [itemId] and emit the source to play from [startMs].
      *
      * [carriedSpeed]: the speed the previous chapter played at, when the
      * fragment chains from one chapter of a book to the next. It's the book's
      * speed, so the chapter starts at it rather than at 1× until a lookup
      * lands. Ignored unless [itemId] is a chapter of that same book.
+     *
+     * [fileId]: the version picked on the detail screen (MediaVersions); the
+     * first listed file when null or gone.
      */
     /** [resumed]: the server session a player reclaimed from the background
      *  service is still reading (initPlayer took it back with its handoff
@@ -213,16 +260,21 @@ class PlaybackViewModel @Inject constructor(
         serverUrl: String,
         carriedSpeed: BookSpeed? = null,
         resumed: StreamSession? = null,
+        fileId: String? = null,
     ) {
         viewModelScope.launch {
             try {
                 val item = itemRepo.getItem(itemId)
-                val file = item.files.firstOrNull()
+                // A stacked movie (cd1 + cd2) starts from its first part,
+                // whichever part was listed first: the server streams every
+                // part from there as one movie.
+                val file = MediaVersions.playFile(item.files, fileId)
 
                 if (file == null) {
                     _uiState.value = PlaybackUiState(error = "No playable file")
                     return@launch
                 }
+                playingFileId = file.id
 
                 // Parental watch-limit pre-flight — block a restricted user
                 // before any stream/transcode starts. Fail-open if the check
@@ -243,14 +295,21 @@ class PlaybackViewModel @Inject constructor(
                 // server what it can decode; map the verdict to a PlaybackMode and
                 // fall back to the local PlaybackHelper when the server is
                 // unreachable. ExoPlayer range-requests, so no faststart refinement.
-                val verdict = transcodeRepo.decide(itemId, file.id)
+                // Over the user's concurrent-stream limit it throws instead
+                // (TooManyStreamsException): no local fallback, no retry.
+                val decision = transcodeRepo.decide(itemId, file.id)
+                val verdict = decision?.decision
+                // An optimized version (v2.6) the server picked over a
+                // transcode of the source, played directly.
+                val optimized = decision?.optimized
                 val mode = run {
                     // "unsupported" (Dolby Vision) is handled below; no
                     // verdict falls back to the local decision.
-                    val resolved = PlaybackHelper.modeFor(verdict, file) ?: PlaybackHelper.decide(file)
+                    val resolved = sourceMode(verdict, file)
                     android.util.Log.i(
                         "PlaybackViewModel",
-                        "playback decision: server=$verdict -> $resolved (${file.video_codec}/${file.audio_codec})",
+                        "playback decision: server=$verdict -> $resolved (${file.video_codec}/${file.audio_codec})" +
+                            (optimized?.let { ", optimized version ${it.id} (source ${decision.source_decision})" } ?: ""),
                     )
                     resolved
                 }
@@ -258,15 +317,17 @@ class PlaybackViewModel @Inject constructor(
                 // Dolby Vision is not supported: the server returns the "unsupported"
                 // verdict (DV can't be tonemapped correctly server-side — see
                 // docs/dolby-vision.md). Show a clear message rather than a broken
-                // transcode. hdr_type covers a failed/absent decision call.
-                if (verdict == "unsupported" ||
-                        file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true) {
+                // transcode. hdr_type covers a failed/absent decision call; an
+                // optimized version is SDR H.264 whatever its source was.
+                if (verdict == "unsupported" || (optimized == null &&
+                        file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true)) {
                     _uiState.value = PlaybackUiState(error = "dolby_vision")
                     return@launch
                 }
 
-                // Default off; armed only on the direct-play branch below.
+                // Default off; armed only on the direct-play branches below.
                 directPlayContext = null
+                optimizedFallback = null
 
                 val source = if (resumed != null) {
                     // Re-entry onto a player reclaimed from the background
@@ -280,45 +341,21 @@ class PlaybackViewModel @Inject constructor(
                         is PlaybackMode.DirectPlay -> null
                     }
                     PlaybackSource.Hls(playlistUrl = resumed.playlistUrl, offsetMs = resumed.offsetMs)
-                } else when (mode) {
-                    is PlaybackMode.DirectPlay -> {
-                        hlsOffsetMs = 0
-                        // Arm the transcode fallback: if ExoPlayer can't
-                        // actually decode this source (e.g. an HEVC profile
-                        // the device rejects, or a container quirk), the
-                        // fragment's onPlayerError re-issues it as a full
-                        // server transcode at the source resolution.
-                        directPlayContext = DirectPlayContext(
-                            itemId, file.id, file.resolution_h ?: 1080, serverUrl,
-                        )
-                        // Direct play: ExoPlayer's track selector
-                        // can swap audio + subtitle tracks by
-                        // language, so no transcode-session re-
-                        // issue path is needed. Clear the cached
-                        // request so a stale one from a previous
-                        // play doesn't get reused.
-                        lastTranscodeRequest = null
-                        // ExoPlayer's DefaultHttpDataSource bypasses
-                        // our OkHttp interceptor chain, so it can't
-                        // carry Authorization: Bearer on /media/stream
-                        // requests. The asset-route middleware accepts
-                        // the bearer as a ?token= query param via
-                        // RequiredAllowQueryToken. Without this,
-                        // direct-play files silently 401 — notably
-                        // ALL audio, since PlaybackHelper.decide()
-                        // returns DirectPlay for audio-only files
-                        // (transcode is never invoked, so the per-
-                        // session ?token= that videos rely on
-                        // doesn't exist for them).
-                        PlaybackSource.DirectPlay(
-                            buildDirectPlayUrl(serverUrl, file.stream_url, file.stream_token),
-                            startMs,
-                        )
-                    }
-                    is PlaybackMode.Remux ->
-                        startTranscode(itemId, 0, startMs, file.id, true, serverUrl) ?: return@launch
-                    is PlaybackMode.Transcode ->
-                        startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl) ?: return@launch
+                } else if (optimized != null) {
+                    hlsOffsetMs = 0
+                    lastTranscodeRequest = null
+                    // Played like a file (its own stream token, else the
+                    // asset token, re-attached by StreamTokenVault); progress
+                    // still reports against the item. If it fails, the
+                    // source plays the way the server judged it.
+                    optimizedFallback = OptimizedFallback(itemId, file, decision.source_decision, serverUrl)
+                    PlaybackSource.DirectPlay(
+                        buildDirectPlayUrl(serverUrl, optimized.stream_url, optimized.stream_token),
+                        startMs,
+                        optimized = true,
+                    )
+                } else {
+                    sourceFor(mode, itemId, file, startMs, serverUrl) ?: return@launch
                 }
 
                 // Markers (intro/credits) are episode-only on the
@@ -335,6 +372,7 @@ class PlaybackViewModel @Inject constructor(
                 _uiState.value = PlaybackUiState(
                     source = source,
                     item = item,
+                    file = file,
                     audioStreams = file.audio_streams,
                     subtitles = file.subtitle_streams,
                     subtitleSources = buildSubtitleSources(serverUrl, file),
@@ -379,6 +417,10 @@ class PlaybackViewModel @Inject constructor(
      *  parental watch limit — parse the error code so each shows the right
      *  message instead of a raw "HTTP 403". */
     private fun playbackErrorMessage(e: Exception): String? = when {
+        // Over the user's concurrent-stream limit (429 TOO_MANY_SESSIONS from
+        // the play decision or transcode start): the server's sentence, on
+        // the fragment's "Too many streams" dialog.
+        e is TooManyStreamsException -> StreamLimit.sentinel(e.message)
         e is HttpException && e.code() == 403 -> {
             val err = e.apiError()
             when (err?.code) {
@@ -449,6 +491,69 @@ class PlaybackViewModel @Inject constructor(
         if (next != null) {
             _uiState.value = _uiState.value.copy(nextEpisode = next)
         }
+    }
+
+    /** The mode to play [file] in for the server's [verdict] (the local
+     *  decision when there is none, or "unsupported" — prepare refuses that
+     *  before playing). A part of a stacked movie never direct plays
+     *  (PlaybackHelper.forStack). */
+    private fun sourceMode(verdict: String?, file: ItemFile): PlaybackMode {
+        val mode = PlaybackHelper.modeFor(verdict, file) ?: PlaybackHelper.decide(file)
+        return if (MediaVersions.isPart(file)) PlaybackHelper.forStack(mode, file) else mode
+    }
+
+    /**
+     * The source playing [file] in [mode] from [startMs]: the file itself
+     * for a direct play (arming the transcode fallback), else a server
+     * session with [audioStreamIndex]. Null when the server ended playback
+     * meanwhile.
+     */
+    private suspend fun sourceFor(
+        mode: PlaybackMode,
+        itemId: String,
+        file: ItemFile,
+        startMs: Long,
+        serverUrl: String,
+        audioStreamIndex: Int? = null,
+    ): PlaybackSource? = when (mode) {
+        is PlaybackMode.DirectPlay -> {
+            hlsOffsetMs = 0
+            // Arm the transcode fallback: if ExoPlayer can't
+            // actually decode this source (e.g. an HEVC profile
+            // the device rejects, or a container quirk), the
+            // fragment's onPlayerError re-issues it as a full
+            // server transcode at the source resolution.
+            directPlayContext = DirectPlayContext(
+                itemId, file.id, file.resolution_h ?: 1080, serverUrl,
+            )
+            // Direct play: ExoPlayer's track selector
+            // can swap audio + subtitle tracks by
+            // language, so no transcode-session re-
+            // issue path is needed. Clear the cached
+            // request so a stale one from a previous
+            // play doesn't get reused.
+            lastTranscodeRequest = null
+            // ExoPlayer's DefaultHttpDataSource bypasses
+            // our OkHttp interceptor chain, so it can't
+            // carry Authorization: Bearer on /media/stream
+            // requests. The asset-route middleware accepts
+            // the bearer as a ?token= query param via
+            // RequiredAllowQueryToken. Without this,
+            // direct-play files silently 401 — notably
+            // ALL audio, since PlaybackHelper.decide()
+            // returns DirectPlay for audio-only files
+            // (transcode is never invoked, so the per-
+            // session ?token= that videos rely on
+            // doesn't exist for them).
+            PlaybackSource.DirectPlay(
+                buildDirectPlayUrl(serverUrl, file.stream_url, file.stream_token),
+                startMs,
+            )
+        }
+        is PlaybackMode.Remux ->
+            startTranscode(itemId, 0, startMs, file.id, true, serverUrl, audioStreamIndex)
+        is PlaybackMode.Transcode ->
+            startTranscode(itemId, mode.height, startMs, file.id, false, serverUrl, audioStreamIndex)
     }
 
     /**
@@ -712,7 +817,7 @@ class PlaybackViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val item = itemRepo.getItem(itemId)
-                val file = item.files.firstOrNull() ?: return@launch
+                val file = MediaVersions.playFile(item.files, playingFileId) ?: return@launch
                 // Refresh the track list + side-load sources ONLY — never
                 // re-issue the session. The old code restarted the whole
                 // transcode on the premise that "a transcoded session bakes
@@ -728,6 +833,7 @@ class PlaybackViewModel @Inject constructor(
                     ?: serverPrefs.getServerUrl().orEmpty()
                 _uiState.value = _uiState.value.copy(
                     item = item,
+                    file = file,
                     subtitles = file.subtitle_streams,
                     subtitleSources = buildSubtitleSources(serverUrl, file),
                 )
@@ -755,6 +861,8 @@ class PlaybackViewModel @Inject constructor(
      * also fails the fragment shows the real error instead of looping.
      */
     fun fallbackFromDirectPlay(currentPositionMs: Long) {
+        // An optimized version that won't play falls back to its source.
+        if (optimizedFallback != null) return fallbackFromOptimized(currentPositionMs)
         val ctx = directPlayContext ?: return
         directPlayContext = null
         viewModelScope.launch {
@@ -778,6 +886,39 @@ class PlaybackViewModel @Inject constructor(
                 // fallback's re-issue is refused by the transcode-start gate
                 // with the SAME 403 — the user must see the watch-limit
                 // message, not a raw "HTTP 403".
+                _uiState.value = _uiState.value.copy(
+                    error = playbackErrorMessage(e) ?: "Playback failed",
+                )
+            }
+        }
+    }
+
+    /**
+     * Leave the optimized version for its source, at [currentPositionMs]:
+     * the version failed to play, or the viewer picked an audio track it
+     * doesn't carry ([audioStreamOrdinal], the position within the source's
+     * audio_streams; a server session starts with it). The source plays the
+     * way the server judged it (source_decision; the local decision when the
+     * server sent none) — a direct play then arms the usual transcode
+     * fallback. One-shot: a source that fails too shows its error.
+     */
+    fun fallbackFromOptimized(currentPositionMs: Long, audioStreamOrdinal: Int? = null) {
+        val fb = optimizedFallback ?: return
+        optimizedFallback = null
+        if (refused) return
+        viewModelScope.launch {
+            try {
+                val mode = sourceMode(fb.sourceVerdict.takeIf { it != "unsupported" }, fb.file)
+                android.util.Log.w(
+                    "PlaybackViewModel",
+                    "leaving the optimized version for the source: ${fb.sourceVerdict} -> $mode",
+                )
+                val source = sourceFor(
+                    mode, fb.itemId, fb.file, currentPositionMs.coerceAtLeast(0L), fb.serverUrl,
+                    audioStreamIndex = audioStreamOrdinal,
+                ) ?: return@launch // stopped meanwhile; the new session is already retired
+                _uiState.value = _uiState.value.copy(source = source, error = null)
+            } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(
                     error = playbackErrorMessage(e) ?: "Playback failed",
                 )

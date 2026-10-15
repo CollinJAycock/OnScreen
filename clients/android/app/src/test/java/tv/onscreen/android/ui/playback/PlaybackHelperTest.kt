@@ -543,6 +543,13 @@ class PlaybackHelperTest {
     }
 
     @Test
+    fun `the header declares that optimized versions are played`() {
+        // v2.6 (docs/capability-profiles.md §13): without it the server never
+        // offers an optimized version in place of a transcode.
+        assertThat(PlaybackHelper.clientCapabilitiesHeader().split(",")).contains("optimized=1")
+    }
+
+    @Test
     fun `no HDR capabilities is unknown before Android 16, forced SDR from it`() {
         assertThat(PlaybackHelper.screenHdrTypes(null, sdk = 30)).isNull()
         assertThat(PlaybackHelper.screenHdrTypes(null, sdk = 36)).isEmpty()

@@ -46,6 +46,7 @@ import kotlinx.coroutines.withContext
 import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.R
 import tv.onscreen.android.data.api.PlaybackStop
+import tv.onscreen.android.data.api.StreamLimit
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.Chapter
 import tv.onscreen.android.data.model.ChildItem
@@ -59,6 +60,7 @@ import tv.onscreen.android.data.repository.TrickplayRepository
 import tv.onscreen.android.playback.AudioItemTypes
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.MediaVersions
 import tv.onscreen.android.playback.withBufferProfile
 import tv.onscreen.android.playback.withoutStuckDetection
 import tv.onscreen.android.ui.KeyEventHandler
@@ -261,6 +263,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  Watch Next publisher to upsert title / poster / type metadata
      *  into the system Continue Watching row. */
     private var currentItem: tv.onscreen.android.data.model.ItemDetail? = null
+    /** The file of [currentItem] being played (PlaybackUiState.file): the
+     *  picked version, or a stacked movie's first part. */
+    private var currentFile: tv.onscreen.android.data.model.ItemFile? = null
     /** Periodic publisher that re-asserts the Watch Next row every
      *  ~30 s during playback. Cancelled on pause / end / view destroy. */
     private var watchNextJob: Job? = null
@@ -298,6 +303,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         private const val ARG_SPEED_BOOK_ID = "speed_book_id"
         private const val ARG_SPEED_RATE = "speed_rate"
         private const val ARG_START_PAUSED = "start_paused"
+        private const val ARG_FILE_ID = "file_id"
         private const val UPDATE_PERIOD_MS = 1000
 
         /** Fraction of view height to keep clear beneath subtitle cues.
@@ -324,17 +330,21 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         /** [bookSpeed]: set when chaining from one chapter of a book to the
          *  next — the speed the book was playing at (see goToNextEpisode).
          *  [startPaused]: open at [startMs] without playing (see
-         *  resumeAfterScreensaver). */
+         *  resumeAfterScreensaver).
+         *  [fileId]: the version picked on the detail screen
+         *  (MediaVersions); null plays the first. */
         fun newInstance(
             itemId: String,
             startMs: Long = 0,
             bookSpeed: BookSpeed? = null,
             startPaused: Boolean = false,
+            fileId: String? = null,
         ): PlaybackFragment {
             return PlaybackFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_ITEM_ID, itemId)
                     putLong(ARG_START_MS, startMs)
+                    if (fileId != null) putString(ARG_FILE_ID, fileId)
                     if (bookSpeed != null) {
                         putString(ARG_SPEED_BOOK_ID, bookSpeed.bookId)
                         putFloat(ARG_SPEED_RATE, bookSpeed.rate)
@@ -401,7 +411,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             matchFrameRateEnabled = prefs.matchFrameRate.first()
 
             initPlayer()
-            viewModel.prepare(itemId, startMs, serverUrl, bookSpeed, resumedSession)
+            viewModel.prepare(
+                itemId, startMs, serverUrl, bookSpeed, resumedSession,
+                fileId = arguments?.getString(ARG_FILE_ID),
+            )
             startAdminStopWatch(itemId)
 
             viewModel.uiState.collectLatest { state ->
@@ -481,7 +494,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                             // A movie's display mode is no use to music.
                             frameRates()?.releaseNow()
                         } else {
-                            matchFrameRate(state.item?.files?.firstOrNull()?.frame_rate?.toFloat())
+                            matchFrameRate(state.file?.frame_rate?.toFloat())
                         }
                         // An explicit in-session choice (picked from the
                         // subtitle dialog) outranks the saved preference: a
@@ -503,9 +516,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
                 markers = state.markers
                 dismissedMarkers.clear()
-                chapters = state.item?.files?.firstOrNull()?.chapters ?: emptyList()
+                chapters = state.file?.chapters ?: emptyList()
                 currentItemType = state.item?.type.orEmpty()
                 currentItem = state.item
+                currentFile = state.file
 
                 applyListeningSpeed(state.listeningRate)
                 refreshSecondaryActions()
@@ -1546,9 +1560,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // downloads), which live server-side, not in the container.
                 // Direct play goes through DefaultMediaSourceFactory, which —
                 // unlike the hand-built HlsMediaSource below — honours
-                // subtitleConfigurations.
+                // subtitleConfigurations. An optimized version (v2.6) carries
+                // no subtitle tracks of its own: every one is side-loaded,
+                // as on a server session.
                 val externalSubs = subtitleConfigurations(
-                    viewModel.uiState.value.subtitleSources.filter { it.embeddedIndex == null },
+                    viewModel.uiState.value.subtitleSources.filter {
+                        source.optimized || it.embeddedIndex == null
+                    },
                 )
                 exo.setMediaItem(
                     MediaItem.Builder()
@@ -2058,6 +2076,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      */
     private fun applyAudioSelection(idx: Int) {
         val stream = audioStreams.getOrNull(idx) ?: return
+        val src = currentSource
+        if (src is PlaybackSource.DirectPlay && src.optimized) {
+            // An optimized version (v2.6) carries the default track only:
+            // another one plays from the source, the way the server judged
+            // it, started with that track. The first track is the default.
+            if (idx != 0 && viewModel.playsOptimized) {
+                viewModel.fallbackFromOptimized(player?.currentPosition ?: 0L, idx)
+            }
+            return
+        }
         if (currentSource is PlaybackSource.Hls) {
             // Transcode path (HLS) — emits a single audio track per
             // session, so a swap requires re-issuing the session with
@@ -2095,12 +2123,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun subtitleRows(): List<SubtitleRow> {
         val sources = viewModel.uiState.value.subtitleSources
-        val isHls = viewModel.uiState.value.source is PlaybackSource.Hls
+        val sideLoadsAll = viewModel.uiState.value.source?.sideLoadsAllSubtitles == true
         // Side-loads carry their picker label (SubtitleLabel) already.
-        return if (isHls) {
-            // Every renderable track is a side-load (the session playlist
-            // carries no text streams). Image-based tracks are already
-            // filtered out — the server can't serve them as VTT.
+        return if (sideLoadsAll) {
+            // Every renderable track is a side-load (the session playlist,
+            // or an optimized version's MP4, carries no text streams).
+            // Image-based tracks are already filtered out — the server can't
+            // serve them as VTT.
             sources.map { s -> SubtitleRow(s.label, s.trackId, -1) }
         } else {
             // Direct play: container tracks render natively (PGS included) in
@@ -2162,7 +2191,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // keep its OpenSubtitles strings in the APK.
         if (!BuildConfig.ONLINE_SUBTITLE_SEARCH) return
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
-        val fileId = viewModel.uiState.value.item?.files?.firstOrNull()?.id ?: return
+        val fileId = viewModel.uiState.value.file?.id ?: return
         val ctx = requireContext()
         val loading = AlertDialog.Builder(ctx, R.style.PlayerDialog)
             .setTitle(R.string.subtitles_searching)
@@ -2546,6 +2575,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // session start. The sentence is shown verbatim.
             PlaybackStop.isSentinel(message) ->
                 getString(R.string.playback_stopped_title) to PlaybackStop.sentenceOf(message)
+            // Over the user's concurrent-stream limit (429 TOO_MANY_SESSIONS):
+            // the server's sentence, verbatim. Nothing retries it.
+            StreamLimit.isSentinel(message) ->
+                getString(R.string.too_many_streams_title) to StreamLimit.textOf(message)
             // Mid-session heartbeat 403 that is not the watch limit — library
             // access revoked or rating ceiling lowered (ProgressTracker).
             message == ProgressTracker.CONTENT_REVOKED ->
@@ -2616,10 +2649,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             playerWindowDynamic = exo?.isCurrentMediaItemDynamic ?: false,
         )
 
-    /** [PlaybackHelper.listedDurationMs] for [item] played from its first
-     *  file, the one PlaybackViewModel.prepare plays. */
-    private fun listedDurationMs(item: tv.onscreen.android.data.model.ItemDetail?): Long? =
-        PlaybackHelper.listedDurationMs(item?.files?.firstOrNull()?.duration_ms, item?.duration_ms)
+    /** [PlaybackHelper.listedDurationMs] for [item] played from the file
+     *  PlaybackViewModel.prepare picked ([currentFile]; its first when not
+     *  known yet). A stacked movie runs the item's length, not its first
+     *  part's (MediaVersions.listedDurationMs). */
+    private fun listedDurationMs(item: tv.onscreen.android.data.model.ItemDetail?): Long? {
+        val file = currentFile?.takeIf { f -> item?.files?.any { it.id == f.id } == true }
+            ?: MediaVersions.playFile(item?.files.orEmpty())
+        return MediaVersions.listedDurationMs(file, item?.duration_ms)
+    }
 
     override fun onStart() {
         super.onStart()
@@ -2659,7 +2697,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // Stopped again meanwhile: kept for the next wake.
         if (!isAdded || parentFragmentManager.isStateSaved) return true
         videoStoppedAtMs = null
-        replaceSelfWith(newInstance(itemId, resumeMs, startPaused = true))
+        replaceSelfWith(newInstance(itemId, resumeMs, startPaused = true, fileId = arguments?.getString(ARG_FILE_ID)))
         return true
     }
 

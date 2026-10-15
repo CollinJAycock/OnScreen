@@ -19,6 +19,7 @@ import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.ItemFile
 import tv.onscreen.android.data.model.Marker
+import tv.onscreen.android.data.model.PlaybackDecision
 import tv.onscreen.android.data.model.SubtitleStream
 import tv.onscreen.android.data.model.TranscodeSession
 import tv.onscreen.android.data.model.UserPreferences
@@ -396,7 +397,7 @@ class PlaybackViewModelTest {
     ): Pair<PlaybackSource.Hls, PlaybackViewModel> {
         val itemRepo = itemRepo()
         val transcodeRepo = transcodeRepoMock(relaxed = true)
-        coEvery { transcodeRepo.decide(any(), any()) } returns verdict
+        coEvery { transcodeRepo.decide(any(), any()) } returns verdict?.let { PlaybackDecision(it) }
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
         coEvery {
             transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
@@ -744,7 +745,7 @@ class PlaybackViewModelTest {
     fun `server unsupported verdict surfaces dolby vision error and no source`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = mockk<TranscodeRepository>()
-        coEvery { transcodeRepo.decide(any(), any()) } returns "unsupported"
+        coEvery { transcodeRepo.decide(any(), any()) } returns PlaybackDecision("unsupported")
         coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
 
         val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
@@ -1383,5 +1384,224 @@ class PlaybackViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.uiState.value.nowPlaying).isNull()
+    }
+
+    // ── v2.6: optimized versions, stream limit, stacked movies ──────────────
+
+    private fun optimizedDecision(sourceDecision: String? = "transcode") = PlaybackDecision(
+        decision = "directPlay",
+        file_id = "f2",
+        reason = PlaybackDecision.REASON_OPTIMIZED_VERSION,
+        optimized_version = tv.onscreen.android.data.model.OptimizedVersion(
+            id = "ov1", stream_url = "/media/optimized/ov1", stream_token = "ov-tok",
+        ),
+        source_decision = sourceDecision,
+    )
+
+    private fun session(id: String = "s") =
+        TranscodeSession(session_id = id, playlist_url = "/p.m3u8", token = "t", start_offset_sec = 0.0)
+
+    @Test
+    fun `an optimized version plays directly with its own token, no session`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns optimizedDecision()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 5_000L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        val src = vm.uiState.value.source as PlaybackSource.DirectPlay
+        assertThat(src.optimized).isTrue()
+        assertThat(src.sideLoadsAllSubtitles).isTrue()
+        assertThat(src.url).isEqualTo("http://srv/media/optimized/ov1")
+        assertThat(src.startMs).isEqualTo(5_000L)
+        assertThat(StreamTokenVault.tokenForTest(src.url)).isEqualTo("ov-tok")
+        assertThat(vm.playsOptimized).isTrue()
+        // Progress stays against the item and its own file.
+        assertThat(vm.uiState.value.item?.id).isEqualTo("movie-1")
+        assertThat(vm.uiState.value.file?.id).isEqualTo("f2")
+        coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `an optimized version without reason optimized_version is not played`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns
+            optimizedDecision().copy(decision = "transcode", reason = null)
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) } returns session()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+        assertThat(vm.playsOptimized).isFalse()
+    }
+
+    @Test
+    fun `an optimized version that fails falls back once to the source's verdict`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns optimizedDecision("transcode")
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) } returns session()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        // The fragment's direct-play error path.
+        vm.fallbackFromDirectPlay(42_000L)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+        assertThat(vm.playsOptimized).isFalse()
+        coVerify(exactly = 1) {
+            transcodeRepo.start("movie-1", 1080, 42_000L, "f2", false, null, any(), any())
+        }
+
+        // One-shot: the source's own failure doesn't start another session.
+        vm.fallbackFromDirectPlay(43_000L)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a source that direct plays is played as the file when the version fails`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns optimizedDecision("directPlay")
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+        vm.fallbackFromDirectPlay(9_000L)
+        advanceUntilIdle()
+
+        val src = vm.uiState.value.source as PlaybackSource.DirectPlay
+        assertThat(src.optimized).isFalse()
+        assertThat(src.url).isEqualTo("http://srv/media/files/f1.mp4")
+        assertThat(src.startMs).isEqualTo(9_000L)
+    }
+
+    @Test
+    fun `another audio track leaves the optimized version for the source with that track`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns optimizedDecision("transcode")
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) } returns session()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+        vm.fallbackFromOptimized(60_000L, audioStreamOrdinal = 2)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start("movie-1", 1080, 60_000L, "f2", false, 2, any(), any())
+        }
+    }
+
+    @Test
+    fun `too many streams on the decision shows the server's sentence and plays nothing`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } throws
+            tv.onscreen.android.data.api.TooManyStreamsException("Stop one to watch here.")
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        val err = vm.uiState.value.error
+        assertThat(tv.onscreen.android.data.api.StreamLimit.isSentinel(err)).isTrue()
+        assertThat(tv.onscreen.android.data.api.StreamLimit.textOf(err!!)).isEqualTo("Stop one to watch here.")
+        // No local fallback: nothing plays, nothing starts.
+        assertThat(vm.uiState.value.source).isNull()
+        coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `too many streams on transcode start shows the server's sentence`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns PlaybackDecision("transcode")
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(transcodeFile())
+        coEvery { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) } throws
+            tv.onscreen.android.data.api.TooManyStreamsException("Limit reached.")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.error).isEqualTo(tv.onscreen.android.data.api.StreamLimit.sentinel("Limit reached."))
+        coVerify(exactly = 1) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a stacked movie starts from its first part through the server, never direct`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true) // decide -> null: local decision
+        val part2 = directPlayFile().copy(id = "cd2", part_index = 2, duration_ms = 3_000_000L)
+        val part1 = directPlayFile().copy(id = "cd1", part_index = 1, duration_ms = 3_100_000L)
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(part2).copy(files = listOf(part2, part1), duration_ms = 6_100_000L)
+        coEvery { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) } returns session()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        // h264/aac/mp4 would direct play on its own; a part never does.
+        assertThat(vm.uiState.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+        assertThat(vm.uiState.value.file?.id).isEqualTo("cd1")
+        coVerify { transcodeRepo.decide("movie-1", "cd1") }
+        coVerify(exactly = 1) {
+            transcodeRepo.start("movie-1", 1080, 0L, "cd1", false, null, any(), any())
+        }
+    }
+
+    @Test
+    fun `a stacked movie the server remuxes stays a remux of the first part`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock(relaxed = true)
+        coEvery { transcodeRepo.decide(any(), any()) } returns PlaybackDecision("directStream", file_id = "cd1")
+        val part1 = transcodeFile().copy(id = "cd1", part_index = 1)
+        val part2 = transcodeFile().copy(id = "cd2", part_index = 2)
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(part1).copy(files = listOf(part1, part2))
+        coEvery { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) } returns session()
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        // The second part named: the movie still starts from the first.
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv", fileId = "cd2")
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) {
+            transcodeRepo.start("movie-1", 0, 0L, "cd1", true, null, any(), any())
+        }
+    }
+
+    @Test
+    fun `the picked version is the file played`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        val cut = directPlayFile().copy(id = "dc", stream_url = "/media/files/dc.mp4", edition = "Director's Cut")
+        coEvery { itemRepo.getItem("movie-1") } returns
+            movieDetail(directPlayFile()).copy(files = listOf(directPlayFile(), cut))
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv", fileId = "dc")
+        advanceUntilIdle()
+
+        val src = vm.uiState.value.source as PlaybackSource.DirectPlay
+        assertThat(src.url).isEqualTo("http://srv/media/files/dc.mp4")
+        coVerify { transcodeRepo.decide("movie-1", "dc") }
     }
 }

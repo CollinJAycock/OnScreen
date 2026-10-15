@@ -58,6 +58,21 @@ object PlaybackHelper {
         else -> decide(file)
     }
 
+    /**
+     * [mode] for one part of a stacked movie (ItemFile.part_index, see
+     * MediaVersions): never a direct play, which would play that part alone.
+     * The server streams every part as one movie from a session started with
+     * the first part's id, so a remux stays a remux and anything else
+     * becomes a transcode. The server's own verdict for a part is never
+     * directPlay; this covers the local decision, when it gave none.
+     */
+    fun forStack(mode: PlaybackMode, file: ItemFile): PlaybackMode =
+        if (mode is PlaybackMode.DirectPlay) {
+            PlaybackMode.Transcode(if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080)
+        } else {
+            mode
+        }
+
     /** The local decision, for when the server gives none. What this device
      *  plays is read the way the capabilities header reads it, so the two
      *  agree: AV1 only with a hardware decoder, DTS and TrueHD only as
@@ -625,6 +640,10 @@ object PlaybackHelper {
     private const val HDR_TYPE_HLG = 3
     private const val HDR_TYPE_HDR10_PLUS = 4
 
+    /** The header key declaring that this player plays optimized versions
+     *  (docs/capability-profiles.md §13). */
+    internal const val OPTIMIZED_KEY = "optimized=1"
+
     /** Height ceiling for transcode requests: never ask for more rows than
      *  the panel has. */
     fun displayHeightCap(): Int = output.height
@@ -650,6 +669,10 @@ object PlaybackHelper {
             "maxWidth=${out.width}",
             "maxHeight=${out.height}",
             "maxAudioChannels=8",
+            // v2.6: this player plays an optimized_version the decision
+            // offers (a pre-made H.264/AAC MP4) as a direct play, falling
+            // back to the source's verdict (PlaybackViewModel).
+            OPTIMIZED_KEY,
         )
         return (keys + depthAndHdrKeys(supports10Bit(), supportsVp9Profile2(), out.hdr, out.hlg)).joinToString(",")
     }

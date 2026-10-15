@@ -155,6 +155,9 @@
     <string name="watch_limit_generic">Playback is blocked by a parental watch limit on this account.</string>
     <!-- Admin "stop this stream": dialog title; the body is the server's sentence. -->
     <string name="playback_stopped_title">Playback stopped</string>
+    <!-- Over the admin-set concurrent-stream limit: dialog title; the body is
+         the server's sentence (429 TOO_MANY_SESSIONS). -->
+    <string name="too_many_streams_title">Too many streams</string>
 
     <!-- Report a problem (detail screen action + ReportProblemDialog) -->
     <string name="report_problem">Report a problem</string>
