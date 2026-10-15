@@ -862,6 +862,7 @@ private fun PlayerHost(
             val msg = when (failure) {
                 BurnInFailure.UNSUPPORTED -> R.string.subtitles_burn_in_unsupported
                 BurnInFailure.UNAVAILABLE -> R.string.subtitles_burn_in_unavailable
+                BurnInFailure.SERVER -> R.string.subtitles_burn_in_server
                 BurnInFailure.FAILED -> R.string.subtitles_burn_in_failed
             }
             android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()

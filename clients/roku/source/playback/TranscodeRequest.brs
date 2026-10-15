@@ -60,13 +60,16 @@ end function
 ' The short sentence for a start the server refused with 400 — a bad audio
 ' track, or a subtitle it can't burn in (INVALID_SUBTITLE_STREAM,
 ' SUBTITLE_NOT_IMAGE, BURN_IN_UNSUPPORTED on a multi-part movie). "" for
-' anything that isn't a 400. A refused track switch keeps the current
+' anything that isn't a 400 or a 503 BURN_IN_UNAVAILABLE. A refused track switch keeps the current
 ' stream playing; the player shows this in a dialog.
 function TranscodeRequest_RefusalText(result as Dynamic) as String
     if result = invalid or type(result) <> "roAssociativeArray" then return ""
-    if result.code = invalid or result.code <> 400 then return ""
     code = ""
     if result.errorCode <> invalid then code = result.errorCode
+    ' 503 when no transcode worker can burn subtitles in (an older remote
+    ' worker); checked before the running session is replaced, like a 400.
+    if result.code = 503 and code = "BURN_IN_UNAVAILABLE" then return "This server can't burn in subtitles right now."
+    if result.code = invalid or result.code <> 400 then return ""
     if code = "INVALID_SUBTITLE_STREAM" then return "That subtitle track isn't in this file."
     if code = "SUBTITLE_NOT_IMAGE" then return "That subtitle track can't be burned in."
     if code = "BURN_IN_UNSUPPORTED" then return TranscodeRequest_BurnUnsupportedText()

@@ -115,6 +115,7 @@
     <string name="subtitles_burn_in_unsupported">These subtitles can\'t be shown on this video</string>
     <string name="subtitles_burn_in_unavailable">That subtitle track isn\'t available</string>
     <string name="subtitles_burn_in_failed">Couldn\'t change subtitles</string>
+    <string name="subtitles_burn_in_server">This server can\'t burn in subtitles right now</string>
     <string name="up_next">Up Next</string>
     <string name="play_now">Play Now</string>
     <string name="cancel">Cancel</string>

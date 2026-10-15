@@ -108,7 +108,7 @@ describe('applyBurn', () => {
 
 describe('BURN_ERROR_CODES', () => {
   it('covers the server burn refusals', () => {
-    for (const c of ['INVALID_SUBTITLE_STREAM', 'SUBTITLE_NOT_IMAGE', 'BURN_IN_UNSUPPORTED']) {
+    for (const c of ['INVALID_SUBTITLE_STREAM', 'SUBTITLE_NOT_IMAGE', 'BURN_IN_UNSUPPORTED', 'BURN_IN_UNAVAILABLE']) {
       expect(BURN_ERROR_CODES.has(c)).toBe(true);
     }
     expect(BURN_ERROR_CODES.has('TOO_MANY_SESSIONS')).toBe(false);

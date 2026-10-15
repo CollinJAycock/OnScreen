@@ -140,6 +140,10 @@ enum class BurnInFailure {
      *  of this file (any more). */
     UNAVAILABLE,
 
+    /** 503 BURN_IN_UNAVAILABLE: no transcode worker on the server can burn
+     *  subtitles in (an older remote worker). */
+    SERVER,
+
     /** Anything else: the new session didn't start. */
     FAILED,
 }
@@ -1238,6 +1242,9 @@ class PlaybackViewModel @Inject constructor(
 
         /** The [BurnInFailure] for a failed burn-in restart [e]. */
         internal fun burnInFailureOf(e: Exception): BurnInFailure {
+            if (e is HttpException && e.code() == 503 && e.apiError()?.code == "BURN_IN_UNAVAILABLE") {
+                return BurnInFailure.SERVER
+            }
             if (e !is HttpException || e.code() != 400) return BurnInFailure.FAILED
             return when (e.apiError()?.code) {
                 "BURN_IN_UNSUPPORTED" -> BurnInFailure.UNSUPPORTED

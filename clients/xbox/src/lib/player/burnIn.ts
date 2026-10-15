@@ -81,6 +81,11 @@ export const BURN_IN_ERROR_CODES: ReadonlySet<string> = new Set([
   'BURN_IN_UNSUPPORTED',
 ]);
 
+/** 503 when no transcode worker can burn subtitles in (an older remote
+ *  worker): refused the same way, and as safely — the server checks before
+ *  it replaces the running session. */
+export const BURN_IN_UNAVAILABLE = 'BURN_IN_UNAVAILABLE';
+
 /**
  * The message to show for a start the server refused to burn in, or null
  * when `e` is anything else. A retry can't change the answer, and the
@@ -89,7 +94,10 @@ export const BURN_IN_ERROR_CODES: ReadonlySet<string> = new Set([
  */
 export function burnInRefusal(e: unknown): string | null {
   const err = e as { status?: unknown; code?: unknown; message?: unknown } | null;
-  if (!err || err.status !== 400 || typeof err.code !== 'string' || !BURN_IN_ERROR_CODES.has(err.code)) return null;
+  if (!err || typeof err.code !== 'string') return null;
+  const refused = (err.status === 400 && BURN_IN_ERROR_CODES.has(err.code)) ||
+    (err.status === 503 && err.code === BURN_IN_UNAVAILABLE);
+  if (!refused) return null;
   const msg = typeof err.message === 'string' ? err.message.trim() : '';
   return msg || 'These subtitles can’t be burned in.';
 }

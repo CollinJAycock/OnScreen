@@ -2585,6 +2585,8 @@ class PlayerViewModelTest {
         assertThat(BurnInFailure.of(err("INVALID_SUBTITLE_STREAM"))).isEqualTo(BurnInFailure.UNAVAILABLE)
         assertThat(BurnInFailure.of(err("SUBTITLE_NOT_IMAGE"))).isEqualTo(BurnInFailure.UNAVAILABLE)
         assertThat(BurnInFailure.of(err("BURN_IN_UNSUPPORTED"))).isEqualTo(BurnInFailure.UNSUPPORTED)
+        assertThat(BurnInFailure.of(httpError(503, """{"error":{"code":"BURN_IN_UNAVAILABLE","message":"x"}}""")))
+            .isEqualTo(BurnInFailure.SERVER)
         assertThat(BurnInFailure.of(httpError(503, "{}"))).isEqualTo(BurnInFailure.FAILED)
         assertThat(BurnInFailure.of(RuntimeException("offline"))).isEqualTo(BurnInFailure.FAILED)
     }

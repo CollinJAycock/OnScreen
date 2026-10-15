@@ -102,6 +102,10 @@ sub testRefusals()
     raw = "{""error"":{""code"":""BAD_REQUEST"",""message"":""audio_stream_index 3 is out of range: this file has 2 audio tracks""}}"
     runStr("refusal: other 400 shows the server's sentence", TranscodeRequest_RefusalText(ApiResult_From(400, raw)), "audio_stream_index 3 is out of range: this file has 2 audio tracks")
     runStr("refusal: bare 400", TranscodeRequest_RefusalText(ApiResult_From(400, "")), "The server couldn't switch to that track.")
+    raw = "{""error"":{""code"":""BURN_IN_UNAVAILABLE"",""message"":""x""}}"
+    runStr("refusal: no worker can burn", TranscodeRequest_RefusalText(ApiResult_From(503, raw)), "This server can't burn in subtitles right now.")
+    raw = "{""error"":{""code"":""SERVICE_UNAVAILABLE"",""message"":""x""}}"
+    runStr("refusal: other 503", TranscodeRequest_RefusalText(ApiResult_From(503, raw)), "")
     raw = "{""error"":{""code"":""SUBTITLE_NOT_IMAGE"",""message"":""x""}}"
     runStr("refusal: not a 400", TranscodeRequest_RefusalText(ApiResult_From(500, raw)), "")
     runStr("refusal: success", TranscodeRequest_RefusalText(ApiResult_From(200, "{""data"":{}}")), "")

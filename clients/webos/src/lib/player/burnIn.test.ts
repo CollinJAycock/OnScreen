@@ -156,6 +156,11 @@ describe('burnInRefusal', () => {
     expect(burnInRefusal(apiError(400, 'BURN_IN_UNSUPPORTED', ''))).toBe('These subtitles can’t be burned in.');
   });
 
+  it('also refuses a 503 when no worker can burn subtitles in', () => {
+    expect(burnInRefusal(apiError(503, 'BURN_IN_UNAVAILABLE', 'no worker can burn'))).toBe('no worker can burn');
+    expect(burnInRefusal(apiError(503, 'SERVICE_UNAVAILABLE', 'x'))).toBeNull();
+  });
+
   it('is null for anything else', () => {
     expect(burnInRefusal(apiError(400, 'BAD_REQUEST', 'x'))).toBeNull();
     expect(burnInRefusal(apiError(500, 'BURN_IN_UNSUPPORTED', 'x'))).toBeNull();

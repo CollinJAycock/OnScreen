@@ -12,12 +12,14 @@
 
 import type { ExternalSubtitle, ItemFile, SubtitleStream } from '$lib/api';
 
-// Server errors that mean "this burn request can't happen" (400s): the page
-// shows the message and stays on what it was playing.
+// Server errors that mean "this burn request can't happen": the three 400s,
+// and 503 BURN_IN_UNAVAILABLE when no transcode worker can burn subtitles.
+// The page shows the message and stays on what it was playing.
 export const BURN_ERROR_CODES: ReadonlySet<string> = new Set([
   'INVALID_SUBTITLE_STREAM',
   'SUBTITLE_NOT_IMAGE',
   'BURN_IN_UNSUPPORTED',
+  'BURN_IN_UNAVAILABLE',
 ]);
 
 // Codec fallback for servers that predate subtitle_streams[].image_based.
