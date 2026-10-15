@@ -75,6 +75,14 @@ function ApiItemTrickplay(id as String) as String
     return "/api/v1/items/" + id + "/trickplay"
 end function
 
+' POST { file_id } → { decision, file_id, reason?, optimized_version?,
+' source_decision? } — the server's play verdict for this client's
+' X-Client-Capabilities. 429 TOO_MANY_SESSIONS when the account is over its
+' stream limit. See Playback_PlanFromServer.
+function ApiItemPlaybackDecision(id as String) as String
+    return "/api/v1/items/" + id + "/playback-decision"
+end function
+
 ' Asset routes (auth via ?token= query param via the asset-route
 ' middleware on the Go server; the Roku Video / Poster nodes can't
 ' attach an Authorization header to their HTTP fetches). The server
@@ -97,6 +105,15 @@ end function
 ' takes (it prepends the configured server itself).
 function AssetStreamPath(fileId as String, token as String) as String
     return "/media/stream/" + fileId + "?token=" + token
+end function
+
+' An optimized version's stream (optimized_version.stream_url, a path like
+' /media/optimized/{id}) with its token as ?token= — stream_token, bound to
+' the version, or the purpose=asset token when an older build sent none.
+function AssetOptimizedPath(streamUrl as String, token as String) as String
+    sep = "?"
+    if Instr(1, streamUrl, "?") > 0 then sep = "&"
+    return streamUrl + sep + "token=" + token
 end function
 
 ' Pairing endpoints. PairCode mints a PIN + device_token for the

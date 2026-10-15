@@ -100,6 +100,17 @@ function Playback_Decide(file as Object, supportsHevc as Boolean) as Object
         return out
     end if
 
+    ' Transcode height hint, set on every video verdict: a direct play or
+    ' remux the server demotes to a transcode (Playback_FromVerdict) keeps
+    ' it. Match source resolution: 4K source → 4K out, anything else →
+    ' 1080p out. Server re-clamps against its own max-height cap and the
+    ' viewer's quality profile, so this is just a hint.
+    sourceH = 1080
+    if file.resolution_h <> invalid and file.resolution_h > 0
+        sourceH = file.resolution_h
+    end if
+    if sourceH >= 2160 then out.height = 2160 else out.height = 1080
+
     videoOk = inList(Playback_DirectVideoCodecs(supportsHevc), videoCodec)
     audioOk = audioCodec = "" or inList(Playback_DirectAudioCodecs(), audioCodec)
     containerOk = inList(Playback_DirectContainers(), container)
@@ -115,15 +126,81 @@ function Playback_Decide(file as Object, supportsHevc as Boolean) as Object
         return out
     end if
 
-    ' Full transcode. Match source resolution: 4K source → 4K out,
-    ' anything else → 1080p out. Server re-clamps against its own
-    ' max-height cap so this is just a hint.
-    sourceH = 1080
-    if file.resolution_h <> invalid and file.resolution_h > 0
-        sourceH = file.resolution_h
-    end if
-    if sourceH >= 2160 then out.height = 2160 else out.height = 1080
+    ' Full transcode at out.height.
     return out
+end function
+
+' ── Server play decision (v2.6) ─────────────────────────────────────────
+' Before a video plays, PlayerScene asks POST /items/{id}/playback-decision
+' { file_id } and turns the answer (an ApiResult_From result) into a plan
+' on top of the local decision:
+'
+'   { kind: "limit", message }   429 TOO_MANY_SESSIONS: show message in a
+'                                "Too many streams" dialog; don't play.
+'   { kind: "optimized", url, token, fallback }
+'                                reason "optimized_version": play
+'                                optimized_version.stream_url directly (an
+'                                MP4, H.264 / AAC) with stream_token as its
+'                                ?token=; if it fails, play `fallback` once
+'                                (the source's own verdict, source_decision).
+'   { kind: "play", decision }   anything else: the local decision — demoted
+'                                to a transcode when the server says the
+'                                source must transcode (the viewer's quality
+'                                profile, a bitrate cap, a resolution
+'                                ceiling). The server never upgrades it.
+'
+' A failed call (older server without the endpoint, network) plays the
+' local decision as before. Depends on PlaybackStop.brs.
+function Playback_PlanFromServer(result as Dynamic, localDecision as Object) as Object
+    limitMsg = PlaybackLimit_FromResult(result)
+    if limitMsg <> "" then return { kind: "limit", message: limitMsg }
+    plan = { kind: "play", decision: localDecision }
+    if result = invalid or type(result) <> "roAssociativeArray" or result.ok <> true then return plan
+    d = result.data
+    if d = invalid or type(d) <> "roAssociativeArray" then return plan
+
+    ov = d.optimized_version
+    if playbackStr(d.reason) = "optimized_version" and ov <> invalid and type(ov) = "roAssociativeArray" and playbackStr(ov.stream_url) <> ""
+        fallback = Playback_FromVerdict(d.source_decision, localDecision)
+        if fallback = invalid then fallback = localDecision
+        return { kind: "optimized", url: ov.stream_url, token: playbackStr(ov.stream_token), fallback: fallback }
+    end if
+
+    if playbackStr(d.decision) = "transcode" and (localDecision.mode = "direct" or localDecision.mode = "remux")
+        plan.decision = Playback_FromVerdict("transcode", localDecision)
+    end if
+    return plan
+end function
+
+' A server verdict (directPlay / directStream / transcode) as this player's
+' decision: direct, remux (video copy) or a full transcode at the local
+' decision's height. invalid for anything else (unsupported, damaged,
+' missing) — the caller keeps its own decision.
+function Playback_FromVerdict(verdict as Dynamic, localDecision as Object) as Dynamic
+    v = playbackStr(verdict)
+    out = {
+        mode: "",
+        height: localDecision.height,
+        videoCopy: false,
+        supportsHevc: localDecision.supportsHevc
+    }
+    if v = "directPlay"
+        out.mode = "direct"
+    else if v = "directStream"
+        out.mode = "remux"
+        out.videoCopy = true
+    else if v = "transcode"
+        out.mode = "transcode"
+    else
+        return invalid
+    end if
+    return out
+end function
+
+function playbackStr(v as Dynamic) as String
+    if v = invalid then return ""
+    if type(v) <> "String" and type(v) <> "roString" then return ""
+    return v
 end function
 
 ' Probe the Roku firmware once to learn whether the device can

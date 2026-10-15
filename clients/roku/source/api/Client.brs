@@ -79,22 +79,36 @@ end function
 ' Self-contained (HEVC probe inlined) so it's in scope wherever Client.brs is —
 ' the fetch Tasks include Client.brs but not the playback Decide.brs. Mirrors
 ' Playback_SupportsHevc's roDeviceInfo probe. The server uses this for transcode
-' target selection and the POST /items/{id}/playback-decision endpoint. The
-' maxbitdepth/hdr fields are starting values — verify per device before adopting
-' the decision endpoint. See docs/capability-profiles.md for the grammar.
+' target selection and the POST /items/{id}/playback-decision endpoint, which
+' the player asks before every video (for the stream limit, optimized versions
+' and quality-profile demotions — its own Playback_Decide still picks direct
+' vs. remux). The maxbitdepth/hdr fields are starting values — verify per
+' device before trusting the server's directPlay verdicts. See
+' docs/capability-profiles.md for the grammar.
 function Client_CapabilitiesHeader() as String
-    video = "h264"
+    supportsHevc = false
     info = CreateObject("roDeviceInfo")
     if info <> invalid and info.CanDecodeVideo <> invalid
         hevc = info.CanDecodeVideo({ Codec: "hevc" })
-        if hevc <> invalid and hevc.Result = true then video = video + ":h265"
+        if hevc <> invalid and hevc.Result = true then supportsHevc = true
     end if
+    return Client_CapabilitiesHeaderFor(supportsHevc)
+end function
+
+' The header for a device that does (or doesn't) decode HEVC. Pure —
+' tests/Capabilities_test.brs. optimized=1 (v2.6) says this player can
+' play an optimized version the play decision hands it (an MP4, H.264 /
+' AAC, direct-played from its own stream_url).
+function Client_CapabilitiesHeaderFor(supportsHevc as Boolean) as String
+    video = "h264"
+    if supportsHevc then video = video + ":h265"
     header = "videoDecoder=" + video
     header = header + ",audioDecoder=aac:ac3:eac3:mp3:flac"
     header = header + ",protocols=mp4:ts"
     header = header + ",maxWidth=3840,maxHeight=2160"
     header = header + ",maxAudioChannels=6"
     header = header + ",maxbitdepth=10,hdr=1"
+    header = header + ",optimized=1"
     return header
 end function
 

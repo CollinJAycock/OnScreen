@@ -54,6 +54,16 @@ const suites = [
     test: 'tests/PlaybackDecide_test.brs',
   },
   {
+    name: 'PlaybackPlan',
+    sources: ['source/util/Json.brs', 'source/api/ApiResult.brs', 'source/playback/PlaybackStop.brs', 'source/playback/Decide.brs'],
+    test: 'tests/PlaybackPlan_test.brs',
+  },
+  {
+    name: 'Capabilities',
+    sources: ['source/api/Client.brs'],
+    test: 'tests/Capabilities_test.brs',
+  },
+  {
     name: 'Trickplay',
     sources: ['source/playback/Trickplay.brs'],
     test: 'tests/Trickplay_test.brs',
