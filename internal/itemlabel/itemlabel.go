@@ -123,7 +123,7 @@ func (f Filter) BlockedArg() []string {
 	return f.Blocked
 }
 
-// AllowedArg: see BlockedArg.
+// AllowedArg is BlockedArg for the allowed labels.
 func (f Filter) AllowedArg() []string {
 	if len(f.Allowed) == 0 {
 		return nil
