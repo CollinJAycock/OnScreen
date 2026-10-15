@@ -8,6 +8,15 @@ data class UserPreferences(
     val preferred_subtitle_lang: String? = null,
     val forced_subtitles_only: Boolean = false,
     val max_content_rating: String? = null,
+    // The user's own quality profile (v2.6), enforced by the server on every
+    // device: limits on what it plays (null = none) and the codec a
+    // conversion prefers ("h264" / "hevc", null = automatic). Written only
+    // through PUT /users/me/quality-profile (QualityProfile); the preferences
+    // PUT ignores them.
+    val max_video_height: Int? = null,
+    val max_video_bitrate_kbps: Int? = null,
+    val max_audio_bitrate_kbps: Int? = null,
+    val preferred_video_codec: String? = null,
     // Per-user home (hub) row order + visibility, configured on the web home page
     // and shared across devices via the user prefs. null = never customized
     // (render the default layout). Keys the clients understand: continue_tv,

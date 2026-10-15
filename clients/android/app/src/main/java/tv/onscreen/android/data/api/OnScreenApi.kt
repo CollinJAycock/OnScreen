@@ -262,6 +262,12 @@ interface OnScreenApi {
     @PUT("api/v1/users/me/preferences")
     suspend fun setPreferences(@Body body: UserPreferences)
 
+    /** v2.6. Replaces the user's whole quality profile; 204 No Content, 400
+     *  for a value the server refuses. The body is QualityProfile.toJson's
+     *  (nulls written out — a null clears that limit), passed through as-is. */
+    @PUT("api/v1/users/me/quality-profile")
+    suspend fun setQualityProfile(@Body body: okhttp3.RequestBody)
+
     // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
 
     @GET("api/v1/users/me/scrobble")

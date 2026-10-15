@@ -128,6 +128,13 @@
     <string name="account">Account</string>
     <string name="scrobbling">Scrobbling</string>
     <string name="playback_settings">Playback</string>
+    <!-- Playback quality (v2.6): the account's quality profile. -->
+    <string name="playback_quality">Playback quality</string>
+    <string name="playback_quality_hint">Saved to your account and applied on every device: anything above these limits is converted before it plays.</string>
+    <string name="quality_max_resolution">Maximum resolution</string>
+    <string name="quality_max_video_bitrate">Maximum video bitrate</string>
+    <string name="quality_max_audio_bitrate">Maximum audio bitrate</string>
+    <string name="quality_video_format">Video format when converting</string>
     <string name="match_frame_rate">Match frame rate</string>
     <string name="match_frame_rate_hint">Switches the TV to the video\'s frame rate while it plays, so films don\'t judder. The screen goes dark for a moment as it switches. Fire TV also needs its own Match Original Frame Rate setting on. Nvidia Shield needs nothing more. On Android 12 and later, the TV\'s Match content frame rate setting decides.</string>
     <string name="setting_on">On</string>
