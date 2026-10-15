@@ -128,6 +128,14 @@ func TestQualityProfileHelpers(t *testing.T) {
 		}
 	}
 
+	for _, tc := range []struct{ cap, ch, want int }{
+		{0, 2, 0}, {96, 2, 96}, {320, 2, 128}, {256, 6, 256}, {512, 6, 384},
+	} {
+		if got := (QualityProfile{MaxAudioBitrateKbps: tc.cap}).aacKbps(tc.ch); got != tc.want {
+			t.Errorf("aacKbps(cap %d, %d ch) = %d, want %d", tc.cap, tc.ch, got, tc.want)
+		}
+	}
+
 	br := int64(20_000_000)
 	movie := &media.File{VideoCodec: strPtr("h264"), Bitrate: &br}
 	c := streamCap{Kbps: 12000, Remote: true, RemoteBinding: true}.withQuality(QualityProfile{MaxVideoBitrateKbps: 6000}, movie)

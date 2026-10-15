@@ -92,6 +92,16 @@ func (q QualityProfile) audioChannels(channels int) int {
 	return channels
 }
 
+// aacKbps is the AAC bitrate a transcode with this many output channels
+// uses: the channel-count default, held to the audio bitrate. 0 (the
+// worker's own default) when the profile sets no audio limit.
+func (q QualityProfile) aacKbps(channels int) int {
+	if q.MaxAudioBitrateKbps <= 0 {
+		return 0
+	}
+	return min(q.MaxAudioBitrateKbps, transcode.AACBitrateKbps(channels))
+}
+
 // outputCodec applies the codec preference to Start's output choice: "h264"
 // turns HEVC and AV1 output off; "hevc" asks for HEVC whenever the client
 // decodes it and the video is re-encoded.

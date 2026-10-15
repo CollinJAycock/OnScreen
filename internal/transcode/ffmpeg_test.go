@@ -2333,26 +2333,3 @@ func TestBuildHLS_H264Remux_UnaffectedByHEVCRemuxFix(t *testing.T) {
 		t.Errorf("H.264 remux must not carry an hvc1 tag: %s", argStr)
 	}
 }
-
-// AudioBitrateKbps is a ceiling: it lowers the channel-count default and
-// never raises it.
-func TestBuildHLS_AudioBitrateCeiling(t *testing.T) {
-	for _, tc := range []struct {
-		cap, channels int
-		want          string
-	}{
-		{0, 2, "-b:a 128k"},
-		{96, 2, "-b:a 96k"},
-		{320, 2, "-b:a 128k"},
-		{256, 6, "-b:a 256k"},
-	} {
-		args := strings.Join(BuildHLS(BuildArgs{
-			InputPath: "/media/movie.mkv", Encoder: EncoderSoftware, Width: 1280, Height: 720,
-			BitrateKbps: 4000, AudioCodec: "aac", AudioChannels: tc.channels, AudioBitrateKbps: tc.cap,
-			SessionDir: "/tmp/s", SegmentPrefix: "seg",
-		}), " ")
-		if !strings.Contains(args, tc.want) {
-			t.Errorf("cap %d, %d ch: want %q in %s", tc.cap, tc.channels, tc.want, args)
-		}
-	}
-}

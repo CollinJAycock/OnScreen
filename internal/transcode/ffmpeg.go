@@ -210,7 +210,7 @@ type BuildArgs struct {
 	// Audio (ADR-018)
 	AudioCodec       string // "copy" | "aac"
 	AudioChannels    int    // 0 = keep source
-	AudioBitrateKbps int    // ceiling on the AAC bitrate; 0 = the channel-count default
+	AudioBitrateKbps int    // 0 = auto
 	AudioStreamIndex int    // -1 = default (first); >= 0 = specific stream index
 
 	// Subtitles
@@ -763,12 +763,11 @@ func BuildHLS(a BuildArgs) []string {
 			channels = 2 // default stereo
 		}
 		args = append(args, "-ac", fmt.Sprint(channels))
-		// Scale with channel count so a 5.1 / 7.1 downmix isn't starved
-		// the way a flat 128k would be (128k stereo, ~64k/channel above).
-		// The viewer's audio bitrate limit only ever lowers it.
-		bitrate := AACBitrateKbps(channels)
-		if a.AudioBitrateKbps > 0 && a.AudioBitrateKbps < bitrate {
-			bitrate = a.AudioBitrateKbps
+		bitrate := a.AudioBitrateKbps
+		if bitrate <= 0 {
+			// Scale with channel count so a 5.1 / 7.1 downmix isn't starved
+			// the way a flat 128k would be (128k stereo, ~64k/channel above).
+			bitrate = AACBitrateKbps(channels)
 		}
 		args = append(args, "-b:a", fmt.Sprintf("%dk", bitrate))
 		// Align audio with video on remux (video-copy + audio-reencode)

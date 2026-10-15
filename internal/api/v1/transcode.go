@@ -1079,7 +1079,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser, playMeta.apply,
 				func(s *transcode.Session) {
 					s.Parts = srcParts
-					s.AudioBitrateKbps = streamCaps.Quality.MaxAudioBitrateKbps
+					s.AudioBitrateKbps = streamCaps.Quality.aacKbps(audioChannels)
 				})
 			// startABR answers the client itself; its parent session existing
 			// under sessionID is the success signal.
@@ -1186,7 +1186,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		BitrateKbps:      jobBitrate,
 		AudioCodec:       jobAudioCodec,
 		AudioChannels:    audioChannels,
-		AudioBitrateKbps: streamCaps.Quality.MaxAudioBitrateKbps,
+		AudioBitrateKbps: streamCaps.Quality.aacKbps(audioChannels),
 		AudioStreamIndex: audioStreamIdx,
 		IsHEVC:           isSourceHEVC,
 		IsAV1:            isSourceAV1,
