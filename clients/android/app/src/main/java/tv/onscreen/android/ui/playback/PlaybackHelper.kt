@@ -65,6 +65,29 @@ object PlaybackHelper {
         else -> decide(file)
     }
 
+    /**
+     * Whether to refuse a file as Dolby Vision this device can't play,
+     * showing "Dolby Vision is not supported" instead of starting anything.
+     * The server's [verdict] decides: "unsupported" is refused. The file's
+     * own [hdrType] ("dolby_vision" is profile 5 only) backs it up for a
+     * failed decision call or an older server, unless the device declared
+     * profile 5 ([declaresProfile5], the header's dovi key), or the server
+     * offered an optimized version ([hasOptimized]: SDR H.264 whatever its
+     * source). A re-encode ([mode] Transcode) of profile 5 is refused
+     * regardless: nothing tone-maps it, and it comes out green and purple.
+     */
+    internal fun refusesDolbyVision(
+        verdict: String?,
+        mode: PlaybackMode?,
+        hdrType: String?,
+        hasOptimized: Boolean,
+        declaresProfile5: Boolean,
+    ): Boolean {
+        if (verdict == VERDICT_UNSUPPORTED) return true
+        if (hasOptimized || hdrType?.equals("dolby_vision", ignoreCase = true) != true) return false
+        return mode is PlaybackMode.Transcode || !declaresProfile5
+    }
+
     /** The server's verdict for a file whose content can't be played or
      *  converted (Dolby Vision profile 5). */
     const val VERDICT_UNSUPPORTED = "unsupported"
@@ -505,6 +528,10 @@ object PlaybackHelper {
         val hdr: Boolean = true,
         /** The screen shows HLG ([displayShowsHlg]). */
         val hlg: Boolean = false,
+        /** The screen shows Dolby Vision ([displayShowsDolbyVision]). False
+         *  until the screen says so: a platform that can't say gets the base
+         *  layer, as before. */
+        val dv: Boolean = false,
     )
 
     @Volatile private var output = Output()
@@ -692,15 +719,21 @@ object PlaybackHelper {
             )
             val hdr = displayShowsHdr10(hdrTypes)
             val hlg = displayShowsHlg(hdrTypes, android.os.Build.MANUFACTURER)
+            val dv = displayShowsDolbyVision(hdrTypes)
             val before = output
             updateOutput {
-                if (w > 0 && h > 0) it.copy(width = w, height = h, hdr = hdr, hlg = hlg) else it.copy(hdr = hdr, hlg = hlg)
+                if (w > 0 && h > 0) {
+                    it.copy(width = w, height = h, hdr = hdr, hlg = hlg, dv = dv)
+                } else {
+                    it.copy(hdr = hdr, hlg = hlg, dv = dv)
+                }
             }
             if (output != before) {
                 android.util.Log.i(
                     "PlaybackHelper",
                     "screen: ${output.width}x${output.height}, HDR types ${hdrTypes?.joinToString() ?: "unknown"}: " +
-                        "HDR10 ${if (hdr) "yes" else "no"}, HLG ${if (hlg) "yes" else "no"} " +
+                        "HDR10 ${if (hdr) "yes" else "no"}, HLG ${if (hlg) "yes" else "no"}, " +
+                        "Dolby Vision ${if (dv) "yes" else "no"} " +
                         "(the server tone-maps HDR sources the screen doesn't show)",
                 )
             }
@@ -739,12 +772,76 @@ object PlaybackHelper {
     internal fun displayShowsHlg(hdrTypes: IntArray?, manufacturer: String?): Boolean =
         !manufacturer.equals("NVIDIA", ignoreCase = true) && hdrTypes?.contains(HDR_TYPE_HLG) == true
 
+    /**
+     * Whether a screen reporting [hdrTypes] shows Dolby Vision: only when it
+     * lists it. Fire OS reports it from the TV's EDID; a Fire TV on a TV
+     * without Dolby Vision (HDR10/HLG/HDR10+ only) decodes Dolby Vision but
+     * can't show it, so it must not ask for it.
+     */
+    internal fun displayShowsDolbyVision(hdrTypes: IntArray?): Boolean =
+        hdrTypes?.contains(HDR_TYPE_DOLBY_VISION) == true
+
+    /**
+     * The header's dovi key (docs/capability-profiles.md "Dolby Vision"): the
+     * Dolby Vision profiles this device both decodes ([decoderProfiles], the
+     * MediaCodecInfo.CodecProfileLevel.DolbyVisionProfile* values its
+     * video/dolby-vision decoders report) and shows ([screenDv]), or null:
+     * the key is left out and the server sends the base layer, as before.
+     * DvheStn is profile 5; DvheDtb profile 7 (two layers, rare: a Fire TV
+     * hasn't it, so the server converts profile 7 to 8.1 for it); DvheSt
+     * profile 8, which is 8.1 (HDR10 base) and, on a screen that shows HLG
+     * ([hlg]), 8.4 (HLG base).
+     */
+    internal fun doviKey(decoderProfiles: Collection<Int>, screenDv: Boolean, hlg: Boolean): String? {
+        if (!screenDv) return null
+        val keys = buildList {
+            if (DV_PROFILE_DVHE_STN in decoderProfiles) add("5")
+            if (DV_PROFILE_DVHE_DTB in decoderProfiles) add("7")
+            if (DV_PROFILE_DVHE_ST in decoderProfiles) {
+                add("8.1")
+                if (hlg) add("8.4")
+            }
+        }
+        return if (keys.isEmpty()) null else "dovi=" + keys.joinToString(":")
+    }
+
+    /** The Dolby Vision profile keys ("5", "7", "8.1", "8.4") the header
+     *  declares for the screen as it is now ([doviKey]). */
+    fun dolbyVisionProfiles(): Set<String> {
+        val out = output
+        val key = doviKey(dolbyVisionDecoderProfiles, out.dv, hlg = supports10Bit() && out.hlg) ?: return emptySet()
+        return key.removePrefix("dovi=").split(":").toSet()
+    }
+
+    /** The profiles (CodecProfileLevel.DolbyVisionProfile*) this device's
+     *  hardware Dolby Vision decoders report, probed once. */
+    private val dolbyVisionDecoderProfiles: Set<Int> by lazy {
+        decoderInfos.filter { isHardware(it) }.flatMap { info ->
+            info.supportedTypes.filter { it.equals("video/dolby-vision", ignoreCase = true) }.flatMap { type ->
+                try {
+                    info.getCapabilitiesForType(type).profileLevels.map { it.profile }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+        }.toSet()
+    }
+
     /** Display.HdrCapabilities.HDR_TYPE_HDR10 / HDR_TYPE_HLG /
      *  HDR_TYPE_HDR10_PLUS (API 29 for the last; the values are what matter
      *  on older ones). */
     private const val HDR_TYPE_HDR10 = 2
     private const val HDR_TYPE_HLG = 3
     private const val HDR_TYPE_HDR10_PLUS = 4
+    /** Display.HdrCapabilities.HDR_TYPE_DOLBY_VISION. */
+    private const val HDR_TYPE_DOLBY_VISION = 1
+
+    /** MediaCodecInfo.CodecProfileLevel.DolbyVisionProfileDvheStn (profile
+     *  5), DolbyVisionProfileDvheDtb (7) and DolbyVisionProfileDvheSt (8):
+     *  bit n is profile n. */
+    private const val DV_PROFILE_DVHE_STN = 0x20
+    private const val DV_PROFILE_DVHE_DTB = 0x80
+    private const val DV_PROFILE_DVHE_ST = 0x100
 
     /** The absolute URL of a chapter's thumbnail (Chapter.thumb_url, v2.6:
      *  server-relative, /trickplay/...), or null when it has none. */
@@ -788,7 +885,12 @@ object PlaybackHelper {
             // offers (a pre-made H.264/AAC MP4) as a direct play, falling
             // back to the source's verdict (PlaybackViewModel).
             OPTIMIZED_KEY,
-        ) + listOfNotNull(audioPassthroughKey(out.ac3, out.eac3, out.truehd, dts = out.dts || out.dtsHd))
+        ) + listOfNotNull(
+            audioPassthroughKey(out.ac3, out.eac3, out.truehd, dts = out.dts || out.dtsHd),
+            // Dolby Vision only for profiles this box decodes AND the screen
+            // shows; left out otherwise, and the server sends the base layer.
+            doviKey(dolbyVisionDecoderProfiles, out.dv, hlg = supports10Bit() && out.hlg),
+        )
         return (keys + depthAndHdrKeys(supports10Bit(), supportsVp9Profile2(), out.hdr, out.hlg)).joinToString(",")
     }
 

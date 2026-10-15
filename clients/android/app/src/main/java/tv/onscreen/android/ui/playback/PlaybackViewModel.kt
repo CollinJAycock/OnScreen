@@ -387,13 +387,16 @@ class PlaybackViewModel @Inject constructor(
                     return@launch
                 }
 
-                // Dolby Vision is not supported: the server returns the "unsupported"
-                // verdict (DV can't be tonemapped correctly server-side — see
-                // docs/dolby-vision.md). Show a clear message rather than a broken
-                // transcode. hdr_type covers a failed/absent decision call; an
-                // optimized version is SDR H.264 whatever its source was.
-                if (verdict == "unsupported" || (optimized == null &&
-                        file.hdr_type?.equals("dolby_vision", ignoreCase = true) == true)) {
+                // Dolby Vision this device can't play: the server returns the
+                // "unsupported" verdict (profile 5 can't be tone-mapped correctly
+                // server-side — see docs/dolby-vision.md). Show a clear message
+                // rather than a broken transcode. See refusesDolbyVision for the
+                // local check behind it.
+                if (PlaybackHelper.refusesDolbyVision(
+                        verdict, mode, file.hdr_type, hasOptimized = optimized != null,
+                        declaresProfile5 = "5" in PlaybackHelper.dolbyVisionProfiles(),
+                    )
+                ) {
                     _uiState.value = PlaybackUiState(error = "dolby_vision")
                     return@launch
                 }
