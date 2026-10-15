@@ -21,6 +21,9 @@ import tv.onscreen.mobile.ui.player.PlaybackHelper
  * - /media/stream/ — Media3 ExoPlayer uses its own HTTP stack, not
  *   OkHttp; the route is reached via transcode session URLs that
  *   carry per-session ?token=, not via this interceptor.
+ * - /media/download/ — an original download (DownloadWorker) carries the
+ *   file's 24 h stream token in ?token=, as /media/stream did; a Bearer
+ *   that expires mid-transfer adds nothing.
  *
  * Notably NOT skipped: /artwork/. Coil's ImageLoader does run through
  * OkHttp and the server's RequiredAllowQueryToken middleware accepts
@@ -44,6 +47,7 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
         "auth/refresh",
         "health/live",
         "/media/stream/",
+        "/media/download/",
     )
 
     @Volatile private var cachedServerHost: String? = null

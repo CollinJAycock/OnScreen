@@ -80,11 +80,19 @@ end function
 ' the fetch Tasks include Client.brs but not the playback Decide.brs. Mirrors
 ' Playback_SupportsHevc's roDeviceInfo probe. The server uses this for transcode
 ' target selection and the POST /items/{id}/playback-decision endpoint, which
-' the player asks before every video (for the stream limit, optimized versions
-' and quality-profile demotions — its own Playback_Decide still picks direct
-' vs. remux). The maxbitdepth/hdr fields are starting values — verify per
-' device before trusting the server's directPlay verdicts. See
-' docs/capability-profiles.md for the grammar.
+' the player asks before every video and whose verdict is final
+' (Playback_PlanFromServer) — so the header never claims more than this
+' Roku plays: mp4 / mov / m4v only, like Playback_Decide (no mkv, no ts —
+' the Video node gets streamFormat "mp4"). ac3 / eac3 are declared on
+' purpose although the local Decide leaves them out: the server copies them
+' into a remux (Dolby passthrough), which Rokus have played since this
+' header shipped, so an mp4 + ac3 direct play uses the same decoder. The
+' local exclusion is about ac3 inside mkv and pre-2018 boxes without OS
+' passthrough; that fallback Decide stays conservative, and mkv stays
+' undeclared. flac is left out (not direct-played in a video). The
+' maxbitdepth/hdr fields are starting values — verify per device before
+' trusting the server's directPlay verdicts. See docs/capability-profiles.md
+' for the grammar.
 function Client_CapabilitiesHeader() as String
     supportsHevc = false
     info = CreateObject("roDeviceInfo")
@@ -103,8 +111,10 @@ function Client_CapabilitiesHeaderFor(supportsHevc as Boolean) as String
     video = "h264"
     if supportsHevc then video = video + ":h265"
     header = "videoDecoder=" + video
-    header = header + ",audioDecoder=aac:ac3:eac3:mp3:flac"
-    header = header + ",protocols=mp4:ts"
+    ' Playback_DirectAudioCodecs plus ac3 / eac3 (passthrough, see above);
+    ' Playback_DirectContainers (the server's "mp4" covers mov and m4v).
+    header = header + ",audioDecoder=aac:mp3:ac3:eac3"
+    header = header + ",protocols=mp4"
     header = header + ",maxWidth=3840,maxHeight=2160"
     header = header + ",maxAudioChannels=6"
     header = header + ",maxbitdepth=10,hdr=1"

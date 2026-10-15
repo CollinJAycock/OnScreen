@@ -2565,6 +2565,16 @@ paths:
         '401': { description: 'Bad or missing auth.' }
         '403': { description: "Caller's content-rating ceiling forbids this item, or per-library ACL denies access." }
         '404': { description: 'File not found, soft-deleted, or item lookup failed.' }
+        '409':
+          description: |
+            `TRANSCODE_REQUIRED`: the play decision would convert this video for
+            the viewer on any device — over the internet streaming limit from
+            outside the home network, or over the viewer's quality profile
+            (video bitrate or resolution). Play it through
+            `POST /api/v1/items/{id}/transcode` instead. Audio-only files and books are
+            never refused.
+        '422': { description: '`FILE_DAMAGED`: the integrity probe marked this video damaged.' }
+        '429': { description: '`TOO_MANY_SESSIONS`: over the admin-set concurrent-stream limit.' }
 
   /media/download/{id}:
     parameters:

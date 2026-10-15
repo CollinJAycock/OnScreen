@@ -88,7 +88,7 @@ npm run package
 ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
 ```
 
-**Local-only test coverage** (423 cases as of v2.6): `UrlEncodePath`,
+**Local-only test coverage** (450 cases as of v2.6): `UrlEncodePath`,
 `AssetStream`/`AssetArtwork` and API path contracts, `Json_Parse`/
 `UnwrapData`/`UnwrapList` envelope handling, string utils, the playback
 decision, trickplay VTT parsing, next-sibling order, and the v2.5 watch
@@ -164,8 +164,16 @@ universal anyway.
 - **v2.6** — multi-episode files labelled as ranges ("E1–E2") with
   auto-advance past the range; a Version picker (editions) with
   multi-part movies played as one; the server play decision before every
-  video (too-many-streams dialog, quality-profile demotions, optimized
-  versions via `optimized=1`); clear logos and studios on the detail
+  video, final as on the other clients — its directPlay / directStream /
+  transcode verdict replaces the local one in either direction, and
+  unsupported (Dolby Vision) or damaged files get a message instead of
+  playing (too-many-streams dialog, optimized versions via `optimized=1`;
+  the local decision only when the call fails or the verdict is unknown).
+  The capability header declares only mp4 / mov / m4v (no mkv or ts) and
+  aac / mp3 / ac3 / eac3 audio — ac3 / eac3 on purpose, for passthrough
+  on a remux, so an mp4 + ac3 may direct-play though the local fallback
+  decision stays conservative. Clear logos and
+  studios on the detail
   page; Similar artists / Appears on rows and Instant mix. Not here:
   chapter thumbnails (no chapter list on Roku) and the Playback quality
   setting (no settings screen).

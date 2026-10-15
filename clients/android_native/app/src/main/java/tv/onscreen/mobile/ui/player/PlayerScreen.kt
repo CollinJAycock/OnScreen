@@ -891,6 +891,13 @@ private fun PlayerHost(
                     vm.onStreamLimited(limited)
                     return
                 }
+                // A direct play the server refused with 409
+                // TRANSCODE_REQUIRED (it converts this file for this user):
+                // the VM asks for a transcode once (a new source, so a new
+                // player).
+                if (transcodeRequired(error) && vm.escalateFromDirectPlay(player.currentPosition + vm.hlsOffsetMs)) {
+                    return
+                }
                 // An optimized version that won't play: the VM moves to the
                 // source's own verdict once (a new source, so a new player).
                 if (source.isOptimized && vm.fallBackFromOptimized(player.currentPosition + vm.hlsOffsetMs)) {

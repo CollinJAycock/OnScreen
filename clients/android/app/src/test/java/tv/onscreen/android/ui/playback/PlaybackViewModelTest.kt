@@ -1471,6 +1471,34 @@ class PlaybackViewModelTest {
     }
 
     @Test
+    fun `a source that plays nowhere is refused, not played locally, when the version fails`() = runTest(dispatcher) {
+        // The local decision would direct play this H.264 MP4; the server
+        // said the source itself is damaged / Dolby Vision.
+        for ((sourceDecision, sentinel) in listOf(
+            "damaged" to PlaybackViewModel.DAMAGED_SENTINEL,
+            "unsupported" to "dolby_vision",
+        )) {
+            val itemRepo = itemRepo()
+            val transcodeRepo = transcodeRepoMock(relaxed = true)
+            coEvery { transcodeRepo.decide(any(), any()) } returns optimizedDecision(sourceDecision)
+            coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+
+            val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), serverPrefs(), audiobooks())
+            vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+            advanceUntilIdle()
+            vm.fallbackFromDirectPlay(9_000L)
+            advanceUntilIdle()
+
+            assertThat(vm.uiState.value.error).isEqualTo(sentinel)
+            // Still the version: the file itself never became the source.
+            assertThat((vm.uiState.value.source as PlaybackSource.DirectPlay).optimized).isTrue()
+            coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+        }
+        assertThat(PlaybackViewModel.sourceRefusal("transcode")).isNull()
+        assertThat(PlaybackViewModel.sourceRefusal(null)).isNull()
+    }
+
+    @Test
     fun `a source that direct plays is played as the file when the version fails`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = transcodeRepoMock(relaxed = true)

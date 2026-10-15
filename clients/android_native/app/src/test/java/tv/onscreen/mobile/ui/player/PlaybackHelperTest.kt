@@ -72,6 +72,30 @@ class PlaybackHelperTest {
     }
 
     @Test
+    fun `a server transcode asks for the same height the local decision does`() {
+        // The phone advertises maxHeight=2160 whatever its screen, so there
+        // is no panel cap on either path.
+        val k4 = file(container = "avi", video = "mpeg2", height = 2160)
+        assertThat(PlaybackHelper.modeFor("transcode", k4)).isEqualTo(PlaybackHelper.decide(k4))
+        assertThat(PlaybackHelper.transcodeHeight(file(height = null))).isEqualTo(1080)
+        assertThat(PlaybackHelper.transcodeHeight(file(height = 4320))).isEqualTo(2160)
+        assertThat(PlaybackHelper.transcodeHeight(file(height = 720))).isEqualTo(1080)
+    }
+
+    @Test
+    fun `a 409 TRANSCODE_REQUIRED on the stream is the server requiring a transcode`() {
+        assertThat(transcodeRequiredFromBody("""{"error":{"code":"TRANSCODE_REQUIRED","message":"x"}}""".toByteArray()))
+            .isTrue()
+        // A proxy that dropped the body: /media/stream answers no other 409.
+        assertThat(transcodeRequiredFromBody(null)).isTrue()
+        assertThat(transcodeRequiredFromBody(ByteArray(0))).isTrue()
+        assertThat(transcodeRequiredFromBody("""{"error":{"code":"CONFLICT"}}""".toByteArray())).isFalse()
+        assertThat(transcodeRequiredFromBody("<html>".toByteArray())).isFalse()
+        assertThat(transcodeRequired(null)).isFalse()
+        assertThat(transcodeRequired(java.io.IOException("reset"))).isFalse()
+    }
+
+    @Test
     fun `one part of a stacked movie never direct-plays`() {
         // Server unreachable: the local decision would direct-play cd1 alone
         // and stop where it ends. A remux session from any part's file_id

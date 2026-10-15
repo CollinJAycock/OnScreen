@@ -342,15 +342,37 @@ The Android TV client's header should add `hlg=0|1` (from the display's
 supported HDR types) and `vp9MaxBitDepth=8|10` (from the VP9 decoder's Profile 2
 support).
 
+**Done — the decision is final (2026-10-15).** Every client plays the
+server's verdict and decides locally only when it gets none (an older server,
+a failed call); the streaming routes hold a client that decided on its own to
+the same outcome:
+- **Transcode start** runs `Decide` for a `video_copy` request and re-encodes
+  when the verdict is transcode (`videoCopyRefused`,
+  internal/api/v1/decision_enforce.go). Without a capability profile only the
+  viewer's resolution ceiling is held; the bitrate caps already escalated a
+  copy.
+- **`GET /media/stream/{id}`** (`DirectPlayGate`) refuses a video the decision
+  would convert whatever the device: over the internet limit from outside the
+  home network or over the viewer's quality profile → 409
+  `TRANSCODE_REQUIRED`; damaged → 422 `FILE_DAMAGED`. Capability verdicts
+  aren't judged there (the request carries no profile). Audio-only files and
+  books are exempt — the web music player streams originals without asking —
+  and downloads go through `/media/download`. Each user's caps and the
+  internet policy are memoised for 10 s, since every Range request is checked.
+- **Roku** plays the verdict both ways (it used to keep its own and accept
+  only a demotion), and its header declares `protocols=mp4` only, so the
+  server never tells it to direct-play a container its Video node doesn't.
+  `ac3`/`eac3` stay declared for passthrough on remux.
+- **Web** awaits the verdict (up to 4 s) before starting; **Android TV and
+  phone** refuse `damaged` instead of falling back to local, and retry a
+  refused direct play once through the server.
+- The **TV web apps** (Tizen / webOS / Xbox) still turn `directPlay` into a
+  remux: their players are only tested on HLS.
+
 **Remaining:**
-1. **Redeploy QA** with `ea91ad4` so the *web* flip actually consults the server
-   there (the 175-sweep verified playback + the 7.1 fix, but the web was still on
-   local-fallback). 142/175 passed (141 + 1 transient DNS); a stall at #143 was
-   build/sweep resource contention, not a playback bug.
-2. Device-test the un-verified flips (Fire TV, Tizen/webOS TVs) — fallback-safe
-   meanwhile.
-3. Roku async-decision flip when a Roku is connected.
-4. Phase 3: audio passthrough (true 7.1/Atmos), video profile/level.
+1. Device-test on Roku (the verdict is now final there, unit-tested only),
+   Fire TV, Tizen and webOS.
+2. Phase 3: audio passthrough (true 7.1/Atmos), video profile/level.
 
 Why staged: the flip changes how playback *starts*. Driving the real endpoint
 per-client (local dev, then the phone on-device) caught both the `DirectStream`

@@ -1393,12 +1393,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // escalation. Only for DirectPlay — the ViewModel clears
             // directPlayContext on the first fallback, so an HLS/transcode
             // error that follows falls through to the dialog below instead
-            // of looping.
+            // of looping. The server refusing the direct stream with 409
+            // TRANSCODE_REQUIRED (a file it converts for this user, met when
+            // the play decision call failed and the local one direct played)
+            // takes this same escalation.
             if (currentSource is PlaybackSource.DirectPlay) {
                 val pos = player?.currentPosition ?: 0L
+                val why = if (PlaybackHelper.isTranscodeRequired(error)) "server requires a transcode" else error.errorCodeName
                 android.util.Log.w(
                     "PlaybackFragment",
-                    "direct play failed (${error.errorCodeName}); falling back to server transcode",
+                    "direct play failed ($why); falling back to server transcode",
                     error,
                 )
                 // Paused stays paused (a video reopened after the
@@ -2695,6 +2699,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // can't be tonemapped correctly server-side; see docs/dolby-vision.md).
             message == "dolby_vision" ->
                 "Dolby Vision" to "Dolby Vision is not supported on this device."
+            // The server's "damaged" verdict (the integrity probe), worded as
+            // the web player words it.
+            message == PlaybackViewModel.DAMAGED_SENTINEL ->
+                "This file appears to be damaged" to
+                    "The integrity check could not decode parts of this file, so playback would " +
+                    "stall or show broken video. Replace the file with a good copy and re-scan the library."
             else -> "Playback error" to message
         }
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)

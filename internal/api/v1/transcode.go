@@ -796,6 +796,17 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		hasProfile, caps.SupportsHEVC, caps.SupportsAV1, caps.MaxAudioChannels,
 		caps.MaxWidth, caps.MaxHeight, caps.MaxVideoBitDepth))
 
+	// The play decision is the server's: a client asking to copy video the
+	// decision would re-encode (a codec or depth it declared it can't decode,
+	// HDR on an SDR display, a picture above its or the viewer's resolution
+	// ceiling) gets the re-encode. Start used to copy whatever it was asked to.
+	if body.VideoCopy && videoCopyRefused(*file, caps, hasProfile, streamCaps.Quality,
+		transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}) {
+		h.logger.InfoContext(ctx, "transcode: video copy refused, the play decision is transcode",
+			"item_id", itemID, "file_id", file.ID)
+		body.VideoCopy = false
+	}
+
 	if body.VideoCopy {
 		encoder = "copy"
 		// No resolution or bitrate needed — video passes through unchanged.

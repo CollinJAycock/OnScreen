@@ -1,6 +1,7 @@
 ' PlayerScene controller. itemId is set by the caller before mount;
 ' on init we fire ItemFetchTask, then route through Playback_Decide
-' to pick one of three paths:
+' (for a video, overruled by the server's play decision when it
+' answers — Playback_PlanFromServer) to pick one of three paths:
 '
 '   direct  → file is roku-friendly (mp4 / h264 / aac etc.); hand
 '             /media/stream/{file.id} straight to the Video node.
@@ -242,14 +243,15 @@ sub onItemTaskState()
     ' Dolby Vision is not supported — Playback_Decide flags it "unsupported"
     ' (the server can't tonemap DV correctly and refuses with 415; see
     ' docs/dolby-vision.md). Show a clear message instead of bailing silently.
+    ' A pre-check: the server's own unsupported verdict is honoured too.
     if decision.mode = "unsupported"
-        showUnsupportedDialog("Dolby Vision is not supported.")
+        showUnsupportedDialog(Playback_UnsupportedMessage())
         return
     end if
 
-    ' Videos ask the server first (onDecisionDone): it may refuse the
-    ' stream, demote it to a transcode or offer an optimized version.
-    ' Audio plays straight away.
+    ' Videos ask the server first (onDecisionDone), whose verdict is final:
+    ' direct, remux or transcode, a refusal (too many streams, unsupported,
+    ' damaged) or an optimized version. Audio plays straight away.
     m.localDecision = decision
     if lcaseSafe(m.file.video_codec) <> ""
         startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
@@ -258,14 +260,16 @@ sub onItemTaskState()
     startPlayback(decision, -1)
 end sub
 
-' The server's play decision landed: refuse (too many streams), play its
-' optimized version, or play the (possibly demoted) local decision. A
+' The server's play decision landed: refuse (too many streams, or a file
+' nothing can play), play its optimized version, or play its verdict. A
 ' failed call plays the local decision.
 sub onDecisionDone(result as Dynamic)
     if m.adminStopped or m.limitShown then return
     plan = Playback_PlanFromServer(result, m.localDecision)
     if plan.kind = "limit"
         onStreamLimit(plan.message)
+    else if plan.kind = "unplayable"
+        showUnsupportedDialog(plan.message)
     else if plan.kind = "optimized"
         startOptimizedPlayback(plan)
     else
@@ -1289,15 +1293,16 @@ sub bailToHome()
     getMainScene().callFunc("navigateTo", "HomeScene")
 end sub
 
-' Show a one-button dialog (e.g. "Dolby Vision is not supported.") on the main
-' scene, then return to Home when the user dismisses it.
+' Show a one-button dialog (e.g. "Dolby Vision is not supported." or the
+' damaged-file message) on the main scene, then return to Home when the user
+' dismisses it.
 sub showUnsupportedDialog(msg as String)
     showExitDialog("Can't play this title", msg)
 end sub
 
 ' One-button dialog that leaves the player when dismissed — the Dolby
-' Vision refusal, an admin stop and too many streams. Every other failure
-' bails silently.
+' Vision and damaged-file refusals, an admin stop and too many streams.
+' Every other failure bails silently.
 sub showExitDialog(title as String, msg as String)
     showPlayerDialog(title, msg, true)
 end sub

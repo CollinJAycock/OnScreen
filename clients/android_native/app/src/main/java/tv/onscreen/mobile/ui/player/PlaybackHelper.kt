@@ -38,16 +38,29 @@ object PlaybackHelper {
         if (videoOk && audioOk && containerOk) return PlaybackMode.DirectPlay
         if (video in remuxVideoCodecs) return PlaybackMode.Remux
 
-        val sourceH = file.resolution_h ?: 1080
-        val defaultHeight = if (sourceH >= 2160) 2160 else 1080
-        return PlaybackMode.Transcode(defaultHeight)
+        return PlaybackMode.Transcode(transcodeHeight(file))
     }
+
+    /** The server's verdict for a file whose content can't be played or
+     *  converted (Dolby Vision profile 5). */
+    const val VERDICT_UNSUPPORTED = "unsupported"
+
+    /** The server's verdict for a file the integrity probe marked damaged:
+     *  no client and no server pipeline plays it. */
+    const val VERDICT_DAMAGED = "damaged"
+
+    /** The transcode rung for [file]: 2160 for a 4K source, else 1080 (also
+     *  when unknown). No panel cap, unlike the TV client: the phone
+     *  advertises maxHeight=2160 whatever its screen ([clientCapabilitiesHeader]),
+     *  so the server's verdict and [decide] already agree. */
+    fun transcodeHeight(file: ItemFile): Int = if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080
 
     /**
      * The [PlaybackMode] for a server verdict on [file] — "directPlay" |
      * "directStream" | "transcode" — or this device's own [decide] when there
      * is none (server unreachable, an older server, an unknown verdict).
-     * "unsupported" / "damaged" are the caller's to refuse before this.
+     * "unsupported" / "damaged" are the caller's to refuse before this
+     * (PlayerViewModel.prepare); what this returns for them is never played.
      *
      * One part of a stacked movie never plays alone ([forStack]).
      */
@@ -55,7 +68,7 @@ object PlaybackHelper {
         val mode = when (verdict) {
             "directPlay" -> PlaybackMode.DirectPlay
             "directStream" -> PlaybackMode.Remux
-            "transcode" -> PlaybackMode.Transcode(if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080)
+            "transcode" -> PlaybackMode.Transcode(transcodeHeight(file))
             else -> decide(file)
         }
         return forStack(mode, file)

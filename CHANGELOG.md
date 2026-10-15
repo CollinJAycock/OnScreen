@@ -831,6 +831,33 @@ API change lands only when every first-party client moves with it — see
 
 ### Changed
 
+- **The server's play decision is final.** Every app asks
+  `POST /items/{id}/playback-decision` how to play a file, and now plays the
+  answer; it decides on its own only when it gets no answer (an older server,
+  a failed call).
+  - **Transcode start** re-encodes video a client asked it to copy when the
+    decision for that client is a transcode (a codec or bit depth it can't
+    decode, HDR on an SDR display, a picture above its or the viewer's
+    resolution ceiling). It used to copy whatever it was asked to.
+  - **`GET /media/stream/{id}`** refuses a video the server would convert for
+    this viewer on any device: over the internet streaming limit from outside
+    the home network, or over the viewer's quality profile (video bitrate or
+    resolution), with 409 `TRANSCODE_REQUIRED`; a damaged file with 422
+    `FILE_DAMAGED`. Music, audiobooks and books are never refused, and
+    downloads use `/media/download`. An app that decided on its own used to
+    get the original file past every one of these.
+  - **Roku** plays the server's verdict both ways (it used to keep its own
+    and accept only a demotion), refuses Dolby Vision profile 5 and damaged
+    files with a message, and declares only the containers it direct-plays
+    (`mp4`).
+  - **Web** waits up to 4 seconds for the verdict before starting, instead of
+    starting on its own guess; a refused direct play retries once through
+    the server.
+  - **Android TV and phone** refuse a damaged file instead of trying it, and
+    retry a refused direct play once through the server. The Android TV app
+    holds a server transcode to the screen's height. The phone downloads
+    originals from `/media/download`.
+
 - `PATCH /collections/{id}` keeps fields the request leaves out. An omitted
   description used to be cleared, and an empty name was saved.
 
