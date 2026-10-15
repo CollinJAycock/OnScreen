@@ -1124,6 +1124,42 @@ func TestParseJSONBSubtitleStreams_Default(t *testing.T) {
 	}
 }
 
+// Image subtitle tracks are flagged so a client knows to burn them in or use
+// their OCR'd text version, which is linked by id when one exists.
+func TestParseJSONBSubtitleStreams_ImageBasedAndTextVersion(t *testing.T) {
+	data := []byte(`[{"index":2,"codec":"hdmv_pgs_subtitle"},{"index":3,"codec":"dvd_subtitle"},{"index":4,"codec":"subrip"}]`)
+	got := parseJSONBSubtitleStreams(data)
+	if len(got) != 3 || !got[0].ImageBased || !got[1].ImageBased || got[2].ImageBased {
+		t.Fatalf("image_based: got %+v", got)
+	}
+	ocr2, other := "stream_2", "stream_9"
+	linkOCRTextVersions(got, []ExternalSubtitleJSON{
+		{ID: "os", Source: "opensubtitles", SourceID: &ocr2},
+		{ID: "ocr9", Source: "ocr", SourceID: &other},
+		{ID: "ocr2", Source: "ocr", SourceID: &ocr2},
+	})
+	if got[0].TextVersionID != "ocr2" || got[1].TextVersionID != "" || got[2].TextVersionID != "" {
+		t.Errorf("text_version_id: got %q %q %q, want ocr2 \"\" \"\"",
+			got[0].TextVersionID, got[1].TextVersionID, got[2].TextVersionID)
+	}
+	b, _ := json.Marshal(got[1])
+	if !strings.Contains(string(b), `"image_based":true`) || strings.Contains(string(b), "text_version_id") {
+		t.Errorf("JSON: %s", b)
+	}
+}
+
+// The probe's codec profile ("DTS-HD MA", "Dolby TrueHD + Dolby Atmos")
+// reaches the client for its track label; rows probed before it omit it.
+func TestParseJSONBAudioStreams_Profile(t *testing.T) {
+	got := parseJSONBAudioStreams([]byte(`[{"index":1,"codec":"dts","channels":6,"profile":"DTS-HD MA"},{"index":2,"codec":"ac3","channels":6}]`))
+	if len(got) != 2 || got[0].Profile != "DTS-HD MA" || got[1].Profile != "" {
+		t.Fatalf("profiles: got %+v", got)
+	}
+	if b, _ := json.Marshal(got[1]); strings.Contains(string(b), "profile") {
+		t.Errorf("an unknown profile must be omitted: %s", b)
+	}
+}
+
 func TestParseJSONBSubtitleStreams_InvalidJSON(t *testing.T) {
 	got := parseJSONBSubtitleStreams([]byte("not json"))
 	if len(got) != 0 {
