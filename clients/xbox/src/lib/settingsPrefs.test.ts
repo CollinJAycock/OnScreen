@@ -8,10 +8,20 @@ import {
   langLabel,
   languageSaver,
   nextLangValue,
+  QUALITY_ROWS,
+  QUALITY_SAVE_FAILED,
+  QUALITY_SAVE_INVALID,
+  qualityLabel,
+  qualityOptions,
   qualityProfileBody,
+  qualityProfileUpdate,
+  qualitySaver,
+  qualityValue,
   type LangPair,
+  type QualityField,
+  type QualityRow,
 } from './settingsPrefs';
-import type { UserPreferences } from './api/endpoints';
+import type { QualityProfileUpdate, UserPreferences } from './api/endpoints';
 
 describe('language options', () => {
   it('writes the 639-2/T codes Android writes, Hindi and Arabic included', () => {
@@ -277,6 +287,193 @@ describe('languageSaver', () => {
     page.puts[0].done.reject(new SignedOut());
     await run;
     expect(page.reads).toHaveLength(0);
+    expect(page.error).toBe('');
+    expect(page.saving).toBe(false);
+  });
+});
+
+const row = (field: QualityField): QualityRow => QUALITY_ROWS.find((r) => r.field === field) as QualityRow;
+
+describe('Playback quality choices', () => {
+  it("offers the web app's choices, values in the profile's units", () => {
+    const values = (f: QualityField) => row(f).options.map((o) => o.value);
+    expect(values('max_video_height')).toEqual([null, 2160, 1080, 720, 480]);
+    expect(values('max_video_bitrate_kbps')).toEqual([null, 40000, 20000, 12000, 8000, 4000, 2000, 1000]);
+    expect(values('max_audio_bitrate_kbps')).toEqual([null, 320, 256, 192, 128, 96]);
+    expect(values('preferred_video_codec')).toEqual([null, 'h264', 'hevc']);
+    expect(qualityLabel(row('max_video_height'), 2160)).toBe('4K');
+    expect(qualityLabel(row('max_video_bitrate_kbps'), null)).toBe('No limit');
+    expect(qualityLabel(row('max_audio_bitrate_kbps'), null)).toBe('Original');
+    expect(qualityLabel(row('preferred_video_codec'), null)).toBe('Automatic');
+  });
+
+  it('shows a value set elsewhere as itself, not as "no limit", and lists it', () => {
+    expect(qualityLabel(row('max_video_height'), 1440)).toBe('1440p');
+    expect(qualityLabel(row('max_video_bitrate_kbps'), 15000)).toBe('15 Mbps');
+    expect(qualityLabel(row('max_video_bitrate_kbps'), 2500)).toBe('2.5 Mbps');
+    expect(qualityLabel(row('max_audio_bitrate_kbps'), 160)).toBe('160 kbps');
+    expect(qualityLabel(row('preferred_video_codec'), 'av1')).toBe('av1');
+    const opts = qualityOptions(row('max_video_height'), 1440);
+    expect(opts).toHaveLength(6);
+    expect(opts[5]).toEqual({ value: 1440, label: '1440p' });
+    expect(qualityOptions(row('max_video_height'), 1080)).toHaveLength(5);
+  });
+
+  it('reads a missing, 0 or empty cap as no limit', () => {
+    const p = { max_video_height: 0, max_video_bitrate_kbps: null, preferred_video_codec: '' };
+    expect(qualityValue(p, 'max_video_height')).toBeNull();
+    expect(qualityValue(p, 'max_video_bitrate_kbps')).toBeNull();
+    expect(qualityValue(p, 'max_audio_bitrate_kbps')).toBeNull();
+    expect(qualityValue(p, 'preferred_video_codec')).toBeNull();
+    expect(qualityValue({ max_video_height: 720 }, 'max_video_height')).toBe(720);
+  });
+});
+
+describe('qualityProfileUpdate', () => {
+  const stored: UserPreferences = {
+    max_video_bitrate_kbps: 8000,
+    max_audio_bitrate_kbps: 320,
+    max_video_height: 1080,
+    preferred_video_codec: 'hevc',
+    forced_subtitles_only: true,
+    episode_use_show_poster: false,
+  };
+
+  it('sends all five fields: the change, the rest echoed from the read', () => {
+    expect(qualityProfileUpdate(stored, { max_video_height: 720 })).toEqual({
+      max_video_bitrate_kbps: 8000,
+      max_audio_bitrate_kbps: 320,
+      max_video_height: 720,
+      preferred_video_codec: 'hevc',
+      forced_subtitles_only: true,
+    });
+  });
+
+  it('clears a cap with null', () => {
+    const body = qualityProfileUpdate(stored, { max_video_bitrate_kbps: null, preferred_video_codec: null });
+    expect(body.max_video_bitrate_kbps).toBeNull();
+    expect(body.preferred_video_codec).toBeNull();
+    expect(body.max_video_height).toBe(1080);
+  });
+});
+
+// The settings page around qualitySaver: what the rows show, every read and
+// PUT held until the test settles it.
+function qualityPage(initial: QualityProfileUpdate) {
+  const reads: ReturnType<typeof deferred<UserPreferences>>[] = [];
+  const puts: { body: QualityProfileUpdate; done: ReturnType<typeof deferred<void>> }[] = [];
+  const page = { screen: { ...initial }, reads, puts, error: '', saving: false };
+  const save = qualitySaver({
+    read: () => {
+      const d = deferred<UserPreferences>();
+      reads.push(d);
+      return d.promise;
+    },
+    put: (body) => {
+      const d = deferred<void>();
+      puts.push({ body, done: d });
+      return d.promise;
+    },
+    show: (stored, pending) => {
+      for (const k of Object.keys(stored) as (keyof QualityProfileUpdate)[]) {
+        if (!pending.has(k)) (page.screen as Record<string, unknown>)[k] = stored[k];
+      }
+    },
+    saving: (on) => (page.saving = on),
+    error: (text) => (page.error = text),
+    fatal: (e) => e instanceof SignedOut,
+  });
+  const press = (change: Partial<QualityProfileUpdate>) => {
+    Object.assign(page.screen, change);
+    return save(change);
+  };
+  return { page, press };
+}
+
+describe('qualitySaver', () => {
+  const server = (p: Partial<UserPreferences> = {}): UserPreferences => ({
+    max_video_bitrate_kbps: null,
+    max_audio_bitrate_kbps: null,
+    max_video_height: null,
+    preferred_video_codec: null,
+    forced_subtitles_only: false,
+    episode_use_show_poster: false,
+    ...p,
+  });
+  const start: QualityProfileUpdate = qualityProfileUpdate(server());
+
+  it('echoes the fields it does not change from a read made right before the PUT', async () => {
+    const { page, press } = qualityPage(start);
+    const run = press({ max_video_height: 720 });
+    // Another device set a bitrate cap since the page opened: it is kept.
+    page.reads[0].resolve(server({ max_video_bitrate_kbps: 4000 }));
+    await flush();
+    expect(page.puts[0].body).toEqual({ ...start, max_video_bitrate_kbps: 4000, max_video_height: 720 });
+    page.puts[0].done.resolve();
+    await run;
+    expect(page.screen.max_video_bitrate_kbps).toBe(4000);
+    expect(page.screen.max_video_height).toBe(720);
+    expect(page.error).toBe('');
+    expect(page.saving).toBe(false);
+  });
+
+  it('folds presses made during a save into one follow-up save, keeping both', async () => {
+    const { page, press } = qualityPage(start);
+    const first = press({ max_video_height: 1080 });
+    const second = press({ preferred_video_codec: 'h264' });
+    const third = press({ forced_subtitles_only: true });
+    page.reads[0].resolve(server());
+    await flush();
+    expect(page.puts).toHaveLength(1);
+    page.puts[0].done.resolve();
+    await flush();
+    // The follow-up reads again (the server now has the first change).
+    page.reads[1].resolve(server({ max_video_height: 1080 }));
+    await flush();
+    expect(page.puts[1].body).toMatchObject({
+      max_video_height: 1080,
+      preferred_video_codec: 'h264',
+      forced_subtitles_only: true,
+    });
+    page.puts[1].done.resolve();
+    await Promise.all([first, second, third]);
+    expect(page.puts).toHaveLength(2);
+    expect(page.screen.preferred_video_codec).toBe('h264');
+  });
+
+  it("puts the server's value back on a refused (400) save", async () => {
+    const { page, press } = qualityPage({ ...start, max_audio_bitrate_kbps: 320 });
+    const run = press({ max_audio_bitrate_kbps: 96 });
+    page.reads[0].resolve(server({ max_audio_bitrate_kbps: 320 }));
+    await flush();
+    page.puts[0].done.reject(Object.assign(new Error('invalid'), { status: 400 }));
+    await run;
+    expect(page.error).toBe(QUALITY_SAVE_INVALID);
+    expect(page.screen.max_audio_bitrate_kbps).toBe(320);
+  });
+
+  it('keeps a change whose read failed for the next save', async () => {
+    const { page, press } = qualityPage(start);
+    const run = press({ max_video_height: 480 });
+    page.reads[0].reject(new Error('offline'));
+    await run;
+    expect(page.error).toBe(QUALITY_SAVE_FAILED);
+    // Still on screen, and the next press carries it too.
+    expect(page.screen.max_video_height).toBe(480);
+    const next = press({ forced_subtitles_only: true });
+    page.reads[1].resolve(server());
+    await flush();
+    expect(page.puts[0].body).toMatchObject({ max_video_height: 480, forced_subtitles_only: true });
+    page.puts[0].done.resolve();
+    await next;
+    expect(page.error).toBe('');
+  });
+
+  it('stops on a failure the page handles itself (signed out)', async () => {
+    const { page, press } = qualityPage(start);
+    const run = press({ max_video_height: 720 });
+    page.reads[0].reject(new SignedOut());
+    await run;
     expect(page.error).toBe('');
     expect(page.saving).toBe(false);
   });
