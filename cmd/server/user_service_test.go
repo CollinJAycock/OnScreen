@@ -33,6 +33,8 @@ type stubUserQ struct {
 	setCalled   bool
 	clearCalled bool
 	setPin      *string
+
+	newPasswordHash *string
 }
 
 func (s *stubUserQ) GetUser(_ context.Context, _ uuid.UUID) (gen.User, error) {
@@ -49,6 +51,10 @@ func (s *stubUserQ) ClearUserPIN(_ context.Context, _ uuid.UUID) error {
 }
 func (s *stubUserQ) ListSwitchableUsers(_ context.Context, _ pgtype.UUID) ([]gen.ListSwitchableUsersRow, error) {
 	return nil, s.listErr
+}
+func (s *stubUserQ) UpdateUserPassword(_ context.Context, arg gen.UpdateUserPasswordParams) error {
+	s.newPasswordHash = arg.PasswordHash
+	return nil
 }
 
 // hashPassword bcrypt-hashes a string at the default cost.
@@ -332,5 +338,46 @@ func TestPinDigitsOnly_RegexMatches(t *testing.T) {
 		if pinDigitsOnly.MatchString(b) {
 			t.Errorf("%q should NOT match", b)
 		}
+	}
+}
+
+// ── ChangePassword ───────────────────────────────────────────────────────────
+
+func TestChangePassword_StoresHashOfNewPassword(t *testing.T) {
+	hash := hashPassword(t, "old-password")
+	q := &stubUserQ{user: gen.User{PasswordHash: &hash}}
+	if err := newUserService(q).ChangePassword(context.Background(), uuid.New(), "old-password", "new-password-1"); err != nil {
+		t.Fatalf("ChangePassword: %v", err)
+	}
+	if q.newPasswordHash == nil {
+		t.Fatal("password not stored")
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(*q.newPasswordHash), []byte("new-password-1")); err != nil {
+		t.Errorf("stored hash doesn't match the new password: %v", err)
+	}
+}
+
+func TestChangePassword_RejectsWrongCurrentPassword(t *testing.T) {
+	hash := hashPassword(t, "old-password")
+	q := &stubUserQ{user: gen.User{PasswordHash: &hash}}
+	err := newUserService(q).ChangePassword(context.Background(), uuid.New(), "guess", "new-password-1")
+	if !errors.Is(err, v1.ErrInvalidCredentials) {
+		t.Fatalf("got %v, want ErrInvalidCredentials", err)
+	}
+	if q.newPasswordHash != nil {
+		t.Error("password changed despite a wrong current password")
+	}
+}
+
+func TestChangePassword_PasswordlessAccountRefused(t *testing.T) {
+	// SSO / LDAP-only accounts and managed profiles have no local hash; unlike
+	// SetPIN, the check isn't skipped: there is nothing to change.
+	q := &stubUserQ{user: gen.User{}}
+	err := newUserService(q).ChangePassword(context.Background(), uuid.New(), "anything", "new-password-1")
+	if !errors.Is(err, v1.ErrNoLocalPassword) {
+		t.Fatalf("got %v, want ErrNoLocalPassword", err)
+	}
+	if q.newPasswordHash != nil {
+		t.Error("a password was set on a passwordless account")
 	}
 }

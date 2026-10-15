@@ -1395,7 +1395,11 @@ SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        -- Whether THIS account has a PIN. The Settings page reads its own PIN
        -- status here rather than from the switchable-profiles list, which is
        -- scoped to the caller's managed children and never contains the caller.
-       (pin IS NOT NULL)::boolean AS has_pin
+       (pin IS NOT NULL)::boolean AS has_pin,
+       -- Whether the account signs in with a local password (false for SSO /
+       -- LDAP-only accounts and managed profiles): the Account page shows the
+       -- change-password form only when there is one to change.
+       (password_hash IS NOT NULL)::boolean AS has_password
 FROM users
 WHERE id = $1
 `
@@ -1412,6 +1416,7 @@ type GetUserPreferencesRow struct {
 	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
 	HubLayout             []byte  `json:"hub_layout"`
 	HasPin                bool    `json:"has_pin"`
+	HasPassword           bool    `json:"has_password"`
 }
 
 // Client reads this on login to seed player defaults (language,
@@ -1432,6 +1437,7 @@ func (q *Queries) GetUserPreferences(ctx context.Context, id uuid.UUID) (GetUser
 		&i.EpisodeUseShowPoster,
 		&i.HubLayout,
 		&i.HasPin,
+		&i.HasPassword,
 	)
 	return i, err
 }

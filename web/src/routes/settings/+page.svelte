@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { settingsApi, subtitleAutoApi, userApi, type HearingImpairedPref } from '$lib/api';
+  import { settingsApi, subtitleAutoApi, type HearingImpairedPref } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import ProfilePin from '$lib/components/ProfilePin.svelte';
+  import LanguagePrefs from '$lib/components/LanguagePrefs.svelte';
 
   let loading = true;
   let saving = false;
@@ -54,21 +56,6 @@
   // feed mirrors this so the button hides on the client too.
   let webDownloadsEnabled = false;
 
-  // PIN management state
-  let hasPin = false;
-  let pinMode: 'idle' | 'set' | 'change' | 'clear' = 'idle';
-  let pinValue = '';
-  let pinPassword = '';
-  let pinSaving = false;
-  let pinError = '';
-
-  // Language preferences state
-  let prefAudioLang = '';
-  let prefSubtitleLang = '';
-  let prefEpisodeUseShowPoster = true;
-  let prefSaving = false;
-
-
 
   onMount(async () => {
     try {
@@ -116,36 +103,7 @@
       subAutoHI = sa.hearing_impaired ?? 'any';
       subAutoLoaded = true;
     } catch { /* section stays hidden */ }
-    // Load language preferences (also carries the caller's own PIN status).
-    // has_pin comes from the self-scoped preferences call, not the switchable
-    // list — that list is scoped to the caller's managed children and never
-    // contains the caller's own account.
-    try {
-      const prefs = await userApi.getPreferences();
-      prefAudioLang = prefs.preferred_audio_lang ?? '';
-      prefSubtitleLang = prefs.preferred_subtitle_lang ?? '';
-      prefEpisodeUseShowPoster = prefs.episode_use_show_poster ?? true;
-      hasPin = prefs.has_pin ?? false;
-    } catch { /* ignore — non-critical */ }
-
   });
-
-  async function savePreferences() {
-    prefSaving = true;
-    try {
-      await userApi.setPreferences({
-        preferred_audio_lang: prefAudioLang || null,
-        preferred_subtitle_lang: prefSubtitleLang || null,
-        max_content_rating: null,
-        episode_use_show_poster: prefEpisodeUseShowPoster
-      });
-      toast.success('Preferences saved');
-    } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save preferences');
-    } finally {
-      prefSaving = false;
-    }
-  }
 
 
   async function save() {
@@ -209,48 +167,6 @@
     }
   }
 
-  function startPinMode(mode: 'set' | 'change' | 'clear') {
-    pinMode = mode;
-    pinValue = '';
-    pinPassword = '';
-    pinError = '';
-  }
-
-  function cancelPinMode() {
-    pinMode = 'idle';
-    pinValue = '';
-    pinPassword = '';
-    pinError = '';
-  }
-
-  function handlePinInput(e: Event) {
-    const input = e.target as HTMLInputElement;
-    input.value = input.value.replace(/\D/g, '').slice(0, 4);
-    pinValue = input.value;
-  }
-
-  async function submitPin() {
-    pinError = '';
-    pinSaving = true;
-    try {
-      if (pinMode === 'clear') {
-        await userApi.clearPin(pinPassword);
-        hasPin = false;
-        toast.success('PIN removed');
-      } else {
-        await userApi.setPin(pinValue, pinPassword);
-        hasPin = true;
-        toast.success(pinMode === 'set' ? 'PIN set successfully' : 'PIN changed successfully');
-      }
-      pinMode = 'idle';
-      pinValue = '';
-      pinPassword = '';
-    } catch (e: unknown) {
-      pinError = e instanceof Error ? e.message : 'Failed to update PIN';
-    } finally {
-      pinSaving = false;
-    }
-  }
 </script>
 
 <svelte:head><title>Settings — OnScreen</title></svelte:head>
@@ -613,7 +529,7 @@
       <section>
         <div class="sec-label">Scrobbling apps</div>
         <div class="hint" style="margin-top: -0.5rem;">
-          Users link their own Last.fm and Trakt accounts under Settings › Scrobbling, and those links run
+          Users link their own Last.fm and Trakt accounts under <a href="/account/scrobble">Account › Scrobbling</a>, and those links run
           under the credentials here. Replacing an app later breaks existing links: each user connects again.
         </div>
         <div class="field">
@@ -681,64 +597,9 @@
       <div class="sec-label">Profile PIN</div>
       <div class="hint" style="margin-top: -0.5rem;">
         A 4-digit PIN lets other users on this server switch to your profile without needing your password.
+        Everyone can also set it on their <a href="/account">Account</a> page.
       </div>
-
-      {#if pinError}
-        <div class="banner error">{pinError}</div>
-      {/if}
-
-      {#if pinMode === 'idle'}
-        <div class="pin-actions">
-          {#if hasPin}
-            <span class="pin-status">PIN is set</span>
-            <button class="btn-outline" on:click={() => startPinMode('change')}>Change PIN</button>
-            <button class="btn-outline btn-danger" on:click={() => startPinMode('clear')}>Clear PIN</button>
-          {:else}
-            <span class="pin-status off">No PIN set</span>
-            <button class="btn-outline" on:click={() => startPinMode('set')}>Set PIN</button>
-          {/if}
-        </div>
-      {:else}
-        <form class="pin-form" on:submit|preventDefault={submitPin}>
-          {#if pinMode !== 'clear'}
-            <div class="field">
-              <label for="pin-input">4-digit PIN</label>
-              <input
-                id="pin-input"
-                type="password"
-                inputmode="numeric"
-                pattern="\d{4}"
-                maxlength="4"
-                value={pinValue}
-                on:input={handlePinInput}
-                placeholder="0000"
-                autocomplete="off"
-                style="max-width: 120px; text-align: center; letter-spacing: 0.3em;"
-              />
-            </div>
-          {/if}
-          <div class="field">
-            <label for="pin-password">Current password</label>
-            <input
-              id="pin-password"
-              type="password"
-              bind:value={pinPassword}
-              placeholder="Confirm your password"
-              autocomplete="current-password"
-            />
-          </div>
-          <div class="pin-form-actions">
-            <button
-              type="submit"
-              class="btn-save"
-              disabled={pinSaving || (pinMode !== 'clear' && pinValue.length !== 4) || !pinPassword}
-            >
-              {pinSaving ? 'Saving...' : pinMode === 'clear' ? 'Remove PIN' : pinMode === 'set' ? 'Set PIN' : 'Change PIN'}
-            </button>
-            <button type="button" class="btn-outline" on:click={cancelPinMode}>Cancel</button>
-          </div>
-        </form>
-      {/if}
+      <ProfilePin />
     </section>
 
     <section>
@@ -746,84 +607,7 @@
       <div class="hint" style="margin-top: -0.5rem;">
         Set default audio and subtitle languages. The player will auto-select matching tracks when available.
       </div>
-      <div class="field">
-        <label for="pref-audio">Preferred Audio Language</label>
-        <select id="pref-audio" bind:value={prefAudioLang}>
-          <option value="">None (use default)</option>
-          <option value="eng">English</option>
-          <option value="jpn">Japanese</option>
-          <option value="spa">Spanish</option>
-          <option value="fra">French</option>
-          <option value="deu">German</option>
-          <option value="ita">Italian</option>
-          <option value="por">Portuguese</option>
-          <option value="rus">Russian</option>
-          <option value="zho">Chinese</option>
-          <option value="kor">Korean</option>
-          <option value="hin">Hindi</option>
-          <option value="ara">Arabic</option>
-          <option value="tha">Thai</option>
-          <option value="pol">Polish</option>
-          <option value="nld">Dutch</option>
-          <option value="swe">Swedish</option>
-          <option value="nor">Norwegian</option>
-          <option value="dan">Danish</option>
-          <option value="fin">Finnish</option>
-          <option value="tur">Turkish</option>
-        </select>
-      </div>
-      <div class="field">
-        <label for="pref-sub">Preferred Subtitle Language</label>
-        <select id="pref-sub" bind:value={prefSubtitleLang}>
-          <option value="">None (disabled)</option>
-          <option value="eng">English</option>
-          <option value="jpn">Japanese</option>
-          <option value="spa">Spanish</option>
-          <option value="fra">French</option>
-          <option value="deu">German</option>
-          <option value="ita">Italian</option>
-          <option value="por">Portuguese</option>
-          <option value="rus">Russian</option>
-          <option value="zho">Chinese</option>
-          <option value="kor">Korean</option>
-          <option value="hin">Hindi</option>
-          <option value="ara">Arabic</option>
-          <option value="tha">Thai</option>
-          <option value="pol">Polish</option>
-          <option value="nld">Dutch</option>
-          <option value="swe">Swedish</option>
-          <option value="nor">Norwegian</option>
-          <option value="dan">Danish</option>
-          <option value="fin">Finnish</option>
-          <option value="tur">Turkish</option>
-        </select>
-      </div>
-      <div class="pref-divider" role="separator"></div>
-
-      <div class="sec-label inline-label">Display</div>
-
-      <div class="field toggle-field">
-        <label for="pref-ep-show-poster" class="toggle-label">
-          <input
-            id="pref-ep-show-poster"
-            type="checkbox"
-            bind:checked={prefEpisodeUseShowPoster}
-          />
-          <span>Use the series poster for episodes</span>
-        </label>
-        <p class="hint">
-          On Continue Watching, History, and Search, episode rows show the show's
-          curated poster instead of an auto-extracted episode thumbnail. Episodes
-          inside a season's list still show their own art so they stay
-          distinguishable.
-        </p>
-      </div>
-
-      <div class="pref-foot">
-        <button class="btn-save" disabled={prefSaving} on:click={savePreferences}>
-          {prefSaving ? 'Saving...' : 'Save Preferences'}
-        </button>
-      </div>
+      <LanguagePrefs />
     </section>
 
   {/if}
@@ -924,15 +708,6 @@
   select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-bg); }
   select option { background: var(--bg-elevated); color: var(--text-primary); }
 
-  .pref-foot { display: flex; justify-content: flex-end; }
-
-  .pref-divider {
-    height: 1px;
-    margin: 1.25rem 0 1rem;
-    background: var(--border);
-  }
-
-  .inline-label { margin-bottom: 0.5rem; }
 
   .toggle-field { display: flex; flex-direction: column; gap: 0.4rem; }
   .toggle-label {
@@ -1017,20 +792,6 @@
     color: var(--text-secondary);
   }
 
-  /* PIN management */
-  .pin-actions {
-    display: flex;
-    align-items: center;
-    gap: 0.6rem;
-    flex-wrap: wrap;
-  }
-  .pin-status {
-    font-size: 0.78rem;
-    color: var(--success);
-    font-weight: 500;
-    margin-right: 0.3rem;
-  }
-  .pin-status.off { color: var(--text-muted); }
   .btn-outline {
     padding: 0.45rem 0.9rem;
     background: transparent;
@@ -1043,17 +804,6 @@
     transition: background 0.12s, border-color 0.12s;
   }
   .btn-outline:hover { background: var(--bg-hover); border-color: var(--text-muted); }
-  .btn-outline.btn-danger { color: var(--error); border-color: var(--error); }
-  .btn-outline.btn-danger:hover { background: var(--error-bg); border-color: var(--error); }
-  .pin-form {
-    display: flex;
-    flex-direction: column;
-    gap: 0.9rem;
-  }
-  .pin-form-actions {
-    display: flex;
-    gap: 0.5rem;
-  }
 
   /* ── Mobile ────────────────────────────────────────────────────────────── */
   @media (max-width: 768px) {
@@ -1061,7 +811,5 @@
 
     input { width: 100%; }
 
-    .pin-actions { flex-direction: column; align-items: flex-start; gap: 0.5rem; }
-    .pin-form-actions { flex-wrap: wrap; }
   }
 </style>

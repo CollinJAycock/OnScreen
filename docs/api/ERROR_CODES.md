@@ -30,6 +30,14 @@ releases.
 | `SETUP_LOCAL_HOST_ONLY` | 403 | `POST /auth/register` on a server with no users yet, from a local client but through a `Host` that isn't an IP address, `localhost`, a single-label name or a local-only suffix (`.local`, `.localhost`, `.home.arpa`, `.internal`, `.lan`, `.home`). Guards first-run setup against DNS rebinding. Open setup via the server's IP once, or set `ALLOW_PUBLIC_SETUP=true`. |
 | `CSRF_BLOCKED` | 403 | A state-changing request authenticated by the browser cookie (no `Authorization: Bearer`) came from another origin (`Sec-Fetch-Site: same-site` / `cross-site`, or a foreign `Origin` not in the CORS allow-list). Also returned for a cross-origin, non-JSON body posted to a sign-in path (login, LDAP login, TOTP verify, register, invite accept). Written by middleware before the handler runs, so this envelope has no `request_id`. |
 
+## Your account
+
+| Code | HTTP | Meaning |
+|---|---|---|
+| `INVALID_CREDENTIALS` | 403 | `PUT /users/me/password`: the current password is wrong. Five wrong tries in 15 minutes lock the change out (`RATE_LIMITED`, 429). |
+| `NO_LOCAL_PASSWORD` | 409 | `PUT /users/me/password` on an account with no OnScreen password: it signs in through single sign-on or LDAP, or it's a managed profile. Change the password with the identity provider. |
+| `PIN_SESSION_FORBIDDEN` | 403 | A session reached by switching profile with a PIN tried to change a PIN or password. Sign in with the account password first. |
+
 ## Live TV / DVR
 
 | Code | HTTP | Meaning |

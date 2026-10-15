@@ -37,9 +37,12 @@ const (
 	// removing one changes who can see the item.
 	ActionItemLabelsChange = "item.labels_change"
 	ActionPasswordReset    = "user.password_reset"
-	ActionLibraryCreate    = "library.create"
-	ActionLibraryDelete    = "library.delete"
-	ActionLibraryScan      = "library.scan"
+	// ActionPasswordChange: a user changed their own password (PUT
+	// /users/me/password); their other sign-ins were ended.
+	ActionPasswordChange = "user.password_change"
+	ActionLibraryCreate  = "library.create"
+	ActionLibraryDelete  = "library.delete"
+	ActionLibraryScan    = "library.scan"
 	// ActionLibraryTrickplay: admin queued seek-bar thumbnail generation
 	// for a whole library ("Generate now").
 	ActionLibraryTrickplay = "library.trickplay_generate"

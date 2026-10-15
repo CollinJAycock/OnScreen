@@ -19,6 +19,7 @@ type userQuerier interface {
 	GetUser(ctx context.Context, id uuid.UUID) (gen.User, error)
 	SetUserPIN(ctx context.Context, arg gen.SetUserPINParams) error
 	ClearUserPIN(ctx context.Context, id uuid.UUID) error
+	UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) error
 	ListSwitchableUsers(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListSwitchableUsersRow, error)
 }
 
@@ -73,6 +74,29 @@ func (s *userService) ClearPIN(ctx context.Context, userID uuid.UUID, password s
 	}
 
 	return s.db.ClearUserPIN(ctx, userID)
+}
+
+// ChangePassword checks the user's current password, then stores a bcrypt
+// hash of next (cost 12, as the admin reset and registration do). An account
+// with no local password — SSO / LDAP-only, or a managed profile — has
+// nothing to change. The caller validates next against the password policy.
+func (s *userService) ChangePassword(ctx context.Context, userID uuid.UUID, current, next string) error {
+	user, err := s.db.GetUser(ctx, userID)
+	if err != nil {
+		return fmt.Errorf("get user: %w", err)
+	}
+	if user.PasswordHash == nil {
+		return v1.ErrNoLocalPassword
+	}
+	if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(current)); err != nil {
+		return v1.ErrInvalidCredentials
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(next), 12)
+	if err != nil {
+		return fmt.Errorf("hash password: %w", err)
+	}
+	hashStr := string(hash)
+	return s.db.UpdateUserPassword(ctx, gen.UpdateUserPasswordParams{ID: userID, PasswordHash: &hashStr})
 }
 
 // ListSwitchable returns the caller's own managed profiles with their has_pin
