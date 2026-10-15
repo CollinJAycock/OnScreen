@@ -424,6 +424,35 @@ object PlaybackHelper {
      * to a transcode once (PlaybackViewModel.fallbackFromDirectPlay), this
      * one included; this only names it in the log.
      */
+    /**
+     * A direct play that failed reading the file, not decoding it: Media3
+     * ran out of memory loading the container's index, or rejected the
+     * container. A long .mov with TrueHD audio carries a sample table Media3
+     * reads whole — 1917 on a Fire TV Stick 4K Max asked for 68 MB of a 192 MB
+     * heap. The video decodes fine, so a remux (the video copied into HLS)
+     * plays it; a full transcode only costs a slower start and a re-encode.
+     */
+    fun isContainerFailure(error: Throwable): Boolean {
+        if (error is androidx.media3.common.PlaybackException && error.errorCode in setOf(
+                androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
+                androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
+            )
+        ) return true
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is OutOfMemoryError) return true
+            cause = cause.cause
+        }
+        return false
+    }
+
+    /** Whether the server can copy [file]'s video into a remux (its HLS
+     *  carries H.264, HEVC and AV1 — transcode.Decide's remuxable set). */
+    fun canRemux(file: ItemFile): Boolean = canRemuxVideo(file.video_codec)
+
+    internal fun canRemuxVideo(videoCodec: String?): Boolean =
+        videoCodec?.lowercase() in setOf("h264", "avc", "avc1", "hevc", "h265", "hvc1", "av1")
+
     @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
     fun isTranscodeRequired(error: Throwable): Boolean {
         var cause: Throwable? = error

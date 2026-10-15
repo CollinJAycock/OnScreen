@@ -213,7 +213,13 @@ class PlaybackViewModel @Inject constructor(
         val fileId: String,
         val sourceHeight: Int,
         val serverUrl: String,
+        val videoCodec: String?,
     )
+
+    /** Files this device plays as a remux instead of directly: their direct
+     *  play failed reading the container (see fallbackFromDirectPlay).
+     *  Loaded from ServerPrefs at each prepare. */
+    private var remuxOnlyFiles: Set<String> = emptySet()
 
     /**
      * Set while the active source is the item's optimized version (v2.6): the
@@ -290,6 +296,7 @@ class PlaybackViewModel @Inject constructor(
                 } catch (_: Exception) { /* limit lookup failed — fail open */ }
 
                 val prefs = try { preferencesRepo.get() } catch (_: Exception) { null }
+                remuxOnlyFiles = try { serverPrefs.remuxOnlyFiles() } catch (_: Exception) { emptySet() }
 
                 // Server-authoritative play decision (capability profiles). The
                 // device's X-Client-Capabilities header (AuthInterceptor) tells the
@@ -518,6 +525,11 @@ class PlaybackViewModel @Inject constructor(
      *  (PlaybackHelper.forStack). */
     private fun sourceMode(verdict: String?, file: ItemFile): PlaybackMode {
         val mode = PlaybackHelper.modeFor(verdict, file) ?: PlaybackHelper.decide(file)
+        if (mode is PlaybackMode.DirectPlay && file.id in remuxOnlyFiles && PlaybackHelper.canRemux(file)) {
+            // This device couldn't read the file directly last time; skip
+            // the failed attempt and remux straight away.
+            return PlaybackMode.Remux
+        }
         return if (MediaVersions.isPart(file)) PlaybackHelper.forStack(mode, file) else mode
     }
 
@@ -543,7 +555,7 @@ class PlaybackViewModel @Inject constructor(
             // fragment's onPlayerError re-issues it as a full
             // server transcode at the source resolution.
             directPlayContext = DirectPlayContext(
-                itemId, file.id, file.resolution_h ?: 1080, serverUrl,
+                itemId, file.id, file.resolution_h ?: 1080, serverUrl, file.video_codec,
             )
             // Direct play: ExoPlayer's track selector
             // can swap audio + subtitle tracks by
@@ -879,22 +891,32 @@ class PlaybackViewModel @Inject constructor(
      * One-shot — directPlayContext is cleared on entry, so if the transcode
      * also fails the fragment shows the real error instead of looping.
      */
-    fun fallbackFromDirectPlay(currentPositionMs: Long) {
+    fun fallbackFromDirectPlay(currentPositionMs: Long, containerFailure: Boolean = false) {
         // An optimized version that won't play falls back to its source.
         if (optimizedFallback != null) return fallbackFromOptimized(currentPositionMs)
         val ctx = directPlayContext ?: return
         directPlayContext = null
+        // The file couldn't be read, but its video decodes: copy it into a
+        // remux, which starts in seconds and keeps the picture, instead of a
+        // full transcode (~30 s to the first frame on QA). The server still
+        // re-encodes if its decision for this device says the video must.
+        // Remembered, so the next play of this file remuxes straight away.
+        val remux = containerFailure && PlaybackHelper.canRemuxVideo(ctx.videoCodec)
         viewModelScope.launch {
             try {
+                if (remux) {
+                    try { serverPrefs.addRemuxOnlyFile(ctx.fileId) } catch (_: Exception) { }
+                    remuxOnlyFiles = remuxOnlyFiles + ctx.fileId
+                }
                 // Cap by the PANEL: re-requesting the source height on a
                 // 1080p stick dead-ended 4K titles instead of getting 1080p.
-                val height = PlaybackHelper.transcodeHeight(ctx.sourceHeight, PlaybackHelper.displayHeightCap())
+                val height = if (remux) 0 else PlaybackHelper.transcodeHeight(ctx.sourceHeight, PlaybackHelper.displayHeightCap())
                 val source = startTranscode(
                     itemId = ctx.itemId,
                     height = height,
                     posMs = currentPositionMs.coerceAtLeast(0L),
                     fileId = ctx.fileId,
-                    videoCopy = false,
+                    videoCopy = remux,
                     serverUrl = ctx.serverUrl,
                 ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source, error = null)

@@ -687,6 +687,71 @@ class PlaybackViewModelTest {
     }
 
     @Test
+    fun `a file Media3 couldn't read falls back to a remux and is remembered`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        val prefs = serverPrefs()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "remux-sess", token = "tok", playlist_url = "/transcode/remux.m3u8")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), prefs, audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+        assertThat(vm.uiState.value.source).isInstanceOf(PlaybackSource.DirectPlay::class.java)
+
+        vm.fallbackFromDirectPlay(currentPositionMs = 0L, containerFailure = true)
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+        // The video copied (videoCopy, no target height), not re-encoded.
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1",
+                height = 0,
+                positionMs = 0L,
+                fileId = "f1",
+                videoCopy = true,
+                audioStreamIndex = null,
+                supportsHevc = false,
+                supportsAv1 = false,
+            )
+        }
+        coVerify(exactly = 1) { prefs.addRemuxOnlyFile("f1") }
+    }
+
+    @Test
+    fun `a remembered file remuxes without trying direct play`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = transcodeRepoMock()
+        val prefs = serverPrefs()
+        coEvery { prefs.remuxOnlyFiles() } returns setOf("f1")
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+        coEvery {
+            transcodeRepo.start(any(), any(), any(), any(), any(), any(), any(), any())
+        } returns TranscodeSession(session_id = "remux-sess", token = "tok", playlist_url = "/transcode/remux.m3u8")
+
+        val vm = PlaybackViewModel(itemRepo, transcodeRepo, prefs(), watchLimitRepo(), prefs, audiobooks())
+        vm.prepare("movie-1", startMs = 0L, serverUrl = "http://srv")
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1",
+                height = 0,
+                positionMs = 0L,
+                fileId = "f1",
+                videoCopy = true,
+                audioStreamIndex = any(),
+                supportsHevc = any(),
+                supportsAv1 = any(),
+            )
+        }
+    }
+
+    @Test
     fun `direct-play fallback is one-shot`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         val transcodeRepo = transcodeRepoMock()
