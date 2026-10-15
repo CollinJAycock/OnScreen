@@ -93,6 +93,13 @@
     type Cue
   } from '$lib/player/subtitles';
   import {
+    burnIndexOfKey,
+    burnInRefusal,
+    keyAfterBurnRefused,
+    planSubtitlePick,
+    streamVideoFields
+  } from '$lib/player/burnIn';
+  import {
     ACTION_LABELS,
     TRANSPORT_SKIP_MS,
     actionRowKey,
@@ -383,9 +390,15 @@
   // downloaded: from files[].external_subtitles), parsed, and its cues drawn
   // in .subtitle-overlay against the CONTENT clock ($lib/player/subtitles).
   const subtitleOptions = $derived(buildSubtitleOptions(playFile));
-  // The chosen row by key ('emb:<index>' / 'ext:<id>'), null = Off. Keyed,
-  // not by position, so it survives every re-issue and an item refresh.
+  // The chosen row by key ('emb:<index>' / 'ext:<id>' / 'burn:<index>'),
+  // null = Off. Keyed, not by position, so it survives every re-issue and an
+  // item refresh. A burn row's key is also what every start burns in
+  // (startStream reads it when the start runs, see $lib/player/burnIn).
   let activeSubtitleKey = $state<string | null>(null);
+  // The image track the live session burns in (null = none), and the row
+  // chosen before the last burn pick: where a refused burn goes back to.
+  let liveBurnIndex: number | null = null;
+  let keyBeforeBurn: string | null = null;
   // The user picked a subtitle (or Off) in this session: the saved
   // preference no longer applies (a retry's re-run of the load would
   // otherwise put it back).
@@ -1013,7 +1026,7 @@
           // audio-only session (a failed direct audio file's fallback), whose
           // append error says nothing about the panel's video decoders.
           canDemoteCodec: !codecEscalated && supportsHEVC() && !isAudioOnly,
-          canFallBackToTranscode: sessionVideoCopy && !remuxFallbackUsed,
+          canFallBackToTranscode: liveRemux() && !remuxFallbackUsed,
         },
         recovery
       );
@@ -1141,7 +1154,7 @@
    *  optimized version's MP4. */
   type Opened =
     | { kind: 'direct'; url?: string }
-    | { kind: 'hls'; session: TranscodeSession; Hls: typeof HlsType; askedRate?: number };
+    | { kind: 'hls'; session: TranscodeSession; Hls: typeof HlsType; askedRate?: number; burnIndex: number | null };
 
   const controller = new SessionController<Opened>({
     start: startStream,
@@ -1155,7 +1168,8 @@
       isPlaybackStoppedError(e) ||
       e instanceof Unauthorized ||
       (e instanceof ApiError && e.code === 'PARENTAL_LIMIT') ||
-      tooManyStreamsMessage(e) !== null,
+      tooManyStreamsMessage(e) !== null ||
+      burnInRefusal(e) !== null,
     failed: (e, req) => {
       console.warn('[player] start failed', e);
       buffering = false;
@@ -1164,6 +1178,18 @@
         return;
       }
       if (refusedByServer(e)) return;
+      // A burn-in the server won't do (400): its message, and the stream
+      // that is playing plays on (nothing tore it down). With none to stay
+      // on (a restart), the error overlay as for any failure, and its retry
+      // goes without the burn.
+      const burnRefused = burnInRefusal(e);
+      if (burnRefused !== null) {
+        if (bound && streamReady && !loading) {
+          onBurnRefused(burnRefused);
+          return;
+        }
+        activeSubtitleKey = keyAfterBurnRefused(null, keyBeforeBurn);
+      }
       const msg = e instanceof Error && e.message ? e.message : 'unknown error';
       showFatal(`Playback error: could not start the stream (${msg}).`, {
         atMs: req.positionMs,
@@ -1204,11 +1230,16 @@
     // a 400; null leaves the track to the server's default (0:a:0).
     const ordinal =
       req.audioOrdinal !== null && validAudioOrdinal(req.audioOrdinal, audioStreams.length) ? req.audioOrdinal : null;
+    // An image subtitle chosen to be burned in (read now, so a seek, an
+    // audio switch or a resume made while it is chosen keeps it): a full
+    // re-encode of the source with it ($lib/player/burnIn).
+    const fields = streamVideoFields(req.videoCopy, isAudioOnly ? null : activeSubtitleKey);
+    const burnIndex = fields.burnSubtitleStreamIndex ?? null;
     // The optimized version the decision handed out, on its default audio
     // (it carries no other track), until it has failed here: a direct play
     // of its MP4. Otherwise the source, with its own verdict (req.videoCopy).
     const optimized = optimizedVersion;
-    if (!isAudioOnly && optimized && playsOptimized({ version: optimized, failed: optimizedFailed, audioOrdinal: ordinal })) {
+    if (!isAudioOnly && optimized && burnIndex === null && playsOptimized({ version: optimized, failed: optimizedFailed, audioOrdinal: ordinal })) {
       return { kind: 'direct', url: api.assetUrl(optimized.stream_url) };
     }
     const Hls = await loadHls();
@@ -1224,7 +1255,8 @@
       height: 2160,
       positionMs: req.positionMs,
       fileId: file.id,
-      videoCopy: req.videoCopy,
+      videoCopy: fields.videoCopy,
+      burnSubtitleStreamIndex: fields.burnSubtitleStreamIndex,
       // The ordinal, never AudioStream.index; explicit (including 0) on
       // every re-issue so the live track is kept. Omitted only for the
       // first start when no preferred audio language matched (and for a
@@ -1236,7 +1268,7 @@
       supportsAV1: supportsAV1(),
       audioRate: askedRate,
     });
-    return { kind: 'hls', session: fresh, Hls, askedRate };
+    return { kind: 'hls', session: fresh, Hls, askedRate, burnIndex };
   }
 
   // Bind what a start produced to the element. The previous session (the
@@ -1266,6 +1298,7 @@
     ptsShiftMs = 0;
     ptsCaptureStartSec = null;
     playingOptimized = o.kind === 'direct' && !!o.url;
+    liveBurnIndex = o.kind === 'hls' ? o.burnIndex : null;
     if (o.kind === 'direct') {
       // Direct play: the file itself (or the optimized version, the whole
       // item in one MP4), so content time is media time and the start point
@@ -1296,12 +1329,14 @@
     const startSec = hlsStartPositionSec(inStreamStartMs(req.positionMs, offsetMs, gap), gap);
     currentMinStartSec = gap / 1000;
     serverStream = true;
+    // The verdict's mode, even under a burn (which re-encodes): taking the
+    // burn off goes back to it.
     sessionVideoCopy = req.videoCopy;
     activeAudioIndex =
       req.audioOrdinal !== null && validAudioOrdinal(req.audioOrdinal, audioStreams.length) ? req.audioOrdinal : 0;
     // Measured on this session's first 'playing' (see ptsShiftOnFirstPlayMs).
     ptsCaptureStartSec = startSec;
-    reporter?.setDecision(req.videoCopy ? 'directStream' : 'transcode');
+    reporter?.setDecision(liveRemux() ? 'directStream' : 'transcode');
     const url = fresh.playlist_url.startsWith('http')
       ? fresh.playlist_url
       : api.mediaUrl(fresh.playlist_url);
@@ -1376,6 +1411,12 @@
     });
     inst.loadSource(url);
     inst.attachMedia(video);
+  }
+
+  // The live session stream-copies the video: its verdict's remux, unless a
+  // burned-in subtitle made it a re-encode.
+  function liveRemux(): boolean {
+    return sessionVideoCopy && liveBurnIndex === null;
   }
 
   // End a server session nothing reads any more. Fire-and-forget: the
@@ -1948,7 +1989,7 @@
         return;
       }
       const opt = i === 0 ? null : subtitleOptions[i - 1];
-      if (i === 0 || opt) selectSubtitle(opt ? opt.key : null, true);
+      if (i === 0 || opt) pickSubtitle(opt ? opt.key : null);
     } else if (chapterPickerOpen) {
       closePickerToRow();
       const ch = chapters[i];
@@ -2244,7 +2285,8 @@
   // files[].external_subtitles, the options rebuild (keys are stable, so the
   // current choice stays put) and the download is selected and shown. No
   // restart: the session carries no subtitles, so there is nothing to
-  // re-issue (Android's reloadSubtitles; the web client auto-selects too).
+  // re-issue (Android's reloadSubtitles; the web client auto-selects too),
+  // unless a burned-in track was showing: pickSubtitle takes the burn off.
   async function downloadOnlineSubtitle(pick: OnlineSubtitle) {
     if (!item || onlineSubsDownloading) return;
     const file = playFile;
@@ -2258,7 +2300,7 @@
       if (destroyed || leaving || refused) return;
       item = refreshed;
       const key = pickDownloadedSubtitle(before, subtitleOptions, pick.provider_file_id, created?.id);
-      if (key) selectSubtitle(key, true);
+      if (key) pickSubtitle(key);
       closeOnlineSubtitleSearch();
       showControls();
     } catch (e) {
@@ -2310,6 +2352,54 @@
     });
   }
 
+  // ── Subtitle picks and burn-in ─────────────────────────────────────
+
+  // The user's pick in the subtitle picker (null = Off). A text row loads
+  // its WebVTT; an image track without a text version is burned in, which
+  // re-opens the stream at the current position as a re-encode with it; a
+  // pick that takes a burn off (Off, a text row) re-opens it without, in the
+  // verdict's own mode ($lib/player/burnIn).
+  function pickSubtitle(key: string | null) {
+    const plan = planSubtitlePick(key, activeSubtitleKey);
+    if (plan.reissue && burnIndexOfKey(plan.key) !== null) {
+      // Burning needs a session to re-open (never direct audio).
+      if (!canReissueForSubtitle()) return;
+      keyBeforeBurn = activeSubtitleKey;
+    }
+    selectSubtitle(plan.key, true);
+    if (plan.reissue) reissueForSubtitle();
+  }
+
+  function canReissueForSubtitle(): boolean {
+    return !!video && !!item && (serverStream || playingOptimized) && !refused && !error && !isAudioOnly;
+  }
+
+  // Re-open the stream where it is, for a change of burn: startStream reads
+  // the burn from the chosen key. Like an audio switch: keeps the remux mode
+  // and audio track of a start still on its way, the pending scrub target
+  // and the play state, and queues behind a start in flight (a parked seek
+  // would land on that start's stream, without the change).
+  function reissueForSubtitle() {
+    if (!canReissueForSubtitle()) return;
+    const pending = controller.intent;
+    const target = scrubTargetMs ?? position;
+    scrub.cancel();
+    void openStream({
+      positionMs: target,
+      videoCopy: pending?.videoCopy ?? sessionVideoCopy,
+      audioOrdinal: pending?.audioOrdinal ?? activeAudioIndex,
+      ...intent.stamp(),
+    });
+  }
+
+  // The server refused the burn (400): back to the row the live session
+  // shows (its own burn, else the pick before), with the server's message.
+  function onBurnRefused(message: string) {
+    activeSubtitleKey = keyAfterBurnRefused(liveBurnIndex, keyBeforeBurn);
+    void loadActiveSubtitle();
+    showSubtitleNotice(message);
+  }
+
   // ── Subtitle loading and drawing ───────────────────────────────────
 
   // Show a track (by option key), or none (null). `explicit` is the user's
@@ -2334,7 +2424,9 @@
     hideSubtitleNotice();
     const key = activeSubtitleKey;
     const opt = key === null ? undefined : subtitleOptions.find((o) => o.key === key);
-    if (!opt) {
+    // Off, or a burn row: the picture carries those subtitles, nothing to
+    // draw.
+    if (!opt || opt.burnIndex !== undefined) {
       subtitleLoad = 'idle';
       return;
     }
@@ -2456,8 +2548,9 @@
     // behind the error overlay (Dolby Vision is refused while this is out):
     // the load would poll on for minutes under the message.
     if (nowPlaying || subtitleChosen || error) return;
+    // Never a burn row: a preference doesn't turn a remux into a re-encode.
     const pick = pickPreferredSubtitle(
-      subtitleOptions,
+      subtitleOptions.filter((o) => o.burnIndex === undefined),
       prefs.preferred_subtitle_lang,
       prefs.forced_subtitles_only ?? false,
     );
@@ -3074,7 +3167,7 @@
           return;
         }
         // A remux the decoder won't take: once, a full transcode.
-        if (usingAvplay && sessionVideoCopy && !remuxFallbackUsed) {
+        if (usingAvplay && liveRemux() && !remuxFallbackUsed) {
           console.warn('[avplay] remux failed — falling back to a transcode', v.error?.message);
           fallBackToTranscode();
           return;
