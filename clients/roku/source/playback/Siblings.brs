@@ -55,6 +55,20 @@ function nextSiblingOf(item as Object, kids as Object) as Dynamic
     return best
 end function
 
+' The entry after currentId in a play queue (an instant mix: [{ id, title,
+' type }]), or invalid at the end / when currentId isn't queued.
+function nextInQueue(queue as Dynamic, currentId as String) as Dynamic
+    if queue = invalid or type(queue) <> "roArray" then return invalid
+    found = false
+    for each q in queue
+        if q <> invalid and type(q) = "roAssociativeArray" and q.id <> invalid
+            if found then return q
+            if q.id = currentId then found = true
+        end if
+    end for
+    return invalid
+end function
+
 function siblingDisc(row as Object) as Integer
     if row.disc_number = invalid then return 1
     return row.disc_number

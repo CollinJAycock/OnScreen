@@ -64,6 +64,11 @@ const suites = [
     test: 'tests/Versions_test.brs',
   },
   {
+    name: 'Music',
+    sources: ['source/api/Endpoints.brs', 'source/playback/Siblings.brs', 'source/util/Music.brs'],
+    test: 'tests/Music_test.brs',
+  },
+  {
     name: 'Capabilities',
     sources: ['source/api/Client.brs'],
     test: 'tests/Capabilities_test.brs',

@@ -224,7 +224,10 @@ sub onItemTaskState()
     m.markersTask.path = "/api/v1/items/" + m.top.itemId + "/markers"
     m.markersTask.control = "RUN"
 
-    if item.parent_id <> invalid and item.parent_id <> ""
+    if hasQueue()
+        ' An instant mix: the next track is the queue's, not the album's.
+        m.nextSibling = nextInQueue(m.top.queue, m.top.itemId)
+    else if item.parent_id <> invalid and item.parent_id <> ""
         m.childrenTask.path = ApiItemChildren(item.parent_id)
         m.childrenTask.control = "RUN"
     end if
@@ -647,8 +650,18 @@ end sub
 
 sub goToNext(target as Object)
     stopTranscodeSession()
-    getMainScene().callFunc("navigateToWithItem", "PlayerScene", target.id)
+    if hasQueue()
+        ' Carry the queue on, so the track after next is the queue's too.
+        getMainScene().callFunc("navigateToWithParams", "PlayerScene", target.id, { queue: m.top.queue })
+    else
+        getMainScene().callFunc("navigateToWithItem", "PlayerScene", target.id)
+    end if
 end sub
+
+function hasQueue() as Boolean
+    q = m.top.queue
+    return q <> invalid and type(q) = "roArray" and q.Count() > 0
+end function
 
 ' ── Progress reporting ─────────────────────────────────────────────
 

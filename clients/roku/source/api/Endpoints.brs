@@ -218,6 +218,25 @@ function ApiPlaybackTransfer() as String
     return "/api/v1/playback/transfer"
 end function
 
+' ── Music discovery (v2.6) ──────────────────────────────────────────────
+' Similar artists: [{ id, title, poster_path?, score, shared_genres,
+' co_listened }], best first. Appears on: tracks on other artists' albums
+' the artist is credited on, [{ id, title, album_title, album_poster_path?,
+' album_artist_title?, … }]. Instant mix: ~50 tracks to play in order,
+' [{ id, title, album_title, artist_title?, file_id, … }], seeded by a
+' track, album or artist id. All list envelopes; see Music.brs.
+function ApiMusicSimilarArtists(artistId as String) as String
+    return "/api/v1/music/artists/" + artistId + "/similar?limit=20"
+end function
+
+function ApiMusicAppearsOn(artistId as String) as String
+    return "/api/v1/music/artists/" + artistId + "/appears-on?limit=50"
+end function
+
+function ApiMusicMix(seedId as String) as String
+    return "/api/v1/music/mix?seed=" + seedId
+end function
+
 ' ── User language preferences ───────────────────────────────────────────
 ' GET returns { preferred_audio_lang, preferred_subtitle_lang,
 ' forced_subtitles_only, … }. PlayerScene reads preferred_subtitle_lang +

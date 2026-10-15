@@ -22,11 +22,16 @@
           Mark       "Mark watched" / "Mark unwatched" (movies,
                      episodes); "Mark all…" on shows and seasons
                      (confirmation before unwatching a whole show)
+          Instant mix  artists and albums: GET /music/mix?seed= played
+                     as a queue
           Report     "Report a problem" (movies, episodes, shows)
-      - children row, down from the buttons: seasons / episodes /
+      - children rows, down from the buttons: seasons / episodes /
         tracks / chapters / albums, with watched checks and resume
         bars. * on an episode or season card opens its options (mark
-        watched / unwatched, report a problem).
+        watched / unwatched, report a problem). An artist adds
+        "Similar artists" and "Appears on" rows below its albums; the
+        list shows one row at a time and the header names the focused
+        row.
 
     Episode-style children include the index ("1. Pilot") so the
     user knows order at a glance; album / podcast children use the
@@ -44,6 +49,7 @@
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/DetailMeta.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Versions.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Music.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/ReportProblem.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
@@ -112,6 +118,13 @@
                         maxWidth="480"
                         focusBitmapBlendColor="0x7c6af7ff"
                         visible="false" />
+                <Button id="mixBtn"
+                        text="Instant mix"
+                        showFocusFootprint="true"
+                        minWidth="360"
+                        maxWidth="360"
+                        focusBitmapBlendColor="0x7c6af7ff"
+                        visible="false" />
                 <Button id="markBtn"
                         text=""
                         showFocusFootprint="true"
@@ -128,10 +141,13 @@
                         visible="false" />
             </Group>
 
-            <!-- Children carousel (episodes / tracks / chapters).
-                 Hidden until the children-fetch task lands and
-                 returns at least one item. Item size is set per parent
-                 type in renderChildren (landscape for episodes). -->
+            <!-- Children carousel (episodes / tracks / chapters), plus
+                 an artist's Similar artists / Appears on rows. Hidden
+                 until a fetch lands with at least one item. Item size is
+                 set per parent type in renderChildren (landscape for
+                 episodes). One row on screen at a time (numRows 1,
+                 floating focus: no wrap, up from the first row bubbles
+                 to the buttons); childrenHeader names the focused row. -->
             <Label id="childrenHeader"
                    text=""
                    translation="[80, 690]"
@@ -146,6 +162,8 @@
                      rowItemSpacing="[[16, 0]]"
                      showRowLabel="[false]"
                      rowHeights="[300]"
+                     numRows="1"
+                     vertFocusAnimationStyle="floatingFocus"
                      focusBitmapBlendColor="0xffffffff"
                      drawFocusFeedback="true"
                      visible="false" />
