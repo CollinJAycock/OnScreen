@@ -46,6 +46,7 @@ import tv.onscreen.mobile.ui.player.playbackStoppedMessage
 import java.io.IOException
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
+import tv.onscreen.mobile.data.backgroundScope
 
 /**
  * Background-audio session for music / audiobook / podcast playback.
@@ -102,7 +103,7 @@ class PlaybackService : MediaSessionService() {
     @Inject lateinit var audiobooks: AudiobookRepository
 
     private var session: MediaSession? = null
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope = backgroundScope("PlaybackService", Dispatchers.Main)
     private var progressJob: Job? = null
     private var expandJob: Job? = null
     private var extendJob: Job? = null

@@ -11,6 +11,45 @@ API change lands only when every first-party client moves with it — see
 
 ## [Unreleased]
 
+The catch-up release: metadata editing with locks, multi-episode files,
+editions and multi-part movies, label restrictions, smaller downloads and
+optimized versions, studio pages, instant mix, OPDS, import from Plex /
+Jellyfin / Emby, and every app updated for them. The server's play decision
+becomes final on every app. Release note:
+[docs/releases/v2.6.0.md](docs/releases/v2.6.0.md).
+
+### Upgrade notes (from v2.5.x)
+
+- **Migrations 00037–00057** (there is no 00053) apply at startup with
+  `AUTO_MIGRATE=true` (otherwise run the migrate step first; `/health/ready`
+  stays unready until they are applied).
+- **The next library scan does one-off work** without re-probing files: an
+  episode filed as `E01` whose file is `E01-E02` becomes one multi-episode
+  item, movie editions and multi-part movies are read from file names,
+  featured-artist credits are read, and photos are regrouped (they are now
+  told apart by file, not by name; RAW + JPEG pairs become one photo).
+- **Three settings now apply that used to be ignored.** Check them if they
+  were ever set: a library's metadata language (applies on the next metadata
+  refresh), a user's concurrent-stream limit (now counts direct plays) and a
+  user's quality profile (now converts anything above it, at home too).
+- **`GET /media/stream` follows the play decision.** A video the server would
+  convert for the viewer (over the internet limit from outside the home
+  network, or over their quality profile) is refused with 409
+  `TRANSCODE_REQUIRED`, and a damaged one with 422. Current apps never hit
+  this; older app builds that decide on their own, and casting, lose the
+  original file for those viewers. Music, audiobooks, books and downloads are
+  not affected.
+- **The internet streaming limit needs the viewer's real address:** behind a
+  reverse proxy or Cloudflare, set `TRUSTED_PROXIES`, or every viewer looks
+  local and the limit never applies.
+- **New optional environment variables:** `ONSCREEN_DVR_POSTPROCESS_SCRIPT`,
+  `ONSCREEN_COMSKIP_PATH`, `ONSCREEN_COMSKIP_INI`, `DOWNLOAD_MAX_CONVERSIONS`,
+  `DOWNLOAD_CACHE_TTL_HOURS` and `DOWNLOAD_CACHE_MAX_GB`. New optional keys
+  in Settings ▸ General: OMDb and fanart.tv.
+- **New tasks off until enabled:** music loudness analysis, photo face
+  detection, chapter-thumbnail backfill and automatic subtitle download.
+- **Built with Go 1.26.9 and x/net 0.60.0** (GO-2026-6612, -6613, -6617).
+
 ### Added
 
 - **Audio passthrough on remux.** A client that bitstreams audio to a receiver

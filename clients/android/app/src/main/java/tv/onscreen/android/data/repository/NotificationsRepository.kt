@@ -21,6 +21,7 @@ import tv.onscreen.android.data.model.asPlaybackTransfer
 import tv.onscreen.android.data.model.asProgressUpdate
 import javax.inject.Inject
 import javax.inject.Singleton
+import tv.onscreen.android.data.backgroundScope
 
 /**
  * Channel-only wrapper around the server's notifications SSE stream.
@@ -45,7 +46,7 @@ open class NotificationsRepository @Inject constructor(
 ) {
     // App-lifetime scope for the shared SSE. The repository is a
     // @Singleton, so this lives as long as the process.
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = backgroundScope("NotificationsRepository")
 
     /**
      * Single shared SSE connection, fanned out to every subscriber.

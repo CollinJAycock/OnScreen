@@ -15,6 +15,7 @@ import tv.onscreen.mobile.data.model.WatchStatus
 import tv.onscreen.mobile.data.model.WatchStatusRequest
 import javax.inject.Inject
 import javax.inject.Singleton
+import tv.onscreen.mobile.data.backgroundScope
 
 @Singleton
 open class ItemRepository @Inject constructor(
@@ -27,7 +28,7 @@ open class ItemRepository @Inject constructor(
      *  viewModelScope — the instant the finished track would report
      *  'stopped'. Riding that scope drops the PUT mid-flight, so the
      *  listen never scrobbles; this scope is never cancelled. */
-    private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val detachedScope = backgroundScope("ItemRepository")
 
     /** The last items [getItem] fetched, by id. Bounded and access-ordered,
      *  so the head is always the least recently used. Guarded by itself:

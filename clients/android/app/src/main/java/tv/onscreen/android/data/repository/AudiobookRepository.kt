@@ -11,6 +11,7 @@ import tv.onscreen.android.playback.AudiobookSpeed
 import java.util.concurrent.ConcurrentHashMap
 import javax.inject.Inject
 import javax.inject.Singleton
+import tv.onscreen.android.data.backgroundScope
 
 /**
  * Audiobook listening speed — GET/PUT /api/v1/items/{id}/playback-rate
@@ -30,7 +31,7 @@ open class AudiobookRepository @Inject constructor(
 ) {
     /** App-lifetime scope for the fire-and-forget PUT, which must outlive
      *  the player screen. A seam for tests. */
-    internal var detachedScope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    internal var detachedScope: CoroutineScope = backgroundScope("AudiobookRepository")
 
     /** Rates set on this device whose PUT hasn't succeeded, by book id. */
     private val pending = ConcurrentHashMap<String, Float>()

@@ -30,6 +30,7 @@ import java.util.concurrent.atomic.AtomicInteger
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.random.Random
+import tv.onscreen.mobile.data.backgroundScope
 
 /**
  * Channel-only wrapper around the server's notifications SSE stream.
@@ -47,7 +48,7 @@ open class NotificationsRepository @Inject constructor(
     private val prefs: ServerPrefs,
 ) {
     // App-lifetime scope for the shared SSE (the repository is a @Singleton).
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = backgroundScope("NotificationsRepository")
 
     /**
      * One SSE connection fanned out to every subscriber (the video player's

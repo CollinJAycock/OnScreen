@@ -12,6 +12,7 @@ import tv.onscreen.mobile.data.prefs.ReadingPositionStore
 import tv.onscreen.mobile.ui.book.ReadingSync
 import javax.inject.Inject
 import javax.inject.Singleton
+import tv.onscreen.mobile.data.backgroundScope
 
 /** Reading position sync (v2.6): the server's copy (GET/PUT
  *  /items/{id}/reading-progress) and this device's ([ReadingPositionStore]). */
@@ -22,7 +23,7 @@ open class ReadingProgressRepository @Inject constructor(
 ) {
     /** Saves outlive the reader: the last one goes out as it closes, when its
      *  viewModelScope is already cancelled. Never cancelled. */
-    private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val detachedScope = backgroundScope("ReadingProgressRepository")
 
     /** The server's position, or null — none saved, an older server (404),
      *  or unreachable (the local copy is the fallback then). */

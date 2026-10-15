@@ -27,6 +27,7 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.playback.StreamTokenVault
 import javax.inject.Inject
 import javax.inject.Singleton
+import tv.onscreen.mobile.data.backgroundScope
 
 @Singleton
 open class AuthRepository @Inject constructor(
@@ -49,7 +50,7 @@ open class AuthRepository @Inject constructor(
 ) {
     /** App-lifetime scope for teardown writes that must outlive the caller —
      *  see [logoutDetached]. Never cancelled. */
-    private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val detachedScope = backgroundScope("AuthRepository")
 
     /** Clear per-identity caches. Called from every sign-in, sign-out and
      *  pairing completion — the points where "who is signed in" changes. */

@@ -47,6 +47,7 @@ import tv.onscreen.android.data.repository.TranscodeRepository
 import tv.onscreen.android.ui.playback.PlaybackHelper
 import tv.onscreen.android.ui.playback.PlaybackMode
 import javax.inject.Inject
+import tv.onscreen.android.data.backgroundScope
 
 /**
  * Media3 session service. Hosts the audio player when the user
@@ -103,7 +104,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
     /** Service-scoped coroutine scope. Cancelled in onDestroy so the
      *  progress reporter + auto-advance jobs don't leak past the
      *  service's lifetime. */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope = backgroundScope("OnScreenMediaSessionService", Dispatchers.Main)
     /** Active item id of the player parked here, used by the progress
      *  reporter to address PUT /items/{id}/progress and by the
      *  auto-advance listener to compute the next-sibling lookup. */
