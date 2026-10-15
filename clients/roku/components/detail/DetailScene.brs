@@ -12,6 +12,7 @@
 sub init()
     m.fanart = m.top.findNode("fanart")
     m.title = m.top.findNode("title")
+    m.logo = m.top.findNode("logo")
     m.meta = m.top.findNode("meta")
     m.summary = m.top.findNode("summary")
     m.playBtn = m.top.findNode("playBtn")
@@ -55,6 +56,7 @@ sub init()
     m.reportBtn.observeField("buttonSelected", "onReportPressed")
     m.childrenList.observeField("rowItemSelected", "onChildSelected")
     m.childrenList.observeField("rowItemFocused", "onChildFocused")
+    m.logo.observeField("loadStatus", "onLogoLoadStatus")
     m.top.observeField("itemId", "onItemIdSet")
 
     if m.top.itemId <> invalid and m.top.itemId <> ""
@@ -164,10 +166,52 @@ sub renderItem()
     end if
 
     m.title.text = item.title
+    renderLogo(item, serverUrl)
     m.meta.text = DetailMeta_Line(item)
     if item.summary <> invalid then m.summary.text = item.summary
 
     renderButtons()
+end sub
+
+' Movies and shows with a clear logo (logo_path, v2.6) show it in place of
+' the title text. The PNG is fetched at its original size (no ?w=, which
+' would re-encode it as a JPEG without transparency); the title stays up
+' until it has loaded and comes back if it fails.
+sub renderLogo(item as Object, serverUrl as Dynamic)
+    t = WatchState_Str(item.type)
+    path = WatchState_Str(item.logo_path)
+    if (t <> "movie" and t <> "show") or path = "" or serverUrl = invalid
+        m.logo.visible = false
+        m.title.visible = true
+        return
+    end if
+    uri = AssetArtworkOriginal(serverUrl, path, Prefs_GetAssetTokenStr())
+    if m.logo.uri <> uri then m.logo.uri = uri
+end sub
+
+sub onLogoLoadStatus()
+    status = m.logo.loadStatus
+    if status = "ready"
+        ' Shrink the box to the scaled bitmap so the logo sits flush left
+        ' (scaleToFit centres it in its box) with its bottom just above the
+        ' meta line, whatever its aspect ratio.
+        bw = m.logo.bitmapWidth
+        bh = m.logo.bitmapHeight
+        if bw > 0 and bh > 0
+            scale = 640 / bw
+            if 170 / bh < scale then scale = 170 / bh
+            w = Int(bw * scale)
+            h = Int(bh * scale)
+            m.logo.width = w
+            m.logo.height = h
+            m.logo.translation = [0, 70 - h]
+        end if
+        m.logo.visible = true
+        m.title.visible = false
+    else if status = "failed"
+        m.logo.visible = false
+        m.title.visible = true
+    end if
 end sub
 
 ' ── Action buttons ─────────────────────────────────────────────────

@@ -62,6 +62,18 @@
 
             <!-- Content column. -->
             <Group translation="[80, 260]">
+                <!-- Clear logo (logo_path, movies + shows): a transparent
+                     PNG shown in place of the title text once it loads.
+                     Hidden until then, so a missing / failed logo leaves
+                     the title as it was. DetailScene.brs sizes it to the
+                     bitmap, left-aligned, bottom just above the meta line. -->
+                <Poster id="logo"
+                        width="640" height="170"
+                        loadWidth="640" loadHeight="170"
+                        loadDisplayMode="scaleToFit"
+                        loadingBitmapOpacity="0"
+                        failedBitmapOpacity="0"
+                        visible="false" />
                 <Label id="title"
                        text=""
                        font="font:LargeBoldSystemFont"

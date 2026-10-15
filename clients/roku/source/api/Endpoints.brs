@@ -214,6 +214,13 @@ function AssetArtwork(serverUrl as String, path as String, width as Integer, acc
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
 end function
 
+' Artwork at its original size and format — for clear logos (logo_path,
+' v2.6), which are transparent PNGs: ?w= / ?h= re-encode as JPEG and lose
+' the transparency, so no resize params.
+function AssetArtworkOriginal(serverUrl as String, path as String, accessToken as String) as String
+    return serverUrl + "/artwork/" + UrlEncodePath(path) + "?token=" + accessToken
+end function
+
 ' Encode a slash-preserving path segment. Roku has no built-in
 ' equivalent of JavaScript's encodeURIComponent — write our own
 ' lightweight one so spaces and other chars don't break the URL.

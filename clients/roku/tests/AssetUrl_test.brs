@@ -11,6 +11,7 @@ sub Main()
     testArtworkUrlEncodesSpecialChars()
     testArtworkUrlIncludesWidth()
     testArtworkUrlIncludesToken()
+    testArtworkOriginalHasNoResize()
 
     print "DONE: AssetUrl_test"
 end sub
@@ -26,6 +27,12 @@ sub testStreamUrlPreservesFileId()
     actual = AssetStream("http://x", "550e8400-e29b-41d4-a716-446655440000", "t")
     expected = "http://x/media/stream/550e8400-e29b-41d4-a716-446655440000?token=t"
     runCase("stream url preserves uuid", actual, expected)
+end sub
+
+sub testArtworkOriginalHasNoResize()
+    actual = AssetArtworkOriginal("http://x", "Movies (2024)/logo.png", "t")
+    expected = "http://x/artwork/Movies%20%282024%29/logo.png?token=t"
+    runCase("original artwork url has no resize params", actual, expected)
 end sub
 
 sub testArtworkUrlBasic()
