@@ -710,7 +710,7 @@
               class="switcher-pin-input"
               type="password"
               inputmode="numeric"
-              pattern="\d{4}"
+              pattern={'\\d{4}'}
               maxlength="4"
               value={pinDigits}
               on:input={handleSwitchPinInput}
