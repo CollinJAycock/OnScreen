@@ -1235,11 +1235,14 @@ sub deleteTranscodeSession(sess as Object)
     })
 end sub
 
-' Best-effort stream-format guess from file extension. The Go
-' server returns the original filename in `path`; Roku's Video
-' node uses streamFormat to pick mp4 / hls / dash demuxers.
-function guessStreamFormat(path as String) as String
-    if path = invalid then return "mp4"
+' Best-effort stream-format guess from file extension. Roku's Video
+' node uses streamFormat to pick mp4 / hls / dash demuxers. Item
+' detail's files[] carry no `path`, so path is usually invalid (→ mp4,
+' which is what direct play's mp4 / mov / m4v containers need); typed
+' Dynamic because an invalid passed to an `as String` parameter is a
+' Type Mismatch that would end every direct play.
+function guessStreamFormat(path as Dynamic) as String
+    if path = invalid or (type(path) <> "String" and type(path) <> "roString") then return "mp4"
     lower = LCase(path)
     if Right(lower, 5) = ".m3u8" then return "hls"
     if Right(lower, 4) = ".mpd" then return "dash"
