@@ -60,6 +60,15 @@ export function episodeNumber(index?: number | null, indexEnd?: number | null): 
   return indexEnd != null && indexEnd > index ? `${index}–${indexEnd}` : String(index);
 }
 
+/** A card's text placeholder when it has no art: the title's first two
+ *  characters ("3." for "3. Pilot", "TH" for "The Wire"), except a
+ *  multi-episode range, which shows whole ("1–2" for "1–2. Pilot") rather
+ *  than cut off at "1–". */
+export function posterPlaceholder(title: string): string {
+  const range = /^(\d+–\d+)\./.exec(title);
+  return range ? range[1] : title.slice(0, 2).toUpperCase();
+}
+
 /** A grid card's title: "4. Title", "1–2. Title" for a multi-episode file,
  *  the bare title without a number. */
 export function numberedTitle(c: { title: string; index?: number | null; index_end?: number | null }): string {

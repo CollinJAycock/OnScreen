@@ -5,6 +5,7 @@ import {
   formatTimecode,
   genreLine,
   numberedTitle,
+  posterPlaceholder,
   resumeLabel,
   studioLine,
 } from './detailText';
@@ -92,5 +93,19 @@ describe('episodeNumber / numberedTitle', () => {
     expect(episodeNumber(0, 2)).toBe('');
     expect(episodeNumber(undefined, 2)).toBe('');
     expect(numberedTitle({ title: 'Extras' })).toBe('Extras');
+  });
+});
+
+describe('posterPlaceholder', () => {
+  it('shows a multi-episode range whole, not cut off at "1–"', () => {
+    expect(posterPlaceholder(numberedTitle({ title: 'Pilot', index: 1, index_end: 2 }))).toBe('1–2');
+    expect(posterPlaceholder('10–12. Finale')).toBe('10–12');
+  });
+
+  it('keeps the first two characters for everything else', () => {
+    expect(posterPlaceholder(numberedTitle({ title: 'Pilot', index: 3 }))).toBe('3.');
+    expect(posterPlaceholder('12. Finale')).toBe('12');
+    expect(posterPlaceholder('the wire')).toBe('TH');
+    expect(posterPlaceholder('')).toBe('');
   });
 });
