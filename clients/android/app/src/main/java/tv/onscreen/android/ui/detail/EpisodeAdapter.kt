@@ -89,7 +89,7 @@ class EpisodeAdapter(
                     "track", "music_video" -> ctx.getString(R.string.label_track_n, n)
                     "audiobook_chapter" -> ctx.getString(R.string.label_chapter_n, n)
                     "book" -> ctx.getString(R.string.label_book_n, n)
-                    // A multi-episode file (v2.6) is one row: "EPISODES 1–2".
+                    // A multi-episode file (v2.6) is one row: "EPISODES 1â€“2".
                     else -> EpisodeRange.end(n, ep.index_end)
                         ?.let { end -> ctx.getString(R.string.label_episode_range, n, end) }
                         ?: ctx.getString(R.string.label_episode_n, n)
