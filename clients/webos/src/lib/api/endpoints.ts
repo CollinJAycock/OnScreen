@@ -1,6 +1,7 @@
 import { api } from './client';
 import type { TokenPair } from './client';
 import type {
+  ArtistAppearance,
   Channel,
   ChildItem,
   CollectionItem,
@@ -21,14 +22,17 @@ import type {
   MediaIssue,
   MediaItem,
   MediaRequest,
+  MixTrack,
   NowNext,
   OnlineSubtitle,
   PairCodeResponse,
+  PlaybackDecision,
   PlaybackRate,
   Recording,
   ScrobbleLinkResult,
   ScrobbleStatus,
   SearchResult,
+  SimilarArtist,
   TraktLinkStart,
   TranscodeSession,
   UpNext,
@@ -156,6 +160,22 @@ export const items = {
     api.put<void>(`/api/v1/items/${id}/playback-rate`, { rate })
 };
 
+// ── Music discovery (v2.6) ────────────────────────────────────────────────
+// Older servers have none of these routes (404): the artist page leaves
+// its rows out and Instant mix says it isn't available.
+
+export const music = {
+  /** Artists like this one, most similar first. */
+  similar: (artistID: string, limit = 20) =>
+    api.get<SimilarArtist[]>(`/api/v1/music/artists/${artistID}/similar?limit=${limit}`),
+  /** Tracks on other artists' albums this one is credited on, newest
+   *  album first. */
+  appearsOn: (artistID: string) => api.get<ArtistAppearance[]>(`/api/v1/music/artists/${artistID}/appears-on`),
+  /** An Instant mix (about 50 tracks, freshly shuffled) from an artist,
+   *  album or track. */
+  mix: (seedID: string) => api.get<MixTrack[]>(`/api/v1/music/mix?seed=${encodeURIComponent(seedID)}`)
+};
+
 // ── Report a problem (v2.5) ────────────────────────────────────────────────
 
 export const issues = {
@@ -243,10 +263,13 @@ export const transcode = {
       supports_av1: opts.supportsAV1 ?? false
     }),
   // Server-authoritative play decision (capability profiles). Returns
-  // "directPlay" | "directStream" | "transcode". The capability profile rides
-  // the X-Client-Capabilities header (client.ts). See docs/capability-profiles.md.
+  // "directPlay" | "directStream" | "transcode" (and an optimized version,
+  // since the header declares optimized=1). The capability profile rides
+  // the X-Client-Capabilities header (client.ts). 429 TOO_MANY_SESSIONS is
+  // the user's stream limit (lib/player/playDecision). See
+  // docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
-    api.post<{ decision: string; file_id: string }>(
+    api.post<PlaybackDecision>(
       `/api/v1/items/${itemId}/playback-decision`,
       fileId ? { file_id: fileId } : {}
     ),

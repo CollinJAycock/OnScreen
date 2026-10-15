@@ -47,11 +47,13 @@ export function playerActions(o: {
 }
 
 /** A picker row: its text, whether it's what plays now (●), and whether it
- *  runs an action instead of picking (the online search). */
+ *  runs an action instead of picking (the online search). `thumb` is an
+ *  image path drawn beside the text (a chapter's thumbnail). */
 export interface PickerRow {
   label: string;
   current: boolean;
   action?: boolean;
+  thumb?: string;
 }
 
 /** The subtitle picker's last row, shown only with onlineSubtitles. */
@@ -198,6 +200,22 @@ export function chapterRowLabel(ch: { title?: string | null; start_ms: number },
   const title = (ch.title ?? '').trim() || `Chapter ${i + 1}`;
   return `${i + 1}. ${title} · ${formatClock(ch.start_ms)}`;
 }
+
+/** The chapter picker's rows: chapterRowLabel, the ● on `current`, and each
+ *  chapter's thumbnail (v2.6 thumb_url) where the server has one. */
+export function chapterPickerRows(
+  chapters: readonly { title?: string | null; start_ms: number; thumb_url?: string }[],
+  current: number
+): PickerRow[] {
+  return chapters.map((c, i) => {
+    const row: PickerRow = { label: chapterRowLabel(c, i), current: i === current };
+    if (c.thumb_url) row.thumb = c.thumb_url;
+    return row;
+  });
+}
+
+/** Rows a picker shows at once when they carry thumbnails (taller rows). */
+export const PICKER_VISIBLE_THUMB_ROWS = 6;
 
 /** The chapter playing at `positionMs` (the last one started), 0 before the
  *  first; -1 with none. The picker opens on it. */

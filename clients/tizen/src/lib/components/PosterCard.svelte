@@ -2,6 +2,7 @@
   import { focusable } from '$lib/focus/focusable';
   import { onDestroy } from 'svelte';
   import { api } from '$lib/api';
+  import { posterPlaceholder } from '$lib/detailText';
 
   interface Props {
     title: string;
@@ -84,7 +85,7 @@
     {#if posterUrl && !failed}
       <img src={posterUrl} alt="" loading="lazy" onerror={onPosterError} />
     {:else}
-      <div class="no-poster">{title.slice(0, 2).toUpperCase()}</div>
+      <div class="no-poster">{posterPlaceholder(title)}</div>
     {/if}
     {#if unwatchedCount != null && unwatchedCount > 0}
       <span class="badge count" aria-label="{unwatchedCount} unwatched">{unwatchedCount}</span>

@@ -9,6 +9,7 @@
     type ItemDetail,
     type ChildItem,
     type IssueKind,
+    type SimilarArtist,
     type UpNext
   } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
@@ -27,7 +28,8 @@
   import PosterCard from '$lib/components/PosterCard.svelte';
   import OptionsDialog from '$lib/components/OptionsDialog.svelte';
   import ReportProblemDialog from '$lib/components/ReportProblemDialog.svelte';
-  import { goBack, openChild as openChildNav, playItem } from '$lib/nav';
+  import { goBack, openChild as openChildNav, playItem, playQueue } from '$lib/nav';
+  import { appearsOnAlbums, appearsOnSubtitle, canMix, mixQueue, type AppearsOnAlbum } from '$lib/music';
   import {
     childWatchBadge,
     endpointMissing,
@@ -39,7 +41,9 @@
   } from '$lib/watchState';
   import { canReportProblem, openKinds } from '$lib/reportProblem';
   import { pickContainerStart, resolvePlayAll, resolveShuffle } from '$lib/playPick';
-  import { formatRuntime, genreLine, resumeLabel } from '$lib/detailText';
+  import { formatRuntime, genreLine, numberedTitle, resumeLabel, studioLine } from '$lib/detailText';
+  import { logoArtworkPath, showsLogo } from '$lib/artwork';
+  import { groupVersions } from '$lib/player/versions';
   import { latestOnly } from '$lib/latest';
 
   // Back from the player: how long to wait before reading the item again
@@ -98,11 +102,25 @@
   let isFavorite = $state(false);
   let favoriteBusy = false;
 
+  // Versions (v2.6, lib/player/versions): a movie with editions or several
+  // files picks which one Play starts. Keyed by the version's key; null =
+  // the first (the server's best).
+  let chosenVersion = $state<string | null>(null);
+  let versionPickerOpen = $state(false);
+
   // Artist pages: albums and loose music videos (v2.0 music_video) as two
   // tabs, like Android's Albums / Music Videos tabs.
   let artistTab = $state<'albums' | 'videos'>('albums');
-  // Play All / Shuffle need a request or two to find their track.
+  // Play All / Shuffle need a request or two to find their track; Instant
+  // mix one.
   let resolving = $state(false);
+
+  // Music discovery (v2.6): an artist's "Similar artists" and "Appears on"
+  // rows (empty, so not shown, on an older server), and Instant mix on an
+  // artist, album or track, hidden once a /music route answered 404.
+  let similarArtists = $state<SimilarArtist[]>([]);
+  let appearsOn = $state<AppearsOnAlbum[]>([]);
+  let mixAvailable = $state(true);
 
   // Back to this page (from a child page or the player): the hero's first
   // button and the grid's first card hold their autofocus while the element
@@ -135,6 +153,13 @@
   const posterUrl = $derived(
     item?.poster_path ? api.assetUrl(`/artwork/${item.poster_path}?w=480`) : ''
   );
+  // A movie's or show's clear logo (v2.6) in place of the title text, at its
+  // own size (lib/artwork). The text comes back if the image doesn't load.
+  const logoUrl = $derived.by(() => {
+    const path = item && showsLogo(item.type) ? logoArtworkPath(item.logo_path) : '';
+    return path ? api.assetUrl(path) : '';
+  });
+  let logoFailedUrl = $state('');
 
   // Artist children: albums (plus anything that isn't a music video, so a
   // future child type still shows up) and the artist's music videos.
@@ -156,6 +181,8 @@
   // Meta line, worded like Android's: "2h 5m" and up to three genres.
   const runtime = $derived(formatRuntime(item?.duration_ms));
   const genres = $derived(genreLine(item?.genres));
+  // A movie's studios / a show's networks (v2.6; absent on older servers).
+  const studios = $derived(studioLine(item?.studios));
 
   // book_author + book_series have no playable file of their own and
   // we deliberately hide the "Play first child" button because the
@@ -169,6 +196,14 @@
         item.type === 'book_series' ||
         (item.type === 'artist' && !artistHasAlbums && children.length > 0))
   );
+
+  const versions = $derived(item ? groupVersions(item.files) : []);
+  const currentVersion = $derived(versions.find((v) => v.key === chosenVersion) ?? versions[0]);
+
+  /** The player's version: the one picked here, else its default. */
+  function versionPick(): { fileId?: string } {
+    return versions.length > 1 && currentVersion ? { fileId: currentVersion.file.id } : {};
+  }
 
   const upNextText = $derived(upNextLabel(upNext));
   // Container pages on a v2.5 server drive Play + Mark all from up-next.
@@ -204,11 +239,23 @@
           key: 'play',
           label: resumeLabel(resumeMs),
           primary: true,
-          onclick: () => playItem(it.id),
+          onclick: () => playItem(it.id, undefined, versionPick()),
         });
-        out.push({ key: 'play-start', label: 'Play from Beginning', onclick: () => playItem(it.id, 0) });
+        out.push({ key: 'play-start', label: 'Play from Beginning', onclick: () => playItem(it.id, 0, versionPick()) });
       } else {
-        out.push({ key: 'play', label: 'Play', primary: true, onclick: () => playItem(it.id) });
+        out.push({ key: 'play', label: 'Play', primary: true, onclick: () => playItem(it.id, undefined, versionPick()) });
+      }
+      // More than one version (editions, or a 4K and a 1080p file; a
+      // stacked movie's parts are ONE version): which one Play starts.
+      if (versions.length > 1 && currentVersion) {
+        out.push({
+          key: 'version',
+          label: `Version: ${currentVersion.label}`,
+          onclick: () => {
+            menuOrigin = focusManager.currentElement();
+            versionPickerOpen = true;
+          },
+        });
       }
     } else if (containerWatch) {
       const ep = upNext?.episode;
@@ -253,6 +300,11 @@
       // series), so Play would land on a non-playable row. Hide and let
       // the user pick a book from the grid below.
       out.push({ key: 'play', label: 'Play', primary: true, onclick: playContainer });
+    }
+    // Instant mix (v2.6): about 50 tracks around this artist, album or
+    // track, played as a queue.
+    if (canMix(it.type) && mixAvailable) {
+      out.push({ key: 'mix', label: 'Instant mix', onclick: () => void playMix() });
     }
     if (leafWatch) {
       const watched = it.watch_state === 'watched';
@@ -344,6 +396,9 @@
           ]);
         }
         actionsReady = true;
+        // An artist's discovery rows, behind the buttons and the albums but
+        // still part of the first load, so Back to a card in them finds it.
+        if (it.type === 'artist') await loadArtistDiscovery(it.id);
 
         // Show context (show/season/episode): assemble the show's
         // season list + selected season's episodes so the page renders
@@ -559,6 +614,51 @@
       if (!alive) return;
       if (e instanceof Unauthorized) goto('#/login');
       else showStatus("Couldn't start playback.");
+    } finally {
+      resolving = false;
+    }
+  }
+
+  // An artist's Similar artists and Appears on rows. Best-effort and never
+  // rejects: a failure leaves a row out; a 404 is an older server, which
+  // has no Instant mix either.
+  async function loadArtistDiscovery(artistId: string): Promise<void> {
+    await Promise.all([
+      (async () => {
+        try {
+          const list = await endpoints.music.similar(artistId);
+          if (alive) similarArtists = Array.isArray(list) ? list : [];
+        } catch (e) {
+          if (endpointMissing(e)) mixAvailable = false;
+        }
+      })(),
+      (async () => {
+        try {
+          const tracks = await endpoints.music.appearsOn(artistId);
+          if (alive) appearsOn = appearsOnAlbums(tracks);
+        } catch {
+          // Best-effort: no row.
+        }
+      })(),
+    ]);
+  }
+
+  // Instant mix: the server's mix from this artist / album / track, played
+  // as a queue from its first track (nav.playQueue).
+  async function playMix() {
+    const it = item;
+    if (!it || resolving) return;
+    resolving = true;
+    try {
+      const queue = mixQueue(await endpoints.music.mix(it.id));
+      if (!alive) return;
+      if (queue.length > 0) playQueue(queue);
+      else showStatus('Nothing to mix yet');
+    } catch (e) {
+      if (!alive) return;
+      if (e instanceof Unauthorized) goto('#/login');
+      else if (endpointMissing(e)) showStatus("This server can't make an Instant mix.");
+      else showStatus("Couldn't make a mix.");
     } finally {
       resolving = false;
     }
@@ -796,13 +896,22 @@
           <img class="hero-poster" src={posterUrl} alt="" />
         {/if}
         <div class="hero-text">
-          <h1>{item.title}</h1>
+          {#if logoUrl && logoFailedUrl !== logoUrl}
+            <!-- The logo stands for the title; its alt keeps the title for
+                 screen readers. -->
+            <h1>
+              <img class="title-logo" src={logoUrl} alt={item.title} onerror={() => (logoFailedUrl = logoUrl)} />
+            </h1>
+          {:else}
+            <h1>{item.title}</h1>
+          {/if}
           <div class="meta">
             {#if item.year}<span>{item.year}</span>{/if}
             {#if item.content_rating}<span class="pill">{item.content_rating}</span>{/if}
             {#if runtime}<span>{runtime}</span>{/if}
             {#if item.rating}<span>★ {item.rating.toFixed(1)}</span>{/if}
             {#if genres}<span>{genres}</span>{/if}
+            {#if studios}<span>{studios}</span>{/if}
             {#if item.watch_state === 'watched'}<span class="watched-pill">Watched</span>{/if}
           </div>
           {#if item.summary}<p class="summary">{item.summary}</p>{/if}
@@ -825,7 +934,7 @@
               data-focus-key={`action:${a.key}`}
               data-focus-control
               onclick={a.onclick}
-              disabled={(marking && a.key !== 'play') || (resolving && (a.key === 'play' || a.key === 'shuffle'))}
+              disabled={(marking && a.key !== 'play') || (resolving && (a.key === 'play' || a.key === 'shuffle' || a.key === 'mix'))}
             >
               {a.label}
             </button>
@@ -873,7 +982,7 @@
               {#each seasonEpisodes as ep (ep.id)}
                 {@const badge = childWatchBadge(ep)}
                 <PosterCard
-                  title={ep.index ? `${ep.index}. ${ep.title}` : ep.title}
+                  title={numberedTitle(ep)}
                   posterPath={ep.thumb_path ?? ep.poster_path}
                   subtitle={ep.duration_ms ? `${Math.round(ep.duration_ms / 60000)}m` : undefined}
                   progressRatio={badge?.progress ?? undefined}
@@ -922,7 +1031,7 @@
                 <!-- No art of its own (an album's tracks, a book's chapters):
                      the parent's cover rather than a blank tile of initials. -->
                 <PosterCard
-                  title={child.index ? `${child.index}. ${child.title}` : child.title}
+                  title={numberedTitle(child)}
                   posterPath={child.thumb_path ?? child.poster_path ?? item.poster_path}
                   subtitle={child.duration_ms ? `${Math.round(child.duration_ms / 60000)}m` : undefined}
                   focusKey={child.id}
@@ -943,12 +1052,47 @@
           </div>
         </section>
       {/if}
+
+      {#if item.type === 'artist' && similarArtists.length > 0}
+        <!-- Rows: Left / Right stay in a row (data-focus-row). -->
+        <section class="children music-section">
+          <h2>Similar artists</h2>
+          <div class="music-row" data-focus-row>
+            {#each similarArtists as artist (artist.id)}
+              <PosterCard
+                title={artist.title}
+                posterPath={artist.poster_path}
+                focusKey={`similar:${artist.id}`}
+                onclick={() => openChild(artist.id)}
+              />
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      {#if item.type === 'artist' && appearsOn.length > 0}
+        <!-- Other artists' albums this one is credited on. -->
+        <section class="children music-section">
+          <h2>Appears on</h2>
+          <div class="music-row" data-focus-row>
+            {#each appearsOn as album (album.id)}
+              <PosterCard
+                title={album.title}
+                posterPath={album.posterPath}
+                subtitle={appearsOnSubtitle(album)}
+                focusKey={`appears:${album.id}`}
+                onclick={() => openChild(album.id)}
+              />
+            {/each}
+          </div>
+        </section>
+      {/if}
     </div>
   </div>
 
   {#if episodeMenu}
     <OptionsDialog
-      title={episodeMenu.index ? `${episodeMenu.index}. ${episodeMenu.title}` : episodeMenu.title}
+      title={numberedTitle(episodeMenu)}
       options={[
         {
           label: episodeMenu.watched ? 'Mark as unwatched' : 'Mark as watched',
@@ -974,11 +1118,31 @@
     />
   {/if}
 
+  {#if versionPickerOpen}
+    <!-- Starts on the version Play starts now (✓), so OK alone keeps it. -->
+    <OptionsDialog
+      title="Version"
+      options={versions.map((v) => ({
+        label: `${v.key === currentVersion?.key ? '✓ ' : ''}${v.label}`,
+        onselect: () => {
+          chosenVersion = v.key;
+          versionPickerOpen = false;
+          void restoreFocus();
+        },
+      }))}
+      initialIndex={versions.findIndex((v) => v.key === currentVersion?.key)}
+      oncancel={() => {
+        versionPickerOpen = false;
+        void restoreFocus();
+      }}
+    />
+  {/if}
+
   {#if reportOpen}
     <ReportProblemDialog
       itemId={item.id}
       itemTitle={item.title}
-      fileId={item.files[0]?.id}
+      fileId={currentVersion?.file.id ?? item.files[0]?.id}
       openKinds={reportKinds}
       onclose={(k) => void closeReport(k)}
     />
@@ -1045,6 +1209,16 @@
   h1 {
     font-size: var(--font-2xl);
     margin: 0 0 20px;
+  }
+
+  /* A clear logo in place of the title, about a title's footprint. (No CSS
+     min(): Tizen 5.5 runs Chromium 69.) */
+  .title-logo {
+    display: block;
+    max-width: 640px;
+    max-height: 200px;
+    object-fit: contain;
+    object-position: left center;
   }
 
   /* Wrapping rows (.meta, .actions, .season-chips) space their children
@@ -1184,6 +1358,32 @@
     grid-template-columns: repeat(auto-fill, 240px);
     column-gap: var(--card-gap);
     row-gap: calc(var(--card-gap) + 24px);
+  }
+
+  /* An artist's discovery rows: one line of cards that scrolls sideways,
+     out to the page's edges (the content is padded), with the same inset
+     kept at both ends of the scroll (see HubRow). */
+  .music-section {
+    margin-top: 48px;
+  }
+  .music-row {
+    display: flex;
+    overflow-x: auto;
+    margin: 0 calc(-1 * var(--page-pad));
+    padding: 16px 0 32px var(--page-pad);
+    scroll-padding: 0 var(--page-pad);
+  }
+  .music-row::after {
+    content: '';
+    flex: 0 0 var(--page-pad);
+  }
+  /* A margin, not flexbox `gap` (Chromium 79); :global() for the cards,
+     another component's elements (and no :where(), Chrome 88). */
+  .music-row > :global(* + *) {
+    margin-left: var(--card-gap);
+  }
+  .music-row::-webkit-scrollbar {
+    display: none;
   }
 
   .error {

@@ -20,16 +20,23 @@
   import { pushTo } from '$lib/nav';
   import { APP_VERSION } from '$lib/version';
   import { hasExtraScrobblers, scrobbleSummary } from '$lib/scrobbleLink';
+  import OptionsDialog from '$lib/components/OptionsDialog.svelte';
   import {
     LANGUAGE_OPTIONS,
+    QUALITY_ROWS,
     SUBTITLE_LANGUAGE_OPTIONS,
     langLabel,
     languageSaver,
     nextLangValue,
-    qualityProfileBody,
+    qualityLabel,
+    qualityOptions,
+    qualitySaver,
+    qualityValue,
+    type QualityField,
+    type QualityRow,
   } from '$lib/settingsPrefs';
   import type { ScrobbleStatus } from '$lib/api';
-  import type { UserPreferences } from '$lib/api/endpoints';
+  import type { QualityProfileUpdate, UserPreferences } from '$lib/api/endpoints';
 
   const username = $derived(api.getUser()?.username ?? '');
   const serverUrl = $derived(api.getOrigin() ?? '');
@@ -83,12 +90,24 @@
   let maxRating = $state<string | null>(null);
   let prefsLoaded = $state(false);
   let prefsSaving = $state(false);
-  let forcedSaving = $state(false);
+  // The quality profile's save (forced-only and the Playback quality rows).
+  let qualitySaving = $state(false);
   // One error line per save path. Each stays up until a save on that path
   // succeeds, so a press that starts the next save doesn't wipe the reason
   // the previous one failed.
   let langError = $state('');
-  let forcedError = $state('');
+  let qualityError = $state('');
+
+  // Playback quality (v2.6): the caps of the user's quality profile, which
+  // the server applies on every device. null = no limit / automatic. Each
+  // row opens a list of its choices (lib/settingsPrefs QUALITY_ROWS).
+  let quality = $state<Record<QualityField, number | string | null>>({
+    max_video_height: null,
+    max_video_bitrate_kbps: null,
+    max_audio_bitrate_kbps: null,
+    preferred_video_codec: null,
+  });
+  let qualityPicker = $state<QualityRow | null>(null);
 
   // Scrobble link status (ListenBrainz, plus Last.fm + Trakt on v2.5
   // servers) — surfaced as a row that opens the dedicated
@@ -102,6 +121,7 @@
     subLang = p.preferred_subtitle_lang ?? '';
     forcedOnly = !!p.forced_subtitles_only;
     maxRating = p.max_content_rating ?? null;
+    for (const row of QUALITY_ROWS) quality[row.field] = qualityValue(p, row.field);
   }
 
   onMount(() => {
@@ -182,30 +202,53 @@
     void persist();
   }
 
-  // Forced-only lives in the quality profile, not the preferences (whose PUT
-  // ignores it, which is why this toggle used to snap back on reload). That
-  // PUT replaces the whole profile, so the other caps are echoed from a read
-  // made right before it rather than from when the page opened.
-  async function toggleForced() {
-    if (forcedSaving) return;
-    const want = !forcedOnly;
-    forcedOnly = want;
-    forcedSaving = true;
-    try {
+  // Forced-only and the Playback quality rows live in the quality profile,
+  // not the preferences (whose PUT ignores them, which is why the forced
+  // toggle used to snap back on reload). That PUT replaces the whole
+  // profile, so each save echoes the fields it doesn't change from a read
+  // made right before it rather than from when the page opened; a refused
+  // or failed save puts the server's values back (see qualitySaver).
+  const saveQuality = qualitySaver({
+    read: async () => {
       const fresh = await endpoints.users.preferences();
       maxRating = fresh.max_content_rating ?? null;
-      await endpoints.users.setQualityProfile(qualityProfileBody(fresh, want));
-      forcedError = '';
-    } catch (e) {
-      forcedOnly = !want;
-      if (e instanceof Unauthorized) {
-        goto('#/login');
-        return;
+      return fresh;
+    },
+    put: (body) => endpoints.users.setQualityProfile(body),
+    show: (stored, pending) => {
+      if (!pending.has('forced_subtitles_only')) forcedOnly = stored.forced_subtitles_only;
+      for (const row of QUALITY_ROWS) {
+        if (!pending.has(row.field)) quality[row.field] = qualityValue(stored, row.field);
       }
-      forcedError = "Couldn't save the subtitle setting.";
-    } finally {
-      forcedSaving = false;
-    }
+    },
+    saving: (on) => (qualitySaving = on),
+    error: (text) => (qualityError = text),
+    fatal: (e) => {
+      if (!(e instanceof Unauthorized)) return false;
+      goto('#/login');
+      return true;
+    },
+  });
+
+  function toggleForced() {
+    forcedOnly = !forcedOnly;
+    void saveQuality({ forced_subtitles_only: forcedOnly });
+  }
+
+  // A quality row's list: picking puts the choice on the row at once and
+  // saves it; Cancel / Back leave it. Either way focus returns to the row.
+  async function closeQualityPicker() {
+    const row = qualityPicker;
+    qualityPicker = null;
+    await tick();
+    if (row) focusFirstOf(`.action-row[data-quality="${row.field}"]`);
+  }
+
+  function pickQuality(row: QualityRow, value: number | string | null) {
+    void closeQualityPicker();
+    if (quality[row.field] === value) return;
+    quality[row.field] = value;
+    void saveQuality({ [row.field]: value } as Partial<QualityProfileUpdate>);
   }
 
   const audioLabel = $derived(langLabel(LANGUAGE_OPTIONS, audioLang));
@@ -293,14 +336,13 @@
         <div class="action-title">Subtitle language</div>
         <div class="action-desc">{subLabel}</div>
       </button>
-      <button use:focusable class="action-row" onclick={() => void toggleForced()}>
+      <button use:focusable class="action-row" onclick={toggleForced}>
         <div class="action-title">Forced subtitles only</div>
         <div class="action-desc">
-          {forcedOnly ? 'On — only show subtitles flagged as forced' : 'Off — show full subtitle tracks'}{forcedSaving ? ' · saving…' : ''}
+          {forcedOnly ? 'On — only show subtitles flagged as forced' : 'Off — show full subtitle tracks'}{qualitySaving ? ' · saving…' : ''}
         </div>
       </button>
       {#if langError}<div class="prefs-error" role="status">{langError}</div>{/if}
-      {#if forcedError}<div class="prefs-error" role="status">{forcedError}</div>{/if}
       <!-- Read-only: the ceiling is the administrator's parental control
            (Android shows it the same way). -->
       <div class="info-row indented">
@@ -311,6 +353,29 @@
       </div>
     {/if}
   </section>
+
+  {#if prefsLoaded}
+    <section>
+      <div class="section-title">Playback quality</div>
+      <div class="section-note">
+        Limits for your account on every device: anything above them is converted by the server.
+      </div>
+      {#each QUALITY_ROWS as row (row.field)}
+        <button
+          use:focusable
+          class="action-row"
+          data-quality={row.field}
+          data-focus-key={`settings:quality:${row.field}`}
+          data-focus-control
+          onclick={() => (qualityPicker = row)}
+        >
+          <div class="action-title">{row.title}</div>
+          <div class="action-desc">{qualityLabel(row, quality[row.field])}</div>
+        </button>
+      {/each}
+      {#if qualityError}<div class="prefs-error" role="status">{qualityError}</div>{/if}
+    </section>
+  {/if}
 
   <section>
     <div class="section-title">Scrobbling</div>
@@ -378,6 +443,21 @@
     </button>
   </section>
 </div>
+
+{#if qualityPicker}
+  {@const row = qualityPicker}
+  {@const opts = qualityOptions(row, quality[row.field])}
+  <!-- Starts on the current choice (✓), so OK alone keeps it. -->
+  <OptionsDialog
+    title={row.title}
+    options={opts.map((o) => ({
+      label: `${o.value === quality[row.field] ? '✓ ' : ''}${o.label}`,
+      onselect: () => pickQuality(row, o.value),
+    }))}
+    initialIndex={opts.findIndex((o) => o.value === quality[row.field])}
+    oncancel={() => void closeQualityPicker()}
+  />
+{/if}
 
 <!-- use:focusScope confines D-pad navigation to the modal — without it
      the focus manager's spatial search still considers the action rows
@@ -460,6 +540,13 @@
     text-transform: uppercase;
     letter-spacing: 0.15em;
     margin-bottom: 16px;
+  }
+  /* Lined up with the rows' text (their 20px padding + border). */
+  .section-note {
+    margin: 0 0 8px;
+    padding: 0 22px;
+    font-size: var(--font-sm);
+    color: var(--text-secondary);
   }
 
   .identity {

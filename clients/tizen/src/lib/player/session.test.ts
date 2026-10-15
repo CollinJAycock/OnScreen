@@ -179,6 +179,16 @@ describe('duration rules', () => {
     expect(listedDurationMs({ duration_ms: 0 }, { duration_ms: 0 })).toBe(0);
   });
 
+  it("measures a stacked movie by the item, not by the part it starts from", () => {
+    // Part 1 is 50 minutes of a 100-minute movie the server streams whole.
+    const part1 = { duration_ms: 3_000_000, part_index: 1 };
+    const movie = { duration_ms: 6_000_000 };
+    expect(listedDurationMs(part1, movie)).toBe(6_000_000);
+    expect(
+      contentDurationMs(part1, movie, { playerDurationMs: Infinity, offsetMs: 0, directAudio: false, ended: false })
+    ).toBe(6_000_000);
+  });
+
   it("never trusts a growing session's player duration", () => {
     const ctx = { playerDurationMs: 180_000, offsetMs: 2_695_000, directAudio: false, ended: false };
     expect(contentDurationMs(file, item, ctx)).toBe(7_200_000);

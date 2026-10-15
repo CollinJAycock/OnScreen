@@ -6,6 +6,7 @@
 
 import type { RemoteKey } from '../focus/keys';
 import { episodeCode } from '../watchState';
+import { numberedTitle } from '../detailText';
 
 // ── Controls auto-hide ─────────────────────────────────────────────────
 
@@ -29,10 +30,23 @@ export function controlsHideDelayMs(o: { alwaysOn: boolean; paused: boolean; act
 
 // ── Labels ─────────────────────────────────────────────────────────────
 
-/** The line over an episode's title: "Show · S2 · E5". Whatever is known of
- *  it (just the show, just the code); '' when nothing is. */
-export function episodeContextLine(show: string | null | undefined, season?: number | null, episode?: number | null): string {
-  return [(show ?? '').trim(), episodeCode(season, episode)].filter((s) => s !== '').join(' · ');
+/** The line over an episode's title: "Show · S2 · E5" ("S1 · E1–E2" for a
+ *  multi-episode file, `episodeEnd` being its index_end). Whatever is known
+ *  of it (just the show, just the code); '' when nothing is. */
+export function episodeContextLine(
+  show: string | null | undefined,
+  season?: number | null,
+  episode?: number | null,
+  episodeEnd?: number | null
+): string {
+  return [(show ?? '').trim(), episodeCode(season, episode, episodeEnd)].filter((s) => s !== '').join(' · ');
+}
+
+/** The Up Next card's title: an episode with its number, "5. Title" or
+ *  "5–6. Title" for a multi-episode file (as the episode grid reads);
+ *  anything else by its title alone. */
+export function upNextCardTitle(next: { title: string; type: string; index?: number; index_end?: number }): string {
+  return next.type === 'episode' ? numberedTitle(next) : next.title;
 }
 
 /** "Track 3 of 12" on the now-playing view, named for what is queued: a

@@ -42,3 +42,36 @@ export function genreLine(genres: readonly string[] | null | undefined, max = 3)
   }
   return out.join(', ');
 }
+
+/** A movie's studios or a show's networks for the meta line: up to `max`
+ *  names, comma-separated, blanks and repeats dropped ('' for none). */
+export function studioLine(
+  studios: readonly { name?: string | null }[] | null | undefined,
+  max = 2
+): string {
+  if (!Array.isArray(studios)) return '';
+  return genreLine(studios.map((s) => (s && typeof s.name === 'string' ? s.name : '')), max);
+}
+
+/** An episode's (or any numbered child's) number: "4", or "1–2" for a
+ *  multi-episode file (index_end). '' without a number. */
+export function episodeNumber(index?: number | null, indexEnd?: number | null): string {
+  if (index == null || !index) return '';
+  return indexEnd != null && indexEnd > index ? `${index}–${indexEnd}` : String(index);
+}
+
+/** A card's text placeholder when it has no art: the title's first two
+ *  characters ("3." for "3. Pilot", "TH" for "The Wire"), except a
+ *  multi-episode range, which shows whole ("1–2" for "1–2. Pilot") rather
+ *  than cut off at "1–". */
+export function posterPlaceholder(title: string): string {
+  const range = /^(\d+–\d+)\./.exec(title);
+  return range ? range[1] : title.slice(0, 2).toUpperCase();
+}
+
+/** A grid card's title: "4. Title", "1–2. Title" for a multi-episode file,
+ *  the bare title without a number. */
+export function numberedTitle(c: { title: string; index?: number | null; index_end?: number | null }): string {
+  const n = episodeNumber(c.index, c.index_end);
+  return n ? `${n}. ${c.title}` : c.title;
+}

@@ -91,12 +91,14 @@ export function toContentMs(streamSec: number, offsetMs: number): number {
 
 /** The length the server lists for what plays: the file's probed duration,
  *  else the item's runtime (TMDB's, in whole minutes, so only a fallback). A
- *  zero is no length either. 0 when neither is known. */
+ *  zero is no length either. 0 when neither is known. A stacked movie's part
+ *  (part_index) lists only its own length while the server streams every
+ *  part: the item's duration_ms, which covers the whole movie, wins. */
 export function listedDurationMs(
-  file: Pick<ItemFile, 'duration_ms'> | null | undefined,
+  file: Pick<ItemFile, 'duration_ms' | 'part_index'> | null | undefined,
   item: Pick<ItemDetail, 'duration_ms'> | null | undefined
 ): number {
-  const f = file?.duration_ms ?? 0;
+  const f = file?.part_index != null ? 0 : (file?.duration_ms ?? 0);
   if (f > 0) return f;
   const i = item?.duration_ms ?? 0;
   return i > 0 ? i : 0;
@@ -123,7 +125,7 @@ export interface DurationContext {
  *  watched, minutes into a resume. 0 when nothing is known yet; callers
  *  treat that as "don't report". Android's contentDurationMs. */
 export function contentDurationMs(
-  file: Pick<ItemFile, 'duration_ms'> | null | undefined,
+  file: Pick<ItemFile, 'duration_ms' | 'part_index'> | null | undefined,
   item: Pick<ItemDetail, 'duration_ms'> | null | undefined,
   ctx: DurationContext
 ): number {

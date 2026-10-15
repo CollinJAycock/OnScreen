@@ -15,19 +15,23 @@ import type {
 } from './api/types';
 
 /** "S2 · E5". A missing season drops the S half; a missing or 0 episode
- *  number (the server's "unknown") drops the E half. */
-export function episodeCode(season?: number | null, episode?: number | null): string {
+ *  number (the server's "unknown") drops the E half. A multi-episode file
+ *  (`episodeEnd`, the server's index_end) reads "S1 · E1–E2". */
+export function episodeCode(season?: number | null, episode?: number | null, episodeEnd?: number | null): string {
   const parts: string[] = [];
   if (season != null) parts.push(`S${season}`);
-  if (episode != null && episode > 0) parts.push(`E${episode}`);
+  if (episode != null && episode > 0) {
+    parts.push(episodeEnd != null && episodeEnd > episode ? `E${episode}–E${episodeEnd}` : `E${episode}`);
+  }
   return parts.join(' · ');
 }
 
-/** Second line of a Next Up tile: "S2 · E5 — Episode title". */
+/** Second line of a Next Up tile: "S2 · E5 — Episode title" ("S1 · E1–E2 —
+ *  …" for a multi-episode file). */
 export function nextUpSubtitle(
-  item: Pick<HubItem, 'title' | 'season_number' | 'episode_number'>,
+  item: Pick<HubItem, 'title' | 'season_number' | 'episode_number' | 'episode_number_end'>,
 ): string {
-  const code = episodeCode(item.season_number, item.episode_number);
+  const code = episodeCode(item.season_number, item.episode_number, item.episode_number_end);
   return code ? `${code} — ${item.title}` : item.title;
 }
 
@@ -48,10 +52,11 @@ export function hubTileText(item: HubItem): { title: string; subtitle?: string }
  *   next    → "Play S3 · E5"
  *   start   → "Play S1 · E1"
  *   rewatch → "Watch again"
+ * A multi-episode file reads as its range: "Play S1 · E1–E2".
  */
 export function upNextLabel(u: UpNext | null | undefined): string | null {
   if (!u || !u.episode) return null;
-  const code = episodeCode(u.episode.season_number, u.episode.episode_number);
+  const code = episodeCode(u.episode.season_number, u.episode.episode_number, u.episode.episode_number_end);
   switch (u.mode) {
     case 'resume':
       return code ? `Resume ${code}` : 'Resume';

@@ -15,6 +15,8 @@
     type Chapter,
     type Marker,
     type NotificationEvent,
+    type OptimizedVersion,
+    type PlaybackDecision,
     type TranscodeSession
   } from '$lib/api';
   import type { UserPreferences } from '$lib/api/endpoints';
@@ -85,8 +87,9 @@
     actionRowKey,
     barSeekMs,
     chapterAt,
-    chapterRowLabel,
+    chapterPickerRows,
     pickerWindow,
+    PICKER_VISIBLE_THUMB_ROWS,
     playerActions,
     subtitlePickerRows,
     transportButtons,
@@ -113,12 +116,23 @@
     nowPlayingArt,
     queueLabel,
     queueNoun,
+    upNextCardTitle,
     upNextKey,
     usesParentCover,
     type UpNextButton
   } from '$lib/player/chrome';
   import { PROGRESS_UPDATED_EVENT, events } from '$lib/events';
-  import { goBack, replaceTo, takeStartOverride } from '$lib/nav';
+  import { goBack, replaceTo, takeFileOverride, takeStartOverride } from '$lib/nav';
+  import { isStackPart, playableFile } from '$lib/player/versions';
+  import { queueNeighbours } from '$lib/player/queue';
+  import {
+    TOO_MANY_STREAMS_TITLE,
+    optimizedVersionOf,
+    playsOptimized,
+    sourceVerdict,
+    tooManyStreamsMessage
+  } from '$lib/player/playDecision';
+  import { logoArtworkPath, showsLogo } from '$lib/artwork';
   import { clientName } from '$lib/device';
   import {
     PLAYBACK_STOP_EVENT,
@@ -144,6 +158,9 @@
   // "Watch again" / the show's up-next episode asked for a start point (see
   // playItem in nav.ts). Read once: a retry of a failed load mustn't lose it.
   const startOverride = takeStartOverride(itemID);
+  // The version the detail page's picker chose (a file id), else undefined:
+  // the default version. Read once, like the start.
+  const fileOverride = takeFileOverride(itemID);
   let video: HTMLVideoElement | undefined = $state();
 
   let item = $state<ItemDetail | null>(null);
@@ -270,6 +287,22 @@
   // a heartbeat). The player is torn down, the message stays on screen and
   // only Back does anything.
   let refused = $state(false);
+  // A heading over the message (`error`) on the overlay, '' for none: "Too
+  // many streams" over the server's stream-limit message.
+  let errorTitle = $state('');
+
+  // ── Optimized versions (v2.6) ──────────────────────────────────────
+  //
+  // The capability header declares optimized=1, so where the source would
+  // need a transcode the play decision may hand out a pre-made H.264/AAC
+  // MP4 instead, played directly (lib/player/playDecision). Progress still
+  // goes to the item. If it doesn't play, the source plays once with its
+  // own verdict (sessionVideoCopy holds it; optimizedFailed for good), and
+  // so does an audio track other than the version's.
+  let optimizedVersion: OptimizedVersion | null = null;
+  let optimizedFailed = false;
+  // The bound source is the optimized version.
+  let playingOptimized = false;
 
   // Audiobook listening speed (books + their chapter files; music stays at
   // 1×) through <video>.playbackRate. RateCheck withdraws the control with a
@@ -281,15 +314,21 @@
   const rateCheck = new RateCheck();
   let rateCheckTimer: ReturnType<typeof setInterval> | null = null;
 
+  // The file this play is of (lib/player/versions): the version the detail
+  // page picked, else the first; a stacked movie as its first part, whose
+  // file_id the server streams every part from. Its tracks and chapters are
+  // what the pickers list.
+  const playFile = $derived(item ? playableFile(item.files, fileOverride) : undefined);
+
   // Chapters: surface as jump targets. Start offsets used for green-button cycling.
-  const chapters = $derived<Chapter[]>(item?.files[0]?.chapters ?? []);
+  const chapters = $derived<Chapter[]>(playFile?.chapters ?? []);
 
   // Audio, subtitle and chapter pickers. They open from the on-screen
   // action row (Down from the controls, then OK; the pointer clicks it too)
   // or the colour keys: yellow audio, blue subtitles. Picking an audio track
   // on an HLS session re-issues the transcode with a new audio_stream_index;
   // subtitles are fetched as WebVTT and drawn by the page (see Subtitles).
-  const audioStreams = $derived(item?.files[0]?.audio_streams ?? []);
+  const audioStreams = $derived(playFile?.audio_streams ?? []);
   let audioPickerOpen = $state(false);
   let subtitlePickerOpen = $state(false);
   let chapterPickerOpen = $state(false);
@@ -314,7 +353,7 @@
   // track is fetched as WebVTT (embedded: by its absolute stream index;
   // downloaded: from files[].external_subtitles), parsed, and its cues drawn
   // in .subtitle-overlay against the CONTENT clock ($lib/player/subtitles).
-  const subtitleOptions = $derived(buildSubtitleOptions(item?.files[0]));
+  const subtitleOptions = $derived(buildSubtitleOptions(playFile));
   // The chosen row by key ('emb:<index>' / 'ext:<id>'), null = Off. Keyed,
   // not by position, so it survives every re-issue and an item refresh.
   let activeSubtitleKey = $state<string | null>(null);
@@ -529,11 +568,23 @@
       return subtitlePickerRows(subtitleOptions, activeSubtitleKey, onlineSubsAvailable, status);
     }
     if (chapterPickerOpen) {
-      return chapters.map((c, i) => ({ label: chapterRowLabel(c, i), current: i === chapterPickerCurrent }));
+      return chapterPickerRows(chapters, chapterPickerCurrent);
     }
     return [];
   });
-  const pickerSpan = $derived(pickerWindow(pickerCursor, pickerRows.length));
+  // Rows with chapter thumbnails are taller: fewer of them fit the panel.
+  const pickerThumbs = $derived(pickerRows.some((r) => !!r.thumb));
+  const pickerSpan = $derived(
+    pickerWindow(pickerCursor, pickerRows.length, pickerThumbs ? PICKER_VISIBLE_THUMB_ROWS : undefined)
+  );
+
+  // A movie's clear logo (v2.6) in place of the title on the controls; the
+  // text comes back if it doesn't load (lib/artwork).
+  const titleLogoUrl = $derived.by(() => {
+    const path = item && showsLogo(item.type) ? logoArtworkPath(item.logo_path) : '';
+    return path ? api.assetUrl(path) : '';
+  });
+  let titleLogoFailedUrl = $state('');
 
   // The controls come up on any key or pointer move and fade 5 s after the
   // last one (Android's leanback timing), 8 s while the action row has
@@ -678,7 +729,7 @@
   // duration. See contentDurationMs.
   function refreshDuration() {
     const vd = video?.duration ?? 0;
-    duration = contentDurationMs(item?.files[0], item, {
+    duration = contentDurationMs(playFile, item, {
       playerDurationMs: Number.isFinite(vd) && vd > 0 ? vd * 1000 : 0,
       offsetMs,
       directAudio: !serverStream && isAudioOnly,
@@ -716,6 +767,13 @@
     }
     if (e instanceof ApiError && e.code === 'PARENTAL_LIMIT') {
       endPlayback(parentalBlockMessage(e.message));
+      return true;
+    }
+    // The user's stream limit (429 TOO_MANY_SESSIONS): the server's message,
+    // never a retry (it would only count against the same limit).
+    const busy = tooManyStreamsMessage(e);
+    if (busy) {
+      endPlayback(busy, TOO_MANY_STREAMS_TITLE);
       return true;
     }
     return false;
@@ -1041,10 +1099,11 @@
   // offset), and two of them could race the server's last-writer-wins
   // supersede into leaving no live session at all.
 
-  /** What a start produced: a server session, or the file's direct source
-   *  (music, audiobooks, audio-only podcast episodes). */
+  /** What a start produced: a server session, or a direct source: the file
+   *  (music, audiobooks, audio-only podcast episodes), or with `url` an
+   *  optimized version's MP4. */
   type Opened =
-    | { kind: 'direct' }
+    | { kind: 'direct'; url?: string }
     | { kind: 'hls'; session: TranscodeSession; Hls: typeof HlsType };
 
   const controller = new SessionController<Opened>({
@@ -1058,7 +1117,8 @@
     isRefusal: (e) =>
       isPlaybackStoppedError(e) ||
       e instanceof Unauthorized ||
-      (e instanceof ApiError && e.code === 'PARENTAL_LIMIT'),
+      (e instanceof ApiError && e.code === 'PARENTAL_LIMIT') ||
+      tooManyStreamsMessage(e) !== null,
     failed: (e, req) => {
       console.warn('[player] start failed', e);
       buffering = false;
@@ -1095,13 +1155,22 @@
   // file itself, unless the TV couldn't play it (then the server's
   // audio-only session, see fallBackFromDirectAudio).
   async function startStream(req: OpenRequest): Promise<Opened> {
-    const file = item?.files[0];
+    const file = playFile;
     if (!file) throw new Error('No playable file for this item.');
-    if (isAudioOnly && !directAudioFailed) return { kind: 'direct' };
+    // Never a stacked movie's part on its own: only the server plays the
+    // parts as one movie.
+    if (isAudioOnly && !directAudioFailed && !isStackPart(file)) return { kind: 'direct' };
     // An out-of-range ordinal (a stale row after an item refresh) would earn
     // a 400; null leaves the track to the server's default (0:a:0).
     const ordinal =
       req.audioOrdinal !== null && validAudioOrdinal(req.audioOrdinal, audioStreams.length) ? req.audioOrdinal : null;
+    // The optimized version the decision handed out, on its default audio
+    // (it carries no other track), until it has failed here: a direct play
+    // of its MP4. Otherwise the source, with its own verdict (req.videoCopy).
+    const optimized = optimizedVersion;
+    if (!isAudioOnly && optimized && playsOptimized({ version: optimized, failed: optimizedFailed, audioOrdinal: ordinal })) {
+      return { kind: 'direct', url: api.assetUrl(optimized.stream_url) };
+    }
     const Hls = await loadHls();
     const fresh = await endpoints.transcode.start({
       itemId: itemID,
@@ -1133,7 +1202,7 @@
   // server has already superseded it) is retired and the player swapped
   // over; the bar holds the requested point until the new stream is ready.
   function attachOpened(o: Opened, req: OpenRequest) {
-    const file = item?.files[0];
+    const file = playFile;
     if (!video || !file) {
       if (o.kind === 'hls') retireSession(o.session);
       return;
@@ -1155,15 +1224,19 @@
     shownCues = [];
     ptsShiftMs = 0;
     ptsCaptureStartSec = null;
+    playingOptimized = o.kind === 'direct' && !!o.url;
     if (o.kind === 'direct') {
-      // Direct play: the file itself, so content time is media time and the
-      // start point is a plain seek once metadata is in.
+      // Direct play: the file itself (or the optimized version, the whole
+      // item in one MP4), so content time is media time and the start point
+      // is a plain seek once metadata is in.
       serverStream = false;
       offsetMs = 0;
       currentPlaylistUrl = '';
       metadataSeekSec = req.positionMs > 0 ? req.positionMs / 1000 : null;
+      // The version carries the default track only.
+      if (o.url) activeAudioIndex = 0;
       reporter?.setDecision('directPlay');
-      video.src = api.assetUrl(file.stream_url);
+      video.src = o.url ?? api.assetUrl(file.stream_url);
       return;
     }
     const fresh = o.session;
@@ -1298,6 +1371,17 @@
     void openStream({ positionMs: atMs, videoCopy: false, audioOrdinal: null, ...intent.stamp() });
   }
 
+  // An optimized version that failed to play: the source from where it
+  // stopped, with the source's own verdict (sessionVideoCopy, set from the
+  // decision's source_decision), keeping the play state. Once per item:
+  // every start from then on is the source's (optimizedFailed).
+  function fallBackFromOptimized(atMs: number) {
+    if (!video || !item || serverStream || refused || optimizedFailed) return;
+    console.warn('[player] optimized version failed; falling back to the source');
+    optimizedFailed = true;
+    void openStream({ positionMs: atMs, videoCopy: sessionVideoCopy, audioOrdinal: activeAudioIndex, ...intent.stamp() });
+  }
+
   // A remux the decoder can't take even after recovery: one restart as a
   // full transcode at the current content position, keeping the paused
   // state (Android's fallbackFromDirectPlay).
@@ -1338,10 +1422,12 @@
   // (matched by isStopForPlayer), a 403 PLAYBACK_STOPPED / PARENTAL_LIMIT
   // from a start, or any 403 on a heartbeat (revoked). Stops at once and
   // shows the message; 'stopped' is reported once (the resume point is
-  // kept), the transcode session ends and nothing opens again.
-  function endPlayback(text: string) {
+  // kept), the transcode session ends and nothing opens again. `title` heads
+  // the message ("Too many streams").
+  function endPlayback(text: string, title = '') {
     if (refused) return;
     refused = true;
+    errorTitle = title;
     controller.close();
     closePickers();
     closeOnlineSubtitleSearch();
@@ -1405,6 +1491,7 @@
     paused = true;
     loading = false;
     errorRetryable = opts.retryable ?? true;
+    errorTitle = '';
     error = text;
   }
 
@@ -2056,7 +2143,7 @@
   // re-issue (Android's reloadSubtitles; the web client auto-selects too).
   async function downloadOnlineSubtitle(pick: OnlineSubtitle) {
     if (!item || onlineSubsDownloading) return;
-    const file = item.files[0];
+    const file = playFile;
     if (!file) return;
     onlineSubsDownloading = true;
     onlineSubsError = '';
@@ -2100,7 +2187,9 @@
   // the running session, so a failed switch can't just keep the old track:
   // the controller retries once, then the error overlay offers a retry.
   function switchAudioStream(ordinal: number) {
-    if (!video || !item || !serverStream || refused || error) return;
+    // A session re-issues with the track; the optimized version, which
+    // carries only the default one, hands over to the source (startStream).
+    if (!video || !item || !(serverStream || playingOptimized) || refused || error) return;
     if (!validAudioOrdinal(ordinal, audioStreams.length)) {
       console.warn('[audio] refusing out-of-range track', ordinal, 'of', audioStreams.length);
       return;
@@ -2328,7 +2417,19 @@
   // "Track N of M".
   function loadNextSibling() {
     const it = item;
-    if (!it || !it.parent_id) return;
+    if (!it) return;
+    // A play queue (an Instant mix) with this item in it: its order, not the
+    // album's, and its end is the end (lib/player/queue).
+    const queued = queueNeighbours(it.id);
+    if (queued) {
+      prevSibling = queued.prev;
+      nextSibling = queued.next;
+      queuePosition = queued.position;
+      queueTotal = queued.total;
+      nextLoad = Promise.resolve(queued.next);
+      return;
+    }
+    if (!it.parent_id) return;
     if (
       it.type !== 'episode' &&
       it.type !== 'track' &&
@@ -2382,7 +2483,7 @@
         let show = parent.type === 'show' ? parent : grand;
         // A server that doesn't send grandparent_id: up from the season.
         if (!show && season?.parent_id) show = await endpoints.items.get(season.parent_id).catch(() => null);
-        if (!destroyed) episodeContext = episodeContextLine(show?.title, season?.index, it.index);
+        if (!destroyed) episodeContext = episodeContextLine(show?.title, season?.index, it.index, it.index_end);
         return;
       }
       if (!usesParentCover(it.type)) return;
@@ -2857,6 +2958,12 @@
           endPlayback(text);
           return;
         }
+        // An optimized version that won't play: once, the source with its
+        // own verdict, from where it stopped.
+        if (playingOptimized) {
+          fallBackFromOptimized(at);
+          return;
+        }
         // Not a stop: the connection, or a file this TV can't play (one
         // server transcode first, see directAudioFailure).
         switch (directAudioFailure(code, directAudioFailed)) {
@@ -2891,7 +2998,7 @@
         showFatal('Book reading isn’t available on TV. Open this book in the web or phone app.', { retryable: false });
         return;
       }
-      const file = it.files[0];
+      const file = playableFile(it.files, fileOverride);
       if (!file) {
         showFatal('No playable file for this item.', { retryable: false });
         return;
@@ -2972,13 +3079,23 @@
         // Server-authoritative play decision (capability profiles): the server
         // uses our X-Client-Capabilities header. directPlay/directStream → the
         // server stream-copies the video (hls.js plays it); transcode → full
-        // re-encode. Falls back to full transcode if the call fails.
-        let verdict: string | null = null;
+        // re-encode. Falls back to full transcode if the call fails, except
+        // when the server refused for the user's stream limit (429), which
+        // only ends here. An optimized version (reason optimized_version)
+        // plays directly; the verdict kept is the source's, its fallback.
+        let decision: PlaybackDecision | null = null;
         try {
-          verdict = (await endpoints.transcode.decide(itemID, file.id)).decision;
+          decision = await endpoints.transcode.decide(itemID, file.id);
         } catch (e) {
+          const busy = tooManyStreamsMessage(e);
+          if (busy) {
+            endPlayback(busy, TOO_MANY_STREAMS_TITLE);
+            return;
+          }
           console.warn('[capability] playback-decision failed, full transcode:', e);
         }
+        optimizedVersion = optimizedVersionOf(decision);
+        const verdict = sourceVerdict(decision);
         // Dolby Vision is not supported — the server returns the "unsupported"
         // verdict (DV can't be tonemapped correctly server-side; see
         // docs/dolby-vision.md). Show a clear message instead of a broken
@@ -3245,7 +3362,12 @@
     </div>
   {:else if error}
     <div class="overlay center">
-      <div class="title error">{error}</div>
+      {#if errorTitle}
+        <div class="title error">{errorTitle}</div>
+        <div class="error-message">{error}</div>
+      {:else}
+        <div class="title error">{error}</div>
+      {/if}
       <div class="sub">{errorRetryable ? 'OK to try again · Back to exit' : 'Back to exit'}</div>
       {#if $pointerShown}
         <div class="transport overlay-buttons">
@@ -3287,7 +3409,7 @@
           class:current={row.current}
           onclick={(e) => clickPickerRow(pickerSpan.start + j, e)}
           onmouseenter={() => hoverPickerRow(pickerSpan.start + j)}
-        >{#if row.current}{'● '}{/if}{row.label}</button>
+        >{#if row.thumb}<img class="picker-thumb" src={api.assetUrl(row.thumb)} alt="" />{/if}{#if row.current}{'● '}{/if}{row.label}</button>
       {/each}
       {#if pickerSpan.end < pickerRows.length}<div class="picker-more">▼</div>{/if}
     </div>
@@ -3336,7 +3458,13 @@
     <div class="controls">
       <div class="top">
         {#if episodeContext}<div class="now-playing-context">{episodeContext}</div>{/if}
-        {#if item}<div class="now-playing">{item.title}</div>{/if}
+        {#if item}
+          {#if titleLogoUrl && titleLogoFailedUrl !== titleLogoUrl}
+            <img class="now-playing-logo" src={titleLogoUrl} alt={item.title} onerror={() => (titleLogoFailedUrl = titleLogoUrl)} />
+          {:else}
+            <div class="now-playing">{item.title}</div>
+          {/if}
+        {/if}
       </div>
 
       <div class="bottom">
@@ -3460,7 +3588,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="up-next" onmousemove={onPointerMove}>
     <div class="up-next-label">UP NEXT · {upNextCountdown}s</div>
-    <div class="up-next-title">{nextSibling.title}</div>
+    <div class="up-next-title">{upNextCardTitle(nextSibling)}</div>
     <div class="up-next-buttons">
       <button
         type="button"
@@ -3669,6 +3797,15 @@
     color: #fca5a5;
   }
 
+  /* The message under a heading ("Too many streams"). */
+  .overlay .error-message {
+    max-width: 60%;
+    text-align: center;
+    font-size: var(--font-md);
+    color: white;
+    line-height: 1.4;
+  }
+
   .overlay .sub {
     font-size: var(--font-md);
     color: var(--text-secondary);
@@ -3694,6 +3831,14 @@
   .now-playing {
     font-size: var(--font-xl);
     color: white;
+  }
+  /* A movie's clear logo in place of its title. */
+  .now-playing-logo {
+    display: block;
+    max-width: 480px;
+    max-height: 140px;
+    object-fit: contain;
+    object-position: left center;
   }
   /* An episode's "Show · S2 · E5", over its title. */
   .now-playing-context {
@@ -3956,6 +4101,17 @@
     padding: 8px 12px;
     border-radius: 6px;
     white-space: pre-wrap;
+  }
+  /* A chapter's thumbnail, ahead of its label. */
+  .picker-thumb {
+    display: inline-block;
+    vertical-align: middle;
+    width: 112px;
+    height: 63px;
+    object-fit: cover;
+    border-radius: 4px;
+    margin-right: 16px;
+    background: rgba(255, 255, 255, 0.08);
   }
   .picker-row.active {
     background: var(--accent);

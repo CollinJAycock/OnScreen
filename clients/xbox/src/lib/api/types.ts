@@ -15,6 +15,9 @@ export interface HubItem {
   /** Next Up tiles: position within the show (0 = unknown). */
   season_number?: number;
   episode_number?: number;
+  /** A multi-episode file's last episode ("S01E01-E02" → 2): the tile
+   *  reads "S1 · E1–E2". Absent for one episode and older servers (v2.6). */
+  episode_number_end?: number;
 }
 
 export interface HubData {
@@ -134,6 +137,16 @@ export interface Chapter {
   title: string;
   start_ms: number;
   end_ms: number;
+  /** The chapter's thumbnail (/trickplay/{item}/chapter_NNN.jpg, asset
+   *  token like the trickplay sprites), once the item's seek-bar sprites
+   *  exist. Absent otherwise and on older servers (v2.6). */
+  thumb_url?: string;
+}
+
+/** A studio or network on an item detail (v2.6). */
+export interface ItemStudio {
+  id: string;
+  name: string;
 }
 
 /** A subtitle file attached to a media file (downloaded from OpenSubtitles,
@@ -166,7 +179,17 @@ export interface ItemFile {
   hdr_type?: string;
   /** Frame rate as probed (e.g. 23.976). Absent on older servers. */
   frame_rate?: number;
+  /** The part's own length for a stacked movie's part (part_index); the
+   *  item's duration_ms is the whole movie's. */
   duration_ms?: number;
+  /** The version's name from the file name ("Director's Cut", "Extended"):
+   *  its label in the version picker (v2.6; absent when none). */
+  edition?: string;
+  /** 1-based part number of one part of a stacked movie (cd1 + cd2). The
+   *  parts are ONE version, played only through the server from the first
+   *  part's file_id (it streams every part as one movie); see
+   *  lib/player/versions. Absent for every other file (v2.6). */
+  part_index?: number;
   /** A 24 h token scoped to this file's stream / subtitle routes, so a
    *  long play outlives the 1 h access token. Empty or absent on older
    *  servers. The player still signs URLs with the asset token
@@ -191,12 +214,25 @@ export interface ItemDetail {
   duration_ms?: number;
   poster_path?: string;
   fanart_path?: string;
+  /** Extra artwork (v2.6), served through /artwork/ like poster_path: a
+   *  transparent clear logo (PNG: fetched without ?w= / ?h=, which
+   *  re-encode as JPEG, see lib/artwork), a wide banner and disc art. */
+  logo_path?: string;
+  banner_path?: string;
+  disc_art_path?: string;
   content_rating?: string;
   genres: string[];
+  /** A movie's production companies or a show's networks, in the
+   *  provider's order (v2.6; absent when none and on older servers). */
+  studios?: ItemStudio[];
   parent_id?: string;
   /** The parent's parent: an episode's show (episode → season → show). */
   grandparent_id?: string;
   index?: number;
+  /** The last episode a multi-episode file covers: an "S01E01-E02" file is
+   *  one episode with index 1, index_end 2. Absent for a single episode,
+   *  every other type and older servers (v2.6). */
+  index_end?: number;
   view_offset_ms: number;
   /** Playable videos (v2.5): the caller's watch state. Absent on other
    *  types and on older servers. */
@@ -216,6 +252,8 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  /** A multi-episode file's last episode (see ItemDetail.index_end). */
+  index_end?: number;
   /** A track's disc within its album (index is its number on that disc).
    *  Absent reads as disc 1: single-disc albums, non-tracks, older servers. */
   disc_number?: number;
@@ -238,10 +276,59 @@ export interface UpNext {
     season_id: string;
     season_number: number;
     episode_number: number;
+    /** A multi-episode file's last episode (v2.6; absent otherwise). */
+    episode_number_end?: number;
     view_offset_ms?: number;
     duration_ms?: number;
     thumb_path?: string;
   };
+}
+
+// ── Music discovery (v2.6) ─────────────────────────────────────────────────
+
+/** GET /music/artists/{id}/similar: an artist like this one. */
+export interface SimilarArtist {
+  id: string;
+  title: string;
+  poster_path?: string;
+  updated_at: number;
+  /** Similarity in [0, 1]. */
+  score: number;
+  shared_genres: string[];
+  co_listened: boolean;
+}
+
+/** GET /music/artists/{id}/appears-on: a track on another artist's album
+ *  this artist is credited on (featured, or a compilation's performer). */
+export interface ArtistAppearance {
+  id: string;
+  title: string;
+  index?: number;
+  disc_number?: number;
+  duration_ms?: number;
+  /** "featured" | "artist". */
+  role: string;
+  album_id: string;
+  album_title: string;
+  album_year?: number;
+  album_poster_path?: string;
+  album_updated_at: number;
+  album_artist_id?: string;
+  album_artist_title?: string;
+}
+
+/** GET /music/mix?seed=: one track of an Instant mix. */
+export interface MixTrack {
+  id: string;
+  title: string;
+  duration_ms?: number;
+  index?: number;
+  album_id: string;
+  album_title: string;
+  album_poster_path?: string;
+  artist_id?: string;
+  artist_title?: string;
+  file_id: string;
 }
 
 // ── Report a problem (v2.5) ────────────────────────────────────────────────
@@ -341,6 +428,46 @@ export interface TranscodeSession {
    *  re-encode after a mid-stream -ss warms up over a moment of silent
    *  video, and playback starts here instead. 0 = no measurable gap. */
   seg0_audio_gap_sec?: number;
+}
+
+/** A pre-made MP4 copy of an item (H.264 + stereo AAC, v2.6), as the play
+ *  decision hands it out. Never one of the item's files. */
+export interface OptimizedVersion {
+  id: string;
+  /** The source file it was made from (a stacked movie's first part). */
+  file_id: string;
+  profile: string;
+  label: string;
+  container: string;
+  video_codec: string;
+  audio_codec: string;
+  audio_channels: number;
+  width?: number;
+  height?: number;
+  bitrate_kbps?: number;
+  duration_ms?: number;
+  /** /media/optimized/{id}: direct play, asset ?token= like a file's
+   *  stream_url (or stream_token, the version's own 24 h token). */
+  stream_url: string;
+  stream_token?: string;
+}
+
+/** POST /items/{id}/playback-decision. */
+export interface PlaybackDecision {
+  /** directPlay | directStream | transcode | unsupported | damaged. */
+  decision: string;
+  /** The (source) file the decision is for. */
+  file_id: string;
+  /** Set when the server overrode the capability verdict: a bitrate limit,
+   *  or optimized_version (with optimized_version below; only to a client
+   *  that declares optimized=1). */
+  reason?: string;
+  max_bitrate_kbps?: number;
+  optimized_version?: OptimizedVersion;
+  /** With an optimized version: the source's own verdict, the fallback if
+   *  the version doesn't play (or a non-default audio track is wanted). */
+  source_decision?: string;
+  source_reason?: string;
 }
 
 // ── Device pairing ──────────────────────────────────────────────────────────

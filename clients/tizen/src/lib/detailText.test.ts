@@ -1,5 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import { formatRuntime, formatTimecode, genreLine, resumeLabel } from './detailText';
+import {
+  episodeNumber,
+  formatRuntime,
+  formatTimecode,
+  genreLine,
+  numberedTitle,
+  posterPlaceholder,
+  resumeLabel,
+  studioLine,
+} from './detailText';
 
 describe('formatTimecode / resumeLabel', () => {
   it('uses h:mm:ss past an hour and m:ss below it', () => {
@@ -53,5 +62,50 @@ describe('genreLine', () => {
     expect(genreLine([])).toBe('');
     expect(genreLine(undefined)).toBe('');
     expect(genreLine(null)).toBe('');
+  });
+});
+
+describe('studioLine', () => {
+  it('names up to two studios or networks, in the order given', () => {
+    expect(studioLine([{ name: 'A24' }])).toBe('A24');
+    expect(studioLine([{ name: 'HBO' }, { name: 'BBC' }, { name: 'Sky' }])).toBe('HBO, BBC');
+  });
+
+  it('drops blank and repeated names, and is empty without studios', () => {
+    expect(studioLine([{ name: ' ' }, { name: 'HBO' }, { name: 'HBO' }])).toBe('HBO');
+    expect(studioLine([])).toBe('');
+    expect(studioLine(undefined)).toBe('');
+    expect(studioLine(null)).toBe('');
+  });
+});
+
+describe('episodeNumber / numberedTitle', () => {
+  it('numbers a single episode and labels a multi-episode file as a range', () => {
+    expect(episodeNumber(4)).toBe('4');
+    expect(episodeNumber(1, 2)).toBe('1–2');
+    expect(numberedTitle({ title: 'Pilot', index: 1, index_end: 2 })).toBe('1–2. Pilot');
+    expect(numberedTitle({ title: 'Pilot', index: 4 })).toBe('4. Pilot');
+  });
+
+  it('ignores an index_end that is not past the index, and no number at all', () => {
+    expect(episodeNumber(3, 3)).toBe('3');
+    expect(episodeNumber(3, 2)).toBe('3');
+    expect(episodeNumber(0, 2)).toBe('');
+    expect(episodeNumber(undefined, 2)).toBe('');
+    expect(numberedTitle({ title: 'Extras' })).toBe('Extras');
+  });
+});
+
+describe('posterPlaceholder', () => {
+  it('shows a multi-episode range whole, not cut off at "1–"', () => {
+    expect(posterPlaceholder(numberedTitle({ title: 'Pilot', index: 1, index_end: 2 }))).toBe('1–2');
+    expect(posterPlaceholder('10–12. Finale')).toBe('10–12');
+  });
+
+  it('keeps the first two characters for everything else', () => {
+    expect(posterPlaceholder(numberedTitle({ title: 'Pilot', index: 3 }))).toBe('3.');
+    expect(posterPlaceholder('12. Finale')).toBe('12');
+    expect(posterPlaceholder('the wire')).toBe('TH');
+    expect(posterPlaceholder('')).toBe('');
   });
 });

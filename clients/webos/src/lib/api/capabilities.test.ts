@@ -72,12 +72,14 @@ describe('buildClientCapabilitiesHeader', () => {
     expect(h.protocols).toBe('mp4:webm:mov');
     expect(h.maxAudioChannels).toBe('6');
     expect(h.maxbitdepth).toBe('10');
+    // Plays an optimized version the decision hands out (v2.6).
+    expect(h.optimized).toBe('1');
   });
 
   it('builds the whole header in a stable order', () => {
     expect(buildClientCapabilitiesHeader(probes([PROBE_TYPES.hevc], { panel: FHD_PANEL }))).toBe(
       'videoDecoder=h264:h265,audioDecoder=aac:mp3:opus:flac,protocols=mp4:webm:mov,' +
-        'maxWidth=1920,maxHeight=1080,maxAudioChannels=6,maxbitdepth=8,hdr=0',
+        'maxWidth=1920,maxHeight=1080,maxAudioChannels=6,maxbitdepth=8,hdr=0,optimized=1',
     );
   });
 });
@@ -87,7 +89,7 @@ describe('clientCapabilitiesHeader (runtime)', () => {
     // No MediaSource, PalmSystem, PalmServiceBridge or window under node.
     expect(clientCapabilitiesHeader()).toBe(
       'videoDecoder=h264,audioDecoder=aac:mp3:opus:flac,protocols=mp4:webm:mov,' +
-        'maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=8,hdr=0',
+        'maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=8,hdr=0,optimized=1',
     );
   });
 });
