@@ -80,4 +80,43 @@ internal fun streamLimitMessageFromBody(body: ByteArray?): String? {
     return StreamLimit.message(429, err)
 }
 
+/**
+ * Whether a player error is the server refusing a direct play of the file with
+ * `409 TRANSCODE_REQUIRED`: /media/stream won't serve a video file it would
+ * convert for this user (quality profile, internet bitrate cap, damaged). Only
+ * met when the play decision call failed and the local decision direct played;
+ * the screen then asks for a transcode once
+ * (PlayerViewModel.escalateFromDirectPlay). Found the same way as
+ * [playbackStoppedMessage].
+ */
+fun transcodeRequired(error: Throwable?): Boolean {
+    var t: Throwable? = error
+    var depth = 0
+    while (t != null && depth < MAX_CAUSE_DEPTH) {
+        if (t is HttpDataSource.InvalidResponseCodeException) {
+            return t.responseCode == 409 && transcodeRequiredFromBody(t.responseBody)
+        }
+        t = t.cause
+        depth++
+    }
+    return false
+}
+
+/** [transcodeRequired] for a raw 409 body: a TRANSCODE_REQUIRED envelope, or
+ *  no body at all (a proxy that dropped it — /media/stream answers no other
+ *  409). */
+internal fun transcodeRequiredFromBody(body: ByteArray?): Boolean {
+    if (body == null || body.isEmpty()) return true
+    val err = try {
+        stopMoshi.adapter(ApiError::class.java).fromJson(String(body, Charsets.UTF_8))?.error
+    } catch (_: Exception) {
+        null
+    }
+    return err?.code == TRANSCODE_REQUIRED
+}
+
+/** The error code /media/stream refuses a direct play with when the server
+ *  would convert the file for this user. */
+internal const val TRANSCODE_REQUIRED = "TRANSCODE_REQUIRED"
+
 private const val MAX_CAUSE_DEPTH = 8

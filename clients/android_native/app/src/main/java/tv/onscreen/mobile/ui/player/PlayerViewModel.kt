@@ -721,6 +721,7 @@ class PlayerViewModel @Inject constructor(
         // background queue here (see handOffSleepTimer).
         adoptSleepTimer(itemId)
         preparedItemId = null
+        directPlayEscalation = null
         // An audio switch still starting for what played before brings a
         // session nobody will play: it stops it when it lands.
         audioSwitch = null
@@ -833,8 +834,9 @@ class PlayerViewModel @Inject constructor(
                 }
                 val decision = (decided as? PlayDecisionResult.Decided)?.decision
                 val verdict = decided.verdict
-                // "unsupported" (Dolby Vision) is handled below before use;
-                // null/unknown → local fallback (server unreachable). A part of
+                // "unsupported" (Dolby Vision) and "damaged" are handled below
+                // before use; null/unknown → local fallback (server
+                // unreachable). A part of
                 // a stacked movie never direct-plays (see PlaybackHelper.forStack).
                 val mode = PlaybackHelper.modeFor(verdict, file)
                 // The server chose a pre-made optimized version over a
@@ -858,6 +860,15 @@ class PlayerViewModel @Inject constructor(
                 val wl = limitCall.await()
                 if (wl != null && !wl.allowed) {
                     _state.value = PlayerUiState(loading = false, error = parentalBlockMessage(wl.reason))
+                    return@launch
+                }
+
+                // A damaged file (the integrity probe found its bitstream
+                // undecodable): nothing the server streams plays it — direct
+                // play stalls, a transcode comes out green — so say so instead
+                // of starting anything. A completed download plays, as for DV.
+                if (localFile == null && verdict == PlaybackHelper.VERDICT_DAMAGED) {
+                    _state.value = PlayerUiState(loading = false, error = DAMAGED_MESSAGE, errorTitle = DAMAGED_TITLE)
                     return@launch
                 }
 
@@ -920,6 +931,13 @@ class PlayerViewModel @Inject constructor(
                         hlsOffsetMs = 0
                         lastTranscodeRequest = null
                         activeDecision = "directPlay"
+                        // The screen's own direct play of the file may still
+                        // be refused with 409 TRANSCODE_REQUIRED (the local
+                        // decision, when the decision call failed): armed for
+                        // one transcode. Not when the service plays it.
+                        if (!playingInService) {
+                            directPlayEscalation = DirectPlayEscalation(itemId, file, serverUrl)
+                        }
                         PlaybackSource.DirectPlay(
                             buildDirectPlayUrl(serverUrl, file.stream_url, file.stream_token),
                             startMs,
@@ -1012,12 +1030,11 @@ class PlayerViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 if (OptimizedPlayback.sourceUnplayable(fb.decision)) {
-                    val text = if (fb.decision.source_decision == "damaged") {
-                        "This file is damaged and can’t be played."
+                    if (fb.decision.source_decision == PlaybackHelper.VERDICT_DAMAGED) {
+                        _state.update { it.copy(error = DAMAGED_MESSAGE, errorTitle = DAMAGED_TITLE) }
                     } else {
-                        "Dolby Vision is not supported"
+                        _state.update { it.copy(error = "Dolby Vision is not supported") }
                     }
-                    _state.update { it.copy(error = text) }
                     return@launch
                 }
                 val source = when (val mode = OptimizedPlayback.fallbackMode(fb.decision, fb.file)) {
@@ -1052,6 +1069,73 @@ class PlayerViewModel @Inject constructor(
                 throw e
             } catch (e: Exception) {
                 if (preparedItemId == fb.itemId) {
+                    val failed = failureState(e)
+                    _state.update { it.copy(error = failed.error, errorTitle = failed.errorTitle) }
+                }
+            }
+        }
+        return true
+    }
+
+    /** The screen's direct play of the server's file, until it is escalated
+     *  ([escalateFromDirectPlay]) or something else is prepared. */
+    private var directPlayEscalation: DirectPlayEscalation? = null
+
+    private class DirectPlayEscalation(
+        val itemId: String,
+        val file: tv.onscreen.mobile.data.model.ItemFile,
+        val serverUrl: String,
+    )
+
+    /**
+     * The server refused the screen's direct play of the file with 409
+     * TRANSCODE_REQUIRED (see transcodeRequired): it converts this file for
+     * this user — a quality profile, an internet bitrate cap — and the local
+     * decision, used because the play decision call failed, didn't know. Ask
+     * for a full transcode from [contentPositionMs] instead — once. Returns
+     * false when there is nothing to escalate (not the screen's direct play
+     * of a server file, or already escalated): the screen then shows its
+     * usual error.
+     *
+     * Not for a download, an optimized version or a service-bound screen:
+     * none of them reads /media/stream through this player. The replaced
+     * player sends no 'stopped' report (see [swappedOut]), as for the
+     * optimized fallback.
+     */
+    fun escalateFromDirectPlay(contentPositionMs: Long): Boolean {
+        val esc = directPlayEscalation ?: return false
+        val current = _state.value.source
+        if (current !is PlaybackSource.DirectPlay || current.isOptimized || preparedItemId != esc.itemId ||
+            _state.value.error != null
+        ) {
+            return false
+        }
+        directPlayEscalation = null
+        android.util.Log.w("PlayerViewModel", "direct play refused (409 $TRANSCODE_REQUIRED); asking for a transcode")
+        val posMs = contentPositionMs.coerceAtLeast(0L)
+        viewModelScope.launch {
+            try {
+                val source = startTranscode(
+                    esc.itemId, PlaybackHelper.transcodeHeight(esc.file), posMs, esc.file.id, false, esc.serverUrl,
+                )
+                if (preparedItemId != esc.itemId) return@launch
+                val tracks = SubtitleTracks.build(
+                    esc.serverUrl, esc.file, subtitleAssetToken(esc.file, true), sideLoadEmbedded = true,
+                )
+                swappedOutSource = current
+                _state.update {
+                    it.copy(
+                        source = source,
+                        sessionAudioRow = if (esc.file.audio_streams.isNotEmpty()) 0 else null,
+                        subtitleTracks = tracks,
+                    )
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The server's own answer — a 422 for a damaged file, a 429
+                // stream limit, a 403 — as a failed start shows it.
+                if (preparedItemId == esc.itemId) {
                     val failed = failureState(e)
                     _state.update { it.copy(error = failed.error, errorTitle = failed.errorTitle) }
                 }
@@ -1205,6 +1289,12 @@ class PlayerViewModel @Inject constructor(
         val limit = (e as? HttpException)?.let { StreamLimit.message(it.code(), err) }
         if (limit != null) {
             return PlayerUiState(loading = false, error = limit, errorTitle = StreamLimit.TITLE)
+        }
+        // The transcode-start integrity gate (422 FILE_DAMAGED): a damaged
+        // file reached without the play decision's verdict (the call failed,
+        // or a direct play escalated), shown as that verdict is.
+        if ((e as? HttpException)?.code() == 422 && err?.code == "FILE_DAMAGED") {
+            return PlayerUiState(loading = false, error = DAMAGED_MESSAGE, errorTitle = DAMAGED_TITLE)
         }
         return PlayerUiState(loading = false, error = failureMessage(e, err))
     }
@@ -1949,6 +2039,12 @@ private const val ARTWORK_WIDTH = 1080
 
 /** A failed start that carries no message of its own. */
 internal const val START_FAILED_MESSAGE = "Couldn’t start playback."
+
+/** The heading and text for a file the server judged "damaged" (the
+ *  integrity probe), worded as the web player words it. */
+internal const val DAMAGED_TITLE = "This file appears to be damaged"
+internal const val DAMAGED_MESSAGE = "The integrity check could not decode parts of this file, so playback " +
+    "would stall or show broken video. Replace the file with a good copy and re-scan the library."
 
 /** [block]'s result, or null if it fails — for the calls prepare() can do
  *  without. Inline, so [block] may suspend; a cancellation still propagates
