@@ -149,9 +149,14 @@ videoDecoder=h264:h265:vp9,audioDecoder=aac:ac3,protocols=mp4:mkv,maxWidth=3840,
 | `vp9MaxBitDepth` | 8 / 10 / 12 | not declared — VP9 isn't depth-gated | VP9 depth check (below) |
 | `hdr` | boolean | no | HDR10 / HDR10+, and HLG unless `hlg` is sent |
 | `hlg` | boolean | not declared — `hdr` decides HLG | HLG check (below) |
-| `dovi` (alias `dolbyvision`) | boolean | no | Dolby Vision (else `unsupported`) |
+| `dovi` (alias `dolbyvision`) | Dolby Vision profiles: `5`, `7`, `8.1`, `8.4` (`8` = `8.1`, `8.x` = both 8s); `1` = `5:8.1:8.4` | none | profile 5 plays instead of `unsupported`; the listed profiles are kept on a remux (below) |
 | `optimized` | boolean | no | the client plays an `optimized_version` from the decision (§13) |
 | `audioPassthrough` | codecs bitstreamed to a receiver: `ac3`, `eac3`, `truehd`, `dts` (`dts-hd` folds to `dts`; others ignored) | none | channel cap lifted for these + remux copies them (below) |
+
+**Dolby Vision (`dovi`).** A client lists the Dolby Vision profiles its decoder and display handle. Each file has a profile key from its `dv_profile` and its base layer: `5` (no base other players can show), `7` (dual layer, HDR10 base: UHD Blu-ray), `8.1` (HDR10 base) or `8.4` (HLG base). A profile 8 record over SDR video has no key and plays as SDR.
+- **Decide:** profile 5 is `unsupported` unless `5` is listed. A file whose key the client lists skips the HDR tone-map check (it's shown as Dolby Vision, not as its base layer). A profile 7 file for a client that lists `8.1` but not `7` is a `remux` when a worker can convert it (below), so the client gets Dolby Vision rather than the base layer.
+- **Remux:** a video copy for a client that lists the file's key keeps Dolby Vision: fMP4 segments (even if `ts` segments were asked for) with the configuration record (`dvvC`/`dvcC`) and every frame's metadata; the sample entry is `hvc1`, `dvh1` for profile 5. Profile 7 for an `8.1` client is converted while remuxing (enhancement layer dropped, metadata rewritten for 8.1) on a worker whose ffmpeg has OnScreen's conversion patch (`dolby_vision_p7_to_p81` feature); without one it plays as-is. A re-encode never carries Dolby Vision.
+- Nothing changes for a client that doesn't send `dovi`.
 
 **Audio passthrough (`audioPassthrough`).** A client that hands a codec to an
 AV receiver undecoded (HDMI/S/PDIF bitstreaming: Android TV's

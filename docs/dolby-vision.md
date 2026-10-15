@@ -1,5 +1,45 @@
 # Dolby Vision — handling strategy + decision
 
+## Update 2026-10-15: Dolby Vision for clients that decode it
+
+A client lists the profiles it decodes in its capability profile (`dovi=5:8.1:8.4`,
+plus `7` for the rare dual-layer decoder; `dovi=1` means `5:8.1:8.4`), and gets
+Dolby Vision for those. Everyone else is unchanged: the base layer, as below.
+
+| File | Client lists | Result |
+|---|---|---|
+| 8.1 / 8.4 / 5 | that profile | Direct play, or a remux that keeps Dolby Vision |
+| 7 | `7` | The same |
+| 7 | `8.1` only | Remuxed and converted to 8.1, on a worker that can |
+| 5 | not `5` | Refused, as before |
+| anything | nothing | The base layer, as before |
+
+**Keeping it on a remux.** ffmpeg drops the configuration record when it copies
+HEVC into fMP4 unless the muxer runs at `-strict unofficial` or lower; the
+per-frame metadata (RPU NAL units) survives either way. So a Dolby Vision copy
+is always fMP4 with `-strict unofficial` (or `-2`, which TrueHD passthrough
+already sets), tagged `hvc1` for profiles 7/8 (the record sits alongside, and a
+plain HEVC decoder ignores it) and `dvh1` for profile 5. Checked on Dune Part
+One (profile 8): `dvvC` in the init segment, RPU on every frame. A re-encode
+never carries Dolby Vision.
+
+**Converting profile 7.** Most streaming players (Fire TV's included) can't
+decode profile 7's two layers. The usual answer is to drop the enhancement layer
+and rewrite each frame's metadata for a single-layer decoder (dovi_tool's
+mode 2). dovi_tool can't do it inside a remux: it reads and writes raw HEVC,
+which has no timestamps, so B-frame presentation times are lost (checked on a
+profile 7 sample: every frame's PTS became its DTS, and decoded frames came out
+of time order). Upstream ffmpeg's `dovi_rpu` filter only strips or compresses,
+and jellyfin-ffmpeg has no conversion either (Jellyfin strips Dolby Vision for
+clients that don't take profile 7). OnScreen therefore patches `dovi_rpu` in its
+own ffmpeg build with a `convert_p81` option; a worker advertises
+`dolby_vision_p7_to_p81` only when its ffmpeg has it (`ffmpeg -h bsf=dovi_rpu`).
+Elsewhere profile 7 keeps playing from its base layer.
+
+**Not done:** tone-mapping profile 5 for screens without Dolby Vision (no
+profile 5 in the library); Dolby Vision in ABR ladders or optimized versions
+(both re-encode).
+
 ## Update 2026-10-06: only profile 5 is refused
 
 The June decision below rested on two premises that turned out wrong:

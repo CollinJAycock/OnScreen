@@ -60,6 +60,17 @@ becomes final on every app. Release note:
 
 ### Added
 
+- **Dolby Vision for apps that decode it.** The capability profile's `dovi`
+  key takes a profile list (`dovi=5:8.1:8.4`, plus `7`; `dovi=1` means
+  `5:8.1:8.4`). A file whose profile the app lists plays as Dolby Vision:
+  profile 5 is no longer refused for it, the HDR tone-map check is skipped,
+  and a remux keeps the Dolby Vision configuration record and per-frame
+  metadata (fMP4 segments, `-strict unofficial`; `dvh1` sample entry for
+  profile 5). Profile 7 for an app that takes only 8.1 is converted to 8.1
+  while remuxing, on workers whose ffmpeg has OnScreen's `dovi_rpu`
+  conversion patch (worker feature `dolby_vision_p7_to_p81`); elsewhere it
+  plays from its HDR10 base layer as before. Apps that don't send `dovi` are
+  unchanged.
 - **Your own sign-in settings on the Account page, for every user.** Change
   your password (new `PUT /users/me/password`: needs the current one, ends
   your other sign-ins; `GET /users/me/preferences` gains `has_password`), turn

@@ -217,6 +217,11 @@ type BuildArgs struct {
 	// is then fMP4 (the caller sets ForceFMP4 too; see TranscodeJob.ForcesFMP4)
 	// and ffmpeg's mp4 muxer is told -strict -2, which it requires for TrueHD.
 	AudioPassthrough bool
+	// DolbyVision is what a video copy does with the source's Dolby Vision
+	// (TranscodeJob.DolbyVision); DVProfileKey is the source's profile key.
+	// Ignored unless the video is copied.
+	DolbyVision  DVMode
+	DVProfileKey string
 
 	// BurnSubtitle paints an image subtitle stream into the picture on a
 	// re-encode (TranscodeJob.BurnSubtitle); nil for none. Ignored on a
@@ -777,12 +782,17 @@ func BuildHLS(a BuildArgs) []string {
 			audioCodec = "libfdk_aac"
 		}
 		args = append(args, "-c:a", audioCodec)
-		// ffmpeg's mp4 muxer calls TrueHD (and DTS on some builds)
-		// experimental and refuses it without this. It's an output option,
-		// so it only loosens what this HLS output accepts.
-		if a.AudioCodec == "copy" && a.AudioPassthrough {
-			args = append(args, "-strict", "-2")
-		}
+	}
+	// -strict, one output option for two reasons. ffmpeg's mp4 muxer calls
+	// TrueHD (and DTS on some builds) experimental and refuses it without -2,
+	// and writes a Dolby Vision configuration record (dvcC / dvvC) only at
+	// unofficial or below — without it a Dolby Vision copy reaches the client
+	// as plain HDR10. -2 (experimental) is below unofficial, so it covers both.
+	switch {
+	case !a.NoAudio && a.AudioCodec == "copy" && a.AudioPassthrough:
+		args = append(args, "-strict", "-2")
+	case dvCopy(a):
+		args = append(args, "-strict", "unofficial")
 	}
 	if !a.NoAudio && a.AudioCodec == "aac" {
 		channels := a.AudioChannels
@@ -845,7 +855,8 @@ func BuildHLS(a BuildArgs) []string {
 	// hunts for these same files by extension — cannot disagree with us.
 	// A TrueHD/DTS passthrough copy forces fMP4 here too, so a caller that
 	// set only AudioPassthrough still can't produce a TS no player demuxes.
-	forceFMP4 := a.ForceFMP4 || (a.AudioPassthrough && a.AudioCodec == "copy")
+	// A Dolby Vision copy is fMP4 too: MPEG-TS has no configuration record.
+	forceFMP4 := a.ForceFMP4 || (a.AudioPassthrough && a.AudioCodec == "copy") || dvCopy(a)
 	vout := ResolveVideoOutput(a.Encoder, a.IsHEVC, a.IsAV1, forceFMP4, a.TSSegments)
 	if a.AudioOnly {
 		// No video stream: AAC-in-MPEG-TS, no codec tag, no init segment.
@@ -874,7 +885,16 @@ func BuildHLS(a BuildArgs) []string {
 	// modern fourCC tag rather than the codec's native one to
 	// recognize the stream.
 	if tag := vout.TagV(); tag != "" {
+		// Profile 5 has no HEVC base a plain hvc1 decoder could show, so its
+		// sample entry is dvh1; profiles 7 and 8 stay hvc1 with the record
+		// alongside, which a non-Dolby-Vision player simply ignores.
+		if tag == "hvc1" && dvCopy(a) && a.DVProfileKey == "5" {
+			tag = "dvh1"
+		}
 		args = append(args, "-tag:v", tag)
+	}
+	if videoCopy && !a.AudioOnly && a.DolbyVision == DVToP81 {
+		args = append(args, "-bsf:v", dvConvertBSF)
 	}
 
 	// temp_file: write each segment as name.tmp and RENAME on completion.
@@ -1429,4 +1449,10 @@ func AtempoFilter(rate float64) string {
 	}
 	parts = append(parts, fmt.Sprintf("atempo=%.4g", rate))
 	return strings.Join(parts, ",")
+}
+
+// dvCopy reports whether the session copies Dolby Vision video through (kept
+// or converted): a video copy with a Dolby Vision mode.
+func dvCopy(a BuildArgs) bool {
+	return a.DolbyVision != DVNone && IsVideoCopy(a.Encoder) && !a.AudioOnly
 }

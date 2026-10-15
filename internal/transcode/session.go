@@ -206,10 +206,18 @@ const (
 	// older one writes the remux as MPEG-TS while the playlist handler waits
 	// for .m4s, and playback never starts.
 	WorkerFeatureAudioPassthrough = "audio_passthrough"
+	// WorkerFeatureDolbyVision: the worker honours TranscodeJob.DolbyVision
+	// = DVKeep (a Dolby Vision copy, fMP4 with the configuration record).
+	WorkerFeatureDolbyVision = "dolby_vision"
+	// WorkerFeatureDVConvert: the worker's ffmpeg converts Dolby Vision
+	// profile 7 to 8.1 (TranscodeJob.DolbyVision = DVToP81). Probed at
+	// startup (ProbeDVConvert), not implied by the build: it needs OnScreen's
+	// patched ffmpeg.
+	WorkerFeatureDVConvert = "dolby_vision_p7_to_p81"
 )
 
 // workerFeatures is what every worker of this build advertises.
-var workerFeatures = []string{WorkerFeatureBurnSubtitles, WorkerFeatureAudioPassthrough}
+var workerFeatures = []string{WorkerFeatureBurnSubtitles, WorkerFeatureAudioPassthrough, WorkerFeatureDolbyVision}
 
 // SessionStore manages transcode sessions in Valkey.
 type SessionStore struct {
@@ -883,6 +891,12 @@ func jobNeeds(j TranscodeJob) JobNeeds {
 	if j.BurnSubtitle != nil {
 		needs.Features = append(needs.Features, WorkerFeatureBurnSubtitles)
 	}
+	switch j.DolbyVision {
+	case DVKeep:
+		needs.Features = append(needs.Features, WorkerFeatureDolbyVision)
+	case DVToP81:
+		needs.Features = append(needs.Features, WorkerFeatureDolbyVision, WorkerFeatureDVConvert)
+	}
 	if j.AudioPassthrough {
 		needs.Features = append(needs.Features, WorkerFeatureAudioPassthrough)
 	}
@@ -1185,6 +1199,14 @@ type TranscodeJob struct {
 	// DVB, XSUB) into the picture. Only on a re-encode. Dispatched only to a
 	// worker that advertises WorkerFeatureBurnSubtitles.
 	BurnSubtitle *SubtitleBurn `json:"burn_subtitle,omitempty"`
+	// DolbyVision is what the video copy does with the source's Dolby Vision
+	// (DVKeep, DVToP81; empty = the base layer as before), and DVProfileKey
+	// the source's profile key ("5", "7", "8.1", "8.4"). Only on a video copy;
+	// the output is fMP4 (ForcesFMP4). Dispatched only to a worker that
+	// advertises WorkerFeatureDolbyVision (DVKeep) or WorkerFeatureDVConvert
+	// (DVToP81).
+	DolbyVision  DVMode `json:"dolby_vision,omitempty"`
+	DVProfileKey string `json:"dv_profile_key,omitempty"`
 }
 
 // SubtitleBurn is the subtitle stream a transcode paints into the picture.
@@ -1201,7 +1223,8 @@ type SubtitleBurn struct {
 // the worker lands on: a promised .m4s playlist (ForceFMP4), or a TrueHD/DTS
 // passthrough copy (AudioPassthrough).
 func (j TranscodeJob) ForcesFMP4() bool {
-	return j.ForceFMP4 || (j.AudioPassthrough && j.AudioCodec == "copy")
+	return j.ForceFMP4 || (j.AudioPassthrough && j.AudioCodec == "copy") ||
+		(j.DolbyVision != DVNone && IsVideoCopy(Encoder(j.Encoder)))
 }
 
 // NewSessionID generates a new transcode session ID.

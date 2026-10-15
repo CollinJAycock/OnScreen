@@ -403,8 +403,7 @@ func TestDecide_AudioPassthrough(t *testing.T) {
 func TestDecide_DirectPlay_DolbyVision_ClientSupportsDV(t *testing.T) {
 	file := baseFile()
 	file.HDRType = strPtr("dolby_vision")
-	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4")
-	caps.SupportsDV = true
+	caps := ParseCapabilities("videoDecoder=h264:h265,audioDecoder=aac,protocols=mkv:mp4,dovi=1")
 	got := Decide(file, caps, defaultServerCaps)
 	if got != DecisionDirectPlay {
 		t.Errorf("want DirectPlay for DV with DV support, got %s", got)
@@ -586,7 +585,7 @@ func TestClientSupportsHDR(t *testing.T) {
 	capsHDR := ClientCapabilities{SupportsHDR: true}
 	capsHDRNoHLG := ClientCapabilities{SupportsHDR: true, SupportsHLG: &no}
 	capsHLGOnly := ClientCapabilities{SupportsHLG: &yes}
-	capsDV := ClientCapabilities{SupportsDV: true}
+	capsDV := ClientCapabilities{SupportsDV: true, DVProfiles: []string{"5"}}
 	capsNone := ClientCapabilities{}
 
 	cases := []struct {
