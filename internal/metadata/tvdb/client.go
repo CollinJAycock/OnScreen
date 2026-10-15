@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -44,46 +45,54 @@ func New(apiKey string) *Client {
 }
 
 // SearchSeries looks up a show by title (optionally filtered by first-air year)
-// and returns the top match with poster+fanart URLs resolved from the series'
+// and returns the match with poster+fanart URLs resolved from the series'
 // extended record. Intended as a fallback when the TMDB agent finds no show.
+// Like TMDB's SearchTV it is an unattended auto-match, so it takes only a
+// series whose name, alias or translation is the title's once folded, first
+// aired in the year or a year either side (metadata.MatchTitle), and errors
+// otherwise. TVDB's own disambiguators ("The Office (US)", "Doctor Who
+// (2005)") are compared without the qualifier, which picks between series
+// sharing the name when the title carries one too.
 func (c *Client) SearchSeries(ctx context.Context, title string, year int) (*metadata.TVShowResult, error) {
 	token, err := c.ensureToken(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	q := url.Values{}
-	q.Set("query", title)
-	q.Set("type", "series")
-	if year > 0 {
-		q.Set("year", fmt.Sprintf("%d", year))
-	}
-	searchURL := fmt.Sprintf("%s/search?%s", baseURL, q.Encode())
-
-	var searchResp struct {
-		Data []tvdbSearchHit `json:"data"`
-	}
-	if err := c.getJSON(ctx, token, searchURL, &searchResp); err != nil {
-		return nil, fmt.Errorf("tvdb search series %q: %w", title, err)
-	}
-	if len(searchResp.Data) == 0 {
-		return nil, fmt.Errorf("tvdb: no series match for %q", title)
+	name, country, qualifierYear := metadata.SplitShowQualifier(title)
+	if year == 0 {
+		year = qualifierYear
 	}
 
-	// Pick the first hit whose TVDB id parses — the search API returns the
-	// id as a string, not an int.
-	var hit *tvdbSearchHit
-	var seriesID int
-	for i := range searchResp.Data {
-		if id, convErr := parseTVDBID(searchResp.Data[i].TVDBID); convErr == nil {
-			hit = &searchResp.Data[i]
-			seriesID = id
-			break
+	hits, err := c.searchSeries(ctx, token, title, year)
+	if err != nil {
+		return nil, err
+	}
+	matches := metadata.MatchTitle(name, year, seriesCandidates(hits))
+	if len(matches) == 0 && year > 0 {
+		// The year filter misses a series first aired a year off the
+		// title's; the unfiltered search still holds it.
+		if hits, err = c.searchSeries(ctx, token, title, 0); err != nil {
+			return nil, err
+		}
+		matches = metadata.MatchTitle(name, year, seriesCandidates(hits))
+	}
+	if len(matches) == 0 {
+		if len(hits) == 0 {
+			return nil, fmt.Errorf("tvdb: no series match for %q", title)
+		}
+		return nil, fmt.Errorf("tvdb: no confident series match for %q (%d); top hit %q (%s)",
+			title, year, hits[0].Name, hits[0].Year)
+	}
+	hit := &hits[matches[0]]
+	if country != "" {
+		for _, i := range matches {
+			if _, hitCountry, _ := metadata.SplitShowQualifier(hits[i].Name); hitCountry == country {
+				hit = &hits[i]
+				break
+			}
 		}
 	}
-	if hit == nil {
-		return nil, fmt.Errorf("tvdb: no usable series id in search results for %q", title)
-	}
+	seriesID, _ := parseTVDBID(hit.TVDBID)
 
 	poster, fanart := c.fetchSeriesArtwork(ctx, token, seriesID)
 	// Fall back to the search hit's image_url if the extended fetch failed to
@@ -105,6 +114,51 @@ func (c *Client) SearchSeries(ctx context.Context, title string, year int) (*met
 		PosterURL:    poster,
 		FanartURL:    fanart,
 	}, nil
+}
+
+// searchSeries runs one /search query for series, narrowed to shows first
+// aired in year when year > 0.
+func (c *Client) searchSeries(ctx context.Context, token, title string, year int) ([]tvdbSearchHit, error) {
+	q := url.Values{}
+	q.Set("query", title)
+	q.Set("type", "series")
+	if year > 0 {
+		q.Set("year", fmt.Sprintf("%d", year))
+	}
+	var resp struct {
+		Data []tvdbSearchHit `json:"data"`
+	}
+	if err := c.getJSON(ctx, token, fmt.Sprintf("%s/search?%s", baseURL, q.Encode()), &resp); err != nil {
+		return nil, fmt.Errorf("tvdb search series %q: %w", title, err)
+	}
+	return resp.Data, nil
+}
+
+// seriesCandidates is hits as metadata.MatchTitle sees them: each one's name
+// and aliases with any qualifier split off, plus its translations. A hit
+// whose id doesn't parse (the search API returns it as a string) gets no
+// titles, so it never matches.
+func seriesCandidates(hits []tvdbSearchHit) []metadata.Candidate {
+	out := make([]metadata.Candidate, len(hits))
+	for i, h := range hits {
+		if _, err := parseTVDBID(h.TVDBID); err != nil {
+			continue
+		}
+		_, _, year := metadata.SplitShowQualifier(h.Name)
+		if y, err := strconv.Atoi(h.Year); err == nil {
+			year = y
+		}
+		var titles []string
+		for _, t := range append([]string{h.Name}, h.Aliases...) {
+			bare, _, _ := metadata.SplitShowQualifier(t)
+			titles = append(titles, bare)
+		}
+		for _, t := range h.Translations {
+			titles = append(titles, t)
+		}
+		out[i] = metadata.Candidate{Titles: titles, Year: year}
+	}
+	return out
 }
 
 // fetchSeriesArtwork pulls the series' extended record and picks the highest
@@ -365,11 +419,44 @@ type tvdbEpisode struct {
 // as a string here (unlike the extended endpoint where it's numeric), so we
 // decode it through any and parse it in parseTVDBID.
 type tvdbSearchHit struct {
-	TVDBID   any    `json:"tvdb_id"`
-	Name     string `json:"name"`
-	Overview string `json:"overview"`
-	ImageURL string `json:"image_url"`
-	Year     string `json:"year"`
+	TVDBID       any          `json:"tvdb_id"`
+	Name         string       `json:"name"`
+	Aliases      lenientNames `json:"aliases"`
+	Translations lenientNames `json:"translations"` // language code → name
+	Overview     string       `json:"overview"`
+	ImageURL     string       `json:"image_url"`
+	Year         string       `json:"year"`
+}
+
+// lenientNames is a list of names TVDB gives as strings ("aliases") or as a
+// language → name object ("translations"); a {"name": ...} entry counts
+// too. Anything else decodes to nothing, so a shape TVDB changes can't fail
+// the search it rides on.
+type lenientNames []string
+
+func (n *lenientNames) UnmarshalJSON(b []byte) error {
+	var list []any
+	var byLanguage map[string]any
+	switch {
+	case json.Unmarshal(b, &list) == nil:
+		for _, v := range list {
+			switch v := v.(type) {
+			case string:
+				*n = append(*n, v)
+			case map[string]any:
+				if name, ok := v["name"].(string); ok {
+					*n = append(*n, name)
+				}
+			}
+		}
+	case json.Unmarshal(b, &byLanguage) == nil:
+		for _, v := range byLanguage {
+			if name, ok := v.(string); ok {
+				*n = append(*n, name)
+			}
+		}
+	}
+	return nil
 }
 
 // tvdbArtwork matches an entry in the /series/{id}/extended artworks list.

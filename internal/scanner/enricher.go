@@ -1095,8 +1095,12 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	}
 	if result.PosterURL == "" {
 		// TMDB matched but has no poster — ask TVDB for art while keeping
-		// TMDB's other fields.
-		if merged := e.tvdbShowFallback(ctx, searchTitle, year, result); merged != nil {
+		// TMDB's other fields. TVDB takes only a series of the name asked
+		// for, and TMDB may have matched the folder by an alternative
+		// title, so its own name gets a turn too.
+		if merged := firstShow([]string{searchTitle, result.Title}, func(name string) *metadata.TVShowResult {
+			return e.tvdbShowFallback(ctx, name, year, result)
+		}); merged != nil {
 			result = merged
 		}
 	}
@@ -2934,11 +2938,11 @@ func (e *Enricher) relPath(absPath string) string {
 // matches against Western shows that share a title with an anime.
 // TVDB stays the universal last-ditch fallback in both orders.
 func (e *Enricher) searchShow(ctx context.Context, agent metadata.Agent, title string, year int, isAnimeLibrary bool) *metadata.TVShowResult {
-	tryTMDB := func() *metadata.TVShowResult {
-		r, err := agent.SearchTV(ctx, title, year)
+	tryTMDB := func(name string) *metadata.TVShowResult {
+		r, err := agent.SearchTV(ctx, name, year)
 		if err != nil || r == nil {
 			e.logger.InfoContext(ctx, "tmdb tv search found no result",
-				"title", title, "err", err)
+				"title", name, "err", err)
 			return nil
 		}
 		return r
@@ -2946,8 +2950,8 @@ func (e *Enricher) searchShow(ctx context.Context, agent metadata.Agent, title s
 	tryAniList := func() *metadata.TVShowResult {
 		return e.anilistShowFallback(ctx, title, year, nil)
 	}
-	tryTVDB := func() *metadata.TVShowResult {
-		return e.tvdbShowFallback(ctx, title, year, nil)
+	tryTVDB := func(name string) *metadata.TVShowResult {
+		return e.tvdbShowFallback(ctx, name, year, nil)
 	}
 
 	if isAnimeLibrary {
@@ -2961,8 +2965,13 @@ func (e *Enricher) searchShow(ctx context.Context, agent metadata.Agent, title s
 		if primary := tryAniList(); primary != nil {
 			// Best-effort cross-references. Each agent miss leaves the
 			// corresponding ID at 0; the show row still gets the
-			// AniList text fields and IDs we already have.
-			if tmdb := tryTMDB(); tmdb != nil {
+			// AniList text fields and IDs we already have. TMDB and
+			// TVDB take only a show of the name asked for, and a folder
+			// named in romaji may be listed there only under AniList's
+			// English title (or the reverse), so each of AniList's
+			// names gets a turn.
+			names := []string{title, primary.Title, primary.OriginalTitle}
+			if tmdb := firstShow(names, tryTMDB); tmdb != nil {
 				if primary.TMDBID == 0 {
 					primary.TMDBID = tmdb.TMDBID
 				}
@@ -2974,7 +2983,7 @@ func (e *Enricher) searchShow(ctx context.Context, agent metadata.Agent, title s
 					primary.Studios, primary.StudiosChecked = tmdb.Studios, true
 				}
 			}
-			if tvdb := tryTVDB(); tvdb != nil {
+			if tvdb := firstShow(names, tryTVDB); tvdb != nil {
 				if primary.TVDBID == 0 {
 					primary.TVDBID = tvdb.TVDBID
 				}
@@ -2985,16 +2994,43 @@ func (e *Enricher) searchShow(ctx context.Context, agent metadata.Agent, title s
 		// cross-harvest needed because TMDB has TVDB-equivalent
 		// per-episode coverage on its own (and the AniList agent
 		// we already tried is the one we'd be harvesting anyway).
-		if r := tryTMDB(); r != nil {
+		if r := tryTMDB(title); r != nil {
 			return r
 		}
-		return tryTVDB()
+		return tryTVDB(title)
 	}
 
 	// Non-anime: TMDB primary, AniList for catches TMDB doesn't
 	// cover (rare anime in non-anime libraries), TVDB as last-ditch.
-	for _, try := range []func() *metadata.TVShowResult{tryTMDB, tryAniList, tryTVDB} {
-		if r := try(); r != nil {
+	if r := tryTMDB(title); r != nil {
+		return r
+	}
+	if r := tryAniList(); r != nil {
+		// AniList answers with its single best guess, fuzzy by design:
+		// right where it is the primary source, but here it is only a
+		// fallback and must name the same show, as TMDB and TVDB must.
+		name, _, _ := metadata.SplitShowQualifier(title)
+		cand := metadata.Candidate{Titles: []string{r.Title, r.OriginalTitle}, Year: r.FirstAirYear}
+		if len(metadata.MatchTitle(name, year, []metadata.Candidate{cand})) > 0 {
+			return r
+		}
+		e.logger.InfoContext(ctx, "anilist match refused outside an anime library: different show",
+			"title", title, "year", year, "anilist_title", r.Title, "anilist_year", r.FirstAirYear)
+	}
+	return tryTVDB(title)
+}
+
+// firstShow returns the first show search finds under any of names, trying
+// each distinct name once, in order.
+func firstShow(names []string, search func(name string) *metadata.TVShowResult) *metadata.TVShowResult {
+	tried := map[string]bool{}
+	for _, name := range names {
+		key := metadata.FoldTitle(name)
+		if key == "" || tried[key] {
+			continue
+		}
+		tried[key] = true
+		if r := search(name); r != nil {
 			return r
 		}
 	}

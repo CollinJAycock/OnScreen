@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/onscreen/onscreen/internal/metadata"
 )
 
 // Movie auto-match against the films a fresh server mismatched on
@@ -177,7 +179,7 @@ func TestSearchMovie_ExactTitleAndYearBeatTMDBTopHit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("search: %v", err)
 	}
-	if foldTitle(res.Title) != "hero" || res.Year != 2018 {
+	if metadata.FoldTitle(res.Title) != "hero" || res.Year != 2018 {
 		t.Fatalf("Hero (2018): got %d %q (%d), want a film titled Hero from 2018", res.TMDBID, res.Title, res.Year)
 	}
 }
@@ -198,7 +200,7 @@ func TestSearchMovie_FallbackSkipsPartialTitleAndWrongYear(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", tc.title, err)
 		}
-		if foldTitle(res.Title) != foldTitle(tc.title) || res.Year != tc.year {
+		if metadata.FoldTitle(res.Title) != metadata.FoldTitle(tc.title) || res.Year != tc.year {
 			t.Errorf("%s (%d): got %d %q (%d)", tc.title, tc.year, res.TMDBID, res.Title, res.Year)
 		}
 	}
@@ -268,94 +270,5 @@ func TestSearchMovieWithRuntime_PicksNamesakeByRuntime(t *testing.T) {
 				t.Errorf("details of the pick fetched %d times, want 1", n)
 			}
 		})
-	}
-}
-
-func TestMatchByTitle(t *testing.T) {
-	row := func(id int, title, date string) tmdbMovie {
-		return tmdbMovie{ID: id, Title: title, ReleaseDate: date}
-	}
-	ids := func(rows []tmdbMovie) []int {
-		out := []int{}
-		for _, r := range rows {
-			out = append(out, r.ID)
-		}
-		return out
-	}
-	for _, tc := range []struct {
-		name  string
-		title string
-		year  int
-		rows  []tmdbMovie
-		want  []int
-	}{
-		{"exact year beats a year off", "Example Film", 2021,
-			[]tmdbMovie{row(1, "Example Film", "2020-12-01"), row(2, "Example Film", "2021-09-15")}, []int{2}},
-		{"a year off when nothing is exact", "Example Film", 2021,
-			[]tmdbMovie{row(1, "Example Film", "2020-12-01"), row(2, "Example Film", "2023-01-01")}, []int{1}},
-		{"two years off is refused", "Example Film", 2021,
-			[]tmdbMovie{row(1, "Example Film", "2019-01-01"), row(2, "Example Film", "2023-01-01")}, []int{}},
-		{"undated is refused when a year was parsed", "Example Film", 2021,
-			[]tmdbMovie{row(1, "Example Film", "")}, []int{}},
-		{"no parsed year takes any year", "Example Film", 0,
-			[]tmdbMovie{row(1, "Example Film Part Two", "2024-02-27"), row(2, "Example Film", "1984-12-14")}, []int{2}},
-		{"partial titles are refused", "Spring", 2019,
-			[]tmdbMovie{row(1, "Spring Breakers", "2019-01-01"), row(2, "Spring Fever", "2019-06-06")}, []int{}},
-		{"title inside a longer title is refused", "Hero", 2018,
-			[]tmdbMovie{row(1, "Chestnut: Hero of Central Park", "2018-01-01")}, []int{}},
-		{"original title counts", "万引き家族", 2018,
-			[]tmdbMovie{{ID: 505192, Title: "Shoplifters", OriginalTitle: "万引き家族", ReleaseDate: "2018-06-02"}}, []int{505192}},
-		{"ties keep TMDB's order", "Singularity", 2026,
-			[]tmdbMovie{row(1735105, "Singularity", "2026-08-08"), row(1687677, "Singularity", "2026-05-08")}, []int{1735105, 1687677}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			got := ids(matchByTitle(tc.rows, tc.title, tc.year))
-			if fmt.Sprint(got) != fmt.Sprint(tc.want) {
-				t.Errorf("got %v, want %v", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestFoldTitle(t *testing.T) {
-	same := [][2]string{
-		// Filename-derived title vs TMDB's, for the films the same server
-		// matched correctly.
-		{"Big Buck Bunny", "Big Buck Bunny"},
-		{"Elephants Dream", "Elephants Dream"},
-		{"Wing It!", "Wing It!"},
-		{"Wing It", "Wing It!"},
-		{"Coffee Run", "Coffee Run"},
-		{"Tears of Steel", "Tears of Steel"},
-		{"Hero", "HERO"},
-		{"Spider Man", "Spider-Man"},
-		{"Spiderman", "Spider-Man"},
-		{"S W A T", "S.W.A.T."},
-		{"Amelie", "Amélie"},
-		{"Fast and Furious", "Fast & Furious"},
-		{"Avengers", "The Avengers"},
-		{"Schindlers List", "Schindler's List"},
-		{"Mission Impossible Fallout", "Mission: Impossible - Fallout"},
-		{"ＡＫＩＲＡ", "AKIRA"},
-	}
-	for _, p := range same {
-		if foldTitle(p[0]) != foldTitle(p[1]) {
-			t.Errorf("%q and %q should fold alike: %q vs %q", p[0], p[1], foldTitle(p[0]), foldTitle(p[1]))
-		}
-	}
-	differ := [][2]string{
-		{"Spring", "Spring Breakers"},
-		{"Hero", "Chestnut: Hero of Central Park"},
-		{"Singularity", "The Singularity Protocol"},
-		{"千と千尋の神隠し", "もののけ姫"},
-		{"Кино", "Сталкер"},
-	}
-	for _, p := range differ {
-		if foldTitle(p[0]) == foldTitle(p[1]) {
-			t.Errorf("%q and %q must not fold alike (both %q)", p[0], p[1], foldTitle(p[0]))
-		}
-	}
-	if foldTitle("千と千尋の神隠し") == "" {
-		t.Error("a title in another script must not fold to nothing")
 	}
 }

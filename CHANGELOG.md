@@ -859,6 +859,19 @@ API change lands only when every first-party client moves with it — see
     the codec choice picks H.264 or HEVC output. The web Account page has a
     new **Playback quality** section to set it. Values too small to play are
     refused with 400.
+- **Shows auto-matched the wrong series.** Movies got a strict match in
+  v2.5.0; shows hadn't. TMDB's show search took an exact name if there was
+  one, else any show whose name began with the folder's ("Avatar" became the
+  2024 live-action Avatar: The Last Airbender), else TMDB's top hit, and
+  ignored the year. TMDB, the TVDB fallback and, outside anime libraries, the
+  AniList fallback now apply the movie rule: the name, original name, alias or
+  alternative title must be the folder's, first aired within a year of its
+  year. "Avatar" now finds the animated series, which TMDB also lists under
+  that name. TVDB/Sonarr qualifiers are understood: "The Office (US)" picks
+  the American Office of the six TMDB has, and "Doctor Who (2005)" the 2005
+  series. In anime libraries AniList still matches first, and the TMDB and
+  TVDB lookups that fetch episode data also try AniList's English and romaji
+  names. Items already matched keep their match; use Fix Match on a wrong one.
 
 ## [v2.5.1] — 2026-10-06
 
