@@ -1,0 +1,1624 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OnScreen v2.6 User Guide</title>
+<style>
+  :root {
+    --accent: #6d5dfc;
+    --accent-soft: #efedff;
+    --accent-dark: #4a3bd6;
+    --ink: #1d1d27;
+    --muted: #5b5b6b;
+    --line: #dedde6;
+    --panel: #f6f6f9;
+    --tip: #e9f7ef;
+    --tip-line: #2e9d5b;
+    --note: #fff6e5;
+    --note-line: #d99a1b;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, -apple-system, Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 11pt;
+    line-height: 1.5;
+    color: var(--ink);
+    background: #fff;
+  }
+  a { color: var(--accent-dark); text-decoration: none; }
+  p { margin: 0 0 0.6em; }
+  ul, ol { margin: 0 0 0.7em; padding-left: 1.4em; }
+  li { margin: 0.15em 0; }
+  li > ul, li > ol { margin-top: 0.15em; margin-bottom: 0.2em; }
+  strong { font-weight: 600; }
+  code, kbd {
+    font-family: Consolas, "Cascadia Mono", "Courier New", monospace;
+    font-size: 0.92em;
+  }
+  code { background: var(--panel); padding: 0.05em 0.3em; border-radius: 3px; }
+  kbd {
+    display: inline-block;
+    padding: 0 0.4em;
+    border: 1px solid #c9c8d4;
+    border-bottom-width: 2px;
+    border-radius: 4px;
+    background: #fbfbfd;
+    line-height: 1.35;
+    white-space: nowrap;
+  }
+  .ui { font-weight: 600; color: #2a2a38; }
+
+  /* ---------- Title page ---------- */
+  .cover {
+    height: 9.4in;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    page-break-after: always;
+  }
+  .cover-band {
+    background: linear-gradient(135deg, #6d5dfc 0%, #8a7dff 55%, #b3a9ff 100%);
+    color: #fff;
+    border-radius: 14px;
+    padding: 0.9in 0.6in 0.8in;
+    margin-top: 0.6in;
+  }
+  .cover-kicker { letter-spacing: 0.18em; text-transform: uppercase; font-size: 10pt; opacity: 0.9; }
+  .cover h1 { font-size: 40pt; line-height: 1.05; margin: 0.15in 0 0.1in; font-weight: 700; }
+  .cover .sub { font-size: 15pt; opacity: 0.95; margin: 0; }
+  .cover-meta { color: var(--muted); font-size: 10pt; border-top: 1px solid var(--line); padding-top: 0.15in; }
+  .cover-meta p { margin: 0.2em 0; }
+  .cover-who {
+    margin: 0.4in 0.1in 0;
+    font-size: 11.5pt;
+    color: var(--ink);
+  }
+
+  /* ---------- Table of contents ---------- */
+  .toc { page-break-after: always; }
+  .toc h2 { font-size: 20pt; margin: 0 0 0.12in; color: var(--ink); border: 0; }
+  .toc ol { list-style: none; padding: 0; margin: 0; }
+  .toc { line-height: 1.32; }
+  .toc > ol > li { margin: 0.4em 0 0.1em; }
+  .toc > ol > li > a { font-weight: 600; font-size: 12pt; color: var(--ink); }
+  .toc ol ol { columns: 2; column-gap: 0.4in; margin: 0.2em 0 0 1.6em; }
+  .toc ol ol li { font-size: 9.2pt; margin: 0.02em 0; break-inside: avoid; }
+  .toc ol ol a { color: var(--muted); }
+  .toc .num { display: inline-block; min-width: 1.6em; color: var(--accent); font-weight: 600; }
+  .toc ol ol .num { min-width: 2.4em; font-weight: 500; }
+
+  /* ---------- Chapters ---------- */
+  section.chapter { page-break-before: always; }
+  h1.ch {
+    font-size: 22pt;
+    margin: 0 0 0.25in;
+    padding-bottom: 0.1in;
+    border-bottom: 3px solid var(--accent);
+    line-height: 1.2;
+  }
+  h1.ch .num { color: var(--accent); margin-right: 0.25em; }
+  h2 {
+    font-size: 14pt;
+    margin: 1.3em 0 0.45em;
+    color: var(--ink);
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  h2 .num { color: var(--accent); margin-right: 0.35em; font-weight: 600; }
+  h3 {
+    font-size: 11.5pt;
+    margin: 1em 0 0.35em;
+    color: var(--accent-dark);
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+  .lead { font-size: 11.5pt; color: #33333f; }
+
+  /* ---------- Callouts ---------- */
+  .tip, .note, .new {
+    border-left: 4px solid;
+    border-radius: 6px;
+    padding: 0.5em 0.8em;
+    margin: 0.8em 0;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .tip { background: var(--tip); border-color: var(--tip-line); }
+  .note { background: var(--note); border-color: var(--note-line); }
+  .new { background: var(--accent-soft); border-color: var(--accent); }
+  .tip::before, .note::before, .new::before {
+    display: block;
+    font-weight: 700;
+    font-size: 8.5pt;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    margin-bottom: 0.2em;
+  }
+  .tip::before { content: "Tip"; color: var(--tip-line); }
+  .note::before { content: "Note"; color: #a8730c; }
+  .new::before { content: "New in v2.6"; color: var(--accent-dark); }
+  .tip p:last-child, .note p:last-child, .new p:last-child,
+  .tip ul:last-child, .note ul:last-child, .new ul:last-child { margin-bottom: 0; }
+  .badge {
+    display: inline-block;
+    font-size: 7.5pt;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    color: #fff;
+    background: var(--accent);
+    padding: 0.05em 0.45em;
+    border-radius: 3px;
+    vertical-align: 0.15em;
+    margin-left: 0.3em;
+  }
+
+  /* ---------- Tables ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.6em 0 1em;
+    font-size: 9.8pt;
+    break-inside: auto;
+  }
+  tr { break-inside: avoid; page-break-inside: avoid; }
+  tr:first-child, tr:nth-child(2) { break-after: avoid; page-break-after: avoid; }
+  th, td { text-align: left; vertical-align: top; padding: 0.35em 0.55em; border-bottom: 1px solid var(--line); }
+  th { background: var(--accent-soft); color: var(--ink); font-weight: 600; border-bottom: 2px solid var(--accent); }
+  td:first-child { font-weight: 500; }
+  table.keys td:first-child { white-space: nowrap; width: 28%; }
+
+  /* ---------- Figures ---------- */
+  figure {
+    margin: 0.9em 0 1.1em;
+    text-align: center;
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  figure img {
+    max-width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    box-shadow: 0 1px 4px rgba(20, 20, 40, 0.08);
+  }
+  figure.w80 img { width: 80%; }
+  figure.w70 img { width: 70%; }
+  figure.w60 img { width: 60%; }
+  figure.w50 img { width: 50%; }
+  figure.w40 img { width: 40%; }
+  figcaption { font-size: 9pt; color: var(--muted); margin-top: 0.35em; }
+  figcaption b { color: var(--ink); }
+  .pair { display: flex; gap: 0.2in; align-items: flex-start; break-inside: avoid; page-break-inside: avoid; }
+  .pair figure { flex: 1; margin-top: 0.4em; }
+
+  .steps { counter-reset: step; list-style: none; padding-left: 0; }
+  .steps > li { counter-increment: step; position: relative; padding-left: 2em; margin: 0.35em 0; }
+  .steps > li::before {
+    content: counter(step);
+    position: absolute; left: 0; top: 0.05em;
+    width: 1.45em; height: 1.45em;
+    border-radius: 50%;
+    background: var(--accent); color: #fff;
+    font-size: 9pt; font-weight: 700;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .keep { break-inside: avoid; page-break-inside: avoid; }
+  .small { font-size: 9.5pt; color: var(--muted); }
+</style>
+</head>
+<body>
+
+<!-- ======================= TITLE PAGE ======================= -->
+<div class="cover">
+  <div>
+    <div class="cover-band">
+      <div class="cover-kicker">OnScreen v2.6</div>
+      <h1>User Guide</h1>
+      <p class="sub">Watching, listening and reading with OnScreen on the web, your TV and your phone</p>
+    </div>
+    <div class="cover-who">
+      <p>This guide is for the people who <strong>watch and listen</strong>. It covers signing in, finding things, the
+      players, music, audiobooks, books, photos, live TV, downloads and your account, plus notes for each app.</p>
+      <p>Setting up the server, adding libraries and managing users is covered in the separate
+      <strong>OnScreen Install &amp; Administration Guide</strong>. When something in this guide depends on a server
+      setting, it says <em>ask your server's admin</em>.</p>
+    </div>
+  </div>
+  <div class="cover-meta">
+    <p>Covers OnScreen server v2.6 and the apps released with it: web, Android TV / Google TV, Fire TV, Android phone,
+    Samsung (Tizen), LG (webOS), Xbox and Roku.</p>
+    <p>Screens in this guide come from a test server. Your server's libraries, titles and some buttons will differ.</p>
+  </div>
+</div>
+
+<!-- ======================= CONTENTS ======================= -->
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#ch1"><span class="num">1</span>Welcome to OnScreen</a>
+      <ol>
+        <li><a href="#s1-1"><span class="num">1.1</span>What OnScreen is</a></li>
+        <li><a href="#s1-2"><span class="num">1.2</span>The apps and where to get them</a></li>
+        <li><a href="#s1-3"><span class="num">1.3</span>Signing in on the web</a></li>
+        <li><a href="#s1-4"><span class="num">1.4</span>Signing in on a TV with a code</a></li>
+        <li><a href="#s1-5"><span class="num">1.5</span>Signing in on your phone</a></li>
+        <li><a href="#s1-6"><span class="num">1.6</span>Profiles and PINs</a></li>
+        <li><a href="#s1-7"><span class="num">1.7</span>Signing out</a></li>
+      </ol></li>
+    <li><a href="#ch2"><span class="num">2</span>Finding things</a>
+      <ol>
+        <li><a href="#s2-1"><span class="num">2.1</span>Getting around the web app</a></li>
+        <li><a href="#s2-2"><span class="num">2.2</span>The Home screen</a></li>
+        <li><a href="#s2-3"><span class="num">2.3</span>Browsing a library</a></li>
+        <li><a href="#s2-4"><span class="num">2.4</span>Title pages</a></li>
+        <li><a href="#s2-5"><span class="num">2.5</span>Search</a></li>
+        <li><a href="#s2-6"><span class="num">2.6</span>Collections and film series</a></li>
+        <li><a href="#s2-7"><span class="num">2.7</span>People, studios and networks</a></li>
+        <li><a href="#s2-8"><span class="num">2.8</span>Favorites, watch status and history</a></li>
+        <li><a href="#s2-9"><span class="num">2.9</span>Asking for something new</a></li>
+        <li><a href="#s2-10"><span class="num">2.10</span>Notifications</a></li>
+      </ol></li>
+    <li><a href="#ch3"><span class="num">3</span>Watching</a>
+      <ol>
+        <li><a href="#s3-1"><span class="num">3.1</span>Starting and resuming</a></li>
+        <li><a href="#s3-2"><span class="num">3.2</span>The web player</a></li>
+        <li><a href="#s3-3"><span class="num">3.3</span>Versions, editions and multi-part movies</a></li>
+        <li><a href="#s3-4"><span class="num">3.4</span>Audio tracks</a></li>
+        <li><a href="#s3-5"><span class="num">3.5</span>Subtitles</a></li>
+        <li><a href="#s3-6"><span class="num">3.6</span>Skip Intro, Credits and Ad</a></li>
+        <li><a href="#s3-7"><span class="num">3.7</span>Up Next</a></li>
+        <li><a href="#s3-8"><span class="num">3.8</span>Quality and direct play</a></li>
+        <li><a href="#s3-9"><span class="num">3.9</span>Play on another device and casting</a></li>
+        <li><a href="#s3-10"><span class="num">3.10</span>Sleep timer</a></li>
+        <li><a href="#s3-11"><span class="num">3.11</span>Messages you might see</a></li>
+        <li><a href="#s3-12"><span class="num">3.12</span>Reporting a problem</a></li>
+      </ol></li>
+    <li><a href="#ch4"><span class="num">4</span>Music</a>
+      <ol>
+        <li><a href="#s4-1"><span class="num">4.1</span>Browsing music</a></li>
+        <li><a href="#s4-2"><span class="num">4.2</span>Artists and albums</a></li>
+        <li><a href="#s4-3"><span class="num">4.3</span>The music player</a></li>
+        <li><a href="#s4-4"><span class="num">4.4</span>Track details, lyrics and quality</a></li>
+        <li><a href="#s4-5"><span class="num">4.5</span>ReplayGain and gapless playback</a></li>
+        <li><a href="#s4-6"><span class="num">4.6</span>Playlists and M3U files</a></li>
+      </ol></li>
+    <li><a href="#ch5"><span class="num">5</span>Audiobooks, podcasts and books</a>
+      <ol>
+        <li><a href="#s5-1"><span class="num">5.1</span>Audiobooks</a></li>
+        <li><a href="#s5-2"><span class="num">5.2</span>Podcasts</a></li>
+        <li><a href="#s5-3"><span class="num">5.3</span>Reading books and comics</a></li>
+        <li><a href="#s5-4"><span class="num">5.4</span>Reading in an e-reader app (OPDS)</a></li>
+      </ol></li>
+    <li><a href="#ch6"><span class="num">6</span>Photos</a>
+      <ol>
+        <li><a href="#s6-1"><span class="num">6.1</span>Browsing photos</a></li>
+        <li><a href="#s6-2"><span class="num">6.2</span>The photo viewer</a></li>
+        <li><a href="#s6-3"><span class="num">6.3</span>Albums</a></li>
+        <li><a href="#s6-4"><span class="num">6.4</span>The map</a></li>
+        <li><a href="#s6-5"><span class="num">6.5</span>Faces and people</a></li>
+        <li><a href="#s6-6"><span class="num">6.6</span>Memories</a></li>
+      </ol></li>
+    <li><a href="#ch7"><span class="num">7</span>Live TV and recordings</a>
+      <ol>
+        <li><a href="#s7-1"><span class="num">7.1</span>The guide and channels</a></li>
+        <li><a href="#s7-2"><span class="num">7.2</span>Recording</a></li>
+        <li><a href="#s7-3"><span class="num">7.3</span>Watching recordings and skipping ads</a></li>
+      </ol></li>
+    <li><a href="#ch8"><span class="num">8</span>Downloads</a>
+      <ol>
+        <li><a href="#s8-1"><span class="num">8.1</span>Downloading in the web app</a></li>
+        <li><a href="#s8-2"><span class="num">8.2</span>Your downloads list</a></li>
+        <li><a href="#s8-3"><span class="num">8.3</span>Downloads on your phone</a></li>
+      </ol></li>
+    <li><a href="#ch9"><span class="num">9</span>Your account</a>
+      <ol>
+        <li><a href="#s9-1"><span class="num">9.1</span>The Account page</a></li>
+        <li><a href="#s9-2"><span class="num">9.2</span>Playback quality</a></li>
+        <li><a href="#s9-3"><span class="num">9.3</span>Signed-in devices</a></li>
+        <li><a href="#s9-4"><span class="num">9.4</span>API keys</a></li>
+        <li><a href="#s9-5"><span class="num">9.5</span>Digest email, stats and your data</a></li>
+        <li><a href="#s9-6"><span class="num">9.6</span>Password, two-factor sign-in, languages and scrobbling</a></li>
+      </ol></li>
+    <li><a href="#ch10"><span class="num">10</span>App-by-app notes</a>
+      <ol>
+        <li><a href="#s10-1"><span class="num">10.1</span>Android TV, Google TV and Fire TV</a></li>
+        <li><a href="#s10-2"><span class="num">10.2</span>Android phone</a></li>
+        <li><a href="#s10-3"><span class="num">10.3</span>Samsung, LG and Xbox</a></li>
+        <li><a href="#s10-4"><span class="num">10.4</span>Roku</a></li>
+        <li><a href="#s10-5"><span class="num">10.5</span>Which app does what</a></li>
+      </ol></li>
+    <li><a href="#ch11"><span class="num">11</span>Troubleshooting and FAQ</a></li>
+  </ol>
+</nav>
+
+<!-- ======================= 1 WELCOME ======================= -->
+<section class="chapter" id="ch1">
+<h1 class="ch"><span class="num">1</span>Welcome to OnScreen</h1>
+
+<h2 id="s1-1"><span class="num">1.1</span>What OnScreen is</h2>
+<p class="lead">OnScreen is a media server. One computer keeps your household's movies, TV shows, anime, music,
+audiobooks, podcasts, books, comics and photos, and you watch, listen and read on your own devices.</p>
+<p>The person who runs the server, <strong>your admin</strong>, decides which libraries you can open and can set limits
+on your account (for example a content-rating limit or how many streams you can play at once). Everything else in this
+guide you can do yourself.</p>
+<p>Your progress follows you. Start a film on the TV, finish it on your laptop: every app reads the same watch
+history, resume points, favorites and ratings from the server.</p>
+
+<h2 id="s1-2"><span class="num">1.2</span>The apps and where to get them</h2>
+<p>All the apps talk to the same server. You need your server's address (for example
+<code>https://media.example.com</code> or <code>192.168.1.10:7070</code>) and an account. Your admin gives you both.</p>
+<table>
+  <tr><th style="width:24%">App</th><th style="width:34%">Runs on</th><th>How to get it</th></tr>
+  <tr><td>Web app</td><td>Any up-to-date browser on a computer, tablet or phone</td><td>Open your server's address in the browser. Nothing to install.</td></tr>
+  <tr><td>Fire TV</td><td>Amazon Fire TV sticks and boxes</td><td>The Amazon Appstore.</td></tr>
+  <tr><td>Android TV / Google TV</td><td>TVs and streaming boxes running Android TV or Google TV</td><td>Being tested on Google Play; not yet public. Ask your admin.</td></tr>
+  <tr><td>Android phone</td><td>Android 7.0 or later</td><td>Being tested on Google Play; not yet public. Ask your admin.</td></tr>
+  <tr><td>Samsung TV (Tizen)</td><td>Samsung smart TVs from 2020 on</td><td>Submitted to Samsung's store and waiting for review. Ask your admin.</td></tr>
+  <tr><td>LG TV (webOS)</td><td>LG 4K (UHD) TVs with webOS 6 or later</td><td>Submitted to the LG Content Store and waiting for review. Ask your admin.</td></tr>
+  <tr><td>Xbox</td><td>Xbox consoles</td><td>Not in the Microsoft Store yet. Ask your admin.</td></tr>
+  <tr><td>Roku</td><td>Roku devices</td><td>Not in the Roku store. Ask your admin.</td></tr>
+  <tr><td>Desktop</td><td>Windows and Linux</td><td>Installers are published with each OnScreen release. Ask your admin.</td></tr>
+</table>
+<p class="small">Store availability is as of October 2026. The desktop app shows the web app in its own window and adds a
+high-quality music engine (see <a href="#s4-5">4.5</a>).</p>
+
+<h2 id="s1-3"><span class="num">1.3</span>Signing in on the web</h2>
+<ol class="steps">
+  <li>Open your server's address in your browser.</li>
+  <li>Enter your <span class="ui">Username</span> and <span class="ui">Password</span>, then click <span class="ui">Sign In</span>.</li>
+  <li>If your account uses two-factor sign-in, the next screen asks for an <span class="ui">Authentication code</span>.
+  Open your authenticator app and enter the 6-digit code, then click <span class="ui">Verify</span>. Lost your phone?
+  Click <span class="ui">Use a recovery code instead</span> and enter one of the recovery codes you saved.</li>
+</ol>
+<p>Depending on how your server is set up, you might also see:</p>
+<ul>
+  <li><strong>Single sign-on buttons</strong> under <span class="ui">or continue with</span>. They sign you in with your
+  organisation's account instead of an OnScreen password.</li>
+  <li>A <span class="ui">Sign in with …</span> link for a directory (LDAP) account. Click it to use your directory
+  password; <span class="ui">Use local account</span> switches back.</li>
+  <li>A <span class="ui">Forgot password?</span> link next to the password label. It only appears when your admin has set
+  up email. Enter your email address and click <span class="ui">Send Reset Link</span>; the email takes you to
+  <span class="ui">Choose a New Password</span>.</li>
+</ul>
+<h3>Accepting an invitation</h3>
+<p>If your admin sent you an invite link, open it to reach <span class="ui">Set Up Your Account</span>. Choose a
+username and a password of at least 8 characters, click <span class="ui">Create Account</span>, then
+<span class="ui">Sign In</span>.</p>
+
+<h2 id="s1-4"><span class="num">1.4</span>Signing in on a TV with a code</h2>
+<p>Typing a password with a remote is slow, so most TV apps let you sign in from your phone or computer instead. This is
+called <strong>pairing</strong>.</p>
+<ol class="steps">
+  <li>The first time you open the TV app, enter your server's address when it asks.</li>
+  <li>On the sign-in screen, choose <span class="ui">Sign in with another device</span>. The TV shows an address ending
+  in <code>/pair</code> and a 6-digit code.</li>
+  <li>On your phone or computer, open that address. Sign in to the web app if it asks.</li>
+  <li>Type the code into <span class="ui">Pairing code</span>. You can also give the TV a name under
+  <span class="ui">Device name (optional)</span>, such as "Living Room TV".</li>
+  <li>Check the box headed <span class="ui">You are about to authorise:</span>, then click
+  <span class="ui">Authorise device</span>. The TV signs in within a few seconds.</li>
+</ol>
+<div class="pair">
+  <figure><img src="img/tv-pair.jpg" alt="TV pairing screen"><figcaption><b>On the TV.</b> The address to open and the
+  code to enter. The code renews itself if it expires.</figcaption></figure>
+  <figure class="w80"><img src="img/web-pair.jpg" alt="Pair a device page"><figcaption><b>On your phone or computer.</b>
+  The <span class="ui">Pair a device</span> page.</figcaption></figure>
+</div>
+<div class="note"><p>Only enter a code that is showing on a device you own. Whoever started that code gets access to your
+account, which is why the page warns you before you click <span class="ui">Authorise device</span>.</p></div>
+<p>If your server uses single sign-on, pairing is how you sign in on a TV: you sign in on the web page with your
+organisation's account, and the TV follows. To type a username and password on the TV instead, choose
+<span class="ui">Use password instead</span> (LG, Samsung, Xbox, Roku) or simply stay on the
+<span class="ui">Sign In</span> screen (Android TV and Fire TV).</p>
+<figure class="w70"><img src="img/tv-sign-in.jpg" alt="TV app sign in screen"><figcaption><b>Sign in on the LG, Samsung and
+Xbox apps.</b> Type with the on-screen keyboard, or choose <span class="ui">Sign in with another device</span>.</figcaption></figure>
+
+<h2 id="s1-5"><span class="num">1.5</span>Signing in on your phone</h2>
+<ol class="steps">
+  <li>Open the OnScreen phone app and type your server's address under <span class="ui">Connect to your server</span>.
+  You don't need to type <code>http://</code> or <code>https://</code>. Tap <span class="ui">Continue</span>.</li>
+  <li>Sign in in one of three ways:
+    <ul>
+      <li>Type your <span class="ui">Username</span> and <span class="ui">Password</span> and tap
+      <span class="ui">Sign in with password</span>.</li>
+      <li>If your server uses single sign-on, tap <span class="ui">Sign in with …</span>. The phone opens your server's
+      sign-in page and signs in by itself when you finish.</li>
+      <li>Tap <span class="ui">Pair this phone</span> to get a code, then enter it on the
+      <code>/pair</code> page from a computer, as in <a href="#s1-4">1.4</a>.</li>
+    </ul></li>
+  <li>If your account uses two-factor sign-in, enter the 6-digit code (or a recovery code) and tap
+  <span class="ui">Verify</span>.</li>
+</ol>
+
+<h2 id="s1-6"><span class="num">1.6</span>Profiles and PINs</h2>
+<p>A household can share one account and still keep things apart with <strong>managed profiles</strong>. Each profile has
+its own watch history and progress, and can have its own 4-digit PIN and content-rating limit. Profiles are created by
+your server's admin.</p>
+<h3>Switching profile in the web app</h3>
+<ol class="steps">
+  <li>Click your name at the bottom of the sidebar. The <span class="ui">Switch User</span> panel lists your profiles.</li>
+  <li>Click a profile and type its PIN under <span class="ui">Enter 4-digit PIN</span>. OnScreen switches as soon as
+  the fourth digit is in and reloads the Home screen.</li>
+</ol>
+<ul>
+  <li>A profile marked <span class="ui">No PIN set</span> can't be switched to. Ask your admin to give it a PIN.</li>
+  <li>From a profile you can't switch straight to another one. Sign out and sign in with your account first.</li>
+  <li>Too many wrong PINs locks switching for a while ("too many failed attempts; try again later").</li>
+  <li>The TV and phone apps have no profile switcher; they use the account you signed in with.</li>
+</ul>
+
+<h2 id="s1-7"><span class="num">1.7</span>Signing out</h2>
+<table>
+  <tr><th>App</th><th>Where</th></tr>
+  <tr><td>Web</td><td><span class="ui">Sign out</span> at the bottom of the sidebar.</td></tr>
+  <tr><td>LG, Samsung, Xbox</td><td>Settings ▸ <span class="ui">Sign out</span> (keeps the server address) or
+  <span class="ui">Forget server</span> (start over with a new address).</td></tr>
+  <tr><td>Android TV, Fire TV</td><td>Settings ▸ Account ▸ <span class="ui">Log out</span> or <span class="ui">Change server</span>.</td></tr>
+  <tr><td>Android phone</td><td>⋮ ▸ Settings ▸ Account ▸ <span class="ui">Sign out</span> or <span class="ui">Forget server</span>.
+  Both also remove the downloads saved on the phone.</td></tr>
+  <tr><td>Roku</td><td>There is no sign-out on Roku. Sign the Roku out from another device's
+  <a href="#s9-3">Signed-in devices</a> list.</td></tr>
+</table>
+<p>You can sign any device out remotely from <span class="ui">Account</span> ▸ <span class="ui">Signed-in devices</span>
+in the web app (see <a href="#s9-3">9.3</a>).</p>
+</section>
+
+<!-- ======================= 2 FINDING THINGS ======================= -->
+<section class="chapter" id="ch2">
+<h1 class="ch"><span class="num">2</span>Finding things</h1>
+
+<h2 id="s2-1"><span class="num">2.1</span>Getting around the web app</h2>
+<p>The sidebar on the left is the web app's main menu.</p>
+<table>
+  <tr><th style="width:24%">Item</th><th>What it opens</th></tr>
+  <tr><td>Home</td><td>Your rows of things to watch and the list of libraries (<a href="#s2-2">2.2</a>).</td></tr>
+  <tr><td>Search</td><td>Search across everything you can open (<a href="#s2-5">2.5</a>).</td></tr>
+  <tr><td>Collections</td><td>Collections, your playlists, film series and genres (<a href="#s2-6">2.6</a>).</td></tr>
+  <tr><td>History</td><td>Everything you've played, newest first (<a href="#s2-8">2.8</a>).</td></tr>
+  <tr><td>My stats</td><td>Your own viewing and listening numbers and Year in review (<a href="#s9-5">9.5</a>).</td></tr>
+  <tr><td>Requests</td><td>Things you've asked the admin to add. Only shown when your server takes requests and your account may make them (<a href="#s2-9">2.9</a>).</td></tr>
+  <tr><td>Favorites</td><td>Titles you've marked with the heart.</td></tr>
+  <tr><td>Live TV</td><td>The TV guide. Only shown when your server has a TV tuner (<a href="#ch7">chapter 7</a>).</td></tr>
+  <tr><td>Audio</td><td>ReplayGain loudness settings for music in this browser (<a href="#s4-5">4.5</a>).</td></tr>
+  <tr><td>Account</td><td>Your account settings (<a href="#ch9">chapter 9</a>).</td></tr>
+</table>
+<p>At the bottom of the sidebar are the <strong>notification bell</strong>, a <span class="ui">Dark mode</span> /
+<span class="ui">Light mode</span> switch, your name (which opens <span class="ui">Switch User</span>) and
+<span class="ui">Sign out</span>. Admins see a few more items, such as Settings; this guide doesn't cover them.</p>
+
+<h2 id="s2-2"><span class="num">2.2</span>The Home screen</h2>
+<figure><img src="img/web-home.jpg" alt="Home screen"><figcaption><b>Home in the web app.</b> Rows of titles, with
+<span class="ui">Customize rows</span> at the top right.</figcaption></figure>
+<p>Home shows rows of titles. A row only appears when it has something in it.</p>
+<table>
+  <tr><th style="width:30%">Row</th><th>What's in it</th></tr>
+  <tr><td>Continue Watching TV Shows</td><td>Shows you're part-way through, one tile per show, with a progress bar.</td></tr>
+  <tr><td>Next Up</td><td>The next unwatched episode of each show you're watching, such as "S2 · E5 — Title".</td></tr>
+  <tr><td>Continue Watching Movies</td><td>Movies you've started.</td></tr>
+  <tr><td>Continue Watching</td><td>Anything else you've started, such as home videos.</td></tr>
+  <tr><td>Memories</td><td>Photos taken on this day in earlier years (only if you can open a photo library; see <a href="#s6-6">6.6</a>).</td></tr>
+  <tr><td>Plan to Watch</td><td>Titles you've set to Plan to Watch (<a href="#s2-8">2.8</a>), until you've watched them.</td></tr>
+  <tr><td><em>Collection rows</em></td><td>Collections your admin has chosen to show on everyone's Home screen.</td></tr>
+  <tr><td>Trending this week</td><td>What's being watched most on the server.</td></tr>
+  <tr><td>Recently Added to <em>library</em></td><td>The newest titles in each library. Click the row's title to open the library sorted newest first.</td></tr>
+  <tr><td>Libraries</td><td>A tile for each library you can open. This is how you get into a library.</td></tr>
+</table>
+<h3>Removing something from Continue Watching</h3>
+<p>Point at the tile and click the <strong>×</strong> that appears (<span class="ui">Remove from Continue Watching</span>).
+The title leaves the Continue Watching rows and Next Up until you watch it again. On a TV app, hold
+<kbd>OK</kbd> on the tile (the row says <span class="ui">Hold OK for options</span>); on the phone, press and hold the card.</p>
+<h3>Choosing and ordering your rows</h3>
+<ol class="steps">
+  <li>Click <span class="ui">Customize rows</span> at the top right of Home.</li>
+  <li>In <span class="ui">Hub rows</span>, use ↑ and ↓ to move a row, and untick <span class="ui">Show</span> to hide it.
+  The Libraries grid is in the list too.</li>
+  <li>Click <span class="ui">Save</span>. <span class="ui">Reset to default</span> puts everything back.</li>
+</ol>
+<figure class="w80"><img src="img/web-customize-rows.jpg" alt="Customize rows panel"><figcaption><b>Hub rows.</b> Rows
+marked "(empty right now)" are hidden until they have something in them.</figcaption></figure>
+<p>Your layout is saved to your account, so the Android TV, Fire TV, phone, LG, Samsung and Xbox apps use the same order.
+It only affects you.</p>
+
+<h2 id="s2-3"><span class="num">2.3</span>Browsing a library</h2>
+<p>Open a library from the <span class="ui">Libraries</span> row on Home.</p>
+<figure><img src="img/web-library.jpg" alt="A movie library"><figcaption><b>A movie library.</b> Sorting, filters and
+<span class="ui">Surprise me</span> sit above the grid.</figcaption></figure>
+<ul>
+  <li><span class="ui">Filter…</span> narrows the titles on the page by name.</li>
+  <li><strong>Sort</strong> with <span class="ui">Title</span>, <span class="ui">Year</span>, <span class="ui">Rating</span>
+  or <span class="ui">Added</span>. Click the highlighted one again to flip the order.</li>
+  <li><span class="ui">All Genres</span> picks one genre.</li>
+  <li>The watch filter shows <span class="ui">All items</span>, <span class="ui">Unwatched</span>,
+  <span class="ui">In progress</span> or <span class="ui">Watched</span>.</li>
+  <li><span class="ui">Surprise me</span> opens a random title that matches your filters.</li>
+  <li><span class="ui">Browse genres</span> and <span class="ui">Browse years</span> open lists by genre and by decade or
+  year. Movie libraries add <span class="ui">Browse studios</span>; TV libraries add
+  <span class="ui">Browse networks</span>.</li>
+  <li>Movie and TV libraries have a <span class="ui">Collections</span> tab with the film series and collections in that
+  library. Music libraries have <span class="ui">Artists</span> and <span class="ui">Albums</span> tabs instead
+  (<a href="#ch4">chapter 4</a>).</li>
+</ul>
+<p>On each tile:</p>
+<ul>
+  <li>A <strong>check mark</strong> means watched, a <strong>number</strong> counts unwatched episodes, and a bar shows how
+  far you've got.</li>
+  <li>The <strong>⋯</strong> menu has <span class="ui">Mark watched</span> / <span class="ui">Mark unwatched</span>.</li>
+  <li>The <strong>+</strong> button adds the title to a playlist (movie and TV libraries).</li>
+</ul>
+<p class="small">The TV apps offer the same sorting and filters: <span class="ui">Sort</span> (Title A–Z / Z–A, Recently
+added, Newest year, Oldest year, Highest rated), <span class="ui">Genre</span>, the watch filter and
+<span class="ui">Surprise me</span>.</p>
+
+<h2 id="s2-4"><span class="num">2.4</span>Title pages</h2>
+<p>Clicking a movie or show opens its page. (Clicking an episode starts it straight away.)</p>
+<figure><img src="img/web-movie-download.jpg" alt="A movie page"><figcaption><b>A movie page</b>, with the
+<span class="ui">Download</span> menu open.</figcaption></figure>
+<h3>Buttons on a movie page</h3>
+<ul>
+  <li><span class="ui">Play</span>, or <span class="ui">Resume · 0:23</span> if you've started it.</li>
+  <li><span class="ui">Play on…</span> sends it to another of your devices (<a href="#s3-9">3.9</a>).</li>
+  <li><span class="ui">Mark watched</span> / <span class="ui">Mark unwatched</span>.</li>
+  <li><span class="ui">Download</span>, if your admin allows downloads (<a href="#ch8">chapter 8</a>).</li>
+  <li><span class="ui">Report a problem</span> (<a href="#s3-12">3.12</a>).</li>
+</ul>
+<h3>Buttons on a show page</h3>
+<ul>
+  <li>One play button that knows where you are: <span class="ui">Resume S1 · E2</span>, <span class="ui">Play S3 · E5</span>,
+  <span class="ui">Play S1 · E1</span> or <span class="ui">Watch again</span>.</li>
+  <li><span class="ui">Mark all watched</span> and <span class="ui">Mark all unwatched</span>.</li>
+  <li><span class="ui">Request more seasons</span>, when seasons are missing and you're allowed to request.</li>
+  <li>Season tabs (<span class="ui">Season 1</span>, <span class="ui">Season 2</span>, …) and the episode list. Each episode
+  has its own watched toggle.</li>
+</ul>
+<figure class="w80"><img src="img/web-show.jpg" alt="A show page"><figcaption><b>A show page.</b> The play button picks up
+where you left off.</figcaption></figure>
+<h3>What else is on the page</h3>
+<ul>
+  <li><strong>Ratings:</strong> the year and content rating, then scores such as ★ (critics), 👥 (audience) and
+  OnScreen (other users on your server). Where your admin has set it up, you'll also see IMDb, Rotten Tomatoes (RT) and
+  Metacritic scores; the IMDb score links to IMDb.</li>
+  <li><strong>Your rating:</strong> click a star to rate the title for yourself. Click your current star (or
+  <span class="ui">clear</span>) to remove it.</li>
+  <li><strong>Studio or network</strong> names link to a page of everything from that studio (<a href="#s2-7">2.7</a>).</li>
+  <li><span class="ui">Chapters</span>: for movies with chapter pictures, a strip of chapters. Click one to play from there.</li>
+  <li><span class="ui">Cast &amp; Crew</span>: click a person to see what else they're in.</li>
+  <li><span class="ui">Part of the …</span>: other films in the same series, with <span class="ui">See all</span>. Films you
+  don't have show <span class="ui">Not in library</span>.</li>
+  <li><span class="ui">Status</span>: your watch status for the title (<a href="#s2-8">2.8</a>).</li>
+  <li>For anime, links to <span class="ui">AniList</span> and <span class="ui">MyAnimeList</span>.</li>
+</ul>
+
+<h2 id="s2-5"><span class="num">2.5</span>Search</h2>
+<p>Click <span class="ui">Search</span> in the sidebar and start typing.</p>
+<figure><img src="img/web-search.jpg" alt="Search results"><figcaption><b>Search.</b> Tick the boxes to choose what kinds of
+results you see.</figcaption></figure>
+<ul>
+  <li>Results <span class="ui">In your library</span> can be narrowed with <span class="ui">Movies</span>,
+  <span class="ui">Shows</span>, <span class="ui">Episodes</span> and <span class="ui">Tracks</span>. Movies and Shows are on to
+  start with; tick Tracks to find music (artists and albums come with it). Your choice is remembered in that browser.</li>
+  <li>If some results are hidden by the boxes, a line tells you how many.</li>
+  <li>If your account can make requests, a second section, <span class="ui">Ask your admin to add</span>, lists titles that
+  aren't on the server yet (<a href="#s2-9">2.9</a>).</li>
+</ul>
+<p class="small">On the LG, Samsung and Xbox apps, Search has an on-screen keyboard and a <span class="ui">Search in:</span>
+choice of library. The Android TV and Google TV app also has voice search when the device supports it.</p>
+
+<h2 id="s2-6"><span class="num">2.6</span>Collections and film series</h2>
+<p>The <span class="ui">Collections</span> page groups things in four sections:</p>
+<ul>
+  <li><strong>Collections</strong> made by your admin. A <span class="ui">Smart</span> collection fills itself from rules
+  (for example "80s horror") and updates as the libraries change.</li>
+  <li><strong>Playlists</strong> you've made. Click <span class="ui">+ New Playlist</span> to start one (more in
+  <a href="#s4-6">4.6</a>).</li>
+  <li><strong>Film series</strong> such as the Alien or Toy Story films. A series appears once two of its films are on the
+  server. Its page shows every film in the series; the ones you don't have are greyed out and may have a
+  <span class="ui">Request</span> button.</li>
+  <li><strong>Genres</strong>.</li>
+</ul>
+
+<h2 id="s2-7"><span class="num">2.7</span>People, studios and networks</h2>
+<ul>
+  <li><strong>People:</strong> click a face under <span class="ui">Cast &amp; Crew</span> to see the person's photo, biography
+  and everything of theirs on the server, grouped as <span class="ui">Acting</span>, <span class="ui">Directing</span>,
+  <span class="ui">Writing</span>, <span class="ui">Created</span> and <span class="ui">Produced</span>.</li>
+  <li><strong>Studios and networks</strong> <span class="badge">NEW</span>: click a studio or network name on a title page, or
+  use <span class="ui">Browse studios</span> / <span class="ui">Browse networks</span> in a library. A studio page lists its
+  titles and can be sorted by <span class="ui">Title</span>, <span class="ui">Year</span>, <span class="ui">Rating</span> or
+  <span class="ui">Date added</span>.</li>
+</ul>
+
+<h2 id="s2-8"><span class="num">2.8</span>Favorites, watch status and history</h2>
+<h3>Favorites</h3>
+<p>In the web app, click the <strong>heart</strong> at the top right of the player (<span class="ui">Add to favorites</span>).
+On the TV apps press <span class="ui">♥ Favorite</span> (LG, Samsung, Xbox) or the heart (Android TV, Fire TV) on the
+title's page; on the phone, tap the heart on the title's page. Everything you've favorited is on the
+<span class="ui">Favorites</span> page.</p>
+<h3>Watch status</h3>
+<p>Movie and show pages have a <span class="ui">Status</span> list: <span class="ui">Plan to Watch</span>,
+<span class="ui">Watching</span>, <span class="ui">On Hold</span>, <span class="ui">Completed</span> or
+<span class="ui">Dropped</span> (<span class="ui">— None —</span> clears it). Titles set to Plan to Watch appear in the Plan
+to Watch row on Home. The phone app has the same choice as <span class="ui">Watching status</span>.</p>
+<h3>Watched and unwatched</h3>
+<p>OnScreen marks a title watched when you finish it. To change it yourself, use <span class="ui">Mark watched</span> /
+<span class="ui">Mark unwatched</span> on the title page, a tile's ⋯ menu, or the check mark at the top of the player. Shows
+and seasons have <span class="ui">Mark all watched</span> / <span class="ui">Mark all unwatched</span>. Marking something
+unwatched also clears its resume point.</p>
+<h3>History</h3>
+<p><span class="ui">History</span> (<span class="ui">Watch History</span>) lists what you've played, with the app you used,
+how long and when. Entries can't be deleted.</p>
+
+<h2 id="s2-9"><span class="num">2.9</span>Asking for something new</h2>
+<p>If your server takes requests, you can ask your admin to get a movie or show. This works in the web app (and as
+<span class="ui">Discover</span> on the LG, Samsung and Xbox apps). The Android apps don't take requests.</p>
+<ol class="steps">
+  <li>Search for the title. Under <span class="ui">Ask your admin to add</span>, click
+  <span class="ui">Request for admin to acquire</span> for a movie, or <span class="ui">Request</span> for a show.</li>
+  <li>For a show, choose the seasons in <span class="ui">Choose seasons</span> (or tick <span class="ui">All seasons</span>)
+  and click the request button.</li>
+  <li>Follow progress on the <span class="ui">Requests</span> page under <span class="ui">My Requests</span>. You can
+  <span class="ui">Cancel</span> a request while it's pending, and <span class="ui">Watch</span> it once it's available.</li>
+</ol>
+<p>Your account may have a limit, shown as for example "2 movie requests left this week". Over the limit, a request
+still goes in but needs the admin's approval. If your server is connected to download tools, the
+<span class="ui">Upcoming</span> tab shows a calendar of expected releases.</p>
+
+<h2 id="s2-10"><span class="num">2.10</span>Notifications</h2>
+<p>The bell at the bottom of the sidebar shows a count of unread notifications. Click it to see them; click one to open
+it, or <span class="ui">Mark all read</span>. You're told when:</p>
+<ul>
+  <li>a library scan adds new titles (<span class="ui">Library scan complete</span>) or a new title arrives;</li>
+  <li>a request of yours is submitted, approved, declined, fails to download, or becomes available (including
+  <span class="ui">Season N now available</span>);</li>
+  <li>a problem you reported is resolved or closed.</li>
+</ul>
+</section>
+
+<!-- ======================= 3 WATCHING ======================= -->
+<section class="chapter" id="ch3">
+<h1 class="ch"><span class="num">3</span>Watching</h1>
+
+<h2 id="s3-1"><span class="num">3.1</span>Starting and resuming</h2>
+<ul>
+  <li><strong>Movies:</strong> press <span class="ui">Play</span> on the movie's page, or <span class="ui">Resume · time</span>
+  to carry on.</li>
+  <li><strong>Episodes</strong> start as soon as you open them, from where you left off.</li>
+  <li><strong>Shows:</strong> the show page's play button resumes or starts the right episode.</li>
+</ul>
+<p>To start a movie from the beginning in the web app, use the <span class="ui">Chapters</span> strip, drag the seek
+bar back, or mark the movie unwatched. On the Android TV, Fire TV, LG, Samsung and Xbox apps the title page has
+<span class="ui">Play from Beginning</span>.</p>
+<p>Your position is saved as you watch, on every app. If you watch on another device while the web player is paused,
+the position and the Resume button update to match.</p>
+
+<h2 id="s3-2"><span class="num">3.2</span>The web player</h2>
+<figure><img src="img/web-player.jpg" alt="The web player"><figcaption><b>The web player.</b> Pointing at the seek bar shows a
+preview picture of that moment.</figcaption></figure>
+<p>Move the mouse to show the controls; they hide again after a few seconds. Click the picture to pause or play.</p>
+<h3>Top bar</h3>
+<p>Back (to the show page for an episode), the title (and episode number and chapter), a check mark
+(<span class="ui">Mark watched</span>) and a heart (<span class="ui">Add to favorites</span>).</p>
+<h3>Bottom bar</h3>
+<table>
+  <tr><th style="width:28%">Control</th><th>What it does</th></tr>
+  <tr><td>Seek bar</td><td>Drag or click to jump. Ticks mark chapters; pointing at it shows a preview picture when the server has made them.</td></tr>
+  <tr><td>Volume and time</td><td>Mute, volume slider, and the time played / total.</td></tr>
+  <tr><td>⏮ −10s ▶ +10s ⏭</td><td>Previous episode, back 10 seconds, play/pause, forward 10 seconds, next episode. Movies have only the middle three.</td></tr>
+  <tr><td>Ch 1/19</td><td>The chapter menu, with pictures when available. Only shown when the file has chapters.</td></tr>
+  <tr><td>+</td><td>Add to playlist.</td></tr>
+  <tr><td>Subtitles</td><td>Shows the subtitle language, or Off (<a href="#s3-5">3.5</a>).</td></tr>
+  <tr><td>Audio track</td><td>Only when there's more than one (<a href="#s3-4">3.4</a>).</td></tr>
+  <tr><td>Play on another device</td><td>See <a href="#s3-9">3.9</a>.</td></tr>
+  <tr><td>Report a problem</td><td>The flag icon (<a href="#s3-12">3.12</a>).</td></tr>
+  <tr><td>Cast to TV</td><td>Chromecast, in Chrome and Edge, when the file can be cast (<a href="#s3-9">3.9</a>).</td></tr>
+  <tr><td>Version</td><td>Only when the title has more than one version (<a href="#s3-3">3.3</a>).</td></tr>
+  <tr><td>Quality</td><td>See <a href="#s3-8">3.8</a>.</td></tr>
+  <tr><td>Sleep timer</td><td>The moon icon (<a href="#s3-10">3.10</a>).</td></tr>
+  <tr><td>Fullscreen</td><td>Fill the screen.</td></tr>
+</table>
+<h3>Keyboard shortcuts</h3>
+<table class="keys">
+  <tr><th>Key</th><th>Action</th></tr>
+  <tr><td><kbd>Space</kbd> or <kbd>K</kbd></td><td>Play / pause</td></tr>
+  <tr><td><kbd>←</kbd> <kbd>→</kbd></td><td>Back / forward 10 seconds</td></tr>
+  <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Volume up / down</td></tr>
+  <tr><td><kbd>F</kbd></td><td>Fullscreen on / off</td></tr>
+  <tr><td><kbd>M</kbd></td><td>Mute on / off</td></tr>
+  <tr><td><kbd>S</kbd></td><td>Skip the intro, credits or ad that's playing</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Close the Quality, Version, Subtitles, Audio or Sleep timer menu</td></tr>
+</table>
+<h3>On a phone or tablet</h3>
+<ul>
+  <li>Double-tap the left or right third of the picture to go back or forward 10 seconds; double-tap the middle to pause.</li>
+  <li>Swipe sideways to seek, up or down on the right half for volume, and on the left half for brightness.</li>
+  <li>Swipe down to leave the player.</li>
+  <li>Quality, Subtitles and Audio open as panels from the bottom of the screen. Going fullscreen turns the screen sideways.</li>
+</ul>
+<p class="small">The TV apps work with the remote's arrows and <kbd>OK</kbd>. Their buttons are listed in
+<a href="#ch10">chapter 10</a>.</p>
+
+<h2 id="s3-3"><span class="num">3.3</span>Versions, editions and multi-part movies <span class="badge">NEW</span></h2>
+<p>A title can have more than one version, for example a Director's Cut and the theatrical cut, or a 4K and a 1080p
+copy. When it does:</p>
+<ul>
+  <li>the web player has a <span class="ui">Version</span> menu, and the movie page shows which version is chosen;</li>
+  <li>the TV apps have a <span class="ui">Version:</span> button on the title page;</li>
+  <li>the phone shows <span class="ui">Version</span> choices on the title page.</li>
+</ul>
+<p>Versions are named after the edition (such as "Director's Cut") or described, such as "4K · HDR10 · HEVC · MKV".
+A version marked <span class="ui">DAMAGED</span> (or "⚠ file may be damaged" on the page) failed the server's file check
+and may not play properly.</p>
+<p><strong>Multi-part movies</strong> (a film stored as two or more files, such as CD1 and CD2) play as one movie on every
+app, with one seek bar and one running time. The version menu shows them as "· 2 parts". They can't be cast.</p>
+<p><strong>Multi-episode files</strong> (one file holding two episodes) show as "E1–E2" or "S1 · E1–E2", count as both
+episodes, and are followed by the next episode after the range (E3).</p>
+
+<h2 id="s3-4"><span class="num">3.4</span>Audio tracks</h2>
+<p>When a file has more than one audio track (another language, or a commentary), the web player shows an
+<span class="ui">Audio track</span> button. Each track is listed by its name and language, with the channel count. OnScreen
+picks your preferred audio language automatically if one is set (<a href="#s9-6">9.6</a>).</p>
+<figure class="w80"><img src="img/web-audio-menu.jpg" alt="Audio track menu"><figcaption><b>Audio track menu</b> in the web
+player.</figcaption></figure>
+<p>Switching to a track that isn't the file's default may restart the stream for a moment while the server prepares it.
+On the TV apps open <span class="ui">Audio</span> from the player's button row (press <kbd>↓</kbd>) or press the
+<strong>yellow</strong> button (LG, Samsung) or <kbd>Y</kbd> (Xbox).</p>
+
+<h2 id="s3-5"><span class="num">3.5</span>Subtitles</h2>
+<h3>Choosing subtitles</h3>
+<p>Click the <span class="ui">Subtitles</span> button. The list starts with <span class="ui">Off</span>, then the file's
+tracks (marked <em>forced</em> or <em>SDH</em> where that applies), then subtitles downloaded for the title
+(marked <em>· online</em>). If you've set a preferred subtitle language, OnScreen picks it for you.</p>
+<figure class="w60"><img src="img/web-subtitles-menu.jpg" alt="Subtitles menu with style and sync rows"><figcaption><b>The
+Subtitles menu</b> with a track chosen: size, color, background, outline and sync. (Admins also see a
+<span class="ui">Server</span> row for saving timing for everyone.)</figcaption></figure>
+<h3>Size, color and outline</h3>
+<p>With a text subtitle chosen, the menu adds <span class="ui">Size</span> (Small, Medium, Large),
+<span class="ui">Color</span> (White, Yellow, Black, Red), <span class="ui">Background</span> (None, Translucent, Opaque) and
+<span class="ui">Outline</span> (None, Light, Heavy). These are remembered in that browser. The phone app has the same
+choices under <span class="ui">Subtitle style</span>.</p>
+<h3>Subtitles out of sync</h3>
+<p>Use the <span class="ui">Sync</span> row: <span class="ui">−1s</span> and <span class="ui">−0.1</span> show subtitles
+earlier, <span class="ui">+0.1</span> and <span class="ui">+1s</span> later, and <span class="ui">Reset</span> puts them back.
+This lasts for the current viewing only. If a file is always out of step, use <span class="ui">Report a problem</span>
+▸ <span class="ui">Subtitles problem</span>: an admin can fix the timing on the server, and the fix then applies in
+every app.</p>
+<h3>Finding subtitles online</h3>
+<p>If your server is connected to OpenSubtitles, the menu has <span class="ui">Search online…</span>. Choose a language,
+click <span class="ui">Search</span>, and pick a result; it downloads and is turned on. The Android TV and Google TV app
+(<span class="ui">Find more online…</span>), the phone app and the LG, Samsung and Xbox apps have the same search. Fire TV
+and Roku don't.</p>
+<h3>Picture-based subtitles (Blu-ray and DVD) <span class="badge">NEW</span></h3>
+<p>Subtitles copied from Blu-rays and DVDs (PGS and VobSub) are pictures, not text, so a player can't simply draw them
+over the video. In v2.6, when the server is preparing the stream for you (rather than sending the file as it is), these
+tracks appear in the Subtitles menu like any other, in one of two ways:</p>
+<ul>
+  <li><strong>"· text"</strong>: the track has already been converted to text. Choosing it works like any other subtitle,
+  with no restart.</li>
+  <li><strong>"(burned in)"</strong>: choosing it restarts the video at the same moment with the subtitles drawn into the
+  picture. You'll see the loading circle briefly. Size, color and Sync don't apply to burned-in subtitles.</li>
+</ul>
+<p>Choose <span class="ui">Off</span> (or a text track) to remove burned-in subtitles; the video restarts without them.
+Switching audio track or quality keeps the burned-in subtitles on. If a track can't be burned in (for example on a
+multi-part movie), a message says so and your video carries on.</p>
+<p>This works on the web, Android TV, Fire TV, phone, LG, Samsung, Xbox and Roku apps. On Roku, picture-based
+subtitles are always burned in.</p>
+<p>In the web player the menu may also offer <span class="ui">Convert … to text (OCR)</span>, which turns a picture-based
+track into text so it can be styled and synced. It takes a few minutes; the text track is turned on when it's ready.
+If OCR isn't installed on the server, it says so.</p>
+
+<h2 id="s3-6"><span class="num">3.6</span>Skip Intro, Credits and Ad</h2>
+<p>When an episode's intro or end credits are marked on the server, a button appears while they play:
+<span class="ui">Skip Intro →</span> or <span class="ui">Skip Credits →</span>. Click it, or press <kbd>S</kbd>.</p>
+<ul>
+  <li>During an intro, <span class="ui">Always skip intros</span> turns on automatic skipping in that browser.
+  Each intro is skipped once, so you can seek back into it to watch it.</li>
+  <li>Recordings from live TV can show <span class="ui">Skip Ad →</span> during a detected ad break, with
+  <span class="ui">Always skip ads</span> (<a href="#s7-3">7.3</a>).</li>
+  <li>On TV apps, the skip button is selected for you: press <kbd>OK</kbd> (LG, Samsung and Xbox show
+  <span class="ui">Press OK to skip Intro</span>). <kbd>Back</kbd> dismisses it. On Roku press <kbd>★</kbd>.</li>
+</ul>
+
+<h2 id="s3-7"><span class="num">3.7</span>Up Next</h2>
+<p>Near the end of an episode, an <span class="ui">Up Next</span> card shows the next episode.</p>
+<table>
+  <tr><th style="width:28%">App</th><th>What happens</th></tr>
+  <tr><td>Web</td><td>Appears in the last minute. <span class="ui">Up Next · 10s</span> counts down, then plays the next episode.
+  <span class="ui">Play →</span> goes now; <span class="ui">Cancel</span> stops the countdown. Only within the same season.</td></tr>
+  <tr><td>LG, Samsung, Xbox</td><td>Appears 25 seconds before the end with a 10-second countdown: <span class="ui">▶ Play now</span>
+  or <span class="ui">Cancel</span>. Pausing holds the countdown.</td></tr>
+  <tr><td>Android TV, Fire TV</td><td>Appears about 25 seconds before the end with a 10-second countdown:
+  <span class="ui">Play Now</span> or <span class="ui">Cancel</span>.</td></tr>
+  <tr><td>Phone</td><td>Appears in the last 25 seconds with <span class="ui">Play now</span> and <span class="ui">Dismiss</span>; no countdown.</td></tr>
+  <tr><td>Roku</td><td>Appears 25 seconds before the end; <kbd>OK</kbd> plays now, and the next episode starts when this one ends.</td></tr>
+</table>
+<p>Music tracks and audiobook chapters simply follow on, with no card.</p>
+
+<h2 id="s3-8"><span class="num">3.8</span>Quality and direct play</h2>
+<p>When your device can play a file exactly as it is stored, OnScreen sends it unchanged. This is called
+<strong>direct play</strong> and gives the best picture. When it can't (an unusual format, a slow connection, or a limit on
+your account), the server converts the video as you watch.</p>
+<h3>The Quality menu (web)</h3>
+<p>The <span class="ui">Quality</span> button offers <span class="ui">Auto (Direct Play)</span>, <span class="ui">4K (2160p)</span>,
+<span class="ui">1080p</span>, <span class="ui">720p</span>, <span class="ui">480p</span> and <span class="ui">360p</span>.
+Choices higher than the file itself are left out, and Auto (Direct Play) is left out when the file can't be played as it
+is. Pick a lower setting if playback keeps pausing to load.</p>
+<figure class="w60"><img src="img/web-quality-menu.jpg" alt="Quality menu"><figcaption><b>Quality menu</b> for a 1080p
+file.</figcaption></figure>
+<h3>Playback quality for your account <span class="badge">NEW</span></h3>
+<p>To set limits for every device at once, use <span class="ui">Account</span> ▸ <span class="ui">Playback quality</span>
+in the web app, or <span class="ui">Settings</span> ▸ <span class="ui">Playback quality</span> in the Android TV, Fire TV,
+phone, LG, Samsung and Xbox apps. Details are in <a href="#s9-2">9.2</a>. The TV apps have no quality menu in the player;
+this setting is how you choose quality there.</p>
+<div class="note"><p>Your admin can also set a bitrate limit for watching from outside your home network. Anything above
+it is converted too, so playback away from home may look softer than at home.</p></div>
+
+<h2 id="s3-9"><span class="num">3.9</span>Play on another device and casting</h2>
+<h3>Play on…</h3>
+<p>Send what you're watching in the web app to one of your other devices, such as your TV:</p>
+<ol class="steps">
+  <li>Open OnScreen on the TV first, so the server has seen it recently.</li>
+  <li>In the web app, click <span class="ui">Play on…</span> on the movie page, or the
+  <span class="ui">Play on another device</span> icon in the player.</li>
+  <li>Pick the device. The web player pauses and the TV carries on from the same moment.</li>
+</ol>
+<figure class="w70"><img src="img/web-play-on.jpg" alt="Play on menu"><figcaption><b>Play on.</b> When no other device has
+been seen recently, the menu says so.</figcaption></figure>
+<p>The list shows your own devices that have played something in the last 30 days. The LG, Samsung, Xbox, Android TV and
+Fire TV apps can receive. The phone and Roku can't.</p>
+<h3>Chromecast</h3>
+<ul>
+  <li><strong>Web:</strong> in Chrome or Edge, a <span class="ui">Cast to TV</span> button appears for files that can play
+  directly on a Chromecast (MP4, M4V, MOV or WebM with H.264 or HEVC video). Casting starts where you are and pauses the
+  browser.</li>
+  <li><strong>Phone:</strong> the player has a Cast button. It sends the original file (H.264 or HEVC video in MP4, M4V, MOV
+  or WebM, and common music formats). Subtitles aren't sent.</li>
+</ul>
+<div class="note"><p>Casting sends the original file, so a video above your <a href="#s9-2">playback quality</a> limit can't
+be cast. Multi-part movies can't be cast either.</p></div>
+
+<h2 id="s3-10"><span class="num">3.10</span>Sleep timer</h2>
+<p>The moon icon in the web player stops playback after <span class="ui">15 minutes</span>, <span class="ui">30 minutes</span>,
+<span class="ui">45 minutes</span>, <span class="ui">1 hour</span> or at the <span class="ui">End of episode</span>.
+<span class="ui">Off</span> cancels it. The music player has the same timer, with <span class="ui">End of track</span> (or
+<span class="ui">End of chapter</span> for audiobooks). The phone app has a sleep timer too.</p>
+
+<h2 id="s3-11"><span class="num">3.11</span>Messages you might see</h2>
+<table>
+  <tr><th style="width:30%">Message</th><th>What it means and what to do</th></tr>
+  <tr><td>Too many streams</td><td>Your account may only play a set number of streams at once, and that many are already
+  playing on other devices. Stop one, then try again. The limit is set by your admin; since v2.6 it counts every stream,
+  not only converted ones.</td></tr>
+  <tr><td>Watch limit reached</td><td>Your account has viewing hours or a daily time limit. Try again in the allowed hours
+  or tomorrow.</td></tr>
+  <tr><td>Playback stopped</td><td>The admin stopped your stream, sometimes with a reason.</td></tr>
+  <tr><td>This file appears to be damaged</td><td>The server's file check found broken parts. Use <span class="ui">Report a
+  problem</span> so the admin can replace it.</td></tr>
+  <tr><td>Dolby Vision is not supported</td><td>This copy uses a kind of Dolby Vision that OnScreen can't play. Another
+  version (HDR10 or SDR) will play normally; ask your admin.</td></tr>
+  <tr><td>This content is restricted by your profile's content rating</td><td>It's above your account's rating limit.</td></tr>
+  <tr><td>Playback keeps stalling</td><td>The web player restarted three times and gave up. The file may be damaged or the
+  server busy; try a lower <a href="#s3-8">quality</a> or report it.</td></tr>
+  <tr><td>Downloads are turned off on this server.</td><td>Your admin hasn't enabled downloads.</td></tr>
+</table>
+
+<h2 id="s3-12"><span class="num">3.12</span>Reporting a problem</h2>
+<p>If something's wrong with a title, tell your admin from inside OnScreen. Click <span class="ui">Report a problem</span>
+(the flag icon in the player, or the button on the title page), choose what's wrong and add a note if you like:</p>
+<ul>
+  <li><span class="ui">Video won't play or looks wrong</span></li>
+  <li><span class="ui">Audio problem</span></li>
+  <li><span class="ui">Subtitles problem</span></li>
+  <li><span class="ui">Wrong movie/show</span></li>
+  <li><span class="ui">Something else</span></li>
+</ul>
+<p>Click <span class="ui">Send report</span>. The admin is notified, and you get a notification when the report is
+resolved. The same option is on the Android TV, Fire TV, phone, LG, Samsung, Xbox and Roku apps.</p>
+</section>
+
+<!-- ======================= 4 MUSIC ======================= -->
+<section class="chapter" id="ch4">
+<h1 class="ch"><span class="num">4</span>Music</h1>
+
+<h2 id="s4-1"><span class="num">4.1</span>Browsing music</h2>
+<p>A music library has two tabs, <span class="ui">Artists</span> and <span class="ui">Albums</span>. Sort artists by
+<span class="ui">Title</span>, <span class="ui">Year</span>, <span class="ui">Rating</span> or <span class="ui">Added</span>,
+and albums by <span class="ui">Title</span>, <span class="ui">Artist</span>, <span class="ui">Year</span> or
+<span class="ui">Added</span>. <span class="ui">All Genres</span>, <span class="ui">Browse genres</span> and
+<span class="ui">Browse years</span> narrow the albums. Music videos appear on a shelf at the top of the Artists tab.</p>
+<p>To find a particular song, use Search with <span class="ui">Tracks</span> ticked.</p>
+
+<h2 id="s4-2"><span class="num">4.2</span>Artists and albums</h2>
+<figure class="w80"><img src="img/web-artist.jpg" alt="An artist page"><figcaption><b>An artist page</b> with
+<span class="ui">Instant mix</span>.</figcaption></figure>
+<p>An <strong>artist page</strong> has these sections:</p>
+<ul>
+  <li><span class="ui">Albums</span>, newest first.</li>
+  <li><span class="ui">Appears on</span> <span class="badge">NEW</span>: albums by others that the artist features on, with the
+  matching tracks.</li>
+  <li><span class="ui">Similar artists</span> <span class="badge">NEW</span>: artists on your server with a similar sound.</li>
+  <li><span class="ui">Music Videos</span>.</li>
+</ul>
+<p><span class="ui">Instant mix</span> <span class="badge">NEW</span> plays a mix of the artist and similar music on your
+server, replacing what's playing. It's also on album pages and in a track's details. The TV apps have Instant mix too,
+plus <span class="ui">Play All</span> and <span class="ui">Shuffle</span> on artist pages.</p>
+<p>An <strong>album page</strong> shows the year, track count and length, with <span class="ui">▶ Play</span> and
+<span class="ui">Instant mix</span>. Albums on more than one disc are split under <span class="ui">Disc 1</span>,
+<span class="ui">Disc 2</span> and so on. Click a track number to play from that track.</p>
+
+<h2 id="s4-3"><span class="num">4.3</span>The music player</h2>
+<figure><img src="img/web-album-playing.jpg" alt="Album page with the music player"><figcaption><b>Playing an album.</b> The
+player bar stays at the bottom of the screen while you browse.</figcaption></figure>
+<p>Music plays in a bar at the bottom of the web app, so you can keep browsing. From left to right:</p>
+<ul>
+  <li><strong>×</strong> (<span class="ui">Close player</span>) stops and clears what's playing.</li>
+  <li>The cover, title and artist (links to the artist and album).</li>
+  <li><span class="ui">Shuffle</span>, <span class="ui">Previous</span>, <span class="ui">Play</span>/<span class="ui">Pause</span>,
+  <span class="ui">Next</span> and <span class="ui">Repeat</span> (off → all → one). Previous restarts the track if you're
+  more than 3 seconds in.</li>
+  <li>The seek bar, then the sleep timer, <span class="ui">RG</span> (ReplayGain, <a href="#s4-5">4.5</a>) and volume.</li>
+</ul>
+<p>On the phone and Android TV, music keeps playing after you leave the app, with controls on the lock screen and in the
+notification area (phone) or the system's media controls (TV).</p>
+
+<h2 id="s4-4"><span class="num">4.4</span>Track details, lyrics and quality</h2>
+<p>Each track on an album page has a quality badge: <span class="ui">Hi-Res</span> (lossless, better than CD) or
+<span class="ui">Lossless</span>. Point at a track and click <span class="ui">ⓘ</span> (<span class="ui">File details</span>)
+to see:</p>
+<ul>
+  <li>the format, bit depth, sample rate, channels and bitrate;</li>
+  <li>ReplayGain values, and whether they came from the file's tags or the server measured them;</li>
+  <li><span class="ui">Lyrics</span>, when the server has them;</li>
+  <li>MusicBrainz links for the recording, release and artist.</li>
+</ul>
+<figure class="w60"><img src="img/web-track-info.jpg" alt="Track details"><figcaption><b>File details</b> for a 24-bit,
+192 kHz FLAC track.</figcaption></figure>
+<p>The phone app shows lyrics from a <span class="ui">Lyrics</span> button in the player.</p>
+
+<h2 id="s4-5"><span class="num">4.5</span>ReplayGain and gapless playback</h2>
+<p><strong>ReplayGain</strong> evens out loudness so one track doesn't blast after a quiet one. It's off unless you turn it
+on, and it's set per browser or device.</p>
+<ul>
+  <li>Click <span class="ui">RG</span> in the music player, or open <span class="ui">Audio</span> in the sidebar.</li>
+  <li>Choose <span class="ui">Off</span>, <span class="ui">Track</span> (each track at the same loudness) or
+  <span class="ui">Album</span> (whole albums at the same loudness, keeping the differences between their tracks).</li>
+  <li><span class="ui">Preamp</span> raises or lowers everything by up to 15 dB. The gain never pushes a track past its peak,
+  so it doesn't distort.</li>
+</ul>
+<figure class="w60"><img src="img/web-replaygain.jpg" alt="ReplayGain menu"><figcaption><b>ReplayGain</b> in the music
+player.</figcaption></figure>
+<p>Tracks without ReplayGain tags play at their own level, unless your server has measured them (shown as
+<span class="ui">Analyzed</span> in the track's details). The phone app has the same choice in
+<span class="ui">Settings</span> ▸ <span class="ui">ReplayGain</span>.</p>
+<p><strong>Gapless playback:</strong> the web player loads the next track before the current one ends, so live albums and
+continuous mixes play without a gap. The phone plays queues gaplessly too.</p>
+<p class="small">The OnScreen desktop app adds a native audio engine for bit-perfect playback, with its options on the
+<span class="ui">Audio</span> page. The web music player always plays the original files.</p>
+
+<h2 id="s4-6"><span class="num">4.6</span>Playlists and M3U files</h2>
+<h3>Making a playlist</h3>
+<ul>
+  <li>On the <span class="ui">Collections</span> page, click <span class="ui">+ New Playlist</span>.</li>
+  <li>Add a movie or episode with the <strong>+</strong> button (<span class="ui">Add to playlist</span>) in the player or on a
+  library tile, then choose a playlist or <span class="ui">+ New Playlist</span>.</li>
+  <li>Your playlists are listed under <span class="ui">Playlists</span> on the Collections page; open one to edit it or remove
+  items.</li>
+</ul>
+<h3>Importing and exporting M3U playlists <span class="badge">NEW</span></h3>
+<p>Import and export live on the <span class="ui">My Playlists</span> page: click <span class="ui">Playlists</span> in the
+sidebar.</p>
+<ol class="steps">
+  <li>Click <span class="ui">Import playlist</span> and choose an <code>.m3u</code> or <code>.m3u8</code> file (up to 1 MB)
+  exported from another player.</li>
+  <li>Give it a name (or leave the file name) and click <span class="ui">Import</span>.</li>
+  <li>OnScreen matches each line to something on the server by path, folder and file name, or artist and title, and says
+  how many it matched. Lines it couldn't match are listed. Web addresses in the file are never opened.</li>
+</ol>
+<p>To export, open a playlist there and click <span class="ui">Export .m3u8</span>. Tick <span class="ui">Full server paths</span>
+if the other player needs the files' full paths on the server.</p>
+<p>The My Playlists page also makes <strong>smart playlists</strong> (tick <span class="ui">Smart playlist (rule-based)</span>),
+which fill themselves from rules such as type, genre, year and rating.</p>
+</section>
+
+<!-- ======================= 5 AUDIOBOOKS, PODCASTS, BOOKS ======================= -->
+<section class="chapter" id="ch5">
+<h1 class="ch"><span class="num">5</span>Audiobooks, podcasts and books</h1>
+
+<h2 id="s5-1"><span class="num">5.1</span>Audiobooks</h2>
+<p>Audiobook libraries are organised by author and series. A book's page shows its chapters and a play button:</p>
+<ul>
+  <li><span class="ui">▶ Play</span> for a new book, or <span class="ui">▶ Resume · ch 3 · 12:40</span> to carry on. You resume
+  at the start of the chapter you were in.</li>
+  <li><span class="ui">Start over</span> goes back to chapter 1.</li>
+  <li>Click a chapter to play from it.</li>
+</ul>
+<p>Audiobooks play in the music player bar, which adds two buttons:</p>
+<ul>
+  <li><strong>Speed</strong> (shows e.g. <span class="ui">1×</span>): <span class="ui">0.75×</span> to <span class="ui">3×</span>.
+  The voice keeps its normal pitch, and the speed is saved for that book on the server, so it follows you to other
+  devices.</li>
+  <li><span class="ui">Add bookmark</span>: saves the current moment, with an optional note.</li>
+</ul>
+<figure><img src="img/web-audiobook-speed.jpg" alt="Audiobook speed"><figcaption><b>Playback speed</b> for an audiobook, next
+to the bookmark and sleep timer buttons.</figcaption></figure>
+<p>Bookmarks are listed on the book's page under <span class="ui">Bookmarks</span>. Click a bookmark's time to play from
+there, or use <span class="ui">Add note</span> / <span class="ui">Edit note</span> and <span class="ui">Delete</span>.
+The sleep timer can stop at the <span class="ui">End of chapter</span>.</p>
+<p class="small">Other apps: the phone has speed, bookmarks and a sleep timer. Android TV, Fire TV, LG, Samsung and Xbox
+have speed (on LG, Samsung and Xbox press <kbd>↓</kbd> during an audiobook). Roku plays audiobooks at normal speed only.</p>
+
+<h2 id="s5-2"><span class="num">5.2</span>Podcasts</h2>
+<p>Podcast libraries list shows; open one to see its <span class="ui">Episodes</span>, newest first, with the date and
+length. Click an episode to play it. Your admin chooses which podcasts the server follows and how many episodes it keeps;
+new episodes download automatically. To suggest a podcast, ask your admin.</p>
+
+<h2 id="s5-3"><span class="num">5.3</span>Reading books and comics</h2>
+<p>OnScreen reads EPUB books and CBZ and CBR comics in the web app and the phone app. Open a book to start reading.</p>
+<figure><img src="img/web-comic-reader.jpg" alt="Comic reader"><figcaption><b>Reading a comic.</b> Reading direction and page
+layout are at the top right; the slider at the bottom jumps to a page.</figcaption></figure>
+<h3>Turning pages</h3>
+<ul>
+  <li>Click <strong>‹</strong> or <strong>›</strong> at the sides, or drag the slider at the bottom.</li>
+  <li>Keys: <kbd>←</kbd> <kbd>→</kbd>, <kbd>PgUp</kbd> <kbd>PgDn</kbd> or <kbd>Space</kbd> to turn pages, <kbd>Home</kbd> and
+  <kbd>End</kbd> to jump to the first or last page.</li>
+  <li>EPUB books show <span class="ui">Section 3 of 144</span> at the top; comics show <span class="ui">Page 1 of 36</span>.</li>
+</ul>
+<h3>Comic options</h3>
+<ul>
+  <li><strong>Reading direction:</strong> <span class="ui">Left → Right</span>, <span class="ui">Right → Left</span> (manga) or
+  <span class="ui">Vertical (webtoon)</span>. Manga usually opens right-to-left by itself. The arrow keys follow the direction.</li>
+  <li><strong>Layout:</strong> <span class="ui">Single page</span>, <span class="ui">Two-page spread</span> or
+  <span class="ui">Long scroll</span>.</li>
+</ul>
+<h3>Picking up where you left off <span class="badge">NEW</span></h3>
+<p>Your page is saved to the server as you read. If you've read further on another device, the web reader offers
+<span class="ui">You're further along on …</span> with <span class="ui">Continue from page 40 on …</span> or
+<span class="ui">Stay here</span>. This works for EPUB, CBZ and CBR in the web app; the phone app syncs comic pages
+(CBZ and CBR).</p>
+<p class="small">The TV apps don't read books ("Book reading isn't available on TV. Open this book in the web or phone app.").</p>
+
+<h2 id="s5-4"><span class="num">5.4</span>Reading in an e-reader app (OPDS) <span class="badge">NEW</span></h2>
+<p>E-reader apps that support OPDS catalogs, such as KOReader, Moon+ Reader, Panels, Chunky and Thorium, can browse,
+search and download your books.</p>
+<ol class="steps">
+  <li><strong>Make a key.</strong> In the web app go to <span class="ui">Account</span> ▸ <span class="ui">API keys</span> ▸
+  <span class="ui">Create API key</span>. Name it after the device (for example "Kobo"), set
+  <span class="ui">Access</span> to <span class="ui">Read-only (GET requests only)</span>, and click
+  <span class="ui">Create key</span>. Copy the key (it starts with <code>osk_</code>); it's shown only once.</li>
+  <li><strong>Add the catalog in the app.</strong> The address is shown on the Account page under
+  <span class="ui">Read your books in an e-reader app</span> (with a <span class="ui">Copy</span> button). It's your server's
+  address followed by <code>/opds/</code>.</li>
+  <li><strong>Sign in with the key.</strong> Enter anything as the user name (your username is fine) and paste the key as the
+  <strong>password</strong>.</li>
+</ol>
+<ul>
+  <li><strong>KOReader:</strong> Search ▸ OPDS catalog ▸ <strong>+</strong>.</li>
+  <li><strong>Moon+ Reader:</strong> Net Library ▸ Add.</li>
+  <li><strong>Panels / Chunky:</strong> add an OPDS source with the address, then the user name and key.</li>
+</ul>
+<p>The catalog shows <strong>Recently added</strong>, one entry per book library you can open, and search. You see exactly
+the books you'd see in the web app.</p>
+<div class="note"><p>Your account password doesn't work here, on purpose. If a device is lost, revoke its key in
+<span class="ui">Account</span> ▸ <span class="ui">API keys</span>. The catalog needs downloads to be allowed on the server;
+if they're not, the Account page says so.</p></div>
+</section>
+
+<!-- ======================= 6 PHOTOS ======================= -->
+<section class="chapter" id="ch6">
+<h1 class="ch"><span class="num">6</span>Photos</h1>
+
+<h2 id="s6-1"><span class="num">6.1</span>Browsing photos</h2>
+<p>A photo library opens as a grid sorted by <span class="ui">Taken</span> (newest first), which works as a timeline. You can
+also sort by <span class="ui">Added</span> or <span class="ui">Title</span>. Links at the top open the
+<span class="ui">Map</span>, <span class="ui">Albums</span>, <span class="ui">People</span> and <span class="ui">Memories</span>.</p>
+<p><strong>Camera RAW files</strong> <span class="badge">NEW</span> (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2 and PEF) show like any
+other photo. When you shoot RAW + JPEG, the pair appears as one photo, and <span class="ui">Download original</span> gives you
+the RAW file.</p>
+<p><span class="ui">Select</span> lets you tick photos and <span class="ui">Add to album…</span>.</p>
+
+<h2 id="s6-2"><span class="num">6.2</span>The photo viewer</h2>
+<table class="keys">
+  <tr><th>Key or button</th><th>Action</th></tr>
+  <tr><td><kbd>←</kbd> <kbd>→</kbd> or swipe</td><td>Previous / next photo</td></tr>
+  <tr><td><kbd>+</kbd> <kbd>-</kbd>, wheel, pinch</td><td>Zoom in / out (double-click zooms to 2×); <kbd>0</kbd> resets. Drag to move around.</td></tr>
+  <tr><td><kbd>Space</kbd></td><td>Start or stop a slideshow (4 seconds a photo)</td></tr>
+  <tr><td><kbd>I</kbd></td><td>Info: when it was taken, camera, lens, exposure, size, location and people</td></tr>
+  <tr><td><kbd>F</kbd></td><td>Show the faces found in the photo</td></tr>
+  <tr><td><kbd>Esc</kbd></td><td>Stop the slideshow, close the info panel, then close the viewer</td></tr>
+</table>
+<p>The top bar also has <span class="ui">Download original</span> (when downloads are allowed), <span class="ui">Add to
+album…</span> and, inside an album, <span class="ui">Remove from this album</span>. The location in the info panel links to
+OpenStreetMap.</p>
+
+<h2 id="s6-3"><span class="num">6.3</span>Albums</h2>
+<p>Albums are private: only you see yours. Open <span class="ui">Albums</span> (<span class="ui">Photo albums</span>) and click
+<span class="ui">+ New album</span>, or add photos from the viewer or with <span class="ui">Select</span>. Each album's
+<strong>⋯</strong> menu has <span class="ui">Rename</span> and <span class="ui">Delete</span>; deleting an album leaves the photos
+in the library.</p>
+
+<h2 id="s6-4"><span class="num">6.4</span>The map</h2>
+<p><span class="ui">Photo map</span> places photos that have GPS coordinates. Click a spot to see its photos in a side panel;
+zoom in to split busy spots. The phone app has a map too, under the library's <span class="ui">Photo timeline / map</span>
+button, with <span class="ui">Timeline</span> and <span class="ui">Geotagged</span> tabs.</p>
+
+<h2 id="s6-5"><span class="num">6.5</span>Faces and people <span class="badge">NEW</span></h2>
+<p>If your admin has turned on face detection, OnScreen finds faces in your photos. It doesn't recognise who they are:
+you name them, and OnScreen gathers each person's photos.</p>
+<ul>
+  <li>In the viewer, press <kbd>F</kbd> and click a face box. Type a name under <span class="ui">Who is this?</span> and click
+  <span class="ui">Save</span>, or <span class="ui">Not a face</span>. Typing an existing name adds the face to that person.</li>
+  <li>The <span class="ui">People</span> page lists named people and a <span class="ui">Who is this?</span> section of unnamed
+  faces to name.</li>
+  <li>A person's page can suggest more faces (<span class="ui">Is this …?</span>); answer <span class="ui">Yes</span> or
+  <span class="ui">No</span>.</li>
+</ul>
+<p class="small">Naming is available unless your account has viewing restrictions. If there are no faces yet, face
+detection may be off; ask your admin.</p>
+
+<h2 id="s6-6"><span class="num">6.6</span>Memories <span class="badge">NEW</span></h2>
+<p><span class="ui">Memories</span> shows photos taken on this day in earlier years (or this week, when a year has none
+that day). Each group has a <span class="ui">Play</span> button that starts a slideshow. The same memories appear as a row on
+Home.</p>
+<p class="small">On the TV apps, photos open in a viewer: <kbd>←</kbd> <kbd>→</kbd> move between photos and <kbd>OK</kbd>
+starts a slideshow.</p>
+</section>
+
+<!-- ======================= 7 LIVE TV ======================= -->
+<section class="chapter" id="ch7">
+<h1 class="ch"><span class="num">7</span>Live TV and recordings</h1>
+<p>If your server has a TV tuner, the web app shows <span class="ui">Live TV</span> in the sidebar, and the LG, Samsung,
+Xbox and Android TV / Google TV apps show <span class="ui">Live TV</span> and <span class="ui">Recordings</span>. Fire TV, the
+phone and Roku don't have live TV.</p>
+
+<h2 id="s7-1"><span class="num">7.1</span>The guide and channels</h2>
+<ul>
+  <li><span class="ui">Guide</span> shows four hours at a time. <span class="ui">← Earlier</span>, <span class="ui">Now</span>
+  and <span class="ui">Later →</span> move through the day; a red line marks the current time.</li>
+  <li>Click a programme for its details, then <span class="ui">Watch channel</span> or <span class="ui">Record</span>.</li>
+  <li><span class="ui">Channels</span> shows a tile per channel with what's on now and next. Click one to watch.</li>
+  <li>A channel starts muted; unmute with the volume control. <span class="ui">↑ Prev</span> and <span class="ui">↓ Next</span>
+  (or the <kbd>P</kbd> and <kbd>N</kbd> keys) change channel, and <span class="ui">All channels</span> goes back.</li>
+</ul>
+<p class="small">On the LG, Samsung and Xbox apps, change channel with <kbd>▲</kbd> <kbd>▼</kbd> or <kbd>CH ▲▼</kbd>;
+<kbd>Back</kbd> returns to the channel list.</p>
+
+<h2 id="s7-2"><span class="num">7.2</span>Recording</h2>
+<ol class="steps">
+  <li>In the guide, click the programme.</li>
+  <li>Click <span class="ui">Record</span>. "Recording scheduled" confirms it.</li>
+</ol>
+<p>The <span class="ui">Recordings</span> page has tabs for <span class="ui">Upcoming</span>, <span class="ui">Recording now</span>,
+<span class="ui">Completed</span> and <span class="ui">Rules</span>. You can <span class="ui">Cancel</span> a recording that's
+scheduled or in progress. Statuses include <span class="ui">Scheduled</span>, <span class="ui">Recording now</span>,
+<span class="ui">Done</span> and <span class="ui">Failed</span>.</p>
+
+<h2 id="s7-3"><span class="num">7.3</span>Watching recordings and skipping ads</h2>
+<p>Click <span class="ui">Watch</span> on a completed recording to open it in the normal player. If the server has found the
+ad breaks <span class="badge">NEW</span>, a <span class="ui">Skip Ad →</span> button appears during each break; click it or
+press <kbd>S</kbd>. Turn on <span class="ui">Always skip ads</span> to skip them automatically in that browser.</p>
+</section>
+
+<!-- ======================= 8 DOWNLOADS ======================= -->
+<section class="chapter" id="ch8">
+<h1 class="ch"><span class="num">8</span>Downloads</h1>
+<p>Downloads let you keep a copy of a movie or episode to watch without a connection. They only appear when your admin
+allows downloads. Otherwise the button is hidden, or you'll see "Downloads are turned off on this server."</p>
+
+<h2 id="s8-1"><span class="num">8.1</span>Downloading in the web app</h2>
+<ol class="steps">
+  <li>On a movie or episode page, click <span class="ui">Download</span>.</li>
+  <li>Choose a size:
+    <ul>
+      <li><span class="ui">Original</span>: the file exactly as it's stored ("the file as it is"). It starts straight away.</li>
+      <li>A smaller copy <span class="badge">NEW</span>: <span class="ui">1080p · 8 Mbps</span>, <span class="ui">720p · 4 Mbps</span>,
+      <span class="ui">720p · 2 Mbps</span> or <span class="ui">480p · 1 Mbps</span>. These are MP4 files the server prepares
+      first.</li>
+    </ul></li>
+  <li>For a smaller copy, the button shows <span class="ui">Waiting…</span> and then <span class="ui">Preparing 40%</span>. The
+  download starts by itself when the copy is ready. You can leave the page; the server keeps working.</li>
+</ol>
+<ul>
+  <li>Sizes above your account's limit are greyed out and marked "above your limit".</li>
+  <li>If a file can't be converted, the menu says <span class="ui">No smaller copies for this file</span>.</li>
+  <li>"You already have downloads being prepared" means wait for one of them to finish before asking for another.</li>
+</ul>
+
+<h2 id="s8-2"><span class="num">8.2</span>Your downloads list</h2>
+<p><span class="ui">Account</span> ▸ <span class="ui">Downloads</span> lists the smaller copies you've asked for, with their
+size and status: <span class="ui">Waiting to start</span>, <span class="ui">Preparing · N%</span>, <span class="ui">Ready</span>,
+<span class="ui">Failed</span> or <span class="ui">Expired</span>.</p>
+<ul>
+  <li><span class="ui">Download</span> saves a ready copy again; <span class="ui">Cancel</span> stops one being prepared;
+  <span class="ui">Remove</span> deletes it from the list.</li>
+  <li>The server keeps each copy for a while after you last downloaded it (a week unless your admin changed it), then
+  removes it to save space. An expired copy can simply be asked for again.</li>
+</ul>
+<figure class="w70"><img src="img/web-account-downloads.jpg" alt="Downloads section"><figcaption><b>Account ▸ Downloads</b>
+before anything has been downloaded.</figcaption></figure>
+
+<h2 id="s8-3"><span class="num">8.3</span>Downloads on your phone</h2>
+<p>The phone app keeps downloads inside the app for watching offline.</p>
+<ol class="steps">
+  <li>On a movie, episode, track or book page, tap <span class="ui">Download</span>.</li>
+  <li>For video, choose <span class="ui">Original</span> or a smaller copy (the same sizes as the web). If nothing smaller is
+  offered, the original downloads straight away.</li>
+  <li>The button shows the progress (<span class="ui">Queued</span>, <span class="ui">Preparing N%</span>, then a percentage) and
+  finally <span class="ui">Downloaded</span>. Tap <span class="ui">Downloaded</span> to remove it.</li>
+</ol>
+<ul>
+  <li>All your downloads are under <strong>⋮</strong> ▸ <span class="ui">Downloads</span>, with the space they use. Tap one to
+  play it; the trash icon removes it.</li>
+  <li>If the phone has no connection when you open the app, it goes straight to Downloads and shows
+  <span class="ui">Offline — showing your downloaded items</span>.</li>
+  <li><span class="ui">Settings</span> ▸ <span class="ui">Download only over Wi-Fi</span> (on by default) waits for Wi-Fi before
+  downloading.</li>
+</ul>
+<div class="note"><p>Signing out of the phone app, or choosing <span class="ui">Forget server</span>, deletes every download on
+the phone.</p></div>
+<p class="small">The TV apps don't download.</p>
+</section>
+
+<!-- ======================= 9 ACCOUNT ======================= -->
+<section class="chapter" id="ch9">
+<h1 class="ch"><span class="num">9</span>Your account</h1>
+
+<h2 id="s9-1"><span class="num">9.1</span>The Account page</h2>
+<p>Click <span class="ui">Account</span> in the sidebar. The page has these sections:</p>
+<table>
+  <tr><th style="width:28%">Section</th><th>What it's for</th></tr>
+  <tr><td>My stats</td><td>A link to your statistics and Year in review (<a href="#s9-5">9.5</a>).</td></tr>
+  <tr><td>Email me a digest</td><td>A weekly or monthly email of what's new (<a href="#s9-5">9.5</a>).</td></tr>
+  <tr><td>Playback quality</td><td>Quality limits for all your devices (<a href="#s9-2">9.2</a>).</td></tr>
+  <tr><td>Languages</td><td>Preferred audio and subtitle language (<a href="#s9-6">9.6</a>).</td></tr>
+  <tr><td>Scrobbling</td><td>Link Last.fm, ListenBrainz or Trakt (<a href="#s9-6">9.6</a>).</td></tr>
+  <tr><td>Password</td><td>Change your password (<a href="#s9-6">9.6</a>).</td></tr>
+  <tr><td>Two-factor authentication</td><td>A code from an authenticator app at sign-in (<a href="#s9-6">9.6</a>).</td></tr>
+  <tr><td>Signed-in devices</td><td>See and sign out your devices (<a href="#s9-3">9.3</a>).</td></tr>
+  <tr><td>Downloads</td><td>Smaller copies you've asked for (<a href="#s8-2">8.2</a>).</td></tr>
+  <tr><td>API keys</td><td>Keys for e-reader apps and home automation (<a href="#s9-4">9.4</a>).</td></tr>
+  <tr><td>Your data</td><td>Download a copy of everything the server keeps about you (<a href="#s9-5">9.5</a>).</td></tr>
+</table>
+
+<h2 id="s9-2"><span class="num">9.2</span>Playback quality <span class="badge">NEW</span></h2>
+<p>These limits apply to your account on every device, at home and away. Anything above them is converted by the server
+before it plays.</p>
+<figure class="w70"><img src="img/web-account-quality.jpg" alt="Playback quality"><figcaption><b>Account ▸ Playback
+quality.</b> The defaults set no limit.</figcaption></figure>
+<table>
+  <tr><th style="width:32%">Setting</th><th>Choices</th></tr>
+  <tr><td>Maximum resolution</td><td>Original, 4K, 1080p, 720p, 480p</td></tr>
+  <tr><td>Maximum video bitrate</td><td>No limit, 40, 20, 12, 8, 4, 2 or 1 Mbps</td></tr>
+  <tr><td>Maximum audio bitrate</td><td>Original, 320, 256, 192, 128 or 96 kbps</td></tr>
+  <tr><td>Video format when converting</td><td>Automatic, H.264 (plays everywhere), HEVC (smaller, where supported)</td></tr>
+</table>
+<p>Click <span class="ui">Save</span>. The same four settings are in the Android TV, Fire TV, phone, LG, Samsung and Xbox
+apps' Settings, and they all change the one setting on your account.</p>
+<div class="tip"><p>Lower the limits if you often watch over a slow connection or want to save mobile data. Leave them at
+<span class="ui">Original</span> / <span class="ui">No limit</span> for the best picture at home. The audio limit also applies
+to music in the apps that check with the server first; the web music player always plays the original files.</p></div>
+
+<h2 id="s9-3"><span class="num">9.3</span>Signed-in devices <span class="badge">NEW</span></h2>
+<p>This lists the browsers and apps signed in to your account, with when each was last used. The one you're using is
+marked <span class="ui">This device</span>.</p>
+<ul>
+  <li><span class="ui">Sign out</span> next to a device signs it out at once.</li>
+  <li><span class="ui">Sign out everywhere else</span> signs out every device except this browser.</li>
+</ul>
+<figure class="w70"><img src="img/web-account-devices.jpg" alt="Signed-in devices"><figcaption><b>Signed-in devices.</b>
+"Last used" updates about every hour while a device is in use.</figcaption></figure>
+<div class="tip"><p>Lost a phone, or sold a TV? Sign it out here. If someone may know your password, change it too
+(<a href="#s9-6">9.6</a>).</p></div>
+
+<h2 id="s9-4"><span class="num">9.4</span>API keys <span class="badge">NEW</span></h2>
+<p>An API key lets an e-reader app, Home Assistant, Kometa or a script use OnScreen as you, without your password.</p>
+<ol class="steps">
+  <li>Click <span class="ui">Create API key</span>.</li>
+  <li>Give it a <span class="ui">Name</span> you'll recognise.</li>
+  <li>Choose <span class="ui">Access</span>: <span class="ui">Full access</span>, or <span class="ui">Read-only (GET requests only)</span>
+  for anything that only reads (e-readers, sensors).</li>
+  <li>Choose when it <span class="ui">Expires</span>: <span class="ui">Never</span>, <span class="ui">30 days</span>,
+  <span class="ui">90 days</span> or <span class="ui">1 year</span>.</li>
+  <li>Click <span class="ui">Create key</span>, then <span class="ui">Copy</span>. The key is shown only once.</li>
+</ol>
+<figure class="w50"><img src="img/web-api-key-dialog.jpg" alt="Create API key dialog"><figcaption><b>Create API
+key.</b></figcaption></figure>
+<p>A key can do what you can, with your library access and limits, but it can never sign in, change your password or
+two-factor settings, or manage keys and devices. <span class="ui">Revoke</span> a key to stop it working at once. The
+section also shows your OPDS catalog address (<a href="#s5-4">5.4</a>).</p>
+
+<h2 id="s9-5"><span class="num">9.5</span>Digest email, stats and your data</h2>
+<h3>Email me a digest <span class="badge">NEW</span></h3>
+<p>Choose <span class="ui">Off</span>, <span class="ui">Weekly</span> or <span class="ui">Monthly</span> for an email of what was
+added, what you're in the middle of and your numbers for the period. It needs an email address on your account and email
+set up on the server; the section tells you if either is missing.</p>
+<h3>My stats and Year in review <span class="badge">NEW</span></h3>
+<p><span class="ui">My stats</span> shows what you've watched, listened to and read. Only you can see it. Pick
+<span class="ui">30 days</span>, <span class="ui">90 days</span>, <span class="ui">12 months</span>, <span class="ui">All time</span>
+or a year. You'll see hours watched and listened, plays, titles finished, books read and your longest streak, then
+activity by month, a chart of when you play, top genres, top movies, shows, artists and albums, and your devices. Plays
+show up a few minutes after they finish.</p>
+<div class="pair">
+  <figure><img src="img/web-my-stats.jpg" alt="My stats"><figcaption><b>My stats.</b></figcaption></figure>
+  <figure><img src="img/web-year-in-review.jpg" alt="Year in review"><figcaption><b>Year in review.</b></figcaption></figure>
+</div>
+<p><span class="ui">Your 2026 in review →</span> opens a summary of the year: total hours, top titles,
+<span class="ui">Where it started</span>, highlights such as your busiest day and longest streak, and your year month by
+month. <span class="ui">Print</span> prints it.</p>
+<h3>Your data <span class="badge">NEW</span></h3>
+<p><span class="ui">Download my data</span> saves a ZIP of what the server keeps about your account: profile and preferences,
+watch history and progress, ratings, favorites, playlists, reading positions, requests and signed-in devices. Passwords,
+two-factor secrets and keys are never included.</p>
+
+<h2 id="s9-6"><span class="num">9.6</span>Password, two-factor sign-in, languages and scrobbling <span class="badge">NEW</span></h2>
+<p>These are on the Account page too. Before v2.6 they were only in the admin's Settings.</p>
+<h3>Changing your password</h3>
+<ol class="steps">
+  <li>Under <span class="ui">Password</span>, enter your <span class="ui">Current password</span>, then the
+  <span class="ui">New password</span> twice. It must be at least 12 characters.</li>
+  <li>Click <span class="ui">Change password</span>.</li>
+</ol>
+<p>Your other devices are signed out and need the new password; this browser stays signed in. After five wrong current
+passwords within 15 minutes, the form refuses further tries for a while. If you sign in through your organisation's sign-in (single sign-on) or
+LDAP, there's no OnScreen password to change and the section says so. Forgotten your password? Use
+<span class="ui">Forgot password?</span> on the sign-in page if your server sends email, or ask your admin.</p>
+<h3>Two-factor sign-in</h3>
+<ol class="steps">
+  <li>Under <span class="ui">Two-factor authentication</span>, click <span class="ui">Enable 2FA</span>.</li>
+  <li>Scan the QR code with an authenticator app (Google Authenticator, Authy, 1Password and others), or type in the
+  secret shown under it.</li>
+  <li>Enter the 6-digit code the app shows.</li>
+  <li>Save the recovery codes: <span class="ui">Copy</span> or <span class="ui">Download</span> them, then click
+  <span class="ui">I've saved them</span>. Each recovery code works once, in place of a code from the app.</li>
+</ol>
+<p>To turn it off, enter a current code or a recovery code and click <span class="ui">Disable 2FA</span>. The phone app
+has the same setting (<span class="ui">Settings</span> ▸ <span class="ui">Security</span>). Two-factor sign-in protects
+password sign-in, so it isn't offered to accounts that use single sign-on or LDAP.</p>
+<h3>Languages</h3>
+<p>Choose a <span class="ui">Preferred Audio Language</span> and a <span class="ui">Preferred Subtitle Language</span>, then
+click <span class="ui">Save Preferences</span>. They're saved to your account, so every app uses them; the TV apps also
+have them in their own Settings. <span class="ui">Use the series poster for episodes</span> shows a show's poster instead
+of an episode still on Continue Watching, History and Search.</p>
+<h3>Scrobbling</h3>
+<p>Click <span class="ui">Link your accounts →</span> under <span class="ui">Scrobbling</span> to send what you play to
+other services:</p>
+<ul>
+  <li><strong>ListenBrainz</strong>: paste your user token and click <span class="ui">Link account</span>.</li>
+  <li><strong>Last.fm</strong> and <strong>Trakt</strong> (if your server is set up for them): click
+  <span class="ui">Connect Last.fm</span> or <span class="ui">Connect Trakt</span>, approve OnScreen on that site, then come
+  back. The page finishes linking on its own.</li>
+</ul>
+<p>The phone, Android TV and Fire TV apps can link ListenBrainz too (<span class="ui">Settings</span> ▸
+<span class="ui">Scrobbling</span>).</p>
+<h3>Things only your admin can change</h3>
+<table>
+  <tr><th style="width:28%">Setting</th><th>Who changes it</th></tr>
+  <tr><td>Profile PINs, content-rating limit</td><td>Your admin. The TV apps show your rating limit as "Managed by the
+  server administrator".</td></tr>
+  <tr><td>Display name, email</td><td>Your admin.</td></tr>
+  <tr><td>Deleting your account</td><td>Your admin.</td></tr>
+</table>
+<h3>Light and dark theme</h3>
+<p>The web app follows your computer's light or dark setting. Click <span class="ui">Dark mode</span> /
+<span class="ui">Light mode</span> at the bottom of the sidebar to choose.</p>
+</section>
+
+<!-- ======================= 10 APP NOTES ======================= -->
+<section class="chapter" id="ch10">
+<h1 class="ch"><span class="num">10</span>App-by-app notes</h1>
+
+<h2 id="s10-1"><span class="num">10.1</span>Android TV, Google TV and Fire TV</h2>
+<p>One app, in two editions. The Google TV / Android TV edition adds live TV and online subtitle search; the Fire TV
+edition leaves those out.</p>
+<h3>Getting around</h3>
+<ul>
+  <li>Home has the same rows as the web, a row per library, and a <span class="ui">Browse</span> row with
+  <span class="ui">Favorites</span>, <span class="ui">History</span>, <span class="ui">Live TV</span> and
+  <span class="ui">Recordings</span> (Google TV edition) and <span class="ui">Settings</span>.</li>
+  <li>In a library, the search orb opens <span class="ui">Sort and filter</span>. The remote's <kbd>Menu</kbd> button opens
+  sorting too.</li>
+  <li>Search has voice input when your device supports it.</li>
+  <li>Hold <kbd>OK</kbd> on an episode for <span class="ui">Mark as watched</span>; on a Continue Watching card for
+  <span class="ui">Remove from Continue Watching</span>.</li>
+</ul>
+<h3>Remote in the player</h3>
+<table class="keys">
+  <tr><th>Button</th><th>Action</th></tr>
+  <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>Back 10 s / forward 30 s (when the controls are hidden)</td></tr>
+  <tr><td><kbd>OK</kbd></td><td>Show the controls; then press the selected button</td></tr>
+  <tr><td><kbd>Play/Pause</kbd></td><td>Play / pause</td></tr>
+  <tr><td><kbd>Fast-forward</kbd> / <kbd>Rewind</kbd></td><td>Forward 30 s / back 10 s</td></tr>
+  <tr><td><kbd>Next</kbd></td><td>Next episode, track or chapter</td></tr>
+  <tr><td><kbd>Back</kbd></td><td>Close a Skip or Up Next card, or leave the player</td></tr>
+</table>
+<p>The player's buttons open <span class="ui">Audio</span>, <span class="ui">Subtitles</span> and <span class="ui">Chapters</span>
+(and <span class="ui">Playback speed</span> for audiobooks). Pick a version with <span class="ui">Version:</span> on the title
+page, and set quality in <span class="ui">Settings</span> ▸ <span class="ui">Playback quality</span>.</p>
+<h3>Settings</h3>
+<ul>
+  <li><span class="ui">Language Preferences</span>: preferred audio and subtitle language (saved to your account).</li>
+  <li><span class="ui">Match frame rate</span> (on by default) switches the TV to the film's frame rate so motion is smooth;
+  the screen goes dark for a moment. On Fire TV, also turn on the Fire TV's own Match Original Frame Rate setting. On
+  Android 12 and later, the TV's Match content frame rate setting decides.</li>
+  <li><span class="ui">Playback quality</span> (<a href="#s9-2">9.2</a>).</li>
+  <li><span class="ui">Scrobbling</span> (ListenBrainz) and <span class="ui">Account</span>.</li>
+</ul>
+<p class="small">Surround sound (Dolby, DTS, TrueHD/Atmos), 4K and HDR are used automatically when your TV or receiver
+supports them. Music and audiobooks keep playing after you press Home. This app doesn't download or cast.</p>
+
+<h2 id="s10-2"><span class="num">10.2</span>Android phone</h2>
+<ul>
+  <li><strong>Home:</strong> the ⋮ menu has <span class="ui">Favorites</span>, <span class="ui">History</span>,
+  <span class="ui">Collections</span>, <span class="ui">Playlists</span>, <span class="ui">Downloads</span> and
+  <span class="ui">Settings</span>. Pull down to refresh.</li>
+  <li><strong>Libraries:</strong> filter chips <span class="ui">All</span>, <span class="ui">Unwatched</span>,
+  <span class="ui">In progress</span>, <span class="ui">Watched</span>, and a shuffle button for <span class="ui">Surprise me</span>.
+  Press and hold a card to mark it watched or unwatched.</li>
+  <li><strong>Player:</strong> buttons for audio, Cast, subtitles, subtitle style, chapters, lyrics, sleep timer and
+  picture-in-picture (plus speed and bookmarks for audiobooks). Video shrinks into a small window when you press Home
+  (Android 12 and later).</li>
+  <li><strong>Mobile data:</strong> <span class="ui">Warn before streaming on cellular</span> (on by default) asks
+  <span class="ui">Stream over cellular?</span> before video plays on mobile data.</li>
+  <li><strong>Downloads and offline viewing:</strong> see <a href="#s8-3">8.3</a>.</li>
+  <li><strong>Books:</strong> CBZ and CBR comics (swipe to turn pages; right-to-left and top-to-bottom supported) and EPUB.
+  Comic pages sync with your other devices.</li>
+  <li><strong>Photos:</strong> a swipe viewer with <span class="ui">Photo info</span>, and a map.</li>
+  <li><strong>Settings:</strong> <span class="ui">Playback quality</span>, <span class="ui">ReplayGain</span>,
+  <span class="ui">Two-factor authentication</span>, ListenBrainz scrobbling and Wi-Fi-only downloads.</li>
+</ul>
+
+<h2 id="s10-3"><span class="num">10.3</span>Samsung, LG and Xbox</h2>
+<p>These three apps share the same screens. The top bar has <span class="ui">Home</span>, <span class="ui">Libraries</span>,
+<span class="ui">Search</span>, <span class="ui">Favorites</span>, <span class="ui">History</span>, and when your server offers
+them <span class="ui">Discover</span> (requests), <span class="ui">Live TV</span> and <span class="ui">Recordings</span>, then
+<span class="ui">Settings</span>.</p>
+<figure class="w80"><img src="img/tv-home.jpg" alt="TV app home"><figcaption><b>Home on the LG, Samsung and Xbox apps.</b> Hold
+<kbd>OK</kbd> on a Continue Watching tile for options.</figcaption></figure>
+<div class="pair">
+  <figure><img src="img/tv-item.jpg" alt="TV title page"><figcaption><b>A title page</b>: Resume, Play from Beginning, Mark
+  watched, Favorite and Report a problem.</figcaption></figure>
+  <figure><img src="img/tv-settings.jpg" alt="TV settings"><figcaption><b>Settings</b>: Playback (languages) and Playback
+  quality.</figcaption></figure>
+</div>
+<h3>Remote in the player</h3>
+<table class="keys">
+  <tr><th>Button</th><th>Action</th></tr>
+  <tr><td><kbd>OK</kbd> or <kbd>Play/Pause</kbd></td><td>Play / pause</td></tr>
+  <tr><td><kbd>←</kbd> / <kbd>→</kbd></td><td>Back / forward 10 seconds (presses add up; the jump happens a moment after the last one)</td></tr>
+  <tr><td><kbd>Rewind</kbd> / <kbd>Fast-forward</kbd></td><td>Back / forward 30 seconds (previous / next track for music)</td></tr>
+  <tr><td><kbd>CH ▲▼</kbd></td><td>Previous / next chapter, track or episode</td></tr>
+  <tr><td>Red / green</td><td>Previous / next chapter</td></tr>
+  <tr><td>Yellow / blue</td><td>Audio / subtitles menu</td></tr>
+  <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Show the controls; <kbd>↓</kbd> again reaches <span class="ui">Audio</span>,
+  <span class="ui">Subtitles</span> and <span class="ui">Chapters</span></td></tr>
+  <tr><td><kbd>Stop</kbd></td><td>Pause</td></tr>
+  <tr><td><kbd>Back</kbd></td><td>Close a menu, cancel Up Next, dismiss Skip, or leave the player</td></tr>
+</table>
+<ul>
+  <li><strong>Samsung:</strong> the slim Smart Remote has no colour, rewind or fast-forward buttons; use <kbd>↓</kbd> for the menus and
+  <kbd>CH ▲▼</kbd> for chapters. <kbd>Back</kbd> on Home closes the app.</li>
+  <li><strong>LG:</strong> the Magic Remote pointer also shows on-screen buttons (−10s, play, +10s, previous, next) and lets
+  you click the seek bar. <kbd>Back</kbd> on Home asks <span class="ui">Exit OnScreen?</span>.</li>
+  <li><strong>Xbox controller:</strong> <kbd>A</kbd> = OK (hold for options), <kbd>B</kbd> = Back, <kbd>X</kbd> = subtitles,
+  <kbd>Y</kbd> = audio, <kbd>LB</kbd>/<kbd>RB</kbd> = previous/next chapter or track, <kbd>LT</kbd>/<kbd>RT</kbd> = back/forward
+  30 seconds. The on-screen hints use TV-remote names. The Xbox app first asks for your server address
+  (<span class="ui">Add your OnScreen server</span>), then shows the TV app your server provides.</li>
+</ul>
+<p class="small">These apps have no quality menu in the player (use <span class="ui">Settings</span> ▸
+<span class="ui">Playback quality</span>) and no book reader. There is no profile switcher; to change account, use
+<span class="ui">Settings</span> ▸ <span class="ui">Sign out</span>.</p>
+
+<h2 id="s10-4"><span class="num">10.4</span>Roku</h2>
+<ul>
+  <li><strong>Getting started:</strong> enter the server address including <code>http://</code> or <code>https://</code>, then
+  sign in or choose <span class="ui">Sign in with another device</span>.</li>
+  <li><strong>Home</strong> rows: Continue Watching, Next Up, Plan to Watch, Trending and Recently Added. Press <kbd>↑</kbd>
+  from the top row for <span class="ui">Libraries</span>, <span class="ui">Favorites</span>, <span class="ui">History</span>
+  and <span class="ui">Search</span>.</li>
+  <li><strong>In the player:</strong> <kbd>★</kbd> opens the audio menu, <kbd>★</kbd> again the subtitles menu, and skips an
+  intro or credits when the skip button shows. <kbd>Back</kbd> stops playback and returns to Home. Seeking uses the Roku's
+  own controls.</li>
+</ul>
+<div class="note"><p>Roku limits:</p>
+<ul>
+  <li>Only subtitles inside the video file are offered; downloaded or online subtitles and subtitle styling aren't.
+  Picture-based subtitles are burned in (<a href="#s3-5">3.5</a>).</li>
+  <li>No Settings screen: no Playback quality, no sign-out, no Favorite button (add favorites from another app).</li>
+  <li>No live TV, recordings, requests, book reader or audiobook speed.</li>
+  <li>The Roku app hasn't yet been tested on a Roku device for this release.</li>
+</ul></div>
+
+<h2 id="s10-5"><span class="num">10.5</span>Which app does what</h2>
+<table>
+  <tr><th style="width:26%">Feature</th><th>Web</th><th>Android TV / Fire TV</th><th>Phone</th><th>LG / Samsung / Xbox</th><th>Roku</th></tr>
+  <tr><td>Pair with a code</td><td>(approves)</td><td>Yes</td><td>Yes</td><td>Yes</td><td>Yes</td></tr>
+  <tr><td>Profile switching</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+  <tr><td>Playback quality setting</td><td>Account</td><td>Settings</td><td>Settings</td><td>Settings</td><td>No</td></tr>
+  <tr><td>Quality menu in player</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+  <tr><td>Version picker</td><td>Player</td><td>Title page</td><td>Title page</td><td>Title page</td><td>Title page</td></tr>
+  <tr><td>Online subtitle search</td><td>Yes</td><td>Google TV only</td><td>Yes</td><td>Yes</td><td>No</td></tr>
+  <tr><td>Subtitle sync</td><td>Yes</td><td>No</td><td>No</td><td>No</td><td>No</td></tr>
+  <tr><td>Downloads</td><td>Yes</td><td>No</td><td>Yes, offline</td><td>No</td><td>No</td></tr>
+  <tr><td>Casting / Play on</td><td>Both</td><td>Receives</td><td>Chromecast</td><td>Receives</td><td>No</td></tr>
+  <tr><td>Book reader</td><td>Yes</td><td>No</td><td>Yes</td><td>No</td><td>No</td></tr>
+  <tr><td>Live TV</td><td>Yes</td><td>Google TV only</td><td>No</td><td>Yes</td><td>No</td></tr>
+  <tr><td>Requests</td><td>Yes</td><td>No</td><td>No</td><td>Discover</td><td>No</td></tr>
+</table>
+</section>
+
+<!-- ======================= 11 TROUBLESHOOTING ======================= -->
+<section class="chapter" id="ch11">
+<h1 class="ch"><span class="num">11</span>Troubleshooting and FAQ</h1>
+
+<h3>The video keeps stopping to load (buffering).</h3>
+<ul>
+  <li>Choose a lower setting in the web player's <span class="ui">Quality</span> menu, or lower
+  <a href="#s9-2">Playback quality</a> for your account (it's the only quality control in the TV apps).</li>
+  <li>Watching away from home? Your admin may have a lower limit for viewers outside the home network.</li>
+  <li>If the web player says "Playback keeps stalling", the file may be damaged or the server busy. Report it.</li>
+</ul>
+
+<h3>A title won't play.</h3>
+<ul>
+  <li>Read the message (<a href="#s3-11">3.11</a>). "Too many streams" means stop playback on another device first.</li>
+  <li>"Dolby Vision is not supported" or "This file appears to be damaged": ask your admin for another copy, using
+  <span class="ui">Report a problem</span>.</li>
+  <li>Try another app or a browser. If it fails everywhere, report it.</li>
+</ul>
+
+<h3>Subtitles are out of sync.</h3>
+<p>In the web player, use the <span class="ui">Sync</span> row in the Subtitles menu (<a href="#s3-5">3.5</a>). It only lasts
+for that viewing, so also send <span class="ui">Report a problem</span> ▸ <span class="ui">Subtitles problem</span>: an admin
+can save the right timing on the server for every app. Or try a different track, or <span class="ui">Search online…</span>
+for another one.</p>
+
+<h3>I can't see the subtitles I chose.</h3>
+<ul>
+  <li>Picture-based (Blu-ray/DVD) tracks marked "(burned in)" take a moment to appear, because the video restarts.</li>
+  <li>On Roku, only subtitles inside the video file are offered.</li>
+  <li>On Fire TV, the Subtitles button only appears when the title has a subtitle track.</li>
+</ul>
+
+<h3>I was signed out.</h3>
+<ul>
+  <li>Someone may have signed the device out from <span class="ui">Signed-in devices</span>, or your admin may have. Sign in
+  again. If you didn't do it and don't know who did, ask your admin to change your password.</li>
+  <li>A device that hasn't been used for a long time has to sign in again.</li>
+</ul>
+
+<h3>The TV pairing code doesn't work.</h3>
+<ul>
+  <li>Make sure you're signed in on the <code>/pair</code> page with the right account, and you typed all 6 digits.</li>
+  <li>Codes expire. The TV shows a new one by itself (Android TV says "The previous code expired — enter the NEW code shown
+  above"); type the new code.</li>
+  <li>If the TV says it can't reach the server, check the server address on the TV (<span class="ui">Change server</span>).</li>
+  <li>Still stuck? Choose <span class="ui">Use password instead</span>, or use the Sign In screen.</li>
+</ul>
+
+<h3>Something is missing from my library.</h3>
+<p>Your admin decides which libraries you can open, and may have a content-rating limit or label restrictions on your
+account. If you can make requests, search for the title and ask for it (<a href="#s2-9">2.9</a>).</p>
+
+<h3>I can't find the Download button.</h3>
+<p>Downloads are off on your server. Ask your admin. The same setting controls the e-reader catalog and photo
+<span class="ui">Download original</span>.</p>
+
+<h3>Can I watch on two devices at once?</h3>
+<p>Usually yes, up to your account's stream limit. Opening the same title on a second device takes over from the first.</p>
+
+<h3>Can I cast to a Chromecast?</h3>
+<p>From the web app in Chrome or Edge, or from the phone app, when the file can play directly on the Chromecast and is
+within your Playback quality limit (<a href="#s3-9">3.9</a>). Otherwise use <span class="ui">Play on…</span> to send it to an
+OnScreen TV app.</p>
+
+<h3>My music is louder or quieter from track to track.</h3>
+<p>Turn on ReplayGain (<a href="#s4-5">4.5</a>). It's set separately in each browser and on the phone.</p>
+
+<h3>Where are the settings for my profile's PIN or rating limit?</h3>
+<p>Your admin manages those.</p>
+
+<h3>How do I change my password?</h3>
+<p>On the Account page, under <span class="ui">Password</span> (<a href="#s9-6">9.6</a>). If you've forgotten it, use
+<span class="ui">Forgot password?</span> on the sign-in page if it's there, or ask your admin.</p>
+</section>
+
+</body>
+</html>
