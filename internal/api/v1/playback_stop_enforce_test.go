@@ -279,7 +279,7 @@ func TestStart_StampsNowPlayingAttribution(t *testing.T) {
 	t.Run("remux keeps only audio/container reasons", func(t *testing.T) {
 		itemID, user := uuid.New(), uuid.New()
 		file := media.File{ID: uuid.New(), MediaItemID: itemID, FilePath: "/media/x.mkv",
-			VideoCodec: strPtr("h264"), AudioCodec: strPtr("dts"), ResolutionW: ip(3840), ResolutionH: ip(2160)}
+			VideoCodec: strPtr("h264"), AudioCodec: strPtr("dts"), ResolutionW: ip(1920), ResolutionH: ip(1080)}
 		h, store := newStartHandler(t, file)
 		rec := startAs(t, h, itemID, user, "192.168.1.9:9", "videoDecoder=h264,audioDecoder=aac", transcodeStartRequest{VideoCopy: true})
 		if rec.Code != http.StatusOK {
@@ -291,6 +291,20 @@ func TestStart_StampsNowPlayingAttribution(t *testing.T) {
 		}
 		if s.OutputHeight != 0 || s.OutputAudioCodec != "aac" {
 			t.Errorf("remux output: %dx%d audio=%q", s.OutputWidth, s.OutputHeight, s.OutputAudioCodec)
+		}
+	})
+	t.Run("a copy the play decision would re-encode is re-encoded", func(t *testing.T) {
+		itemID, user := uuid.New(), uuid.New()
+		file := media.File{ID: uuid.New(), MediaItemID: itemID, FilePath: "/media/x.mkv",
+			VideoCodec: strPtr("h264"), AudioCodec: strPtr("dts"), ResolutionW: ip(3840), ResolutionH: ip(2160)}
+		h, store := newStartHandler(t, file)
+		rec := startAs(t, h, itemID, user, "192.168.1.9:9", "videoDecoder=h264,audioDecoder=aac,maxHeight=1080", transcodeStartRequest{VideoCopy: true})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("start: %d %s", rec.Code, rec.Body.String())
+		}
+		s := onlySession(t, store)
+		if s.OutputHeight == 0 || s.OutputHeight > 1080 {
+			t.Errorf("4K copy to a 1080p client: want a re-encode at or below 1080, got %dx%d", s.OutputWidth, s.OutputHeight)
 		}
 	})
 }

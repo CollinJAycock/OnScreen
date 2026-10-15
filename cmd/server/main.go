@@ -1028,6 +1028,7 @@ func run() error {
 	ratingsSvc := ratings.New(gen.New(rwPool))
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
 		WithStreamLimit(streamLimit).
+		WithDirectPlayGate(v1.NewDirectPlayGate(streamCapsAdapter{q: gen.New(roPool)}, remotePolicy)).
 		WithEpisodePoster(gen.New(roPool)).
 		WithLibraryAccess(libSvc).
 		WithWatchLimit(watchLimitStore).

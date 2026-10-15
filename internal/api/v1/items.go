@@ -204,6 +204,9 @@ type ItemHandler struct {
 	// streamLimit enforces an admin-set concurrent-stream limit on direct
 	// plays (StreamFile, StreamOptimized). Optional.
 	streamLimit *StreamLimit
+	// directGate refuses a direct stream of a video the play decision would
+	// convert for this viewer (StreamFile). Optional.
+	directGate *DirectPlayGate
 
 	sync      *notification.Broker
 	audit     *audit.Logger
@@ -470,6 +473,13 @@ func (h *ItemHandler) WithStreamTokenMaker(m *auth.TokenMaker) *ItemHandler {
 // routes enforce (see StreamLimit).
 func (h *ItemHandler) WithStreamLimit(l *StreamLimit) *ItemHandler {
 	h.streamLimit = l
+	return h
+}
+
+// WithDirectPlayGate attaches the check that holds StreamFile to the play
+// decision (see DirectPlayGate).
+func (h *ItemHandler) WithDirectPlayGate(g *DirectPlayGate) *ItemHandler {
+	h.directGate = g
 	return h
 }
 
@@ -2844,6 +2854,11 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		if h.streamLimit.BlocksNewStream(w, r, streamRequest{
 			user: claims.UserID, clientIP: canonicalIP(audit.ClientIP(r)), item: file.MediaItemID,
 		}) {
+			return
+		}
+		// The play decision: a video it would convert for this viewer isn't
+		// served as-is (see DirectPlayGate).
+		if h.directGate.Blocks(w, r, claims.UserID, file) {
 			return
 		}
 		// Accrue usage from the serving path itself (throttled; restricted
