@@ -811,8 +811,6 @@ func NewRouter(h *Handlers) http.Handler {
 				// Account security: deleting the account and its PIN are
 				// out of an API key's reach.
 				r.With(middleware.RefuseAPIKey).Delete("/users/me", h.User.DeleteSelf)
-				r.With(middleware.RefuseAPIKey).Put("/users/me/pin", h.User.SetPIN)
-				r.With(middleware.RefuseAPIKey).Delete("/users/me/pin", h.User.ClearPIN)
 				r.With(middleware.RefuseAPIKey).Put("/users/me/password", h.User.ChangePassword)
 				r.Get("/users/me/preferences", h.User.GetPreferences)
 				r.Put("/users/me/preferences", h.User.SetPreferences)

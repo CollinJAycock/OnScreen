@@ -23,9 +23,6 @@ import (
 // ── mock user service ────────────────────────────────────────────────────────
 
 type mockUserService struct {
-	setPINErr   error
-	clearPINErr error
-
 	changePasswordErr    error
 	changePasswordCalled bool
 
@@ -37,12 +34,6 @@ type mockUserService struct {
 	verifyPINCalled bool
 }
 
-func (m *mockUserService) SetPIN(_ context.Context, _ uuid.UUID, _, _ string) error {
-	return m.setPINErr
-}
-func (m *mockUserService) ClearPIN(_ context.Context, _ uuid.UUID, _ string) error {
-	return m.clearPINErr
-}
 func (m *mockUserService) ChangePassword(_ context.Context, _ uuid.UUID, _, _ string) error {
 	m.changePasswordCalled = true
 	return m.changePasswordErr
@@ -250,72 +241,6 @@ func authedRequest(r *http.Request) *http.Request {
 	return r.WithContext(ctx)
 }
 
-// ── SetPIN ───────────────────────────────────────────────────────────────────
-
-func TestUser_SetPIN_Success(t *testing.T) {
-	h := NewUserHandler(&mockUserService{})
-
-	rec := httptest.NewRecorder()
-	body := `{"pin":"1234","password":"pass"}`
-	req := authedRequest(httptest.NewRequest("PUT", "/", strings.NewReader(body)))
-	h.SetPIN(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNoContent)
-	}
-}
-
-func TestUser_SetPIN_NoClaims(t *testing.T) {
-	h := NewUserHandler(&mockUserService{})
-
-	rec := httptest.NewRecorder()
-	body := `{"pin":"1234","password":"pass"}`
-	req := httptest.NewRequest("PUT", "/", strings.NewReader(body))
-	h.SetPIN(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestUser_SetPIN_BadPIN(t *testing.T) {
-	h := NewUserHandler(&mockUserService{setPINErr: ErrBadPIN})
-
-	rec := httptest.NewRecorder()
-	body := `{"pin":"abc","password":"pass"}`
-	req := authedRequest(httptest.NewRequest("PUT", "/", strings.NewReader(body)))
-	h.SetPIN(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-}
-
-func TestUser_SetPIN_WrongPassword(t *testing.T) {
-	h := NewUserHandler(&mockUserService{setPINErr: ErrInvalidCredentials})
-
-	rec := httptest.NewRecorder()
-	body := `{"pin":"1234","password":"wrong"}`
-	req := authedRequest(httptest.NewRequest("PUT", "/", strings.NewReader(body)))
-	h.SetPIN(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestUser_SetPIN_InvalidBody(t *testing.T) {
-	h := NewUserHandler(&mockUserService{})
-
-	rec := httptest.NewRecorder()
-	req := authedRequest(httptest.NewRequest("PUT", "/", strings.NewReader("bad")))
-	h.SetPIN(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
-	}
-}
-
 // ── ChangePassword ───────────────────────────────────────────────────────────
 
 func changePasswordRequest(claims *auth.Claims, body string) *http.Request {
@@ -441,47 +366,6 @@ func TestUser_ChangePassword_WrongPasswordCountsTowardLockout(t *testing.T) {
 	}
 	if svc.changePasswordCalled {
 		t.Error("password checked while locked out")
-	}
-}
-
-// ── ClearPIN ─────────────────────────────────────────────────────────────────
-
-func TestUser_ClearPIN_Success(t *testing.T) {
-	h := NewUserHandler(&mockUserService{})
-
-	rec := httptest.NewRecorder()
-	body := `{"password":"pass"}`
-	req := authedRequest(httptest.NewRequest("DELETE", "/", strings.NewReader(body)))
-	h.ClearPIN(rec, req)
-
-	if rec.Code != http.StatusNoContent {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusNoContent)
-	}
-}
-
-func TestUser_ClearPIN_NoClaims(t *testing.T) {
-	h := NewUserHandler(&mockUserService{})
-
-	rec := httptest.NewRecorder()
-	body := `{"password":"pass"}`
-	req := httptest.NewRequest("DELETE", "/", strings.NewReader(body))
-	h.ClearPIN(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusForbidden)
-	}
-}
-
-func TestUser_ClearPIN_WrongPassword(t *testing.T) {
-	h := NewUserHandler(&mockUserService{clearPINErr: ErrInvalidCredentials})
-
-	rec := httptest.NewRecorder()
-	body := `{"password":"wrong"}`
-	req := authedRequest(httptest.NewRequest("DELETE", "/", strings.NewReader(body)))
-	h.ClearPIN(rec, req)
-
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("status: got %d, want %d", rec.Code, http.StatusForbidden)
 	}
 }
 

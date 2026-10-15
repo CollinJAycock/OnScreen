@@ -40,15 +40,6 @@ func (q *Queries) BumpSessionEpoch(ctx context.Context, id uuid.UUID) error {
 	return err
 }
 
-const clearUserPIN = `-- name: ClearUserPIN :exec
-UPDATE users SET pin = NULL, updated_at = NOW() WHERE id = $1
-`
-
-func (q *Queries) ClearUserPIN(ctx context.Context, id uuid.UUID) error {
-	_, err := q.db.Exec(ctx, clearUserPIN, id)
-	return err
-}
-
 const consumeTOTPRecoveryCode = `-- name: ConsumeTOTPRecoveryCode :execrows
 UPDATE totp_recovery_codes
 SET used_at = NOW()
@@ -1392,10 +1383,6 @@ SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
        preferred_video_codec, forced_subtitles_only,
        episode_use_show_poster, hub_layout,
-       -- Whether THIS account has a PIN. The Settings page reads its own PIN
-       -- status here rather than from the switchable-profiles list, which is
-       -- scoped to the caller's managed children and never contains the caller.
-       (pin IS NOT NULL)::boolean AS has_pin,
        -- Whether the account signs in with a local password (false for SSO /
        -- LDAP-only accounts and managed profiles): the Account page shows the
        -- change-password form only when there is one to change.
@@ -1415,7 +1402,6 @@ type GetUserPreferencesRow struct {
 	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
 	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
 	HubLayout             []byte  `json:"hub_layout"`
-	HasPin                bool    `json:"has_pin"`
 	HasPassword           bool    `json:"has_password"`
 }
 
@@ -1436,7 +1422,6 @@ func (q *Queries) GetUserPreferences(ctx context.Context, id uuid.UUID) (GetUser
 		&i.ForcedSubtitlesOnly,
 		&i.EpisodeUseShowPoster,
 		&i.HubLayout,
-		&i.HasPin,
 		&i.HasPassword,
 	)
 	return i, err
@@ -1931,20 +1916,6 @@ type SetUserAdminParams struct {
 
 func (q *Queries) SetUserAdmin(ctx context.Context, arg SetUserAdminParams) error {
 	_, err := q.db.Exec(ctx, setUserAdmin, arg.ID, arg.IsAdmin)
-	return err
-}
-
-const setUserPIN = `-- name: SetUserPIN :exec
-UPDATE users SET pin = $2, updated_at = NOW() WHERE id = $1
-`
-
-type SetUserPINParams struct {
-	ID  uuid.UUID `json:"id"`
-	Pin *string   `json:"pin"`
-}
-
-func (q *Queries) SetUserPIN(ctx context.Context, arg SetUserPINParams) error {
-	_, err := q.db.Exec(ctx, setUserPIN, arg.ID, arg.Pin)
 	return err
 }
 

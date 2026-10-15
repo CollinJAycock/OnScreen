@@ -17,8 +17,6 @@ var pinDigitsOnly = regexp.MustCompile(`^\d{4}$`)
 
 type userQuerier interface {
 	GetUser(ctx context.Context, id uuid.UUID) (gen.User, error)
-	SetUserPIN(ctx context.Context, arg gen.SetUserPINParams) error
-	ClearUserPIN(ctx context.Context, id uuid.UUID) error
 	UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) error
 	ListSwitchableUsers(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListSwitchableUsersRow, error)
 }
@@ -29,51 +27,6 @@ type userService struct {
 
 func newUserService(db userQuerier) *userService {
 	return &userService{db: db}
-}
-
-// SetPIN validates the user's current password, then stores a bcrypt hash of rawPIN.
-func (s *userService) SetPIN(ctx context.Context, userID uuid.UUID, rawPIN, password string) error {
-	if !pinDigitsOnly.MatchString(rawPIN) {
-		return v1.ErrBadPIN
-	}
-
-	user, err := s.db.GetUser(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("get user: %w", err)
-	}
-
-	// Require current password for non-admin PIN changes.
-	if user.PasswordHash != nil {
-		if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password)); err != nil {
-			return v1.ErrInvalidCredentials
-		}
-	}
-
-	// Cost 12 to match every other stored credential (DefaultCost=10 was the
-	// lone outlier here). The 4-digit keyspace makes bcrypt cost only marginally
-	// helpful, but there's no reason to hash the PIN weaker than the password.
-	hash, err := bcrypt.GenerateFromPassword([]byte(rawPIN), 12)
-	if err != nil {
-		return fmt.Errorf("hash PIN: %w", err)
-	}
-	pinHash := string(hash)
-	return s.db.SetUserPIN(ctx, gen.SetUserPINParams{ID: userID, Pin: &pinHash})
-}
-
-// ClearPIN validates the user's current password, then removes the PIN.
-func (s *userService) ClearPIN(ctx context.Context, userID uuid.UUID, password string) error {
-	user, err := s.db.GetUser(ctx, userID)
-	if err != nil {
-		return fmt.Errorf("get user: %w", err)
-	}
-
-	if user.PasswordHash != nil {
-		if err := bcrypt.CompareHashAndPassword([]byte(*user.PasswordHash), []byte(password)); err != nil {
-			return v1.ErrInvalidCredentials
-		}
-	}
-
-	return s.db.ClearUserPIN(ctx, userID)
 }
 
 // ChangePassword checks the user's current password, then stores a bcrypt

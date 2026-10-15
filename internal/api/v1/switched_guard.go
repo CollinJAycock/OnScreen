@@ -18,11 +18,9 @@ import (
 // require a real login — otherwise the PIN becomes a full credential for
 // everything except the two places that happen to ask for a password.
 //
-// The codebase already applied this reasoning in three places: SetPIN and
-// ClearPIN both demand the account password, and PINSwitch refuses to chain off
-// an already-switched token. The endpoints below were the gap — account
-// deletion and 2FA enrolment are strictly more destructive than changing a PIN,
-// and both were reachable with nothing but the PIN.
+// PINSwitch already refuses to chain off an already-switched token. The
+// endpoints below were the gap — account deletion and 2FA enrolment (and,
+// since v2.6, a password change) were reachable with nothing but the PIN.
 func blockSwitchedSession(w http.ResponseWriter, r *http.Request, action string) bool {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil || !claims.Switched {

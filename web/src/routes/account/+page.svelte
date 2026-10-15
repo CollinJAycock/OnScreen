@@ -3,9 +3,8 @@
   // (password, two-factor), languages, scrobbling, playback quality, devices,
   // downloads, API keys and data. Settings is admin-only, so anything a user
   // sets for their own account belongs here; Settings ▸ General / Security
-  // show the same language and 2FA controls to admins. No PIN card: switching
-  // only reaches managed profiles, whose PINs are set on the Profiles page, so
-  // an account's own PIN isn't used.
+  // show the same language and 2FA controls to admins. PINs belong to managed
+  // profiles and are set on the Profiles page.
   import { onMount } from 'svelte';
   import { getApiBase, userApi } from '$lib/api';
   import ChangePassword from '$lib/components/ChangePassword.svelte';

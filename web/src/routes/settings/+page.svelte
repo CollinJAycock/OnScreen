@@ -2,7 +2,6 @@
   import { onMount } from 'svelte';
   import { settingsApi, subtitleAutoApi, type HearingImpairedPref } from '$lib/api';
   import { toast } from '$lib/stores/toast';
-  import ProfilePin from '$lib/components/ProfilePin.svelte';
   import LanguagePrefs from '$lib/components/LanguagePrefs.svelte';
 
   let loading = true;
@@ -592,15 +591,6 @@
         </button>
       </div>
     </form>
-
-    <section>
-      <div class="sec-label">Profile PIN</div>
-      <div class="hint" style="margin-top: -0.5rem;">
-        A 4-digit PIN lets other users on this server switch to your profile without needing your password.
-        Everyone can also set it on their <a href="/account">Account</a> page.
-      </div>
-      <ProfilePin />
-    </section>
 
     <section>
       <div class="sec-label">Language Preferences</div>

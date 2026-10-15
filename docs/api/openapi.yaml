@@ -3990,27 +3990,6 @@ paths:
         '413': { description: File over 1 MB or over 10,000 entries (`PLAYLIST_TOO_LARGE`). }
 
   # ── Users / profile ────────────────────────────────────────────────────────
-  /api/v1/users/me/pin:
-    put:
-      summary: Set or change the caller's PIN
-      tags: [Users]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [pin]
-              properties:
-                pin: { type: string, minLength: 4, maxLength: 8 }
-      responses:
-        '204': { description: Saved. }
-    delete:
-      summary: Clear the caller's PIN
-      tags: [Users]
-      responses:
-        '204': { description: Cleared. }
-
   /api/v1/users/me/password:
     put:
       summary: Change the caller's password
@@ -4057,7 +4036,7 @@ paths:
       summary: Get caller preferences
       tags: [Users]
       description: |
-        Also reports `has_pin` and *(v2.6)* `has_password`: whether the
+        Also reports *(v2.6)* `has_password`: whether the
         account signs in with an OnScreen password (false for SSO / LDAP-only
         accounts and managed profiles), i.e. whether
         `PUT /users/me/password` can work.

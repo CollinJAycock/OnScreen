@@ -73,7 +73,7 @@ func TestRouter_APIKeyRefusedOnAccountSecurityRoutes(t *testing.T) {
 		{http.MethodDelete, "/api/v1/users/me/sessions"},
 		{http.MethodDelete, "/api/v1/users/me/sessions/" + uid},
 		{http.MethodDelete, "/api/v1/users/me"},
-		{http.MethodPut, "/api/v1/users/me/pin"},
+		{http.MethodPut, "/api/v1/users/me/password"},
 		{http.MethodPost, "/api/v1/auth/pin-switch"},
 		{http.MethodPost, "/api/v1/auth/pair/claim"},
 		{http.MethodGet, "/api/v1/users"},

@@ -25,29 +25,14 @@ func pgUUID(id uuid.UUID) pgtype.UUID {
 type stubUserQ struct {
 	user gen.User
 
-	getErr   error
-	setErr   error
-	clearErr error
-	listErr  error
-
-	setCalled   bool
-	clearCalled bool
-	setPin      *string
+	getErr  error
+	listErr error
 
 	newPasswordHash *string
 }
 
 func (s *stubUserQ) GetUser(_ context.Context, _ uuid.UUID) (gen.User, error) {
 	return s.user, s.getErr
-}
-func (s *stubUserQ) SetUserPIN(_ context.Context, arg gen.SetUserPINParams) error {
-	s.setCalled = true
-	s.setPin = arg.Pin
-	return s.setErr
-}
-func (s *stubUserQ) ClearUserPIN(_ context.Context, _ uuid.UUID) error {
-	s.clearCalled = true
-	return s.clearErr
 }
 func (s *stubUserQ) ListSwitchableUsers(_ context.Context, _ pgtype.UUID) ([]gen.ListSwitchableUsersRow, error) {
 	return nil, s.listErr
@@ -65,111 +50,6 @@ func hashPassword(t *testing.T, pw string) string {
 		t.Fatal(err)
 	}
 	return string(h)
-}
-
-// ── SetPIN ───────────────────────────────────────────────────────────────────
-
-func TestSetPIN_RejectsNonDigitPIN(t *testing.T) {
-	cases := []string{"abcd", "12a4", "12345", "12", ""}
-	svc := newUserService(&stubUserQ{})
-	for _, p := range cases {
-		err := svc.SetPIN(context.Background(), uuid.New(), p, "any-password")
-		if !errors.Is(err, v1.ErrBadPIN) {
-			t.Errorf("PIN %q: got %v, want ErrBadPIN", p, err)
-		}
-	}
-}
-
-func TestSetPIN_AcceptsCorrectPassword(t *testing.T) {
-	pw := "correct-password"
-	hash := hashPassword(t, pw)
-	q := &stubUserQ{
-		user: gen.User{ID: uuid.New(), PasswordHash: &hash},
-	}
-	svc := newUserService(q)
-
-	err := svc.SetPIN(context.Background(), q.user.ID, "1234", pw)
-	if err != nil {
-		t.Fatalf("SetPIN: %v", err)
-	}
-	if !q.setCalled {
-		t.Fatal("SetUserPIN was not called")
-	}
-	// Stored value should be a bcrypt hash of "1234", not the plain PIN.
-	if q.setPin == nil || *q.setPin == "1234" {
-		t.Errorf("SetPIN stored raw PIN instead of bcrypt hash: %v", q.setPin)
-	}
-	if err := bcrypt.CompareHashAndPassword([]byte(*q.setPin), []byte("1234")); err != nil {
-		t.Errorf("stored hash doesn't match raw PIN: %v", err)
-	}
-}
-
-func TestSetPIN_RejectsWrongPassword(t *testing.T) {
-	pw := "real-password"
-	hash := hashPassword(t, pw)
-	q := &stubUserQ{
-		user: gen.User{ID: uuid.New(), PasswordHash: &hash},
-	}
-	svc := newUserService(q)
-
-	err := svc.SetPIN(context.Background(), q.user.ID, "1234", "WRONG")
-	if !errors.Is(err, v1.ErrInvalidCredentials) {
-		t.Errorf("got %v, want ErrInvalidCredentials", err)
-	}
-	if q.setCalled {
-		t.Error("SetUserPIN should NOT be called when password verification fails")
-	}
-}
-
-func TestSetPIN_PasswordlessUserSkipsCheck(t *testing.T) {
-	// Managed-profile users (created without a password) — the password
-	// check is skipped. Set goes straight through to storage.
-	q := &stubUserQ{
-		user: gen.User{ID: uuid.New(), PasswordHash: nil},
-	}
-	svc := newUserService(q)
-
-	if err := svc.SetPIN(context.Background(), q.user.ID, "9876", ""); err != nil {
-		t.Fatalf("SetPIN: %v", err)
-	}
-	if !q.setCalled {
-		t.Error("SetUserPIN should still be called for passwordless users")
-	}
-}
-
-// ── ClearPIN ─────────────────────────────────────────────────────────────────
-
-func TestClearPIN_AcceptsCorrectPassword(t *testing.T) {
-	pw := "right-pw"
-	hash := hashPassword(t, pw)
-	q := &stubUserQ{
-		user: gen.User{ID: uuid.New(), PasswordHash: &hash},
-	}
-	svc := newUserService(q)
-
-	if err := svc.ClearPIN(context.Background(), q.user.ID, pw); err != nil {
-		t.Fatalf("ClearPIN: %v", err)
-	}
-	if !q.clearCalled {
-		t.Error("ClearUserPIN was not called")
-	}
-}
-
-func TestClearPIN_RejectsWrongPassword(t *testing.T) {
-	pw := "right-pw"
-	hash := hashPassword(t, pw)
-	q := &stubUserQ{
-		user: gen.User{ID: uuid.New(), PasswordHash: &hash},
-	}
-	svc := newUserService(q)
-
-	err := svc.ClearPIN(context.Background(), q.user.ID, "WRONG")
-	if !errors.Is(err, v1.ErrInvalidCredentials) {
-		t.Errorf("got %v, want ErrInvalidCredentials", err)
-	}
-	if q.clearCalled {
-		t.Error("ClearUserPIN should NOT be called on wrong password")
-	}
 }
 
 // ── VerifyPIN ────────────────────────────────────────────────────────────────

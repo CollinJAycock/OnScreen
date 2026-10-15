@@ -32,7 +32,7 @@ beforeEach(() => {
 
 describe('Account page', () => {
   it('offers password, two-factor, languages and scrobbling to an account with a password', async () => {
-    mockGetPrefs.mockResolvedValue({ has_password: true, has_pin: false });
+    mockGetPrefs.mockResolvedValue({ has_password: true });
     render(Page);
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Password' })).toBeTruthy());

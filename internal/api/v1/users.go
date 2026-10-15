@@ -63,8 +63,6 @@ type PINSwitchResult struct {
 
 // UserService manages user profile operations.
 type UserService interface {
-	SetPIN(ctx context.Context, userID uuid.UUID, rawPIN, password string) error
-	ClearPIN(ctx context.Context, userID uuid.UUID, password string) error
 	// ChangePassword checks current against the stored hash and stores a
 	// hash of next. ErrInvalidCredentials when current is wrong,
 	// ErrNoLocalPassword when the account has no local password.
@@ -232,81 +230,6 @@ func (h *UserHandler) WithPINThrottle(t FailureThrottle) *UserHandler {
 func (h *UserHandler) WithPinSwitchPolicy(p PinSwitchPolicy) *UserHandler {
 	h.pinPolicy = p
 	return h
-}
-
-// ── PIN management (existing) ─────────────────────────────────────────────────
-
-// SetPIN handles PUT /api/v1/users/me/pin.
-// Body: {"pin":"1234","password":"currentPassword"}
-func (h *UserHandler) SetPIN(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Forbidden(w, r)
-		return
-	}
-	// A PIN-switched session must not set a PIN. SetPIN requires the account
-	// password, but a managed profile has none, so that check is skipped for it
-	// (PasswordHash == nil) — which would let a switched session set or change
-	// its own profile's PIN with no credential at all. Managed-profile PINs are
-	// managed by the owning account through the profile endpoints instead.
-	if blockSwitchedSession(w, r, "change a PIN") {
-		return
-	}
-
-	var body struct {
-		PIN      string `json:"pin"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.BadRequest(w, r, "invalid request body")
-		return
-	}
-
-	if err := h.users.SetPIN(r.Context(), claims.UserID, body.PIN, body.Password); err != nil {
-		switch {
-		case errors.Is(err, ErrBadPIN):
-			respond.BadRequest(w, r, err.Error())
-		case errors.Is(err, ErrInvalidCredentials):
-			respond.Forbidden(w, r)
-		default:
-			respond.InternalError(w, r)
-		}
-		return
-	}
-	respond.NoContent(w)
-}
-
-// ClearPIN handles DELETE /api/v1/users/me/pin.
-// Body: {"password":"currentPassword"}
-func (h *UserHandler) ClearPIN(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Forbidden(w, r)
-		return
-	}
-	// Same reasoning as SetPIN: a passwordless managed profile would skip the
-	// password check, so a switched session could clear its own PIN.
-	if blockSwitchedSession(w, r, "change a PIN") {
-		return
-	}
-
-	var body struct {
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.BadRequest(w, r, "invalid request body")
-		return
-	}
-
-	if err := h.users.ClearPIN(r.Context(), claims.UserID, body.Password); err != nil {
-		if errors.Is(err, ErrInvalidCredentials) {
-			respond.Forbidden(w, r)
-		} else {
-			respond.InternalError(w, r)
-		}
-		return
-	}
-	respond.NoContent(w)
 }
 
 // ── Admin user management ─────────────────────────────────────────────────────
@@ -1221,11 +1144,6 @@ type preferencesResponse struct {
 	// (false for SSO / LDAP-only accounts and managed profiles), so the
 	// Account page offers PUT /users/me/password only when it can work.
 	HasPassword bool `json:"has_password"`
-	// HasPIN reports whether the CALLER's own account has a PIN set. The Settings
-	// page reads it here (a self-scoped call) rather than from the switchable
-	// list, which is scoped to the caller's managed children and never contains
-	// the caller.
-	HasPIN bool `json:"has_pin"`
 	// HubLayout is the user's hub row customization (order + visibility).
 	// Omitted entirely when the user has never customized — clients render
 	// their default layout.
@@ -1273,7 +1191,6 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		PreferredVideoCodec:   row.PreferredVideoCodec,
 		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
 		EpisodeUseShowPoster:  row.EpisodeUseShowPoster,
-		HasPIN:                row.HasPin,
 		HasPassword:           row.HasPassword,
 	}
 	if len(row.HubLayout) > 0 {

@@ -919,6 +919,12 @@ becomes final on every app. Release note:
 
 ### Changed
 
+- **An account's own PIN is gone.** `PUT` / `DELETE /users/me/pin` and the
+  `has_pin` field of `GET /users/me/preferences` are removed, with the
+  Profile PIN block in Settings ▸ General. Switching only ever reached a
+  managed profile the account owns, so a PIN set on the account itself was
+  never checked. Managed profiles keep their PINs (Profiles page,
+  `/profiles`); no first-party app used the removed routes.
 - **The server's play decision is final.** Every app asks
   `POST /items/{id}/playback-decision` how to play a file, and now plays the
   answer; it decides on its own only when it gets no answer (an older server,

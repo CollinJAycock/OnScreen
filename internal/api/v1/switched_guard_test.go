@@ -13,9 +13,8 @@ import (
 
 // /auth/pin-switch mints the weakest credential the system issues: derived from
 // a 4-digit PIN, no refresh token. It must not reach anything that destroys the
-// account or seizes control of how it authenticates. SetPIN and ClearPIN
-// already demand the account password; account deletion and 2FA enrolment are
-// strictly more destructive and were reachable with nothing but the PIN.
+// account or seizes control of how it authenticates. Account deletion and 2FA
+// enrolment were reachable with nothing but the PIN.
 func TestBlockSwitchedSession(t *testing.T) {
 	cases := []struct {
 		name     string
