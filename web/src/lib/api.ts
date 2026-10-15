@@ -2771,6 +2771,12 @@ export interface SubtitleStream {
   /** The admin's server-wide timing correction in ms (positive = later),
    *  already applied to the served cues. Absent from older servers. */
   offset_ms?: number;
+  /** A bitmap track (PGS, VobSub, DVB) the browser can't draw: it plays as
+   *  its OCR text version or burned into a transcode. Absent from older
+   *  servers (fall back to the codec). */
+  image_based?: boolean;
+  /** id of the files[].external_subtitles entry OCR'd from this stream. */
+  text_version_id?: string;
 }
 
 export interface ExternalSubtitle {
@@ -4669,7 +4675,12 @@ export interface PlaybackDecision {
 }
 
 export const transcodeApi = {
-  start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean, audioStreamIndex?: number, supportsHEVC?: boolean, supportsAV1?: boolean) =>
+  // burnSubtitleStreamIndex is an image subtitle's ABSOLUTE stream index
+  // (subtitle_streams[].index) to burn into the picture — a full re-encode,
+  // so the caller sends videoCopy false with it. Sent only when set; the
+  // server answers 400 INVALID_SUBTITLE_STREAM / SUBTITLE_NOT_IMAGE /
+  // BURN_IN_UNSUPPORTED when it can't.
+  start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean, audioStreamIndex?: number, supportsHEVC?: boolean, supportsAV1?: boolean, burnSubtitleStreamIndex?: number) =>
     api.post<TranscodeSession>(`/items/${itemId}/transcode`, {
       file_id: fileId,
       height,
@@ -4677,7 +4688,8 @@ export const transcodeApi = {
       video_copy: videoCopy ?? false,
       audio_stream_index: audioStreamIndex ?? null,
       supports_hevc: supportsHEVC ?? false,
-      supports_av1: supportsAV1 ?? false
+      supports_av1: supportsAV1 ?? false,
+      ...(burnSubtitleStreamIndex !== undefined ? { burn_subtitle_stream_index: burnSubtitleStreamIndex } : {})
     }),
   // Server-authoritative play decision (capability profiles). Returns the
   // server's verdict for a file given the client's X-Client-Capabilities header.
