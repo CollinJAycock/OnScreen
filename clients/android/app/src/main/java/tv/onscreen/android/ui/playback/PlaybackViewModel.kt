@@ -924,9 +924,16 @@ class PlaybackViewModel @Inject constructor(
         val fb = optimizedFallback ?: return
         optimizedFallback = null
         if (refused) return
+        // A source the server won't stream at all (Dolby Vision, a damaged
+        // file): nothing to fall back to — say why, as prepare does, rather
+        // than letting the local decision play it.
+        sourceRefusal(fb.sourceVerdict)?.let { refusal ->
+            _uiState.value = _uiState.value.copy(error = refusal)
+            return
+        }
         viewModelScope.launch {
             try {
-                val mode = sourceMode(fb.sourceVerdict.takeIf { it != "unsupported" }, fb.file)
+                val mode = sourceMode(fb.sourceVerdict, fb.file)
                 android.util.Log.w(
                     "PlaybackViewModel",
                     "leaving the optimized version for the source: ${fb.sourceVerdict} -> $mode",
@@ -1056,6 +1063,16 @@ class PlaybackViewModel @Inject constructor(
         /** The error sentinel for a file the server judged "damaged": the
          *  fragment shows its damaged-file dialog for it. */
         const val DAMAGED_SENTINEL = "file_damaged"
+
+        /** The error sentinel for a source [verdict] that plays nowhere —
+         *  "damaged" or "unsupported" (Dolby Vision) — else null. The
+         *  optimized version's fallback reads source_decision with it (the
+         *  phone's OptimizedPlayback.sourceUnplayable). */
+        internal fun sourceRefusal(verdict: String?): String? = when (verdict) {
+            PlaybackHelper.VERDICT_DAMAGED -> DAMAGED_SENTINEL
+            PlaybackHelper.VERDICT_UNSUPPORTED -> "dolby_vision"
+            else -> null
+        }
 
         /** Mirrors the server's ocr.IsImageBased — the codecs whose VTT
          *  extraction is refused with 415 IMAGE_SUBTITLE. */
