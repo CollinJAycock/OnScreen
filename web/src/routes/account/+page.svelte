@@ -1,14 +1,15 @@
 <script lang="ts">
   // Account page for every signed-in user: their own sign-in settings
-  // (password, two-factor, profile PIN), languages, scrobbling, playback
-  // quality, devices, downloads, API keys and data. Settings is admin-only, so
-  // anything a user sets for their own account belongs here; Settings ▸
-  // General / Security show the same PIN, language and 2FA controls to admins.
+  // (password, two-factor), languages, scrobbling, playback quality, devices,
+  // downloads, API keys and data. Settings is admin-only, so anything a user
+  // sets for their own account belongs here; Settings ▸ General / Security
+  // show the same language and 2FA controls to admins. No PIN card: switching
+  // only reaches managed profiles, whose PINs are set on the Profiles page, so
+  // an account's own PIN isn't used.
   import { onMount } from 'svelte';
   import { getApiBase, userApi } from '$lib/api';
   import ChangePassword from '$lib/components/ChangePassword.svelte';
   import TwoFactor from '$lib/components/TwoFactor.svelte';
-  import ProfilePin from '$lib/components/ProfilePin.svelte';
   import LanguagePrefs from '$lib/components/LanguagePrefs.svelte';
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import MyDownloads from '$lib/components/MyDownloads.svelte';
@@ -133,15 +134,6 @@
       </p>
     </section>
   {/if}
-
-  <section class="card">
-    <h2>Profile PIN</h2>
-    <p class="sub">
-      A 4-digit PIN lets other users on this server switch to your profile
-      without needing your password.
-    </p>
-    <ProfilePin />
-  </section>
 
   <section class="card">
     <h2>Signed-in devices</h2>

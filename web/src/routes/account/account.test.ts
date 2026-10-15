@@ -24,7 +24,6 @@ vi.mock('$lib/components/PlaybackQuality.svelte', () => ({ default: Stub }));
 vi.mock('$lib/components/DigestOptIn.svelte', () => ({ default: Stub }));
 vi.mock('$lib/components/ChangePassword.svelte', () => ({ default: Stub }));
 vi.mock('$lib/components/TwoFactor.svelte', () => ({ default: Stub }));
-vi.mock('$lib/components/ProfilePin.svelte', () => ({ default: Stub }));
 vi.mock('$lib/components/LanguagePrefs.svelte', () => ({ default: Stub }));
 
 beforeEach(() => {
@@ -32,13 +31,14 @@ beforeEach(() => {
 });
 
 describe('Account page', () => {
-  it('offers password, two-factor, PIN, languages and scrobbling to an account with a password', async () => {
+  it('offers password, two-factor, languages and scrobbling to an account with a password', async () => {
     mockGetPrefs.mockResolvedValue({ has_password: true, has_pin: false });
     render(Page);
 
     await waitFor(() => expect(screen.getByRole('heading', { name: 'Password' })).toBeTruthy());
     expect(screen.getByText(/signs you out on your other devices/i)).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Profile PIN' })).toBeTruthy();
+    // An account's own PIN isn't used for switching (only managed profiles').
+    expect(screen.queryByRole('heading', { name: 'Profile PIN' })).toBeNull();
     expect(screen.getByRole('heading', { name: 'Languages' })).toBeTruthy();
     expect(screen.getByRole('link', { name: /link your accounts/i }).getAttribute('href')).toBe('/account/scrobble');
   });

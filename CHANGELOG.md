@@ -63,8 +63,8 @@ becomes final on every app. Release note:
 - **Your own sign-in settings on the Account page, for every user.** Change
   your password (new `PUT /users/me/password`: needs the current one, ends
   your other sign-ins; `GET /users/me/preferences` gains `has_password`), turn
-  two-factor sign-in on or off, set your profile PIN, pick preferred audio and
-  subtitle languages, and link Last.fm, ListenBrainz or Trakt
+  two-factor sign-in on or off, pick preferred audio and subtitle languages,
+  and link Last.fm, ListenBrainz or Trakt
   (`/account/scrobble`; `/settings/scrobble` redirects there). These were only
   under Settings, which only admins can open.
 - **Audio passthrough on remux.** A client that bitstreams audio to a receiver
