@@ -42,6 +42,13 @@ class ServerPrefs(private val context: Context) {
         // On by default; a TV or receiver that takes long to resync after a
         // mode change is the reason to turn it off.
         private val KEY_MATCH_FRAME_RATE = booleanPreferencesKey("match_frame_rate")
+        // Files whose direct play this device couldn't read (Media3 ran out
+        // of memory on the container's index — see
+        // PlaybackHelper.isContainerFailure): comma-joined ids, oldest
+        // first, at most REMUX_ONLY_MAX. Played as a remux from then on.
+        private val KEY_REMUX_ONLY_FILES = stringPreferencesKey("remux_only_files")
+        private const val REMUX_ONLY_SEP = ","
+        internal const val REMUX_ONLY_MAX = 200
 
         /**
          * Pick a scheme for a bare-host URL the user typed into the server
@@ -178,6 +185,22 @@ class ServerPrefs(private val context: Context) {
 
     suspend fun setMatchFrameRate(enabled: Boolean) {
         context.dataStore.edit { it[KEY_MATCH_FRAME_RATE] = enabled }
+    }
+
+    /** Files this device plays as a remux instead of directly (see
+     *  [addRemuxOnlyFile]). */
+    suspend fun remuxOnlyFiles(): Set<String> =
+        context.dataStore.data.first()[KEY_REMUX_ONLY_FILES]
+            ?.split(REMUX_ONLY_SEP)?.filter { it.isNotEmpty() }?.toSet() ?: emptySet()
+
+    /** Remember that [fileId]'s direct play failed reading the container, so
+     *  the next play skips straight to a remux. Keeps the newest
+     *  [REMUX_ONLY_MAX]. */
+    suspend fun addRemuxOnlyFile(fileId: String) {
+        context.dataStore.edit {
+            val ids = it[KEY_REMUX_ONLY_FILES]?.split(REMUX_ONLY_SEP)?.filter { id -> id.isNotEmpty() && id != fileId }.orEmpty()
+            it[KEY_REMUX_ONLY_FILES] = (ids + fileId).takeLast(REMUX_ONLY_MAX).joinToString(REMUX_ONLY_SEP)
+        }
     }
 
     suspend fun setSearchFilters(filters: SearchFilters) {

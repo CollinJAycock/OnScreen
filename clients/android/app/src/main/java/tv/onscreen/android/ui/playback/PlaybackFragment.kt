@@ -1399,17 +1399,24 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // takes this same escalation.
             if (currentSource is PlaybackSource.DirectPlay) {
                 val pos = player?.currentPosition ?: 0L
-                val why = if (PlaybackHelper.isTranscodeRequired(error)) "server requires a transcode" else error.errorCodeName
+                // A file Media3 couldn't read (out of memory on the
+                // container's index) remuxes; anything else transcodes.
+                val containerFailure = PlaybackHelper.isContainerFailure(error)
+                val why = when {
+                    PlaybackHelper.isTranscodeRequired(error) -> "server requires a transcode"
+                    containerFailure -> "couldn't read the container, ${error.errorCodeName}"
+                    else -> error.errorCodeName
+                }
                 android.util.Log.w(
                     "PlaybackFragment",
-                    "direct play failed ($why); falling back to server transcode",
+                    "direct play failed ($why); falling back to the server",
                     error,
                 )
                 // Paused stays paused (a video reopened after the
                 // screensaver fails here, before anyone pressed play); the
                 // display-switch hold is no pause of the user's.
                 startPaused = player?.playWhenReady == false && !heldForFrameRate
-                viewModel.fallbackFromDirectPlay(pos)
+                viewModel.fallbackFromDirectPlay(pos, containerFailure)
                 return
             }
             // Surface ExoPlayer's actual error to the user instead

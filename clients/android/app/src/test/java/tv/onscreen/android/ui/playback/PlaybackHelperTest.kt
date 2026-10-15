@@ -602,4 +602,45 @@ class PlaybackHelperTest {
         assertThat(PlaybackHelper.displayShowsHdr10(PlaybackHelper.screenHdrTypes(null, sdk = 36))).isFalse()
         assertThat(PlaybackHelper.screenHdrTypes(intArrayOf(2), sdk = 36)!!.toList()).containsExactly(2)
     }
+
+    // ── isContainerFailure / canRemux: the direct-play failures a remux fixes ──
+
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    private fun playerErrorCode(code: Int, cause: Throwable? = null) =
+        androidx.media3.common.PlaybackException("boom", cause, code)
+
+    @Test
+    fun `running out of memory on the container is a container failure`() {
+        // What 1917 (HEVC + TrueHD in .mov) did on a Fire TV Stick: Media3's
+        // loader wraps the OutOfMemoryError as an unexpected IO error.
+        val oom = RuntimeException("Unexpected OutOfMemoryError", OutOfMemoryError("Failed to allocate a 68526080 byte allocation"))
+        assertThat(PlaybackHelper.isContainerFailure(
+            playerErrorCode(androidx.media3.common.PlaybackException.ERROR_CODE_IO_UNSPECIFIED, oom),
+        )).isTrue()
+        assertThat(PlaybackHelper.isContainerFailure(
+            playerErrorCode(androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED),
+        )).isTrue()
+        assertThat(PlaybackHelper.isContainerFailure(
+            playerErrorCode(androidx.media3.common.PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED),
+        )).isTrue()
+    }
+
+    @Test
+    fun `decoder and network failures are not container failures`() {
+        assertThat(PlaybackHelper.isContainerFailure(
+            playerErrorCode(androidx.media3.common.PlaybackException.ERROR_CODE_DECODER_INIT_FAILED),
+        )).isFalse()
+        assertThat(PlaybackHelper.isContainerFailure(playerError(badStatus(409)))).isFalse()
+        assertThat(PlaybackHelper.isContainerFailure(playerError(java.io.IOException("reset")))).isFalse()
+    }
+
+    @Test
+    fun `the server remuxes H264, HEVC and AV1 video only`() {
+        for (c in listOf("h264", "HEVC", "h265", "av1", "avc1", "hvc1")) {
+            assertThat(PlaybackHelper.canRemuxVideo(c)).isTrue()
+        }
+        for (c in listOf("vp9", "mpeg4", "vc1", null)) {
+            assertThat(PlaybackHelper.canRemuxVideo(c)).isFalse()
+        }
+    }
 }
