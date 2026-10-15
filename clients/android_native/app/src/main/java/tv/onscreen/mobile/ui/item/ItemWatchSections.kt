@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
@@ -55,6 +56,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import tv.onscreen.mobile.data.model.ChildItem
 import tv.onscreen.mobile.data.model.UpNextMode
+import tv.onscreen.mobile.ui.watch.episodeNumberLabel
 import tv.onscreen.mobile.ui.watch.markAllOptions
 import tv.onscreen.mobile.ui.watch.progressFraction
 import tv.onscreen.mobile.ui.watch.upNextLabel
@@ -351,11 +353,13 @@ private fun EpisodeRow(
             .padding(start = 16.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
     ) {
         if (episode.index != null) {
+            // "1–2." for a multi-episode file.
             Text(
-                "${episode.index}.",
+                "${episodeNumberLabel(episode.index, episode.index_end)}.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.width(40.dp),
+                // At least the old column, wider for a range ("12–13.").
+                modifier = Modifier.widthIn(min = 40.dp).padding(end = 4.dp),
             )
         }
         Column(modifier = Modifier.weight(1f)) {

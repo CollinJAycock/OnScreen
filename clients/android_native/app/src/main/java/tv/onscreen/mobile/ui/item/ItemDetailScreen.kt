@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.CheckCircle
@@ -85,6 +86,7 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.playback.MusicQueue
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
+import tv.onscreen.mobile.ui.watch.episodeNumberLabel
 import tv.onscreen.mobile.ui.watch.isWatchContainerType
 import tv.onscreen.mobile.ui.watch.isWatchLeafType
 import tv.onscreen.mobile.ui.watch.leafPlayLabel
@@ -969,10 +971,11 @@ private fun ChildRow(
         // ordering hint even when the title doesn't carry one.
         if (child.index != null) {
             Text(
-                text = "${child.index}.",
+                // "1–2." for a multi-episode file.
+                text = "${episodeNumberLabel(child.index, child.index_end)}.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(end = 12.dp).width(40.dp),
+                modifier = Modifier.padding(end = 12.dp).widthIn(min = 40.dp),
             )
         }
         Column(modifier = Modifier.weight(1f, fill = true)) {

@@ -187,6 +187,62 @@ class NextSiblingResolverTest {
         assertThat(next).isNull()
     }
 
+    // Multi-episode files (v2.6): "S01E01-E02" is one row, index 1, index_end 2.
+
+    @Test
+    fun `a two-episode file is followed by the episode after its last`() {
+        val kids = listOf(
+            ChildItem(id = "e1-2", title = "t", type = "episode", index = 1, index_end = 2),
+            child("e3", "episode", index = 3),
+        )
+        val next = NextSiblingResolver.nextInContainer(kids, "e1-2", "episode", 1, currentIndexEnd = 2)
+        assertThat(next?.id).isEqualTo("e3")
+    }
+
+    @Test
+    fun `the episode a multi-episode file already covers is skipped`() {
+        // A stray single-episode copy of E2 beside the E1-E2 file: playing on
+        // into it would repeat what was just watched.
+        val kids = listOf(
+            ChildItem(id = "e1-2", title = "t", type = "episode", index = 1, index_end = 2),
+            child("e2", "episode", index = 2),
+            child("e3", "episode", index = 3),
+        )
+        assertThat(NextSiblingResolver.nextInContainer(kids, "e1-2", "episode", 1, 2)?.id).isEqualTo("e3")
+        // Only the index known (the background queue's extras): the row's own
+        // index_end, from the listing, still counts.
+        assertThat(NextSiblingResolver.nextInContainer(kids, "e1-2", "episode", 1)?.id).isEqualTo("e3")
+    }
+
+    @Test
+    fun `a single episode before a multi-episode file plays on into it`() {
+        val kids = listOf(
+            child("e1", "episode", index = 1),
+            ChildItem(id = "e2-3", title = "t", type = "episode", index = 2, index_end = 3),
+            child("e4", "episode", index = 4),
+        )
+        assertThat(NextSiblingResolver.nextInContainer(kids, "e1", "episode", 1)?.id).isEqualTo("e2-3")
+    }
+
+    @Test
+    fun `the last multi-episode file of a season falls through to the next season`() = runTest {
+        val repo = mockk<ItemRepository>()
+        coEvery { repo.getChildren("s1") } returns listOf(
+            child("e1", "episode", index = 1),
+            ChildItem(id = "e2-3", title = "t", type = "episode", index = 2, index_end = 3),
+        )
+        coEvery { repo.getItem("s1") } returns ItemDetail(
+            id = "s1", library_id = "lib", title = "S1", type = "season", parent_id = "show",
+        )
+        coEvery { repo.getChildren("show") } returns listOf(
+            child("s1", "season", index = 1),
+            child("s2", "season", index = 2),
+        )
+        coEvery { repo.getChildren("s2") } returns listOf(child("s2e1", "episode", index = 1))
+        val next = NextSiblingResolver(repo).resolve("e2-3", "episode", "s1", 2)
+        assertThat(next?.id).isEqualTo("s2e1")
+    }
+
     @Test
     fun `non-track non-episode types do not fall through`() = runTest {
         // Movies don't auto-advance — last "movie" in a list returns null.
