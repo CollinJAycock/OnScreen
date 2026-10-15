@@ -18,7 +18,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
-// ErrOptimizedNotFound: no such optimized version (or job).
+// ErrOptimizedNotFound means no such optimized version (or job).
 var ErrOptimizedNotFound = errors.New("downloads: optimized version not found")
 
 // MaxOptimizeTargets bounds one "Optimize…" request: a library bigger than

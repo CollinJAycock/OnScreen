@@ -66,8 +66,6 @@ const (
 	maxIFDEntries = 1024
 	// maxValueBytes caps a single tag value read (strings, arrays).
 	maxValueBytes = 64 << 10
-	// maxBoxDepth bounds ISO-BMFF nesting for CR3.
-	maxBoxDepth = 6
 	// maxBoxes bounds the ISO-BMFF boxes visited for CR3.
 	maxBoxes = 512
 	// minGoodLongEdge is the long edge below which a structural preview is
