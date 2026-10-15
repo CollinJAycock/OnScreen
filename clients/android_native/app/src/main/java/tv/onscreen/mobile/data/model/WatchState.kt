@@ -24,6 +24,9 @@ data class UpNextEpisode(
     val season_id: String = "",
     val season_number: Int? = null,
     val episode_number: Int? = null,
+    /** Multi-episode file (v2.6): the last episode it covers. Absent for a
+     *  single episode and on older servers. */
+    val episode_number_end: Int? = null,
     val view_offset_ms: Long? = null,
     val duration_ms: Long? = null,
     val thumb_path: String? = null,

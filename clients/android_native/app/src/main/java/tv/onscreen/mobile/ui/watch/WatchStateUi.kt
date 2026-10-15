@@ -16,17 +16,18 @@ import tv.onscreen.mobile.data.model.WatchStateValue
 
 /** "S2 · E5". A missing half is dropped ("S2", "E5"); both missing → "".
  *  The server sends 0 for an unrecorded episode number, so E0 is dropped
- *  too (season 0 is kept — that's Specials). */
-fun episodeCode(season: Int?, episode: Int?): String {
+ *  too (season 0 is kept — that's Specials). A multi-episode file (v2.6
+ *  [episodeEnd]) reads as a range: "S1 · E1–E2". */
+fun episodeCode(season: Int?, episode: Int?, episodeEnd: Int? = null): String {
     val parts = mutableListOf<String>()
     if (season != null) parts += "S$season"
-    if (episode != null && episode > 0) parts += "E$episode"
+    if (episode != null && episode > 0) parts += "E${episodeNumberLabel(episode, episodeEnd)}"
     return parts.joinToString(" · ")
 }
 
 /** Second line of a Next Up tile: "S2 · E5 — Episode title". */
 fun nextUpSubtitle(item: HubItem): String {
-    val code = episodeCode(item.season_number, item.episode_number)
+    val code = episodeCode(item.season_number, item.episode_number, item.episode_number_end)
     return if (code.isEmpty()) item.title else "$code — ${item.title}"
 }
 
@@ -40,7 +41,7 @@ fun nextUpSubtitle(item: HubItem): String {
  */
 fun upNextLabel(u: UpNext?): String? {
     val ep = u?.episode ?: return null
-    val code = episodeCode(ep.season_number, ep.episode_number)
+    val code = episodeCode(ep.season_number, ep.episode_number, ep.episode_number_end)
     return when (u.mode) {
         UpNextMode.RESUME -> if (code.isEmpty()) "Resume" else "Resume $code"
         UpNextMode.NEXT, UpNextMode.START -> if (code.isEmpty()) "Play" else "Play $code"
