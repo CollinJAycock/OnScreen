@@ -151,6 +151,31 @@ videoDecoder=h264:h265:vp9,audioDecoder=aac:ac3,protocols=mp4:mkv,maxWidth=3840,
 | `hlg` | boolean | not declared — `hdr` decides HLG | HLG check (below) |
 | `dovi` (alias `dolbyvision`) | boolean | no | Dolby Vision (else `unsupported`) |
 | `optimized` | boolean | no | the client plays an `optimized_version` from the decision (§13) |
+| `audioPassthrough` | codecs bitstreamed to a receiver: `ac3`, `eac3`, `truehd`, `dts` (`dts-hd` folds to `dts`; others ignored) | none | channel cap lifted for these + remux copies them (below) |
+
+**Audio passthrough (`audioPassthrough`).** A client that hands a codec to an
+AV receiver undecoded (HDMI/S/PDIF bitstreaming: Android TV's
+`AudioCapabilities`) lists it here. The receiver decodes it, so:
+- **Decide** treats the codec as playable whatever `maxAudioChannels` says
+  (and whether or not `audioDecoder` lists it): a 7.1 TrueHD track on a
+  `maxAudioChannels=6` client direct-plays from MKV/MP4 instead of
+  remuxing to a 5.1 AAC downmix. The container rule stays: TrueHD in MPEG-TS
+  is still a remux, because no player demuxes it there.
+- **Remux** (`video_copy`) copies the track instead of converting it to AAC.
+  AC-3/E-AC-3 copy into the usual segments. TrueHD and DTS can't ride MPEG-TS
+  to a player, so their copy is packaged as **fMP4** (`.m4s` + `init.mp4`, even
+  for H.264 video) with ffmpeg's `-strict -2` (its mp4 muxer calls TrueHD
+  experimental). That needs a worker that advertises the `audio_passthrough`
+  feature; on an all-old fleet, for a client that asked for TS segments, or for
+  an audio-only file, TrueHD/DTS fall back to the AAC conversion.
+- **Transcode** (video re-encoded) is unchanged: audio is AAC, as the ABR
+  ladder's CODECS string advertises.
+
+It's opt-in on purpose: `audioDecoder` alone never widens the copy, since a
+client may list a codec there it can demux but not output (the phone lists
+`dts`). Item details give each audio stream ffprobe's `profile` ("DTS-HD MA",
+"Dolby TrueHD + Dolby Atmos", "Dolby Digital Plus + Dolby Atmos") for the
+track label, on files scanned (or re-probed) since it was stored.
 
 **HLG (`hlg`).** An HDR10 display isn't necessarily an HLG one: NVIDIA SHIELD
 outputs HDR10 but sends HLG flagged as SDR (dark, green picture). So for an HLG
@@ -369,10 +394,23 @@ the same outcome:
 - The **TV web apps** (Tizen / webOS / Xbox) still turn `directPlay` into a
   remux: their players are only tested on HLS.
 
+**Done — Phase 3 audio passthrough (2026-10-15, server).** `audioPassthrough`
+in the grammar (§5.1): `Decide` lifts the channel cap for a passed-through
+codec, and the remux copies it, TrueHD and DTS into fMP4 segments with
+`-strict -2` (`ResolveVideoOutput` now honours forced fMP4 on a copy; the
+session's `fmp4_segments` tells the playlist handler to wait for `.m4s`). Jobs
+that need it go only to workers advertising the `audio_passthrough` feature.
+Checked with ffmpeg 8.1: a TrueHD copy writes an `mlpa` track and fails at the
+header without `-strict -2`; DTS-HD MA copies as an `mp4a` (object type 0xA9,
+DTS) track. Audio item details carry ffprobe's `profile`. Clients still have to
+send the key (Android TV first), and Media3's reading of TrueHD (`mlpa`) and
+DTS out of fMP4 HLS needs checking on a device with a receiver.
+
 **Remaining:**
 1. Device-test on Roku (the verdict is now final there, unit-tested only),
    Fire TV, Tizen and webOS.
-2. Phase 3: audio passthrough (true 7.1/Atmos), video profile/level.
+2. Phase 3 rest: passthrough on full transcodes (audio is always AAC there,
+   ABR ladder included), video profile/level.
 
 Why staged: the flip changes how playback *starts*. Driving the real endpoint
 per-client (local dev, then the phone on-device) caught both the `DirectStream`
