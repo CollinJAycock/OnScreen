@@ -71,6 +71,8 @@
     <string name="books">Books</string>
     <!-- Per-child index label on the detail-screen card grid. -->
     <string name="label_episode_n">EPISODE %1$d</string>
+    <!-- A multi-episode file (S01E01-E02): one row covering both. -->
+    <string name="label_episode_range">EPISODES %1$d–%2$d</string>
     <string name="label_track_n">TRACK %1$d</string>
     <string name="label_chapter_n">CHAPTER %1$d</string>
     <string name="label_book_n">BOOK %1$d</string>

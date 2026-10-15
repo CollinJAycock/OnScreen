@@ -15,6 +15,7 @@ import coil.load
 import tv.onscreen.android.R
 import tv.onscreen.android.data.artworkUrl
 import tv.onscreen.android.data.model.ChildItem
+import tv.onscreen.android.data.model.EpisodeRange
 
 class EpisodeAdapter(
     private val serverUrl: String,
@@ -88,7 +89,10 @@ class EpisodeAdapter(
                     "track", "music_video" -> ctx.getString(R.string.label_track_n, n)
                     "audiobook_chapter" -> ctx.getString(R.string.label_chapter_n, n)
                     "book" -> ctx.getString(R.string.label_book_n, n)
-                    else -> ctx.getString(R.string.label_episode_n, n)
+                    // A multi-episode file (v2.6) is one row: "EPISODES 1–2".
+                    else -> EpisodeRange.end(n, ep.index_end)
+                        ?.let { end -> ctx.getString(R.string.label_episode_range, n, end) }
+                        ?: ctx.getString(R.string.label_episode_n, n)
                 }
             } ?: ""
             index.visibility = if (ep.index != null) View.VISIBLE else View.GONE

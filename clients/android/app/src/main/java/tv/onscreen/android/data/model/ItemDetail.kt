@@ -22,6 +22,9 @@ data class ItemDetail(
     val genres: List<String> = emptyList(),
     val parent_id: String? = null,
     val index: Int? = null,
+    /** v2.6. The last episode a multi-episode file covers (see
+     *  ChildItem.index_end). Null for a single episode and older servers. */
+    val index_end: Int? = null,
     val view_offset_ms: Long = 0,
     val updated_at: Long = 0,
     val is_favorite: Boolean = false,

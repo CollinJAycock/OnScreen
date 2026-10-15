@@ -94,20 +94,29 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
          *  on each disc: by index alone, disc 2 track 5 is followed by disc 1
          *  track 6, and the last track of disc 1 by nothing on disc 2. The
          *  current row's disc comes from [children] (the item endpoint doesn't
-         *  carry one); without one it is disc 1, as every episode is. */
+         *  carry one); without one it is disc 1, as every episode is.
+         *
+         *  A multi-episode file (v2.6, "S01E01-E02": index 1, index_end 2)
+         *  is followed by the first row after the END of its range: the
+         *  episode it covers is already played, so a stray row carrying that
+         *  number (a duplicate rip of E02) is stepped over, not played again.
+         *  The range comes from the current row in [children], which carries
+         *  index_end, or from [currentIndex] when the caller passed the end. */
         fun nextInContainer(
             children: List<ChildItem>,
             currentItemId: String,
             type: String,
             currentIndex: Int,
         ): ChildItem? {
-            val disc = children.firstOrNull { it.id == currentItemId }?.disc_number ?: 1
+            val current = children.firstOrNull { it.id == currentItemId }
+            val disc = current?.disc_number ?: 1
+            val after = maxOf(currentIndex, current?.lastIndex ?: currentIndex)
             return children
-                .filter { it.type == type && it.index != null }
+                .filter { it.type == type && it.index != null && it.id != currentItemId }
                 .sortedWith(ChildItem.PLAY_ORDER)
                 .firstOrNull {
                     val d = it.disc_number ?: 1
-                    d > disc || (d == disc && (it.index ?: Int.MIN_VALUE) > currentIndex)
+                    d > disc || (d == disc && (it.index ?: Int.MIN_VALUE) > after)
                 }
         }
     }

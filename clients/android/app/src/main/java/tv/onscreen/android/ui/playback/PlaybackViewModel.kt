@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.data.model.AudioStream
+import tv.onscreen.android.data.model.EpisodeRange
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.model.ItemFile
@@ -356,8 +357,12 @@ class PlaybackViewModel @Inject constructor(
                 // silently (tracks, chapters — see AudioItemTypes).
                 if (item.parent_id != null) {
                     when (item.type) {
-                        "episode", "track" ->
-                            if (item.index != null) loadNextSibling(item.parent_id, item.index, item.type)
+                        // From the end of a multi-episode file's range: the
+                        // episodes it covers are already playing here.
+                        "episode", "track" -> {
+                            val last = EpisodeRange.last(item.index, item.index_end)
+                            if (last != null) loadNextSibling(item.parent_id, last, item.type)
+                        }
                         // By the book's listing, not the index: a chapter the
                         // scanner couldn't number still has a next one.
                         AudiobookSpeed.CHAPTER -> loadNextSibling(item.parent_id, item.index, item.type)
