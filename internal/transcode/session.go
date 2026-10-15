@@ -892,6 +892,7 @@ func jobNeeds(j TranscodeJob) JobNeeds {
 		needs.Features = append(needs.Features, WorkerFeatureBurnSubtitles)
 	}
 	switch j.DolbyVision {
+	case DVNone:
 	case DVKeep:
 		needs.Features = append(needs.Features, WorkerFeatureDolbyVision)
 	case DVToP81:
