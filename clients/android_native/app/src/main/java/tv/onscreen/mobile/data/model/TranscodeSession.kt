@@ -39,6 +39,18 @@ data class PlaybackDecisionRequest(
 data class PlaybackDecision(
     val decision: String,
     val file_id: String? = null,
+    /** Why the server overrode the capability verdict, when it did:
+     *  remote_bitrate_limit / user_bitrate_limit / quality_profile (a forced
+     *  transcode), or optimized_version (see [optimized_version]). */
+    val reason: String? = null,
+    /** With reason "optimized_version" and decision "directPlay" (v2.6, only
+     *  for a client that sends optimized=1): the pre-made MP4 to play instead
+     *  of the source. file_id stays the source's. */
+    val optimized_version: OptimizedVersion? = null,
+    /** The verdict for the source itself when an optimized version replaced
+     *  it — what to fall back to if the version won't play. */
+    val source_decision: String? = null,
+    val source_reason: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

@@ -23,6 +23,15 @@ data class ItemFile(
     val hdr_type: String? = null,
     val duration_ms: Long? = null,
     val faststart: Boolean = false,
+    /** The version this file is, from its name ("Director's Cut",
+     *  "Extended") — v2.6; null when the name gives none. */
+    val edition: String? = null,
+    /** 1-based part number when this file is one part of a stacked movie
+     *  ("cd1" + "cd2"). The parts are ONE version: a part never plays on
+     *  its own — the server streams them all as one movie from the first
+     *  part's file_id — and [duration_ms] is the part's own length, the
+     *  item's is the whole movie's. See ItemVersions. */
+    val part_index: Int? = null,
     // ── audiophile metadata (v2.1 music track) ─────────────────
     /** Bit depth in bits per sample. 16 / 24 / 32. Null for codecs
      *  where the concept doesn't apply (lossy AAC etc.). */

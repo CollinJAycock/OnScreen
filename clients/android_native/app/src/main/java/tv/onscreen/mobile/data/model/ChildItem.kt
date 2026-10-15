@@ -14,6 +14,9 @@ data class ChildItem(
     val poster_path: String? = null,
     val thumb_path: String? = null,
     val index: Int? = null,
+    /** Multi-episode file: the last episode it covers (see
+     *  ItemDetail.index_end). Null for everything else. */
+    val index_end: Int? = null,
     /** A track's disc within its album; [index] is its number on that disc.
      *  Null reads as disc 1: single-disc albums, every non-track child, and
      *  servers that predate the field. */
