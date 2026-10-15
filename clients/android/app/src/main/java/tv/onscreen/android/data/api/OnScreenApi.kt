@@ -215,6 +215,24 @@ interface OnScreenApi {
         @Query("token") token: String,
     )
 
+    // ── Music discovery (v2.6) ──────────────────────────────────────────────
+    // internal/api/v1/music.go. 404 on a server that predates them, and for
+    // a seed the caller can't see.
+
+    @GET("api/v1/music/artists/{id}/similar")
+    suspend fun getSimilarArtists(
+        @Path("id") artistId: String,
+        @Query("limit") limit: Int = 20,
+    ): ApiListResponse<SimilarArtist>
+
+    @GET("api/v1/music/artists/{id}/appears-on")
+    suspend fun getArtistAppearances(@Path("id") artistId: String): ApiListResponse<ArtistAppearance>
+
+    /** An instant mix seeded from a track, album or artist: about 50 tracks
+     *  in play order, freshly shuffled on every call. */
+    @GET("api/v1/music/mix")
+    suspend fun getInstantMix(@Query("seed") seedId: String): ApiListResponse<MixTrack>
+
     // ── Search ──────────────────────────────────────────────────────────────
 
     @GET("api/v1/search")
@@ -261,6 +279,12 @@ interface OnScreenApi {
     // logout / addFavorite / setListenBrainz above.
     @PUT("api/v1/users/me/preferences")
     suspend fun setPreferences(@Body body: UserPreferences)
+
+    /** v2.6. Replaces the user's whole quality profile; 204 No Content, 400
+     *  for a value the server refuses. The body is QualityProfile.toJson's
+     *  (nulls written out — a null clears that limit), passed through as-is. */
+    @PUT("api/v1/users/me/quality-profile")
+    suspend fun setQualityProfile(@Body body: okhttp3.RequestBody)
 
     // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
 

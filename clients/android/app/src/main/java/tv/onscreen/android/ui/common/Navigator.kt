@@ -87,9 +87,12 @@ object Navigator {
             // tracks, audiobook chapters, podcast episodes
             // — all leaf items the user has already drilled to via
             // the parent container's detail page, so a second detail
-            // hop would be friction.
-            else ->
+            // hop would be friction. Picked by the user, so not part of
+            // an instant mix that was playing (PlayQueue).
+            else -> {
+                tv.onscreen.android.playback.PlayQueue.clear()
                 PlaybackFragment.newInstance(itemId, resumeMs)
+            }
         }
     }
 }

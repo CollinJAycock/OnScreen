@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- One row of the player's chapter picker when the chapters have
+     thumbnails (v2.6, chapter thumb_url): the frame, then "n. Title · 12:34". -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:gravity="center_vertical"
+    android:minHeight="?android:attr/listPreferredItemHeightSmall"
+    android:paddingStart="24dp"
+    android:paddingEnd="24dp"
+    android:paddingTop="8dp"
+    android:paddingBottom="8dp">
+
+    <ImageView
+        android:id="@+id/chapter_thumb"
+        android:layout_width="128dp"
+        android:layout_height="72dp"
+        android:scaleType="centerCrop"
+        android:background="@color/bg_elevated"
+        android:contentDescription="@null" />
+
+    <TextView
+        android:id="@+id/chapter_label"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:layout_marginStart="16dp"
+        android:textColor="@color/text_primary"
+        android:textSize="16sp"
+        android:maxLines="2"
+        android:ellipsize="end" />
+</LinearLayout>

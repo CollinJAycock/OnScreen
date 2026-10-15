@@ -14,6 +14,9 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import retrofit2.HttpException
+import tv.onscreen.android.data.api.apiError
+import tv.onscreen.android.data.model.QualityProfileBody
 import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.repository.AuthRepository
 import tv.onscreen.android.data.repository.PreferencesRepository
@@ -88,6 +91,31 @@ class SettingsViewModel @Inject constructor(
                 val saved = prefsRepo.set(prefs)
                 _uiState.value = _uiState.value.copy(preferences = saved, saved = true, error = null)
                 scheduleSavedClear()
+            } catch (e: Exception) {
+                _uiState.value = _uiState.value.copy(error = e.message ?: "save failed")
+            }
+        }
+    }
+
+    /**
+     * Change one field of the playback-quality profile (v2.6). The profile is
+     * re-read just before the write and [change] applied to that, so the
+     * other fields — forced_subtitles_only included — go back as the server
+     * has them now. A refused value (400) shows the server's reason.
+     */
+    fun saveQuality(change: (QualityProfileBody) -> QualityProfileBody) {
+        // Refuse to write until a real load succeeded — see prefsLoaded.
+        if (!_uiState.value.prefsLoaded) return
+        viewModelScope.launch {
+            try {
+                val saved = prefsRepo.setQualityProfile(change)
+                _uiState.value = _uiState.value.copy(preferences = saved, saved = true, error = null)
+                scheduleSavedClear()
+            } catch (e: HttpException) {
+                val reason = if (e.code() == 400) e.apiError()?.message?.takeIf { it.isNotBlank() } else null
+                _uiState.value = _uiState.value.copy(
+                    error = reason ?: if (e.code() == 400) "That quality setting isn't allowed" else "Couldn't save (HTTP ${e.code()})",
+                )
             } catch (e: Exception) {
                 _uiState.value = _uiState.value.copy(error = e.message ?: "save failed")
             }

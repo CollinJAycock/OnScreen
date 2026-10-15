@@ -34,6 +34,9 @@
     <string name="resume">Resume from %s</string>
     <string name="play_from_beginning">Play from Beginning</string>
     <string name="play_all">Play All</string>
+    <!-- Instant mix (v2.6): artist / album button, track long-press. -->
+    <string name="instant_mix">Instant Mix</string>
+    <string name="instant_mix_failed">Couldn\'t make a mix from this</string>
     <string name="shuffle">Shuffle</string>
     <string name="error_connection">Could not connect to server</string>
     <!-- Distinct from error_connection: the request never ran, so telling the
@@ -71,6 +74,8 @@
     <string name="books">Books</string>
     <!-- Per-child index label on the detail-screen card grid. -->
     <string name="label_episode_n">EPISODE %1$d</string>
+    <!-- A multi-episode file (S01E01-E02): one row covering both. -->
+    <string name="label_episode_range">EPISODES %1$d–%2$d</string>
     <string name="label_track_n">TRACK %1$d</string>
     <string name="label_chapter_n">CHAPTER %1$d</string>
     <string name="label_book_n">BOOK %1$d</string>
@@ -126,6 +131,13 @@
     <string name="account">Account</string>
     <string name="scrobbling">Scrobbling</string>
     <string name="playback_settings">Playback</string>
+    <!-- Playback quality (v2.6): the account's quality profile. -->
+    <string name="playback_quality">Playback quality</string>
+    <string name="playback_quality_hint">Saved to your account and applied on every device: anything above these limits is converted before it plays.</string>
+    <string name="quality_max_resolution">Maximum resolution</string>
+    <string name="quality_max_video_bitrate">Maximum video bitrate</string>
+    <string name="quality_max_audio_bitrate">Maximum audio bitrate</string>
+    <string name="quality_video_format">Video format when converting</string>
     <string name="match_frame_rate">Match frame rate</string>
     <string name="match_frame_rate_hint">Switches the TV to the video\'s frame rate while it plays, so films don\'t judder. The screen goes dark for a moment as it switches. Fire TV also needs its own Match Original Frame Rate setting on. Nvidia Shield needs nothing more. On Android 12 and later, the TV\'s Match content frame rate setting decides.</string>
     <string name="setting_on">On</string>
@@ -153,6 +165,12 @@
     <string name="watch_limit_generic">Playback is blocked by a parental watch limit on this account.</string>
     <!-- Admin "stop this stream": dialog title; the body is the server's sentence. -->
     <string name="playback_stopped_title">Playback stopped</string>
+    <!-- Version picker on a movie / episode with several (v2.6). -->
+    <string name="version">Version</string>
+    <string name="version_label">Version: %1$s</string>
+    <!-- Over the admin-set concurrent-stream limit: dialog title; the body is
+         the server's sentence (429 TOO_MANY_SESSIONS). -->
+    <string name="too_many_streams_title">Too many streams</string>
 
     <!-- Report a problem (detail screen action + ReportProblemDialog) -->
     <string name="report_problem">Report a problem</string>

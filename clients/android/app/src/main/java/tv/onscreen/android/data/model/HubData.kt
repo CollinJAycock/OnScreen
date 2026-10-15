@@ -69,6 +69,9 @@ data class HubItem(
     val show_id: String? = null,
     val season_number: Int? = null,
     val episode_number: Int? = null,
+    /** v2.6. The last episode a multi-episode file covers ("S1 · E1–E2");
+     *  null for a single episode and from older servers. */
+    val episode_number_end: Int? = null,
 )
 
 /** "Recently added to <library>" strip — library info denormalized so

@@ -58,7 +58,45 @@ data class PlaybackDecisionRequest(
 @JsonClass(generateAdapter = true)
 data class PlaybackDecision(
     val decision: String,
+    /** The file the decision is for: a stacked movie's first part when the
+     *  request named any of its parts. */
     val file_id: String? = null,
+    /** Why the server overrode the capability verdict: remote_bitrate_limit,
+     *  quality_profile, or [REASON_OPTIMIZED_VERSION] (v2.6). */
+    val reason: String? = null,
+    /** v2.6, with reason optimized_version and decision directPlay: the
+     *  pre-made MP4 to play instead of transcoding the source. Only sent to a
+     *  client that declares optimized=1 (PlaybackHelper's header). */
+    val optimized_version: OptimizedVersion? = null,
+    /** v2.6. The verdict for the source itself when [optimized_version]
+     *  replaced it — what to fall back to if the version can't be played. */
+    val source_decision: String? = null,
+) {
+    /** The optimized version to play, when the server picked one. */
+    val optimized: OptimizedVersion?
+        get() = optimized_version?.takeIf { reason == REASON_OPTIMIZED_VERSION && it.stream_url.isNotBlank() }
+
+    companion object {
+        const val REASON_OPTIMIZED_VERSION = "optimized_version"
+    }
+}
+
+/** A pre-made optimized version of an item (v2.6, "Optimize…" on the web):
+ *  a progressive MP4, H.264 + stereo AAC, served from [stream_url]
+ *  (/media/optimized/{id}). Never one of the item's files. */
+@JsonClass(generateAdapter = true)
+data class OptimizedVersion(
+    val id: String,
+    /** The source file it was made from (a stacked movie's first part). */
+    val file_id: String? = null,
+    val label: String? = null,
+    val stream_url: String = "",
+    /** 24 h token bound to this version, the URL credential for players that
+     *  can't send a header — like ItemFile.stream_token. */
+    val stream_token: String? = null,
+    val height: Int? = null,
+    val bitrate_kbps: Int? = null,
+    val duration_ms: Long? = null,
 )
 
 @JsonClass(generateAdapter = true)

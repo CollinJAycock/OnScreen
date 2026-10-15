@@ -108,6 +108,19 @@
             android:clipChildren="false"
             android:clipToPadding="false">
 
+            <!-- Clear logo (v2.6): shown in place of the title text on a
+                 movie or show that has one, once it has loaded. Its
+                 contentDescription carries the title. -->
+            <ImageView
+                android:id="@+id/title_logo"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:maxWidth="560dp"
+                android:maxHeight="140dp"
+                android:adjustViewBounds="true"
+                android:scaleType="fitStart"
+                android:visibility="gone" />
+
             <TextView
                 android:id="@+id/title"
                 android:layout_width="wrap_content"
@@ -184,6 +197,45 @@
                     android:focusable="true"
                     android:visibility="gone"
                     android:text="@string/play_from_beginning" />
+
+                <!-- Version picker (v2.6): a movie or episode with more than
+                     one version (editions, encodes; a stacked movie's parts
+                     count as one). Hidden otherwise; DetailFragment wires it. -->
+                <Button
+                    android:id="@+id/btn_version"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="14dp"
+                    android:paddingHorizontal="28dp"
+                    android:background="@drawable/btn_pill_secondary"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textAllCaps="false"
+                    android:maxLines="1"
+                    android:ellipsize="end"
+                    android:maxWidth="360dp"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:visibility="gone" />
+
+                <!-- Instant mix (v2.6) on an artist or album: plays a mix
+                     seeded from it as a queue. Hidden for other types. -->
+                <Button
+                    android:id="@+id/btn_instant_mix"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="14dp"
+                    android:paddingHorizontal="28dp"
+                    android:background="@drawable/btn_pill_secondary"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textAllCaps="false"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:visibility="gone"
+                    android:text="@string/instant_mix" />
 
                 <!-- Watched marks: "Mark watched / unwatched" on a movie or
                      episode, "Mark all …" on a show or season. Hidden for

@@ -86,7 +86,7 @@ class DetailViewModelWatchStateTest {
     @Test
     fun `show load carries up-next alongside the seasons`() = runTest(dispatcher) {
         stubShow()
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
 
@@ -98,7 +98,7 @@ class DetailViewModelWatchStateTest {
     @Test
     fun `up-next failure (older server) still loads the show with no up-next`() = runTest(dispatcher) {
         stubShow(upNext = null)
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
 
@@ -110,7 +110,7 @@ class DetailViewModelWatchStateTest {
     @Test
     fun `movies do not ask for up-next and read watch_state`() = runTest(dispatcher) {
         coEvery { itemRepo.getItem("m1") } returns movie(watchState = "watched")
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -126,7 +126,7 @@ class DetailViewModelWatchStateTest {
         coEvery { itemRepo.getItem("m1") } returns movie(watchState = "in_progress", offset = 60_000)
         val gate = CompletableDeferred<Unit>()
         coEvery { itemRepo.setWatched("m1", true) } coAnswers { gate.await() }
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
         val events = collectEvents(vm)
@@ -147,7 +147,7 @@ class DetailViewModelWatchStateTest {
     fun `toggleWatched on a watched movie marks unwatched`() = runTest(dispatcher) {
         coEvery { itemRepo.getItem("m1") } returns movie(watchState = "watched")
         coEvery { itemRepo.setWatched("m1", false) } just Runs
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -162,7 +162,7 @@ class DetailViewModelWatchStateTest {
     fun `toggleWatched failure rolls back and reports rate limiting`() = runTest(dispatcher) {
         coEvery { itemRepo.getItem("m1") } returns movie(offset = 60_000)
         coEvery { itemRepo.setWatched("m1", true) } throws http(429)
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
         val events = collectEvents(vm)
@@ -181,7 +181,7 @@ class DetailViewModelWatchStateTest {
     fun `a second toggle while one is in flight is ignored`() = runTest(dispatcher) {
         coEvery { itemRepo.getItem("m1") } returns movie()
         coEvery { itemRepo.setWatched("m1", true) } just Runs
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -199,7 +199,7 @@ class DetailViewModelWatchStateTest {
             coEvery { itemRepo.getItem("m1") } returns movie(watchState = "in_progress", offset = 60_000)
             val gate = CompletableDeferred<Unit>()
             coEvery { itemRepo.setWatched("m1", true) } coAnswers { gate.await() }
-            val vm = DetailViewModel(itemRepo, favRepo)
+            val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
             vm.load("m1")
             advanceUntilIdle()
 
@@ -222,7 +222,7 @@ class DetailViewModelWatchStateTest {
     fun `a reload that started before the mark settled cannot undo it`() = runTest(dispatcher) {
         coEvery { itemRepo.getItem("m1") } returns movie(watchState = "in_progress")
         coEvery { itemRepo.setWatched("m1", true) } just Runs
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -254,7 +254,7 @@ class DetailViewModelWatchStateTest {
     fun `markAll marks the show then re-reads episodes and up-next`() = runTest(dispatcher) {
         stubShow()
         coEvery { itemRepo.setWatched("s1", true) } just Runs
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
         val events = collectEvents(vm)
@@ -280,7 +280,7 @@ class DetailViewModelWatchStateTest {
     fun `markAll failure leaves the episodes untouched`() = runTest(dispatcher) {
         stubShow()
         coEvery { itemRepo.setWatched("s1", false) } throws RuntimeException("offline")
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
         val before = vm.uiState.value.seasons
@@ -298,7 +298,7 @@ class DetailViewModelWatchStateTest {
     fun `markAll falls back to a local patch when a season re-read fails`() = runTest(dispatcher) {
         stubShow()
         coEvery { itemRepo.setWatched("s1", false) } just Runs
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
 
@@ -319,7 +319,7 @@ class DetailViewModelWatchStateTest {
         stubShow()
         val gate = CompletableDeferred<Unit>()
         coEvery { itemRepo.setWatched("e21", true) } coAnswers { gate.await() }
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
 
@@ -343,7 +343,7 @@ class DetailViewModelWatchStateTest {
     fun `episode toggle failure restores the row`() = runTest(dispatcher) {
         stubShow()
         coEvery { itemRepo.setWatched("e11", false) } throws http(500)
-        val vm = DetailViewModel(itemRepo, favRepo)
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
         val events = collectEvents(vm)

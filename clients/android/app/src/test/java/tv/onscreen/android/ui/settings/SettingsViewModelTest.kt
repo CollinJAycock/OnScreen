@@ -4,6 +4,8 @@ import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.mockk
+import io.mockk.slot
+import okhttp3.ResponseBody.Companion.toResponseBody
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -183,5 +185,64 @@ class SettingsViewModelTest {
 
         coVerify { scrobble.setListenBrainz("", false) }
         assertThat(vm.uiState.value.scrobbleLinked).isFalse()
+    }
+
+    // ── Playback quality (v2.6) ─────────────────────────────────────────────
+
+    @Test
+    fun `saveQuality writes through the repository and shows the re-read profile`() = runTest(dispatcher) {
+        val prefsRepo = mockk<PreferencesRepository>()
+        coEvery { prefsRepo.refresh() } returns UserPreferences()
+        val after = UserPreferences(max_video_height = 720)
+        val change = slot<(tv.onscreen.android.data.model.QualityProfileBody) -> tv.onscreen.android.data.model.QualityProfileBody>()
+        coEvery { prefsRepo.setQualityProfile(capture(change)) } returns after
+        val vm = newViewModel(prefsRepo, mockk())
+        vm.load(null, null)
+        advanceUntilIdle()
+
+        vm.saveQuality { it.copy(max_video_height = 720) }
+        runCurrent()
+
+        assertThat(vm.uiState.value.preferences).isEqualTo(after)
+        assertThat(vm.uiState.value.saved).isTrue()
+        // The change touches its own field only.
+        val base = tv.onscreen.android.data.model.QualityProfileBody(null, 8_000, 192, "hevc", true)
+        assertThat(change.captured(base)).isEqualTo(base.copy(max_video_height = 720))
+    }
+
+    @Test
+    fun `saveQuality shows the server's reason for a refused value`() = runTest(dispatcher) {
+        val prefsRepo = mockk<PreferencesRepository>()
+        coEvery { prefsRepo.refresh() } returns UserPreferences()
+        coEvery { prefsRepo.setQualityProfile(any()) } throws retrofit2.HttpException(
+            retrofit2.Response.error<Unit>(
+                400,
+                """{"error":{"code":"BAD_REQUEST","message":"max_video_bitrate_kbps must be at least 200, or null for no limit"}}"""
+                    .toResponseBody(null),
+            ),
+        )
+        val vm = newViewModel(prefsRepo, mockk())
+        vm.load(null, null)
+        advanceUntilIdle()
+
+        vm.saveQuality { it.copy(max_video_bitrate_kbps = 100) }
+        advanceUntilIdle()
+
+        assertThat(vm.uiState.value.error).isEqualTo("max_video_bitrate_kbps must be at least 200, or null for no limit")
+        assertThat(vm.uiState.value.saved).isFalse()
+    }
+
+    @Test
+    fun `saveQuality writes nothing before preferences loaded`() = runTest(dispatcher) {
+        val prefsRepo = mockk<PreferencesRepository>()
+        coEvery { prefsRepo.refresh() } throws java.io.IOException("offline")
+        val vm = newViewModel(prefsRepo, mockk())
+        vm.load(null, null)
+        advanceUntilIdle()
+
+        vm.saveQuality { it.copy(max_video_height = 720) }
+        advanceUntilIdle()
+
+        coVerify(exactly = 0) { prefsRepo.setQualityProfile(any()) }
     }
 }

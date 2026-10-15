@@ -11,7 +11,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
+import coil.dispose
+import coil.load
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.isVisible
 import androidx.leanback.app.VideoSupportFragment
@@ -46,6 +49,7 @@ import kotlinx.coroutines.withContext
 import tv.onscreen.android.BuildConfig
 import tv.onscreen.android.R
 import tv.onscreen.android.data.api.PlaybackStop
+import tv.onscreen.android.data.api.StreamLimit
 import tv.onscreen.android.data.model.AudioStream
 import tv.onscreen.android.data.model.Chapter
 import tv.onscreen.android.data.model.ChildItem
@@ -59,6 +63,7 @@ import tv.onscreen.android.data.repository.TrickplayRepository
 import tv.onscreen.android.playback.AudioItemTypes
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
+import tv.onscreen.android.playback.MediaVersions
 import tv.onscreen.android.playback.withBufferProfile
 import tv.onscreen.android.playback.withoutStuckDetection
 import tv.onscreen.android.ui.KeyEventHandler
@@ -261,6 +266,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  Watch Next publisher to upsert title / poster / type metadata
      *  into the system Continue Watching row. */
     private var currentItem: tv.onscreen.android.data.model.ItemDetail? = null
+    /** The file of [currentItem] being played (PlaybackUiState.file): the
+     *  picked version, or a stacked movie's first part. */
+    private var currentFile: tv.onscreen.android.data.model.ItemFile? = null
     /** Periodic publisher that re-asserts the Watch Next row every
      *  ~30 s during playback. Cancelled on pause / end / view destroy. */
     private var watchNextJob: Job? = null
@@ -298,6 +306,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         private const val ARG_SPEED_BOOK_ID = "speed_book_id"
         private const val ARG_SPEED_RATE = "speed_rate"
         private const val ARG_START_PAUSED = "start_paused"
+        private const val ARG_FILE_ID = "file_id"
         private const val UPDATE_PERIOD_MS = 1000
 
         /** Fraction of view height to keep clear beneath subtitle cues.
@@ -321,20 +330,27 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         /** Load tries for a side-loaded subtitle (see playSource). */
         private const val SUBTITLE_LOAD_TRIES = 8
 
+        /** View tag of the overlay's clear logo (bindPlayerLogo). */
+        private const val PLAYER_LOGO_TAG = "player_title_logo"
+
         /** [bookSpeed]: set when chaining from one chapter of a book to the
          *  next — the speed the book was playing at (see goToNextEpisode).
          *  [startPaused]: open at [startMs] without playing (see
-         *  resumeAfterScreensaver). */
+         *  resumeAfterScreensaver).
+         *  [fileId]: the version picked on the detail screen
+         *  (MediaVersions); null plays the first. */
         fun newInstance(
             itemId: String,
             startMs: Long = 0,
             bookSpeed: BookSpeed? = null,
             startPaused: Boolean = false,
+            fileId: String? = null,
         ): PlaybackFragment {
             return PlaybackFragment().apply {
                 arguments = Bundle().apply {
                     putString(ARG_ITEM_ID, itemId)
                     putLong(ARG_START_MS, startMs)
+                    if (fileId != null) putString(ARG_FILE_ID, fileId)
                     if (bookSpeed != null) {
                         putString(ARG_SPEED_BOOK_ID, bookSpeed.bookId)
                         putFloat(ARG_SPEED_RATE, bookSpeed.rate)
@@ -391,6 +407,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
         val startMs = arguments?.getLong(ARG_START_MS, 0) ?: 0
+        // An instant mix plays on only through its own tracks (PlayQueue).
+        tv.onscreen.android.playback.PlayQueue.retainFor(itemId)
         val bookSpeed = arguments?.let { args ->
             args.getString(ARG_SPEED_BOOK_ID)?.let { BookSpeed(it, args.getFloat(ARG_SPEED_RATE, AudiobookSpeed.NORMAL)) }
         }
@@ -401,7 +419,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             matchFrameRateEnabled = prefs.matchFrameRate.first()
 
             initPlayer()
-            viewModel.prepare(itemId, startMs, serverUrl, bookSpeed, resumedSession)
+            viewModel.prepare(
+                itemId, startMs, serverUrl, bookSpeed, resumedSession,
+                fileId = arguments?.getString(ARG_FILE_ID),
+            )
             startAdminStopWatch(itemId)
 
             viewModel.uiState.collectLatest { state ->
@@ -481,7 +502,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                             // A movie's display mode is no use to music.
                             frameRates()?.releaseNow()
                         } else {
-                            matchFrameRate(state.item?.files?.firstOrNull()?.frame_rate?.toFloat())
+                            matchFrameRate(state.file?.frame_rate?.toFloat())
                         }
                         // An explicit in-session choice (picked from the
                         // subtitle dialog) outranks the saved preference: a
@@ -498,14 +519,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     }
                 }
 
-                glue?.title = state.item?.title ?: ""
-                glue?.subtitle = state.item?.year?.toString() ?: ""
-
                 markers = state.markers
                 dismissedMarkers.clear()
-                chapters = state.item?.files?.firstOrNull()?.chapters ?: emptyList()
+                chapters = state.file?.chapters ?: emptyList()
                 currentItemType = state.item?.type.orEmpty()
                 currentItem = state.item
+                currentFile = state.file
+
+                // After currentItem: the title block's logo reads it.
+                glue?.title = state.item?.title ?: ""
+                glue?.subtitle = state.item?.year?.toString() ?: ""
 
                 applyListeningSpeed(state.listeningRate)
                 refreshSecondaryActions()
@@ -1170,6 +1193,23 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val host = VideoSupportFragmentGlueHost(this)
 
         glue = object : PlaybackTransportControlGlue<LeanbackPlayerAdapter>(requireContext(), adapter) {
+            // The overlay's title block, as the glue's own (title + subtitle),
+            // plus a movie's clear logo in place of the title (bindPlayerLogo).
+            override fun onCreateRowPresenter(): androidx.leanback.widget.PlaybackRowPresenter {
+                val rp = super.onCreateRowPresenter()
+                (rp as? androidx.leanback.widget.PlaybackTransportRowPresenter)?.setDescriptionPresenter(
+                    object : androidx.leanback.widget.AbstractDetailsDescriptionPresenter() {
+                        override fun onBindDescription(vh: ViewHolder, item: Any) {
+                            val g = item as androidx.leanback.media.PlaybackBaseControlGlue<*>
+                            vh.title.text = g.title
+                            vh.subtitle.text = g.subtitle
+                            bindPlayerLogo(vh)
+                        }
+                    },
+                )
+                return rp
+            }
+
             override fun onCreatePrimaryActions(adapter: ArrayObjectAdapter) {
                 // Order: Rewind, [PlayPause inserted by super], FastForward.
                 // PlaybackTransportControlGlue inserts its own play/pause
@@ -1546,9 +1586,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 // downloads), which live server-side, not in the container.
                 // Direct play goes through DefaultMediaSourceFactory, which —
                 // unlike the hand-built HlsMediaSource below — honours
-                // subtitleConfigurations.
+                // subtitleConfigurations. An optimized version (v2.6) carries
+                // no subtitle tracks of its own: every one is side-loaded,
+                // as on a server session.
                 val externalSubs = subtitleConfigurations(
-                    viewModel.uiState.value.subtitleSources.filter { it.embeddedIndex == null },
+                    viewModel.uiState.value.subtitleSources.filter {
+                        source.optimized || it.embeddedIndex == null
+                    },
                 )
                 exo.setMediaItem(
                     MediaItem.Builder()
@@ -1985,16 +2029,89 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         speedAction?.label1 = getString(R.string.speed_label, AudiobookSpeed.label(speed))
     }
 
+    /**
+     * The overlay's title as a clear logo (v2.6), for a movie that has one:
+     * an image above the title text, which is hidden once the logo has
+     * loaded (and stays when it fails or there is none). The logo carries
+     * the title as its content description. Posted: the presenter sets the
+     * title's visibility from its text after this bind returns, and a cached
+     * logo can load before that.
+     */
+    private fun bindPlayerLogo(vh: androidx.leanback.widget.AbstractDetailsDescriptionPresenter.ViewHolder) {
+        val column = vh.view as? ViewGroup ?: return
+        var logoView = column.findViewWithTag<ImageView>(PLAYER_LOGO_TAG)
+        val item = currentItem
+        val path = item?.let { tv.onscreen.android.ui.detail.DetailMeta.logoPath(it) }
+        if (path == null || serverUrl.isEmpty()) {
+            logoView?.visibility = View.GONE
+            return
+        }
+        if (logoView == null) {
+            val ctx = column.context
+            val dp = ctx.resources.displayMetrics.density
+            logoView = ImageView(ctx).apply {
+                tag = PLAYER_LOGO_TAG
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_START
+                maxHeight = (96 * dp).toInt()
+                maxWidth = (420 * dp).toInt()
+                visibility = View.GONE
+            }
+            column.addView(
+                logoView, 0,
+                ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
+        }
+        val logo = logoView
+        logo.contentDescription = item.title
+        logo.load(tv.onscreen.android.data.artworkOriginalUrl(serverUrl, path)) {
+            listener(
+                onSuccess = { _, _ ->
+                    logo.post {
+                        logo.visibility = View.VISIBLE
+                        vh.title.visibility = View.GONE
+                    }
+                },
+                onError = { _, _ -> logo.post { logo.visibility = View.GONE } },
+            )
+        }
+    }
+
     private fun showChapterPicker() {
         if (chapters.isEmpty()) return
         val labels = chapters.mapIndexed { i, c ->
             val title = c.title.ifBlank { getString(R.string.chapter_n, i + 1) }
             "${i + 1}. $title · ${fmtTimecode(c.start_ms)}"
         }.toTypedArray()
+        // v2.6: chapters with thumbnails list as frame + label rows. A
+        // chapter without one (or a server that sends none) gets an empty
+        // frame; with none at all the list stays text-only.
+        val thumbs = chapters.map { PlaybackHelper.chapterThumbUrl(serverUrl, it.thumb_url) }
+        val rows: android.widget.ListAdapter = if (thumbs.any { it != null }) {
+            object : android.widget.ArrayAdapter<String>(requireContext(), R.layout.item_chapter_row, R.id.chapter_label, labels) {
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val row = super.getView(position, convertView, parent)
+                    val thumb = row.findViewById<ImageView>(R.id.chapter_thumb)
+                    val url = thumbs[position]
+                    if (url != null) {
+                        thumb.load(url) {
+                            placeholder(R.color.bg_elevated)
+                            error(R.color.bg_elevated)
+                        }
+                    } else {
+                        thumb.dispose()
+                        thumb.setImageDrawable(null)
+                    }
+                    return row
+                }
+            }
+        } else {
+            android.widget.ArrayAdapter(requireContext(), android.R.layout.select_dialog_item, labels)
+        }
 
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.chapters)
-            .setItems(labels) { d, idx ->
+            .setAdapter(rows) { d, idx ->
                 val target = chapters[idx].start_ms
                 // Server stores chapter offsets in content-time; HLS
                 // sessions need the player-time translation through
@@ -2058,6 +2175,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      */
     private fun applyAudioSelection(idx: Int) {
         val stream = audioStreams.getOrNull(idx) ?: return
+        val src = currentSource
+        if (src is PlaybackSource.DirectPlay && src.optimized) {
+            // An optimized version (v2.6) carries the default track only:
+            // another one plays from the source, the way the server judged
+            // it, started with that track. The first track is the default.
+            if (idx != 0 && viewModel.playsOptimized) {
+                viewModel.fallbackFromOptimized(player?.currentPosition ?: 0L, idx)
+            }
+            return
+        }
         if (currentSource is PlaybackSource.Hls) {
             // Transcode path (HLS) — emits a single audio track per
             // session, so a swap requires re-issuing the session with
@@ -2095,12 +2222,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     private fun subtitleRows(): List<SubtitleRow> {
         val sources = viewModel.uiState.value.subtitleSources
-        val isHls = viewModel.uiState.value.source is PlaybackSource.Hls
+        val sideLoadsAll = viewModel.uiState.value.source?.sideLoadsAllSubtitles == true
         // Side-loads carry their picker label (SubtitleLabel) already.
-        return if (isHls) {
-            // Every renderable track is a side-load (the session playlist
-            // carries no text streams). Image-based tracks are already
-            // filtered out — the server can't serve them as VTT.
+        return if (sideLoadsAll) {
+            // Every renderable track is a side-load (the session playlist,
+            // or an optimized version's MP4, carries no text streams).
+            // Image-based tracks are already filtered out — the server can't
+            // serve them as VTT.
             sources.map { s -> SubtitleRow(s.label, s.trackId, -1) }
         } else {
             // Direct play: container tracks render natively (PGS included) in
@@ -2162,7 +2290,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // keep its OpenSubtitles strings in the APK.
         if (!BuildConfig.ONLINE_SUBTITLE_SEARCH) return
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
-        val fileId = viewModel.uiState.value.item?.files?.firstOrNull()?.id ?: return
+        val fileId = viewModel.uiState.value.file?.id ?: return
         val ctx = requireContext()
         val loading = AlertDialog.Builder(ctx, R.style.PlayerDialog)
             .setTitle(R.string.subtitles_searching)
@@ -2546,6 +2674,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // session start. The sentence is shown verbatim.
             PlaybackStop.isSentinel(message) ->
                 getString(R.string.playback_stopped_title) to PlaybackStop.sentenceOf(message)
+            // Over the user's concurrent-stream limit (429 TOO_MANY_SESSIONS):
+            // the server's sentence, verbatim. Nothing retries it.
+            StreamLimit.isSentinel(message) ->
+                getString(R.string.too_many_streams_title) to StreamLimit.textOf(message)
             // Mid-session heartbeat 403 that is not the watch limit — library
             // access revoked or rating ceiling lowered (ProgressTracker).
             message == ProgressTracker.CONTENT_REVOKED ->
@@ -2616,10 +2748,15 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             playerWindowDynamic = exo?.isCurrentMediaItemDynamic ?: false,
         )
 
-    /** [PlaybackHelper.listedDurationMs] for [item] played from its first
-     *  file, the one PlaybackViewModel.prepare plays. */
-    private fun listedDurationMs(item: tv.onscreen.android.data.model.ItemDetail?): Long? =
-        PlaybackHelper.listedDurationMs(item?.files?.firstOrNull()?.duration_ms, item?.duration_ms)
+    /** [PlaybackHelper.listedDurationMs] for [item] played from the file
+     *  PlaybackViewModel.prepare picked ([currentFile]; its first when not
+     *  known yet). A stacked movie runs the item's length, not its first
+     *  part's (MediaVersions.listedDurationMs). */
+    private fun listedDurationMs(item: tv.onscreen.android.data.model.ItemDetail?): Long? {
+        val file = currentFile?.takeIf { f -> item?.files?.any { it.id == f.id } == true }
+            ?: MediaVersions.playFile(item?.files.orEmpty())
+        return MediaVersions.listedDurationMs(file, item?.duration_ms)
+    }
 
     override fun onStart() {
         super.onStart()
@@ -2659,7 +2796,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // Stopped again meanwhile: kept for the next wake.
         if (!isAdded || parentFragmentManager.isStateSaved) return true
         videoStoppedAtMs = null
-        replaceSelfWith(newInstance(itemId, resumeMs, startPaused = true))
+        replaceSelfWith(newInstance(itemId, resumeMs, startPaused = true, fileId = arguments?.getString(ARG_FILE_ID)))
         return true
     }
 

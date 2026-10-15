@@ -81,6 +81,72 @@ class NextSiblingResolverTest {
         assertThat(next?.id).isEqualTo("t3")
     }
 
+    // ── Multi-episode files (v2.6) ──────────────────────────────────────────
+    // An "S01E01-E02" file is one item: index 1, index_end 2.
+
+    @Test
+    fun `a multi-episode file continues after the end of its range`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("season-1") } returns listOf(
+            ChildItem(id = "e1-2", title = "e1-2", type = "episode", index = 1, index_end = 2),
+            ep("e3", 3),
+            ep("e4", 4),
+        )
+
+        val next = NextSiblingResolver(repo).resolve("e1-2", "episode", "season-1", 1)
+
+        assertThat(next?.id).isEqualTo("e3")
+    }
+
+    @Test
+    fun `a stray row for an episode the range covers is stepped over`() = runTest {
+        val repo = repo()
+        // A duplicate rip of E02 alongside the E01-E02 file: already played.
+        coEvery { repo.getChildren("season-1") } returns listOf(
+            ChildItem(id = "e1-2", title = "e1-2", type = "episode", index = 1, index_end = 2),
+            ep("e2", 2),
+            ep("e3", 3),
+        )
+
+        val next = NextSiblingResolver(repo).resolve("e1-2", "episode", "season-1", 1)
+
+        assertThat(next?.id).isEqualTo("e3")
+    }
+
+    @Test
+    fun `the end of the range passed by the caller is honoured too`() = runTest {
+        val repo = repo()
+        // The listing predates index_end (older server): the caller's own
+        // detail carried it.
+        coEvery { repo.getChildren("season-1") } returns
+            listOf(ep("e1", 1), ep("e2", 2), ep("e3", 3))
+
+        val next = NextSiblingResolver(repo).resolve("e1", "episode", "season-1", 2)
+
+        assertThat(next?.id).isEqualTo("e3")
+    }
+
+    @Test
+    fun `the last multi-episode file of a season falls through to the next season`() = runTest {
+        val repo = repo()
+        coEvery { repo.getChildren("season-1") } returns listOf(
+            ep("e1", 1),
+            ChildItem(id = "e2-3", title = "e2-3", type = "episode", index = 2, index_end = 3),
+        )
+        coEvery { repo.getItem("season-1") } returns ItemDetail(
+            id = "season-1", library_id = "lib", title = "S1", type = "season", parent_id = "show-1",
+        )
+        coEvery { repo.getChildren("show-1") } returns listOf(
+            ChildItem(id = "season-1", title = "S1", type = "season", index = 1),
+            ChildItem(id = "season-2", title = "S2", type = "season", index = 2),
+        )
+        coEvery { repo.getChildren("season-2") } returns listOf(ep("s2e1", 1))
+
+        val next = NextSiblingResolver(repo).resolve("e2-3", "episode", "season-1", 2)
+
+        assertThat(next?.id).isEqualTo("s2e1")
+    }
+
     // ── Multi-disc albums ───────────────────────────────────────────────────
     // Each disc numbers its tracks from 1, so by index alone the discs
     // interleave (disc 2 track 1 sorts next to disc 1 track 1).

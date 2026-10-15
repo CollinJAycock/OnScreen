@@ -17,6 +17,8 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
+import tv.onscreen.android.data.model.QualityProfile
+import tv.onscreen.android.data.model.QualityProfileBody
 import tv.onscreen.android.data.model.UserPreferences
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.MainActivity
@@ -86,6 +88,10 @@ class SettingsFragment : Fragment() {
         val scrobbleStatus = view.findViewById<TextView>(R.id.scrobble_status)
         val scrobbleBtn = view.findViewById<Button>(R.id.btn_scrobble)
         val frameRateBtn = view.findViewById<Button>(R.id.btn_match_frame_rate)
+        val heightBtn = view.findViewById<Button>(R.id.btn_quality_height)
+        val videoKbpsBtn = view.findViewById<Button>(R.id.btn_quality_video_bitrate)
+        val audioKbpsBtn = view.findViewById<Button>(R.id.btn_quality_audio_bitrate)
+        val codecBtn = view.findViewById<Button>(R.id.btn_quality_codec)
 
         viewLifecycleOwner.lifecycleScope.launch {
             val username = prefs.username.first()
@@ -105,6 +111,15 @@ class SettingsFragment : Fragment() {
                 val editable = state.prefsLoaded
                 audioBtn.isEnabled = editable
                 subtitleBtn.isEnabled = editable
+
+                // Playback quality: a value set elsewhere that no option
+                // lists shows as itself, never as "no limit".
+                val p = QualityProfile.fromPreferences(state.preferences)
+                heightBtn.text = QualityProfile.labelOf(heightOptions(p), p.max_video_height)
+                videoKbpsBtn.text = QualityProfile.labelOf(videoKbpsOptions(p), p.max_video_bitrate_kbps)
+                audioKbpsBtn.text = QualityProfile.labelOf(audioKbpsOptions(p), p.max_audio_bitrate_kbps)
+                codecBtn.text = QualityProfile.labelOf(QualityProfile.CODECS, p.preferred_video_codec)
+                for (b in listOf(heightBtn, videoKbpsBtn, audioKbpsBtn, codecBtn)) b.isEnabled = editable
 
                 scrobbleStatus.text = when {
                     !state.scrobbleLinked -> "ListenBrainz · Not linked"
@@ -153,6 +168,33 @@ class SettingsFragment : Fragment() {
                 .focusableOnTv()
                 .dismissOnViewDestroyed(this)
                 .show()
+        }
+
+        // Playback quality (v2.6): each pick saves the whole profile, the
+        // other fields echoed from a fresh read (SettingsViewModel.saveQuality).
+        heightBtn.setOnClickListener {
+            val p = QualityProfile.fromPreferences(currentPrefs)
+            showValuePicker(R.string.quality_max_resolution, heightOptions(p), p.max_video_height) { v ->
+                viewModel.saveQuality { it.copy(max_video_height = v) }
+            }
+        }
+        videoKbpsBtn.setOnClickListener {
+            val p = QualityProfile.fromPreferences(currentPrefs)
+            showValuePicker(R.string.quality_max_video_bitrate, videoKbpsOptions(p), p.max_video_bitrate_kbps) { v ->
+                viewModel.saveQuality { it.copy(max_video_bitrate_kbps = v) }
+            }
+        }
+        audioKbpsBtn.setOnClickListener {
+            val p = QualityProfile.fromPreferences(currentPrefs)
+            showValuePicker(R.string.quality_max_audio_bitrate, audioKbpsOptions(p), p.max_audio_bitrate_kbps) { v ->
+                viewModel.saveQuality { it.copy(max_audio_bitrate_kbps = v) }
+            }
+        }
+        codecBtn.setOnClickListener {
+            val p = QualityProfile.fromPreferences(currentPrefs)
+            showValuePicker(R.string.quality_video_format, QualityProfile.CODECS, p.preferred_video_codec) { v ->
+                viewModel.saveQuality { it.copy(preferred_video_codec = v) }
+            }
         }
 
         // A device setting (the TV, not the account): kept in this box's
@@ -253,6 +295,37 @@ class SettingsFragment : Fragment() {
             .setSingleChoiceItems(labels, checked) { d, idx ->
                 onSelect(options[idx].first)
                 d.dismiss()
+            }
+            .create()
+            .dismissOnViewDestroyed(this)
+            .show()
+    }
+
+    private fun heightOptions(p: QualityProfileBody) =
+        QualityProfile.withStored(QualityProfile.HEIGHTS, p.max_video_height, QualityProfile::heightLabel)
+
+    private fun videoKbpsOptions(p: QualityProfileBody) =
+        QualityProfile.withStored(QualityProfile.VIDEO_KBPS, p.max_video_bitrate_kbps, QualityProfile::videoKbpsLabel)
+
+    private fun audioKbpsOptions(p: QualityProfileBody) =
+        QualityProfile.withStored(QualityProfile.AUDIO_KBPS, p.max_audio_bitrate_kbps, QualityProfile::audioKbpsLabel)
+
+    /** [showOptionPicker] for a quality option list; picking the current
+     *  value again saves nothing. */
+    private fun <T> showValuePicker(
+        titleRes: Int,
+        options: List<QualityProfile.Option<T>>,
+        current: T?,
+        onSelect: (T?) -> Unit,
+    ) {
+        val labels = options.map { it.label }.toTypedArray()
+        val checked = options.indexOfFirst { it.value == current }.coerceAtLeast(0)
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(titleRes)
+            .setSingleChoiceItems(labels, checked) { d, idx ->
+                d.dismiss()
+                val picked = options[idx].value
+                if (isAdded && picked != current) onSelect(picked)
             }
             .create()
             .dismissOnViewDestroyed(this)

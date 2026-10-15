@@ -37,6 +37,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.api.PlaybackStop
+import tv.onscreen.android.data.api.TooManyStreamsException
 import tv.onscreen.android.data.device.ClientName
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.data.repository.AudiobookRepository
@@ -703,9 +704,17 @@ class OnScreenMediaSessionService : MediaSessionService() {
 
         // The session's names for the next item, looked up alongside the
         // play decision rather than after it.
-        val (verdict, names) = coroutineScope {
-            val names = async { NowPlaying.resolve(itemRepo, item) }
-            transcodeRepo.decide(itemId, file.id) to names.await()
+        val (verdict, names) = try {
+            coroutineScope {
+                val names = async { NowPlaying.resolve(itemRepo, item) }
+                transcodeRepo.decide(itemId, file.id)?.decision to names.await()
+            }
+        } catch (e: TooManyStreamsException) {
+            // Over the user's concurrent-stream limit: nothing plays next.
+            // The background has no dialog to show it on; the chain ends.
+            android.util.Log.i(TAG, "next track refused: ${e.message}")
+            if (activePlayer === player && activeItemId == fromItemId) releaseAndStop()
+            return
         }
         // A track this device can't decode (DSD, ALAC on some panels) comes
         // back as a remux or transcode. Chaining always direct-played, so

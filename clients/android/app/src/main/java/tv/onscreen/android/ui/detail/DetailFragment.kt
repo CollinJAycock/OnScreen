@@ -22,10 +22,13 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
+import tv.onscreen.android.data.artworkOriginalUrl
 import tv.onscreen.android.data.artworkUrl
 import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.prefs.ServerPrefs
+import tv.onscreen.android.playback.MediaVersions
+import tv.onscreen.android.playback.PlayQueue
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.WatchStateUi
@@ -65,6 +68,11 @@ class DetailFragment : Fragment() {
     /** Up-next episode to scroll the episode list to on the first bind of a
      *  show / season (the season tab holding it is opened too). */
     private var initialScrollEpisodeId: String? = null
+
+    /** The version picked for a movie / episode with several
+     *  (bindVersionPicker): the file Play starts. Kept for the fragment's
+     *  life, so a return from the player keeps the pick. */
+    private var selectedFileId: String? = null
 
     companion object {
         private const val ARG_ITEM_ID = "item_id"
@@ -231,17 +239,10 @@ class DetailFragment : Fragment() {
             fanart.load(artworkUrl(serverUrl, fanartPath, 1280)) { crossfade(true) }
         }
 
-        titleView.text = item.title
+        bindTitle(root, titleView, item)
 
-        val parts = mutableListOf<String>()
-        item.year?.let { parts.add(it.toString()) }
-        item.content_rating?.let { parts.add(it) }
-        item.duration_ms?.let { ms ->
-            val min = ms / 60_000
-            parts.add(if (min >= 60) "${min / 60}h ${min % 60}m" else "${min}m")
-        }
-        item.rating?.let { parts.add("★ %.1f".format(it)) }
-        if (item.genres.isNotEmpty()) parts.add(item.genres.take(3).joinToString(", "))
+        // Year · rating · runtime · genres · studios / networks (v2.6).
+        val parts = DetailMeta.lineParts(item)
         subtitleView.text = parts.joinToString(" · ")
         subtitleView.visibility = if (parts.isEmpty()) View.GONE else View.VISIBLE
 
@@ -260,8 +261,112 @@ class DetailFragment : Fragment() {
         // Play called playItem() with the CONTAINER id — which has no files, so
         // playback died with "No playable file".
         configureEpisodes(root, item, seasons)
+        bindVersionPicker(root, item)
         configurePlayButtons(item, btnPlay, btnFromStart)
+        bindInstantMix(root, item)
         bindReportProblem(root, item)
+    }
+
+    /** "Instant Mix" on an artist or album (v2.6). */
+    private fun bindInstantMix(root: View, item: ItemDetail) {
+        val btn = root.findViewById<Button>(R.id.btn_instant_mix) ?: return
+        btn.visibility = if (item.type == "artist" || item.type == "album") View.VISIBLE else View.GONE
+        btn.setOnClickListener { startInstantMix(item.id) }
+    }
+
+    /** Play an instant mix seeded from [seedId] (an artist, album or track)
+     *  as a queue: DetailViewModel.instantMix makes it the PlayQueue. */
+    private fun startInstantMix(seedId: String) {
+        viewModel.instantMix(seedId) { firstTrackId ->
+            if (!isAdded) return@instantMix
+            if (firstTrackId == null) {
+                toast(R.string.instant_mix_failed)
+            } else {
+                playItem(firstTrackId, 0L, keepQueue = true)
+            }
+        }
+    }
+
+    /** Long-press menu on an album's track row: an instant mix from it. */
+    private fun showTrackMenu(track: ChildItem) {
+        if (!isAdded) return
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(track.title)
+            .setItems(arrayOf(getString(R.string.instant_mix))) { d, _ ->
+                d.dismiss()
+                if (isAdded) startInstantMix(track.id)
+            }
+            .create()
+            .dismissOnViewDestroyed(this)
+            .show()
+    }
+
+    /**
+     * The title: a movie's or show's clear logo (v2.6, a transparent PNG
+     * fetched at its own size) in place of the text once it has loaded; the
+     * text stays when there is none or it fails. The logo carries the title
+     * as its content description, so TalkBack still reads it.
+     */
+    private fun bindTitle(root: View, titleView: TextView, item: ItemDetail) {
+        titleView.text = item.title
+        titleView.visibility = View.VISIBLE
+        val logoView = root.findViewById<ImageView>(R.id.title_logo) ?: return
+        val logo = DetailMeta.logoPath(item)
+        if (logo == null || serverUrl.isEmpty()) {
+            logoView.visibility = View.GONE
+            return
+        }
+        logoView.contentDescription = item.title
+        logoView.load(artworkOriginalUrl(serverUrl, logo)) {
+            listener(
+                onSuccess = { _, _ ->
+                    logoView.visibility = View.VISIBLE
+                    titleView.visibility = View.GONE
+                },
+                onError = { _, _ ->
+                    logoView.visibility = View.GONE
+                    titleView.visibility = View.VISIBLE
+                },
+            )
+        }
+    }
+
+    /**
+     * "Version: …" on a movie or episode with more than one version
+     * (MediaVersions: editions and encodes; a stacked movie's parts are one).
+     * The pick is what Play / Resume start; the first listed (the server's
+     * best) until then.
+     */
+    private fun bindVersionPicker(root: View, item: ItemDetail) {
+        val btn = root.findViewById<Button>(R.id.btn_version) ?: return
+        val versions = if (item.type == "movie" || item.type == "episode") {
+            MediaVersions.versions(item.files)
+        } else {
+            emptyList()
+        }
+        if (versions.size < 2) {
+            btn.visibility = View.GONE
+            selectedFileId = null
+            return
+        }
+        val current = versions.firstOrNull { it.fileId == selectedFileId } ?: versions.first()
+        selectedFileId = current.fileId
+        btn.visibility = View.VISIBLE
+        btn.text = getString(R.string.version_label, current.label)
+        btn.setOnClickListener {
+            val checked = versions.indexOfFirst { it.fileId == selectedFileId }.coerceAtLeast(0)
+            AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+                .setTitle(R.string.version)
+                .setSingleChoiceItems(versions.map { it.label }.toTypedArray(), checked) { d, idx ->
+                    d.dismiss()
+                    if (!isAdded) return@setSingleChoiceItems
+                    selectedFileId = versions[idx].fileId
+                    btn.text = getString(R.string.version_label, versions[idx].label)
+                }
+                .create()
+                .dismissOnViewDestroyed(this)
+                .show()
+        }
     }
 
     /** "Report a problem" on a movie / episode / show — ReportProblemDialog
@@ -382,15 +487,16 @@ class DetailFragment : Fragment() {
                 // resumeOverrideMs (the position the player just handed
                 // back) wins over the server-loaded offset so the label
                 // is accurate the instant we return from the player.
+                // The version picked (bindVersionPicker), read at the click.
                 val resumeMs = resumeOverrideMs ?: item.view_offset_ms
                 if (resumeMs > 0) {
                     btnPlay.text = getString(R.string.resume, fmtTimecode(resumeMs))
-                    btnPlay.setOnClickListener { playItem(item.id, resumeMs) }
+                    btnPlay.setOnClickListener { playItem(item.id, resumeMs, selectedFileId) }
                     btnFromStart.visibility = View.VISIBLE
-                    btnFromStart.setOnClickListener { playItem(item.id, 0L) }
+                    btnFromStart.setOnClickListener { playItem(item.id, 0L, selectedFileId) }
                 } else {
                     btnPlay.text = getString(R.string.play)
-                    btnPlay.setOnClickListener { playItem(item.id, 0L) }
+                    btnPlay.setOnClickListener { playItem(item.id, 0L, selectedFileId) }
                     btnFromStart.visibility = View.GONE
                 }
             }
@@ -461,11 +567,12 @@ class DetailFragment : Fragment() {
             // instead of being mis-played as media. Tracks / episodes
             // / podcast episodes still hit PlaybackFragment via
             // Navigator's else branch.
-            // Show / season episode rows get a long-press watched toggle.
-            val onLongClick: ((ChildItem) -> Unit)? = if (WatchStateUi.isWatchContainer(item.type)) {
-                { child -> if (child.type == "episode") showEpisodeMenu(child) }
-            } else {
-                null
+            // Show / season episode rows get a long-press watched toggle;
+            // an album's tracks an instant mix (v2.6).
+            val onLongClick: ((ChildItem) -> Unit)? = when {
+                WatchStateUi.isWatchContainer(item.type) -> { child -> if (child.type == "episode") showEpisodeMenu(child) }
+                item.type == "album" -> { child -> if (child.type == "track") showTrackMenu(child) }
+                else -> null
             }
             episodeAdapter = EpisodeAdapter(serverUrl, item.poster_path, onLongClick) { child ->
                 Navigator.open(parentFragmentManager, child.id, child.type, child.view_offset_ms)
@@ -655,9 +762,13 @@ class DetailFragment : Fragment() {
         if (isAdded) Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
     }
 
-    private fun playItem(itemId: String, startMs: Long) {
+    /** [fileId]: the version to play (bindVersionPicker); null = the first.
+     *  [keepQueue]: the start of an instant mix, whose PlayQueue was just
+     *  set; anything else the user starts here ends a mix that was playing. */
+    private fun playItem(itemId: String, startMs: Long, fileId: String? = null, keepQueue: Boolean = false) {
+        if (!keepQueue) PlayQueue.clear()
         parentFragmentManager.beginTransaction()
-            .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, startMs))
+            .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, startMs, fileId = fileId))
             .addToBackStack(null)
             .commit()
     }

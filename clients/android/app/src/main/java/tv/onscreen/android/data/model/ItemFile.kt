@@ -26,6 +26,16 @@ data class ItemFile(
      *  servers before it was sent, and for audio. */
     val frame_rate: Double? = null,
     val duration_ms: Long? = null,
+    /** v2.6. The version this file is, as its name gives it ("Director's
+     *  Cut", "Extended"): the version picker's label when present. */
+    val edition: String? = null,
+    /** v2.6. 1-based part number when the file is one part of a stacked
+     *  movie (cd1 + cd2). Null for every other file. Such a file is never
+     *  played on its own: the server streams all parts as one movie from a
+     *  session started with the first part's id, and [duration_ms] is only
+     *  the part's own length (the item's covers the whole movie). See
+     *  MediaVersions. */
+    val part_index: Int? = null,
     val faststart: Boolean = false,
     val audio_streams: List<AudioStream> = emptyList(),
     val subtitle_streams: List<SubtitleStream> = emptyList(),

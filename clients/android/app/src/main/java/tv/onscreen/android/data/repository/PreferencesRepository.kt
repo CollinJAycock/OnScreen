@@ -1,6 +1,10 @@
 package tv.onscreen.android.data.repository
 
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import tv.onscreen.android.data.api.OnScreenApi
+import tv.onscreen.android.data.model.QualityProfile
+import tv.onscreen.android.data.model.QualityProfileBody
 import tv.onscreen.android.data.model.UserPreferences
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -38,6 +42,22 @@ open class PreferencesRepository @Inject constructor(
         // have the app believe it changed values the server ignored.
         cached = null
         return get()
+    }
+
+    /**
+     * Change the quality profile (v2.6). The endpoint replaces the whole
+     * profile, so [change] is applied to the profile as a FRESH read holds
+     * it — the fields it leaves alone (forced_subtitles_only among them) go
+     * back as they are, never cleared by a stale or default value. Returns
+     * the preferences re-read after the write. A refusal (400) throws the
+     * HttpException.
+     */
+    open suspend fun setQualityProfile(change: (QualityProfileBody) -> QualityProfileBody): UserPreferences {
+        val body = change(QualityProfile.fromPreferences(refresh()))
+        api.setQualityProfile(
+            QualityProfile.toJson(body).toRequestBody("application/json; charset=utf-8".toMediaType()),
+        )
+        return refresh()
     }
 
     /** Drop the cached preferences. MUST be called on every identity change:

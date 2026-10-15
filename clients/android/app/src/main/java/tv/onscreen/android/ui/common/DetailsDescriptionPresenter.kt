@@ -10,22 +10,8 @@ class DetailsDescriptionPresenter : AbstractDetailsDescriptionPresenter() {
 
         vh.title.text = detail.title
 
-        val parts = mutableListOf<String>()
-        detail.year?.let { parts.add(it.toString()) }
-        detail.content_rating?.let { parts.add(it) }
-        detail.duration_ms?.let { ms ->
-            val min = ms / 60_000
-            if (min >= 60) {
-                parts.add("${min / 60}h ${min % 60}m")
-            } else {
-                parts.add("${min}m")
-            }
-        }
-        detail.rating?.let { parts.add("★ %.1f".format(it)) }
-        if (detail.genres.isNotEmpty()) {
-            parts.add(detail.genres.take(3).joinToString(", "))
-        }
-        vh.subtitle.text = parts.joinToString(" · ")
+        // The detail screen's own line (studios / networks included).
+        vh.subtitle.text = tv.onscreen.android.ui.detail.DetailMeta.lineParts(detail).joinToString(" · ")
 
         vh.body.text = detail.summary ?: ""
     }
