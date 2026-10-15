@@ -1266,8 +1266,9 @@ private fun PlayerHost(
         // top: when the user is connected and presses it, build a LOAD
         // payload from the active item + file and send it to the
         // receiver. Only surfaces when the file is direct-play castable
-        // (matches the web isCastable predicate).
-        val castFile = ui.item?.files?.firstOrNull()?.let { f ->
+        // (matches the web isCastable predicate). Never one part of a stacked
+        // movie: the receiver would play that part alone and stop.
+        val castFile = ui.item?.files?.firstOrNull()?.takeIf { it.part_index == null }?.let { f ->
             CastMediaInfo.File(
                 id = f.id,
                 // ItemFile carries no status field — files surfaced

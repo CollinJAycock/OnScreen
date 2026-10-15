@@ -59,9 +59,10 @@ sealed class PlaybackSource {
     /** [container]: the container of what [url] serves when it isn't the
      *  playing file's own (an optimized version is always an MP4) — the
      *  player's MIME hint. [optimized]: an optimized version (see
-     *  OptimizedPlayback) — an MP4 with one stereo AAC track and no
-     *  subtitles of its own, so the subtitles come in side-loaded as on a
-     *  remux / transcode, and a failure falls back to the source's verdict. */
+     *  OptimizedPlayback), or a converted download — an MP4 with one stereo
+     *  AAC track and no subtitles of its own, so the subtitles come in
+     *  side-loaded as on a remux / transcode. A failed optimized version
+     *  falls back to the source's verdict (fallBackFromOptimized). */
     data class DirectPlay(
         val url: String,
         val startMs: Long,
@@ -887,7 +888,17 @@ class PlayerViewModel @Inject constructor(
                         hlsOffsetMs = 0
                         lastTranscodeRequest = null
                         activeDecision = "directPlay"
-                        PlaybackSource.DirectPlay("file://${localFile.absolutePath}", startMs)
+                        // The download's own container: a converted copy is an
+                        // MP4 whatever the source file is — and, like an
+                        // optimized version, carries one stereo track and no
+                        // subtitles of its own (no fallback, though: it is
+                        // what the user downloaded).
+                        PlaybackSource.DirectPlay(
+                            "file://${localFile.absolutePath}",
+                            startMs,
+                            container = downloaded?.container,
+                            optimized = downloaded?.quality != null,
+                        )
                     }
                     optimized != null && decision != null && !playingInService -> {
                         // Played like a file's direct play — same URL-token

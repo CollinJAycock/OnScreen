@@ -2305,6 +2305,45 @@ class PlayerViewModelTest {
     }
 
     @Test
+    fun `a converted download plays as the MP4 it is`() = runTest(dispatcher) {
+        // The source is an MKV with several audio tracks; the downloaded
+        // copy is a 720p MP4 with one.
+        val local = kotlin.io.path.createTempFile(suffix = ".mp4").toFile().apply { writeBytes(ByteArray(64)) }
+        try {
+            val itemRepo = itemRepo()
+            coEvery { itemRepo.getItem("movie-1") } returns
+                movieDetail(directPlayFile().copy(container = "mkv", audio_streams = threeAudioStreams))
+            val entry = tv.onscreen.mobile.data.downloads.DownloadEntry(
+                file_id = "f1", item_id = "movie-1", item_title = "Test Movie", item_type = "movie",
+                container = "mp4", size_bytes = 64, downloaded_bytes = 64, status = "completed",
+                quality = "720p_4mbps",
+            )
+            val store = mockk<DownloadStore>(relaxed = true)
+            coEvery { store.load() } returns Unit
+            coEvery { store.get("f1") } returns entry
+            every { store.fileFor(entry) } returns local
+            every { store.state } returns MutableStateFlow(DownloadManifest(entries = listOf(entry)))
+            val downloads = mockk<OnScreenDownloadManager>().also { every { it.store } returns store }
+            val transcodeRepo = mockk<TranscodeRepository>(relaxed = true).also { repo ->
+                coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.of("directPlay")
+            }
+            val vm = PlayerViewModel(itemRepo, transcodeRepo, prefs(), serverPrefs(), subPrefs(), playbackPrefs(), downloads, emptyNotifications(), stubSubtitles(), stubTrickplay(), stubWatchLimit(), stubAudiobooks(), stubCapabilities())
+            vm.prepare("movie-1")
+            advanceUntilIdle()
+
+            val src = vm.state.value.source as PlaybackSource.DirectPlay
+            assertThat(src.url).startsWith("file://")
+            assertThat(src.container).isEqualTo("mp4")
+            assertThat(src.optimized).isTrue()
+            assertThat(vm.state.value.audioStreams).isEmpty()
+            // Not an optimized version the server picked: no fallback.
+            assertThat(vm.fallBackFromOptimized(0L)).isFalse()
+        } finally {
+            local.delete()
+        }
+    }
+
+    @Test
     fun `the next episode after a multi-episode file is the one after its last`() = runTest(dispatcher) {
         val itemRepo = itemRepo()
         coEvery { itemRepo.getItem("ep-1") } returns
