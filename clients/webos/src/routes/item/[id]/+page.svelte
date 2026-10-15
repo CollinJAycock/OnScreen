@@ -41,6 +41,7 @@
   import { pickContainerStart, resolvePlayAll, resolveShuffle } from '$lib/playPick';
   import { formatRuntime, genreLine, numberedTitle, resumeLabel, studioLine } from '$lib/detailText';
   import { logoArtworkPath, showsLogo } from '$lib/artwork';
+  import { groupVersions } from '$lib/player/versions';
   import { latestOnly } from '$lib/latest';
 
   // Back from the player: how long to wait before reading the item again
@@ -98,6 +99,12 @@
   // the server refuses. Seeded from the item's is_favorite.
   let isFavorite = $state(false);
   let favoriteBusy = false;
+
+  // Versions (v2.6, lib/player/versions): a movie with editions or several
+  // files picks which one Play starts. Keyed by the version's key; null =
+  // the first (the server's best).
+  let chosenVersion = $state<string | null>(null);
+  let versionPickerOpen = $state(false);
 
   // Artist pages: albums and loose music videos (v2.0 music_video) as two
   // tabs, like Android's Albums / Music Videos tabs.
@@ -180,6 +187,14 @@
         (item.type === 'artist' && !artistHasAlbums && children.length > 0))
   );
 
+  const versions = $derived(item ? groupVersions(item.files) : []);
+  const currentVersion = $derived(versions.find((v) => v.key === chosenVersion) ?? versions[0]);
+
+  /** The player's version: the one picked here, else its default. */
+  function versionPick(): { fileId?: string } {
+    return versions.length > 1 && currentVersion ? { fileId: currentVersion.file.id } : {};
+  }
+
   const upNextText = $derived(upNextLabel(upNext));
   // Container pages on a v2.5 server drive Play + Mark all from up-next.
   const containerWatch = $derived(!!item && isWatchContainer(item.type) && upNextLoaded);
@@ -214,11 +229,23 @@
           key: 'play',
           label: resumeLabel(resumeMs),
           primary: true,
-          onclick: () => playItem(it.id),
+          onclick: () => playItem(it.id, undefined, versionPick()),
         });
-        out.push({ key: 'play-start', label: 'Play from Beginning', onclick: () => playItem(it.id, 0) });
+        out.push({ key: 'play-start', label: 'Play from Beginning', onclick: () => playItem(it.id, 0, versionPick()) });
       } else {
-        out.push({ key: 'play', label: 'Play', primary: true, onclick: () => playItem(it.id) });
+        out.push({ key: 'play', label: 'Play', primary: true, onclick: () => playItem(it.id, undefined, versionPick()) });
+      }
+      // More than one version (editions, or a 4K and a 1080p file; a
+      // stacked movie's parts are ONE version): which one Play starts.
+      if (versions.length > 1 && currentVersion) {
+        out.push({
+          key: 'version',
+          label: `Version: ${currentVersion.label}`,
+          onclick: () => {
+            menuOrigin = focusManager.currentElement();
+            versionPickerOpen = true;
+          },
+        });
       }
     } else if (containerWatch) {
       const ep = upNext?.episode;
@@ -993,11 +1020,31 @@
     />
   {/if}
 
+  {#if versionPickerOpen}
+    <!-- Starts on the version Play starts now (✓), so OK alone keeps it. -->
+    <OptionsDialog
+      title="Version"
+      options={versions.map((v) => ({
+        label: `${v.key === currentVersion?.key ? '✓ ' : ''}${v.label}`,
+        onselect: () => {
+          chosenVersion = v.key;
+          versionPickerOpen = false;
+          void restoreFocus();
+        },
+      }))}
+      initialIndex={versions.findIndex((v) => v.key === currentVersion?.key)}
+      oncancel={() => {
+        versionPickerOpen = false;
+        void restoreFocus();
+      }}
+    />
+  {/if}
+
   {#if reportOpen}
     <ReportProblemDialog
       itemId={item.id}
       itemTitle={item.title}
-      fileId={item.files[0]?.id}
+      fileId={currentVersion?.file.id ?? item.files[0]?.id}
       openKinds={reportKinds}
       onclose={(k) => void closeReport(k)}
     />

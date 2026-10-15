@@ -24,6 +24,7 @@ import type {
   NowNext,
   OnlineSubtitle,
   PairCodeResponse,
+  PlaybackDecision,
   PlaybackRate,
   Recording,
   ScrobbleLinkResult,
@@ -243,10 +244,13 @@ export const transcode = {
       supports_av1: opts.supportsAV1 ?? false
     }),
   // Server-authoritative play decision (capability profiles). Returns
-  // "directPlay" | "directStream" | "transcode". The capability profile rides
-  // the X-Client-Capabilities header (client.ts). See docs/capability-profiles.md.
+  // "directPlay" | "directStream" | "transcode" (and an optimized version,
+  // since the header declares optimized=1). The capability profile rides
+  // the X-Client-Capabilities header (client.ts). 429 TOO_MANY_SESSIONS is
+  // the user's stream limit (lib/player/playDecision). See
+  // docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
-    api.post<{ decision: string; file_id: string }>(
+    api.post<PlaybackDecision>(
       `/api/v1/items/${itemId}/playback-decision`,
       fileId ? { file_id: fileId } : {}
     ),

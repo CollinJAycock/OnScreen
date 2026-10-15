@@ -176,7 +176,17 @@ export interface ItemFile {
   hdr_type?: string;
   /** Frame rate as probed (e.g. 23.976). Absent on older servers. */
   frame_rate?: number;
+  /** The part's own length for a stacked movie's part (part_index); the
+   *  item's duration_ms is the whole movie's. */
   duration_ms?: number;
+  /** The version's name from the file name ("Director's Cut", "Extended"):
+   *  its label in the version picker (v2.6; absent when none). */
+  edition?: string;
+  /** 1-based part number of one part of a stacked movie (cd1 + cd2). The
+   *  parts are ONE version, played only through the server from the first
+   *  part's file_id (it streams every part as one movie); see
+   *  lib/player/versions. Absent for every other file (v2.6). */
+  part_index?: number;
   /** A 24 h token scoped to this file's stream / subtitle routes, so a
    *  long play outlives the 1 h access token. Empty or absent on older
    *  servers. The player still signs URLs with the asset token
@@ -366,6 +376,46 @@ export interface TranscodeSession {
    *  re-encode after a mid-stream -ss warms up over a moment of silent
    *  video, and playback starts here instead. 0 = no measurable gap. */
   seg0_audio_gap_sec?: number;
+}
+
+/** A pre-made MP4 copy of an item (H.264 + stereo AAC, v2.6), as the play
+ *  decision hands it out. Never one of the item's files. */
+export interface OptimizedVersion {
+  id: string;
+  /** The source file it was made from (a stacked movie's first part). */
+  file_id: string;
+  profile: string;
+  label: string;
+  container: string;
+  video_codec: string;
+  audio_codec: string;
+  audio_channels: number;
+  width?: number;
+  height?: number;
+  bitrate_kbps?: number;
+  duration_ms?: number;
+  /** /media/optimized/{id}: direct play, asset ?token= like a file's
+   *  stream_url (or stream_token, the version's own 24 h token). */
+  stream_url: string;
+  stream_token?: string;
+}
+
+/** POST /items/{id}/playback-decision. */
+export interface PlaybackDecision {
+  /** directPlay | directStream | transcode | unsupported | damaged. */
+  decision: string;
+  /** The (source) file the decision is for. */
+  file_id: string;
+  /** Set when the server overrode the capability verdict: a bitrate limit,
+   *  or optimized_version (with optimized_version below; only to a client
+   *  that declares optimized=1). */
+  reason?: string;
+  max_bitrate_kbps?: number;
+  optimized_version?: OptimizedVersion;
+  /** With an optimized version: the source's own verdict, the fallback if
+   *  the version doesn't play (or a non-default audio track is wanted). */
+  source_decision?: string;
+  source_reason?: string;
 }
 
 // ── Device pairing ──────────────────────────────────────────────────────────

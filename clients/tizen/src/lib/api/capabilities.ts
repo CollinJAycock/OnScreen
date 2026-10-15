@@ -69,6 +69,10 @@ export function clientCapabilitiesHeader(): string {
     // output so Main 10 sources can't sneak back in through the depth field.
     `maxbitdepth=${demoted.has('hevc') ? 8 : 10}`,
     'hdr=1',
+    // Plays an optimized version (an H.264/AAC MP4 made ahead of time) when
+    // the decision hands one out instead of a transcode (v2.6; older
+    // servers ignore the key). See the watch page's startStream.
+    'optimized=1',
   ].join(',');
 }
 

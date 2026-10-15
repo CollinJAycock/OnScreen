@@ -62,6 +62,9 @@ export function pushTo(hashRoute: string) {
 // the show / season up-next button need to say "from the top" (or from the
 // up-next episode's resume point) instead.
 const startOverrides = new Map<string, number>();
+// One-shot version picks (v2.6): the file the detail page's version picker
+// chose, by item. The player starts its default version without one.
+const fileOverrides = new Map<string, string>();
 
 /** Bumped to give the item already open in the player a fresh player: the
  *  watch layout keys its page on the item id AND this. Another item's route
@@ -76,10 +79,13 @@ export const playerEpoch = writable(0);
  *  the hub. It used to go to the playing item's own detail page, so album →
  *  track → Back landed on a bare track page. `push: false` leaves the stack
  *  as it is (after resetStack). The item already open in the player starts
- *  over in a fresh player (see playerEpoch). */
-export function playItem(id: string, startMs?: number, opts: { push?: boolean } = {}) {
+ *  over in a fresh player (see playerEpoch). `fileId` plays that version
+ *  (the detail page's version picker); none = the default one. */
+export function playItem(id: string, startMs?: number, opts: { push?: boolean; fileId?: string } = {}) {
   if (startMs !== undefined) startOverrides.set(id, Math.max(0, startMs));
   else startOverrides.delete(id);
+  if (opts.fileId) fileOverrides.set(id, opts.fileId);
+  else fileOverrides.delete(id);
   const route = `#/watch/${id}`;
   if (currentHash() === route) {
     playerEpoch.update((n) => n + 1);
@@ -106,6 +112,7 @@ export function resetStack(root = '#/hub') {
 export function forgetHistory() {
   backStack.length = 0;
   startOverrides.clear();
+  fileOverrides.clear();
   focusMemory.clear();
 }
 
@@ -126,6 +133,14 @@ export function replaceTo(hashRoute: string, start?: { id: string; ms: number })
 export function takeStartOverride(id: string): number | undefined {
   const v = startOverrides.get(id);
   startOverrides.delete(id);
+  return v;
+}
+
+/** The version (file id) playItem asked for, consumed on read (undefined =
+ *  the default version). */
+export function takeFileOverride(id: string): string | undefined {
+  const v = fileOverrides.get(id);
+  fileOverrides.delete(id);
   return v;
 }
 

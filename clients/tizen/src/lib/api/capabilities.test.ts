@@ -38,6 +38,13 @@ describe('the Tizen capability profile', () => {
     expect(mod.supportsAV1()).toBe(false);
   });
 
+  it('declares that it plays optimized versions', async () => {
+    const { mod } = await load();
+    expect(keys(mod.clientCapabilitiesHeader()).optimized).toBe('1');
+    mod.demoteCodec('hevc');
+    expect(keys(mod.clientCapabilitiesHeader()).optimized).toBe('1');
+  });
+
   it('drops HEVC and 10-bit once a panel proves it cannot decode HEVC, for good', async () => {
     const { mod, store } = await load();
     mod.demoteCodec('hevc');

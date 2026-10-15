@@ -15,6 +15,7 @@ import {
   pushTo,
   replaceTo,
   resetStack,
+  takeFileOverride,
   takeStartOverride,
 } from './nav';
 
@@ -103,6 +104,16 @@ describe('playItem', () => {
     expect(goto).not.toHaveBeenCalled();
     expect(get(playerEpoch)).toBe(before + 1);
     expect(takeStartOverride(ITEM)).toBe(754_000);
+  });
+
+  it('hands the player the version picked, once; a plain play takes the default', () => {
+    at('#/item/movie-3');
+    playItem(ITEM, undefined, { fileId: 'cut-2' });
+    expect(takeFileOverride(ITEM)).toBe('cut-2');
+    expect(takeFileOverride(ITEM)).toBeUndefined();
+    playItem(ITEM, undefined, { fileId: 'cut-2' });
+    playItem(ITEM);
+    expect(takeFileOverride(ITEM)).toBeUndefined();
   });
 });
 

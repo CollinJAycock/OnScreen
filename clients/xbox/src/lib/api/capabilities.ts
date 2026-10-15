@@ -147,6 +147,10 @@ export function buildClientCapabilitiesHeader(p: CapabilityProbes): string {
   ];
   if (vp9) keys.push(`vp9MaxBitDepth=${vp9Profile2 ? 10 : 8}`);
   keys.push(`hdr=${hdr ? 1 : 0}`);
+  // Plays an optimized version (an H.264/AAC MP4 made ahead of time) when
+  // the decision hands one out instead of a transcode (v2.6; older servers
+  // ignore the key). See the watch page's startStream.
+  keys.push('optimized=1');
   return keys.join(',');
 }
 
