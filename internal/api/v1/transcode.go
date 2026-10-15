@@ -933,6 +933,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			"item_id", itemID, "file_id", file.ID)
 		body.VideoCopy = false
 	}
+	// Dolby Vision profile 5 can only be copied: a re-encode tone-maps its IPT
+	// colour as HDR10 (green and purple). A client that lists profile 5 still
+	// reaches here when it asks for, or needs, a re-encode.
+	if !body.VideoCopy && transcode.DVProfileKey(*file) == "5" {
+		h.logger.InfoContext(ctx, "transcode: refusing a Dolby Vision profile 5 re-encode",
+			"item_id", itemID, "file_id", file.ID)
+		respond.Error(w, r, http.StatusUnsupportedMediaType,
+			"DOLBY_VISION_UNSUPPORTED", "Dolby Vision is not supported")
+		return
+	}
 
 	if body.VideoCopy {
 		encoder = "copy"

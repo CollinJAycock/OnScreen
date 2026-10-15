@@ -107,6 +107,9 @@ func TestDecide_DolbyVision(t *testing.T) {
 		{"8.1, no DV, no hdr", dvFile("hdr10", 8), base, defaultServerCaps, DecisionTranscode},
 		{"5, DV client", dvFile("dolby_vision", 5), base + ",dovi=5", defaultServerCaps, DecisionDirectPlay},
 		{"5, 8.1-only client", dvFile("dolby_vision", 5), base + ",hdr=1,dovi=8.1", defaultServerCaps, DecisionUnsupported},
+		// Profile 5 can't be re-encoded (green): a DV client over its limits
+		// gets unsupported, not a transcode.
+		{"5, DV client, too big", dvFile("dolby_vision", 5), "videoDecoder=h265,audioDecoder=aac,protocols=mkv,maxWidth=1280,maxHeight=720,maxBitDepth=10,dovi=5", defaultServerCaps, DecisionUnsupported},
 		// Profile 7 for a client that only takes 8.1: remuxed to convert when
 		// a worker can, otherwise played as-is (its HDR10 base layer).
 		{"7, 8.1 client, converter", dvFile("hdr10", 7), base + ",hdr=1,dovi=8.1", ServerCaps{DVConvert: true}, DecisionDirectStream},

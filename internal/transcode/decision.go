@@ -68,6 +68,18 @@ func (d Decision) String() string {
 // here — it isn't on media.File; clients refine a DirectPlay verdict with their
 // own faststart check (see docs/capability-profiles.md).
 func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Decision {
+	d := decide(file, caps, serverCaps)
+	// Profile 5 can only be copied: a re-encode tone-maps its IPT colour as if
+	// it were HDR10 and comes out green and purple. A client that lists
+	// profile 5 still gets "unsupported" when it would need one (over its
+	// resolution, bitrate or quality limit).
+	if d == DecisionTranscode && DVProfileKey(file) == "5" {
+		return DecisionUnsupported
+	}
+	return d
+}
+
+func decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Decision {
 	// Damaged file (integrity-probe verdict): client-independent, so it
 	// pre-empts every capability check — there is no client for which an
 	// undecodable bitstream plays, and no escape hatch like DV's dovi=1.
