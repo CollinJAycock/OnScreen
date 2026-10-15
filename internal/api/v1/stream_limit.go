@@ -95,12 +95,20 @@ func (l *StreamLimit) otherStreams(ctx context.Context, req streamRequest) int {
 	return countTranscodeStreams(sessions, req, time.Now()) + countDirectStreams(sessions, entries, req)
 }
 
-// refuse answers 429 TOO_MANY_SESSIONS — the code and wording transcode
-// Start has always used for its session cap, which the clients already show.
+// refuseStreamLimit answers 429 TOO_MANY_SESSIONS — the code transcode
+// Start has always used for its session cap, which the clients already
+// handle. The players show the message as-is, so it is written for the
+// viewer.
 func refuseStreamLimit(w http.ResponseWriter, r *http.Request, active, limit int) {
-	respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS",
-		fmt.Sprintf("you already have %d active streams (cap %d); stop one before starting another",
-			active, limit))
+	respond.Error(w, r, http.StatusTooManyRequests, "TOO_MANY_SESSIONS", streamLimitMessage(active, limit))
+}
+
+func streamLimitMessage(active, limit int) string {
+	if limit == 1 {
+		return "Your account can play one stream at a time, and another device is already playing. Stop it to watch here."
+	}
+	return fmt.Sprintf("Your account can play %d streams at a time, and %d are already playing on other devices. Stop one to watch here.",
+		limit, active)
 }
 
 // Blocks reports whether the requested playback is over the user's limit,
