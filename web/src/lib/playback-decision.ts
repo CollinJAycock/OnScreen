@@ -255,3 +255,31 @@ export function clientCapabilitiesHeader(): string {
   ].join(',');
   return capsHeaderCache;
 }
+
+// ── Waiting for the server verdict ──────────────────────────────────────────
+//
+// The server's play decision is final: the watch page holds the initial
+// playback start until the verdict (POST /items/{id}/playback-decision) lands,
+// so it never begins a direct play the server would refuse. The call is a
+// fast read-only lookup, but a slow or wedged server must not hang playback
+// behind a spinner — past this bound the page proceeds on the local
+// heuristic, exactly as it does when the call fails.
+
+/** How long the initial playback start waits for the server verdict. */
+export const VERDICT_WAIT_MS = 4000;
+
+/** settleWithin waits for `pending` to settle (resolve OR reject), but no
+ *  longer than `ms`. Resolves true when it settled in time, false on timeout;
+ *  never rejects, and never cancels `pending` — a late verdict still lands
+ *  for the play-decision helpers that run after the start (quality / version
+ *  switches). */
+export function settleWithin(pending: Promise<unknown>, ms: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(false), ms);
+    const settled = () => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    pending.then(settled, settled);
+  });
+}
