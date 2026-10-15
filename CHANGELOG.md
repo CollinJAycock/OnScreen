@@ -68,8 +68,8 @@ becomes final on every app. Release note:
   metadata (fMP4 segments, `-strict unofficial`; `dvh1` sample entry for
   profile 5). Profile 7 for an app that takes only 8.1 is converted to 8.1
   while remuxing, on workers whose ffmpeg has OnScreen's `dovi_rpu`
-  conversion patch (worker feature `dolby_vision_p7_to_p81`); elsewhere it
-  plays from its HDR10 base layer as before. Apps that don't send `dovi` are
+  conversion patch (the GPU image; worker feature `dolby_vision_p7_to_p81`);
+  elsewhere it plays from its HDR10 base layer as before. Apps that don't send `dovi` are
   unchanged.
 - **Your own sign-in settings on the Account page, for every user.** Change
   your password (new `PUT /users/me/password`: needs the current one, ends

@@ -32,9 +32,23 @@ profile 7 sample: every frame's PTS became its DTS, and decoded frames came out
 of time order). Upstream ffmpeg's `dovi_rpu` filter only strips or compresses,
 and jellyfin-ffmpeg has no conversion either (Jellyfin strips Dolby Vision for
 clients that don't take profile 7). OnScreen therefore patches `dovi_rpu` in its
-own ffmpeg build with a `convert_p81` option; a worker advertises
+own ffmpeg build with a `convert_p81` option
+(`docker/patches/0005-dovi-rpu-convert-p7-to-p81.patch`); a worker advertises
 `dolby_vision_p7_to_p81` only when its ffmpeg has it (`ffmpeg -h bsf=dovi_rpu`).
-Elsewhere profile 7 keeps playing from its base layer.
+That is the GPU image (`docker/Dockerfile.ffmpeg`); the standard image uses
+Alpine's ffmpeg and the Windows installer Gyan's, so there profile 7 keeps
+playing from its base layer.
+
+The patch does what dovi_tool's mode 2 does, frame by frame: it drops every
+enhancement-layer NAL unit, sets `disable_residual_flag`, removes the NLQ data,
+turns a full enhancement layer's mapping curves into the identity (a minimal one
+keeps its mapping), gives the display-management block the 8.1 matrices, and
+rewrites the configuration record to profile 8, compatibility 1. It copies every
+other NAL unit byte for byte in its own framing, so the stream's parameter sets
+and timestamps are untouched. Checked on three profile 7 FEL samples (Kodi
+wiki): metadata identical to `dovi_tool -m 2` on all 10,016 frames apart from
+extension-block order; packet timestamps identical to a plain remux, B-frames
+included; base layer bit-identical; no new decode errors.
 
 **Not done:** tone-mapping profile 5 for screens without Dolby Vision (no
 profile 5 in the library); Dolby Vision in ABR ladders or optimized versions
