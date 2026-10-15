@@ -55,12 +55,15 @@ func IsVideoCopy(encoder Encoder) bool { return encoder == EncoderCopy }
 // "copy", which belongs to no codec family — so IsHEVCEncoder and IsAV1Encoder
 // both answer false and every container question derived from them is wrong.
 // Only when we are really encoding does the encoder determine the output.
-// forceFMP4 is honoured only on a re-encode: a remux's container is already
-// dictated by the source codec it is passing through untouched.
+// forceFMP4 applies to a remux too: the source codec decides the codec tag,
+// but the AUDIO can also need fMP4. A TrueHD or DTS track passed through for
+// a receiver (audioPassthrough) has no MPEG-TS stream type a player's demuxer
+// reads, so an H.264 remux carrying one is packaged as fMP4 even though the
+// video alone would be MPEG-TS.
 // tsSegments carries the client's request for MPEG-TS (see VideoOutput.TSSegments).
 func ResolveVideoOutput(encoder Encoder, sourceHEVC, sourceAV1, forceFMP4, tsSegments bool) VideoOutput {
 	if IsVideoCopy(encoder) {
-		return VideoOutput{HEVC: sourceHEVC, AV1: sourceAV1, TSSegments: tsSegments}
+		return VideoOutput{HEVC: sourceHEVC, AV1: sourceAV1, ForcedFMP4: forceFMP4, TSSegments: tsSegments}
 	}
 	return VideoOutput{
 		HEVC:       IsHEVCEncoder(encoder),

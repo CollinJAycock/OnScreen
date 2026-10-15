@@ -40,6 +40,14 @@ type ClientCapabilities struct {
 	// protocol one: a client that doesn't send it never gets that verdict,
 	// so builds that only know file_id keep their exact old decisions.
 	AcceptsOptimized bool
+	// AudioPassthrough lists the codecs (canonical names: ac3, eac3, truehd,
+	// dts) the client hands to a receiver undecoded, over HDMI or S/PDIF.
+	// The receiver decodes them, so the client's own channel cap doesn't
+	// apply to them, and a remux copies them (TrueHD and DTS included)
+	// instead of re-encoding to AAC. Opt-in: audioDecoder alone never widens
+	// the copy, because some clients list codecs there that they can't
+	// output (the phone lists dts without being able to pass it anywhere).
+	AudioPassthrough []string
 }
 
 // ParseCapabilities parses the X-Client-Capabilities header value. Keys are
@@ -79,6 +87,13 @@ func ParseCapabilities(header string) ClientCapabilities {
 			}
 		case "audiodecoder":
 			caps.AudioCodecs = append(caps.AudioCodecs, vals...)
+		case "audiopassthrough":
+			for _, v := range vals {
+				c := CanonicalAudioCodec(strings.TrimSpace(v))
+				if passthroughCodec(c) && !caps.PassesThroughAudio(c) {
+					caps.AudioPassthrough = append(caps.AudioPassthrough, c)
+				}
+			}
 		case "protocols":
 			caps.Containers = append(caps.Containers, vals...)
 		case "maxwidth":
@@ -147,6 +162,31 @@ func (c ClientCapabilities) SupportsAudioCodec(codec string) bool {
 		if strings.ToLower(v) == codec {
 			return true
 		}
+	}
+	return false
+}
+
+// PassesThroughAudio reports whether the client bitstreams an audio codec to
+// a receiver (audioPassthrough). codec may be any ffprobe or client alias;
+// it's canonicalised first, so "dts-hd" matches a declared "dts".
+func (c ClientCapabilities) PassesThroughAudio(codec string) bool {
+	codec = CanonicalAudioCodec(codec)
+	for _, v := range c.AudioPassthrough {
+		if v == codec {
+			return true
+		}
+	}
+	return false
+}
+
+// passthroughCodec reports whether a canonical codec can be bitstreamed over
+// HDMI at all. Anything else in an audioPassthrough list is dropped: an AAC
+// or FLAC "passthrough" would only lift the channel cap off audio the client
+// decodes itself.
+func passthroughCodec(codec string) bool {
+	switch codec {
+	case "ac3", "eac3", "truehd", "dts":
+		return true
 	}
 	return false
 }

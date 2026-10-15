@@ -212,6 +212,18 @@ type BuildArgs struct {
 	AudioChannels    int    // 0 = keep source
 	AudioBitrateKbps int    // 0 = auto
 	AudioStreamIndex int    // -1 = default (first); >= 0 = specific stream index
+	// AudioPassthrough: the AudioCodec "copy" track is TrueHD or DTS kept
+	// for the client's receiver (TranscodeJob.AudioPassthrough). The output
+	// is then fMP4 (the caller sets ForceFMP4 too; see TranscodeJob.ForcesFMP4)
+	// and ffmpeg's mp4 muxer is told -strict -2, which it requires for TrueHD.
+	AudioPassthrough bool
+
+	// BurnSubtitle paints an image subtitle stream into the picture on a
+	// re-encode (TranscodeJob.BurnSubtitle); nil for none. Ignored on a
+	// remux or an audio-only session. Burning switches the video chain from
+	// -vf to -filter_complex and turns off every all-GPU-memory path (see
+	// burnInArgs), because the overlay is a CPU filter.
+	BurnSubtitle *SubtitleBurn
 
 	// Subtitles
 	//
@@ -309,6 +321,8 @@ func BuildHLS(a BuildArgs) []string {
 	}
 
 	videoCopy := IsVideoCopy(a.Encoder)
+	a = burnInArgs(a)
+	burn := a.BurnSubtitle != nil
 
 	args := []string{
 		"-hide_banner",
@@ -406,8 +420,9 @@ func BuildHLS(a BuildArgs) []string {
 	// HDR HEVC uses the CudaHevcDecode system-memory path instead).
 	// HEVC/H.264 join the full-VRAM path only when CudaVRAM is set (gated
 	// on a startup probe of the fragile mainline cuvid→scale_cuda chain);
-	// AV1 has always been reliable enough to take it unconditionally.
-	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap &&
+	// AV1 has always been reliable enough to take it unconditionally — except
+	// under a subtitle burn-in, whose CPU overlay needs system-memory frames.
+	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap && !burn &&
 		(a.IsAV1 || ((a.IsHEVC || a.IsH264) && a.CudaVRAM))
 
 	if !videoCopy && !a.AudioOnly {
@@ -576,8 +591,9 @@ func BuildHLS(a BuildArgs) []string {
 		// Stream copy — no re-encode, no filters, no bitrate control.
 		args = append(args, "-c:v", "copy")
 	} else {
-		vf := buildVideoFilter(a)
-		if vf != "" {
+		if burn {
+			args = append(args, "-filter_complex", buildBurnInGraph(a))
+		} else if vf := buildVideoFilter(a); vf != "" {
 			args = append(args, "-vf", vf)
 		}
 
@@ -726,7 +742,12 @@ func BuildHLS(a BuildArgs) []string {
 	// matches no streams"), which made audio-only sources and audio-less
 	// videos equally unplayable — an endless spinner while the playlist
 	// endpoint waited for segments that would never come.
-	if !a.AudioOnly {
+	// A burn-in's picture is the filtergraph's output, not the input stream.
+	switch {
+	case a.AudioOnly:
+	case burn:
+		args = append(args, "-map", "[vout]")
+	default:
 		args = append(args, "-map", "0:v:0")
 	}
 	if !a.NoAudio {
@@ -756,6 +777,12 @@ func BuildHLS(a BuildArgs) []string {
 			audioCodec = "libfdk_aac"
 		}
 		args = append(args, "-c:a", audioCodec)
+		// ffmpeg's mp4 muxer calls TrueHD (and DTS on some builds)
+		// experimental and refuses it without this. It's an output option,
+		// so it only loosens what this HLS output accepts.
+		if a.AudioCodec == "copy" && a.AudioPassthrough {
+			args = append(args, "-strict", "-2")
+		}
 	}
 	if !a.NoAudio && a.AudioCodec == "aac" {
 		channels := a.AudioChannels
@@ -816,7 +843,10 @@ func BuildHLS(a BuildArgs) []string {
 	// what container"; see videooutput.go for why this must not be re-derived
 	// per call site. ForceFMP4 is folded in there too, so the worker — which
 	// hunts for these same files by extension — cannot disagree with us.
-	vout := ResolveVideoOutput(a.Encoder, a.IsHEVC, a.IsAV1, a.ForceFMP4, a.TSSegments)
+	// A TrueHD/DTS passthrough copy forces fMP4 here too, so a caller that
+	// set only AudioPassthrough still can't produce a TS no player demuxes.
+	forceFMP4 := a.ForceFMP4 || (a.AudioPassthrough && a.AudioCodec == "copy")
+	vout := ResolveVideoOutput(a.Encoder, a.IsHEVC, a.IsAV1, forceFMP4, a.TSSegments)
 	if a.AudioOnly {
 		// No video stream: AAC-in-MPEG-TS, no codec tag, no init segment.
 		vout = VideoOutput{}
@@ -1016,7 +1046,103 @@ func BuildDirectStream(inputPath, sessionDir string, startOffset float64, concat
 
 // buildVideoFilter constructs the -vf filter chain for the given args.
 func buildVideoFilter(a BuildArgs) string {
-	var filters []string
+	filters, tail := videoFilterChain(a)
+	return strings.Join(append(filters, tail...), ",")
+}
+
+// burnInArgs turns off every path that keeps frames in GPU memory when a
+// subtitle burn-in is asked for, and drops a burn-in that can't apply (a
+// remux or an audio-only session has no picture to paint on). The overlay is a
+// CPU filter, so the picture has to reach it in system memory: the full-VRAM
+// decode+scale chains (CudaVRAM, QSVVRAM, VAAPIVRAM), the all-VRAM tonemaps
+// (CudaTonemap, VAAPITonemap) and the GPU-assisted HDR fallback
+// (CudaHDRTonemap, whose scale_cuda doesn't pad and so would leave the frame a
+// different size from the subtitle canvas). Decode-only offloads that hand
+// frames back to system memory (QSVDecode, CudaHevcDecode) stay, and every
+// encoder takes system-memory frames: NVENC/AMF/QSV directly, VAAPI after the
+// hwupload that follows the overlay. The AV1 NVDEC carve-out is gated on the
+// burn-in where it's decided (useCUDADecode).
+func burnInArgs(a BuildArgs) BuildArgs {
+	if a.BurnSubtitle == nil {
+		return a
+	}
+	if IsVideoCopy(a.Encoder) || a.AudioOnly {
+		a.BurnSubtitle = nil
+		return a
+	}
+	a.CudaVRAM, a.QSVVRAM, a.VAAPIVRAM = false, false, false
+	a.CudaTonemap, a.VAAPITonemap, a.CudaHDRTonemap = false, false, false
+	return a
+}
+
+// buildBurnInGraph is the -filter_complex graph of a subtitle burn-in: the
+// usual video chain up to the overlay point, the subtitle stream (rendered to
+// frames by ffmpeg's sub2video) shifted by its offset and scaled the way the
+// picture was, the overlay, then the chain's tail (8-bit strip, VAAPI upload).
+// The overlay sits after scaling and tonemapping so it paints on the output
+// frame, at output resolution, in SDR. eof_action=pass and repeatlast=0 let
+// the picture through untouched once the subtitle stream runs out, instead of
+// freezing its last cue or ending the video.
+//
+// The output is 8-bit. overlay paints in 8-bit yuv420 unless told otherwise,
+// and its output list includes an alpha format (yuva420p): an encoder that
+// takes alpha (libx265 lists it, then refuses it at init) negotiates that and
+// dies, so the tail always ends in a plain format. Asking overlay for a 10-bit
+// mode would keep a 10-bit SDR source 10-bit, but every client decodes 8-bit
+// and a burn-in is a fallback path; HDR sources are tonemapped to 8-bit
+// before the overlay anyway.
+//
+// The subtitle stream comes from the same input as the video, so an input -ss
+// seeks both: a cue already on screen at the seek point is skipped (its packet
+// is before the seek), and subtitles show from the next cue on.
+func buildBurnInGraph(a BuildArgs) string {
+	pre, tail := videoFilterChain(a)
+	if len(pre) == 0 {
+		pre = []string{"null"}
+	}
+
+	var sub []string
+	if off := a.BurnSubtitle.OffsetMS; off != 0 {
+		sign := "+"
+		if off < 0 {
+			sign, off = "-", -off
+		}
+		sub = append(sub, fmt.Sprintf("setpts=PTS%s%.3f/TB", sign, float64(off)/1000))
+	}
+	// The subtitle canvas is the source frame's size (PGS and VobSub are
+	// authored against it), so scale it exactly as the picture was scaled:
+	// stretched to the box by libplacebo, fitted and padded (transparent)
+	// by the software scaler.
+	if a.Width > 0 && a.Height > 0 {
+		if a.NeedsToneMap && a.HasLibplacebo && !a.IsVAAPI {
+			sub = append(sub, fmt.Sprintf("scale=%d:%d", a.Width, a.Height))
+		} else {
+			sub = append(sub, fmt.Sprintf(
+				"scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:color=black@0",
+				a.Width, a.Height, a.Width, a.Height))
+		}
+	}
+	if len(sub) == 0 {
+		sub = []string{"null"}
+	}
+
+	// The tail is empty, or starts with format=yuv420p (the 8-bit strip) or
+	// format=nv12 (the VAAPI upload): either way it ends overlay's alpha.
+	if len(tail) == 0 {
+		tail = []string{"format=yuv420p"}
+	}
+	overlay := "overlay=eof_action=pass:repeatlast=0," + strings.Join(tail, ",")
+	return fmt.Sprintf("[0:v:0]%s[v];[0:%d]%s[s];[v][s]%s[vout]",
+		strings.Join(pre, ","), a.BurnSubtitle.StreamIndex, strings.Join(sub, ","), overlay)
+}
+
+// videoFilterChain builds the video filters in two parts: the chain proper and
+// a tail that has to come after anything painted onto the output frame. The
+// tail is the 8-bit strip and, under a burn-in, the VAAPI upload (without one,
+// the VAAPI upload sits mid-chain ahead of scale_vaapi). -vf runs the two
+// back to back; a burn-in puts the overlay between them.
+func videoFilterChain(a BuildArgs) (filters, tail []string) {
+	burn := a.BurnSubtitle != nil
 
 	isNVENC := a.Encoder == EncoderNVENC || a.Encoder == EncoderHEVCNVENC
 	isAMF := a.Encoder == EncoderAMF || a.Encoder == EncoderHEVCAMF || a.Encoder == EncoderAV1AMF
@@ -1024,7 +1150,7 @@ func buildVideoFilter(a BuildArgs) string {
 	// Must stay in lockstep with the decode-side useCUDADecode in BuildHLS: when
 	// the input decodes into CUDA memory, the scale filter must be scale_cuda so
 	// frames stay in VRAM. AV1 always; HEVC/H.264 SDR only when CudaVRAM is set.
-	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap &&
+	useCUDADecode := IsNVENCEncoder(a.Encoder) && !a.NeedsToneMap && !burn &&
 		(a.IsAV1 || ((a.IsHEVC || a.IsH264) && a.CudaVRAM))
 	// Intel full-VRAM scale paths — must stay in lockstep with the decode-side
 	// QSVVRAM/VAAPIVRAM branches in BuildHLS. When the input decodes into QSV/VA
@@ -1091,8 +1217,9 @@ func buildVideoFilter(a BuildArgs) string {
 	// preserves the input's transfer/primaries metadata, so the subsequent
 	// zscale chain still linearizes the HDR signal correctly. VAAPI keeps
 	// tonemap → hwupload → scale_vaapi (scale_vaapi needs hardware frames),
-	// and the AV1 cuda-decode path carries no tonemap.
-	swTonemapScaleFirst := needsSoftwareTonemap && swScale != "" && !a.IsVAAPI && !useCUDADecode
+	// except under a burn-in, where VAAPI scales on the CPU too so the overlay
+	// can paint before the upload. The AV1 cuda-decode path carries no tonemap.
+	swTonemapScaleFirst := needsSoftwareTonemap && swScale != "" && (!a.IsVAAPI || burn) && !useCUDADecode
 
 	// All-VRAM NVIDIA HDR via tonemap_cuda: scale_cuda downscale + tonemap_cuda
 	// HDR→SDR, both in CUDA memory, straight to NVENC — no CPU, no hwdownload, no
@@ -1162,8 +1289,10 @@ func buildVideoFilter(a BuildArgs) string {
 		// downconverted to bt709 yuv420p in CPU first, then re-formatted to
 		// nv12 and uploaded to a VAAPI surface for scale_vaapi + encode. Skipped
 		// on the full-VRAM VAAPI path: the input was hardware-decoded straight
-		// into VA surfaces, so there's nothing to upload.
-		if a.IsVAAPI && !useVAAPIVRAM {
+		// into VA surfaces, so there's nothing to upload. Under a burn-in the
+		// upload moves to the tail, after the overlay, and the scale below is
+		// the software one.
+		if a.IsVAAPI && !useVAAPIVRAM && !burn {
 			filters = append(filters, "format=nv12", "hwupload")
 		}
 		// Scale to target resolution, maintaining aspect ratio.
@@ -1175,7 +1304,7 @@ func buildVideoFilter(a BuildArgs) string {
 				// analogue of scale_cuda. No pad (vpp_qsv has none); the API's
 				// Width/Height are already aspect-correct.
 				filters = append(filters, fmt.Sprintf("vpp_qsv=w=%d:h=%d:format=nv12", a.Width, a.Height))
-			case a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI:
+			case !burn && (a.Encoder == EncoderVAAPI || a.Encoder == EncoderHEVCVAAPI || a.Encoder == EncoderAV1VAAPI):
 				// scale_vaapi runs on VA surfaces — fed by the hwupload above on the
 				// default path, or directly by the hardware decode on VAAPIVRAM.
 				// format=nv12 forces 8-bit (a no-op after the nv12 hwupload; on the
@@ -1219,10 +1348,15 @@ func buildVideoFilter(a BuildArgs) string {
 		// scale_cuda already emits nv12 (8-bit) in VRAM, and inserting a
 		// CPU format filter would force a hwdownload that defeats the
 		// purpose of keeping the pipeline in GPU memory.
-		filters = append(filters, "format=yuv420p")
+		tail = append(tail, "format=yuv420p")
+	}
+	// A burn-in's VAAPI upload, after the overlay painted on the CPU frame.
+	// No scale_vaapi follows: the frame was scaled before the overlay.
+	if burn && a.IsVAAPI {
+		tail = append(tail, "format=nv12", "hwupload")
 	}
 
-	return strings.Join(filters, ",")
+	return filters, tail
 }
 
 // IsNVENCEncoder reports whether enc is any NVENC encoder. All three (H.264,

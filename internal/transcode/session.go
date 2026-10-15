@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -61,6 +62,12 @@ type Session struct {
 	// "ts"), so HEVC output is .ts, not .m4s. See VideoOutput.TSSegments. Set
 	// by the API at Start; the worker's stamp (SetWorkerInfo) leaves it alone.
 	TSSegments bool `json:"ts_segments,omitempty"`
+	// FMP4Segments: the job was told to write fMP4 whatever its video codec
+	// (TranscodeJob.ForceFMP4), today only for a remux passing TrueHD or DTS
+	// through, which MPEG-TS can't carry to a player. Read back as
+	// VideoOutput.ForcedFMP4 so the playlist handler waits for .m4s. Set by the
+	// API at Start; the worker's stamp leaves it alone.
+	FMP4Segments bool `json:"fmp4_segments,omitempty"`
 	// Source codec markers (distinct from the *Output flags, which are the
 	// chosen OUTPUT codec). Carried so ABR rung children can set job.IsHEVC /
 	// job.IsAV1 — the worker keys hardware decode (AV1 NVDEC, opt-in QSV HEVC)
@@ -156,7 +163,7 @@ type Session struct {
 // (SetWorkerInfo). Before that these flags hold the API's client-preference
 // guess, which is what the ForceFMP4 contract exists to reconcile.
 func (s *Session) VideoOutput() VideoOutput {
-	return VideoOutput{HEVC: s.HEVCOutput, AV1: s.AV1Output, TSSegments: s.TSSegments}
+	return VideoOutput{HEVC: s.HEVCOutput, AV1: s.AV1Output, ForcedFMP4: s.FMP4Segments, TSSegments: s.TSSegments}
 }
 
 // WorkerRegistration is the record a transcode worker writes to Valkey.
@@ -179,9 +186,30 @@ type WorkerRegistration struct {
 	// can only software-tonemap (zscale), which can't sustain 4K. Filter
 	// capabilities otherwise stay local to each worker; this one is registered
 	// because it's the highest-value routing signal. See JobNeeds.
-	HasGPUTonemap bool      `json:"has_gpu_tonemap,omitempty"`
-	RegisteredAt  time.Time `json:"registered_at"`
+	HasGPUTonemap bool `json:"has_gpu_tonemap,omitempty"`
+	// Features lists the job fields this worker's build understands beyond
+	// the original set (WorkerFeature*). A field an older worker doesn't know
+	// is dropped silently when it decodes the job, so a job that relies on one
+	// is only dispatched to a worker that names it here (JobNeeds.Features).
+	Features     []string  `json:"features,omitempty"`
+	RegisteredAt time.Time `json:"registered_at"`
 }
+
+// Worker features: job fields whose meaning an older worker would silently
+// ignore, with a broken stream as the result. See WorkerRegistration.Features.
+const (
+	// WorkerFeatureBurnSubtitles: the worker honours TranscodeJob.BurnSubtitle.
+	// An older one would play the title with no subtitles at all.
+	WorkerFeatureBurnSubtitles = "burn_in_subtitles"
+	// WorkerFeatureAudioPassthrough: the worker honours
+	// TranscodeJob.AudioPassthrough (a TrueHD/DTS copy packaged as fMP4). An
+	// older one writes the remux as MPEG-TS while the playlist handler waits
+	// for .m4s, and playback never starts.
+	WorkerFeatureAudioPassthrough = "audio_passthrough"
+)
+
+// workerFeatures is what every worker of this build advertises.
+var workerFeatures = []string{WorkerFeatureBurnSubtitles, WorkerFeatureAudioPassthrough}
 
 // SessionStore manages transcode sessions in Valkey.
 type SessionStore struct {
@@ -720,6 +748,12 @@ func (s *SessionStore) EnqueueJob(ctx context.Context, job TranscodeJob) error {
 func (s *SessionStore) DispatchJob(ctx context.Context, job TranscodeJob) (string, error) {
 	workers, err := s.ListWorkers(ctx)
 	if err != nil || len(workers) == 0 {
+		// Any worker, of any build, may pop the global queue, so a job that
+		// needs a worker feature can't go there.
+		if len(jobNeeds(job).Features) > 0 {
+			s.recordJob("error", ErrNoCapableWorker)
+			return "", ErrNoCapableWorker
+		}
 		eqErr := s.EnqueueJob(ctx, job)
 		s.recordJob("queued", eqErr)
 		return "", eqErr
@@ -737,8 +771,17 @@ func (s *SessionStore) DispatchJob(ctx context.Context, job TranscodeJob) (strin
 		}
 	}
 
-	best := selectWorker(workers, jobNeeds(job))
+	needs := jobNeeds(job)
+	workers = workersWithFeatures(workers, needs.Features)
+	if len(workers) == 0 {
+		s.recordJob("error", ErrNoCapableWorker)
+		return "", ErrNoCapableWorker
+	}
+	best := selectWorker(workers, needs)
 	job.CostCenti = JobCostCenti(job.Width, job.Height, job.Decision)
+	if job.BurnSubtitle != nil {
+		job.CostCenti = BurnInCostCenti(job.CostCenti)
+	}
 	b, err := json.Marshal(job)
 	if err != nil {
 		s.recordJob("error", err)
@@ -824,14 +867,66 @@ func workerQueueKey(addr string) string {
 // never blocked from a non-matching worker: every worker self-resolves a working
 // path (software zscale tonemap, HEVC instead of AV1, software decode), just
 // more slowly. So this routes for speed/quality, not correctness.
+//
+// Features is the exception: it is a hard requirement. A worker that predates
+// a job field drops it without a word, so it can't fall back to anything.
 type JobNeeds struct {
 	ToneMap    bool // HDR→SDR tonemap — prefer a GPU-tonemap node over software zscale
 	PreferAV1  bool // AV1 output requested — prefer a node with an AV1 encoder
 	PreferHEVC bool // HEVC output requested — prefer a node with an HEVC encoder
+	// Features the worker must advertise (WorkerFeature*) to get the job at all.
+	Features []string
 }
 
 func jobNeeds(j TranscodeJob) JobNeeds {
-	return JobNeeds{ToneMap: j.NeedsToneMap, PreferAV1: j.PreferAV1, PreferHEVC: j.PreferHEVC}
+	needs := JobNeeds{ToneMap: j.NeedsToneMap, PreferAV1: j.PreferAV1, PreferHEVC: j.PreferHEVC}
+	if j.BurnSubtitle != nil {
+		needs.Features = append(needs.Features, WorkerFeatureBurnSubtitles)
+	}
+	if j.AudioPassthrough {
+		needs.Features = append(needs.Features, WorkerFeatureAudioPassthrough)
+	}
+	return needs
+}
+
+// ErrNoCapableWorker is DispatchJob's answer when no registered worker
+// advertises a feature the job needs (JobNeeds.Features): every worker in
+// the fleet is an older build.
+var ErrNoCapableWorker = errors.New("no transcode worker supports this job")
+
+// workersWithFeatures keeps the workers that advertise every feature in
+// features (all of them when features is empty).
+func workersWithFeatures(workers []WorkerRegistration, features []string) []WorkerRegistration {
+	if len(features) == 0 {
+		return workers
+	}
+	out := make([]WorkerRegistration, 0, len(workers))
+	for _, w := range workers {
+		if hasAllFeatures(w.Features, features) {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+func hasAllFeatures(have, want []string) bool {
+	for _, f := range want {
+		if !slices.Contains(have, f) {
+			return false
+		}
+	}
+	return true
+}
+
+// FleetHasFeature reports whether any registered worker advertises a worker
+// feature (WorkerFeature*). Like FleetCanEncode, a registry error or an empty
+// fleet answers false: a job needing the feature couldn't be dispatched.
+func (s *SessionStore) FleetHasFeature(ctx context.Context, feature string) bool {
+	workers, err := s.ListWorkers(ctx)
+	if err != nil {
+		return false
+	}
+	return len(workersWithFeatures(workers, []string{feature})) > 0
 }
 
 // selectWorker picks the best worker for a new job. Workers are ranked in strict
@@ -930,6 +1025,14 @@ func JobCostCenti(width, height int, decision string) int {
 		cost = 25
 	}
 	return cost
+}
+
+// BurnInCostCenti raises a job's cost for a subtitle burn-in. The overlay runs
+// on the CPU, and a burn turns off the all-GPU-memory paths, so frames make a
+// round trip through system memory that a plain GPU transcode avoids: about
+// half again the work of the same transcode.
+func BurnInCostCenti(cost int) int {
+	return cost * 3 / 2
 }
 
 func workerScore(w WorkerRegistration, needs JobNeeds) int {
@@ -1071,6 +1174,34 @@ type TranscodeJob struct {
 	// parts.go) and FilePath / SourceURL, which describe part 1, are not read.
 	// A worker built before stacking ignores Parts and plays part 1.
 	Parts []SourcePart `json:"parts,omitempty"`
+
+	// AudioPassthrough: AudioCodec is "copy" and the copied track is TrueHD or
+	// DTS, bitstreamed for the client's receiver (audioPassthrough). MPEG-TS
+	// can't carry either to a player, so the output is fMP4 whatever the
+	// video (ForcesFMP4), and ffmpeg's mp4 muxer wants -strict -2 for them.
+	// Dispatched only to a worker that advertises WorkerFeatureAudioPassthrough.
+	AudioPassthrough bool `json:"audio_passthrough,omitempty"`
+	// BurnSubtitle, when set, paints an image subtitle stream (PGS, VobSub,
+	// DVB, XSUB) into the picture. Only on a re-encode. Dispatched only to a
+	// worker that advertises WorkerFeatureBurnSubtitles.
+	BurnSubtitle *SubtitleBurn `json:"burn_subtitle,omitempty"`
+}
+
+// SubtitleBurn is the subtitle stream a transcode paints into the picture.
+type SubtitleBurn struct {
+	// StreamIndex is the ABSOLUTE ffprobe stream index (`0:N`), the number
+	// item details give as subtitle_streams[].index.
+	StreamIndex int `json:"stream_index"`
+	// OffsetMS shifts the subtitles' timing (positive = later), the stream's
+	// admin offset.
+	OffsetMS int64 `json:"offset_ms,omitempty"`
+}
+
+// ForcesFMP4 reports whether the job's output must be fMP4 whatever encoder
+// the worker lands on: a promised .m4s playlist (ForceFMP4), or a TrueHD/DTS
+// passthrough copy (AudioPassthrough).
+func (j TranscodeJob) ForcesFMP4() bool {
+	return j.ForceFMP4 || (j.AudioPassthrough && j.AudioCodec == "copy")
 }
 
 // NewSessionID generates a new transcode session ID.

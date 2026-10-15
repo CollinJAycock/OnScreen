@@ -97,10 +97,17 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	// bitstream, and most decoders reject >5.1 AAC outright (the 7.1-AAC browser
 	// finding) — so it must transcode to downmix. The downmix target is chosen
 	// separately by TargetAudioChannels.
+	//
+	// A codec the client passes through to a receiver (audioPassthrough) is
+	// the exception to the channel cap: the client never decodes it, so its
+	// maxAudioChannels (what its own mixer renders) says nothing about a 7.1
+	// TrueHD stream the AVR unpacks. The container rule still applies — a
+	// track the client's demuxer can't find can't be passed on either.
 	srcChannels := SourceAudioChannels(file.AudioStreams, -1)
 	channelsFit := caps.MaxAudioChannels <= 0 || srcChannels <= 0 || srcChannels <= caps.MaxAudioChannels
+	audioPlayable := (caps.SupportsAudioCodec(audioAlias) && channelsFit) || caps.PassesThroughAudio(audioAlias)
 	clientSupportsAudio := audioAlias == "" ||
-		(caps.SupportsAudioCodec(audioAlias) && channelsFit && containerCarriesAudio(containerAlias, audioAlias))
+		(audioPlayable && containerCarriesAudio(containerAlias, audioAlias))
 	clientSupportsContainer := caps.SupportsContainer(containerAlias)
 
 	// Dolby Vision: "dolby_vision" is only profile 5 now — a file with an HDR10,
@@ -283,8 +290,8 @@ func canonicalContainer(container string) string {
 // demuxers skip it — Media3's among them, which is what the Android TV client
 // claiming truehd (for passthrough) plays through. Direct-played there, a TS
 // file with a TrueHD track would show the picture with no sound; it remuxes
-// instead, and the remux converts the audio (TrueHD is never stream-copied
-// into the HLS containers).
+// instead. The remux copies the TrueHD into fMP4 segments for a client that
+// declared it in audioPassthrough, and converts it to AAC for everyone else.
 func containerCarriesAudio(containerAlias, audioAlias string) bool {
 	return !(audioAlias == "truehd" && containerAlias == "ts")
 }
