@@ -1,0 +1,410 @@
+OnScreen: dovi_rpu bsf - convert_p81, Dolby Vision profile 7 -> 8.1
+
+Adds `-bsf:v dovi_rpu=convert_p81=1`. On a profile 7 HEVC stream (UHD
+Blu-ray dual layer, FEL or MEL) it drops every enhancement layer NAL
+(type 63) and rewrites each RPU the way `dovi_tool -m 2 convert --discard`
+does (residual off, NLQ removed, identity BL->VDR mapping for a FEL, the
+BT.2020 profile 8.1 DM matrices), and sets the configuration record to
+profile 8, compatibility id 1, no EL, uncompressed. One pass, so packet
+timestamps (B-frame reordering) stay intact, which a dovi_tool pipe loses.
+
+The conversion walks the packet's NAL units in their own format (hvcC
+length-prefixed or Annex B) and copies everything but the EL and RPU byte
+for byte, extradata untouched. It deliberately avoids the CBS round trip the
+filter's other modes use: that writes Annex B, and an MP4 muxer with an hvc1
+tag then moves every in-band parameter set into the sample entry, which
+corrupts a base layer whose in-band sets differ from its hvcC ones.
+
+On anything else (profile 8 or 5, no configuration record, AV1) the option
+makes the filter a no-op: packets pass through unchanged.
+
+Detect it with: ffmpeg -h bsf=dovi_rpu   (lists "convert_p81")
+
+--- FFmpeg.orig/libavcodec/bsf/dovi_rpu.c
++++ FFmpeg/libavcodec/bsf/dovi_rpu.c
+@@ -40,8 +40,92 @@
+ 
+     int strip;
+     int compression;
++
++    int convert_p81;    /* option: rewrite profile 7 as single-layer profile 8.1 */
++    int convert_active; /* convert_p81 and the input really is profile 7 HEVC */
++    int passthrough;    /* convert_p81 on anything else: packets go through as-is */
++    int nal_length_size; /* convert_active: 0 = Annex B, else hvcC length size */
++    uint8_t *rbsp;      /* convert_active: unescaped RPU scratch buffer */
++    unsigned rbsp_size;
+ } DoviRpuContext;
+ 
++/* The BT.2020 matrices profile 8.1 expects, as dovi_tool's mode 2 writes
++ * them (libdovi VdrDmData::set_p81_coeffs). */
++static const int p81_ycc_to_rgb[9] = {
++    9574, 0, 13802, 9574, -1540, -5348, 9574, 17610, 0,
++};
++static const unsigned p81_ycc_to_rgb_offset[3] = {
++    16777216, 134217728, 134217728,
++};
++static const int p81_rgb_to_lms[9] = {
++    7222, 8771, 390, 2654, 12430, 1300, 0, 422, 15962,
++};
++
++/* libdovi RpuDataNlq::is_mel(): every NLQ parameter is the identity. */
++static int dovi_nlq_is_mel(const AVDOVIRpuDataHeader *hdr,
++                           const AVDOVIDataMapping *mapping)
++{
++    const uint64_t one = 1ULL << hdr->coef_log2_denom;
++    for (int c = 0; c < 3; c++) {
++        const AVDOVINLQParams *nlq = &mapping->nlq[c];
++        if (nlq->nlq_offset || nlq->vdr_in_max != one ||
++            nlq->linear_deadzone_slope || nlq->linear_deadzone_threshold)
++            return 0;
++    }
++    return 1;
++}
++
++/**
++ * Profile 7 -> profile 8.1, as `dovi_tool -m 2 convert --discard` does it:
++ * the enhancement layer is dropped (see dovi_rpu_filter_convert_p81()), so
++ * the RPU stops describing one. Residual decoding is disabled and the NLQ
++ * parameters go. For a full enhancement layer (FEL) the BL->VDR reshaping is
++ * replaced by the identity, since it only made sense together with the FEL's
++ * residual; a minimal enhancement layer (MEL) keeps its mapping. When the
++ * frame carries display management data, its matrices become the BT.2020
++ * ones profile 8.1 expects.
++ */
++static void dovi_convert_to_p81(AVDOVIMetadata *metadata)
++{
++    AVDOVIRpuDataHeader *hdr = av_dovi_get_header(metadata);
++    AVDOVIDataMapping *mapping = av_dovi_get_mapping(metadata);
++    AVDOVIColorMetadata *color = av_dovi_get_color(metadata);
++    const int fel = mapping->nlq_method_idc != AV_DOVI_NLQ_NONE &&
++                    !dovi_nlq_is_mel(hdr, mapping);
++
++    hdr->el_spatial_resampling_filter_flag = 0;
++    hdr->disable_residual_flag = 1;
++
++    mapping->nlq_method_idc = AV_DOVI_NLQ_NONE;
++    mapping->num_x_partitions = 1;
++    mapping->num_y_partitions = 1;
++    memset(mapping->nlq, 0, sizeof(mapping->nlq));
++    memset(mapping->nlq_pivots, 0, sizeof(mapping->nlq_pivots));
++
++    if (fel) {
++        for (int c = 0; c < 3; c++) {
++            AVDOVIReshapingCurve *curve = &mapping->curves[c];
++            memset(curve, 0, sizeof(*curve));
++            curve->num_pivots      = 2;
++            curve->pivots[0]       = 0;
++            curve->pivots[1]       = (1 << hdr->bl_bit_depth) - 1;
++            curve->mapping_idc[0]  = AV_DOVI_MAPPING_POLYNOMIAL;
++            curve->poly_order[0]   = 1;
++            curve->poly_coef[0][1] = 1LL << hdr->coef_log2_denom;
++        }
++    }
++
++    if (memcmp(color, &ff_dovi_color_default, sizeof(*color))) {
++        for (int i = 0; i < 9; i++) {
++            color->ycc_to_rgb_matrix[i] = av_make_q(p81_ycc_to_rgb[i], 1 << 13);
++            color->rgb_to_lms_matrix[i] = av_make_q(p81_rgb_to_lms[i], 1 << 14);
++        }
++        for (int i = 0; i < 3; i++)
++            color->ycc_to_rgb_offset[i] = av_make_q(p81_ycc_to_rgb_offset[i], 1 << 28);
++        color->signal_color_space = 0;
++    }
++}
++
+ static int update_rpu(AVBSFContext *bsf, const AVPacket *pkt, int flags,
+                       const uint8_t *rpu, size_t rpu_size,
+                       uint8_t **out_rpu, int *out_size)
+@@ -66,6 +150,9 @@
+         return ret;
+     }
+ 
++    if (s->convert_active)
++        dovi_convert_to_p81(metadata);
++
+     if (pkt && !(pkt->flags & AV_PKT_FLAG_KEY))
+         flags |= FF_DOVI_COMPRESS_RPU;
+     ret = ff_dovi_rpu_generate(&s->enc, metadata, flags, out_rpu, out_size);
+@@ -189,6 +276,194 @@
+     .update_fragment = &dovi_rpu_update_fragment_av1,
+ };
+ 
++/* Size of the next NAL unit in an Annex B buffer: up to the next start
++ * code (00 00 01, its leading zero bytes excluded) or the end. */
++static int annexb_nal_end(const uint8_t *buf, int size)
++{
++    for (int i = 0; i + 2 < size; i++) {
++        if (buf[i] == 0 && buf[i + 1] == 0 && buf[i + 2] == 1) {
++            while (i > 0 && buf[i - 1] == 0)
++                i--;
++            return i;
++        }
++    }
++    return size;
++}
++
++/* Rewrites one profile 7 RPU NAL unit (2-byte header included) as a
++ * profile 8.1 one into *out: 7C 01 + escaped payload. 0 bytes when the RPU
++ * carries no mapping, or can't be parsed (a warning is logged and the frame
++ * goes out without one). */
++static int convert_rpu_nal(AVBSFContext *bsf, const AVPacket *pkt,
++                           const uint8_t *nal, int nal_size,
++                           uint8_t **out, int *out_size)
++{
++    DoviRpuContext *s = bsf->priv_data;
++    uint8_t *rpu = NULL, *dst;
++    int rpu_size, n = 0, zeros = 0, ret;
++
++    *out = NULL;
++    *out_size = 0;
++    av_fast_padded_malloc(&s->rbsp, &s->rbsp_size, nal_size);
++    if (!s->rbsp)
++        return AVERROR(ENOMEM);
++    /* Undo emulation prevention (00 00 03 -> 00 00) after the NAL header. */
++    for (int i = 2; i < nal_size; i++) {
++        if (zeros >= 2 && nal[i] == 3) {
++            zeros = 0;
++            continue;
++        }
++        zeros = nal[i] ? 0 : zeros + 1;
++        s->rbsp[n++] = nal[i];
++    }
++
++    ret = update_rpu(bsf, pkt, FF_DOVI_WRAP_NAL, s->rbsp, n, &rpu, &rpu_size);
++    if (ret < 0) {
++        av_log(bsf, AV_LOG_WARNING, "Dropping an RPU that could not be "
++               "converted to profile 8.1: %s\n", av_err2str(ret));
++        return 0;
++    }
++    if (!rpu || rpu_size <= 0) {
++        av_free(rpu);
++        return 0;
++    }
++
++    dst = av_malloc(rpu_size + 2);
++    if (!dst) {
++        av_free(rpu);
++        return AVERROR(ENOMEM);
++    }
++    dst[0] = nal[0];
++    dst[1] = nal[1];
++    memcpy(dst + 2, rpu, rpu_size);
++    av_free(rpu);
++    *out = dst;
++    *out_size = rpu_size + 2;
++    return 0;
++}
++
++/**
++ * convert_p81: walks the packet's NAL units in the format they came in
++ * (hvcC length-prefixed or Annex B) and writes them back in that format,
++ * every enhancement layer unit (type 63) dropped and the RPU (type 62)
++ * rewritten. Everything else, base layer parameter sets and slices
++ * included, is copied byte for byte, and the extradata is left alone. The
++ * CBS round trip the other modes use isn't used here: it writes Annex B,
++ * after which an MP4 muxer with an hvc1 tag moves every in-band parameter
++ * set into the sample entry, which breaks a base layer whose in-band sets
++ * differ from its hvcC ones.
++ */
++static int dovi_rpu_filter_convert_p81(AVBSFContext *bsf, AVPacket *pkt)
++{
++    DoviRpuContext *s = bsf->priv_data;
++    const int lsize = s->nal_length_size;
++    AVPacket *in = NULL;
++    uint8_t *out = NULL;
++    size_t out_size = 0, out_cap;
++    const uint8_t *buf, *end;
++    int ret;
++
++    ret = ff_bsf_get_packet(bsf, &in);
++    if (ret < 0)
++        return ret;
++
++    out_cap = in->size + 1024;
++    out = av_malloc(out_cap + AV_INPUT_BUFFER_PADDING_SIZE);
++    if (!out) {
++        ret = AVERROR(ENOMEM);
++        goto fail;
++    }
++
++    buf = in->data;
++    end = in->data + in->size;
++    while (buf < end) {
++        const uint8_t *nal, *prefix = buf;
++        int nal_size, prefix_size, type;
++        uint8_t *rpu = NULL;
++        int rpu_size = 0;
++
++        if (lsize) {
++            if (end - buf < lsize) {
++                ret = AVERROR_INVALIDDATA;
++                goto fail;
++            }
++            nal_size = 0;
++            for (int i = 0; i < lsize; i++)
++                nal_size = (nal_size << 8) | buf[i];
++            buf += lsize;
++            if (nal_size < 0 || nal_size > end - buf) {
++                ret = AVERROR_INVALIDDATA;
++                goto fail;
++            }
++        } else {
++            /* Skip to the start code, then past it. */
++            while (end - buf >= 3 && !(buf[0] == 0 && buf[1] == 0 && buf[2] == 1))
++                buf++;
++            if (end - buf < 3)
++                break;
++            buf += 3;
++            nal_size = annexb_nal_end(buf, end - buf);
++        }
++        prefix_size = buf - prefix;
++        nal = buf;
++        buf += nal_size;
++        if (nal_size < 2)
++            continue;
++
++        type = (nal[0] >> 1) & 0x3f;
++        if (type == HEVC_NAL_UNSPEC63)
++            continue;
++        if (type == HEVC_NAL_UNSPEC62) {
++            ret = convert_rpu_nal(bsf, in, nal, nal_size, &rpu, &rpu_size);
++            if (ret < 0)
++                goto fail;
++            if (!rpu_size)
++                continue;
++            nal = rpu;
++            nal_size = rpu_size;
++        }
++
++        if (out_size + 4 + nal_size > out_cap) {
++            out_cap = FFMAX(out_cap * 2, out_size + 4 + nal_size);
++            ret = av_reallocp(&out, out_cap + AV_INPUT_BUFFER_PADDING_SIZE);
++            if (ret < 0) {
++                av_free(rpu);
++                goto fail;
++            }
++        }
++        if (lsize) {
++            for (int i = lsize - 1; i >= 0; i--)
++                out[out_size++] = (nal_size >> (8 * i)) & 0xff;
++        } else {
++            /* Keep the 3- or 4-byte start code the unit had. */
++            if (prefix_size >= 4)
++                out[out_size++] = 0;
++            out[out_size++] = 0;
++            out[out_size++] = 0;
++            out[out_size++] = 1;
++        }
++        memcpy(out + out_size, nal, nal_size);
++        out_size += nal_size;
++        av_free(rpu);
++    }
++    memset(out + out_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
++
++    ret = av_packet_from_data(pkt, out, out_size);
++    if (ret < 0)
++        goto fail;
++    out = NULL;
++    ret = av_packet_copy_props(pkt, in);
++    if (ret < 0) {
++        av_packet_unref(pkt);
++        goto fail;
++    }
++
++fail:
++    av_free(out);
++    av_packet_free(&in);
++    return ret;
++}
++
+ static int dovi_rpu_init(AVBSFContext *bsf)
+ {
+     int ret;
+@@ -196,6 +471,50 @@
+     s->dec.logctx = s->enc.logctx = bsf;
+     s->enc.enable = 1;
+ 
++    if (s->convert_p81) {
++        const AVPacketSideData *sd;
++        AVDOVIDecoderConfigurationRecord *cfg;
++        const AVCodecParameters *par = bsf->par_in;
++
++        if (s->strip) {
++            av_log(bsf, AV_LOG_ERROR, "convert_p81 and strip are mutually exclusive.\n");
++            return AVERROR(EINVAL);
++        }
++
++        sd = av_packet_side_data_get(bsf->par_out->coded_side_data,
++                                     bsf->par_out->nb_coded_side_data,
++                                     AV_PKT_DATA_DOVI_CONF);
++        cfg = sd ? (AVDOVIDecoderConfigurationRecord *) sd->data : NULL;
++        if (!cfg || cfg->dv_profile != 7 || par->codec_id != AV_CODEC_ID_HEVC) {
++            /* Nothing to convert: hand every packet through untouched. */
++            av_log(bsf, AV_LOG_VERBOSE, "convert_p81: not Dolby Vision profile 7 "
++                   "HEVC, passing the stream through unchanged.\n");
++            s->passthrough = 1;
++            return 0;
++        }
++
++        /* hvcC extradata means length-prefixed NAL units; otherwise Annex B. */
++        if (par->extradata_size >= 23 && par->extradata[0] == 1)
++            s->nal_length_size = (par->extradata[21] & 3) + 1;
++
++        /* Single-layer profile 8.1: BL + RPU over the HDR10-compatible base.
++         * The RPUs are rewritten as profile 8.1 and go out uncompressed,
++         * which every profile 8 player takes. */
++        s->dec.cfg                         = *cfg;
++        s->convert_active                  = 1;
++        s->compression                     = AV_DOVI_COMPRESSION_NONE;
++        cfg->dv_profile                    = 8;
++        cfg->rpu_present_flag              = 1;
++        cfg->el_present_flag               = 0;
++        cfg->bl_present_flag               = 1;
++        cfg->dv_bl_signal_compatibility_id = 1;
++        cfg->dv_md_compression             = AV_DOVI_COMPRESSION_NONE;
++        s->enc.cfg                         = *cfg;
++        av_log(bsf, AV_LOG_VERBOSE, "Converting Dolby Vision profile 7 to 8.1 "
++               "(%s input).\n", s->nal_length_size ? "length-prefixed" : "Annex B");
++        return 0;
++    }
++
+     if (s->compression == AV_DOVI_COMPRESSION_RESERVED) {
+         av_log(bsf, AV_LOG_ERROR, "Invalid compression level: %d\n", s->compression);
+         return AVERROR(EINVAL);
+@@ -248,9 +567,20 @@
+     }
+ }
+ 
++static int dovi_rpu_filter(AVBSFContext *bsf, AVPacket *pkt)
++{
++    DoviRpuContext *s = bsf->priv_data;
++    if (s->passthrough)
++        return ff_bsf_get_packet_ref(bsf, pkt);
++    if (s->convert_active)
++        return dovi_rpu_filter_convert_p81(bsf, pkt);
++    return ff_cbs_bsf_generic_filter(bsf, pkt);
++}
++
+ static void dovi_rpu_close(AVBSFContext *bsf)
+ {
+     DoviRpuContext *s = bsf->priv_data;
++    av_freep(&s->rbsp);
+     ff_dovi_ctx_unref(&s->dec);
+     ff_dovi_ctx_unref(&s->enc);
+     ff_cbs_bsf_generic_close(bsf);
+@@ -260,6 +590,8 @@
+ #define FLAGS (AV_OPT_FLAG_VIDEO_PARAM|AV_OPT_FLAG_BSF_PARAM)
+ static const AVOption dovi_rpu_options[] = {
+     { "strip",          "Strip Dolby Vision metadata",  OFFSET(strip),       AV_OPT_TYPE_BOOL,  { .i64 = 0 }, 0, 1, FLAGS },
++    { "convert_p81",    "Convert profile 7 to single-layer profile 8.1, dropping the enhancement layer (other streams pass through unchanged)",
++                        OFFSET(convert_p81), AV_OPT_TYPE_BOOL, { .i64 = 0 }, 0, 1, FLAGS },
+     { "compression",    "DV metadata compression mode", OFFSET(compression), AV_OPT_TYPE_INT,   { .i64 = AV_DOVI_COMPRESSION_LIMITED }, 0, AV_DOVI_COMPRESSION_EXTENDED, FLAGS, .unit = "compression" },
+         { "none",       "Don't compress metadata",      0, AV_OPT_TYPE_CONST, {.i64 = 0},                            .flags = FLAGS, .unit = "compression" },
+         { "limited",    "Limited metadata compression", 0, AV_OPT_TYPE_CONST, {.i64 = AV_DOVI_COMPRESSION_LIMITED},  .flags = FLAGS, .unit = "compression" },
+@@ -285,5 +617,5 @@
+     .priv_data_size = sizeof(DoviRpuContext),
+     .init           = &dovi_rpu_init,
+     .close          = &dovi_rpu_close,
+-    .filter         = &ff_cbs_bsf_generic_filter,
++    .filter         = &dovi_rpu_filter,
+ };

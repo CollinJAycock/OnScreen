@@ -122,6 +122,13 @@ RUN cd /tmp && \
 # where libplacebo can't init. libplacebo stays for Vulkan-capable hosts. Skipped
 # patch 0001 (segment-muxer, unrelated); the chain only needs 0002->0004 and they
 # apply to mainline 8.1.1. Re-vendor from the same branch when bumping FFmpeg.
+#   0005 dovi-rpu-convert-p7-to-p81          (ours, not jellyfin's)
+# adds `-bsf:v dovi_rpu=convert_p81=1`: Dolby Vision profile 7 (UHD Blu-ray dual
+# layer) is remuxed as single-layer profile 8.1 in the same pass, the way
+# `dovi_tool -m 2 convert --discard` converts it, with timestamps intact. Any
+# other stream passes through unchanged. The server probes `ffmpeg -h
+# bsf=dovi_rpu` for "convert_p81"; without it, profile 7 keeps its HDR10 base
+# layer only. Rebase it onto libavcodec/bsf/dovi_rpu.c when bumping FFmpeg.
 COPY docker/patches/ /tmp/ffmpeg-patches/
 RUN cd /tmp/ffmpeg-${FFMPEG_VERSION} && \
     for p in /tmp/ffmpeg-patches/*.patch; do echo "== applying $(basename "$p") ==" && patch -p1 < "$p"; done
