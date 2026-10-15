@@ -13,13 +13,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
-	"golang.org/x/text/unicode/norm"
 	"golang.org/x/time/rate"
 
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -171,9 +170,9 @@ func (c *Client) SearchMovie(ctx context.Context, title string, year int) (*meta
 
 // SearchMovieWithRuntime implements metadata.RuntimeMovieSearcher. It is the
 // scanner's unattended auto-match, so it returns only a film it can vouch
-// for: one whose title, original title or alternative title is the query
-// once folded (foldTitle), released in the parsed year or a year either side
-// of it. Otherwise it errors and the item stays unmatched for Fix Match —
+// for (metadata.MatchTitle): one whose title, original title or alternative
+// title is the query once folded, released in the parsed year or a year
+// either side of it. Otherwise it errors and the item stays unmatched for Fix Match —
 // TMDB's top hit alone is not a match ("Spring" 2019 → Spring Breakers,
 // 2013; "Hero" 2018 → Chestnut: Hero of Central Park, 2004). runtime, when
 // known, picks between films sharing that title and year (pickByRuntime).
@@ -187,18 +186,18 @@ func (c *Client) SearchMovieWithRuntime(ctx context.Context, title string, year 
 	if err != nil {
 		return nil, err
 	}
-	matches := matchByTitle(rows, title, year)
+	matches := pick(rows, metadata.MatchTitle(title, year, movieCandidates(rows)))
 	if len(matches) == 0 && year > 0 {
 		more, err := c.searchMovieRows(ctx, title, "year", year)
 		if err != nil {
 			return nil, err
 		}
-		rows = appendNewMovies(rows, more)
-		matches = matchByTitle(rows, title, year)
+		rows = appendNew(rows, more, func(m tmdbMovie) int { return m.ID })
+		matches = pick(rows, metadata.MatchTitle(title, year, movieCandidates(rows)))
 	}
 	if len(matches) == 0 {
-		if r, ok := c.matchByAlternativeTitle(ctx, rows, title, year); ok {
-			matches = []tmdbMovie{r}
+		if i, ok := c.matchByAlternativeTitle(ctx, "movie", movieCandidates(rows), title, year); ok {
+			matches = []tmdbMovie{rows[i]}
 		}
 	}
 	if len(matches) == 0 {
@@ -249,47 +248,55 @@ func (c *Client) searchMovieRows(ctx context.Context, title, yearParam string, y
 	return resp.Results, nil
 }
 
-// appendNewMovies appends the rows of more whose id rows doesn't hold yet.
-func appendNewMovies(rows, more []tmdbMovie) []tmdbMovie {
+// movieCandidates is rows as metadata.MatchTitle sees them.
+func movieCandidates(rows []tmdbMovie) []metadata.Candidate {
+	out := make([]metadata.Candidate, len(rows))
+	for i, r := range rows {
+		out[i] = metadata.Candidate{ID: r.ID, Titles: []string{r.Title, r.OriginalTitle}, Year: dateYear(r.ReleaseDate)}
+	}
+	return out
+}
+
+// tvCandidates is rows as metadata.MatchTitle sees them.
+func tvCandidates(rows []tmdbTV) []metadata.Candidate {
+	out := make([]metadata.Candidate, len(rows))
+	for i, r := range rows {
+		out[i] = metadata.Candidate{ID: r.ID, Titles: []string{r.Name, r.OriginalName}, Year: dateYear(r.FirstAirDate)}
+	}
+	return out
+}
+
+// dateYear is the year of a TMDB "2006-01-02" date, 0 when there is none.
+func dateYear(date string) int {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return 0
+	}
+	return t.Year()
+}
+
+// pick returns rows[i] for each i in idx.
+func pick[T any](rows []T, idx []int) []T {
+	out := make([]T, len(idx))
+	for n, i := range idx {
+		out[n] = rows[i]
+	}
+	return out
+}
+
+// appendNew appends the rows of more whose id rows doesn't hold yet.
+func appendNew[T any](rows, more []T, id func(T) int) []T {
 	seen := make(map[int]bool, len(rows))
 	for _, r := range rows {
-		seen[r.ID] = true
+		seen[id(r)] = true
 	}
 	for _, r := range more {
-		if !seen[r.ID] {
-			seen[r.ID] = true
+		if !seen[id(r)] {
+			seen[id(r)] = true
 			rows = append(rows, r)
 		}
 	}
 	return rows
-}
-
-// matchByTitle returns the rows, in TMDB's order, whose title or original
-// title folds to the query and whose release year is closest to the parsed
-// one: the parsed year itself if any row has it, else a year either side
-// (see movieYearDistance). A row that only shares words with the query
-// ("Spring Breakers" for "Spring") never qualifies.
-func matchByTitle(rows []tmdbMovie, title string, year int) []tmdbMovie {
-	want := foldTitle(title)
-	if want == "" {
-		return nil
-	}
-	var exact, near []tmdbMovie
-	for _, r := range rows {
-		if foldTitle(r.Title) != want && foldTitle(r.OriginalTitle) != want {
-			continue
-		}
-		switch movieYearDistance(r, year) {
-		case 0:
-			exact = append(exact, r)
-		case 1:
-			near = append(near, r)
-		}
-	}
-	if len(exact) > 0 {
-		return exact
-	}
-	return near
 }
 
 // maxRuntimeLookups caps the details calls pickByRuntime spends on one
@@ -345,113 +352,102 @@ func (c *Client) pickByRuntime(ctx context.Context, matches []tmdbMovie, runtime
 
 // maxAltTitleLookups caps the /alternative_titles calls one search spends
 // when no row's own title matches. Only an unmatched search pays them, and
-// the right film, when TMDB found it by another title, ranks at the top.
+// the right title, when TMDB found it by another name, ranks at the top.
 const maxAltTitleLookups = 3
 
-// matchByAlternativeTitle is matchByTitle's fallback for a file named by a
-// title TMDB only lists as an alternative: a regional release title ("Harry
-// Potter and the Sorcerer's Stone") or the short form of a long one
-// ("Borat"). It checks the year-compatible rows in TMDB's order. A failed
-// lookup skips the row; it never makes a match.
-func (c *Client) matchByAlternativeTitle(ctx context.Context, rows []tmdbMovie, title string, year int) (tmdbMovie, bool) {
-	want := foldTitle(title)
-	if want == "" {
-		return tmdbMovie{}, false
+// matchByAlternativeTitle is the fallback for a file named by a title TMDB
+// only lists as an alternative: a regional release title ("Harry Potter and
+// the Sorcerer's Stone"), the short form of a long one ("Borat"), a show's
+// abbreviation. It checks the candidates within a year of year, in TMDB's
+// order, and returns the index of the first whose alternative titles (kind
+// "movie" or "tv") include title. A failed lookup skips the row; it never
+// makes a match.
+func (c *Client) matchByAlternativeTitle(ctx context.Context, kind string, cands []metadata.Candidate, title string, year int) (int, bool) {
+	if metadata.FoldTitle(title) == "" {
+		return 0, false
 	}
 	looked := 0
-	for _, r := range rows {
-		if movieYearDistance(r, year) > 1 {
+	for i, cand := range cands {
+		if metadata.YearDistance(cand.Year, year) > 1 {
 			continue
 		}
 		if looked == maxAltTitleLookups || ctx.Err() != nil {
 			break
 		}
 		looked++
+		// Movies list them under "titles", shows under "results".
 		var resp struct {
-			Titles []struct {
-				Title string `json:"title"`
-			} `json:"titles"`
+			Titles  []struct{ Title string } `json:"titles"`
+			Results []struct{ Title string } `json:"results"`
 		}
-		if err := c.get(ctx, fmt.Sprintf("/movie/%d/alternative_titles", r.ID), nil, &resp); err != nil {
+		if err := c.get(ctx, fmt.Sprintf("/%s/%d/alternative_titles", kind, cand.ID), nil, &resp); err != nil {
 			continue
 		}
-		for _, t := range resp.Titles {
-			if foldTitle(t.Title) == want {
-				return r, true
+		var alts []string
+		for _, t := range append(resp.Titles, resp.Results...) {
+			alts = append(alts, t.Title)
+		}
+		if metadata.HasTitle(alts, title) {
+			return i, true
+		}
+	}
+	return 0, false
+}
+
+// SearchTV implements metadata.Agent. Like SearchMovieWithRuntime it is the
+// scanner's unattended auto-match and returns only a show it can vouch for
+// (metadata.MatchTitle): one whose name, original name or alternative title
+// is the query's once folded, first aired in the parsed year or a year
+// either side of it. Otherwise it errors, so the scanner's next agent gets
+// its turn or the show stays unmatched for Fix Match. A TVDB-style
+// qualifier on the query ("The Office (US)", "Doctor Who (2005)") is split
+// off first: its year stands in for a missing parsed one, and its country
+// picks between shows sharing the name.
+func (c *Client) SearchTV(ctx context.Context, title string, year int) (*metadata.TVShowResult, error) {
+	name, country, qualifierYear := metadata.SplitShowQualifier(title)
+	if year == 0 {
+		year = qualifierYear
+	}
+	rows, err := c.searchTVRows(ctx, name, year)
+	if err != nil {
+		return nil, err
+	}
+	matches := metadata.MatchTitle(name, year, tvCandidates(rows))
+	if len(matches) == 0 && year > 0 {
+		// first_air_date_year misses a show first aired a year off the
+		// file's; the unfiltered search still holds it.
+		more, err := c.searchTVRows(ctx, name, 0)
+		if err != nil {
+			return nil, err
+		}
+		rows = appendNew(rows, more, func(t tmdbTV) int { return t.ID })
+		matches = metadata.MatchTitle(name, year, tvCandidates(rows))
+	}
+	if len(matches) == 0 {
+		if i, ok := c.matchByAlternativeTitle(ctx, "tv", tvCandidates(rows), name, year); ok {
+			matches = []int{i}
+		}
+	}
+	if len(matches) == 0 {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("tmdb search tv %q: %w", title, ctxErr)
+		}
+		if len(rows) == 0 {
+			return nil, fmt.Errorf("tmdb: no results for TV %q", title)
+		}
+		return nil, fmt.Errorf("tmdb: no confident TV match for %q (%d); top hit %q (%s)",
+			title, year, rows[0].Name, rows[0].FirstAirDate)
+	}
+
+	best := rows[matches[0]]
+	if country != "" {
+		for _, i := range matches {
+			if slices.Contains(rows[i].OriginCountry, country) {
+				best = rows[i]
+				break
 			}
 		}
 	}
-	return tmdbMovie{}, false
-}
-
-// movieYearDistance is how many years row's release date lies from the
-// parsed year: 0 when no year was parsed (any year will do), and past the
-// one-year tolerance when the row has no release date to check.
-func movieYearDistance(row tmdbMovie, year int) int {
-	if year <= 0 {
-		return 0
-	}
-	release, err := time.Parse("2006-01-02", row.ReleaseDate)
-	if err != nil {
-		return 1 << 30
-	}
-	d := release.Year() - year
-	if d < 0 {
-		d = -d
-	}
-	return d
-}
-
-// foldTitle reduces a movie title to the form auto-match compares:
-// lowercase, diacritics stripped, "&" read as "and", a leading English
-// article dropped, then everything but letters and digits removed. So
-// "Spider-Man" and "Spiderman" fold alike, as do "S W A T" (cleaned from
-// "S.W.A.T.") and "S.W.A.T.", "Amélie" and "Amelie", "Wing It" and "Wing
-// It!". Letters of every script survive, so two different Japanese titles
-// don't both fold to "".
-func foldTitle(s string) string {
-	s = strings.ToLower(strings.TrimSpace(norm.NFKD.String(s)))
-	s = strings.ReplaceAll(s, "&", " and ")
-	for _, article := range []string{"the ", "a ", "an "} {
-		if strings.HasPrefix(s, article) {
-			s = s[len(article):]
-			break
-		}
-	}
-	return strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsDigit(r) {
-			return r
-		}
-		return -1
-	}, s)
-}
-
-// SearchTV implements metadata.Agent.
-// It passes year to TMDB when > 0 and picks the result whose title is the
-// closest match instead of blindly returning the first hit.
-func (c *Client) SearchTV(ctx context.Context, title string, year int) (*metadata.TVShowResult, error) {
-	params := url.Values{}
-	params.Set("query", title)
-	params.Set("language", c.language)
-	if year > 0 {
-		params.Set("first_air_date_year", strconv.Itoa(year))
-	}
-
-	var resp struct {
-		Results []tmdbTV `json:"results"`
-	}
-	if err := c.get(ctx, "/search/tv", params, &resp); err != nil {
-		return nil, fmt.Errorf("tmdb search tv %q: %w", title, err)
-	}
-	if len(resp.Results) == 0 {
-		// If year was specified and got no results, retry without year filter.
-		if year > 0 {
-			return c.SearchTV(ctx, title, 0)
-		}
-		return nil, fmt.Errorf("tmdb: no results for TV %q", title)
-	}
-
-	best := pickBestTVMatch(resp.Results, title)
 
 	// Upgrade the chosen hit to a full details response, as
 	// SearchMovieWithRuntime does: search rows carry no networks, content
@@ -474,6 +470,24 @@ func (c *Client) SearchTV(ctx context.Context, title string, year int) (*metadat
 	}
 
 	return result, nil
+}
+
+// searchTVRows runs one /search/tv query, narrowed to shows first aired in
+// year when year > 0.
+func (c *Client) searchTVRows(ctx context.Context, title string, year int) ([]tmdbTV, error) {
+	params := url.Values{}
+	params.Set("query", title)
+	params.Set("language", c.language)
+	if year > 0 {
+		params.Set("first_air_date_year", strconv.Itoa(year))
+	}
+	var resp struct {
+		Results []tmdbTV `json:"results"`
+	}
+	if err := c.get(ctx, "/search/tv", params, &resp); err != nil {
+		return nil, fmt.Errorf("tmdb search tv %q: %w", title, err)
+	}
+	return resp.Results, nil
 }
 
 // DiscoverResult is one row in a SearchMulti result. MediaType is "movie"
@@ -621,47 +635,6 @@ func (c *Client) SearchTVCandidates(ctx context.Context, query string, year int)
 		out[i] = tvToResultLite(resp.Results[i])
 	}
 	return out, nil
-}
-
-// pickBestTVMatch selects the TMDB result whose title is the closest match to
-// the search query. Exact (case-insensitive) matches win, then prefix matches,
-// then the first result from TMDB (which is ranked by popularity).
-func pickBestTVMatch(results []tmdbTV, query string) tmdbTV {
-	normQ := normTitle(query)
-
-	// Pass 1: exact match on Name or OriginalName.
-	for _, r := range results {
-		if normTitle(r.Name) == normQ || normTitle(r.OriginalName) == normQ {
-			return r
-		}
-	}
-
-	// Pass 2: query is a prefix of name or vice versa (handles "Good Eats" vs "Good Eats: Reloaded").
-	for _, r := range results {
-		rn := normTitle(r.Name)
-		if strings.HasPrefix(rn, normQ) || strings.HasPrefix(normQ, rn) {
-			return r
-		}
-		on := normTitle(r.OriginalName)
-		if strings.HasPrefix(on, normQ) || strings.HasPrefix(normQ, on) {
-			return r
-		}
-	}
-
-	// Pass 3: default to TMDB's top result.
-	return results[0]
-}
-
-// normTitle lowercases and collapses non-alphanumeric runs for fuzzy comparison.
-func normTitle(s string) string {
-	s = strings.ToLower(s)
-	s = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
-			return r
-		}
-		return ' '
-	}, s)
-	return strings.Join(strings.Fields(s), " ")
 }
 
 // GetSeason implements metadata.Agent. Returns season metadata + the
@@ -1219,6 +1192,8 @@ type tmdbTV struct {
 	PosterPath   string      `json:"poster_path"`
 	BackdropPath string      `json:"backdrop_path"`
 	Genres       []tmdbGenre `json:"genres"`
+	// ISO 3166-1 codes, e.g. ["US"]; on search rows and details alike.
+	OriginCountry []string `json:"origin_country"`
 	// Present only on detail responses requested with
 	// append_to_response=content_ratings,external_ids.
 	ContentRatings *tmdbContentRatings `json:"content_ratings"`

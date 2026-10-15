@@ -3,6 +3,7 @@ package scanner
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"strings"
@@ -2117,6 +2118,72 @@ func TestSearchShow_NonAnimeStaysFirstMatch(t *testing.T) {
 	// AniList wasn't called, so no AniList IDs.
 	if res.AniListID != 0 {
 		t.Errorf("AniListID: got %d, want 0 (non-anime path)", res.AniListID)
+	}
+}
+
+// namedTVAgent answers SearchTV only for the names it knows, the way the
+// TMDB client now refuses any other name, and records what was asked.
+type namedTVAgent struct {
+	mockAgent
+	shows map[string]*metadata.TVShowResult
+	asked []string
+}
+
+func (a *namedTVAgent) SearchTV(_ context.Context, title string, _ int) (*metadata.TVShowResult, error) {
+	a.asked = append(a.asked, title)
+	if r, ok := a.shows[title]; ok {
+		return r, nil
+	}
+	return nil, errors.New("no confident TV match")
+}
+
+// A romaji-named anime folder: TMDB lists the show under its English
+// name, which only AniList knows. The cross-reference must ask for it.
+func TestSearchShow_AnimeCrossRefTriesAniListNames(t *testing.T) {
+	tmdb := &namedTVAgent{shows: map[string]*metadata.TVShowResult{
+		"Attack on Titan": {TMDBID: 1429, Title: "Attack on Titan"},
+	}}
+	anilist := &stubAniListAgent{result: &metadata.TVShowResult{
+		AniListID: 16498, Title: "Attack on Titan", OriginalTitle: "Shingeki no Kyojin", FirstAirYear: 2013,
+	}}
+	e := NewEnricher(func() metadata.Agent { return tmdb }, nil, nil, nil, slog.Default())
+	e.SetAniListFn(func() AniListAgent { return anilist })
+
+	res := e.searchShow(context.Background(), tmdb, "Shingeki no Kyojin", 2013, true)
+	if res == nil || res.AniListID != 16498 || res.TMDBID != 1429 {
+		t.Fatalf("got %+v, want AniList 16498 with TMDB 1429 harvested", res)
+	}
+	if fmt.Sprint(tmdb.asked) != "[Shingeki no Kyojin Attack on Titan]" {
+		t.Errorf("TMDB asked for %q; want the folder name, then AniList's English one, each once", tmdb.asked)
+	}
+}
+
+// Outside an anime library AniList is only a fallback, and its fuzzy best
+// guess must name the same show, first aired within a year, before it is
+// taken; otherwise TVDB gets its turn.
+func TestSearchShow_NonAnimeAniListMustNameTheShow(t *testing.T) {
+	monster := &metadata.TVShowResult{AniListID: 19, Title: "Monster", OriginalTitle: "MONSTER", FirstAirYear: 2004}
+	tvdbShow := &metadata.TVShowResult{TVDBID: 5555, Title: "Monster", FirstAirYear: 2019}
+	for _, tc := range []struct {
+		name    string
+		year    int
+		wantAL  int
+		wantTVD int
+	}{
+		{"same name and year: AniList's", 2004, 19, 0},
+		{"same name, another year: TVDB's", 2019, 0, 5555},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tmdb := &mockAgent{searchTVErr: errors.New("no confident TV match")}
+			e := NewEnricher(func() metadata.Agent { return tmdb }, nil, nil, nil, slog.Default())
+			e.SetAniListFn(func() AniListAgent { return &stubAniListAgent{result: monster} })
+			e.SetTVDBFallbackFn(func() TVDBFallback { return &mockTVDB{searchSeriesResult: tvdbShow} })
+
+			res := e.searchShow(context.Background(), tmdb, "Monster", tc.year, false)
+			if res == nil || res.AniListID != tc.wantAL || res.TVDBID != tc.wantTVD {
+				t.Fatalf("got %+v, want AniList %d / TVDB %d", res, tc.wantAL, tc.wantTVD)
+			}
+		})
 	}
 }
 

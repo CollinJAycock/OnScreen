@@ -398,60 +398,6 @@ func TestGetTVExternalIDs_Success(t *testing.T) {
 	}
 }
 
-// ── pickBestTVMatch ─────────────────────────────────────────────────────────
-
-func TestPickBestTVMatch_ExactMatch(t *testing.T) {
-	results := []tmdbTV{
-		{ID: 1, Name: "Good Eats: Reloaded"},
-		{ID: 2, Name: "Good Eats"},
-	}
-	got := pickBestTVMatch(results, "Good Eats")
-	if got.ID != 2 {
-		t.Errorf("got ID %d, want 2 (exact match)", got.ID)
-	}
-}
-
-func TestPickBestTVMatch_PrefixMatch(t *testing.T) {
-	results := []tmdbTV{
-		{ID: 1, Name: "The Office: An American Workplace"},
-		{ID: 2, Name: "Office Hours"},
-	}
-	got := pickBestTVMatch(results, "The Office")
-	if got.ID != 1 {
-		t.Errorf("got ID %d, want 1 (prefix match)", got.ID)
-	}
-}
-
-func TestPickBestTVMatch_FallbackToFirst(t *testing.T) {
-	results := []tmdbTV{
-		{ID: 1, Name: "Completely Different"},
-		{ID: 2, Name: "Also Different"},
-	}
-	got := pickBestTVMatch(results, "Something Else")
-	if got.ID != 1 {
-		t.Errorf("got ID %d, want 1 (fallback to first)", got.ID)
-	}
-}
-
-// ── normTitle ───────────────────────────────────────────────────────────────
-
-func TestNormTitle(t *testing.T) {
-	tests := []struct {
-		input, want string
-	}{
-		{"Breaking Bad", "breaking bad"},
-		{"The Office (US)", "the office us"},
-		{"  HELLO  ", "hello"},
-		{"CSI: Miami", "csi miami"},
-	}
-	for _, tt := range tests {
-		got := normTitle(tt.input)
-		if got != tt.want {
-			t.Errorf("normTitle(%q) = %q, want %q", tt.input, got, tt.want)
-		}
-	}
-}
-
 // ── imageURL ────────────────────────────────────────────────────────────────
 
 func TestImageURL_Empty(t *testing.T) {
