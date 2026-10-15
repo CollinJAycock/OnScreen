@@ -164,7 +164,7 @@ sub renderItem()
     end if
 
     m.title.text = item.title
-    m.meta.text = buildMetaLine(item)
+    m.meta.text = DetailMeta_Line(item)
     if item.summary <> invalid then m.summary.text = item.summary
 
     renderButtons()
@@ -713,34 +713,6 @@ end sub
 
 function isLeafType(t as String) as Boolean
     return t = "movie" or t = "episode" or t = "track" or t = "audiobook_chapter" or t = "podcast_episode"
-end function
-
-function buildMetaLine(item as Object) as String
-    parts = []
-    if item.year <> invalid then parts.push(item.year.ToStr())
-    if item.content_rating <> invalid and item.content_rating <> "" then parts.push(item.content_rating)
-    if item.duration_ms <> invalid and item.duration_ms > 0
-        mins = Int(item.duration_ms / 60000)
-        if mins >= 60
-            h = Int(mins / 60)
-            mm = mins mod 60
-            parts.push(h.ToStr() + "h " + mm.ToStr() + "m")
-        else
-            parts.push(mins.ToStr() + "m")
-        end if
-    end if
-    if item.rating <> invalid and item.rating > 0
-        parts.push("★ " + Str(item.rating))
-    end if
-    if item.genres <> invalid and item.genres.Count() > 0
-        parts.push(item.genres[0])
-    end if
-    out = ""
-    for i = 0 to parts.Count() - 1
-        if i > 0 then out = out + "  ·  "
-        out = out + parts[i]
-    end for
-    return out
 end function
 
 function getMainScene() as Object

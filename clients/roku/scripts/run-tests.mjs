@@ -89,6 +89,11 @@ const suites = [
     test: 'tests/HubRows_test.brs',
   },
   {
+    name: 'DetailMeta',
+    sources: ['source/util/DetailMeta.brs'],
+    test: 'tests/DetailMeta_test.brs',
+  },
+  {
     name: 'ReportProblem',
     sources: ['source/util/Json.brs', 'source/api/ApiResult.brs', 'source/util/ReportProblem.brs'],
     test: 'tests/ReportProblem_test.brs',

@@ -39,6 +39,7 @@
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/DetailMeta.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/ReportProblem.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
