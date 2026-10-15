@@ -39,7 +39,7 @@
   } from '$lib/watchState';
   import { canReportProblem, openKinds } from '$lib/reportProblem';
   import { pickContainerStart, resolvePlayAll, resolveShuffle } from '$lib/playPick';
-  import { formatRuntime, genreLine, resumeLabel } from '$lib/detailText';
+  import { formatRuntime, genreLine, numberedTitle, resumeLabel } from '$lib/detailText';
   import { latestOnly } from '$lib/latest';
 
   // Back from the player: how long to wait before reading the item again
@@ -873,7 +873,7 @@
               {#each seasonEpisodes as ep (ep.id)}
                 {@const badge = childWatchBadge(ep)}
                 <PosterCard
-                  title={ep.index ? `${ep.index}. ${ep.title}` : ep.title}
+                  title={numberedTitle(ep)}
                   posterPath={ep.thumb_path ?? ep.poster_path}
                   subtitle={ep.duration_ms ? `${Math.round(ep.duration_ms / 60000)}m` : undefined}
                   progressRatio={badge?.progress ?? undefined}
@@ -922,7 +922,7 @@
                 <!-- No art of its own (an album's tracks, a book's chapters):
                      the parent's cover rather than a blank tile of initials. -->
                 <PosterCard
-                  title={child.index ? `${child.index}. ${child.title}` : child.title}
+                  title={numberedTitle(child)}
                   posterPath={child.thumb_path ?? child.poster_path ?? item.poster_path}
                   subtitle={child.duration_ms ? `${Math.round(child.duration_ms / 60000)}m` : undefined}
                   focusKey={child.id}
@@ -948,7 +948,7 @@
 
   {#if episodeMenu}
     <OptionsDialog
-      title={episodeMenu.index ? `${episodeMenu.index}. ${episodeMenu.title}` : episodeMenu.title}
+      title={numberedTitle(episodeMenu)}
       options={[
         {
           label: episodeMenu.watched ? 'Mark as unwatched' : 'Mark as watched',

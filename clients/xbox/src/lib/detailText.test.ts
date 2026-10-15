@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatRuntime, formatTimecode, genreLine, resumeLabel } from './detailText';
+import { episodeNumber, formatRuntime, formatTimecode, genreLine, numberedTitle, resumeLabel } from './detailText';
 
 describe('formatTimecode / resumeLabel', () => {
   it('uses h:mm:ss past an hour and m:ss below it', () => {
@@ -53,5 +53,22 @@ describe('genreLine', () => {
     expect(genreLine([])).toBe('');
     expect(genreLine(undefined)).toBe('');
     expect(genreLine(null)).toBe('');
+  });
+});
+
+describe('episodeNumber / numberedTitle', () => {
+  it('numbers a single episode and labels a multi-episode file as a range', () => {
+    expect(episodeNumber(4)).toBe('4');
+    expect(episodeNumber(1, 2)).toBe('1–2');
+    expect(numberedTitle({ title: 'Pilot', index: 1, index_end: 2 })).toBe('1–2. Pilot');
+    expect(numberedTitle({ title: 'Pilot', index: 4 })).toBe('4. Pilot');
+  });
+
+  it('ignores an index_end that is not past the index, and no number at all', () => {
+    expect(episodeNumber(3, 3)).toBe('3');
+    expect(episodeNumber(3, 2)).toBe('3');
+    expect(episodeNumber(0, 2)).toBe('');
+    expect(episodeNumber(undefined, 2)).toBe('');
+    expect(numberedTitle({ title: 'Extras' })).toBe('Extras');
   });
 });

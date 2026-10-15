@@ -22,9 +22,15 @@ export interface Siblings {
   total: number;
 }
 
+/** The last number a row covers: index_end for a multi-episode file ("E1–E2"
+ *  covers 1 and 2), else its index. */
+export function lastIndex(k: { index?: number; index_end?: number }): number | undefined {
+  return k.index_end != null && k.index != null && k.index_end > k.index ? k.index_end : k.index;
+}
+
 export function findSiblings(
   kids: ChildItem[],
-  current: { id: string; type: string; index?: number }
+  current: { id: string; type: string; index?: number; index_end?: number }
 ): Siblings {
   const sorted = kids
     .filter((k) => k.type === current.type && k.index != null)
@@ -39,9 +45,13 @@ export function findSiblings(
     next = pos >= 0 ? (sorted[pos + 1] ?? null) : null;
     prev = pos > 0 ? sorted[pos - 1] : null;
   } else {
+    // A multi-episode file covers index..index_end: the next one follows its
+    // last episode, and the previous one may be another range ending just
+    // before its first.
     const myIdx = current.index ?? -1;
-    next = sorted.find((k) => (k.index ?? -1) === myIdx + 1) ?? null;
-    prev = sorted.find((k) => (k.index ?? -1) === myIdx - 1) ?? null;
+    const myEnd = lastIndex(current) ?? -1;
+    next = sorted.find((k) => (k.index ?? -1) === myEnd + 1) ?? null;
+    prev = sorted.find((k) => (lastIndex(k) ?? -1) === myIdx - 1) ?? null;
   }
   return { next, prev, position: pos + 1, total: sorted.length };
 }
@@ -60,6 +70,8 @@ export interface PlayingItem {
   type: string;
   parent_id?: string;
   index?: number;
+  /** A multi-episode file's last episode: what plays next follows it. */
+  index_end?: number;
 }
 
 /** The `type` row of `children` after `currentId`: the nearest one after it
@@ -140,7 +152,9 @@ export async function resolveNext(
     if (item.type === 'podcast_episode') return nextInContainer(kids, item.id, item.type, item.index);
     if (item.type !== 'episode' && item.type !== 'track') return null;
 
-    const inPlace = nextInContainer(kids, item.id, item.type, item.index);
+    // From the last episode a multi-episode file covers ("E1–E2" goes on to
+    // E3, never to an E2 the file already played).
+    const inPlace = nextInContainer(kids, item.id, item.type, lastIndex(item) ?? item.index);
     if (inPlace) return inPlace;
 
     // Off the end of the season / album: the next container of the same

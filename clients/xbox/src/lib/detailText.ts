@@ -42,3 +42,17 @@ export function genreLine(genres: readonly string[] | null | undefined, max = 3)
   }
   return out.join(', ');
 }
+
+/** An episode's (or any numbered child's) number: "4", or "1–2" for a
+ *  multi-episode file (index_end). '' without a number. */
+export function episodeNumber(index?: number | null, indexEnd?: number | null): string {
+  if (index == null || !index) return '';
+  return indexEnd != null && indexEnd > index ? `${index}–${indexEnd}` : String(index);
+}
+
+/** A grid card's title: "4. Title", "1–2. Title" for a multi-episode file,
+ *  the bare title without a number. */
+export function numberedTitle(c: { title: string; index?: number | null; index_end?: number | null }): string {
+  const n = episodeNumber(c.index, c.index_end);
+  return n ? `${n}. ${c.title}` : c.title;
+}

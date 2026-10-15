@@ -15,11 +15,14 @@ import type {
 } from './api/types';
 
 /** "S2 · E5". A missing season drops the S half; a missing or 0 episode
- *  number (the server's "unknown") drops the E half. */
-export function episodeCode(season?: number | null, episode?: number | null): string {
+ *  number (the server's "unknown") drops the E half. A multi-episode file
+ *  (`episodeEnd`, the server's index_end) reads "S1 · E1–E2". */
+export function episodeCode(season?: number | null, episode?: number | null, episodeEnd?: number | null): string {
   const parts: string[] = [];
   if (season != null) parts.push(`S${season}`);
-  if (episode != null && episode > 0) parts.push(`E${episode}`);
+  if (episode != null && episode > 0) {
+    parts.push(episodeEnd != null && episodeEnd > episode ? `E${episode}–E${episodeEnd}` : `E${episode}`);
+  }
   return parts.join(' · ');
 }
 

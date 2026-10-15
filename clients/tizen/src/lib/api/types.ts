@@ -197,6 +197,10 @@ export interface ItemDetail {
   /** The parent's parent: an episode's show (episode → season → show). */
   grandparent_id?: string;
   index?: number;
+  /** The last episode a multi-episode file covers: an "S01E01-E02" file is
+   *  one episode with index 1, index_end 2. Absent for a single episode,
+   *  every other type and older servers (v2.6). */
+  index_end?: number;
   view_offset_ms: number;
   /** Playable videos (v2.5): the caller's watch state. Absent on other
    *  types and on older servers. */
@@ -216,6 +220,8 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  /** A multi-episode file's last episode (see ItemDetail.index_end). */
+  index_end?: number;
   /** A track's disc within its album (index is its number on that disc).
    *  Absent reads as disc 1: single-disc albums, non-tracks, older servers. */
   disc_number?: number;

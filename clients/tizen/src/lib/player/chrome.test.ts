@@ -44,6 +44,13 @@ describe('episodeContextLine', () => {
   it('shows specials as season 0', () => {
     expect(episodeContextLine('Doctor Who', 0, 3)).toBe('Doctor Who · S0 · E3');
   });
+
+  it('labels a multi-episode file as a range', () => {
+    expect(episodeContextLine('The Wire', 1, 1, 2)).toBe('The Wire · S1 · E1–E2');
+    // An index_end that isn't past the index is one episode.
+    expect(episodeContextLine('The Wire', 1, 3, 3)).toBe('The Wire · S1 · E3');
+    expect(episodeContextLine('The Wire', 1, null, 2)).toBe('The Wire · S1');
+  });
 });
 
 describe('queueLabel', () => {

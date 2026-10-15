@@ -29,10 +29,16 @@ export function controlsHideDelayMs(o: { alwaysOn: boolean; paused: boolean; act
 
 // ── Labels ─────────────────────────────────────────────────────────────
 
-/** The line over an episode's title: "Show · S2 · E5". Whatever is known of
- *  it (just the show, just the code); '' when nothing is. */
-export function episodeContextLine(show: string | null | undefined, season?: number | null, episode?: number | null): string {
-  return [(show ?? '').trim(), episodeCode(season, episode)].filter((s) => s !== '').join(' · ');
+/** The line over an episode's title: "Show · S2 · E5" ("S1 · E1–E2" for a
+ *  multi-episode file, `episodeEnd` being its index_end). Whatever is known
+ *  of it (just the show, just the code); '' when nothing is. */
+export function episodeContextLine(
+  show: string | null | undefined,
+  season?: number | null,
+  episode?: number | null,
+  episodeEnd?: number | null
+): string {
+  return [(show ?? '').trim(), episodeCode(season, episode, episodeEnd)].filter((s) => s !== '').join(' · ');
 }
 
 /** "Track 3 of 12" on the now-playing view, named for what is queued: a

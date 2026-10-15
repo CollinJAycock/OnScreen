@@ -2382,7 +2382,7 @@
         let show = parent.type === 'show' ? parent : grand;
         // A server that doesn't send grandparent_id: up from the season.
         if (!show && season?.parent_id) show = await endpoints.items.get(season.parent_id).catch(() => null);
-        if (!destroyed) episodeContext = episodeContextLine(show?.title, season?.index, it.index);
+        if (!destroyed) episodeContext = episodeContextLine(show?.title, season?.index, it.index, it.index_end);
         return;
       }
       if (!usesParentCover(it.type)) return;

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChildItem } from '../api/types';
-import { chaptersInOrder, findSiblings, nextInContainer, resolveNext } from './siblings';
+import { chaptersInOrder, findSiblings, lastIndex, nextInContainer, resolveNext } from './siblings';
 
 function kid(id: string, type: string, index?: number, extra: Partial<ChildItem> = {}): ChildItem {
   return { id, title: id, type, index, ...extra };
@@ -188,5 +188,70 @@ describe('nextInContainer / findSiblings', () => {
     expect(s.prev?.id).toBe('t1');
     expect(s.next?.id).toBe('t3');
     expect([s.position, s.total]).toEqual([2, 3]);
+  });
+});
+
+describe('multi-episode files (index_end)', () => {
+  // s1: E1–E2 in one file, then E3, then E4–E6, then E7.
+  const season = [
+    kid('e1-2', 'episode', 1, { index_end: 2 }),
+    kid('e3', 'episode', 3),
+    kid('e4-6', 'episode', 4, { index_end: 6 }),
+    kid('e7', 'episode', 7),
+  ];
+  const lib = () =>
+    fakeLibrary(
+      {
+        s1: season,
+        s2: [kid('s2e1', 'episode', 1)],
+        show: [kid('s1', 'season', 1), kid('s2', 'season', 2)],
+      },
+      { s1: 'show', s2: 'show' },
+    );
+
+  it('plays the episode after the last one the file covers', async () => {
+    const l = lib();
+    const first = await resolveNext(
+      { id: 'e1-2', type: 'episode', parent_id: 's1', index: 1, index_end: 2 },
+      l.fetchChildren,
+      l.fetchItem,
+    );
+    expect(first?.id).toBe('e3');
+    const after = await resolveNext(
+      { id: 'e4-6', type: 'episode', parent_id: 's1', index: 4, index_end: 6 },
+      l.fetchChildren,
+      l.fetchItem,
+    );
+    expect(after?.id).toBe('e7');
+  });
+
+  it('rolls a range that ends the season into the next season', async () => {
+    const l = lib();
+    const kids = [kid('a', 'episode', 1), kid('b', 'episode', 2, { index_end: 3 })];
+    const next = await resolveNext(
+      { id: 'b', type: 'episode', parent_id: 's1', index: 2, index_end: 3 },
+      l.fetchChildren,
+      l.fetchItem,
+      kids,
+    );
+    expect(next?.id).toBe('s2e1');
+  });
+
+  it('steps prev / next across ranges by their first and last episodes', () => {
+    expect(findSiblings(season, { id: 'e1-2', type: 'episode', index: 1, index_end: 2 }).next?.id).toBe('e3');
+    const mid = findSiblings(season, { id: 'e3', type: 'episode', index: 3 });
+    expect(mid.prev?.id).toBe('e1-2');
+    expect(mid.next?.id).toBe('e4-6');
+    const range = findSiblings(season, { id: 'e4-6', type: 'episode', index: 4, index_end: 6 });
+    expect(range.prev?.id).toBe('e3');
+    expect(range.next?.id).toBe('e7');
+    expect(findSiblings(season, { id: 'e7', type: 'episode', index: 7 }).prev?.id).toBe('e4-6');
+  });
+
+  it('reads an index_end that is not past the index as a single episode', () => {
+    expect(lastIndex({ index: 3, index_end: 3 })).toBe(3);
+    expect(lastIndex({ index: 3, index_end: 1 })).toBe(3);
+    expect(lastIndex({ index: 3 })).toBe(3);
+    expect(lastIndex({ index: 1, index_end: 2 })).toBe(2);
   });
 });
