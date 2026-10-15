@@ -187,6 +187,7 @@ type ItemHandler struct {
 	favorites   ItemFavoriteChecker
 	ratings     ItemRatingService // optional; per-user + community ratings (WithRatings)
 	markers     ItemMarkerService
+	commercials ItemCommercialLister // optional; DVR ad breaks per file (WithCommercials)
 	access      LibraryAccessChecker
 	watchLimit  ItemWatchLimit // optional; when set, Progress enforces parental limits + accrues usage
 	usageAccrue *usageAccruer  // byte-serving accrual companion to watchLimit (see WithWatchLimit)
@@ -234,6 +235,28 @@ type ItemHandler struct {
 	subtitleExtractSem chan struct{}
 	logger             *slog.Logger
 	labels             ItemLabelReader // admin-only labels on detail; nil = omitted
+	// chapterThumbs reports which file's chapters have thumbnails next to
+	// the item's trickplay sprites; nil = chapters carry no thumb_url.
+	chapterThumbs ChapterThumbLookup
+	// optional; movie and show details list their studios / networks
+	// (items_studios.go)
+	studios ItemStudioReader
+	// optional; a metadata edit rewrites the item's NFO (items_studios.go)
+	nfoWriter ItemNFOWriter
+}
+
+// ChapterThumbLookup returns the file whose chapters have thumbnails
+// (/trickplay/{item}/chapter_NNN.jpg, generated with the seek-bar sprites)
+// and how many; uuid.Nil / 0 when none. Satisfied by *trickplay.Service.
+type ChapterThumbLookup interface {
+	ChapterThumbs(ctx context.Context, itemID uuid.UUID) (uuid.UUID, int, error)
+}
+
+// WithChapterThumbs wires the chapter-thumbnail lookup behind each chapter's
+// thumb_url in the item detail.
+func (h *ItemHandler) WithChapterThumbs(l ChapterThumbLookup) *ItemHandler {
+	h.chapterThumbs = l
+	return h
 }
 
 // DownloadGate decides whether the /media/download/{id} endpoint is open
@@ -260,6 +283,13 @@ func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions Ite
 // response omits markers and the Markers endpoints are not served.
 func (h *ItemHandler) WithMarkers(m ItemMarkerService) *ItemHandler {
 	h.markers = m
+	return h
+}
+
+// WithCommercials attaches the DVR commercial-break lister. When nil the
+// files in the Get response carry no commercials.
+func (h *ItemHandler) WithCommercials(c ItemCommercialLister) *ItemHandler {
+	h.commercials = c
 	return h
 }
 
@@ -559,6 +589,11 @@ type ItemFileResponse struct {
 	ReplayGainTrackPeak *float64 `json:"replaygain_track_peak,omitempty"`
 	ReplayGainAlbumGain *float64 `json:"replaygain_album_gain,omitempty"`
 	ReplayGainAlbumPeak *float64 `json:"replaygain_album_peak,omitempty"`
+	// ReplayGainSource says where the replaygain_* values came from: "tags"
+	// (the file's own tags) or "analyzed" (measured by the server's
+	// loudness_analysis task, EBU R128 → ReplayGain 2.0). Omitted when the
+	// file has none (additive, v2.6).
+	ReplayGainSource *string `json:"replaygain_source,omitempty"`
 	// IntegrityStatus is the opt-in deep-decode probe's verdict:
 	// "unchecked" | "ok" | "damaged" (migration 00018). Clients badge
 	// damaged files and pre-empt playback with a clear message instead of
@@ -572,6 +607,25 @@ type ItemFileResponse struct {
 	SubtitleStreams   []SubtitleStreamJSON   `json:"subtitle_streams"`
 	ExternalSubtitles []ExternalSubtitleJSON `json:"external_subtitles,omitempty"`
 	Chapters          []ChapterJSON          `json:"chapters"`
+	// Commercials are the ad breaks DVR commercial detection found in this
+	// file (migration 00052); absent when none were stored. A separate field
+	// rather than item markers: first-party clients show every entry of
+	// markers as Skip intro / Skip credits without checking its kind.
+	Commercials []CommercialMarkerJSON `json:"commercials,omitempty"`
+}
+
+// CommercialMarkerJSON is one detected ad break in a recording's file.
+// source is "comskip" or "heuristic".
+type CommercialMarkerJSON struct {
+	StartMS int64  `json:"start_ms"`
+	EndMS   int64  `json:"end_ms"`
+	Source  string `json:"source"`
+}
+
+// ItemCommercialLister returns an item's stored commercial breaks grouped by
+// media file id.
+type ItemCommercialLister interface {
+	ListCommercialsByItem(ctx context.Context, itemID uuid.UUID) (map[uuid.UUID][]CommercialMarkerJSON, error)
 }
 
 // ChapterJSON is the API representation of a chapter marker.
@@ -579,6 +633,11 @@ type ChapterJSON struct {
 	Title   string `json:"title"`
 	StartMS int64  `json:"start_ms"`
 	EndMS   int64  `json:"end_ms"`
+	// ThumbURL is the chapter's thumbnail (/trickplay/{item_id}/chapter_NNN.jpg),
+	// present once the item's seek-bar sprites — which generate chapter
+	// thumbnails with them — exist. Same auth as the sprites: cookie, Bearer
+	// or an asset ?token=.
+	ThumbURL string `json:"thumb_url,omitempty"`
 }
 
 // MarkerJSON is the API representation of an intro/credits marker.
@@ -618,9 +677,19 @@ type ItemDetailResponse struct {
 	DurationMS      *int64                   `json:"duration_ms,omitempty"`
 	PosterPath      *string                  `json:"poster_path,omitempty"`
 	FanartPath      *string                  `json:"fanart_path,omitempty"`
-	ContentRating   *string                  `json:"content_rating,omitempty"`
-	Genres          []string                 `json:"genres"`
-	ParentID        *string                  `json:"parent_id,omitempty"`
+	// LogoPath, BannerPath and DiscArtPath are extra artwork, served like
+	// poster_path through /artwork/: a transparent clear logo (PNG — fetch
+	// it without ?w=/?h=, which re-encode as JPEG), a wide banner, and disc
+	// / CD art. Each omitted when the item has none (additive, v2.6).
+	LogoPath      *string  `json:"logo_path,omitempty"`
+	BannerPath    *string  `json:"banner_path,omitempty"`
+	DiscArtPath   *string  `json:"disc_art_path,omitempty"`
+	ContentRating *string  `json:"content_rating,omitempty"`
+	Genres        []string `json:"genres"`
+	// Studios are a movie's production companies or a show's networks, in
+	// the provider's order (additive, v2.6; omitted when none).
+	Studios  []ItemStudioRef `json:"studios,omitempty"`
+	ParentID *string         `json:"parent_id,omitempty"`
 	// GrandparentID is the parent of the parent — for an episode it's the
 	// show id (episode → season → show), letting the back button on the
 	// player jump straight to the show page instead of replaying browser
@@ -846,8 +915,12 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		DurationMS:      item.DurationMS,
 		PosterPath:      item.PosterPath,
 		FanartPath:      item.FanartPath,
+		LogoPath:        item.LogoPath,
+		BannerPath:      item.BannerPath,
+		DiscArtPath:     item.DiscArtPath,
 		ContentRating:   item.ContentRating,
 		Genres:          genres,
+		Studios:         h.studiosFor(r.Context(), item.ID, item.Type),
 		Index:           item.Index,
 		IndexEnd:        item.IndexEnd,
 		ViewOffsetMS:    viewOffsetMS,
@@ -904,6 +977,27 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// standard access token in that case.
 	claims := middleware.ClaimsFromContext(r.Context())
 
+	var commercials map[uuid.UUID][]CommercialMarkerJSON
+	if h.commercials != nil {
+		if c, err := h.commercials.ListCommercialsByItem(r.Context(), id); err == nil {
+			commercials = c
+		} else {
+			h.logger.WarnContext(r.Context(), "list commercials", "item_id", id, "err", err)
+		}
+	}
+
+	// Chapter thumbnails exist for one file — the one the trickplay sprites
+	// were cut from — and are served beside the sprites with the same auth.
+	var thumbFileID uuid.UUID
+	var thumbCount int
+	if h.chapterThumbs != nil && len(files) > 0 {
+		if fid, n, err := h.chapterThumbs.ChapterThumbs(r.Context(), id); err != nil {
+			h.logger.WarnContext(r.Context(), "chapter thumbs lookup", "item_id", id, "err", err)
+		} else {
+			thumbFileID, thumbCount = fid, n
+		}
+	}
+
 	for _, f := range files {
 		if f.Status != "active" {
 			continue
@@ -953,16 +1047,28 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			ReplayGainTrackPeak: f.ReplayGainTrackPeak,
 			ReplayGainAlbumGain: f.ReplayGainAlbumGain,
 			ReplayGainAlbumPeak: f.ReplayGainAlbumPeak,
+			ReplayGainSource:    f.ReplayGainSource,
 			IntegrityStatus:     f.IntegrityStatus,
 			AudioStreams:        parseJSONBAudioStreams(f.AudioStreams),
 			SubtitleStreams:     parseJSONBSubtitleStreams(f.SubtitleStreams),
 			Chapters:            parseJSONBChapters(f.Chapters),
+		}
+		if thumbCount > 0 && f.ID == thumbFileID {
+			for i := range fr.Chapters {
+				if i >= thumbCount {
+					break
+				}
+				fr.Chapters[i].ThumbURL = fmt.Sprintf("/trickplay/%s/chapter_%03d.jpg", id, i)
+			}
 		}
 		if claims != nil && claims.IsAdmin {
 			fr.IntegrityDetail = f.IntegrityDetail
 		}
 		if media.IsStacked(files, f) {
 			fr.PartIndex = f.PartIndex
+		}
+		if c := commercials[f.ID]; len(c) > 0 {
+			fr.Commercials = c
 		}
 		if h.subs != nil {
 			if rows, err := h.subs.List(r.Context(), f.ID); err == nil && len(rows) > 0 {
@@ -1174,6 +1280,8 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	if h.caches != nil {
 		h.caches.InvalidateItemCaches()
 	}
+	// Libraries that save NFO files get the edit written through.
+	h.writeNFOAfterEdit(r.Context(), updated.ID)
 
 	if h.audit != nil {
 		actor := claims.UserID

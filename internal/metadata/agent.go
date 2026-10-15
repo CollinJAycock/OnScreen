@@ -34,6 +34,10 @@ type MovieResult struct {
 	// never carry the field. See collection.go.
 	Collection        *CollectionRef
 	CollectionChecked bool
+	// Studios are the production companies, from a details payload (search
+	// rows carry none). nil = not known; see StudiosChecked on TVShowResult
+	// for why a show needs the distinction and a movie doesn't.
+	Studios []Studio
 }
 
 // TVShowResult holds TV show metadata returned by an agent.
@@ -52,6 +56,14 @@ type TVShowResult struct {
 	Genres        []string
 	PosterURL     string
 	FanartURL     string
+	// BannerURL is a wide banner image, when the agent has one (AniList's
+	// bannerImage). Kept as the banner when no better one is found.
+	BannerURL string
+	// Studios are the show's networks. StudiosChecked says the result came
+	// from a details payload, so an empty list means "none" rather than
+	// "not asked" (TMDB search rows carry no networks).
+	Studios        []Studio
+	StudiosChecked bool
 }
 
 // SeasonResult holds season metadata. Episodes is populated by agents
@@ -222,4 +234,30 @@ type PosterLister interface {
 // has it and the file has a probed duration.
 type RuntimeMovieSearcher interface {
 	SearchMovieWithRuntime(ctx context.Context, title string, year int, runtime time.Duration) (*MovieResult, error)
+}
+
+// ExtraArt holds the image URLs of an item's extra artwork: a transparent
+// clear logo, a wide banner and disc (or CD) art. "" = none.
+type ExtraArt struct {
+	LogoURL   string
+	BannerURL string
+	DiscURL   string
+}
+
+// ExtraArtAgent looks up extra artwork (fanart.tv). lang is the library's
+// metadata language; images in it are preferred, then English, then
+// language-neutral art. An id the provider doesn't know is an empty
+// ExtraArt, not an error.
+type ExtraArtAgent interface {
+	MovieArt(ctx context.Context, tmdbID int, imdbID, lang string) (ExtraArt, error)
+	ShowArt(ctx context.Context, tvdbID int, lang string) (ExtraArt, error)
+	ArtistArt(ctx context.Context, artistMBID uuid.UUID, lang string) (ExtraArt, error)
+	AlbumArt(ctx context.Context, releaseGroupID uuid.UUID, lang string) (ExtraArt, error)
+}
+
+// Studio is one production company (movies) or network (shows) from a
+// metadata provider, in the provider's order. TMDBID is 0 when unknown.
+type Studio struct {
+	Name   string
+	TMDBID int
 }

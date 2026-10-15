@@ -51,7 +51,10 @@ WHERE library_id = $3
   AND deleted_at IS NULL
   AND (lower(poster_path) = lower($4)
        OR lower(fanart_path) = lower($4)
-       OR lower(thumb_path) = lower($4))
+       OR lower(thumb_path) = lower($4)
+       OR lower(logo_path) = lower($4)
+       OR lower(banner_path) = lower($4)
+       OR lower(disc_art_path) = lower($4))
 `
 
 type ArtworkLabelsPermittedParams struct {

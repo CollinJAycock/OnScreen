@@ -114,9 +114,11 @@ SELECT r.id, r.schedule_id, r.user_id, r.channel_id, r.program_id,
        r.title, r.subtitle, r.season_num, r.episode_num, r.status,
        r.starts_at, r.ends_at, r.file_path, r.item_id, r.error,
        r.created_at, r.updated_at,
-       c.number AS channel_number, c.name AS channel_name, c.logo_url
+       c.number AS channel_number, c.name AS channel_name, c.logo_url,
+       j.status AS postprocess_status, j.message AS postprocess_message
 FROM recordings r
 JOIN channels c ON c.id = r.channel_id
+LEFT JOIN dvr_postprocess_jobs j ON j.recording_id = r.id
 WHERE r.user_id = $1
   AND (sqlc.narg('status')::text IS NULL OR r.status = sqlc.narg('status'))
 ORDER BY r.starts_at DESC
@@ -184,10 +186,12 @@ DELETE FROM recordings WHERE id = $1;
 
 -- name: ListExpiredRecordings :many
 -- Recordings past their schedule's retention window. Worker deletes
--- them + their media_items rows.
-SELECT r.id, r.schedule_id, r.item_id, r.file_path
+-- them + their media_items rows. original_file_path is the capture kept
+-- aside by post-processing (delete-original off), removed alongside.
+SELECT r.id, r.schedule_id, r.item_id, r.file_path, j.original_file_path
 FROM recordings r
 JOIN schedules s ON s.id = r.schedule_id
+LEFT JOIN dvr_postprocess_jobs j ON j.recording_id = r.id
 WHERE r.status = 'completed'
   AND s.retention_days IS NOT NULL
   AND r.ends_at < NOW() - (s.retention_days || ' days')::interval;

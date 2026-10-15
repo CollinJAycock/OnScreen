@@ -167,6 +167,20 @@ var requiredSystemTasks = []systemTask{
 		enabled:  false,
 	},
 	{
+		name:     "Music loudness analysis",
+		taskType: "loudness_analysis",
+		// Nightly at 4:13am local (prime-offset, clear of the integrity
+		// probe at 3:41). Measures EBU R128 loudness of music files with no
+		// ReplayGain tags — a full decode per file, a few seconds each — and
+		// writes ReplayGain 2.0 track and album gain, so normalisation works
+		// for them too. Each run measures a bounded batch (default 500
+		// files) and continues the next night. Seeded DISABLED per the
+		// integrity-probe precedent: a heavy opt-in sweep, one click to
+		// enable in the Tasks UI.
+		cronExpr: "13 4 * * *",
+		enabled:  false,
+	},
+	{
 		name:     "Seek-bar thumbnail backfill",
 		taskType: "trickplay_backfill",
 		// Nightly at 2:29am local (prime-offset, and clear of the 3am
@@ -178,6 +192,29 @@ var requiredSystemTasks = []systemTask{
 		// designed (seek previews for the existing catalogue), each
 		// library has its own off switch, and the budget bounds the cost.
 		cronExpr: "29 2 * * *",
+		enabled:  true,
+	},
+	{
+		name:     "Chapter thumbnails backfill",
+		taskType: "chapter_thumbnails",
+		// Nightly at 2:47am local, after the sprite backfill. Adds chapter
+		// thumbnails to items whose seek-bar sprites were generated before
+		// chapter thumbnails existed (new and regenerated sprites get them in
+		// the same run) — one seek-and-decode per chapter, oldest items
+		// first, within a 30-minute budget. Seeded DISABLED: an opt-in sweep
+		// of the back catalogue, never run unprompted.
+		cronExpr: "47 2 * * *",
+		enabled:  false,
+	},
+	{
+		name:     "Converted download cache cleanup",
+		taskType: "download_cache_cleanup",
+		// Hourly at :13. Evicts converted downloads past their expiry, then
+		// the least recently used ones while the cache is over
+		// DOWNLOAD_CACHE_MAX_GB, and removes orphaned files. Seeded ENABLED:
+		// without it the cache only ever grows. With no downloads it reads
+		// two empty lists and a directory.
+		cronExpr: "13 * * * *",
 		enabled:  true,
 	},
 	{
@@ -193,6 +230,21 @@ var requiredSystemTasks = []systemTask{
 		// ENABLED: it is the feature converging on an existing library,
 		// and the per-run budgets bound the TMDB traffic.
 		cronExpr: "53 4 * * *",
+		enabled:  true,
+	},
+	{
+		name:     "Download missing subtitles",
+		taskType: "subtitle_auto_download",
+		// Every 6 hours at :47. For movies and episodes (newest first) with
+		// no subtitle in a wanted language, searches OpenSubtitles and
+		// downloads the best match — at most 40 searches a run, a miss
+		// retried after 1, 7 and 30 days, and a day's pause once the
+		// provider's daily download quota runs out. Seeded ENABLED because
+		// it does nothing at all until an admin turns automatic downloads
+		// on (Settings ▸ Subtitles, off by default) and OpenSubtitles is
+		// set up; every 6 hours spreads the small free-tier quota over the
+		// day instead of spending it in one burst.
+		cronExpr: "47 */6 * * *",
 		enabled:  true,
 	},
 }

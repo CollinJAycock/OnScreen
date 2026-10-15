@@ -29,6 +29,16 @@ info:
     authenticate. Since v2.4 that token must be a purpose-scoped one: the
     `asset_token` returned by login and refresh, or a file's `stream_token`.
     An access token in the query string is refused.
+
+    **Personal API keys** (v2.6) are long-lived credentials for scripts and
+    integrations: `Authorization: Bearer osk_…` or `X-Api-Key: osk_…`, never
+    in a query string. A key acts as its user with that user's current
+    library access, rating ceiling and label restriction; a `read_only` key
+    may only make GET/HEAD requests (403 `API_KEY_READ_ONLY` otherwise).
+    Keys are refused with 403 `API_KEY_NOT_ALLOWED` on sign-in, refresh,
+    2FA, PIN, profile, signed-in device and API key management, device
+    pairing, user administration, invites, server settings and backups. See
+    [docs/api/api-keys.md](api-keys.md).
   license:
     name: AGPL-3.0
 servers:
@@ -40,6 +50,7 @@ servers:
 security:
   - bearerAuth: []
   - cookieAuth: []
+  - apiKeyHeader: []
 
 tags:
   - name: Auth
@@ -52,6 +63,8 @@ tags:
     description: Library CRUD plus item browsing inside a library.
   - name: Items
     description: Per-item metadata, playback progress, markers, EXIF, enrichment.
+  - name: Music
+    description: Music discovery — similar artists, an artist's "Appears on", instant mixes.
   - name: Search
     description: Full-text search across media items.
   - name: Hub
@@ -66,10 +79,14 @@ tags:
     description: User-owned ordered playlists.
   - name: People
     description: Cast and crew.
+  - name: Studios
+    description: Studios (production companies) and TV networks, and the titles they made.
   - name: Subtitles
     description: External subtitle search, download, and OCR.
   - name: Trickplay
-    description: Seekbar thumbnail previews.
+    description: Seekbar thumbnail previews and chapter thumbnails.
+  - name: Downloads
+    description: Converted (lower-quality) downloads — per-user jobs over a shared encode cache.
   - name: Transcode
     description: HLS transcode sessions (start, stop, segments).
   - name: Notifications
@@ -167,6 +184,8 @@ tags:
     description: TMDB-backed search for the request workflow.
   - name: Requests
     description: Media request workflow (user submit, admin approve/decline).
+  - name: DVR
+    description: DVR recordings post-processing and commercial detection.
 
 paths:
   # ── Health ─────────────────────────────────────────────────────────────────
@@ -902,6 +921,117 @@ paths:
                       data:
                         type: array
                         items: { $ref: '#/components/schemas/WatchHistoryItem' }
+
+  # ── Music discovery ────────────────────────────────────────────────────────
+  /api/v1/music/artists/{id}/similar:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Artists similar to an artist
+      description: |
+        Artists from the same library, ranked by co-listening (people who
+        play one play the other, from the nightly item co-occurrence table,
+        aggregated to artists and normalised by track counts) blended with
+        shared genres. With no listening history, genre overlap ranks alone
+        with era as a tie-breaker; an artist with no genres falls back to
+        artists of its era. Library access, the content-rating ceiling and
+        label restrictions apply to the artist asked about (404 / 403) and to
+        every suggestion. Additive (v2.6).
+      tags: [Music]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 50, default: 20 }
+      responses:
+        '200':
+          description: Similar artists, best first.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/SimilarArtist' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/music/artists/{id}/appears-on:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Tracks an artist appears on
+      description: |
+        Tracks on other artists' albums this artist is credited on: featured
+        artists (a "feat." clause or a multi-valued ARTISTS tag), and the
+        performer of a compilation track. Newest album first, tracks in album
+        order. Each track passes the content-rating ceiling and label
+        restrictions (a label on its album or album artist hides it).
+        Additive (v2.6).
+      tags: [Music]
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: Appearances.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/ArtistAppearance' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/music/mix:
+    get:
+      summary: Instant mix from a track, album or artist
+      description: |
+        An ordered list of about `limit` tracks to play: the seed's own
+        tracks first (a seed track leads), then tracks by similar artists
+        (most similar first in each round), then tracks sharing the seed
+        artist's genres. Tracks by one artist are spaced apart while other
+        artists remain; tracks the caller rated 2 or lower (one star) are
+        left out, except a seed track; every call is shuffled afresh. Each
+        entry carries the file to stream and its ReplayGain values, so it
+        can go straight into a player queue. Library access, the
+        content-rating ceiling and label restrictions apply to the seed and
+        to every track. Additive (v2.6).
+      tags: [Music]
+      parameters:
+        - in: query
+          name: seed
+          required: true
+          schema: { type: string, format: uuid }
+          description: A track, album or artist id.
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 50 }
+      responses:
+        '200':
+          description: The mix, in play order.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/MixTrack' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
 
   # ── Favorites ──────────────────────────────────────────────────────────────
   /api/v1/favorites:
@@ -1734,6 +1864,81 @@ paths:
                     type: array
                     items: { $ref: '#/components/schemas/FilmographyEntry' }
 
+  # ── Studios / networks ───────────────────────────────────────────────────────
+  /api/v1/studios:
+    get:
+      summary: List studios and networks
+      description: |
+        *(v2.6)* Studios (movies' TMDB production companies) and networks
+        (shows' TMDB networks); an NFO's `<studio>` tags win over TMDB's.
+        Only studios with at least one title the caller can see are listed,
+        each with how many — library grants, the content-rating ceiling and
+        label restrictions all apply. Ordered by name.
+      tags: [Studios]
+      parameters:
+        - { in: query, name: library_id, schema: { type: string, format: uuid }, description: 'Count only this library''s titles. 404 when the caller can''t open it.' }
+        - { in: query, name: kind, schema: { type: string, enum: [studio, network] } }
+      responses:
+        '200':
+          description: Studios with visible titles.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Studio' }
+                  meta: { type: object, properties: { total: { type: integer } } }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/studios/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Studio detail
+      description: '*(v2.6)* A studio and how many of its titles the caller can see. 404 when that is none, the same as an unknown id.'
+      tags: [Studios]
+      responses:
+        '200':
+          description: Studio.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Studio' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/studios/{id}/items:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { $ref: '#/components/parameters/Limit' }
+      - { $ref: '#/components/parameters/Offset' }
+      - { in: query, name: library_id, schema: { type: string, format: uuid }, description: 'Only this library''s titles. 404 when the caller can''t open it.' }
+      - { in: query, name: sort, schema: { type: string, enum: [title, year, rating, created_at] } }
+      - in: query
+        name: sort_dir
+        schema: { type: string, enum: [asc, desc] }
+        description: Defaults to `desc` for year, rating and created_at; `asc` for title.
+    get:
+      summary: A studio's titles
+      description: |
+        *(v2.6)* The studio's movies or shows the caller can see, paged and
+        sorted like library browse, in the same item shape (watch state is
+        not included). 404 when the caller can see none of them (without
+        `library_id`) or the id is unknown.
+      tags: [Studios]
+      responses:
+        '200':
+          description: One page of titles.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MediaItemListEnvelope'
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   # ── Subtitles ──────────────────────────────────────────────────────────────
   /api/v1/items/{id}/subtitles/search:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -1889,8 +2094,10 @@ paths:
         `?token=` (sprites are loaded where no Authorization header can be
         sent; a general access token is rejected in the URL). The item's
         library ACL and the caller's content-rating ceiling apply (404 when
-        either fails). `file` is whitelisted to `index.vtt` or
-        `sprite_NNN.jpg`; the VTT's cues name sprites relative to it.
+        either fails). `file` is whitelisted to `index.vtt`,
+        `sprite_NNN.jpg` or `chapter_NNN.jpg` (a chapter thumbnail, linked
+        from the item detail's `chapters[].thumb_url`); the VTT's cues name
+        sprites relative to it.
       tags: [Trickplay]
       responses:
         '200':
@@ -2173,8 +2380,8 @@ paths:
         `filename*=UTF-8''<percent-encoded>` form are emitted so non-ASCII
         titles survive on every browser.
 
-        Direct-play files only — transcoded-for-download (re-encode to a
-        smaller / device-specific format) is a future feature.
+        The original file only. Lower-quality copies are converted downloads:
+        `POST /api/v1/items/{id}/downloads`.
       tags: [Items]
       responses:
         '200':
@@ -2196,6 +2403,145 @@ paths:
             `features.web_downloads` capabilities flag so clients hide
             the UI without needing to probe with a real download.
         '404': { description: File not found or soft-deleted. }
+
+  # ── Converted downloads ────────────────────────────────────────────────────
+  /api/v1/items/{id}/downloads:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Converted-download qualities for an item
+      description: |
+        The lower-quality copies this user may download (the original is
+        always `GET /media/download/{file_id}`). `allowed` is false for a
+        quality above the user's bitrate cap — and, from outside the home
+        network, the internet limit — following the playback rule: the
+        highest ladder rung that fits, or the lowest rung when none does.
+        Empty `qualities` when the file can't be converted (audio-only,
+        damaged, Dolby Vision profile 5).
+      tags: [Downloads]
+      parameters:
+        - { in: query, name: file_id, required: false, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Options.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadOptions' }
+        '403': { description: '`DOWNLOADS_DISABLED`, over the rating ceiling / label restriction, watch limit, or an admin stop.' }
+        '404': { description: Unknown item, no library access, or no such file. }
+    post:
+      summary: Request a converted download
+      description: |
+        Creates the user's conversion job, or returns their existing one for
+        this file and quality (200 instead of 201). The file is encoded once
+        into a progressive MP4 (H.264 + stereo AAC, `+faststart`; text
+        subtitles carried as mov_text) and the result is shared: another user
+        asking for the same file at the same quality gets the ready file
+        without a second encode. A stacked (multi-part) movie converts into
+        one joined file whichever part's `file_id` is given. Poll
+        `GET /api/v1/downloads/{job}` until `status` is `ready`, then fetch
+        `file_url`. Rate-limited like transcode start; at most 3 of a user's
+        jobs may be waiting on an encode at once.
+      tags: [Downloads]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quality]
+              properties:
+                quality: { type: string, enum: [1080p_8mbps, 720p_4mbps, 720p_2mbps, 480p_1mbps] }
+                file_id: { type: string, format: uuid, description: "Default: the item's best file." }
+      responses:
+        '200':
+          description: The existing job.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadJob' }
+        '201':
+          description: Job created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadJob' }
+        '400': { description: 'Bad body, or `quality: original` (use `/media/download/{file_id}`).' }
+        '403': { description: '`DOWNLOADS_DISABLED`, `QUALITY_ABOVE_LIMIT`, over the rating ceiling / label restriction, watch limit, or an admin stop.' }
+        '404': { description: Unknown item, no library access, or a `file_id` not of this item. }
+        '422': { description: '`NOT_CONVERTIBLE` (audio-only, damaged, a playlist container, Dolby Vision profile 5) or an unknown quality.' }
+        '429': { description: "`TOO_MANY_DOWNLOADS` — three of the user's downloads are already being prepared." }
+
+  /api/v1/downloads/{job}:
+    parameters:
+      - { in: path, name: job, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Converted-download status and progress
+      tags: [Downloads]
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DownloadJob' }
+        '404': { description: "No such job, or not the caller's." }
+    delete:
+      summary: Cancel or remove a converted download
+      description: |
+        Removes the job. An encode nobody else is waiting for is cancelled;
+        a ready file stays in the shared cache for anyone who asks next,
+        until the cleanup task evicts it.
+      tags: [Downloads]
+      responses:
+        '204': { description: Removed. }
+        '404': { description: "No such job, or not the caller's." }
+
+  /api/v1/downloads/{job}/file:
+    parameters:
+      - { in: path, name: job, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Fetch a ready converted download
+      description: |
+        The MP4, `Content-Type: video/mp4`, with `Content-Disposition:
+        attachment` (title + quality) and `Range` support. Auth: Bearer /
+        cookie, or a `purpose=asset` `?token=` (a browser save-as link). Only
+        the job's owner; the item gates (library ACL, rating ceiling, labels,
+        watch limit, admin stop, `DOWNLOADS_DISABLED`) and the bitrate cap
+        are re-checked at fetch time. Fetching moves the file's expiry out.
+      tags: [Downloads]
+      responses:
+        '200':
+          description: The file.
+          content:
+            video/mp4: {}
+        '206': { description: Partial content (range request). }
+        '403': { description: '`QUALITY_ABOVE_LIMIT` from here, or an item gate.' }
+        '404': { description: "No such job, or not the caller's." }
+        '409': { description: '`DOWNLOAD_NOT_READY` — still encoding, failed, or expired.' }
+
+  /api/v1/users/me/downloads:
+    get:
+      summary: My converted downloads
+      description: The caller's jobs, newest first (at most 100).
+      tags: [Downloads]
+      responses:
+        '200':
+          description: Jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { type: array, items: { $ref: '#/components/schemas/DownloadJob' } }
 
   /media/subtitles/{fileId}/{streamIndex}:
     parameters:
@@ -3000,6 +3346,245 @@ paths:
         '204': { description: Revoked. }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /api/v1/users/me/api-keys:
+    get:
+      summary: Caller's personal API keys
+      tags: [Users]
+      description: |
+        The caller's keys, newest first. The key itself is never returned
+        after creation; `prefix` is its first characters. Requires a signed-in
+        session — an API key can't list, create or delete keys (403
+        `API_KEY_NOT_ALLOWED`). v2.6.
+      responses:
+        '200':
+          description: Keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    post:
+      summary: Create a personal API key
+      tags: [Users]
+      description: |
+        Creates a key and returns it once, in `key` (`osk_` + 43 base62
+        characters). Only its SHA-256 is stored. `scope` defaults to `full`;
+        `expires_at` is optional and must be in the future. At most 50 keys
+        per user (409 `API_KEY_LIMIT`). Audited as `api_key.create`. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:       { type: string, maxLength: 100 }
+                scope:      { type: string, enum: [full, read_only], default: full }
+                expires_at: { type: string, format: date-time, nullable: true }
+      responses:
+        '201':
+          description: The new key, with the secret shown this once.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/CreatedAPIKey' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /api/v1/users/me/api-keys/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Revoke one of the caller's API keys
+      tags: [Users]
+      description: |
+        The key stops working on its next request, on every server instance
+        (keys are looked up per request, not cached), and so do the stream
+        tokens requests made with it were handed. Another user's key id is a
+        404. Audited as `api_key.delete`. v2.6.
+      responses:
+        '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/admin/api-keys:
+    get:
+      summary: Every user's API keys (admin)
+      tags: [Users]
+      description: Same rows as `GET /users/me/api-keys`, plus `user_id` and `username`. v2.6.
+      responses:
+        '200':
+          description: Keys, newest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/APIKey' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/admin/api-keys/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Revoke any user's API key (admin)
+      tags: [Users]
+      description: Audited as `api_key.delete` with `by_admin`. v2.6.
+      responses:
+        '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/items/{id}/reading-progress:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Caller's reading position in an ebook
+      tags: [Items]
+      description: |
+        Where the caller is in a book (EPUB, CBZ, CBR, PDF), synced across
+        their devices. `data` is null when nothing is saved. The item must be
+        a book the caller can see (library access, rating ceiling, label
+        restriction), else 404. Audiobooks use playback progress instead. v2.6.
+      responses:
+        '200':
+          description: The saved position, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    allOf: [{ $ref: '#/components/schemas/ReadingProgress' }]
+                    nullable: true
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Save the caller's reading position
+      tags: [Items]
+      description: |
+        The newest position wins, by the client's `updated_at` (omitted =
+        now; a time ahead of the server's clock is clamped to it), so a device
+        flushing a stale position late can't rewind a newer one. The response
+        is the position the server now holds; `applied: false` means a newer
+        one was kept. Progression 0.98 or more marks the book read (the same
+        mark as `POST /items/{id}/watched`). v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [locator, progression]
+              properties:
+                locator:     { type: string, maxLength: 4096, description: 'Opaque to the server: an EPUB CFI, or a page number.' }
+                progression: { type: number, minimum: 0, maximum: 1 }
+                device_name: { type: string, maxLength: 100 }
+                updated_at:  { type: string, format: date-time }
+      responses:
+        '200':
+          description: The stored position.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ReadingProgress' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/settings/subtitle-auto-download:
+    get:
+      summary: Automatic subtitle download setting (admin)
+      tags: [Settings]
+      description: |
+        The server-wide setting for the `subtitle_auto_download` task, which
+        downloads subtitles from OpenSubtitles for movies and episodes that
+        have none in a wanted language. Off by default. v2.6.
+      responses:
+        '200':
+          description: The setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SubtitleAutoSettings' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Update the automatic subtitle download setting (admin)
+      tags: [Settings]
+      description: Every field optional; an omitted one keeps its value. Audited as `settings.update`. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:           { type: boolean }
+                languages:         { type: string, example: 'en,es' }
+                prefer_hash_match: { type: boolean }
+                hearing_impaired:  { type: string, enum: [prefer, avoid, any] }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/SubtitleAutoSettings' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/libraries/{id}/subtitle-auto-download:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A library's automatic subtitle download override (admin)
+      tags: [Libraries]
+      description: '`null` fields follow the server-wide setting. v2.6.'
+      responses:
+        '200':
+          description: The override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LibrarySubtitleAuto' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Set a library's automatic subtitle download override (admin)
+      tags: [Libraries]
+      description: Both fields null removes the override. 404 for an unknown library. v2.6.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                enabled:   { type: boolean, nullable: true }
+                languages: { type: string, nullable: true }
+      responses:
+        '200':
+          description: The override.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LibrarySubtitleAuto' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/users/me/scrobble:
     get:
       summary: Caller's scrobble links
@@ -3780,6 +4365,10 @@ paths:
           - `omdb_daily_limit` *(v2.6)* — lookups the key allows a day
             (1–1000000, default 1000); the task never exceeds it in any
             24 hours. Out of range is a 422.
+          - `fanarttv_api_key` *(v2.6, masked)* — the fanart.tv key used
+            for clear logos, banners and disc art at enrichment
+            (`ItemDetail.logo_path` / `banner_path` / `disc_art_path`).
+            Empty = no fanart.tv lookups.
           - `arr_webhook_url`, `arr_path_mappings`
           - `transcode_encoders`
           - `web_downloads_enabled` *(v2.2)* — admin toggle for the
@@ -3905,6 +4494,82 @@ paths:
             schema: { $ref: '#/components/schemas/TranscodeConfig' }
       responses:
         '204': { description: Saved. }
+
+  /api/v1/settings/dvr:
+    get:
+      summary: Get DVR post-processing settings (admin)
+      description: >
+        Everything defaults to off (the capture is left as the tuner wrote
+        it). `script_configured`, `script_path`, `comskip_configured` and
+        `commercial_detector` are read-only: the post-processing script and
+        comskip are executables, set only through the environment
+        (`ONSCREEN_DVR_POSTPROCESS_SCRIPT`, `ONSCREEN_COMSKIP_PATH`,
+        `ONSCREEN_COMSKIP_INI`) and never through the API.
+      tags: [Settings, DVR]
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DVRSettings' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      summary: Replace DVR post-processing settings (admin)
+      description: >
+        Applies to the next recording that finishes; no restart. Read-only
+        fields in the body are ignored. `commercials: cut` needs `remux` or
+        `transcode` (400 otherwise).
+      tags: [Settings, DVR]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DVRSettings' }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/tv/recordings/{id}/detect-commercials:
+    post:
+      summary: Queue commercial detection for a recording (admin)
+      description: >
+        Runs commercial detection (comskip when configured, otherwise the
+        built-in black + silence detector) on a completed recording and
+        stores the breaks; the file is not changed. Progress shows on
+        `GET /api/v1/tv/recordings` as `postprocess_status`
+        (queued | processing | processed | failed) and `postprocess_message`;
+        both are absent for recordings never post-processed. The breaks
+        reach players as `files[].commercials` on the item detail.
+      tags: [DVR]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202': { description: 'Queued. Body `{"data": {"postprocess_status": "queued"}}`.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: DVR or post-processing is not enabled on this server. }
+
+  /api/v1/tv/recordings/{id}/postprocess:
+    post:
+      summary: Re-run post-processing for a recording (admin)
+      description: >
+        Queues the full post-processing pipeline (remux / transcode,
+        commercials, script) with the current settings. Refused (400) for a
+        recording already processed, so a file is never transcoded twice; use
+        it after a failed run.
+      tags: [DVR]
+      parameters:
+        - { name: id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '202': { description: 'Queued. Body `{"data": {"postprocess_status": "queued"}}`.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { description: DVR or post-processing is not enabled on this server. }
 
   /api/v1/settings/system:
     get:
@@ -5836,6 +6501,14 @@ components:
       type: apiKey
       in: cookie
       name: onscreen_at
+    apiKeyHeader:
+      type: apiKey
+      in: header
+      name: X-Api-Key
+      description: |
+        A personal API key (`osk_…`, v2.6). The same key is also accepted as
+        `Authorization: Bearer osk_…`. Not accepted on the credential and
+        account-security endpoints (403 `API_KEY_NOT_ALLOWED`).
 
   parameters:
     UUID:
@@ -6185,6 +6858,15 @@ components:
             sets its own (`PUT /items/{id}/episode-order`): `aired` (default),
             `dvd` or `absolute`. Only meaningful for show / anime / cartoons
             libraries.
+        save_nfo:
+          type: boolean
+          description: |
+            v2.6. Write Kodi-compatible NFO files next to the media after
+            enrichment, a manual metadata edit or Fix Match: `<file>.nfo` (or
+            the `movie.nfo` already there) for movies, `tvshow.nfo` for shows,
+            `<episode file>.nfo` for episodes. Only files OnScreen wrote
+            (marked `<!-- written by OnScreen -->`) are replaced; local
+            storage only. Default off.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:
@@ -6212,6 +6894,7 @@ components:
           description: Omit for the per-type default (on for video library types, off otherwise).
         nfo_collections: { type: string, enum: ['off', sets, sets_and_tags], default: 'off' }
         episode_order:   { type: string, enum: [aired, dvd, absolute], default: aired }
+        save_nfo:        { type: boolean, default: false }
     LibraryUpdate:
       type: object
       description: |
@@ -6249,6 +6932,10 @@ components:
           type: string
           enum: [aired, dvd, absolute]
           description: Omit to preserve. Changing it on a show / anime / cartoons library re-enriches, in the background, every show that follows the library's order.
+        save_nfo:
+          type: boolean
+          nullable: true
+          description: Omit to preserve. NFO files are written as titles are next enriched, edited or re-matched.
     GenreCount:
       type: object
       properties:
@@ -6344,6 +7031,15 @@ components:
         title:    { type: string }
         start_ms: { type: integer, format: int64 }
         end_ms:   { type: integer, format: int64 }
+        thumb_url:
+          type: string
+          description: |
+            The chapter's thumbnail, `/trickplay/{item_id}/chapter_NNN.jpg`
+            (320 px wide, taken at the chapter start plus min(5 s, 10% of
+            its length)). Present only on the chapters of the file the item's
+            seek-bar sprites were cut from, once they exist; same auth as the
+            sprites (Bearer / cookie, or an asset `?token=`). Added in
+            migration 00051.
     Marker:
       type: object
       properties:
@@ -6395,10 +7091,46 @@ components:
         replaygain_track_peak: { type: number, format: double, nullable: true, description: 'ReplayGain track peak (linear; can exceed 1.0). Music files only.' }
         replaygain_album_gain: { type: number, format: double, nullable: true, description: 'ReplayGain album gain in dB. Music files only.' }
         replaygain_album_peak: { type: number, format: double, nullable: true, description: 'ReplayGain album peak (linear; can exceed 1.0). Music files only.' }
+        replaygain_source:
+          type: string
+          enum: [tags, analyzed]
+          description: |
+            Where the replaygain_* values came from: the file's own tags, or
+            the opt-in loudness_analysis task (EBU R128 integrated loudness and
+            true peak, ReplayGain 2.0 at −18 LUFS; album gain from the album's
+            tracks together). Tag values are never replaced by an analysis.
+            Omitted when the file has no ReplayGain. Additive (v2.6).
         audio_streams:     { type: array, items: { $ref: '#/components/schemas/AudioStream' } }
         subtitle_streams:  { type: array, items: { $ref: '#/components/schemas/SubtitleStream' } }
         external_subtitles: { type: array, items: { $ref: '#/components/schemas/ExternalSubtitle' } }
         chapters:          { type: array, items: { $ref: '#/components/schemas/Chapter' } }
+        commercials:
+          type: array
+          description: >
+            Ad breaks DVR commercial detection found in this file; absent when
+            none are stored. Kept out of the item's `markers` on purpose:
+            clients render every marker as Skip intro / Skip credits.
+          items: { $ref: '#/components/schemas/CommercialMarker' }
+    CommercialMarker:
+      type: object
+      properties:
+        start_ms: { type: integer, format: int64 }
+        end_ms:   { type: integer, format: int64 }
+        source:   { type: string, enum: [comskip, heuristic] }
+    DVRSettings:
+      type: object
+      properties:
+        remux:               { type: boolean, description: 'Stream-copy the capture into remux_container with regenerated timestamps.' }
+        remux_container:     { type: string, enum: [mkv, mp4], default: mkv }
+        transcode:           { type: boolean, description: 'Re-encode video to save space (audio copied). Hardware encoders the transcode settings allow are tried first; software is the fallback.' }
+        transcode_codec:     { type: string, enum: [h264, hevc], default: h264 }
+        transcode_quality:   { type: string, enum: [high, balanced, small], default: balanced }
+        delete_original:     { type: boolean, description: 'Delete the capture once the processed copy passes verification (duration within 2%, streams present). Off keeps it in a .dvr-originals folder the scanner skips.' }
+        commercials:         { type: string, enum: ['off', mark, cut], default: 'off' }
+        script_configured:   { type: boolean, readOnly: true }
+        script_path:         { type: string, readOnly: true }
+        comskip_configured:  { type: boolean, readOnly: true }
+        commercial_detector: { type: string, enum: [comskip, builtin], readOnly: true }
     ItemDetail:
       type: object
       properties:
@@ -6421,6 +7153,18 @@ components:
         duration_ms:    { type: integer, format: int64, nullable: true, description: 'Running time. For a multi-part movie whose first version is stacked (files[].part_index), the parts'' combined length — the timeline its stream and progress use.' }
         poster_path:    { type: string, nullable: true }
         fanart_path:    { type: string, nullable: true }
+        logo_path:      { type: string, description: 'v2.6, omitted when none. A transparent clear logo (PNG), served via /artwork/ like poster_path. Fetch it without ?w=/?h=: a resize re-encodes as JPEG and loses the transparency.' }
+        banner_path:    { type: string, description: 'v2.6, omitted when none. A wide banner image (movies, shows, artists).' }
+        disc_art_path:  { type: string, description: 'v2.6, omitted when none. Disc / CD art (movies, albums), usually a transparent PNG.' }
+        studios:
+          type: array
+          description: 'v2.6. Movies: production companies; shows: networks; in the provider''s order. Omitted when none.'
+          items:
+            type: object
+            properties:
+              id:   { type: string, format: uuid }
+              name: { type: string }
+              kind: { type: string, enum: [studio, network] }
         content_rating: { type: string, nullable: true }
         genres:         { type: array, items: { type: string } }
         parent_id:      { type: string, nullable: true, format: uuid }
@@ -6470,6 +7214,55 @@ components:
           type: array
           items: { type: string }
           description: 'Admins only, omitted otherwise and when the item has none *(v2.6)*: the item''s own admin labels (not those inherited from its show / album), which per-user label restrictions match. See PUT /api/v1/items/{id}/labels.'
+    SimilarArtist:
+      type: object
+      required: [id, title, updated_at, score, shared_genres, co_listened]
+      properties:
+        id:            { type: string, format: uuid }
+        title:         { type: string }
+        poster_path:   { type: string }
+        updated_at:    { type: integer, format: int64, description: 'Unix ms; artwork cache-buster.' }
+        score:         { type: number, format: double, minimum: 0, maximum: 1 }
+        shared_genres: { type: array, items: { type: string }, description: 'Genres shared with the artist asked about (lower-case).' }
+        co_listened:   { type: boolean, description: 'People who listen to one listen to the other.' }
+
+    ArtistAppearance:
+      type: object
+      required: [id, title, role, album_id, album_title, album_updated_at]
+      properties:
+        id:                 { type: string, format: uuid, description: 'The track.' }
+        title:              { type: string }
+        index:              { type: integer }
+        disc_number:        { type: integer }
+        duration_ms:        { type: integer, format: int64 }
+        role:               { type: string, enum: [featured, artist], description: '"featured" for a feat. credit; "artist" for another credit (a compilation track''s performer).' }
+        album_id:           { type: string, format: uuid }
+        album_title:        { type: string }
+        album_year:         { type: integer }
+        album_poster_path:  { type: string }
+        album_updated_at:   { type: integer, format: int64 }
+        album_artist_id:    { type: string, format: uuid }
+        album_artist_title: { type: string }
+
+    MixTrack:
+      type: object
+      required: [id, title, album_id, album_title, file_id]
+      properties:
+        id:                    { type: string, format: uuid }
+        title:                 { type: string }
+        duration_ms:           { type: integer, format: int64 }
+        index:                 { type: integer }
+        album_id:              { type: string, format: uuid }
+        album_title:           { type: string }
+        album_poster_path:     { type: string }
+        artist_id:             { type: string, format: uuid, description: 'The album artist.' }
+        artist_title:          { type: string }
+        file_id:               { type: string, format: uuid, description: 'The file to stream (/media/stream/{file_id}): lossless first, then highest bitrate.' }
+        replaygain_track_gain: { type: number, format: double }
+        replaygain_track_peak: { type: number, format: double }
+        replaygain_album_gain: { type: number, format: double }
+        replaygain_album_peak: { type: number, format: double }
+
     ChildItem:
       type: object
       properties:
@@ -6702,6 +7495,15 @@ components:
         biography:  { type: string, nullable: true }
         birth_date: { type: string, format: date, nullable: true }
         photo_path: { type: string, nullable: true }
+    Studio:
+      type: object
+      description: v2.6. A studio (production company) or TV network.
+      properties:
+        id:         { type: string, format: uuid }
+        name:       { type: string }
+        kind:       { type: string, enum: [studio, network] }
+        tmdb_id:    { type: integer, description: 'TMDB company / network id, when known.' }
+        item_count: { type: integer, format: int64, description: 'Titles the caller can see (within library_id when given).' }
     FilmographyEntry:
       type: object
       properties:
@@ -6722,6 +7524,39 @@ components:
         release:          { type: string }
         downloads:        { type: integer }
         rating:           { type: number, format: float }
+    DownloadOptions:
+      type: object
+      properties:
+        file_id: { type: string, format: uuid, description: "The file a conversion would encode (a stacked movie's first part)." }
+        bitrate_cap_kbps: { type: integer, description: 'The cap applied to this request; absent = none.' }
+        qualities:
+          type: array
+          items:
+            type: object
+            properties:
+              id:           { type: string, enum: [1080p_8mbps, 720p_4mbps, 720p_2mbps, 480p_1mbps] }
+              label:        { type: string, example: '720p · 4 Mbps' }
+              bitrate_kbps: { type: integer }
+              max_height:   { type: integer }
+              allowed:      { type: boolean }
+    DownloadJob:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        item_id:       { type: string, format: uuid }
+        file_id:       { type: string, format: uuid }
+        title:         { type: string }
+        item_type:     { type: string }
+        quality:       { type: string }
+        quality_label: { type: string }
+        status:        { type: string, enum: [queued, running, ready, failed, expired] }
+        progress:      { type: number, description: 'Encode progress, 0..1.' }
+        error:         { type: string }
+        size_bytes:    { type: integer, format: int64 }
+        created_at:    { type: string, format: date-time }
+        completed_at:  { type: string, format: date-time }
+        expires_at:    { type: string, format: date-time, description: 'When a ready file may leave the cache.' }
+        file_url:      { type: string, description: 'Present when ready: `/api/v1/downloads/{id}/file`.' }
     TrickplayStatus:
       type: object
       description: |
@@ -7339,6 +8174,49 @@ components:
         created_at:   { type: string, format: date-time }
         last_seen_at: { type: string, format: date-time, description: 'Approximate: sign-in or latest refresh.' }
         current:      { type: boolean, description: "True on the caller's own sign-in." }
+    APIKey:
+      type: object
+      description: A personal API key. Never carries the key or its hash.
+      properties:
+        id:           { type: string, format: uuid }
+        name:         { type: string }
+        prefix:       { type: string, description: 'The first characters of the key, e.g. "osk_AbC12xYz".' }
+        scope:        { type: string, enum: [full, read_only] }
+        created_at:   { type: string, format: date-time }
+        last_used_at: { type: string, format: date-time, nullable: true, description: 'Approximate: written at most every 5 minutes.' }
+        expires_at:   { type: string, format: date-time, nullable: true }
+        expired:      { type: boolean }
+        user_id:      { type: string, format: uuid, description: 'Admin list only.' }
+        username:     { type: string, description: 'Admin list only.' }
+    CreatedAPIKey:
+      allOf:
+        - { $ref: '#/components/schemas/APIKey' }
+        - type: object
+          properties:
+            key: { type: string, description: 'The key itself, shown only in this response.' }
+    ReadingProgress:
+      type: object
+      properties:
+        locator:     { type: string }
+        progression: { type: number, minimum: 0, maximum: 1 }
+        device_name: { type: string, description: 'Where the position was saved; omitted when unknown.' }
+        updated_at:  { type: string, format: date-time, description: 'Client time the position was reached (clamped to the server clock).' }
+        applied:     { type: boolean, description: 'PUT only: false when a newer stored position was kept.' }
+    SubtitleAutoSettings:
+      type: object
+      properties:
+        enabled:             { type: boolean }
+        languages:           { type: string, description: 'Comma-separated language codes, normalised (e.g. "en,es,pt-br").' }
+        only_missing:        { type: boolean, description: 'Always true: a language the file already has is never downloaded.' }
+        prefer_hash_match:   { type: boolean }
+        hearing_impaired:    { type: string, enum: [prefer, avoid, any] }
+        provider_configured: { type: boolean, description: 'Read-only: whether OpenSubtitles is set up.' }
+    LibrarySubtitleAuto:
+      type: object
+      properties:
+        library_id: { type: string, format: uuid }
+        enabled:    { type: boolean, nullable: true }
+        languages:  { type: string, nullable: true }
     StreamingLimits:
       type: object
       properties:

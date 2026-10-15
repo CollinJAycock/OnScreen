@@ -534,6 +534,17 @@ func (a *mediaAdapter) UpdateMediaFileNaming(ctx context.Context, id uuid.UUID, 
 	})
 }
 
+func (a *mediaAdapter) UpdateMediaFileReplayGain(ctx context.Context, id uuid.UUID, rg media.ReplayGain) error {
+	return a.q.UpdateMediaFileReplayGain(ctx, gen.UpdateMediaFileReplayGainParams{
+		ID:                  id,
+		ReplaygainTrackGain: float64PtrToNumeric(rg.TrackGain),
+		ReplaygainTrackPeak: float64PtrToNumeric(rg.TrackPeak),
+		ReplaygainAlbumGain: float64PtrToNumeric(rg.AlbumGain),
+		ReplaygainAlbumPeak: float64PtrToNumeric(rg.AlbumPeak),
+		ReplaygainSource:    rg.Source,
+	})
+}
+
 func (a *mediaAdapter) UpdateMediaFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error {
 	return a.q.UpdateMediaFileDynamicRange(ctx, gen.UpdateMediaFileDynamicRangeParams{
 		ID:        id,

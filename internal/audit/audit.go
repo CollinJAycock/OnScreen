@@ -149,6 +149,13 @@ const (
 	// ActionUserStreamLimitsChange records an admin changing a user's
 	// streaming caps (concurrent streams, bitrate, internet bitrate).
 	ActionUserStreamLimitsChange = "user.streaming_limits_change"
+
+	// ActionAPIKeyCreate / ActionAPIKeyDelete record a personal API key being
+	// made or revoked. user_id is the actor, target the key's owner (the same
+	// user, except when an admin revokes someone else's key); detail carries
+	// key_id, name, the display prefix and scope — never the key itself.
+	ActionAPIKeyCreate = "api_key.create"
+	ActionAPIKeyDelete = "api_key.delete"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

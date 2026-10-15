@@ -12,6 +12,18 @@ import (
 	"time"
 )
 
+type ApiKey struct {
+	ID         uuid.UUID          `json:"id"`
+	UserID     uuid.UUID          `json:"user_id"`
+	Name       string             `json:"name"`
+	KeyHash    string             `json:"key_hash"`
+	KeyPrefix  string             `json:"key_prefix"`
+	Scope      string             `json:"scope"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastUsedAt pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt  pgtype.Timestamptz `json:"expires_at"`
+}
+
 type ArrService struct {
 	ID                      uuid.UUID          `json:"id"`
 	Name                    string             `json:"name"`
@@ -101,10 +113,56 @@ type CollectionPoster struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type CommercialMarker struct {
+	ID          uuid.UUID          `json:"id"`
+	MediaFileID uuid.UUID          `json:"media_file_id"`
+	StartMs     int64              `json:"start_ms"`
+	EndMs       int64              `json:"end_ms"`
+	Source      string             `json:"source"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+}
+
 type ContinueWatchingDismissal struct {
 	UserID      uuid.UUID          `json:"user_id"`
 	MediaID     uuid.UUID          `json:"media_id"`
 	DismissedAt pgtype.Timestamptz `json:"dismissed_at"`
+}
+
+type DownloadConversion struct {
+	ID          uuid.UUID          `json:"id"`
+	MediaItemID uuid.UUID          `json:"media_item_id"`
+	MediaFileID uuid.UUID          `json:"media_file_id"`
+	Quality     string             `json:"quality"`
+	Status      string             `json:"status"`
+	Progress    float32            `json:"progress"`
+	Error       *string            `json:"error"`
+	SizeBytes   *int64             `json:"size_bytes"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	StartedAt   pgtype.Timestamptz `json:"started_at"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+}
+
+type DownloadJob struct {
+	ID           uuid.UUID          `json:"id"`
+	UserID       uuid.UUID          `json:"user_id"`
+	MediaItemID  uuid.UUID          `json:"media_item_id"`
+	MediaFileID  uuid.UUID          `json:"media_file_id"`
+	Quality      string             `json:"quality"`
+	ConversionID pgtype.UUID        `json:"conversion_id"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type DvrPostprocessJob struct {
+	RecordingID      uuid.UUID          `json:"recording_id"`
+	Kind             string             `json:"kind"`
+	Status           string             `json:"status"`
+	Message          *string            `json:"message"`
+	OriginalFilePath *string            `json:"original_file_path"`
+	QueuedAt         pgtype.Timestamptz `json:"queued_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type EpgProgram struct {
@@ -248,12 +306,20 @@ type Library struct {
 	TrickplayEnabled        bool               `json:"trickplay_enabled"`
 	NfoCollections          string             `json:"nfo_collections"`
 	EpisodeOrder            string             `json:"episode_order"`
+	SaveNfo                 bool               `json:"save_nfo"`
 }
 
 type LibraryAccess struct {
 	UserID    uuid.UUID          `json:"user_id"`
 	LibraryID uuid.UUID          `json:"library_id"`
 	GrantedAt pgtype.Timestamptz `json:"granted_at"`
+}
+
+type LibrarySubtitleAutoDownload struct {
+	LibraryID uuid.UUID          `json:"library_id"`
+	Enabled   *bool              `json:"enabled"`
+	Languages *string            `json:"languages"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type MediaCredit struct {
@@ -302,6 +368,18 @@ type MediaFile struct {
 	DvProfile           *int16             `json:"dv_profile"`
 	Edition             *string            `json:"edition"`
 	PartIndex           *int16             `json:"part_index"`
+	ReplaygainSource    *string            `json:"replaygain_source"`
+}
+
+type MediaFileLoudness struct {
+	FileID         uuid.UUID          `json:"file_id"`
+	IntegratedLufs pgtype.Numeric     `json:"integrated_lufs"`
+	TruePeak       pgtype.Numeric     `json:"true_peak"`
+	DurationMs     *int64             `json:"duration_ms"`
+	FileSize       int64              `json:"file_size"`
+	FileHash       *string            `json:"file_hash"`
+	Error          *string            `json:"error"`
+	AnalyzedAt     pgtype.Timestamptz `json:"analyzed_at"`
 }
 
 type MediaIssue struct {
@@ -370,6 +448,15 @@ type MediaItem struct {
 	IndexEnd                  *int32             `json:"index_end"`
 	EpisodeOrder              *string            `json:"episode_order"`
 	Labels                    []string           `json:"labels"`
+	LogoPath                  *string            `json:"logo_path"`
+	BannerPath                *string            `json:"banner_path"`
+	DiscArtPath               *string            `json:"disc_art_path"`
+}
+
+type MediaItemStudio struct {
+	MediaItemID uuid.UUID `json:"media_item_id"`
+	StudioID    uuid.UUID `json:"studio_id"`
+	Position    int32     `json:"position"`
 }
 
 type MediaItemTmdbCollection struct {
@@ -545,6 +632,16 @@ type PodcastFeedEpisode struct {
 	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
 }
 
+type ReadingProgress struct {
+	UserID          uuid.UUID          `json:"user_id"`
+	MediaID         uuid.UUID          `json:"media_id"`
+	Locator         string             `json:"locator"`
+	Progression     float64            `json:"progression"`
+	DeviceName      *string            `json:"device_name"`
+	ClientUpdatedAt pgtype.Timestamptz `json:"client_updated_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Recording struct {
 	ID         uuid.UUID          `json:"id"`
 	ScheduleID pgtype.UUID        `json:"schedule_id"`
@@ -621,6 +718,25 @@ type Session struct {
 	AbsoluteExpiresAt pgtype.Timestamptz `json:"absolute_expires_at"`
 }
 
+type Studio struct {
+	ID        uuid.UUID          `json:"id"`
+	Name      string             `json:"name"`
+	Kind      string             `json:"kind"`
+	TmdbID    *int32             `json:"tmdb_id"`
+	LogoPath  *string            `json:"logo_path"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type SubtitleAutoAttempt struct {
+	MediaID       uuid.UUID          `json:"media_id"`
+	Language      string             `json:"language"`
+	Attempts      int32              `json:"attempts"`
+	Status        string             `json:"status"`
+	LastAttemptAt pgtype.Timestamptz `json:"last_attempt_at"`
+	NextAttemptAt pgtype.Timestamptz `json:"next_attempt_at"`
+	LastResult    *string            `json:"last_result"`
+}
+
 type TaskRun struct {
 	ID        uuid.UUID          `json:"id"`
 	TaskID    uuid.UUID          `json:"task_id"`
@@ -649,19 +765,32 @@ type TotpRecoveryCode struct {
 	CreatedAt pgtype.Timestamptz `json:"created_at"`
 }
 
+type TrackArtist struct {
+	TrackID  uuid.UUID `json:"track_id"`
+	ArtistID uuid.UUID `json:"artist_id"`
+	Role     string    `json:"role"`
+	Position int16     `json:"position"`
+}
+
+type TrackCreditScan struct {
+	FileID    uuid.UUID          `json:"file_id"`
+	ScannedAt pgtype.Timestamptz `json:"scanned_at"`
+}
+
 type TrickplayStatus struct {
-	ItemID          uuid.UUID          `json:"item_id"`
-	FileID          pgtype.UUID        `json:"file_id"`
-	Status          string             `json:"status"`
-	SpriteCount     int32              `json:"sprite_count"`
-	IntervalSec     int32              `json:"interval_sec"`
-	ThumbWidth      int32              `json:"thumb_width"`
-	ThumbHeight     int32              `json:"thumb_height"`
-	GridCols        int32              `json:"grid_cols"`
-	GridRows        int32              `json:"grid_rows"`
-	LastAttemptedAt pgtype.Timestamptz `json:"last_attempted_at"`
-	LastError       *string            `json:"last_error"`
-	GeneratedAt     pgtype.Timestamptz `json:"generated_at"`
+	ItemID            uuid.UUID          `json:"item_id"`
+	FileID            pgtype.UUID        `json:"file_id"`
+	Status            string             `json:"status"`
+	SpriteCount       int32              `json:"sprite_count"`
+	IntervalSec       int32              `json:"interval_sec"`
+	ThumbWidth        int32              `json:"thumb_width"`
+	ThumbHeight       int32              `json:"thumb_height"`
+	GridCols          int32              `json:"grid_cols"`
+	GridRows          int32              `json:"grid_rows"`
+	LastAttemptedAt   pgtype.Timestamptz `json:"last_attempted_at"`
+	LastError         *string            `json:"last_error"`
+	GeneratedAt       pgtype.Timestamptz `json:"generated_at"`
+	ChapterThumbCount *int32             `json:"chapter_thumb_count"`
 }
 
 type TunerDevice struct {

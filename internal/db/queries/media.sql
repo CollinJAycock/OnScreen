@@ -8,7 +8,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
        parent_id, index, index_end, episode_order, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at,
-       locked_fields
+       locked_fields, logo_path, banner_path, disc_art_path
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -583,6 +583,19 @@ UPDATE media_items
 SET poster_path = sqlc.arg(poster_path),
     updated_at  = NOW()
 WHERE id = sqlc.arg(id);
+
+-- name: SetMediaItemExtraArt :exec
+-- Sets an item's clear logo, banner and disc art paths (migration 00049).
+-- A NULL argument keeps the stored path, the same COALESCE rule
+-- UpdateMediaItemMetadata applies to poster and fanart, so a provider that
+-- has no logo this time doesn't wipe the one a previous pass (or the
+-- operator's own clearlogo.png) supplied. Artwork isn't lockable.
+UPDATE media_items
+SET logo_path     = COALESCE(sqlc.narg(logo_path)::text, logo_path),
+    banner_path   = COALESCE(sqlc.narg(banner_path)::text, banner_path),
+    disc_art_path = COALESCE(sqlc.narg(disc_art_path)::text, disc_art_path),
+    updated_at    = NOW()
+WHERE id = sqlc.arg(id) AND deleted_at IS NULL;
 
 -- name: UpdateMediaItemTakenAt :exec
 -- Sets only an item's originally_available_at: a photo's EXIF capture date.
@@ -1593,7 +1606,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE id = $1;
 
@@ -1606,7 +1619,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE file_path = $1;
 
@@ -1619,7 +1632,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 -- Move detection only matches against status='missing' rows now —
 -- the 'deleted' arm went away when "delete = hard delete" landed
@@ -1637,7 +1650,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best quality first (ADR-031)
@@ -1651,7 +1664,7 @@ INSERT INTO media_files (
     replaygain_track_gain, replaygain_track_peak,
     replaygain_album_gain, replaygain_album_peak,
     video_bit_depth, dv_profile,
-    edition, part_index
+    edition, part_index, replaygain_source
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -1660,7 +1673,7 @@ INSERT INTO media_files (
     $21, $22,
     $23, $24,
     $25, $26,
-    $27, $28
+    $27, $28, $29
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -1670,7 +1683,7 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           replaygain_track_gain, replaygain_track_peak,
           replaygain_album_gain, replaygain_album_peak, video_bit_depth,
           integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-          edition, part_index;
+          edition, part_index, replaygain_source;
 
 -- name: UpdateMediaFilePath :exec
 UPDATE media_files
@@ -1766,6 +1779,21 @@ SET edition    = $2,
     part_index = $3
 WHERE id = $1;
 
+-- name: UpdateMediaFileReplayGain :exec
+-- Writes a file's ReplayGain values and where they came from ('tags',
+-- 'analyzed', or NULL with every value NULL). The scanner calls it for a
+-- changed file (its tags may have gained, lost or changed ReplayGain); the
+-- loudness_analysis task writes its measurements through
+-- SetAnalyzedReplayGain instead, which refuses a file whose values came from
+-- tags.
+UPDATE media_files
+SET replaygain_track_gain = $2,
+    replaygain_track_peak = $3,
+    replaygain_album_gain = $4,
+    replaygain_album_peak = $5,
+    replaygain_source     = $6
+WHERE id = $1;
+
 -- name: UpdateMediaFileIntegrity :exec
 -- Records the integrity-probe verdict. detail is NULL for 'ok' and carries
 -- the human-readable failure summary for 'damaged'.
@@ -1792,7 +1820,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
        mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
-       mf.edition, mf.part_index
+       mf.edition, mf.part_index, mf.replaygain_source
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 JOIN libraries l ON l.id = mi.library_id
@@ -1825,7 +1853,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
        mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
-       mf.edition, mf.part_index
+       mf.edition, mf.part_index, mf.replaygain_source
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';
@@ -1956,7 +1984,9 @@ WHERE f.media_item_id = i.id
 -- Soft-delete container items (show, season, artist, album, podcast) whose
 -- every child has been soft-deleted. Call twice in sequence to cascade up:
 -- the first pass clears empty seasons/albums, the second clears
--- shows/artists whose seasons/albums just died.
+-- shows/artists whose seasons/albums just died. An artist credited on a live
+-- track (track_artists, migration 00048) stays even with no albums of its
+-- own: it is a featured artist, and its page lists what it appears on.
 UPDATE media_items AS parent
 SET deleted_at = NOW(), updated_at = NOW()
 WHERE parent.library_id = $1
@@ -1965,7 +1995,12 @@ WHERE parent.library_id = $1
   AND NOT EXISTS (
       SELECT 1 FROM media_items child
       WHERE child.parent_id = parent.id AND child.deleted_at IS NULL
-  );
+  )
+  AND NOT (parent.type = 'artist' AND EXISTS (
+      SELECT 1 FROM track_artists ta
+      JOIN media_items t ON t.id = ta.track_id AND t.deleted_at IS NULL
+      WHERE ta.artist_id = parent.id
+  ));
 
 -- name: ListMissingFilesOlderThan :many
 SELECT id, media_item_id, file_path, file_size, container, video_codec,
@@ -1976,7 +2011,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index
+       edition, part_index, replaygain_source
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000;
@@ -2119,7 +2154,8 @@ LIMIT 1;
 
 -- name: GetArtworkContentRating :one
 -- Resolves the content_rating of the item that owns a given artwork file,
--- matched by its library-relative poster/fanart/thumb path (slash-separated,
+-- matched by its library-relative poster/fanart/thumb (or logo/banner/disc
+-- art) path (slash-separated,
 -- the form stored at scan time). Used by the /artwork/* server to enforce the
 -- per-user content-rating ceiling so a restricted profile with library access
 -- can't pull an over-ceiling item's poster by direct URL. Scoped to the owning
@@ -2144,5 +2180,8 @@ WHERE library_id = sqlc.arg(library_id)
   AND deleted_at IS NULL
   AND (lower(poster_path) = lower(sqlc.arg(art_path))
        OR lower(fanart_path) = lower(sqlc.arg(art_path))
-       OR lower(thumb_path) = lower(sqlc.arg(art_path)))
+       OR lower(thumb_path) = lower(sqlc.arg(art_path))
+       OR lower(logo_path) = lower(sqlc.arg(art_path))
+       OR lower(banner_path) = lower(sqlc.arg(art_path))
+       OR lower(disc_art_path) = lower(sqlc.arg(art_path)))
 LIMIT 1;

@@ -2,13 +2,20 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, assetUrl, type ItemDetail, type ChildItem } from '$lib/api';
+  import { itemApi, musicApi, assetUrl, type ItemDetail, type ChildItem, type SimilarArtist } from '$lib/api';
+  import { groupAppearances, startInstantMix, type AppearanceGroup } from '$lib/instantMix';
+  import { toast } from '$lib/stores/toast';
 
   let artist: ItemDetail | null = null;
   let albums: ChildItem[] = [];
   let musicVideos: ChildItem[] = [];
+  // Discovery rows load after the page and never block it: an older
+  // server without the endpoints just leaves them empty.
+  let similar: SimilarArtist[] = [];
+  let appearsOn: AppearanceGroup[] = [];
   let loading = true;
   let error = '';
+  let mixing = false;
 
   $: id = $page.params.id!;
 
@@ -51,10 +58,36 @@
       musicVideos = all.filter(c => c.type === 'music_video').sort((a, b) =>
         a.title.localeCompare(b.title),
       );
+      loadDiscovery(id);
     } catch (e: unknown) {
       error = e instanceof Error ? e.message : 'Failed to load artist';
     } finally {
       loading = false;
+    }
+  }
+
+  async function loadDiscovery(artistId: string) {
+    similar = [];
+    appearsOn = [];
+    const [sim, app] = await Promise.allSettled([
+      musicApi.similarArtists(artistId, 12),
+      musicApi.appearsOn(artistId),
+    ]);
+    // A newer navigation may have replaced the artist meanwhile.
+    if (artist?.id !== artistId) return;
+    if (sim.status === 'fulfilled') similar = sim.value;
+    if (app.status === 'fulfilled') appearsOn = groupAppearances(app.value);
+  }
+
+  async function instantMix() {
+    if (!artist || mixing) return;
+    mixing = true;
+    try {
+      if ((await startInstantMix(artist.id)) === 0) toast.info('Nothing to mix with this artist yet.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start an instant mix');
+    } finally {
+      mixing = false;
     }
   }
 </script>
@@ -92,13 +125,21 @@
             · {musicVideos.length} music {musicVideos.length === 1 ? 'video' : 'videos'}
           {/if}
         </div>
+        {#if albums.length > 0 || appearsOn.length > 0}
+          <div class="actions">
+            <button class="btn-mix" on:click={instantMix} disabled={mixing}
+                    title="Play a mix of this artist and similar music">
+              {mixing ? 'Mixing…' : 'Instant mix'}
+            </button>
+          </div>
+        {/if}
         {#if artist.summary}
           <p class="bio">{artist.summary}</p>
         {/if}
       </div>
     </header>
 
-    {#if albums.length === 0 && musicVideos.length === 0}
+    {#if albums.length === 0 && musicVideos.length === 0 && appearsOn.length === 0}
       <p class="empty">No albums or music videos in your library yet.</p>
     {/if}
 
@@ -119,6 +160,49 @@
             </div>
             <div class="title">{a.title}</div>
             {#if a.year}<div class="year">{a.year}</div>{/if}
+          </a>
+        {/each}
+      </div>
+    {/if}
+
+    {#if appearsOn.length > 0}
+      <h2 class="section-h extra-h">Appears on</h2>
+      <div class="grid">
+        {#each appearsOn as g (g.albumId)}
+          <a class="card" href="/albums/{g.albumId}">
+            <div class="poster">
+              {#if g.albumPosterPath}
+                <img src={assetUrl(`/artwork/${encodeURI(g.albumPosterPath)}?v=${g.albumUpdatedAt}&w=300`)}
+                     alt={g.albumTitle} loading="lazy" />
+              {:else}
+                <div class="poster-blank">♪</div>
+              {/if}
+            </div>
+            <div class="title">{g.albumTitle}</div>
+            <div class="year">
+              {#if g.albumArtistTitle}{g.albumArtistTitle}{/if}{#if g.albumArtistTitle && g.albumYear} · {/if}{#if g.albumYear}{g.albumYear}{/if}
+            </div>
+            <div class="appear-tracks" title={g.tracks.map(t => t.title).join(', ')}>
+              {g.tracks.map(t => t.title).join(' · ')}
+            </div>
+          </a>
+        {/each}
+      </div>
+    {/if}
+
+    {#if similar.length > 0}
+      <h2 class="section-h extra-h">Similar artists</h2>
+      <div class="similar-row">
+        {#each similar as a (a.id)}
+          <a class="similar" href="/artists/{a.id}"
+             title={a.shared_genres.length ? a.shared_genres.join(', ') : a.title}>
+            {#if a.poster_path}
+              <img src={assetUrl(`/artwork/${encodeURI(a.poster_path)}?v=${a.updated_at}&w=200`)}
+                   alt={a.title} loading="lazy" />
+            {:else}
+              <div class="similar-blank">{a.title.charAt(0)}</div>
+            {/if}
+            <div class="similar-name">{a.title}</div>
           </a>
         {/each}
       </div>
@@ -175,6 +259,40 @@
   .bio { color: var(--text-secondary); line-height: 1.5; max-width: 70ch; }
 
   .section-h { font-size: 1.1rem; margin: 0 0 1rem; }
+  .extra-h { margin-top: 2.5rem; }
+
+  .actions { margin-bottom: 1rem; }
+  .btn-mix {
+    background: var(--accent); color: white; border: 0; padding: 0.55rem 1.3rem;
+    border-radius: 999px; font-size: 0.9rem; font-weight: 600; cursor: pointer;
+  }
+  .btn-mix:hover:not(:disabled) { filter: brightness(1.1); }
+  .btn-mix:disabled { opacity: 0.6; cursor: default; }
+
+  .appear-tracks {
+    font-size: 0.75rem; color: var(--text-secondary); margin-top: 0.15rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .similar-row {
+    display: flex; gap: 1.25rem; overflow-x: auto; padding-bottom: 0.5rem;
+    scroll-snap-type: x proximity;
+  }
+  .similar {
+    flex: 0 0 auto; width: 120px; text-decoration: none; color: inherit;
+    text-align: center; scroll-snap-align: start;
+  }
+  .similar img, .similar-blank {
+    width: 120px; height: 120px; border-radius: 50%; object-fit: cover;
+    background: var(--surface); box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 2.5rem; color: var(--text-muted); font-weight: 200;
+  }
+  .similar:hover img, .similar:hover .similar-blank { transform: translateY(-2px); }
+  .similar-name {
+    margin-top: 0.5rem; font-size: 0.85rem; overflow: hidden;
+    text-overflow: ellipsis; white-space: nowrap;
+  }
 
   .grid {
     display: grid;

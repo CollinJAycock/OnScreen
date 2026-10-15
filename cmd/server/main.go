@@ -42,12 +42,14 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/domain/watchstatus"
+	"github.com/onscreen/onscreen/internal/downloads"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/externalratings"
 	"github.com/onscreen/onscreen/internal/franchise"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/livetv"
+	"github.com/onscreen/onscreen/internal/loudness"
 	"github.com/onscreen/onscreen/internal/lyrics"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/metadata"
@@ -55,6 +57,7 @@ import (
 	"github.com/onscreen/onscreen/internal/metadata/animedb"
 	"github.com/onscreen/onscreen/internal/metadata/audiodb"
 	"github.com/onscreen/onscreen/internal/metadata/coverartarchive"
+	"github.com/onscreen/onscreen/internal/metadata/fanarttv"
 	"github.com/onscreen/onscreen/internal/metadata/tmdb"
 	"github.com/onscreen/onscreen/internal/metadata/tvdb"
 	"github.com/onscreen/onscreen/internal/notification"
@@ -72,6 +75,7 @@ import (
 	"github.com/onscreen/onscreen/internal/serverimport"
 	"github.com/onscreen/onscreen/internal/staticabr"
 	"github.com/onscreen/onscreen/internal/streaming"
+	"github.com/onscreen/onscreen/internal/studios"
 	"github.com/onscreen/onscreen/internal/subtitles"
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -587,10 +591,41 @@ func run() error {
 		func() franchise.TMDB { return &franchiseTMDBAdapter{agentFn: agentFn} }, logger)
 	metaAgent.SetFranchiseRecorder(franchiseSvc)
 
+	// Studios / networks, clear logos, banners and disc art, and NFO
+	// writing (libraries.save_nfo) — the enricher's post-write steps.
+	studioSvc := studios.New(gen.New(rwPool))
+	metaAgent.SetItemExtras(&enricherExtrasAdapter{rw: gen.New(rwPool), studios: studioSvc})
+	// fanart.tv: key from the admin UI (Settings ▸ General), read per
+	// enrichment so setting or clearing it applies without a restart. No
+	// key = no lookup; local Kodi-named files and AniList banners still
+	// apply.
+	var (
+		fanartMu    sync.Mutex
+		fanartKey   string
+		fanartCache metadata.ExtraArtAgent
+	)
+	metaAgent.SetExtraArtFn(func() metadata.ExtraArtAgent {
+		key := settingsSvc.FanartTVAPIKey(context.WithoutCancel(ctx))
+		fanartMu.Lock()
+		defer fanartMu.Unlock()
+		if key == "" {
+			fanartKey, fanartCache = "", nil
+			return nil
+		}
+		if key != fanartKey {
+			fanartKey = key
+			fanartCache = fanarttv.New(key)
+		}
+		return fanartCache
+	})
+
 	libScanner := scanner.New(mediaSvc, metaAgent, hot, logger).WithMetrics(metrics).
 		// Admin-set missing-file grace (System settings override the env
 		// default); read per scan so a change applies without a restart.
-		WithMissingFileGrace(func() time.Duration { return cfg.MissingFileGracePeriod })
+		WithMissingFileGrace(func() time.Duration { return cfg.MissingFileGracePeriod }).
+		// Featured-artist credits (track_artists): "Appears on" on the
+		// artist page.
+		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)})
 	notifBrokerEarly := notification.NewBroker()
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
@@ -694,8 +729,10 @@ func run() error {
 	}
 
 	// Epoch reads go to the PRIMARY: a replica would delay revocation by its lag.
+	// API key lookups too: a deleted key must stop working on the next request.
 	authMiddleware := middleware.NewAuthenticator(tokenMaker).
-		WithEpochReader(&sessionEpochAdapter{q: gen.New(rwPool)})
+		WithEpochReader(&sessionEpochAdapter{q: gen.New(rwPool)}).
+		WithAPIKeys(&apiKeyAdapter{q: gen.New(rwPool)})
 
 	auditLogger := audit.New(gen.New(rwPool), logger)
 	libHandler := v1.NewLibraryHandler(libSvc, logger).
@@ -736,6 +773,9 @@ func run() error {
 	userSessionsHandler := v1.NewUserSessionsHandler(gen.New(rwPool), logger).
 		WithAudit(auditLogger).
 		WithSegmentTokenRevoker(segTokenMgr)
+	// Personal API keys. Primary pool for the same reason: a deleted key must
+	// fail the middleware's very next lookup (apiKeyAdapter reads rwPool).
+	apiKeyHandler := v1.NewAPIKeyHandler(gen.New(rwPool), logger).WithAudit(auditLogger)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
@@ -823,6 +863,8 @@ func run() error {
 	// so object-storage libraries scan (movies/shows/anime fully; types needing
 	// embedded-tag/cover reads degrade to online enrichment for remote sources).
 	libScanner.WithMediaStore(mediaStoreProvider)
+	// NFO files are only written next to media on local disk.
+	metaAgent.SetLocalMediaFn(func() bool { return mediastore.IsLocal(mediaStoreProvider) })
 
 	// Podcast RSS subscriptions: feeds download episodes into their podcast
 	// library's folder through the media store, rescan that folder when a
@@ -925,6 +967,31 @@ func run() error {
 	}
 	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
 		WithLibraryAccess(libSvc)
+	// Automatic subtitle download: admin settings (server-wide + per-library)
+	// and the subtitle_auto_download task registered below.
+	subtitleAutoHandler := v1.NewSubtitleAutoHandler(settingsSvc, gen.New(rwPool),
+		subtitleSvc.Configured, logger).WithAudit(auditLogger)
+	subtitleAuto := subtitles.NewAutoDownloader(gen.New(rwPool), subtitleSvc,
+		func(ctx context.Context) subtitles.AutoConfig {
+			c := settingsSvc.SubtitleAutoDownload(ctx)
+			return subtitles.AutoConfig{
+				Enabled:         c.Enabled,
+				Languages:       subtitles.ParseLanguageList(c.Languages),
+				PreferHashMatch: c.PreferHashMatch,
+				HearingImpaired: c.HearingImpaired,
+			}
+		},
+		func(ctx context.Context) ([]uuid.UUID, error) {
+			libs, err := libSvc.List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			ids := make([]uuid.UUID, len(libs))
+			for i, l := range libs {
+				ids[i] = l.ID
+			}
+			return ids, nil
+		}, logger)
 
 	// People service has to land here (vs the per-handler section
 	// below) so the items handler can hook the cast/crew refresher
@@ -953,6 +1020,7 @@ func run() error {
 		WithSegmentTokenRevoker(segTokenMgr).
 		WithPlayDecisions(playDecisions).
 		WithMarkers(intromarker.NewStore(rwPool)).
+		WithCommercials(commercialMarkerLister{q: gen.New(roPool)}).
 		WithExternalSubtitles(subtitleSvc).
 		WithSubtitleCache(subtitleCacheRoot).
 		WithSyncBroker(notifBrokerEarly).
@@ -969,6 +1037,12 @@ func run() error {
 		WithExternalRatings(gen.New(roPool)).
 		WithEpisodeOrder(mediaSvc).
 		WithLabels(gen.New(roPool)).
+		// Chapters carry thumb_url once the sprites (and with them the
+		// chapter thumbnails) exist.
+		WithChapterThumbs(trickplaySvc).
+		WithStudios(studioSvc).
+		// A metadata edit rewrites the item's NFO in save_nfo libraries.
+		WithNFOWriter(metaAgent).
 		// A metadata edit drops the hub's cached trending row, which carries
 		// titles and was rating-filtered when fetched.
 		WithCacheInvalidator(hubHandler)
@@ -1091,11 +1165,43 @@ func run() error {
 		},
 		&dvrMediaCreator{svc: mediaSvc},
 		logger)
+
+	// DVR post-processing (remux / transcode / commercials / script). Queued
+	// by the worker when a capture completes; the admin settings decide
+	// whether there is any work (all off by default). Executables come only
+	// from the environment.
+	dvrPost := livetv.NewPostProcessor(livetv.PostProcessConfig{
+		ScriptPath:  cfg.DVRPostProcessScript,
+		ComskipPath: cfg.ComskipPath,
+		ComskipINI:  cfg.ComskipINI,
+		Settings:    dvrPostProcessSettings(settingsSvc),
+		// Same encoder choice as the embedded transcoder: the admin's
+		// override (DB, then env) filtered to what was detected, else
+		// everything detected. Software is always the last resort.
+		Encoders: func() []string {
+			override := settingsSvc.TranscodeEncoders(context.Background())
+			if override == "" {
+				override = cfg.TranscodeEncoders
+			}
+			if override == "" {
+				return transcode.EncoderNames(allEncoders)
+			}
+			return transcode.EncoderNames(transcode.FilterAvailable(transcode.ParseOverride(override), allEncoders))
+		},
+	}, newDVRPostProcessAdapter(rwPool), logger)
+	dvrWorker.WithPostProcessor(dvrPost)
+	go func() { _ = dvrPost.Run(ctx) }()
+	settingsHandler.SetDVRSettings(settingsSvc, v1.DVREnvInfo{
+		ScriptPath:  cfg.DVRPostProcessScript,
+		ComskipPath: cfg.ComskipPath,
+		ComskipINI:  cfg.ComskipINI,
+	})
+
 	go func() {
 		// Run forever; context cancellation on server shutdown stops it.
 		_ = dvrWorker.Run(ctx, 5*time.Second)
 	}()
-	liveTVHandler.WithDVR(dvrSvc)
+	liveTVHandler.WithDVR(dvrSvc).WithPostProcess(dvrPost)
 
 	// Lyrics: tag-sourced at scan time, LRCLIB fallback on first GET.
 	lyricsHandler := v1.NewLyricsHandler(
@@ -1126,21 +1232,7 @@ func run() error {
 	var embeddedWorker *transcode.Worker
 	if embeddedEnabled {
 		// Encoder priority: fleet config > DB transcode_encoders > env > auto-detect.
-		encoderOverride := fleetCfg.EmbeddedEncoder
-		if encoderOverride == "" {
-			encoderOverride = settingsSvc.TranscodeEncoders(ctx)
-		}
-		if encoderOverride == "" {
-			encoderOverride = cfg.TranscodeEncoders
-		}
-		var encoders []transcode.Encoder
-		if encoderOverride != "" {
-			encoders = transcode.ParseOverride(encoderOverride)
-		} else {
-			encoders = allEncoders
-		}
-		// Safety: never use an encoder that wasn't actually detected.
-		encoders = transcode.FilterAvailable(encoders, allEncoders)
+		encoders := configuredEncoders(fleetCfg.EmbeddedEncoder, settingsSvc.TranscodeEncoders(ctx), cfg.TranscodeEncoders, allEncoders)
 		logger.Info("transcode encoders", "active", transcode.EncoderNames(encoders), "detected", transcode.EncoderNames(allEncoders))
 		// Session cap: admin fleet override (set live + persisted via the UI)
 		// wins over the TRANSCODE_MAX_SESSIONS env default.
@@ -1179,6 +1271,44 @@ func run() error {
 	} else {
 		logger.Info("embedded transcode worker disabled — using remote workers only")
 	}
+
+	// ── Converted downloads ───────────────────────────────────────────────────
+	// Lower-quality download copies (1080p 8 Mbps … 480p 1 Mbps), encoded on
+	// this server into CACHE_PATH/downloads with the same encoder choice as the
+	// embedded worker (H.264 only; a failing hardware encoder retries on
+	// libx264). The worker fleet's job protocol is built around live HLS
+	// sessions (segment server, watchdog, playlist handoff), so a one-shot file
+	// encode runs here instead — but each conversion holds one of the embedded
+	// worker's session slots, so it counts against the same transcode
+	// concurrency as playback and the dispatcher steers streams elsewhere.
+	downloadRoot := cfg.CacheSubdir("downloads")
+	downloadTTL := time.Duration(cfg.DownloadCacheTTLHours) * time.Hour
+	downloadEncoder := transcode.BestH264Encoder(configuredEncoders(
+		fleetCfg.EmbeddedEncoder, settingsSvc.TranscodeEncoders(ctx), cfg.TranscodeEncoders, allEncoders))
+	downloadRunner := downloads.NewRunner(rwPool, mediaSvc, downloads.RunnerConfig{
+		Root:          downloadRoot,
+		MaxConcurrent: cfg.DownloadMaxConversions,
+		TTL:           downloadTTL,
+		Encoder:       downloadEncoder,
+		EncoderOpts: transcode.EncoderOpts{
+			NVENCPreset:  cfg.TranscodeNVENCPreset,
+			NVENCTune:    cfg.TranscodeNVENCTune,
+			NVENCRC:      cfg.TranscodeNVENCRC,
+			MaxrateRatio: cfg.TranscodeMaxrateRatio,
+		},
+		HasZscale: transcode.ProbeFilter(ctx, "zscale"),
+	}, logger)
+	if embeddedWorker != nil {
+		downloadRunner.WithSlots(embeddedWorker)
+	}
+	downloadSvc := downloads.NewService(rwPool, downloadRoot, downloadTTL).WithRunner(downloadRunner)
+	downloadsHandler := v1.NewDownloadsHandler(downloadSvc, mediaSvc, logger).
+		WithLibraryAccess(libSvc).
+		WithDownloadGate(settingsSvc).
+		WithStreamCaps(streamCapsAdapter{q: gen.New(roPool)}, remotePolicy).
+		WithWatchLimit(watchLimitStore)
+	logger.Info("converted downloads", "encoder", downloadEncoder,
+		"max_conversions", cfg.DownloadMaxConversions, "cache", downloadRoot)
 
 	// ── Email / SMTP (settings-driven) ───────────────────────────────────────
 	// Sender resolves SMTPConfig on every Send so admins can rotate creds and
@@ -1268,6 +1398,7 @@ func run() error {
 	playbackStops := v1.NewPlaybackStopGuard(valkeyClient, logger)
 	itemHandler.WithPlaybackStops(playbackStops)
 	nativeTranscodeHandler.WithPlaybackStops(playbackStops)
+	downloadsHandler.WithPlaybackStops(playbackStops)
 	nativeSessionsHandler.
 		WithUsers(gen.New(roPool)).
 		WithFiles(mediaSvc).
@@ -1424,11 +1555,35 @@ func run() error {
 			return rep.Status, rep.Detail, nil
 		},
 		logger))
+	// Loudness analysis for music without ReplayGain tags: measures EBU
+	// R128 loudness + true peak with ffmpeg and writes ReplayGain 2.0 track
+	// and album values, marked 'analyzed' (tag values are never touched).
+	// Runs here, not on the transcode fleet. Object-storage sources are
+	// read through a short-lived signed URL, like the scanner's ffprobe.
+	// Seeded DISABLED below, like the integrity probe.
+	schedRegistry.Register("loudness_analysis", scheduler.NewLoudnessAnalysisHandler(
+		loudnessStore{q: gen.New(rwPool)},
+		func(ctx context.Context, path string) (loudness.Measurement, error) {
+			src := path
+			if u, err := mediaStoreProvider.SignedURL(ctx, path, time.Hour); err == nil && u != "" {
+				src = u
+			}
+			return loudness.Measure(ctx, src)
+		},
+		logger))
 	// Nightly seek-bar thumbnail backfill for trickplay-enabled libraries:
 	// oldest items first within a time budget, through the same single
 	// worker slot as post-scan generation (seeded enabled below).
 	schedRegistry.Register("trickplay_backfill",
 		scheduler.NewTrickplayBackfillHandler(trickplayPlanner, logger))
+	// Chapter thumbnails for items whose sprites predate them (opt-in, seeded
+	// disabled below); new and regenerated sprites get them with the run.
+	schedRegistry.Register("chapter_thumbnails",
+		scheduler.NewChapterThumbsHandler(trickplaySvc, logger))
+	// Converted-download cache: expiry, size limit, orphans (seeded enabled).
+	schedRegistry.Register("download_cache_cleanup",
+		scheduler.NewDownloadCacheCleanupHandler(
+			downloads.NewCleaner(rwPool, downloadRoot, int64(cfg.DownloadCacheMaxGB)<<30, logger)))
 	// Nightly franchise-collection pass: bounded TMDB-collection backfill for
 	// movies enriched before franchise tracking, stale-snapshot refresh, and a
 	// DB-only reconcile (seeded enabled below).
@@ -1454,6 +1609,9 @@ func run() error {
 	schedRegistry.Register("podcast_refresh", scheduler.NewPodcastRefreshHandler(podcastSvc))
 	schedRegistry.Register("external_ratings", scheduler.NewExternalRatingsHandler(
 		externalratings.New(gen.New(rwPool), settingsSvc, logger)))
+	// Missing subtitles for new movies and episodes, from OpenSubtitles, when
+	// an admin turned automatic downloads on (seeded every 6 hours).
+	schedRegistry.Register("subtitle_auto_download", scheduler.NewSubtitleAutoDownloadHandler(subtitleAuto))
 	// Static-ABR pre-encode (HA roadmap §5). Off by default — wired only when
 	// STATIC_ABR_ENABLED is set, since each pass spawns ffmpeg encodes and is
 	// really worthwhile only with object storage + a CDN. It pre-encodes the
@@ -1513,6 +1671,7 @@ func run() error {
 		enricher: metaAgent,
 		logger:   logger,
 	}, logger).WithLibraryAccess(libSvc)
+	studioHandler := v1.NewStudioHandler(studioSvc, logger).WithLibraryAccess(libSvc)
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	h := &api.Handlers{
@@ -1522,6 +1681,7 @@ func run() error {
 		TOTP:            totpHandler,
 		User:            userHandler,
 		UserSessions:    userSessionsHandler,
+		APIKeys:         apiKeyHandler,
 		FS:              fsHandler,
 		Settings:        settingsHandler,
 		Analytics:       analyticsHandler,
@@ -1532,11 +1692,14 @@ func run() error {
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
+		Music:           v1.NewMusicHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
 		Audiobook:       v1.NewAudiobookHandler(gen.New(rwPool), libSvc, logger),
 		WatchState:      watchStateHandler,
 		Photos:          photosHandler,
 		Books:           booksHandler,
+		ReadingProgress: v1.NewReadingProgressHandler(gen.New(rwPool), libSvc, logger),
+		SubtitleAuto:    subtitleAutoHandler,
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,
@@ -1562,6 +1725,7 @@ func run() error {
 		Tasks:           tasksHandler,
 		Jobs:            jobsHandler,
 		People:          peopleHandler,
+		Studios:         studioHandler,
 		Plugins:         pluginHandler,
 		Pair:            pairHandler,
 		Logs:            v1.NewLogsHandler(logBuffer),
@@ -1569,6 +1733,7 @@ func run() error {
 		Capabilities:    capabilitiesHandler,
 		ArrServices:     arrServicesHandler,
 		Podcasts:        podcastHandler,
+		Downloads:       downloadsHandler,
 		Imports:         importHandler,
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
@@ -1852,6 +2017,13 @@ func run() error {
 	// item has been cancelled and its row reset, before the pools close.
 	g.Go(func() error {
 		trickplayQueue.Run(gCtx)
+		return nil
+	})
+
+	g.Go(func() error {
+		if err := downloadRunner.Run(gCtx); err != nil {
+			logger.Warn("download conversion runner exited", "err", err)
+		}
 		return nil
 	})
 

@@ -46,12 +46,16 @@ func (h Handlers) ValidateLibraryAccess() error {
 	// (UserHandler also has a WithLibraryAccess method, but it takes a
 	// UserLibraryAccessService for admin grant management, not a content ACL,
 	// so it is deliberately not asserted here.)
+	check("downloads", h.Downloads != nil, h.Downloads)
 	check("lyrics", h.Lyrics != nil, h.Lyrics)
 	check("people", h.People != nil, h.People)
+	check("studios", h.Studios != nil, h.Studios)
 	check("subtitles", h.Subtitles != nil, h.Subtitles)
 	check("transcode", h.NativeTranscode != nil, h.NativeTranscode)
 	check("trickplay", h.Trickplay != nil, h.Trickplay)
 	check("watch_state", h.WatchState != nil, h.WatchState)
+	check("music", h.Music != nil, h.Music)
+	check("reading_progress", h.ReadingProgress != nil, h.ReadingProgress)
 
 	if len(missing) > 0 {
 		sort.Strings(missing)

@@ -7,8 +7,13 @@
   import TrackInfo from '$lib/components/TrackInfo.svelte';
   import { replayGainFromFile } from '$lib/replaygain';
   import { albumTrackOrder, discGroups } from '$lib/albumDiscs';
+  import { startInstantMix } from '$lib/instantMix';
+  import { toast } from '$lib/stores/toast';
 
   let album: ItemDetail | null = null;
+  // Keyed by album so navigating to another album retries its own disc.
+  let discFailedFor: string | null = null;
+  $: discFailed = !!album && discFailedFor === album.id;
   let tracks: ChildItem[] = [];
   let trackDetails: Map<string, ItemDetail> = new Map(); // trackId -> full detail
   let artist: { id: string; title: string } | null = null;
@@ -119,6 +124,19 @@
     if (firstPlayable >= 0) playTrack(firstPlayable);
   }
 
+  let mixing = false;
+  async function instantMix() {
+    if (!album || mixing) return;
+    mixing = true;
+    try {
+      if ((await startInstantMix(album.id)) === 0) toast.info('Nothing to mix with this album yet.');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Could not start an instant mix');
+    } finally {
+      mixing = false;
+    }
+  }
+
   function qualityBadge(file?: ItemFile): { label: string; cls: string } | null {
     if (!file) return null;
     if (!file.lossless) return null;
@@ -163,13 +181,23 @@
     </nav>
 
     <header class="hero">
-      {#if album.poster_path}
-        <img class="hero-poster"
-             src={assetUrl(`/artwork/${encodeURI(album.poster_path)}?v=${album.updated_at}&w=400`)}
-             alt={album.title} />
-      {:else}
-        <div class="hero-poster placeholder">♪</div>
-      {/if}
+      <div class="hero-art" class:with-disc={!!album.disc_art_path && !discFailed}>
+        <!-- Disc art (fanart.tv cdart or the folder's cdart.png) peeks out
+             from behind the cover. Full size: a resize re-encodes as JPEG
+             and would square off the transparent disc. -->
+        {#if album.disc_art_path && !discFailed}
+          <img class="hero-disc" aria-hidden="true" alt=""
+               src={assetUrl(`/artwork/${encodeURI(album.disc_art_path)}?v=${album.updated_at}`)}
+               on:error={() => (discFailedFor = album?.id ?? null)} />
+        {/if}
+        {#if album.poster_path}
+          <img class="hero-poster"
+               src={assetUrl(`/artwork/${encodeURI(album.poster_path)}?v=${album.updated_at}&w=400`)}
+               alt={album.title} />
+        {:else}
+          <div class="hero-poster placeholder">♪</div>
+        {/if}
+      </div>
       <div class="hero-meta">
         <div class="kind">Album</div>
         <h1>{album.title}</h1>
@@ -184,6 +212,10 @@
         <div class="actions">
           <button class="btn-play" on:click={playAlbum} disabled={trackDetails.size === 0}>
             <span class="ico">▶</span> Play
+          </button>
+          <button class="btn-mix" on:click={instantMix} disabled={mixing || trackDetails.size === 0}
+                  title="Play a mix of this album, its artist and similar music">
+            {mixing ? 'Mixing…' : 'Instant mix'}
           </button>
         </div>
         {#if album.summary}<p class="bio">{album.summary}</p>{/if}
@@ -257,6 +289,13 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 5rem; color: var(--text-muted);
   }
+  .hero-art { position: relative; flex-shrink: 0; }
+  .hero-art.with-disc { padding-right: 70px; }
+  .hero-art .hero-poster { position: relative; z-index: 1; display: block; }
+  .hero-disc {
+    position: absolute; top: 10px; left: 80px; z-index: 0;
+    width: 200px; height: 200px; object-fit: contain;
+  }
   .hero-meta { flex: 1; min-width: 0; }
   .kind { text-transform: uppercase; font-size: 0.7rem; letter-spacing: 0.1em; color: var(--accent); margin-bottom: 0.5rem; }
   .hero-meta h1 { font-size: 2.5rem; margin: 0 0 0.4rem; line-height: 1.1; }
@@ -275,6 +314,13 @@
   .btn-play:disabled { opacity: 0.5; cursor: not-allowed; }
   .btn-play:hover:not(:disabled) { filter: brightness(1.1); }
   .btn-play .ico { font-size: 0.7rem; }
+  .btn-mix {
+    margin-left: 0.5rem; background: transparent; color: var(--text-secondary);
+    border: 1px solid var(--border, rgba(255,255,255,0.2)); padding: 0.55rem 1.2rem;
+    border-radius: 999px; font-size: 0.9rem; cursor: pointer;
+  }
+  .btn-mix:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+  .btn-mix:disabled { opacity: 0.5; cursor: not-allowed; }
 
   .tracks { list-style: none; padding: 0; margin: 0;
             border-top: 1px solid var(--border, rgba(255,255,255,0.08)); }
@@ -334,6 +380,8 @@
     .page { padding: 1.5rem 1rem 6rem; }
     .hero { flex-direction: column; align-items: flex-start; gap: 1rem; }
     .hero-poster { width: 160px; height: 160px; }
+    .hero-art.with-disc { padding-right: 50px; }
+    .hero-disc { top: 8px; left: 60px; width: 144px; height: 144px; }
     .hero-meta h1 { font-size: 1.6rem; }
   }
 </style>

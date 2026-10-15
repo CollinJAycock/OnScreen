@@ -31,6 +31,8 @@ type SettingsServiceIface interface {
 	SetTVDBAPIKey(ctx context.Context, key string) error
 	OMDbAPIKey(ctx context.Context) string
 	SetOMDbAPIKey(ctx context.Context, key string) error
+	FanartTVAPIKey(ctx context.Context) string
+	SetFanartTVAPIKey(ctx context.Context, key string) error
 	OMDbDailyLimit(ctx context.Context) int
 	SetOMDbDailyLimit(ctx context.Context, n int) error
 	ArrAPIKey(ctx context.Context) string
@@ -134,6 +136,10 @@ type SettingsHandler struct {
 	// the current node and fill its unset fields with running (env) values.
 	nodeID       string
 	nodeDefaults settings.NodeSettings
+	// dvr backs GET/PUT /settings/dvr (nil = endpoints 404); dvrEnv is the
+	// env-only part shown read-only. See settings_dvr.go.
+	dvr    DVRSettingsStore
+	dvrEnv DVREnvInfo
 }
 
 // SetSystemDefaults records the env-effective System config so the System
@@ -581,6 +587,7 @@ type settingsResponse struct {
 	TMDBAPIKey          string                  `json:"tmdb_api_key"`
 	TVDBAPIKey          string                  `json:"tvdb_api_key"`
 	OMDbAPIKey          string                  `json:"omdb_api_key"`
+	FanartTVAPIKey      string                  `json:"fanarttv_api_key"`
 	OMDbDailyLimit      int                     `json:"omdb_daily_limit"`
 	ArrAPIKey           string                  `json:"arr_api_key"`
 	ArrWebhookURL       string                  `json:"arr_webhook_url"`
@@ -983,6 +990,7 @@ func (h *SettingsHandler) Get(w http.ResponseWriter, r *http.Request) {
 		TMDBAPIKey:          maskAPIKey(h.svc.TMDBAPIKey(ctx)),
 		TVDBAPIKey:          maskAPIKey(h.svc.TVDBAPIKey(ctx)),
 		OMDbAPIKey:          maskAPIKey(h.svc.OMDbAPIKey(ctx)),
+		FanartTVAPIKey:      maskAPIKey(h.svc.FanartTVAPIKey(ctx)),
 		OMDbDailyLimit:      h.svc.OMDbDailyLimit(ctx),
 		ArrAPIKey:           maskAPIKey(arrKey),
 		ArrWebhookURL:       webhookURL,
@@ -1009,6 +1017,7 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		TMDBAPIKey          *string            `json:"tmdb_api_key"`
 		TVDBAPIKey          *string            `json:"tvdb_api_key"`
 		OMDbAPIKey          *string            `json:"omdb_api_key"`
+		FanartTVAPIKey      *string            `json:"fanarttv_api_key"`
 		OMDbDailyLimit      *int               `json:"omdb_daily_limit"`
 		ArrAPIKey           *string            `json:"arr_api_key"`
 		ArrPathMappings     *map[string]string `json:"arr_path_mappings"`
@@ -1200,6 +1209,13 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	if body.OMDbAPIKey != nil && *body.OMDbAPIKey != maskedSecret {
 		if err := h.svc.SetOMDbAPIKey(ctx, strings.TrimSpace(*body.OMDbAPIKey)); err != nil {
 			h.logger.ErrorContext(ctx, "update settings", "key", "omdb_api_key", "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+	}
+	if body.FanartTVAPIKey != nil && *body.FanartTVAPIKey != maskedSecret {
+		if err := h.svc.SetFanartTVAPIKey(ctx, strings.TrimSpace(*body.FanartTVAPIKey)); err != nil {
+			h.logger.ErrorContext(ctx, "update settings", "key", "fanarttv_api_key", "err", err)
 			respond.InternalError(w, r)
 			return
 		}
@@ -1520,6 +1536,9 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.OMDbAPIKey != nil {
 			detail["omdb_api_key"] = "changed"
+		}
+		if body.FanartTVAPIKey != nil {
+			detail["fanarttv_api_key"] = "changed"
 		}
 		if body.OMDbDailyLimit != nil {
 			detail["omdb_daily_limit"] = *body.OMDbDailyLimit

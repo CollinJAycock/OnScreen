@@ -90,6 +90,7 @@ func genLibToLib(g gen.Library) library.Library {
 		TrickplayEnabled:        g.TrickplayEnabled,
 		NFOCollections:          g.NfoCollections,
 		EpisodeOrder:            g.EpisodeOrder,
+		SaveNFO:                 g.SaveNfo,
 		ScanInterval:            durationToPtr(g.ScanInterval),
 		ScanLastCompletedAt:     pgtimeTZ(g.ScanLastCompletedAt),
 		MetadataRefreshInterval: durationToPtr(g.MetadataRefreshInterval),
@@ -121,6 +122,7 @@ func libCreateParamsToGen(p library.CreateLibraryParams) gen.CreateLibraryParams
 		TrickplayEnabled:        trickplay,
 		NfoCollections:          p.NFOCollections,
 		EpisodeOrder:            p.EpisodeOrder,
+		SaveNfo:                 p.SaveNFO,
 	}
 }
 
@@ -138,6 +140,7 @@ func libUpdateParamsToGen(p library.UpdateLibraryParams) gen.UpdateLibraryParams
 		TrickplayEnabled:        p.TrickplayEnabled,
 		NfoCollections:          p.NFOCollections,
 		EpisodeOrder:            p.EpisodeOrder,
+		SaveNfo:                 p.SaveNFO,
 	}
 }
 

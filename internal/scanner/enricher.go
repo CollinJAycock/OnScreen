@@ -218,6 +218,15 @@ type Enricher struct {
 	// nfoCollections, when set, imports movie.nfo groupings as manual
 	// collections (see enricher_nfo_collections.go). nil = not wired.
 	nfoCollections NFOCollectionImporter
+
+	// extras stores clear logos / banners / disc art and studios, and
+	// reads the library's NFO options (see enricher_extras.go and
+	// enricher_nfo_write.go). nil = none of that runs. extraArtFn returns
+	// the fanart.tv client, nil without a key; localMediaFn reports
+	// whether media is on local disk (NFO writes need it).
+	extras       ItemExtrasStore
+	extraArtFn   func() metadata.ExtraArtAgent
+	localMediaFn func() bool
 }
 
 // aniListEpsCacheEntry is the cached return of a streamingEpisodes
@@ -402,6 +411,8 @@ func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.Fil
 		if item.Type == "movie" && e.nfoCollections != nil {
 			e.importNFOCollections(ctx, item.LibraryID, item.ID, e.readMovieNFO(ctx, file))
 		}
+		// Kodi-named logo / banner / disc files are local too.
+		e.localExtraArt(ctx, item, file)
 		return nil
 	}
 	switch item.Type {
@@ -514,7 +525,7 @@ func applyMovieNFO(p *media.UpdateItemMetadataParams, m *nfo.Movie) {
 // user cares they can drop a folder.jpg / poster.jpg next to the
 // movie and the scanner's art discovery will pick it up on the
 // next pass.
-func (e *Enricher) writeNFOOnly(ctx context.Context, itemID uuid.UUID, m *nfo.Movie) error {
+func (e *Enricher) writeNFOOnly(ctx context.Context, itemID uuid.UUID, file *media.File, m *nfo.Movie) error {
 	p := media.UpdateItemMetadataParams{ID: itemID}
 	applyMovieNFO(&p, m)
 	if p.Title == "" {
@@ -523,6 +534,7 @@ func (e *Enricher) writeNFOOnly(ctx context.Context, itemID uuid.UUID, m *nfo.Mo
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update item metadata (nfo-only): %w", err)
 	}
+	e.finishMovie(ctx, itemID, file, nil, m, false)
 	e.logger.InfoContext(ctx, "item enriched from NFO (no TMDB match)",
 		"item_id", itemID, "title", m.Title)
 	return nil
@@ -701,8 +713,9 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		// Even without TMDB, NFO alone is enough to populate metadata
 		// for a Kodi-migrated library. Write what we have.
 		if nfoMovie != nil {
-			return e.writeNFOOnly(ctx, item.ID, nfoMovie)
+			return e.writeNFOOnly(ctx, item.ID, file, nfoMovie)
 		}
+		e.localExtraArt(ctx, item, file)
 		return nil
 	}
 
@@ -852,6 +865,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 					return fmt.Errorf("merge into canonical sibling: %w", err)
 				}
 				e.recordFranchise(ctx, survivor.ID, p.TMDBID, result)
+				e.finishMovie(ctx, survivor.ID, file, result, nfoMovie, false)
 				return nil
 			}
 			e.logger.WarnContext(ctx, "enrich: skipping risky title+year merge — sibling shares (title,year) but isn't a safe merge target",
@@ -865,6 +879,7 @@ func (e *Enricher) enrichMovie(ctx context.Context, agent metadata.Agent, item *
 		return fmt.Errorf("update item metadata: %w", err)
 	}
 	e.recordFranchise(ctx, item.ID, p.TMDBID, result)
+	e.finishMovie(ctx, item.ID, file, result, nfoMovie, false)
 
 	e.logger.InfoContext(ctx, "item enriched",
 		"item_id", item.ID,
@@ -1008,6 +1023,9 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				_ = f.Close()
 				if perr == nil {
 					nfoShow = parsed
+					if nfo.IsOurs(nfoPath) {
+						nfoShow = ownShowNFO(parsed) // see ownShowNFO
+					}
 				} else {
 					e.logger.WarnContext(ctx, "tvshow.nfo parse failed; falling through to TMDB",
 						"path", nfoPath, "err", perr)
@@ -1065,10 +1083,13 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 					return fmt.Errorf("update show metadata (nfo-only): %w", err)
 				}
+				e.finishShow(ctx, item.ID, file, nil, nfoShow, false)
 				e.logger.InfoContext(ctx, "show enriched from NFO (no TMDB/TVDB match)",
 					"item_id", item.ID, "title", nfoShow.Title)
+				return nil
 			}
 		}
+		e.localExtraArt(ctx, item, file)
 		return nil
 	}
 	if result.PosterURL == "" {
@@ -1247,6 +1268,7 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 				if err := e.updater.MergeIntoTopLevel(ctx, item.ID, survivor.ID, item.Type); err != nil {
 					return fmt.Errorf("merge into canonical sibling: %w", err)
 				}
+				e.finishShow(ctx, survivor.ID, file, result, nfoShow, false)
 				// Reload survivor and cascade onto IT — children that
 				// were just reparented need enrichment against the
 				// freshly-applied IDs.
@@ -1265,6 +1287,7 @@ func (e *Enricher) enrichShow(ctx context.Context, agent metadata.Agent, item *m
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update show metadata: %w", err)
 	}
+	e.finishShow(ctx, item.ID, file, result, nfoShow, false)
 
 	e.logger.InfoContext(ctx, "show enriched",
 		"item_id", item.ID,
@@ -1549,9 +1572,11 @@ func (e *Enricher) enrichEpisodeWith(ctx context.Context, agent metadata.Agent, 
 		if f, ferr := os.Open(nfoPath); ferr == nil {
 			parsed, perr := nfo.ParseEpisode(f)
 			_ = f.Close()
-			if perr == nil {
+			// An episode NFO OnScreen wrote is the database's own record
+			// (see ownMovieNFO); the episode is found by its numbers.
+			if perr == nil && !nfo.IsOurs(nfoPath) {
 				nfoEpisode = parsed
-			} else {
+			} else if perr != nil {
 				e.logger.WarnContext(ctx, "episode NFO parse failed",
 					"path", nfoPath, "err", perr)
 			}
@@ -1674,6 +1699,7 @@ func (e *Enricher) enrichEpisodeWith(ctx context.Context, agent metadata.Agent, 
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update episode metadata: %w", err)
 	}
+	e.WriteItemNFO(ctx, item.ID)
 
 	e.logger.InfoContext(ctx, "episode enriched",
 		"item_id", item.ID,
@@ -2195,6 +2221,7 @@ func (e *Enricher) enrichArtist(ctx context.Context, agent metadata.MusicAgent, 
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update artist metadata: %w", err)
 	}
+	e.finishMusic(ctx, item, artDir)
 	e.logger.InfoContext(ctx, "artist enriched", "item_id", item.ID, "name", item.Title)
 	return nil
 }
@@ -2267,6 +2294,7 @@ func (e *Enricher) enrichAlbum(ctx context.Context, agent metadata.MusicAgent, i
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update album metadata: %w", err)
 	}
+	e.finishMusic(ctx, item, artDir)
 	e.logger.InfoContext(ctx, "album enriched", "item_id", item.ID, "title", item.Title)
 	return nil
 }
@@ -2482,6 +2510,7 @@ func (e *Enricher) applyMatchedShowToTarget(ctx context.Context, targetID uuid.U
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update show metadata: %w", err)
 	}
+	e.finishShow(ctx, targetID, file, result, nil, true)
 	return nil
 }
 
@@ -2609,6 +2638,7 @@ func (e *Enricher) applyMatchedMovieToTarget(ctx context.Context, targetID uuid.
 		return fmt.Errorf("update movie metadata: %w", err)
 	}
 	e.recordFranchise(ctx, targetID, p.TMDBID, result)
+	e.finishMovie(ctx, targetID, file, result, nil, true)
 	return nil
 }
 
@@ -2936,6 +2966,10 @@ func (e *Enricher) searchShow(ctx context.Context, agent metadata.Agent, title s
 				}
 				if primary.IMDBID == "" {
 					primary.IMDBID = tmdb.IMDBID
+				}
+				// AniList has no networks; TMDB's details do.
+				if !primary.StudiosChecked && tmdb.StudiosChecked && tmdb.TMDBID == primary.TMDBID {
+					primary.Studios, primary.StudiosChecked = tmdb.Studios, true
 				}
 			}
 			if tvdb := tryTVDB(); tvdb != nil {

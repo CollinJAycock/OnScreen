@@ -210,6 +210,14 @@ type Scanner struct {
 	// every scan. Keyed by media_files.id; values are unused.
 	dynamicRangeChecked sync.Map
 
+	// credits stores featured-artist credits (WithArtistCredits); nil
+	// stores none.
+	credits ArtistCreditStore
+	// creditsChecked holds the IDs of unchanged music files healTrackCredits
+	// has looked at this process, so the credits-read lookup runs once per
+	// file per process. Keyed by media_files.id; values are unused.
+	creditsChecked sync.Map
+
 	// probeFile replaces ProbeFile in healDynamicRange; tests set it. nil
 	// uses ProbeFile.
 	probeFile func(ctx context.Context, path string) (*ProbeResult, error)
@@ -1289,11 +1297,21 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		p.ReplayGainTrackPeak = musicTags.ReplayGainTrackPeak
 		p.ReplayGainAlbumGain = musicTags.ReplayGainAlbumGain
 		p.ReplayGainAlbumPeak = musicTags.ReplayGainAlbumPeak
+		// Only a real tag read says the file has no ReplayGain tags; a
+		// path-only fallback must not clear stored values.
+		p.ReplayGainKnown = musicTags.TagsRead
 	}
 
 	file, isNew, err := s.media.CreateOrUpdateFile(ctx, p)
 	if err != nil {
 		return nil, nil, false, fmt.Errorf("upsert file: %w", err)
+	}
+	// The track's artist credits were stored from this read of its tags;
+	// remember that so an unchanged file isn't read again for them.
+	if musicTags != nil && musicTags.creditsStored && musicTags.TagsRead && s.credits != nil {
+		if err := s.credits.MarkCreditsScanned(ctx, file.ID); err != nil {
+			s.logger.WarnContext(ctx, "mark track credits read failed", "file_id", file.ID, "err", err)
+		}
 	}
 
 	// Item-level duration_ms is set by TMDB enrichment or the progress endpoint.
@@ -1374,6 +1392,9 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryID uuid.UUID,
 	// row just gains its position — so the file stays skipped.
 	if libraryType == "music" {
 		s.healUnchangedTrack(ctx, item, existing, path)
+		// And one scanned before featured-artist credits were stored
+		// gains them (one tag read per file, ever).
+		s.healTrackCredits(ctx, libraryID, item, existing, path)
 	}
 	// Likewise a multi-file audiobook chapter imported before chapters were
 	// numbered.
@@ -1982,7 +2003,9 @@ func isMusicFile(path string) bool {
 // descend into. Two classes:
 //
 //   - OnScreen's own conventions: `.artwork` is the artwork storage tree
-//     written by the artwork manager; not user media.
+//     written by the artwork manager; not user media. `.dvr-originals` holds
+//     DVR captures kept after post-processing — scanning it would file each
+//     one as a second copy of its recording.
 //   - OS / filesystem trash patterns: Samba's vfs_recycle puts SMB-deleted
 //     content into `.recycle/<original>/` (and variants `#recycle`,
 //     `.recycle.bin`); Windows SMB clients use `$RECYCLE.BIN`; the
@@ -1998,7 +2021,7 @@ func isMusicFile(path string) bool {
 // differs from the live tree. None should ever be scanned.
 func shouldSkipDir(name string) bool {
 	switch name {
-	case ".artwork",
+	case ".artwork", ".dvr-originals",
 		".recycle", "#recycle", ".recycle.bin",
 		"$RECYCLE.BIN",
 		"lost+found",

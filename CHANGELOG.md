@@ -343,6 +343,264 @@ API change lands only when every first-party client moves with it — see
     on the admin user and profile lists.
   - **Migration 00047** adds `media_items.labels` and the users'
     `blocked_labels` / `allowed_labels`.
+- **DVR post-processing.** Settings ▸ Live TV ▸ "Recording post-processing"
+  decides what happens to a recording once it finishes. Everything is off by
+  default, on new installs and upgrades alike, so recordings stay exactly as
+  the tuner wrote them until you opt in. Turning on remux is recommended.
+  - **Remux** copies the recording into MKV (or MP4) with clean timestamps, so
+    seeking is reliable. It is fast and doesn't change quality.
+  - **Transcode to save space** re-encodes the video to H.264 or HEVC at a
+    high, balanced or small-file quality, and copies the audio. It uses the
+    hardware encoders your Transcode settings allow and falls back to
+    software.
+  - **Delete original** removes the tuner's file, but only after the new file
+    has been checked: same length to within 2%, video and audio both present.
+    When it is off, the original moves to a hidden `.dvr-originals` folder
+    beside the recording. The scanner skips that folder, and the retention
+    clean-up removes the kept file with its recording.
+  - **Post-processing script:** set `ONSCREEN_DVR_POSTPROCESS_SCRIPT` to a
+    program to run after each recording, with the recording's path as its
+    only argument. It runs with a 30-minute timeout and its output goes to
+    the server log. It can only be set in the environment, never in the web
+    UI; the settings page shows it read-only.
+  - **How it runs:** recordings are processed one at a time, after the
+    capture finishes. The Recordings page shows "Queued for processing",
+    "Processing", "Processed" or "Processing failed", with a note saying what
+    was done or what went wrong. A failure leaves the original recording
+    untouched and playable, and admins can re-run it from the recording's
+    "⋯" menu. The library item keeps its watch state: the same file entry
+    points at the new file, so a rescan doesn't add a duplicate.
+- **Commercial detection and Skip Ad for DVR recordings.** Set
+  "Commercials" in the same panel to "Mark" to get a "Skip Ad" button
+  during ad breaks in the web player, or "Cut" to remove the breaks from the
+  file during post-processing (Cut needs remux or transcode).
+  - **Detection:** if `ONSCREEN_COMSKIP_PATH` (and optionally
+    `ONSCREEN_COMSKIP_INI`) is set, OnScreen runs comskip. Otherwise a
+    built-in detector looks for black frames that coincide with silence. It
+    is deliberately conservative: a break must hold at least two ads, last
+    30 seconds to 6 minutes, and sit between at least 3 minutes of programme
+    on each side, so some ads are missed rather than any of the show
+    skipped.
+  - **On demand:** admins can run "Detect commercials" on any finished
+    recording from its "⋯" menu on the Recordings page. This never changes
+    the file.
+  - **Player:** "Skip Ad" (or the S key) jumps to the end of the break.
+    "Always skip ads" next to the button skips breaks automatically in that
+    browser. It is off by default and separate from "Always skip intros".
+  - **Apps:** breaks are a new `commercials` list on each file of the item,
+    not part of the intro/credits `markers`. The TV and phone apps show every
+    marker as Skip Intro or Skip Credits, so putting ads there would have
+    mislabelled them. Current apps ignore the new field.
+  - **API (all additive):** `GET`/`PUT /settings/dvr`;
+    `POST /tv/recordings/{id}/detect-commercials` and
+    `POST /tv/recordings/{id}/postprocess` (admins, 202); recordings gain
+    `postprocess_status` and `postprocess_message`; item files gain
+    `commercials`.
+  - **Migration 00052** adds the post-processing job table and
+    `commercial_markers`.
+- **Lower-quality downloads.** The Download button on a movie or episode is
+  now a menu: Original (the file as it is, as before) or a smaller copy at
+  1080p 8 Mbps, 720p 4 Mbps, 720p 2 Mbps or 480p 1 Mbps, for a phone, a
+  tablet or a slow connection.
+  - **How it works:** the server converts the file once into an MP4 (H.264
+    video, stereo AAC audio, text subtitles kept, nothing burned in) and the
+    page shows its progress, then starts the download. A multi-part movie
+    becomes one file. The same file at the same quality is converted once and
+    shared: anyone else who asks for it gets the finished copy straight away.
+  - **Your downloads:** the Account page lists them with their progress, a
+    download link once ready, and a remove button (which also stops a
+    conversion nobody else is waiting for).
+  - **Limits:** a user's streaming limit, and from outside the home network
+    the internet limit, bounds the qualities offered — someone held to 4 Mbps
+    can't take the 1080p 8 Mbps copy — checked again when the file is
+    fetched. The server-wide downloads switch, library access, content
+    rating, labels, watch limits and admin stops apply as they do to the
+    original. Up to three of a user's downloads can be in preparation at once.
+  - **Server load:** conversions run on the server with its configured
+    H.264 encoder (hardware where Settings ▸ Transcode says so, falling back
+    to software), one at a time by default (`DOWNLOAD_MAX_CONVERSIONS`, at
+    most 2), and each takes one of the embedded worker's transcode slots, so
+    they wait while playback is using every slot.
+  - **Cache:** finished files live in `CACHE_PATH/downloads` and are kept 7
+    days after they were last asked for or fetched
+    (`DOWNLOAD_CACHE_TTL_HOURS`). The new hourly "Converted download cache
+    cleanup" task evicts expired files, then the least recently used ones
+    while the cache is over `DOWNLOAD_CACHE_MAX_GB` (50 GB).
+  - **API (all additive):** `GET`/`POST /items/{id}/downloads`,
+    `GET`/`DELETE /downloads/{job}`, `GET /downloads/{job}/file` (Range,
+    asset-token auth) and `GET /users/me/downloads`. The original download is
+    unchanged; phone and TV apps need no update.
+  - **Migration 00051** adds `download_conversions` and `download_jobs`.
+- **Chapter thumbnails.** The player's chapter menu shows a picture of each
+  chapter, and a title's page shows a chapter strip you can start playing
+  from.
+  - Thumbnails are made with the seek-bar thumbnails (trickplay): one frame
+    per chapter, a few seconds in, from the file the seek-bar thumbnails come
+    from. New and regenerated seek-bar thumbnails get them automatically;
+    for titles that already have seek-bar thumbnails, enable the new
+    "Chapter thumbnails backfill" task (off by default) or regenerate the
+    library's seek-bar thumbnails. Nothing is regenerated at startup.
+  - They are served beside the seek-bar thumbnails with the same access
+    checks (library, content rating, labels).
+  - **API (additive):** each chapter in the item detail gains `thumb_url`
+    when it has a thumbnail.
+  - **Migration 00051** adds `trickplay_status.chapter_thumb_count`.
+- **Clear logos, banners and disc art.** Movie and show pages show the
+  title's clear logo in place of the text title, and album pages show the disc
+  peeking out behind the cover.
+  - **Where art comes from:** first, files already next to your media with
+    Kodi's names (`clearlogo.png` / `logo.png`, `banner.jpg` / `banner.png`,
+    `disc.png` / `discart.png` / `cdart.png`); then fanart.tv (movies by TMDB
+    or IMDb id, shows by TheTVDB id, artists and albums by MusicBrainz id),
+    preferring the library's language, then English, then language-free art,
+    then the most liked; then, for anime, AniList's banner. Downloads are saved
+    next to the media under the same Kodi names.
+  - **Setup:** paste a free personal fanart.tv API key into Settings ▸ General.
+    Without one, local files and AniList banners are still used.
+  - **When:** as titles are enriched, refreshed or re-matched with Fix Match
+    (which replaces the old title's art). Answers, including "none", are
+    remembered for a few hours, so a refresh doesn't ask fanart.tv again.
+  - **API (additive):** `logo_path`, `banner_path` and `disc_art_path` on item
+    details, served through `/artwork/` like posters (fetch the logo without
+    `?w=`, which turns its transparent background black); `fanarttv_api_key`
+    (masked, encrypted at rest) in `/settings`.
+- **Studio and network pages.** Movie pages list the studios that made the
+  film and show pages the networks that aired it, each linking to a page of
+  its titles, sortable by title, year, rating or date added. Movie and TV
+  libraries get "Browse studios" / "Browse networks" next to genres and years.
+  - **Where they come from:** TMDB's production companies (movies) and
+    networks (shows); an NFO file's `<studio>` tags win when it has any.
+  - **Who sees what:** a studio appears only through titles the user can see —
+    library access, the content-rating limit and label restrictions apply to
+    the lists, the counts and the studio pages.
+  - **API (all additive):** `GET /studios` (`library_id`, `kind`),
+    `GET /studios/{id}`, `GET /studios/{id}/items` (paged and sorted like
+    library browse); `studios` on movie and show details.
+- **Save metadata as NFO files.** A new library setting, "Save metadata as NFO
+  files next to media" (movie and TV libraries, off by default), writes
+  Kodi-compatible `<file>.nfo` (or the `movie.nfo` already there),
+  `tvshow.nfo` and episode NFO files after a title is enriched, edited or
+  re-matched, so Kodi, Jellyfin and Emby see the same details. They carry the
+  title, original and sort titles, year, plot, tagline, rating, content rating,
+  genres, studios, TMDB / IMDb / TheTVDB ids, season and episode numbers, air
+  date and runtime.
+  - **Safe:** files are written whole (through a temporary file), only NFO
+    files OnScreen wrote — marked `<!-- written by OnScreen -->` — are ever
+    replaced, and a read-only media folder just logs a warning. Not available
+    with object storage.
+  - **No refresh loops:** the folder watcher ignores these writes, and when
+    OnScreen reads its own NFO back it takes only the ids from it, so newer
+    provider data still lands and locked fields still win.
+  - **API (additive):** `save_nfo` on libraries.
+- **Migration 00049** adds `media_items.logo_path` / `banner_path` /
+  `disc_art_path`, `libraries.save_nfo`, and the `studios` and
+  `media_item_studios` tables.
+- **Loudness analysis for music without ReplayGain tags.** Tracks whose
+  files carry no ReplayGain tags now get volume normalisation too. A new task,
+  "Music loudness analysis" (Settings ▸ Tasks, off until you enable it),
+  measures each such file's loudness and peak the way ReplayGain 2.0 does
+  (EBU R128, −18 LUFS reference, true peak) and stores the track gain, plus
+  an album gain worked out from the album's tracks together. Every player
+  that already applies ReplayGain picks the values up with no update.
+  - **Tags always win:** a file's own ReplayGain tags are never replaced. If
+    you later tag a file, the tags take over; if its audio changes, it is
+    measured again.
+  - **Cost:** each file is decoded once in full on the server (a few seconds
+    for a CD-length track). A run measures up to 500 files (set `max_files`
+    in the task's config, or `library_id` to do one library) and carries on
+    the next night. A silent track gets no gain; a file that can't be
+    decoded is skipped until it changes.
+  - **Where it shows:** a track's info panel says whether its ReplayGain is
+    "From tags" or "Analyzed". API (additive): `replaygain_source`
+    (`tags` / `analyzed`) on item files.
+  - **Also fixed:** MP3 files' MusicBrainz IDs and ReplayGain tags (stored in
+    ID3 `TXXX` frames) were never read; they are now, from the next time the
+    file is scanned.
+  - **Migration 00048** adds `media_files.replaygain_source` (existing values
+    are marked as from tags) and the measurement table.
+- **Instant mix and similar artists.** "Instant mix" on a track (its info
+  panel), an album or an artist starts about 50 tracks: some of its own
+  first, then tracks by similar artists, then others from the same genres —
+  never the same artist twice in a row while there is anyone else to play,
+  without tracks you rated one star, and shuffled afresh each time.
+  - **Similar artists:** a new row on the artist page. Artists come first
+    when people who listen to one also listen to the other (from play history
+    across all users), then by shared genres; a library with no play history
+    yet ranks by genre and era.
+  - Library access, content-rating limits and label restrictions apply to
+    both, for the artist or track you start from and every suggestion.
+  - **API (additive):** `GET /music/artists/{id}/similar`,
+    `GET /music/mix?seed=<track, album or artist id>` (each track comes with
+    the file to stream and its ReplayGain).
+- **Featured artists.** "Jay-Z feat. Rihanna" is now Jay-Z's track with
+  Rihanna credited, instead of an artist of its own. Credits come from
+  MusicBrainz Picard's multi-valued `ARTISTS` tag when a file has one, and
+  otherwise from "feat.", "ft." and "featuring" in the artist or title,
+  including "(feat. X)". Only the featured part is split into names, so
+  "Earth, Wind & Fire" and "Simon & Garfunkel" stay one artist.
+  - **Appears on:** an artist's page lists the albums of other artists it is
+    featured on, and the compilation tracks it performs, with the tracks. An
+    artist known only from features gets a page of its own; it is matched by
+    MusicBrainz ID first, then by name, so it is never created twice.
+  - **Existing libraries:** the next scan reads the credits of files it has
+    already imported, once, without re-probing them. FLAC files with several
+    `ARTIST` fields are now filed under the first (they used to go under the
+    last).
+  - **API (additive):** `GET /music/artists/{id}/appears-on`.
+  - **Migration 00048** adds the track–artist credit table.
+- **Personal API keys** for scripts and integrations such as Home Assistant
+  and Kometa, which can't sign in the way an app does.
+  - **Making one:** Account ▸ API keys (Settings ▸ Security for admins) ▸
+    "Create API key". Name it, choose full access or read-only, and optionally
+    an expiry. The key (`osk_…`) is shown once with a Copy button; the server
+    keeps only a hash of it.
+  - **Using it:** send `Authorization: Bearer osk_…` or `X-Api-Key: osk_…`.
+    Never in a URL. See [docs/api/api-keys.md](docs/api/api-keys.md).
+  - **What it can do:** whatever its owner can, with their libraries, rating
+    limit and labels as they are at that moment — a restriction an admin adds
+    applies to the key straight away. Read-only keys can only read. No key can
+    sign in, refresh, change a password, PIN or 2FA, pair a TV, switch
+    profiles, manage devices, keys or users, or touch server settings and
+    backups.
+  - **Revoking:** "Revoke" stops a key on its next request. Admins see every
+    user's keys under Settings ▸ Security ▸ All API keys and can revoke any of
+    them. Deleting a user deletes their keys. Creating and revoking keys is
+    audited (`api_key.create`, `api_key.delete`).
+  - **API (additive):** `GET`/`POST /users/me/api-keys`,
+    `DELETE /users/me/api-keys/{id}`, and for admins `GET /admin/api-keys`
+    and `DELETE /admin/api-keys/{id}`.
+  - **Migration 00050** adds the `api_keys` table.
+- **Reading position syncs between devices.** The web book reader (EPUB, CBZ,
+  CBR) now saves where you are to the server as you read, and when the page is
+  closed or hidden, so another browser opens the book at the same place. If
+  another device got further than this one, the reader offers "Continue from
+  page 40 on Phone" instead of jumping. Without a connection it falls back to
+  the position saved in the browser. Reaching the end marks the book read.
+  Audiobooks keep their own playback position as before.
+  - **API (additive):** `GET`/`PUT /items/{id}/reading-progress` (a locator,
+    such as an EPUB CFI or a page number, a 0–1 progression, the device name
+    and a timestamp; the newest position wins).
+  - **Migration 00050** adds the `reading_progress` table.
+- **Automatic subtitle download.** OnScreen can fetch subtitles from
+  OpenSubtitles on its own for new movies and episodes. Off by default; turn
+  it on under Settings ▸ General ▸ Automatic subtitle download and list the
+  languages you want (e.g. `en,es`).
+  - It only downloads a language the file has no subtitle in yet — not
+    embedded, not in a file next to the video, not downloaded before. It
+    prefers a subtitle made for the exact file (OpenSubtitles hash match),
+    then the release name closest to the file's, and can prefer or avoid
+    hearing-impaired subtitles.
+  - The new "Download missing subtitles" task (Settings ▸ Tasks) runs every
+    6 hours, newest titles first. A title with nothing found is tried again
+    after 1, 7 and 30 days, then left alone, so nothing is searched over and
+    over. When the OpenSubtitles daily download limit is reached it stops for
+    the day. Without OpenSubtitles set up it does nothing.
+  - Each movie or TV library can turn it on or off for itself, or use its own
+    languages, on the library's settings page.
+  - **API (additive, admin):** `GET`/`PUT /settings/subtitle-auto-download`
+    and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
+  - **Migration 00050** adds the per-library overrides and the
+    per-title-and-language attempt log.
 
 ### Changed
 

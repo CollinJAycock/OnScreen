@@ -266,3 +266,48 @@ func TestFetchFileSurfacesNon200(t *testing.T) {
 		t.Fatal("expected error on 410 response")
 	}
 }
+
+// The automatic download's search: moviehash and an episode's show IDs go
+// upstream, and a result timed for the hashed file comes back flagged.
+func TestSearchSendsMovieHashAndParentIDs(t *testing.T) {
+	var q map[string]string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q = map[string]string{}
+		for k := range r.URL.Query() {
+			q[k] = r.URL.Query().Get(k)
+		}
+		_, _ = io.WriteString(w, `{"data":[{"attributes":{"language":"en","moviehash_match":true,
+			"files":[{"file_id":7,"file_name":"a.srt"}]}}]}`)
+	}))
+	defer srv.Close()
+	c := newTestClient("k", "", "", srv)
+	res, err := c.Search(context.Background(), SearchOpts{
+		Query: "Show", Season: 1, Episode: 2, ParentIMDBID: "tt0903747", ParentTMDBID: 1396,
+		MovieHash: "8e245d9679d31e12", Languages: "en",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q["moviehash"] != "8e245d9679d31e12" || q["parent_imdb_id"] != "0903747" || q["parent_tmdb_id"] != "1396" {
+		t.Fatalf("query %v", q)
+	}
+	if len(res) != 1 || !res[0].MovieHashMatch {
+		t.Fatalf("results %+v", res)
+	}
+}
+
+// 429 / 406 surface as ErrRateLimited so the automatic download can stop for
+// the day.
+func TestRateLimitIsTyped(t *testing.T) {
+	for _, code := range []int{http.StatusTooManyRequests, http.StatusNotAcceptable} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(code)
+		}))
+		c := newTestClient("k", "", "", srv)
+		_, err := c.Download(context.Background(), 1)
+		srv.Close()
+		if !errors.Is(err, ErrRateLimited) {
+			t.Fatalf("status %d: %v", code, err)
+		}
+	}
+}

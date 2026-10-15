@@ -3,7 +3,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -12,7 +12,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE deleted_at IS NULL
 ORDER BY name;
@@ -23,15 +23,16 @@ ORDER BY name;
 INSERT INTO libraries (name, type, scan_paths, agent, language,
                        scan_interval, metadata_refresh_interval,
                        is_private, auto_grant_new_users, trickplay_enabled,
-                       nfo_collections, episode_order)
+                       nfo_collections, episode_order, save_nfo)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
         COALESCE(NULLIF(sqlc.arg('nfo_collections')::text, ''), 'off'),
-        COALESCE(NULLIF(sqlc.arg('episode_order')::text, ''), 'aired'))
+        COALESCE(NULLIF(sqlc.arg('episode_order')::text, ''), 'aired'),
+        sqlc.arg('save_nfo')::bool)
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
           created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-          trickplay_enabled, nfo_collections, episode_order;
+          trickplay_enabled, nfo_collections, episode_order, save_nfo;
 
 -- name: UpdateLibrary :one
 -- is_private uses COALESCE so admins can update other fields without
@@ -50,13 +51,14 @@ SET name                      = $2,
     trickplay_enabled         = COALESCE(sqlc.narg('trickplay_enabled')::bool, trickplay_enabled),
     nfo_collections           = COALESCE(sqlc.narg('nfo_collections')::text, nfo_collections),
     episode_order             = COALESCE(sqlc.narg('episode_order')::text, episode_order),
+    save_nfo                  = COALESCE(sqlc.narg('save_nfo')::bool, save_nfo),
     updated_at                = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 RETURNING id, name, type, scan_paths, agent, language,
           scan_interval, scan_last_completed_at,
           metadata_refresh_interval, metadata_last_refreshed_at,
           created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-          trickplay_enabled, nfo_collections, episode_order;
+          trickplay_enabled, nfo_collections, episode_order, save_nfo;
 
 -- name: SoftDeleteLibrary :exec
 UPDATE libraries SET deleted_at = NOW(), updated_at = NOW()
@@ -77,7 +79,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE deleted_at IS NULL
   AND scan_interval IS NOT NULL
@@ -89,7 +91,7 @@ SELECT id, name, type, scan_paths, agent, language,
        scan_interval, scan_last_completed_at,
        metadata_refresh_interval, metadata_last_refreshed_at,
        created_at, updated_at, deleted_at, is_private, auto_grant_new_users,
-       trickplay_enabled, nfo_collections, episode_order
+       trickplay_enabled, nfo_collections, episode_order, save_nfo
 FROM libraries
 WHERE deleted_at IS NULL
   AND metadata_refresh_interval IS NOT NULL
@@ -117,3 +119,9 @@ SELECT (type = 'manga')::bool FROM libraries WHERE id = $1 AND deleted_at IS NUL
 -- The episode order a library's shows follow unless a show sets its own
 -- (media_items.episode_order). Read by the episode enricher.
 SELECT episode_order FROM libraries WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: GetLibraryNFOOptions :one
+-- What the enricher needs to write NFO files and pick artwork languages:
+-- whether the library saves NFOs next to its media (save_nfo) and its
+-- metadata language.
+SELECT save_nfo, language FROM libraries WHERE id = $1 AND deleted_at IS NULL;

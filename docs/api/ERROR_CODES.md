@@ -39,6 +39,7 @@ releases.
 | `STREAM_NOT_READY` | 504 | Tuner didn't produce a playlist in time. |
 | `EPG_REFRESH_FAILED` | 502 | Upstream XMLTV/Schedules Direct fetch or parse failed. |
 | `DVR_NOT_CONFIGURED` | 503 | DVR service not wired or disabled. |
+| `POSTPROCESS_BUSY` | 409 | A post-processing or commercial-detection job for this recording is already queued or running. |
 
 ## Photos + media
 

@@ -5,6 +5,8 @@ const mockGet = vi.hoisted(() => vi.fn());
 const mockUpdate = vi.hoisted(() => vi.fn());
 const mockTpStatus = vi.hoisted(() => vi.fn());
 const mockTpGenerate = vi.hoisted(() => vi.fn());
+const mockSubAutoGetLib = vi.hoisted(() => vi.fn());
+const mockSubAutoUpdateLib = vi.hoisted(() => vi.fn());
 
 vi.mock('$lib/api', () => ({
   libraryApi: {
@@ -14,6 +16,10 @@ vi.mock('$lib/api', () => ({
     detectIntros: vi.fn(),
     trickplayStatus: mockTpStatus,
     generateTrickplay: mockTpGenerate,
+  },
+  subtitleAutoApi: {
+    getLibrary: mockSubAutoGetLib,
+    updateLibrary: mockSubAutoUpdateLib,
   },
 }));
 
@@ -47,6 +53,35 @@ beforeEach(() => {
   localStorage.setItem('onscreen_user', JSON.stringify({ id: 'u1', is_admin: true }));
   mockTpStatus.mockResolvedValue({ enabled: true, total: 20, done: 12, pending: 7, failed: 1 });
   mockTpGenerate.mockResolvedValue({ status: 'queued', queued: 7 });
+  mockSubAutoGetLib.mockResolvedValue({ library_id: 'lib-1', enabled: null, languages: null });
+  mockSubAutoUpdateLib.mockImplementation(async (_id: string, o: Record<string, unknown>) => ({ library_id: 'lib-1', ...o }));
+});
+
+describe('Library settings — automatic subtitles', () => {
+  it('follows the server by default and saves an override only when changed', async () => {
+    mockGet.mockResolvedValue(lib());
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib(body));
+    render(Page);
+
+    const select = (await screen.findByLabelText('Download missing subtitles')) as HTMLSelectElement;
+    expect(select.value).toBe('');
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalledTimes(1));
+    expect(mockSubAutoUpdateLib).not.toHaveBeenCalled();
+
+    await fireEvent.change(select, { target: { value: 'on' } });
+    await fireEvent.input(screen.getByLabelText('Languages'), { target: { value: ' es ' } });
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockSubAutoUpdateLib).toHaveBeenCalledWith('lib-1', { enabled: true, languages: 'es' }));
+  });
+
+  it('is not offered on libraries without movies or episodes', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'music' }));
+    render(Page);
+    await screen.findByRole('button', { name: /save changes/i });
+    expect(screen.queryByLabelText('Download missing subtitles')).toBeNull();
+    expect(mockSubAutoGetLib).not.toHaveBeenCalled();
+  });
 });
 
 describe('Library settings — seek-bar thumbnails', () => {
@@ -185,5 +220,37 @@ describe('Library settings — episode order', () => {
     render(Page);
     await screen.findByRole('button', { name: /save changes/i });
     expect(screen.queryByLabelText('Episode order')).toBeNull();
+  });
+});
+
+describe('Library settings — NFO files', () => {
+  it('reflects the library and sends a change', async () => {
+    mockGet.mockResolvedValue(lib({ save_nfo: false }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib(body));
+    render(Page);
+    const toggle = (await screen.findByLabelText(/save metadata as nfo files/i)) as HTMLInputElement;
+    expect(toggle.checked).toBe(false);
+    await fireEvent.click(toggle);
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect(mockUpdate.mock.calls[0][1].save_nfo).toBe(true);
+  });
+
+  it('leaves an unchanged setting out of the save', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'show', save_nfo: true }));
+    mockUpdate.mockImplementation(async (_id: string, body: Record<string, unknown>) => lib({ type: 'show', ...body }));
+    render(Page);
+    const toggle = (await screen.findByLabelText(/save metadata as nfo files/i)) as HTMLInputElement;
+    expect(toggle.checked).toBe(true);
+    await fireEvent.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled());
+    expect('save_nfo' in mockUpdate.mock.calls[0][1]).toBe(false);
+  });
+
+  it('is not offered for music libraries', async () => {
+    mockGet.mockResolvedValue(lib({ type: 'music' }));
+    render(Page);
+    await screen.findByRole('button', { name: /save changes/i });
+    expect(screen.queryByLabelText(/save metadata as nfo files/i)).toBeNull();
   });
 });

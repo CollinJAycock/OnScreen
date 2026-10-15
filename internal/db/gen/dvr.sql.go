@@ -350,23 +350,26 @@ func (q *Queries) ListEnabledSchedules(ctx context.Context) ([]Schedule, error) 
 }
 
 const listExpiredRecordings = `-- name: ListExpiredRecordings :many
-SELECT r.id, r.schedule_id, r.item_id, r.file_path
+SELECT r.id, r.schedule_id, r.item_id, r.file_path, j.original_file_path
 FROM recordings r
 JOIN schedules s ON s.id = r.schedule_id
+LEFT JOIN dvr_postprocess_jobs j ON j.recording_id = r.id
 WHERE r.status = 'completed'
   AND s.retention_days IS NOT NULL
   AND r.ends_at < NOW() - (s.retention_days || ' days')::interval
 `
 
 type ListExpiredRecordingsRow struct {
-	ID         uuid.UUID   `json:"id"`
-	ScheduleID pgtype.UUID `json:"schedule_id"`
-	ItemID     pgtype.UUID `json:"item_id"`
-	FilePath   *string     `json:"file_path"`
+	ID               uuid.UUID   `json:"id"`
+	ScheduleID       pgtype.UUID `json:"schedule_id"`
+	ItemID           pgtype.UUID `json:"item_id"`
+	FilePath         *string     `json:"file_path"`
+	OriginalFilePath *string     `json:"original_file_path"`
 }
 
 // Recordings past their schedule's retention window. Worker deletes
-// them + their media_items rows.
+// them + their media_items rows. original_file_path is the capture kept
+// aside by post-processing (delete-original off), removed alongside.
 func (q *Queries) ListExpiredRecordings(ctx context.Context) ([]ListExpiredRecordingsRow, error) {
 	rows, err := q.db.Query(ctx, listExpiredRecordings)
 	if err != nil {
@@ -381,6 +384,7 @@ func (q *Queries) ListExpiredRecordings(ctx context.Context) ([]ListExpiredRecor
 			&i.ScheduleID,
 			&i.ItemID,
 			&i.FilePath,
+			&i.OriginalFilePath,
 		); err != nil {
 			return nil, err
 		}
@@ -397,9 +401,11 @@ SELECT r.id, r.schedule_id, r.user_id, r.channel_id, r.program_id,
        r.title, r.subtitle, r.season_num, r.episode_num, r.status,
        r.starts_at, r.ends_at, r.file_path, r.item_id, r.error,
        r.created_at, r.updated_at,
-       c.number AS channel_number, c.name AS channel_name, c.logo_url
+       c.number AS channel_number, c.name AS channel_name, c.logo_url,
+       j.status AS postprocess_status, j.message AS postprocess_message
 FROM recordings r
 JOIN channels c ON c.id = r.channel_id
+LEFT JOIN dvr_postprocess_jobs j ON j.recording_id = r.id
 WHERE r.user_id = $1
   AND ($4::text IS NULL OR r.status = $4)
 ORDER BY r.starts_at DESC
@@ -414,26 +420,28 @@ type ListRecordingsForUserParams struct {
 }
 
 type ListRecordingsForUserRow struct {
-	ID            uuid.UUID          `json:"id"`
-	ScheduleID    pgtype.UUID        `json:"schedule_id"`
-	UserID        uuid.UUID          `json:"user_id"`
-	ChannelID     uuid.UUID          `json:"channel_id"`
-	ProgramID     pgtype.UUID        `json:"program_id"`
-	Title         string             `json:"title"`
-	Subtitle      *string            `json:"subtitle"`
-	SeasonNum     *int32             `json:"season_num"`
-	EpisodeNum    *int32             `json:"episode_num"`
-	Status        string             `json:"status"`
-	StartsAt      pgtype.Timestamptz `json:"starts_at"`
-	EndsAt        pgtype.Timestamptz `json:"ends_at"`
-	FilePath      *string            `json:"file_path"`
-	ItemID        pgtype.UUID        `json:"item_id"`
-	Error         *string            `json:"error"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	ChannelNumber string             `json:"channel_number"`
-	ChannelName   string             `json:"channel_name"`
-	LogoUrl       *string            `json:"logo_url"`
+	ID                 uuid.UUID          `json:"id"`
+	ScheduleID         pgtype.UUID        `json:"schedule_id"`
+	UserID             uuid.UUID          `json:"user_id"`
+	ChannelID          uuid.UUID          `json:"channel_id"`
+	ProgramID          pgtype.UUID        `json:"program_id"`
+	Title              string             `json:"title"`
+	Subtitle           *string            `json:"subtitle"`
+	SeasonNum          *int32             `json:"season_num"`
+	EpisodeNum         *int32             `json:"episode_num"`
+	Status             string             `json:"status"`
+	StartsAt           pgtype.Timestamptz `json:"starts_at"`
+	EndsAt             pgtype.Timestamptz `json:"ends_at"`
+	FilePath           *string            `json:"file_path"`
+	ItemID             pgtype.UUID        `json:"item_id"`
+	Error              *string            `json:"error"`
+	CreatedAt          pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt          pgtype.Timestamptz `json:"updated_at"`
+	ChannelNumber      string             `json:"channel_number"`
+	ChannelName        string             `json:"channel_name"`
+	LogoUrl            *string            `json:"logo_url"`
+	PostprocessStatus  *string            `json:"postprocess_status"`
+	PostprocessMessage *string            `json:"postprocess_message"`
 }
 
 // Recordings page query. Status filter is optional — pass NULL to get
@@ -473,6 +481,8 @@ func (q *Queries) ListRecordingsForUser(ctx context.Context, arg ListRecordingsF
 			&i.ChannelNumber,
 			&i.ChannelName,
 			&i.LogoUrl,
+			&i.PostprocessStatus,
+			&i.PostprocessMessage,
 		); err != nil {
 			return nil, err
 		}

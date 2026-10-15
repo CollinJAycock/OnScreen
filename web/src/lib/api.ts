@@ -1323,6 +1323,63 @@ export interface RegrabResult {
   has_file?: boolean;
 }
 
+/** Converted (lower-quality) download qualities, best first. */
+export type DownloadQualityId = '1080p_8mbps' | '720p_4mbps' | '720p_2mbps' | '480p_1mbps';
+export type DownloadStatus = 'queued' | 'running' | 'ready' | 'failed' | 'expired';
+
+export interface DownloadQuality {
+  id: DownloadQualityId;
+  label: string;
+  bitrate_kbps: number;
+  max_height: number;
+  /** false = above the caller's streaming (or, remotely, internet) limit. */
+  allowed: boolean;
+}
+
+export interface DownloadOptions {
+  file_id: string;
+  qualities: DownloadQuality[];
+  bitrate_cap_kbps?: number;
+}
+
+export interface DownloadJob {
+  id: string;
+  item_id: string;
+  file_id: string;
+  title: string;
+  item_type: string;
+  quality: DownloadQualityId;
+  quality_label: string;
+  status: DownloadStatus;
+  /** Encode progress, 0..1. */
+  progress: number;
+  error?: string;
+  size_bytes?: number;
+  created_at: string;
+  completed_at?: string;
+  expires_at?: string;
+  /** Present when ready: /api/v1/downloads/{id}/file (pass through assetUrl). */
+  file_url?: string;
+}
+
+export const downloadsApi = {
+  /** The converted qualities for an item and which the caller may take. */
+  options: (itemId: string, fileId?: string) =>
+    api.get<DownloadOptions>(
+      `/items/${encodeURIComponent(itemId)}/downloads${fileId ? `?file_id=${encodeURIComponent(fileId)}` : ''}`,
+    ),
+  /** Create (201) or return the existing (200) conversion job. 403
+   *  QUALITY_ABOVE_LIMIT, 429 TOO_MANY_DOWNLOADS, 422 NOT_CONVERTIBLE. */
+  create: (itemId: string, quality: DownloadQualityId, fileId?: string) =>
+    api.post<DownloadJob>(`/items/${encodeURIComponent(itemId)}/downloads`, {
+      quality,
+      ...(fileId ? { file_id: fileId } : {}),
+    }),
+  get: (jobId: string) => api.get<DownloadJob>(`/downloads/${encodeURIComponent(jobId)}`),
+  listMine: () => api.get<DownloadJob[]>('/users/me/downloads'),
+  remove: (jobId: string) => api.del(`/downloads/${encodeURIComponent(jobId)}`),
+};
+
 export const issuesApi = {
   /** The caller's own reports on an item, newest first. */
   listMine: (itemId: string) => api.get<MediaIssue[]>(`/items/${encodeURIComponent(itemId)}/issues`),
@@ -1518,6 +1575,111 @@ export interface StreamingLimits {
 }
 
 /** One sign-in (refresh session) on the signed-in devices list. */
+// ── Personal API keys ─────────────────────────────────────────────────────────
+
+/** A personal API key as listed. The key itself is shown once, at creation;
+ *  `prefix` is its first characters, enough to tell keys apart. */
+export interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+  /** 'read_only' keys can only make GET requests. */
+  scope: 'full' | 'read_only';
+  created_at: string;
+  /** Approximate (written at most every few minutes); null = never used. */
+  last_used_at: string | null;
+  expires_at: string | null;
+  expired: boolean;
+  /** Owner, on the admin list only. */
+  user_id?: string;
+  username?: string;
+}
+
+/** The creation response: the row plus the full key, shown this once. */
+export interface CreatedApiKey extends ApiKey {
+  key: string;
+}
+
+export const apiKeyApi = {
+  listMine: () => api.get<ApiKey[]>('/users/me/api-keys'),
+  create: (name: string, scope: ApiKey['scope'], expiresAt?: string | null) =>
+    api.post<CreatedApiKey>('/users/me/api-keys', {
+      name,
+      scope,
+      ...(expiresAt ? { expires_at: expiresAt } : {}),
+    }),
+  revoke: (id: string) => api.del(`/users/me/api-keys/${id}`),
+  /** Admin: every user's keys. */
+  adminList: () => api.get<ApiKey[]>('/admin/api-keys'),
+  /** Admin: revoke any user's key. */
+  adminRevoke: (id: string) => api.del(`/admin/api-keys/${id}`),
+};
+
+// ── Ebook reading position ────────────────────────────────────────────────────
+
+/** Where the user is in an ebook, synced across their devices. `locator` is
+ *  an EPUB CFI or a page number; `progression` runs 0–1 through the book. */
+export interface ReadingProgress {
+  locator: string;
+  progression: number;
+  /** The device the position was saved on. */
+  device_name?: string;
+  /** When the position was reached (the saving client's clock). */
+  updated_at: string;
+  /** PUT only: false when the server kept a newer position (returned here). */
+  applied?: boolean;
+}
+
+export interface ReadingProgressSave {
+  locator: string;
+  progression: number;
+  device_name?: string;
+  updated_at?: string;
+}
+
+export const readingProgressApi = {
+  /** null when nothing is saved for the book. */
+  get: (itemId: string) => api.get<ReadingProgress | null>(`/items/${itemId}/reading-progress`),
+  save: (itemId: string, p: ReadingProgressSave) =>
+    api.put<ReadingProgress>(`/items/${itemId}/reading-progress`, p),
+  /** Fire-and-forget save that survives the page closing. */
+  beacon: (itemId: string, p: ReadingProgressSave) =>
+    apiBeacon('PUT', `/items/${itemId}/reading-progress`, p),
+};
+
+// ── Automatic subtitle download (admin) ───────────────────────────────────────
+
+export type HearingImpairedPref = 'prefer' | 'avoid' | 'any';
+
+export interface SubtitleAutoSettings {
+  enabled: boolean;
+  /** Comma-separated language codes, e.g. "en,es". */
+  languages: string;
+  /** Always true: a language the file already has is never downloaded. */
+  only_missing: boolean;
+  prefer_hash_match: boolean;
+  hearing_impaired: HearingImpairedPref;
+  /** Read-only: whether OpenSubtitles is set up (nothing runs without it). */
+  provider_configured: boolean;
+}
+
+/** A library's override; null fields follow the server-wide setting. */
+export interface LibrarySubtitleAuto {
+  library_id: string;
+  enabled: boolean | null;
+  languages: string | null;
+}
+
+export const subtitleAutoApi = {
+  get: () => api.get<SubtitleAutoSettings>('/settings/subtitle-auto-download'),
+  update: (s: Partial<Omit<SubtitleAutoSettings, 'only_missing' | 'provider_configured'>>) =>
+    api.put<SubtitleAutoSettings>('/settings/subtitle-auto-download', s),
+  getLibrary: (libraryId: string) =>
+    api.get<LibrarySubtitleAuto>(`/libraries/${libraryId}/subtitle-auto-download`),
+  updateLibrary: (libraryId: string, o: { enabled: boolean | null; languages: string | null }) =>
+    api.put<LibrarySubtitleAuto>(`/libraries/${libraryId}/subtitle-auto-download`, o),
+};
+
 export interface SignedInSession {
   id: string;
   /** "Chrome on Windows", "Roku", … — empty for sign-ins made before devices
@@ -1672,6 +1834,9 @@ export interface Library {
   // The order the library's shows are numbered in unless a show sets its
   // own. Optional: servers before v2.6 don't send it (aired).
   episode_order?: EpisodeOrder;
+  // Write Kodi-compatible NFO files next to the media. Optional: servers
+  // before v2.6 don't send it (off).
+  save_nfo?: boolean;
   created_at: string;
   updated_at: string;
 }
@@ -1957,6 +2122,8 @@ export interface ServerSettings {
   tvdb_api_key: string;
   /** OMDb key for IMDb / Rotten Tomatoes / Metacritic scores. */
   omdb_api_key?: string;
+  /** fanart.tv key for clear logos, banners and disc art. */
+  fanarttv_api_key?: string;
   /** OMDb lookups the key allows a day (1000 for a free key). */
   omdb_daily_limit?: number;
   arr_api_key: string;
@@ -2089,6 +2256,23 @@ export interface TranscodeConfig {
   local_networks?: string[];
 }
 
+// DVR post-processing settings (Settings ▸ Live TV). Everything defaults to
+// off. The script / comskip fields are read-only: those executables are set
+// only through the server's environment, never through the API.
+export interface DVRSettings {
+  remux: boolean;
+  remux_container: 'mkv' | 'mp4';
+  transcode: boolean;
+  transcode_codec: 'h264' | 'hevc';
+  transcode_quality: 'high' | 'balanced' | 'small';
+  delete_original: boolean;
+  commercials: 'off' | 'mark' | 'cut';
+  readonly script_configured?: boolean;
+  readonly script_path?: string;
+  readonly comskip_configured?: boolean;
+  readonly commercial_detector?: 'comskip' | 'builtin';
+}
+
 export interface WorkerCredentials {
   database_url: string;
   valkey_url: string;
@@ -2104,6 +2288,8 @@ export const settingsApi = {
   updateFleet: (body: FleetConfig) => api.put<void>('/settings/fleet', body),
   revealWorkerCredentials: (password: string, totpCode: string) =>
     api.post<WorkerCredentials>('/settings/worker-credentials', { password, totp_code: totpCode }),
+  getDVR: () => api.get<DVRSettings>('/settings/dvr'),
+  updateDVR: (body: DVRSettings) => api.put<void>('/settings/dvr', body),
   getTranscodeConfig: () => api.get<TranscodeConfig>('/settings/transcode-config'),
   updateTranscodeConfig: (body: TranscodeConfig) => api.put<void>('/settings/transcode-config', body),
   testEmail: (to: string) => api.post<{ message: string }>('/email/test', { to }),
@@ -2284,6 +2470,47 @@ export interface FilmographyEntry {
   job?: string;
 }
 
+// ── Studios / networks ───────────────────────────────────────────────────────
+
+/** A studio (movies) or network (shows) on an item's details. */
+export interface StudioRef {
+  id: string;
+  name: string;
+  kind: 'studio' | 'network';
+}
+
+/** A studio with how many of its titles the caller can see. */
+export interface Studio extends StudioRef {
+  tmdb_id?: number;
+  item_count: number;
+}
+
+export interface StudioItemsParams {
+  sort?: 'title' | 'year' | 'rating' | 'created_at';
+  sort_dir?: 'asc' | 'desc';
+  library_id?: string;
+}
+
+export const studiosApi = {
+  list: async (params?: { library_id?: string; kind?: 'studio' | 'network' }) => {
+    const qs = new URLSearchParams();
+    if (params?.library_id) qs.set('library_id', params.library_id);
+    if (params?.kind) qs.set('kind', params.kind);
+    const q = qs.toString();
+    return (await api.requestList<Studio>(`/studios${q ? `?${q}` : ''}`)).items;
+  },
+  get: (id: string) => api.get<Studio>(`/studios/${id}`),
+  items: (id: string, limit = 50, offset = 0, params?: StudioItemsParams) => {
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    qs.set('offset', String(offset));
+    if (params?.sort) qs.set('sort', params.sort);
+    if (params?.sort_dir) qs.set('sort_dir', params.sort_dir);
+    if (params?.library_id) qs.set('library_id', params.library_id);
+    return api.requestList<MediaItem>(`/studios/${id}/items?${qs.toString()}`);
+  }
+};
+
 export const peopleApi = {
   credits: (itemId: string) => api.get<Credit[]>(`/items/${itemId}/credits`),
   get: (id: string) => api.get<Person>(`/people/${id}`),
@@ -2341,6 +2568,9 @@ export interface Chapter {
   title: string;
   start_ms: number;
   end_ms: number;
+  /** /trickplay/{item}/chapter_NNN.jpg once the item's seek-bar thumbnails
+   *  (and with them the chapter thumbnails) exist; pass through assetUrl. */
+  thumb_url?: string;
 }
 
 export interface ItemFile {
@@ -2381,15 +2611,28 @@ export interface ItemFile {
   replaygain_track_peak?: number;
   replaygain_album_gain?: number;
   replaygain_album_peak?: number;
+  // Where the replaygain_* values came from: the file's own tags, or the
+  // server's loudness analysis (EBU R128 → ReplayGain 2.0). Absent when the
+  // file has none, or on an older server.
+  replaygain_source?: 'tags' | 'analyzed';
   audio_streams: AudioStream[];
   subtitle_streams: SubtitleStream[];
   external_subtitles?: ExternalSubtitle[];
   chapters: Chapter[];
+  // Ad breaks DVR commercial detection found in this file (absent when
+  // none). Separate from the item's markers, which are intro/credits only.
+  commercials?: CommercialMarker[];
   // Per-file 24h PASETO bound to the requesting user. Used in the
   // `?token=` query of the download URL on clients that can't carry
   // cookies (mobile browser save-as, Android Download Manager). Omitted
   // by the server when the stream-token maker isn't wired.
   stream_token?: string;
+}
+
+export interface CommercialMarker {
+  start_ms: number;
+  end_ms: number;
+  source: 'comskip' | 'heuristic';
 }
 
 export interface Marker {
@@ -2421,6 +2664,15 @@ export interface ItemDetail {
   duration_ms?: number;
   poster_path?: string;
   fanart_path?: string;
+  /** Transparent clear logo (PNG). Fetch it without ?w=/?h= — a resize
+   *  re-encodes as JPEG and loses the transparency. */
+  logo_path?: string;
+  /** Wide banner strip. */
+  banner_path?: string;
+  /** Disc / CD art. */
+  disc_art_path?: string;
+  /** Movies: production companies; shows: networks. Provider order. */
+  studios?: StudioRef[];
   content_rating?: string;
   genres: string[];
   parent_id?: string;
@@ -3092,6 +3344,64 @@ export interface OCRJob {
   subtitle?: ExternalSubtitle;
 }
 
+// ── Music discovery ───────────────────────────────────────────────────────────
+
+/** An artist like another (GET /music/artists/{id}/similar). */
+export interface SimilarArtist {
+  id: string;
+  title: string;
+  poster_path?: string;
+  updated_at: number;
+  score: number;
+  shared_genres: string[];
+  co_listened: boolean;
+}
+
+/** A track an artist is credited on without being its album's artist. */
+export interface ArtistAppearance {
+  id: string;
+  title: string;
+  index?: number;
+  disc_number?: number;
+  duration_ms?: number;
+  role: 'featured' | 'artist';
+  album_id: string;
+  album_title: string;
+  album_year?: number;
+  album_poster_path?: string;
+  album_updated_at: number;
+  album_artist_id?: string;
+  album_artist_title?: string;
+}
+
+/** One instant-mix track: everything a player queue needs. */
+export interface MixTrack {
+  id: string;
+  title: string;
+  duration_ms?: number;
+  index?: number;
+  album_id: string;
+  album_title: string;
+  album_poster_path?: string;
+  artist_id?: string;
+  artist_title?: string;
+  file_id: string;
+  replaygain_track_gain?: number;
+  replaygain_track_peak?: number;
+  replaygain_album_gain?: number;
+  replaygain_album_peak?: number;
+}
+
+export const musicApi = {
+  similarArtists: async (artistId: string, limit = 20) =>
+    (await api.requestList<SimilarArtist>(`/music/artists/${artistId}/similar?limit=${limit}`)).items,
+  appearsOn: async (artistId: string) =>
+    (await api.requestList<ArtistAppearance>(`/music/artists/${artistId}/appears-on`)).items,
+  /** A fresh ~50-track mix seeded with a track, album or artist. */
+  mix: async (seedId: string, limit = 50) =>
+    (await api.requestList<MixTrack>(`/music/mix?seed=${encodeURIComponent(seedId)}&limit=${limit}`)).items
+};
+
 export const favoritesApi = {
   list: (limit = 100, offset = 0) =>
     api.requestList<FavoriteItem>(`/favorites?limit=${limit}&offset=${offset}`)
@@ -3215,6 +3525,9 @@ export const liveTvApi = {
   listRecordings: (status?: string) =>
     api.requestList<LiveTVRecording>('/tv/recordings' + (status ? `?status=${status}` : '')),
   cancelRecording: (id: string) => api.delete(`/tv/recordings/${id}`),
+  // Admin: queue commercial detection / re-run post-processing (202).
+  detectCommercials: (id: string) => api.post<{ postprocess_status: string }>(`/tv/recordings/${id}/detect-commercials`),
+  reprocessRecording: (id: string) => api.post<{ postprocess_status: string }>(`/tv/recordings/${id}/postprocess`),
 };
 
 export interface LiveTVBroadcast {
@@ -3260,6 +3573,9 @@ export interface LiveTVRecording {
   ends_at: string;
   item_id?: string;
   error?: string;
+  // DVR post-processing; both absent when it never ran for this recording.
+  postprocess_status?: 'queued' | 'processing' | 'processed' | 'failed';
+  postprocess_message?: string;
 }
 
 export interface LiveTVEPGSource {

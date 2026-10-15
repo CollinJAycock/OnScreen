@@ -3,6 +3,7 @@
   import { liveTvApi, type LiveTVTuner, type LiveTVEPGSource, type LiveTVChannel, type LiveTVBroadcast } from '$lib/api';
   import { confirmAction } from '$lib/native';
   import { toast } from '$lib/stores/toast';
+  import DVRPostProcessing from '$lib/components/DVRPostProcessing.svelte';
 
   let tuners: LiveTVTuner[] = [];
   let epgSources: LiveTVEPGSource[] = [];
@@ -553,6 +554,8 @@
         </ul>
       </section>
     {/if}
+
+    <DVRPostProcessing />
 
     <section>
       <header>

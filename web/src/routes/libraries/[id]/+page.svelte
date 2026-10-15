@@ -4,6 +4,7 @@
   import { page } from '$app/stores';
   import { libraryApi, mediaApi, itemApi, assetUrl, type Library, type MediaItem, type SortField, type ListItemsParams, type GenreCount, type EventCollection, type WatchFilter } from '$lib/api';
   import { itemHref as resolveItemHref } from '$lib/itemHref';
+  import { libraryStudioKind } from '$lib/studios';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   import WatchBadge from '$lib/components/WatchBadge.svelte';
@@ -821,6 +822,9 @@
       {/if}
       <a href="/libraries/{id}/genres">Browse genres</a>
       <a href="/libraries/{id}/years">Browse years</a>
+      {#if libraryStudioKind(library?.type)}
+        <a href="/libraries/{id}/studios">Browse {libraryStudioKind(library?.type) === 'network' ? 'networks' : 'studios'}</a>
+      {/if}
     </div>
 
     <div class="count">
