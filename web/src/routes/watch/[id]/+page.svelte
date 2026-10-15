@@ -54,6 +54,16 @@
     type SubtitleOutline,
   } from './subtitle-style';
   import { pickPreferredSubtitle } from './subtitle-select';
+  // Image subtitles (PGS / VobSub): OCR text version if there is one, else
+  // burned into a transcode. Decisions tested in $lib/subtitleBurn.test.ts.
+  import {
+    BURN_ERROR_CODES,
+    applyBurn,
+    imageSubtitleOptions,
+    planSubtitlePick,
+    type ImageSubtitleOption,
+    type SubtitlePick,
+  } from '$lib/subtitleBurn';
   // Subtitle sync: the session-only adjustment and the admin's
   // "Save for everyone" server offset. Tested in subtitle-offset.test.ts.
   import { OFFSET_STEPS_MS, stepDelay, formatOffset, offsetToSave } from './subtitle-offset';
@@ -227,6 +237,11 @@
     offsetMs: number;
   };
   let selectedSubtitle: PickedSubtitle | null = null;
+  // The image subtitle stream (absolute index) burned into the current
+  // transcode, or null. Mutually exclusive with selectedSubtitle: a burned
+  // track has no cues for the overlay. Every session restart carries it
+  // (applyBurn in switchToTranscode) until the viewer picks something else.
+  let burnedStreamIndex: number | null = null;
   const subtitleSizes = ['small', 'medium', 'large'] as const satisfies readonly SubtitleSize[];
   const subtitleColors = ['white', 'yellow', 'black', 'red'] as const satisfies readonly SubtitleColor[];
   const subtitleBackgrounds = ['none', 'translucent', 'opaque'] as const satisfies readonly SubtitleBackground[];
@@ -551,8 +566,8 @@
       // Auto-select the newly downloaded subtitle.
       const picked = (fresh.files?.[0]?.external_subtitles ?? [])
         .find(e => e.id === ext.id);
-      if (picked) selectedSubtitle = externalToPicked(picked);
       showSubtitleSearch = false;
+      if (picked) void pickSubtitle({ kind: 'text', sub: externalToPicked(picked) });
     } catch (e: unknown) {
       subtitleSearchError = e instanceof Error ? e.message : 'Download failed';
     } finally {
@@ -640,24 +655,68 @@
     return [...embedded, ...external];
   })();
 
-  // Image-based subtitle codecs (PGS, VOBSUB, DVB) the player can't render
-  // directly — surfaced in the picker as "OCR" actions so the user can
-  // convert one in-place without leaving the watch page.
-  const imageSubCodecs = new Set([
-    'hdmv_pgs_subtitle', 'pgssub', 'dvd_subtitle', 'dvb_subtitle', 'xsub',
-  ]);
-  $: imageSubsToOCR = (() => {
-    const file = item?.files?.[0];
-    if (!file) return [] as SubtitleStream[];
-    const ocredStreams = new Set(
-      (file.external_subtitles ?? [])
-        .filter(e => e.source === 'ocr' && e.source_id)
-        .map(e => e.source_id as string),
+  // Image-based subtitle tracks (PGS, VOBSUB, DVB) the player can't render.
+  // Each is listed in the picker: one with an OCR text version plays that
+  // version, one without is burned into a transcode. Their OCR'd external
+  // rows are folded into the image row instead of listed twice.
+  $: imageSubOptions = imageSubtitleOptions(item?.files?.[0]);
+  $: menuTextSubtitles = (() => {
+    const folded = new Set(
+      imageSubOptions.flatMap((o) => (o.textVersion ? [`x:${o.textVersion.id}`] : [])),
     );
-    return (file.subtitle_streams ?? [])
-      .filter(s => imageSubCodecs.has(s.codec.toLowerCase()))
-      .filter(s => !ocredStreams.has(`stream_${s.index}`));
+    return textSubtitles.filter((s) => !folded.has(s.key));
   })();
+  // Tracks still without a text version: the "Convert to text (OCR)" action.
+  $: imageSubsToOCR = imageSubOptions.filter((o) => !o.textVersion).map((o) => o.stream);
+  $: burnedOption = burnedStreamIndex === null
+    ? undefined
+    : imageSubOptions.find((o) => o.stream.index === burnedStreamIndex);
+  // The picker button's label: the text subtitle's language, else the burned
+  // track's, else Off.
+  $: subtitleButtonLabel = selectedSubtitle
+    ? (selectedSubtitle.language || 'Sub')
+    : burnedOption
+      ? (burnedOption.stream.language || 'Sub')
+      : 'Off';
+
+  function imageOptionActive(o: ImageSubtitleOption, sel: PickedSubtitle | null, burned: number | null): boolean {
+    return o.textVersion ? sel?.key === `x:${o.textVersion.id}` : burned === o.stream.index;
+  }
+
+  // pickSubtitle is every subtitle choice the viewer (or an OCR / download
+  // finishing) makes. A text pick just swaps the cue overlay — unless a track
+  // is burned in, in which case playback restarts without the burn through
+  // the normal play decision for the current quality and audio track (back
+  // to direct play, remux, the optimized version or a plain transcode). An
+  // image pick without a text version restarts as a burn-in transcode at the
+  // current position, whatever was playing.
+  async function pickSubtitle(pick: SubtitlePick<PickedSubtitle>) {
+    showSubtitleMenu = false;
+    const plan = planSubtitlePick(pick, burnedStreamIndex);
+    if (plan.action === 'none' || !item?.files?.length) return;
+    // Both restarts go through switchToTranscode's re-entrancy guard; don't
+    // flip the subtitle state for a restart that would be swallowed.
+    if ((plan.action === 'burn' || plan.unburn) && switchingTranscode) return;
+    const posMs = Math.floor(currentTime * 1000);
+    if (plan.action === 'burn') {
+      const prevSelected = selectedSubtitle;
+      burnedStreamIndex = plan.streamIndex;
+      selectedSubtitle = null;
+      skipAutoSeek = true;
+      await switchToTranscode(selectedQuality.height, posMs, false);
+      // A refused burn (400) clears burnedStreamIndex again and leaves the
+      // viewer on their stream (see switchToTranscode) — and their subtitle.
+      if (burnedStreamIndex === null) selectedSubtitle = prevSelected;
+      return;
+    }
+    const text = plan.text;
+    selectedSubtitle = text === null ? null : 'sub' in text ? text.sub : externalToPicked(text.external);
+    if (plan.unburn) {
+      burnedStreamIndex = null;
+      skipAutoSeek = true;
+      await playAtQuality(selectedQuality, posMs);
+    }
+  }
 
   let ocrInFlight: number | null = null;
   let ocrError = '';
@@ -702,8 +761,9 @@
           item = fresh;
           const picked = (fresh.files?.[0]?.external_subtitles ?? [])
             .find((e) => e.id === status.subtitle!.id);
-          if (picked) selectedSubtitle = externalToPicked(picked);
           showSubtitleMenu = false;
+          // Through pickSubtitle: a burned copy of this track comes off.
+          if (picked) void pickSubtitle({ kind: 'text', sub: externalToPicked(picked) });
           break;
         }
         // status === 'running' — keep polling
@@ -1422,6 +1482,8 @@
     mediaErrorEscalated = false;
     directPlayRetried = false;
     stallRestarts = 0;
+    // A burned-in track belongs to the previous item's file.
+    burnedStreamIndex = null;
     pageEnteredAt = Date.now();
     cancelAutoplay();
     load();
@@ -2337,11 +2399,22 @@
     const posMs = Math.floor(currentTime * 1000); // currentTime is content-relative
 
     skipAutoSeek = true;
+    await playAtQuality(q, posMs);
+  }
+
+  // playAtQuality runs the play decision for quality q at posMs: the quality
+  // picker's, and the way back from a burned-in subtitle. A non-default
+  // audio track can't direct play (the source plays its default track), so
+  // it remuxes instead. With a burn active every branch lands on a burn-in
+  // transcode (switchToDirectPlay / switchToOptimized defer to it).
+  async function playAtQuality(q: QualityOption, posMs: number) {
+    if (!item || !item.files?.length) return;
+    const needsAudioSwitch = selectedAudioIndex > 0;
     if (q.height === 0) {
       const file = item.files[0];
-      if (canDirectPlay(file)) {
+      if (canDirectPlay(file) && !needsAudioSwitch) {
         await switchToDirectPlay(posMs);
-      } else if (canRemuxVideo(file)) {
+      } else if (canRemuxVideo(file) || canDirectPlay(file)) {
         // "Auto" but can't direct-play → remux (video copy + audio transcode).
         await switchToTranscode(0, posMs, true);
       } else if (selectedAudioIndex <= 0 && optimizedFor(file)) {
@@ -2368,9 +2441,9 @@
       const srcH = file?.resolution_h ?? 0;
       const srcW = file?.resolution_w ?? 0;
       const isSourceTier = q.height >= srcH || q.width >= srcW;
-      if (isSourceTier && canDirectPlay(file)) {
+      if (isSourceTier && canDirectPlay(file) && !needsAudioSwitch) {
         await switchToDirectPlay(posMs);
-      } else if (isSourceTier && canRemuxVideo(file)) {
+      } else if (isSourceTier && (canRemuxVideo(file) || canDirectPlay(file))) {
         await switchToTranscode(0, posMs, true); // remux (video copy), no re-encode/tonemap
       } else {
         await switchToTranscode(q.height, posMs);
@@ -2381,6 +2454,8 @@
   // switchToOptimized moves playback onto an optimized version's MP4 (direct
   // play), resuming at posMs.
   async function switchToOptimized(v: OptimizedVersion, posMs: number) {
+    // A burned-in subtitle exists only in a transcode.
+    if (burnedStreamIndex !== null) return switchToTranscode(selectedQuality.height, posMs, false);
     const wasPlaying = videoEl && !videoEl.paused;
     destroyHls();
     await stopTranscodeSession();
@@ -2396,6 +2471,8 @@
   }
 
   async function switchToDirectPlay(posMs: number) {
+    // A burned-in subtitle exists only in a transcode.
+    if (burnedStreamIndex !== null) return switchToTranscode(selectedQuality.height, posMs, false);
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
     switchingTranscode = true; // gate codec-escalation during the destroy→attach gap
@@ -2446,6 +2523,15 @@
     // stopped, holding a stream slot — while its hls.js instance leaked
     // attached to a detached media element.
     if (switchingTranscode) return;
+    // An active burn rides every restart (audio / quality switch, seek,
+    // stall) and turns a remux into a full transcode.
+    const burn = applyBurn({ height, videoCopy }, burnedStreamIndex, item.files?.[0]);
+    height = burn.height;
+    videoCopy = burn.videoCopy;
+    // What was on screen before teardown: a refused burn puts it back.
+    const wasHls = hlsActive;
+    const prevOptimized = playingOptimized;
+    const prevEscalationArmed = codecEscalationArmed;
     playingOptimized = null;
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
@@ -2465,6 +2551,7 @@
 
     // Warn admin when HDR content on an SDR screen requires tonemapping transcode.
     const file = item.files?.[0];
+    const prevTonemapWarning = tonemapWarning;
     if (!videoCopy && file?.hdr_type && !clientSupportsHDR) {
       tonemapWarning = `This ${file.resolution_h}p HDR file requires real-time tonemapping. ` +
         `Enable HDR on your display for best performance.`;
@@ -2472,9 +2559,10 @@
       tonemapWarning = '';
     }
 
+    let burnRefused = '';
     try {
       const audioIdx = selectedAudioIndex >= 0 ? selectedAudioIndex : undefined;
-      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC, clientSupportsAV1);
+      const sess = await transcodeApi.start(item.id, height, posMs, item.files[0]?.id, videoCopy, audioIdx, clientSupportsHEVC, clientSupportsAV1, burn.burnSubtitleStreamIndex);
       transcodeSessionId = sess.session_id;
       transcodeToken = sess.token;
       // The server may snap the start time back to the previous keyframe
@@ -2510,12 +2598,31 @@
         serverSaidDamaged = true;
         paused = true;
         buffering = false;
+      } else if (e instanceof ApiRequestError && burn.burnSubtitleStreamIndex !== undefined && BURN_ERROR_CODES.has(e.code)) {
+        // The server can't burn this track (400): say why, drop the burn,
+        // and stay on the stream the viewer had.
+        burnRefused = e.message || 'This subtitle can’t be burned in';
+        buffering = false;
       } else {
         error = e instanceof Error ? e.message : 'Transcode failed';
         buffering = false;
       }
     } finally {
       switchingTranscode = false;
+    }
+    if (burnRefused) {
+      toast.error(burnRefused);
+      burnedStreamIndex = null;
+      if (wasHls) {
+        // The old HLS session is already torn down: restart what the
+        // viewer had, without the burn, at the same position.
+        await playAtQuality(selectedQuality, posMs);
+      } else {
+        // Direct play / the optimized MP4 never left the <video>.
+        playingOptimized = prevOptimized;
+        tonemapWarning = prevTonemapWarning;
+        codecEscalationArmed = prevEscalationArmed;
+      }
     }
     // buffering stays true until the video element fires `playing`,
     // so the spinner covers both the API wait AND the subsequent
@@ -4020,7 +4127,7 @@
                     <rect x="2" y="4" width="20" height="16" rx="2"/>
                     <path d="M7 15h4M13 15h4M7 11h10"/>
                   </svg>
-                  <span class="quality-label">{selectedSubtitle ? (selectedSubtitle.language || 'Sub') : 'Off'}</span>
+                  <span class="quality-label">{subtitleButtonLabel}</span>
                 </button>
 
                 {#if showSubtitleMenu}
@@ -4028,21 +4135,35 @@
                   <div class="quality-menu" on:click|stopPropagation role="menu" aria-label="Subtitle options">
                     <button
                       class="quality-option"
-                      class:active={selectedSubtitle === null}
-                      on:click={() => { selectedSubtitle = null; showSubtitleMenu = false; }}
+                      class:active={selectedSubtitle === null && burnedStreamIndex === null}
+                      on:click={() => pickSubtitle({ kind: 'off' })}
                       role="menuitem"
                     >Off</button>
-                    {#each textSubtitles as sub (sub.key)}
+                    {#each menuTextSubtitles as sub (sub.key)}
                       <button
                         class="quality-option"
                         class:active={selectedSubtitle?.key === sub.key}
-                        on:click={() => { selectedSubtitle = sub; showSubtitleMenu = false; }}
+                        on:click={() => pickSubtitle({ kind: 'text', sub })}
                         role="menuitem"
                       >
                         {sub.label}
                         {#if sub.forced} (forced){/if}
                         {#if sub.sdh} (SDH){/if}
                         {#if sub.origin === 'external'} · online{/if}
+                      </button>
+                    {/each}
+                    <!-- Image tracks: the OCR text version when there is one,
+                         else burned into a transcode. -->
+                    {#each imageSubOptions as opt (opt.stream.index)}
+                      <button
+                        class="quality-option"
+                        class:active={imageOptionActive(opt, selectedSubtitle, burnedStreamIndex)}
+                        on:click={() => pickSubtitle({ kind: 'image', option: opt })}
+                        role="menuitem"
+                      >
+                        {opt.label}
+                        {#if opt.stream.forced} (forced){/if}
+                        {#if opt.textVersion} · text{:else} (burned in){/if}
                       </button>
                     {/each}
                     {#each imageSubsToOCR as imgSub (imgSub.index)}
@@ -4054,7 +4175,7 @@
                       >
                         {ocrInFlight === imgSub.index
                           ? `OCR'ing ${imgSub.language || 'subtitle'}… (a few minutes)`
-                          : `OCR ${imgSub.title || imgSub.language || `track ${imgSub.index}`} (image-based)`}
+                          : `Convert ${imgSub.title || imgSub.language || `track ${imgSub.index}`} to text (OCR)`}
                       </button>
                     {/each}
                     {#if ocrError}
@@ -4439,19 +4560,30 @@
             <div class="bottom-sheet-title">Subtitles</div>
             <button
               class="bottom-sheet-option"
-              class:active={selectedSubtitle === null}
-              on:click={() => { selectedSubtitle = null; showBottomSheet = ''; }}
+              class:active={selectedSubtitle === null && burnedStreamIndex === null}
+              on:click={() => { showBottomSheet = ''; pickSubtitle({ kind: 'off' }); }}
             >Off</button>
-            {#each textSubtitles as sub (sub.key)}
+            {#each menuTextSubtitles as sub (sub.key)}
               <button
                 class="bottom-sheet-option"
                 class:active={selectedSubtitle?.key === sub.key}
-                on:click={() => { selectedSubtitle = sub; showBottomSheet = ''; }}
+                on:click={() => { showBottomSheet = ''; pickSubtitle({ kind: 'text', sub }); }}
               >
                 {sub.label}
                 {#if sub.forced} (forced){/if}
                 {#if sub.sdh} (SDH){/if}
                 {#if sub.origin === 'external'} · online{/if}
+              </button>
+            {/each}
+            {#each imageSubOptions as opt (opt.stream.index)}
+              <button
+                class="bottom-sheet-option"
+                class:active={imageOptionActive(opt, selectedSubtitle, burnedStreamIndex)}
+                on:click={() => { showBottomSheet = ''; pickSubtitle({ kind: 'image', option: opt }); }}
+              >
+                {opt.label}
+                {#if opt.stream.forced} (forced){/if}
+                {#if opt.textVersion} · text{:else} (burned in){/if}
               </button>
             {/each}
             {#if onlineSubtitlesVisible($capabilities)}
