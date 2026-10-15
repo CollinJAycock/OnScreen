@@ -6,6 +6,7 @@
 
 import type { RemoteKey } from '../focus/keys';
 import { episodeCode } from '../watchState';
+import { numberedTitle } from '../detailText';
 
 // ── Controls auto-hide ─────────────────────────────────────────────────
 
@@ -39,6 +40,13 @@ export function episodeContextLine(
   episodeEnd?: number | null
 ): string {
   return [(show ?? '').trim(), episodeCode(season, episode, episodeEnd)].filter((s) => s !== '').join(' · ');
+}
+
+/** The Up Next card's title: an episode with its number, "5. Title" or
+ *  "5–6. Title" for a multi-episode file (as the episode grid reads);
+ *  anything else by its title alone. */
+export function upNextCardTitle(next: { title: string; type: string; index?: number; index_end?: number }): string {
+  return next.type === 'episode' ? numberedTitle(next) : next.title;
 }
 
 /** "Track 3 of 12" on the now-playing view, named for what is queued: a

@@ -8,6 +8,7 @@ import {
   nowPlayingArt,
   queueLabel,
   queueNoun,
+  upNextCardTitle,
   upNextKey,
   usesParentCover,
 } from './chrome';
@@ -43,6 +44,12 @@ describe('episodeContextLine', () => {
 
   it('shows specials as season 0', () => {
     expect(episodeContextLine('Doctor Who', 0, 3)).toBe('Doctor Who · S0 · E3');
+  });
+
+  it('numbers the Up Next card for an episode, a range for a multi-episode file', () => {
+    expect(upNextCardTitle({ title: 'Pilot', type: 'episode', index: 1, index_end: 2 })).toBe('1–2. Pilot');
+    expect(upNextCardTitle({ title: 'Next', type: 'episode', index: 3 })).toBe('3. Next');
+    expect(upNextCardTitle({ title: 'Song', type: 'track', index: 4 })).toBe('Song');
   });
 
   it('labels a multi-episode file as a range', () => {

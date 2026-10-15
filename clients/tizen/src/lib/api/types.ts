@@ -15,6 +15,9 @@ export interface HubItem {
   /** Next Up tiles: position within the show (0 = unknown). */
   season_number?: number;
   episode_number?: number;
+  /** A multi-episode file's last episode ("S01E01-E02" → 2): the tile
+   *  reads "S1 · E1–E2". Absent for one episode and older servers (v2.6). */
+  episode_number_end?: number;
 }
 
 export interface HubData {
@@ -273,6 +276,8 @@ export interface UpNext {
     season_id: string;
     season_number: number;
     episode_number: number;
+    /** A multi-episode file's last episode (v2.6; absent otherwise). */
+    episode_number_end?: number;
     view_offset_ms?: number;
     duration_ms?: number;
     thumb_path?: string;

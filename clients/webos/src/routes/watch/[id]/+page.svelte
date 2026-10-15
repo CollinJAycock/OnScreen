@@ -116,6 +116,7 @@
     nowPlayingArt,
     queueLabel,
     queueNoun,
+    upNextCardTitle,
     upNextKey,
     usesParentCover,
     type UpNextButton
@@ -3587,7 +3588,7 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="up-next" onmousemove={onPointerMove}>
     <div class="up-next-label">UP NEXT · {upNextCountdown}s</div>
-    <div class="up-next-title">{nextSibling.title}</div>
+    <div class="up-next-title">{upNextCardTitle(nextSibling)}</div>
     <div class="up-next-buttons">
       <button
         type="button"
