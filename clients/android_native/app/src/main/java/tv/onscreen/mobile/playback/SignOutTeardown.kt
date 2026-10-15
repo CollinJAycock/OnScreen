@@ -12,6 +12,7 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.AuthRepository
 import javax.inject.Inject
 import javax.inject.Singleton
+import tv.onscreen.mobile.data.backgroundScope
 
 /**
  * Device-level teardown for an INVOLUNTARY sign-out, giving it parity with the
@@ -38,7 +39,7 @@ class SignOutTeardown @Inject constructor(
     private val prefs: ServerPrefs,
     private val authRepo: AuthRepository,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
+    private val scope = backgroundScope("SignOutTeardown", Dispatchers.Main)
     @Volatile private var started = false
 
     /** Begin watching for the logged-in → logged-out edge. Idempotent. */
