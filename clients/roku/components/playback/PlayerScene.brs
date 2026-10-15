@@ -55,6 +55,16 @@
 ' MP4 played directly from its stream_url with its own stream_token. A
 ' failed optimized version falls back once to the source's verdict.
 ' Progress always reports against the item.
+'
+' Image subtitles (v2.6): a remux / transcode HLS carries no subtitles, so
+' picking an image-based track (PGS, VobSub) while playing through a
+' session re-issues it at the playhead with burn_subtitle_stream_index — a
+' full re-encode with the subtitle painted in (Subtitles_PickPlan). Off or
+' another track re-issues without it; an audio switch keeps it. A refused
+' re-issue (400) shows why and keeps the current stream. A re-issued
+' session starts at the playhead, so m.streamOffsetMs maps the Video
+' node's 0-based clock back to the item's (playheadMs). Direct play leaves
+' every track to the firmware, as before.
 
 sub init()
     m.video = m.top.findNode("video")
@@ -83,11 +93,21 @@ sub init()
     m.trackPickerMode = ""
     m.activeAudioIndex = 0
     m.activeSubtitleIndex = -1
-    ' Cache the transcode inputs needed for an audio re-issue. Set
-    ' once when the first transcode session lands; nil on direct
-    ' play (the firmware Video node's audio track selector sees
-    ' every track in the container, so re-issue isn't needed).
+    ' Cache the transcode inputs needed for a re-issue (audio switch,
+    ' subtitle burn-in), including the current session's
+    ' audioStreamIndex / burnSubtitleStreamIndex. Set when a session
+    ' starts; invalid on direct play (the firmware Video node's track
+    ' selectors see every track in the container, so re-issue isn't
+    ' needed).
     m.lastTranscodeRequest = invalid
+    ' Absolute index of the image subtitle burned into the current
+    ' session, -1 for none.
+    m.burnSubtitleIndex = -1
+    ' Where the current stream's 0-based clock starts in the item: 0 for
+    ' a direct play or a first session start, the playhead for a
+    ' re-issued session. See playheadMs.
+    m.streamOffsetMs = 0
+    m.reissuePositionMs = 0
 
     m.session = invalid ' { session_id, token } when remux/transcode
     ' True while an audio re-issue is in flight: the current m.session
@@ -119,9 +139,13 @@ sub init()
     m.stacked = false
     ' Latched once the too-many-streams message is up.
     m.limitShown = false
-    ' The audio row that was active before a re-issue, restored when the
-    ' re-issue is refused.
+    ' What was active before a re-issue — the audio row, the subtitle row,
+    ' the burned subtitle and the request's audio index — restored when
+    ' the re-issue is refused (restoreRefusedReissue).
     m.audioIndexBeforeReissue = 0
+    m.subtitleIndexBeforeReissue = -1
+    m.burnIndexBeforeReissue = -1
+    m.audioRequestBeforeReissue = -1
     ' In-flight ApiCallTasks (progress beacons, the probe), held so they
     ' aren't collected mid-request.
     m.playerCalls = []
@@ -279,8 +303,9 @@ end sub
 
 ' Start decision (a Playback_Decide-shaped { mode, height, videoCopy,
 ' supportsHevc }): direct play, or a remux / transcode session.
-' audioStreamIndex is the transcode's audio_stream_index (-1 = server
-' default).
+' audioStreamIndex is the transcode's audio_stream_index — the track's
+' position among the audio streams (TranscodeRequest_AudioIndex); -1 =
+' server default.
 sub startPlayback(decision as Object, audioStreamIndex as Integer)
     serverUrl = Prefs_GetServerUrl()
     if serverUrl = invalid
@@ -294,30 +319,42 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
     if m.stacked then decision = Playback_ForStack(decision)
 
     m.playbackMode = decision.mode
+    m.streamOffsetMs = 0
+    m.burnSubtitleIndex = -1
     if decision.mode = "direct"
+        m.lastTranscodeRequest = invalid
         startDirectPlayback(serverUrl)
         return
     end if
 
     ' Remux / transcode: kick the per-session ffmpeg job. Video
     ' node sits idle until the task lands and we wire its content.
-    m.transcodeTask.itemId = m.top.itemId
-    m.transcodeTask.fileId = m.file.id
-    m.transcodeTask.height = decision.height
-    m.transcodeTask.videoCopy = decision.videoCopy
-    m.transcodeTask.supportsHevc = decision.supportsHevc
-    m.transcodeTask.audioStreamIndex = audioStreamIndex
-    m.transcodeTask.positionMs = 0
-    m.transcodeTask.control = "RUN"
-    ' Cache the inputs so the audio picker can re-issue at a new
-    ' audio_stream_index without re-running Playback_Decide.
+    ' Cache the inputs so the pickers can re-issue at a new
+    ' audio_stream_index or burned subtitle without re-running
+    ' Playback_Decide.
     m.lastTranscodeRequest = {
         itemId: m.top.itemId,
         fileId: m.file.id,
         height: decision.height,
         videoCopy: decision.videoCopy,
-        supportsHevc: decision.supportsHevc
+        supportsHevc: decision.supportsHevc,
+        audioStreamIndex: audioStreamIndex,
+        burnSubtitleStreamIndex: -1
     }
+    runTranscodeStart(m.lastTranscodeRequest, 0)
+end sub
+
+' Fire the transcode start for a cached request at positionMs.
+sub runTranscodeStart(req as Object, positionMs as Integer)
+    m.transcodeTask.itemId = req.itemId
+    m.transcodeTask.fileId = req.fileId
+    m.transcodeTask.height = req.height
+    m.transcodeTask.videoCopy = req.videoCopy
+    m.transcodeTask.supportsHevc = req.supportsHevc
+    m.transcodeTask.audioStreamIndex = req.audioStreamIndex
+    m.transcodeTask.burnSubtitleStreamIndex = req.burnSubtitleStreamIndex
+    m.transcodeTask.positionMs = positionMs
+    m.transcodeTask.control = "RUN"
 end sub
 
 sub startDirectPlayback(serverUrl as String)
@@ -368,6 +405,7 @@ sub startOptimizedPlayback(plan as Object)
 
     m.playbackMode = "optimized"
     m.optimizedFallback = plan.fallback
+    m.streamOffsetMs = 0
     ' Probed like a direct play when the Video node errors.
     m.directStreamPath = AssetOptimizedPath(plan.url, token)
 
@@ -391,7 +429,7 @@ sub fallBackFromOptimized(audioStreamIndex as Integer)
     fb = m.optimizedFallback
     if fb = invalid then return
     m.optimizedFallback = invalid
-    posMs = Int(m.video.position * 1000)
+    posMs = playheadMs()
     if posMs > 0 then m.item.view_offset_ms = posMs
     m.video.control = "stop"
     m.directStreamPath = ""
@@ -416,16 +454,23 @@ sub onTranscodeTaskState()
         return
     end if
     ' Refused over the account's stream limit. A first start can't play at
-    ' all; a refused audio switch leaves the current session playing.
+    ' all; a refused track switch leaves the current session playing.
     limitMsg = m.transcodeTask.limitMessage
     if limitMsg <> invalid and limitMsg <> ""
         if m.reissuing
-            m.reissuing = false
-            m.activeAudioIndex = m.audioIndexBeforeReissue
+            restoreRefusedReissue()
             showPlayerDialog(PlaybackLimit_Title(), limitMsg, false)
         else
             onStreamLimit(limitMsg)
         end if
+        return
+    end if
+    ' A track switch the server refused with 400 (an audio track out of
+    ' range, a subtitle it can't burn in): say why and keep playing.
+    refusal = m.transcodeTask.refusal
+    if m.reissuing and refusal <> invalid and refusal <> ""
+        restoreRefusedReissue()
+        showPlayerDialog(TranscodeRequest_RefusalTitle(), refusal, false)
         return
     end if
     sess = m.transcodeTask.result
@@ -442,11 +487,12 @@ sub onTranscodeTaskState()
         return
     end if
 
-    ' If this completion is the result of an audio re-issue, the
-    ' previous session is still live (we deliberately didn't DELETE
-    ' it up front so a mid-flight bail had something to clean up).
-    ' Now that the replacement has landed, retire the old one.
-    if m.reissuing = true
+    ' If this completion is the result of a re-issue, the previous
+    ' session is still live (we deliberately didn't DELETE it up front
+    ' so a mid-flight bail had something to clean up). Now that the
+    ' replacement has landed, retire the old one.
+    reissued = m.reissuing = true
+    if reissued
         m.reissuing = false
         retired = m.session
         m.session = { session_id: sess.session_id, token: sess.token }
@@ -464,7 +510,22 @@ sub onTranscodeTaskState()
     content.title = m.item.title
     content.url = streamUrl
     content.streamFormat = streamFormat
-    if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
+    if reissued
+        ' A re-issued session's content begins at start_offset_sec — the
+        ' playhead it was asked for, the keyframe before it on a remux, or
+        ' 0 for a full-timeline ABR playlist — and its clock starts at 0
+        ' there. Map positions back through m.streamOffsetMs and seek the
+        ' rest of the way to the playhead. A server that sends no offset
+        ' started exactly at the playhead.
+        m.streamOffsetMs = m.reissuePositionMs
+        startSec = sess.start_offset_sec
+        if startSec <> invalid and (type(startSec) = "Float" or type(startSec) = "Double" or type(startSec) = "Integer" or type(startSec) = "roFloat" or type(startSec) = "roDouble" or type(startSec) = "roInt") and startSec >= 0
+            m.streamOffsetMs = Int(startSec * 1000)
+        end if
+        if m.reissuePositionMs - m.streamOffsetMs >= 1000
+            content.playStart = Int((m.reissuePositionMs - m.streamOffsetMs) / 1000)
+        end if
+    else if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
 
@@ -483,13 +544,13 @@ sub onVideoState()
         ' Discrete pause report — pushes the resume offset to the
         ' server immediately (a paused player is exactly when another
         ' device goes looking for it).
-        reportProgress(Int(m.video.position * 1000), "paused")
+        reportProgress(playheadMs(), "paused")
     else if state = "finished"
         ' Terminal report at full duration so the server scrobbles
         ' the item watched instead of leaving a dangling resume
         ' offset just shy of the end.
-        endMs = Int(m.video.duration * 1000)
-        if endMs <= 0 then endMs = Int(m.video.position * 1000)
+        endMs = streamDurationMs()
+        if endMs <= 0 then endMs = playheadMs()
         reportProgress(endMs, "stopped")
         ' Auto-advance at end-of-stream for any item type that
         ' has a meaningful "next sibling" — episodes, podcast
@@ -531,10 +592,31 @@ end sub
 ' we use it as our universal scheduler for marker windows and the
 ' Up Next overlay lead-in.
 sub onVideoPosition()
-    posMs = Int(m.video.position * 1000)
+    posMs = playheadMs()
     updateActiveMarker(posMs)
     maybeShowUpNext(posMs)
     maybeReportProgress(posMs)
+end sub
+
+' The playhead in the item, in ms. The Video node's clock starts at 0
+' where its stream starts, which for a re-issued session (audio switch,
+' subtitle burn-in) is m.streamOffsetMs into the item.
+function playheadMs() as Integer
+    return m.streamOffsetMs + Int(m.video.position * 1000)
+end function
+
+' The item's duration as the stream knows it, in ms; 0 when unknown.
+function streamDurationMs() as Integer
+    if m.video.duration <= 0 then return 0
+    return m.streamOffsetMs + Int(m.video.duration * 1000)
+end function
+
+' Seek to a position in the item. A re-issued stream can't go back past
+' its own start.
+sub seekToMs(ms as Dynamic)
+    rel = ms - m.streamOffsetMs
+    if rel < 0 then rel = 0
+    m.video.seek = rel / 1000
 end sub
 
 ' ── Markers ────────────────────────────────────────────────────────
@@ -607,7 +689,7 @@ sub skipActiveMarker()
     if m.activeMarker = invalid then return
     key = m.activeMarker.start_ms.ToStr()
     m.dismissedMarkers[key] = true
-    m.video.seek = m.activeMarker.end_ms / 1000
+    seekToMs(m.activeMarker.end_ms)
     m.skipMarker.visible = false
     m.activeMarker = invalid
 end sub
@@ -628,7 +710,7 @@ sub maybeShowUpNext(posMs as Integer)
     ' Music tracks + audiobook chapters chain silently at EOS — no
     ' overlay because the closing seconds are part of the content.
     if m.item.type = "track" or m.item.type = "audiobook_chapter" then return
-    durationMs = Int(m.video.duration * 1000)
+    durationMs = streamDurationMs()
     if durationMs <= 0 then return
     if durationMs - posMs > m.UP_NEXT_LEAD_MS then return
 
@@ -642,7 +724,7 @@ sub acceptUpNext()
     if m.nextSibling = invalid then return
     ' The user is abandoning the tail of the current item — record a
     ' terminal report at the playhead so the server closes it out.
-    posMs = Int(m.video.position * 1000)
+    posMs = playheadMs()
     if posMs > 0 then reportProgress(posMs, "stopped")
     goToNext(m.nextSibling)
 end sub
@@ -701,7 +783,7 @@ sub reportProgress(posMs as Integer, state as String)
     if posMs = m.lastReportedPositionMs and state = m.lastReportedState then return
 
     durationMs = 0
-    if m.video <> invalid and m.video.duration > 0 then durationMs = Int(m.video.duration * 1000)
+    if m.video <> invalid and m.video.duration > 0 then durationMs = streamDurationMs()
     if durationMs = 0 and m.item.duration_ms <> invalid then durationMs = m.item.duration_ms
 
     body = {
@@ -791,7 +873,7 @@ sub onAdminStop(message as String)
     m.upNext.visible = false
     m.skipMarker.visible = false
     if m.trackPickerMode <> "" then closeTrackPicker()
-    posMs = Int(m.video.position * 1000)
+    posMs = playheadMs()
     if posMs > 0 then reportProgress(posMs, "stopped")
     m.video.control = "stop"
     stopTranscodeSession()
@@ -851,9 +933,9 @@ sub onSyncTaskState()
     if parsed.view_offset_ms = invalid then return
     newPos = parsed.view_offset_ms
     if m.lastReportedPositionMs >= 0 and Abs(newPos - m.lastReportedPositionMs) < 2000 then return
-    localMs = Int(m.video.position * 1000)
+    localMs = playheadMs()
     if Abs(newPos - localMs) < 2000 then return
-    m.video.seek = newPos / 1000
+    seekToMs(newPos)
 end sub
 
 ' Routed by the channel's onKeyEvent in the application. Roku
@@ -921,7 +1003,7 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
         ' playback never actually started (or the user backed out at
         ' the head); skip the write so a stopped@0 doesn't clobber an
         ' existing resume offset.
-        posMs = Int(m.video.position * 1000)
+        posMs = playheadMs()
         if posMs > 0 then reportProgress(posMs, "stopped")
         m.video.control = "stop"
         bailToHome()
@@ -1012,14 +1094,15 @@ function buildSubtitleContent() as Object
         offNode.title = "  Off"
     end if
     if m.file = invalid or m.file.subtitle_streams = invalid then return root
+    ' Through a session an image track is burned in when picked — say so
+    ' on its row. Not on a multi-part movie, which can't be burned.
+    burnable = inServerSession() and not m.stacked
     for i = 0 to m.file.subtitle_streams.Count() - 1
         s = m.file.subtitle_streams[i]
         node = root.createChild("ContentNode")
         prefix = "  "
         if i = m.activeSubtitleIndex then prefix = "● "
-        lang = "und"
-        if s.language <> invalid and s.language <> "" then lang = s.language
-        parts = [lang]
+        parts = [Subtitles_LangLabel(s, Subtitles_WillBurn(s, burnable))]
         if s.forced = true then parts.push("forced")
         ' SDH (Subtitles for the Deaf and Hard-of-hearing). The server
         ' now flags these per stream (subtitle_streams[].sdh); mark the
@@ -1049,23 +1132,29 @@ end function
 ' LabelList delivers itemSelected when the user presses OK on a row.
 sub onTrackPickerSelect()
     idx = m.trackPickerList.itemSelected
+    ' One re-issue at a time: the start task is busy until the new
+    ' session lands, and a second pick would race it.
+    if m.reissuing
+        closeTrackPicker()
+        return
+    end if
+    m.audioIndexBeforeReissue = m.activeAudioIndex
+    m.subtitleIndexBeforeReissue = m.activeSubtitleIndex
     if m.trackPickerMode = "audio"
         if m.file <> invalid and m.file.audio_streams <> invalid
             picked = m.file.audio_streams[idx]
             if picked <> invalid and idx <> m.activeAudioIndex
-                m.audioIndexBeforeReissue = m.activeAudioIndex
                 m.activeAudioIndex = idx
-                ' Server-side audio_stream_index is the stream's
-                ' "index" field (the ffprobe stream index), not its
-                ' position in the array. Pass that through.
-                streamIdx = picked.index
-                if streamIdx = invalid then streamIdx = idx
+                ' audio_stream_index counts audio streams (`-map 0:a:N`):
+                ' the track's position, not its ffprobe stream index.
+                streamIdx = TranscodeRequest_AudioIndex(m.file.audio_streams, idx)
                 if m.playbackMode = "optimized" and m.optimizedFallback <> invalid
                     ' The optimized version carries only the default audio
                     ' track: switch to the source for the picked one.
                     fallBackFromOptimized(streamIdx)
                 else
-                    reissueAudioTrack(streamIdx)
+                    ' A burned-in subtitle stays burned in.
+                    reissueSession(streamIdx, m.burnSubtitleIndex)
                 end if
             end if
         end if
@@ -1075,27 +1164,66 @@ sub onTrackPickerSelect()
         ' preferred-language auto-apply for the rest of this session, so
         ' a late-arriving prefs/track event can't override the user.
         m.userSelectedSubtitle = true
-        if idx = 0
-            m.activeSubtitleIndex = -1
-            ' Roku's Video node uses globalCaptionMode + the
-            ' selected subtitle index from `availableSubtitleTracks`.
-            ' Setting subtitleTrack to "" disables. Clear any deferred
-            ' pick so a not-yet-applied selection doesn't re-enable
-            ' subtitles after the user turned them off.
-            m.pendingSubtitleIndex = -1
-            m.video.subtitleTrack = ""
-        else
-            m.activeSubtitleIndex = idx - 1
-            applySubtitleSelection(m.activeSubtitleIndex)
-        end if
         closeTrackPicker()
+        pickSubtitle(idx - 1)
     end if
 end sub
 
-' Re-issue the active transcode session at the current playhead with
-' a new audio_stream_index. Server emits one audio per session for
-' transcode/remux mode, so language switching can't ride the player's
-' track selector — only a fresh session carries the chosen language.
+' Apply a subtitle pick: pos is the track's position in subtitle_streams,
+' -1 for Off. Through a session an image track is burned in by a re-issue,
+' and turning it off (Off, or any other track) re-issues without it;
+' everything else goes to the firmware's track selector (Subtitles_PickPlan).
+sub pickSubtitle(pos as Integer)
+    streams = invalid
+    if m.file <> invalid then streams = m.file.subtitle_streams
+    plan = Subtitles_PickPlan(streams, pos, {
+        serverSession: inServerSession(),
+        stacked: m.stacked,
+        burnIndex: m.burnSubtitleIndex
+    })
+    if plan.kind = "none" then return
+    if plan.kind = "unsupported"
+        showPlayerDialog(TranscodeRequest_RefusalTitle(), TranscodeRequest_BurnUnsupportedText(), false)
+        return
+    end if
+    m.activeSubtitleIndex = pos
+    if plan.kind = "reissue"
+        audioIdx = -1
+        if m.lastTranscodeRequest.audioStreamIndex <> invalid then audioIdx = m.lastTranscodeRequest.audioStreamIndex
+        reissueSession(audioIdx, plan.burnIndex)
+        if plan.burnIndex >= 0
+            ' The picture carries this one: nothing for the firmware.
+            m.pendingSubtitleIndex = -1
+            m.video.subtitleTrack = ""
+            return
+        end if
+    end if
+    if pos < 0
+        ' Roku's Video node uses globalCaptionMode + the
+        ' selected subtitle index from `availableSubtitleTracks`.
+        ' Setting subtitleTrack to "" disables. Clear any deferred
+        ' pick so a not-yet-applied selection doesn't re-enable
+        ' subtitles after the user turned them off.
+        m.pendingSubtitleIndex = -1
+        m.video.subtitleTrack = ""
+    else
+        applySubtitleSelection(pos)
+    end if
+end sub
+
+' True while playing through a remux / transcode session (the cached
+' request a re-issue starts from), false on a direct or optimized play.
+function inServerSession() as Boolean
+    if m.lastTranscodeRequest = invalid then return false
+    return m.playbackMode = "remux" or m.playbackMode = "transcode"
+end function
+
+' Re-issue the active transcode session at the current playhead with a
+' new audio_stream_index (relative; -1 = server default) and burned-in
+' subtitle (absolute; -1 = none). The server emits one audio track and no
+' subtitles per transcode / remux session, so switching language or
+' burning in a subtitle can't ride the player's track selectors — only a
+' fresh session carries the change.
 '
 ' Leak guard: the old code DELETEd the current session and nulled
 ' m.session immediately, then fired the new task. If the user left
@@ -1105,21 +1233,32 @@ end sub
 ' current session until the new one is confirmed in onTranscodeTaskState,
 ' so there is always a live, deletable session for cleanup to tear
 ' down. The replaced session is DELETEd the moment its successor lands.
-sub reissueAudioTrack(audioStreamIndex as Integer)
+sub reissueSession(audioStreamIndex as Integer, burnIndex as Integer)
     if m.lastTranscodeRequest = invalid then return
-    posMs = Int(m.video.position * 1000)
+    req = m.lastTranscodeRequest
+    m.audioRequestBeforeReissue = req.audioStreamIndex
+    m.burnIndexBeforeReissue = m.burnSubtitleIndex
+    req.audioStreamIndex = audioStreamIndex
+    req.burnSubtitleStreamIndex = burnIndex
+    m.burnSubtitleIndex = burnIndex
+    m.reissuePositionMs = playheadMs()
     ' Mark the current session as the one to retire once the new one
     ' arrives; leave m.session intact as the cleanup fallback.
     m.reissuing = true
-    req = m.lastTranscodeRequest
-    m.transcodeTask.itemId = req.itemId
-    m.transcodeTask.fileId = req.fileId
-    m.transcodeTask.height = req.height
-    m.transcodeTask.videoCopy = req.videoCopy
-    m.transcodeTask.supportsHevc = req.supportsHevc
-    m.transcodeTask.audioStreamIndex = audioStreamIndex
-    m.transcodeTask.positionMs = posMs
-    m.transcodeTask.control = "RUN"
+    runTranscodeStart(req, m.reissuePositionMs)
+end sub
+
+' The server refused a re-issue: the current session keeps playing, so
+' put the pickers and the cached request back the way they were.
+sub restoreRefusedReissue()
+    m.reissuing = false
+    m.activeAudioIndex = m.audioIndexBeforeReissue
+    m.activeSubtitleIndex = m.subtitleIndexBeforeReissue
+    m.burnSubtitleIndex = m.burnIndexBeforeReissue
+    if m.lastTranscodeRequest <> invalid
+        m.lastTranscodeRequest.audioStreamIndex = m.audioRequestBeforeReissue
+        m.lastTranscodeRequest.burnSubtitleStreamIndex = m.burnIndexBeforeReissue
+    end if
 end sub
 
 ' Map the user's pick to the firmware Video node's subtitle selector.

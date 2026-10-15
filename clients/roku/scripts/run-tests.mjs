@@ -64,6 +64,16 @@ const suites = [
     test: 'tests/Versions_test.brs',
   },
   {
+    name: 'TranscodeRequest',
+    sources: ['source/util/Json.brs', 'source/api/ApiResult.brs', 'source/playback/TranscodeRequest.brs'],
+    test: 'tests/TranscodeRequest_test.brs',
+  },
+  {
+    name: 'Subtitles',
+    sources: ['source/playback/Subtitles.brs'],
+    test: 'tests/Subtitles_test.brs',
+  },
+  {
     name: 'Music',
     sources: ['source/api/Endpoints.brs', 'source/playback/Siblings.brs', 'source/util/Music.brs'],
     test: 'tests/Music_test.brs',
