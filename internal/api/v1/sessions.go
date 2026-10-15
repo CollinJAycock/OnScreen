@@ -131,7 +131,6 @@ func (h *NativeSessionsHandler) WithSyncBroker(b *notification.Broker) *NativeSe
 	return h
 }
 
-// WithAudit records admin stops (transcode.stop, reason admin_terminated).
 // WithRemotePolicy makes the LAN / remote label honour the admin's extra
 // home networks (Settings ▸ Transcode), the same classifier the internet
 // streaming limit uses.
@@ -140,6 +139,7 @@ func (h *NativeSessionsHandler) WithRemotePolicy(p RemoteStreamPolicyReader) *Na
 	return h
 }
 
+// WithAudit records admin stops (transcode.stop, reason admin_terminated).
 func (h *NativeSessionsHandler) WithAudit(a *audit.Logger) *NativeSessionsHandler {
 	h.audit = a
 	return h
