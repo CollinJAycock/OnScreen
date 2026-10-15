@@ -344,7 +344,7 @@ Media elements can't attach an `Authorization` header, so these routes also acce
 | `GET/PATCH` | `/settings` | Server settings (TMDB key) |
 | `GET/POST/PATCH/DELETE` | `/webhooks` | Webhook CRUD |
 | `POST` | `/webhooks/{id}/test` | Send test payload |
-| `PUT/DELETE` | `/users/me/pin` | Set / clear 4-digit PIN |
+| `PUT` | `/users/me/password` | Change your own password (ends your other sign-ins) |
 | `GET` | `/fs/browse` | Directory browser (for path picker) |
 
 ---

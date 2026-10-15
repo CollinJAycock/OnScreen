@@ -190,3 +190,50 @@ func TestUpdateSystem_StoresAllFieldsAsOverrides(t *testing.T) {
 		t.Errorf("DiscoveryPort not stored: %+v", got.DiscoveryPort)
 	}
 }
+
+func TestGetTranscodeConfig_FillsUnsetEncoderTuning(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := NewSettingsHandler(&mockSettingsService{transcodeCfg: settings.TranscodeConfig{
+		NVENCPreset: "p6",
+	}}, logger).
+		SetTranscodeDefaults(settings.TranscodeConfig{
+			NVENCPreset: "p4", NVENCTune: "ll", NVENCRC: "cbr", MaxrateRatio: 2,
+		})
+	rec := httptest.NewRecorder()
+	h.GetTranscodeConfig(rec, httptest.NewRequest(http.MethodGet, "/settings/transcode-config", nil))
+	got := decodeTranscodeConfig(t, rec)
+	if got.NVENCPreset != "p6" {
+		t.Errorf("stored preset should win: got %q", got.NVENCPreset)
+	}
+	if got.NVENCTune != "ll" || got.NVENCRC != "cbr" || got.MaxrateRatio != 2 {
+		t.Errorf("unset tuning not filled from the running values: %+v", got)
+	}
+}
+
+func TestUpdateTranscodeConfig_RefusesUnknownEncoderTuning(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	h := NewSettingsHandler(&mockSettingsService{}, logger)
+	for _, body := range []string{
+		`{"nvenc_preset":"p9"}`,
+		`{"nvenc_tune":"film"}`,
+		`{"nvenc_rc":"vbr -y /tmp/x"}`,
+		`{"maxrate_ratio":0.5}`,
+		`{"maxrate_ratio":9}`,
+	} {
+		rec := httptest.NewRecorder()
+		h.UpdateTranscodeConfig(rec, httptest.NewRequest(http.MethodPut, "/settings/transcode-config", strings.NewReader(body)))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("%s: status = %d, want 400", body, rec.Code)
+		}
+	}
+	for _, body := range []string{
+		`{}`,
+		`{"nvenc_preset":"p7","nvenc_tune":"ull","nvenc_rc":"constqp","maxrate_ratio":3}`,
+	} {
+		rec := httptest.NewRecorder()
+		h.UpdateTranscodeConfig(rec, httptest.NewRequest(http.MethodPut, "/settings/transcode-config", strings.NewReader(body)))
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("%s: status = %d, want 204", body, rec.Code)
+		}
+	}
+}

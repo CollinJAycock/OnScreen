@@ -34,12 +34,6 @@ UPDATE users SET password_hash = $2, updated_at = NOW() WHERE id = $1;
 -- name: CountUsers :one
 SELECT COUNT(*) FROM users;
 
--- name: SetUserPIN :exec
-UPDATE users SET pin = $2, updated_at = NOW() WHERE id = $1;
-
--- name: ClearUserPIN :exec
-UPDATE users SET pin = NULL, updated_at = NOW() WHERE id = $1;
-
 -- name: DeleteUser :exec
 DELETE FROM users WHERE id = $1;
 
@@ -223,10 +217,10 @@ SELECT preferred_audio_lang, preferred_subtitle_lang, max_content_rating,
        max_video_bitrate_kbps, max_audio_bitrate_kbps, max_video_height,
        preferred_video_codec, forced_subtitles_only,
        episode_use_show_poster, hub_layout,
-       -- Whether THIS account has a PIN. The Settings page reads its own PIN
-       -- status here rather than from the switchable-profiles list, which is
-       -- scoped to the caller's managed children and never contains the caller.
-       (pin IS NOT NULL)::boolean AS has_pin
+       -- Whether the account signs in with a local password (false for SSO /
+       -- LDAP-only accounts and managed profiles): the Account page shows the
+       -- change-password form only when there is one to change.
+       (password_hash IS NOT NULL)::boolean AS has_password
 FROM users
 WHERE id = $1;
 

@@ -8,8 +8,6 @@ const mockEmailSendTest = vi.hoisted(() => vi.fn());
 const mockListSwitchable = vi.hoisted(() => vi.fn());
 const mockGetPrefs = vi.hoisted(() => vi.fn());
 const mockSetPrefs = vi.hoisted(() => vi.fn());
-const mockSetPin = vi.hoisted(() => vi.fn());
-const mockClearPin = vi.hoisted(() => vi.fn());
 const mockGetUser = vi.hoisted(() => vi.fn());
 const mockSubAutoGet = vi.hoisted(() => vi.fn());
 const mockSubAutoUpdate = vi.hoisted(() => vi.fn());
@@ -21,8 +19,6 @@ vi.mock('$lib/api', () => ({
     listSwitchable: mockListSwitchable,
     getPreferences: mockGetPrefs,
     setPreferences: mockSetPrefs,
-    setPin: mockSetPin,
-    clearPin: mockClearPin,
   },
   emailApi: { enabled: mockEmailEnabled, sendTest: mockEmailSendTest },
   api: { getUser: mockGetUser },

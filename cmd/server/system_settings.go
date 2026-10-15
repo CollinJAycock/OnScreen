@@ -126,13 +126,31 @@ func nodeEffective(cfg *config.Config) settings.NodeSettings {
 }
 
 // applyTranscodeConfig overrides the env-derived transcoder knobs with any
-// values set in Settings ▸ Transcode (stored in TranscodeConfig): output
-// ceilings (0 = "unset, keep env default") and the ABR ladder (pointer fields,
-// nil = "unset"). The server reads cfg.TranscodeMax* / TranscodeABR* directly
-// when starting a session, so merging here (before any session) is all that's
-// required. NVENC/maxrate tuning is consumed elsewhere and left untouched.
+// values set in Settings ▸ Transcode (stored in TranscodeConfig): encoder
+// tuning and output ceilings (zero = "unset, keep env default") and the ABR
+// ladder (pointer fields, nil = "unset"). The server reads cfg.TranscodeMax* /
+// TranscodeABR* when starting a session and hands cfg.TranscodeNVENC* /
+// TranscodeMaxrateRatio to the embedded worker and the download runner when
+// it builds them, so merging here (before any of that) is all that's required.
+// Remote workers keep their own TRANSCODE_NVENC_* / TRANSCODE_MAXRATE_RATIO.
 func applyTranscodeConfig(cfg *config.Config, tc settings.TranscodeConfig, logger *slog.Logger) {
 	changed := 0
+	if tc.NVENCPreset != "" {
+		cfg.TranscodeNVENCPreset = tc.NVENCPreset
+		changed++
+	}
+	if tc.NVENCTune != "" {
+		cfg.TranscodeNVENCTune = tc.NVENCTune
+		changed++
+	}
+	if tc.NVENCRC != "" {
+		cfg.TranscodeNVENCRC = tc.NVENCRC
+		changed++
+	}
+	if tc.MaxrateRatio > 0 {
+		cfg.TranscodeMaxrateRatio = tc.MaxrateRatio
+		changed++
+	}
 	if tc.MaxBitrateKbps > 0 {
 		cfg.TranscodeMaxBitrate = tc.MaxBitrateKbps
 		changed++
@@ -180,10 +198,14 @@ func systemEffective(cfg *config.Config) settings.SystemConfig {
 }
 
 // transcodeEffective snapshots the transcoder knobs the UI fills as defaults
-// (output ceilings + ABR ladder) from the merged config, so a blank stored row
-// shows the running values rather than zeros / false.
+// (encoder tuning, output ceilings, ABR ladder) from the merged config, so a
+// blank stored row shows the running values rather than zeros / false.
 func transcodeEffective(cfg *config.Config) settings.TranscodeConfig {
 	return settings.TranscodeConfig{
+		NVENCPreset:      cfg.TranscodeNVENCPreset,
+		NVENCTune:        cfg.TranscodeNVENCTune,
+		NVENCRC:          cfg.TranscodeNVENCRC,
+		MaxrateRatio:     cfg.TranscodeMaxrateRatio,
 		MaxBitrateKbps:   cfg.TranscodeMaxBitrate,
 		MaxWidth:         cfg.TranscodeMaxWidth,
 		MaxHeight:        cfg.TranscodeMaxHeight,

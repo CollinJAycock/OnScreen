@@ -3990,31 +3990,56 @@ paths:
         '413': { description: File over 1 MB or over 10,000 entries (`PLAYLIST_TOO_LARGE`). }
 
   # ── Users / profile ────────────────────────────────────────────────────────
-  /api/v1/users/me/pin:
+  /api/v1/users/me/password:
     put:
-      summary: Set or change the caller's PIN
+      summary: Change the caller's password
       tags: [Users]
+      description: |
+        Checks the current password, stores the new one and ends every OTHER
+        sign-in of the account: their sessions are deleted and the session
+        epoch is bumped, so their access and asset tokens stop working. This
+        sign-in stays; its access token is refreshed on the next request. A
+        token without a session id (from an old sign-in) ends every session,
+        this one included (`signed_out: true`). Not accepted with an API key
+        or from a PIN-switched session (403 `PIN_SESSION_FORBIDDEN`). Since
+        v2.6.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [pin]
+              required: [current_password, new_password]
               properties:
-                pin: { type: string, minLength: 4, maxLength: 8 }
+                current_password: { type: string }
+                new_password: { type: string, minLength: 12, description: Must differ from the current password. }
       responses:
-        '204': { description: Saved. }
-    delete:
-      summary: Clear the caller's PIN
-      tags: [Users]
-      responses:
-        '204': { description: Cleared. }
+        '200':
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      other_sessions_revoked: { type: integer }
+                      signed_out: { type: boolean, description: True when this sign-in ended too. }
+        '400': { description: Missing current password, new password too short, or unchanged. }
+        '403': { description: '`INVALID_CREDENTIALS` (wrong current password) or `PIN_SESSION_FORBIDDEN`.' }
+        '409': { description: '`NO_LOCAL_PASSWORD`: the account signs in through SSO / LDAP or is a managed profile.' }
+        '429': { description: '`RATE_LIMITED`: five wrong current passwords in 15 minutes.' }
 
   /api/v1/users/me/preferences:
     get:
       summary: Get caller preferences
       tags: [Users]
+      description: |
+        Also reports *(v2.6)* `has_password`: whether the
+        account signs in with an OnScreen password (false for SSO / LDAP-only
+        accounts and managed profiles), i.e. whether
+        `PUT /users/me/password` can work.
       responses:
         '200':
           description: Preferences.

@@ -17,7 +17,7 @@ real differences relevant to OnScreen:
 |---|---|
 | No Google Play Services | None — we don't use GMS |
 | Amazon Appstore (not Play Store) | Different submission process; same code, built as the `firetv` flavor, which drops the EPG permissions and (since 1.4.1) Live TV and online subtitle search — see [Project layout](#project-layout) |
-| Alexa instead of Google Assistant | Voice search isn't wired in our app yet |
+| Alexa instead of Google Assistant | Search shows a microphone only where a speech recognizer is installed (`ui/search/VoiceSearch.kt`); many Fire TVs have none, so there you type, and the remote's Alexa button doesn't search inside the app |
 | Fire TV remote (no colored buttons on most models) | Our skip-intro / skip-credits use OK; no colored-button dependency |
 | Different banner / icon size requirements for the Amazon storefront | Just additional submission assets |
 
@@ -146,5 +146,5 @@ codebase here. Today that flavor:
   endpoints out of the Fire TV APK. `FlavorFeaturesTest` in
   `src/testFiretv` and `src/testGoogletv` pins the values.
 
-Anything else (e.g., Alexa voice, Fire-specific Amazon SSO) belongs
+Anything else (e.g., Alexa in-app search, Fire-specific Amazon SSO) belongs
 in that same flavor.

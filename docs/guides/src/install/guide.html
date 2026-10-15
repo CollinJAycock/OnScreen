@@ -1,0 +1,1518 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OnScreen Install &amp; Administration Guide</title>
+<style>
+  :root {
+    --accent: #6d5dfc;
+    --accent-soft: #efedff;
+    --ink: #1d1d27;
+    --muted: #5b5d6b;
+    --rule: #d9dae3;
+    --code-bg: #f4f4f8;
+    --note-bg: #eef3ff;
+    --note-rule: #5b7cfa;
+    --warn-bg: #fff4e8;
+    --warn-rule: #e08a1e;
+    --new-bg: #f1efff;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body {
+    margin: 0;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, "Liberation Sans", sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.5;
+    color: var(--ink);
+    background: #fff;
+  }
+  p { margin: 0 0 0.6em; }
+  a { color: var(--accent); text-decoration: none; }
+  strong { font-weight: 600; }
+
+  /* ── Title page ── */
+  .cover {
+    height: 9.3in;
+    display: flex; flex-direction: column; justify-content: space-between;
+    break-after: page;
+  }
+  .cover .band { height: 10px; background: var(--accent); border-radius: 5px; }
+  .cover .brand { font-size: 13pt; font-weight: 700; letter-spacing: 0.04em; color: var(--accent); margin-top: 1.6in; }
+  .cover h1 { font-size: 34pt; line-height: 1.1; margin: 0.15in 0 0.1in; font-weight: 700; border: 0; padding: 0; }
+  .cover .sub { font-size: 15pt; color: var(--muted); }
+  .cover .meta { font-size: 10pt; color: var(--muted); border-top: 1px solid var(--rule); padding-top: 10px; }
+  .cover .meta p { margin: 0 0 3px; }
+
+  /* ── Table of contents ── */
+  .toc { break-after: page; }
+  .toc h2 { font-size: 18pt; margin: 0 0 12px; border: 0; color: var(--ink); }
+  .toc ol { list-style: none; padding: 0; margin: 0; }
+  .toc > ol > li { margin: 7px 0 2px; font-weight: 600; break-inside: avoid; }
+  .toc > ol > li > a { color: var(--ink); }
+  .toc ol ol { margin: 2px 0 4px 22px; font-weight: 400; columns: 2; column-gap: 24px; }
+  .toc ol ol li { font-size: 9.5pt; margin: 1px 0; break-inside: avoid; }
+  .toc ol ol a { color: var(--muted); }
+  .toc .n { display: inline-block; min-width: 2.2em; color: var(--accent); }
+
+  /* ── Headings ── */
+  h1.chapter {
+    break-before: page;
+    font-size: 22pt; line-height: 1.2; margin: 0 0 14px; padding-bottom: 8px;
+    border-bottom: 3px solid var(--accent); font-weight: 700;
+  }
+  h1.chapter .num { color: var(--accent); margin-right: 10px; }
+  h2 { font-size: 14pt; margin: 20px 0 8px; font-weight: 650; break-after: avoid; }
+  h2 .num { color: var(--accent); margin-right: 8px; }
+  h3 { font-size: 11.5pt; margin: 14px 0 6px; font-weight: 650; break-after: avoid; }
+  h4 { font-size: 10.5pt; margin: 10px 0 4px; font-weight: 650; break-after: avoid; }
+
+  ul, ol { margin: 0 0 0.7em; padding-left: 1.4em; }
+  li { margin: 0.15em 0; }
+
+  /* ── Code ── */
+  code {
+    font-family: "Cascadia Mono", Consolas, "DejaVu Sans Mono", Menlo, monospace;
+    font-size: 0.88em; background: var(--code-bg); padding: 0.05em 0.3em; border-radius: 3px;
+    overflow-wrap: anywhere;
+  }
+  pre {
+    background: var(--code-bg); border: 1px solid var(--rule); border-left: 3px solid var(--accent);
+    border-radius: 4px; padding: 8px 10px; margin: 6px 0 12px;
+    white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere;
+    font-size: 8.4pt; line-height: 1.4; break-inside: avoid;
+  }
+  pre.long { break-inside: auto; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  /* ── Tables ── */
+  table { width: 100%; border-collapse: collapse; margin: 6px 0 14px; font-size: 9.2pt; }
+  th, td { border: 1px solid var(--rule); padding: 4px 7px; text-align: left; vertical-align: top; }
+  th { background: var(--accent-soft); font-weight: 600; }
+  tr { break-inside: avoid; }
+  table.keep { break-inside: avoid; }
+  thead { display: table-header-group; }
+  td code, th code { font-size: 0.9em; }
+  table.env td:first-child { width: 33%; }
+  table.enc code { white-space: nowrap; overflow-wrap: normal; }
+  table.enc td:first-child { width: 20%; }
+  table.env td:nth-child(2) { width: 17%; }
+
+  /* ── Callouts ── */
+  .note, .warn, .new {
+    border-left: 4px solid var(--note-rule); background: var(--note-bg);
+    padding: 7px 11px; margin: 8px 0 12px; border-radius: 0 4px 4px 0; break-inside: avoid;
+  }
+  .warn { border-color: var(--warn-rule); background: var(--warn-bg); }
+  .new { border-color: var(--accent); background: var(--new-bg); }
+  .note::before, .warn::before, .new::before {
+    display: block; font-weight: 700; font-size: 8.5pt; letter-spacing: 0.06em; margin-bottom: 2px;
+  }
+  .note::before { content: "NOTE"; color: var(--note-rule); }
+  .warn::before { content: "WARNING"; color: var(--warn-rule); }
+  .new::before { content: "NEW IN v2.6"; color: var(--accent); }
+  .note p:last-child, .warn p:last-child, .new p:last-child,
+  .note ul:last-child, .warn ul:last-child, .new ul:last-child { margin-bottom: 0; }
+
+  /* ── Figures ── */
+  figure { margin: 10px 0 16px; text-align: center; break-inside: avoid; }
+  figure img {
+    max-width: 100%; max-height: 5.2in; border: 1px solid var(--rule); border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+  }
+  figure.short img { max-height: 3.8in; }
+  figcaption { font-size: 8.8pt; color: var(--muted); margin-top: 5px; }
+  figcaption b { color: var(--ink); }
+
+  .diagram { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin: 8px 0 14px; break-inside: avoid; }
+  .diagram .box { border: 1px solid var(--rule); border-radius: 6px; padding: 7px 9px; font-size: 9pt; background: #fafafe; }
+  .diagram .box b { display: block; color: var(--accent); font-size: 9.5pt; }
+  .diagram .wide { grid-column: span 3; text-align: center; background: var(--accent-soft); }
+
+  .kv { color: var(--muted); }
+  .small { font-size: 9pt; color: var(--muted); }
+  .path { font-weight: 600; }
+</style>
+</head>
+<body>
+
+<!-- ═══════════════════════════ TITLE PAGE ═══════════════════════════ -->
+<section class="cover">
+  <div class="band"></div>
+  <div>
+    <div class="brand">ONSCREEN</div>
+    <h1>Install &amp; Administration Guide</h1>
+    <div class="sub">Self-hosted media server &middot; version 2.6</div>
+  </div>
+  <div class="meta">
+    <p><strong>Audience:</strong> people who install, configure and run an OnScreen server.</p>
+    <p><strong>Covers:</strong> the Go server and its transcode workers, PostgreSQL and Valkey, the web admin pages, and the settings the TV, phone, Roku, Xbox and desktop apps depend on.</p>
+    <p><strong>Written:</strong> October 2026, against the v2.6 release candidate. Where a setting is described as &ldquo;new in v2.6&rdquo; it does not exist in v2.5.x.</p>
+    <p class="small">Screens in this guide come from a development server; names and addresses in them are placeholders.</p>
+  </div>
+</section>
+
+<!-- ═══════════════════════════ CONTENTS ═══════════════════════════ -->
+<nav class="toc">
+  <h2>Contents</h2>
+  <ol>
+    <li><a href="#ch1"><span class="n">1</span>Introduction</a>
+      <ol>
+        <li><a href="#s1-1"><span class="n">1.1</span>What OnScreen is</a></li>
+        <li><a href="#s1-2"><span class="n">1.2</span>Architecture at a glance</a></li>
+        <li><a href="#s1-3"><span class="n">1.3</span>System requirements</a></li>
+        <li><a href="#s1-4"><span class="n">1.4</span>Supported hardware encoders</a></li>
+        <li><a href="#s1-5"><span class="n">1.5</span>Client apps</a></li>
+      </ol></li>
+    <li><a href="#ch2"><span class="n">2</span>Installation</a>
+      <ol>
+        <li><a href="#s2-1"><span class="n">2.1</span>Choosing an installation path</a></li>
+        <li><a href="#s2-2"><span class="n">2.2</span>Docker Compose (CPU image)</a></li>
+        <li><a href="#s2-3"><span class="n">2.3</span>Docker with an NVIDIA GPU</a></li>
+        <li><a href="#s2-4"><span class="n">2.4</span>Windows installer and portable zip</a></li>
+        <li><a href="#s2-5"><span class="n">2.5</span>Linux portable tarball</a></li>
+        <li><a href="#s2-6"><span class="n">2.6</span>Building from source (bare metal)</a></li>
+        <li><a href="#s2-7"><span class="n">2.7</span>First-run setup</a></li>
+      </ol></li>
+    <li><a href="#ch3"><span class="n">3</span>Configuration reference</a>
+      <ol>
+        <li><a href="#s3-1"><span class="n">3.1</span>How configuration works</a></li>
+        <li><a href="#s3-2"><span class="n">3.2</span>Environment variables</a></li>
+        <li><a href="#s3-3"><span class="n">3.3</span>Secrets and key rotation</a></li>
+        <li><a href="#s3-4"><span class="n">3.4</span>Database and migrations</a></li>
+      </ol></li>
+    <li><a href="#ch4"><span class="n">4</span>Networking and remote access</a>
+      <ol>
+        <li><a href="#s4-1"><span class="n">4.1</span>Ports</a></li>
+        <li><a href="#s4-2"><span class="n">4.2</span>Reverse proxy</a></li>
+        <li><a href="#s4-3"><span class="n">4.3</span>TRUSTED_PROXIES and client addresses</a></li>
+        <li><a href="#s4-4"><span class="n">4.4</span>HTTPS</a></li>
+        <li><a href="#s4-5"><span class="n">4.5</span>Cloudflare Tunnel and split segment access</a></li>
+        <li><a href="#s4-6"><span class="n">4.6</span>Automatic router port mapping</a></li>
+        <li><a href="#s4-7"><span class="n">4.7</span>The home network and the internet limit</a></li>
+        <li><a href="#s4-8"><span class="n">4.8</span>LAN discovery and CORS</a></li>
+      </ol></li>
+    <li><a href="#ch5"><span class="n">5</span>Libraries</a>
+      <ol>
+        <li><a href="#s5-1"><span class="n">5.1</span>Library types</a></li>
+        <li><a href="#s5-2"><span class="n">5.2</span>Creating and configuring a library</a></li>
+        <li><a href="#s5-3"><span class="n">5.3</span>Folder and file naming</a></li>
+        <li><a href="#s5-4"><span class="n">5.4</span>Scanning</a></li>
+        <li><a href="#s5-5"><span class="n">5.5</span>Metadata agents and API keys</a></li>
+        <li><a href="#s5-6"><span class="n">5.6</span>Language and episode order</a></li>
+        <li><a href="#s5-7"><span class="n">5.7</span>NFO files</a></li>
+        <li><a href="#s5-8"><span class="n">5.8</span>Editing metadata, Fix Match and labels</a></li>
+        <li><a href="#s5-9"><span class="n">5.9</span>Collections</a></li>
+        <li><a href="#s5-10"><span class="n">5.10</span>Library health and maintenance</a></li>
+      </ol></li>
+    <li><a href="#ch6"><span class="n">6</span>Transcoding and playback</a>
+      <ol>
+        <li><a href="#s6-1"><span class="n">6.1</span>How the play decision works</a></li>
+        <li><a href="#s6-2"><span class="n">6.2</span>The Transcode settings page</a></li>
+        <li><a href="#s6-3"><span class="n">6.3</span>Encoders and tuning</a></li>
+        <li><a href="#s6-4"><span class="n">6.4</span>HDR tone mapping</a></li>
+        <li><a href="#s6-5"><span class="n">6.5</span>The worker fleet</a></li>
+        <li><a href="#s6-6"><span class="n">6.6</span>Limits: quality, bitrate and streams</a></li>
+        <li><a href="#s6-7"><span class="n">6.7</span>Optimized versions and converted downloads</a></li>
+        <li><a href="#s6-8"><span class="n">6.8</span>Subtitles</a></li>
+        <li><a href="#s6-9"><span class="n">6.9</span>Audio passthrough on remux</a></li>
+        <li><a href="#s6-10"><span class="n">6.10</span>Dolby Vision</a></li>
+      </ol></li>
+    <li><a href="#ch7"><span class="n">7</span>Users and security</a>
+      <ol>
+        <li><a href="#s7-1"><span class="n">7.1</span>Users and invites</a></li>
+        <li><a href="#s7-2"><span class="n">7.2</span>Managed profiles, PINs and rating limits</a></li>
+        <li><a href="#s7-3"><span class="n">7.3</span>Per-user restrictions</a></li>
+        <li><a href="#s7-4"><span class="n">7.4</span>Signed-in devices</a></li>
+        <li><a href="#s7-5"><span class="n">7.5</span>Two-factor authentication</a></li>
+        <li><a href="#s7-6"><span class="n">7.6</span>Single sign-on (OIDC, SAML, LDAP)</a></li>
+        <li><a href="#s7-7"><span class="n">7.7</span>Personal API keys</a></li>
+        <li><a href="#s7-8"><span class="n">7.8</span>Rate limits</a></li>
+        <li><a href="#s7-9"><span class="n">7.9</span>Audit log</a></li>
+        <li><a href="#s7-10"><span class="n">7.10</span>Security checklist</a></li>
+      </ol></li>
+    <li><a href="#ch8"><span class="n">8</span>Live TV and DVR</a>
+      <ol>
+        <li><a href="#s8-1"><span class="n">8.1</span>Tuners and live broadcasts</a></li>
+        <li><a href="#s8-2"><span class="n">8.2</span>Program guide (EPG)</a></li>
+        <li><a href="#s8-3"><span class="n">8.3</span>Recordings and post-processing</a></li>
+        <li><a href="#s8-4"><span class="n">8.4</span>Commercial detection</a></li>
+      </ol></li>
+    <li><a href="#ch9"><span class="n">9</span>Integrations</a>
+      <ol>
+        <li><a href="#s9-1"><span class="n">9.1</span>Radarr, Sonarr and requests</a></li>
+        <li><a href="#s9-2"><span class="n">9.2</span>Scrobbling</a></li>
+        <li><a href="#s9-3"><span class="n">9.3</span>OPDS book catalog</a></li>
+        <li><a href="#s9-4"><span class="n">9.4</span>M3U playlists</a></li>
+        <li><a href="#s9-5"><span class="n">9.5</span>Webhooks and notification agents</a></li>
+        <li><a href="#s9-6"><span class="n">9.6</span>Plugins (MCP)</a></li>
+        <li><a href="#s9-7"><span class="n">9.7</span>Import from Plex, Jellyfin or Emby</a></li>
+        <li><a href="#s9-8"><span class="n">9.8</span>Email and the digest</a></li>
+        <li><a href="#s9-9"><span class="n">9.9</span>Object storage</a></li>
+      </ol></li>
+    <li><a href="#ch10"><span class="n">10</span>Tasks and maintenance</a>
+      <ol>
+        <li><a href="#s10-1"><span class="n">10.1</span>Scheduled tasks</a></li>
+        <li><a href="#s10-2"><span class="n">10.2</span>Backup and restore</a></li>
+        <li><a href="#s10-3"><span class="n">10.3</span>Upgrading from v2.5 to v2.6</a></li>
+        <li><a href="#s10-4"><span class="n">10.4</span>Monitoring, metrics and logs</a></li>
+        <li><a href="#s10-5"><span class="n">10.5</span>High availability (optional)</a></li>
+      </ol></li>
+    <li><a href="#ch11"><span class="n">11</span>Troubleshooting</a></li>
+    <li><a href="#ch12"><span class="n">12</span>Appendix</a>
+      <ol>
+        <li><a href="#s12-1"><span class="n">12.1</span>Ports</a></li>
+        <li><a href="#s12-2"><span class="n">12.2</span>File and directory locations</a></li>
+        <li><a href="#s12-3"><span class="n">12.3</span>Command-line tools</a></li>
+        <li><a href="#s12-4"><span class="n">12.4</span>API documentation</a></li>
+      </ol></li>
+  </ol>
+</nav>
+
+<!-- ═══════════════════════════ 1 INTRODUCTION ═══════════════════════════ -->
+<h1 class="chapter" id="ch1"><span class="num">1</span>Introduction</h1>
+
+<h2 id="s1-1"><span class="num">1.1</span>What OnScreen is</h2>
+<p>OnScreen is an open-source, self-hosted media server. It scans your movies, TV shows, anime, music, audiobooks, books and comics, photos, home videos and podcasts, fetches their metadata and artwork, and streams them to a web app and to native apps on TVs, phones, Roku, Xbox and desktop computers. Live TV, DVR, hardware transcoding and single sign-on are part of the core server; there is no paid tier.</p>
+<p>The server is licensed AGPLv3. It is built on PostgreSQL rather than an embedded database, ships as a single Go binary with the web app embedded, and keeps watch state as an append-only event log that a database trigger rolls up into each user's progress.</p>
+
+<h2 id="s1-2"><span class="num">1.2</span>Architecture at a glance</h2>
+<div class="diagram">
+  <div class="box wide"><b>Clients</b>Web app (served by the server) &middot; Android TV / Fire TV &middot; Android phone &middot; Samsung Tizen &middot; LG webOS &middot; Roku &middot; Xbox &middot; desktop app &middot; <code>onscreen-cli</code></div>
+  <div class="box"><b>OnScreen server</b><code>server</code> binary: REST API (<code>/api/v1</code>), web UI, TV web app at <code>/tvapp/</code>, scanner, scheduler, Live TV/DVR, RTMP ingest, and an <em>embedded</em> transcode worker.</div>
+  <div class="box"><b>Transcode workers</b>The embedded worker, plus optional standalone <code>worker</code> processes on other machines. They pick jobs off a shared queue and serve HLS segments the server proxies.</div>
+  <div class="box"><b>FFmpeg</b>Used by the server and workers for probing (<code>ffprobe</code>), remuxing, transcoding, tone mapping, thumbnails and subtitle OCR (with Tesseract).</div>
+  <div class="box"><b>PostgreSQL 16+</b>All persistent data: libraries, items, users, watch events, settings (secrets encrypted with <code>SECRET_KEY</code>).</div>
+  <div class="box"><b>Valkey / Redis 7+</b>Sessions, the transcode job queue and session index, rate limits, caches, and the leader lock for singleton work.</div>
+  <div class="box"><b>Storage</b>Your media folders (local disk, or S3-compatible object storage), and the cache directory (<code>CACHE_PATH</code>) for artwork, thumbnails, converted downloads and optimized versions.</div>
+</div>
+<p>The API tier is stateless: session state lives in Valkey, so several server instances can run behind a load balancer. Everything beyond a single node (Valkey Sentinel, PostgreSQL failover, object storage, a CDN, multi-site DR) is optional and off by default; see <a href="#s10-5">10.5</a>.</p>
+
+<h2 id="s1-3"><span class="num">1.3</span>System requirements</h2>
+<table class="keep">
+  <thead><tr><th>Component</th><th>Version</th><th>Notes</th></tr></thead>
+  <tr><td>PostgreSQL</td><td>16 or newer</td><td>The first migration creates the <code>pg_trgm</code>, <code>pgcrypto</code> and <code>unaccent</code> extensions, which ship with PostgreSQL.</td></tr>
+  <tr><td>Valkey or Redis</td><td>7 or newer</td><td>Sessions, job queue, rate limiting.</td></tr>
+  <tr><td>FFmpeg (+ ffprobe)</td><td>latest stable</td><td>Bundled in the Docker images and the Windows packages; the Linux tarball uses the distribution's FFmpeg.</td></tr>
+  <tr><td>Go</td><td>1.26+</td><td>Only to build from source.</td></tr>
+  <tr><td>Node.js</td><td>24+</td><td>Only to build the web app from source.</td></tr>
+  <tr><td>goose</td><td>v3</td><td>Migration runner. Bundled in the Docker image; the server binary can also apply migrations itself (<code>server migrate</code>).</td></tr>
+</table>
+<h3>Operating systems and binaries</h3>
+<ul>
+  <li><strong>Docker:</strong> the release image <code>ghcr.io/collinjaycock/onscreen</code> is Alpine-based and runs as a non-root <code>onscreen</code> user. The NVIDIA image is built locally from <code>docker/Dockerfile.gpu</code> (<a href="#s2-3">2.3</a>).</li>
+  <li><strong>Release binaries</strong> (GitHub Releases): the server for Linux amd64/arm64, macOS amd64/arm64 and Windows amd64; the standalone worker for Linux amd64/arm64. Binaries are static (CGO disabled).</li>
+  <li><strong>Windows packages:</strong> Windows 10 21H2+, Windows 11 or Windows Server 2019+ (x64).</li>
+  <li><strong>Linux tarball:</strong> x86_64 with glibc 2.17+ or musl.</li>
+</ul>
+<h3>Sizing</h3>
+<p>The project does not publish fixed CPU, memory or disk minimums. The defaults scale with the machine, which is a useful guide:</p>
+<ul>
+  <li>Concurrent transcodes default to <code>max(1, CPU cores / 2)</code> per worker (<code>TRANSCODE_MAX_SESSIONS</code>). Software transcoding of 4K is CPU-heavy; a supported GPU (<a href="#s1-4">1.4</a>) takes most of that load.</li>
+  <li>The scanner runs <code>CPU cores &times; 2</code> file goroutines by default. On a memory-constrained machine, lower it (<a href="#ch11">chapter 11</a>).</li>
+  <li>Disk: the cache directory holds resized artwork, seek-bar and chapter thumbnails, subtitle OCR output, converted downloads (capped at 50 GB by default) and optimized versions (no automatic expiry). Put it on a disk with room to grow, and back up the database separately (<a href="#s10-2">10.2</a>).</li>
+  <li>The NVIDIA image needs driver 570 or newer (CUDA 12.8; Maxwell through Blackwell GPUs).</li>
+</ul>
+
+<h2 id="s1-4"><span class="num">1.4</span>Supported hardware encoders</h2>
+<p>At startup each worker probes FFmpeg and uses only the encoders it can actually run, falling back to software. You can pin the order with <code>TRANSCODE_ENCODERS</code> (<a href="#s6-3">6.3</a>).</p>
+<table class="keep enc">
+  <thead><tr><th>Family</th><th>H.264</th><th>HEVC</th><th>AV1</th><th>Platform notes</th></tr></thead>
+  <tr><td>NVIDIA NVENC</td><td><code>h264_nvenc</code></td><td><code>hevc_nvenc</code></td><td><code>av1_nvenc</code></td><td>AV1 on RTX 40-series. Docker needs the NVIDIA Container Toolkit.</td></tr>
+  <tr><td>Intel Quick Sync (QSV)</td><td><code>h264_qsv</code></td><td><code>hevc_qsv</code></td><td><code>av1_qsv</code></td><td>AV1 on Arc and 11th-gen Core and later.</td></tr>
+  <tr><td>VAAPI</td><td><code>h264_vaapi</code></td><td><code>hevc_vaapi</code></td><td><code>av1_vaapi</code></td><td>Linux (Intel and AMD). Needs <code>libva</code> and the vendor driver; the run user needs the <code>video</code>/<code>render</code> groups.</td></tr>
+  <tr><td>AMD AMF</td><td><code>h264_amf</code></td><td><code>hevc_amf</code></td><td><code>av1_amf</code></td><td>Windows. AV1 on RDNA3 discrete GPUs.</td></tr>
+  <tr><td>Software</td><td><code>libx264</code></td><td><code>libx265</code></td><td><code>libsvtav1</code></td><td>Always available.</td></tr>
+</table>
+<p>HDR-to-SDR tone mapping runs on the GPU where possible (<a href="#s6-4">6.4</a>).</p>
+
+<h2 id="s1-5"><span class="num">1.5</span>Client apps</h2>
+<ul>
+  <li><strong>Web</strong>: served by the server itself at its root URL; also the admin interface.</li>
+  <li><strong>Android TV / Google TV and Fire TV</strong>, <strong>Android phone</strong>, <strong>Samsung (Tizen)</strong>, <strong>LG (webOS)</strong>, <strong>Roku</strong>, <strong>Xbox</strong> (a shell over the TV web app the server serves at <code>/tvapp/</code>) and the <strong>desktop</strong> app (Windows and Linux).</li>
+  <li><strong><code>onscreen-cli</code></strong>: a terminal client that browses a server and plays through mpv.</li>
+</ul>
+<p>TV apps sign in by showing a pairing code that a signed-in user claims from the web app or phone. Since v2.6 every app plays the server's play decision (<a href="#s6-1">6.1</a>), so the admin settings in this guide apply on all of them.</p>
+
+<!-- ═══════════════════════════ 2 INSTALLATION ═══════════════════════════ -->
+<h1 class="chapter" id="ch2"><span class="num">2</span>Installation</h1>
+
+<h2 id="s2-1"><span class="num">2.1</span>Choosing an installation path</h2>
+<table class="keep">
+  <thead><tr><th>Path</th><th>Best for</th><th>Section</th></tr></thead>
+  <tr><td>Docker Compose, release image</td><td>Most installs: Linux hosts, NAS boxes, anything that runs Docker.</td><td><a href="#s2-2">2.2</a></td></tr>
+  <tr><td>Docker, NVIDIA GPU image</td><td>NVENC/NVDEC transcoding and CUDA HDR tone mapping.</td><td><a href="#s2-3">2.3</a></td></tr>
+  <tr><td>Windows all-in-one installer</td><td>A Windows PC as the server (bundles PostgreSQL, Redis, FFmpeg), or a Windows GPU box as a remote worker.</td><td><a href="#s2-4">2.4</a></td></tr>
+  <tr><td>Windows portable zip / Linux tarball</td><td>Test deployments on real hardware; dependencies through Docker Compose.</td><td><a href="#s2-4">2.4</a>, <a href="#s2-5">2.5</a></td></tr>
+  <tr><td>From source</td><td>Developers and bare-metal installs under systemd.</td><td><a href="#s2-6">2.6</a></td></tr>
+</table>
+<div class="note"><p>The Windows installer, Windows zip and Linux tarball are built from the repository with <code>make installer-windows-msi</code>, <code>make installer-windows</code> and <code>make installer-linux</code>. The GitHub release itself carries the Docker image and plain server/worker binaries.</p></div>
+
+<h2 id="s2-2"><span class="num">2.2</span>Docker Compose (CPU image)</h2>
+<p>Release images are published as <code>ghcr.io/collinjaycock/onscreen:&lt;version&gt;</code>, with <code>:&lt;major&gt;.&lt;minor&gt;</code> and <code>:&lt;major&gt;</code> tags that follow the latest patch. The examples use <code>:2.6</code>; pin a full version (for example <code>:2.6.0</code>) if you want upgrades only when you change the tag.</p>
+<h3>1. Create a project directory and a <code>.env</code> file</h3>
+<pre><code>mkdir onscreen &amp;&amp; cd onscreen
+
+SECRET_KEY=$(openssl rand -hex 32)
+cat &gt; .env &lt;&lt;EOF
+DB_PASS=$(openssl rand -hex 24)
+SECRET_KEY=${SECRET_KEY}
+EOF</code></pre>
+<p><code>DB_PASS</code> is required (Compose refuses to start without it). <code>SECRET_KEY</code> must be a real random key: the server refuses to boot with a placeholder value. Keep a copy of both somewhere safe (<a href="#s3-3">3.3</a>).</p>
+<h3>2. Create <code>docker-compose.yml</code></h3>
+<pre class="long"><code>name: onscreen
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16   # any PostgreSQL 16+ image works
+    environment:
+      POSTGRES_USER: onscreen
+      POSTGRES_PASSWORD: ${DB_PASS:?DB_PASS is required}
+      POSTGRES_DB: onscreen
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U onscreen"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Runs the goose binary and migrations bundled in the image,
+  # so the schema always matches the image version.
+  migrate:
+    image: ghcr.io/collinjaycock/onscreen:2.6
+    entrypoint: ["/usr/local/bin/goose"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      -dir /migrations postgres
+      "postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable" up
+    restart: "no"
+
+  server:
+    image: ghcr.io/collinjaycock/onscreen:2.6
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      # Container loopback is unreachable through a port publish;
+      # the host side stays loopback-only.
+      METRICS_ADDR: "0.0.0.0:7071"
+    restart: unless-stopped
+    ports:
+      - "7070:7070"
+      - "127.0.0.1:7071:7071"
+    volumes:
+      - /path/to/your/media:/media:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7070/health/live || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  postgres_data:</code></pre>
+<p>Replace <code>/path/to/your/media</code> with your media folder and point libraries at the container path (<code>/media/...</code>). Use <code>:ro</code> unless you want OnScreen to write next to your media (NFO files, downloaded artwork, podcast episodes, DVR recordings).</p>
+<p>The image stores its cache at <code>/var/cache/onscreen</code> (a declared volume). Mount a named volume there if you want resized artwork, thumbnails and converted downloads to survive re-creating the container.</p>
+<div class="note"><p><strong>No separate migrate step?</strong> Drop the <code>migrate</code> service and its <code>depends_on</code> entries, and set <code>AUTO_MIGRATE: "true"</code> on the server. It then applies pending migrations at startup, before serving.</p></div>
+<h3>3. Start and verify</h3>
+<pre><code>docker compose up -d
+curl http://localhost:7070/health/live
+docker compose logs -f server</code></pre>
+<p>The <code>migrate</code> service runs once and exits; the server starts after it succeeds. Then open <code>http://your-server:7070</code> and complete first-run setup (<a href="#s2-7">2.7</a>).</p>
+<h3>Adding a standalone worker</h3>
+<p>The server already contains an embedded transcode worker. To add a separate worker container (for example on the same host with a different encoder, or to keep transcoding out of the server process), add a service like this; every worker needs the same <code>SECRET_KEY</code> as the server:</p>
+<pre class="long"><code>  worker:
+    image: ghcr.io/collinjaycock/onscreen:2.6
+    entrypoint: ["/usr/local/bin/worker"]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      valkey:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://onscreen:${DB_PASS:?DB_PASS is required}@postgres:5432/onscreen?sslmode=disable
+      VALKEY_URL: redis://valkey:6379
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY required}
+      # Bind AND advertised address: must be routable from the server.
+      WORKER_ADDR: "worker:7073"
+    restart: unless-stopped
+    healthcheck:   # the image's default probes the server's :7070
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    volumes:
+      - /path/to/your/media:/media:ro</code></pre>
+<div class="warn"><p><code>WORKER_ADDR</code> is both the address the worker binds and the address the server proxies HLS to. A bare <code>:7073</code> means the server's own loopback, so every playlist for a job that worker claims fails with 503. Use a name the server can reach, such as <code>worker:7073</code>.</p></div>
+
+<h2 id="s2-3"><span class="num">2.3</span>Docker with an NVIDIA GPU</h2>
+<p>For NVENC/NVDEC transcoding, build the GPU images. The host needs the NVIDIA Container Toolkit and driver <strong>570 or newer</strong> (<code>nvidia-smi</code> should report CUDA 12.8 or higher). The FFmpeg image is deliberately pinned to CUDA 12.8 so it runs on Maxwell through Blackwell GPUs on the drivers most distributions and NAS systems ship.</p>
+<pre><code># 1. One-time: FFmpeg with NVENC/NVDEC, scale_cuda, tonemap_cuda and libplacebo
+docker build -f docker/Dockerfile.ffmpeg -t onscreen-ffmpeg:latest .
+
+# 2. The application image on top of it
+docker build -f docker/Dockerfile.gpu -t onscreen:gpu .</code></pre>
+<p>Then give the server and/or worker the GPU, for example:</p>
+<pre class="long"><code>  worker:
+    image: onscreen:gpu
+    entrypoint: ["/usr/local/bin/worker"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu, compute, video, graphics, utility]
+    environment:
+      NVIDIA_VISIBLE_DEVICES: all
+      NVIDIA_DRIVER_CAPABILITIES: all
+      TRANSCODE_ENCODERS: nvenc,software
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:7074/health/ready"]
+    volumes:
+      - onscreen_cache:/var/cache/onscreen   # must persist</code></pre>
+<p><code>docker/docker-compose.gpu.yml</code> in the repository is an override that does the same for the server, the worker and a second worker.</p>
+<div class="warn">
+<p>Two settings silently disable GPU paths if they are missed:</p>
+<ul>
+  <li><strong><code>NVIDIA_DRIVER_CAPABILITIES</code> must include <code>graphics</code></strong> (or be <code>all</code>). Without it the Vulkan driver isn't injected and the libplacebo HDR tone map falls back to software. The image sets <code>all</code>, but orchestrators (notably TrueNAS apps) can override it; set it explicitly there.</li>
+  <li><strong><code>/var/cache/onscreen</code> must be persistent.</strong> It holds the CUDA JIT cache. On a fresh volume the first <code>scale_cuda</code> use compiles for about 90 seconds; with a persistent volume that happens once.</li>
+</ul>
+</div>
+<h3>Verifying GPU acceleration</h3>
+<p>Each worker logs a <code>transcode worker ready</code> line at startup:</p>
+<pre><code>docker logs &lt;container&gt; 2&gt;&amp;1 | grep "worker ready"</code></pre>
+<table class="keep">
+  <thead><tr><th>Flag</th><th>Meaning</th><th>Needs</th></tr></thead>
+  <tr><td><code>nvdec_hevc</code></td><td>NVDEC HEVC decode</td><td>NVENC GPU and driver</td></tr>
+  <tr><td><code>cuda_scale</code></td><td>Decode, scale and encode all in GPU memory (4K SDR)</td><td>Matched CUDA/driver and a warm JIT cache</td></tr>
+  <tr><td><code>tonemap_cuda</code></td><td>All-GPU HDR-to-SDR (4K HDR, no Vulkan)</td><td>Matched CUDA/driver and a warm JIT cache</td></tr>
+  <tr><td><code>libplacebo</code></td><td>Vulkan GPU tone map and scale</td><td>The <code>graphics</code> capability</td></tr>
+</table>
+<p><code>cuda_scale</code> and <code>tonemap_cuda</code> are probed in the background: they read <code>false</code> in the first line and switch on later (about 90 seconds on a cold cache, about 2 seconds on a warm one), logged as <code>cuda_scale enabled</code> and <code>tonemap_cuda enabled</code>. <code>libplacebo</code> can stay <code>false</code> where Vulkan won't start (TrueNAS, WSL2); HDR then uses <code>tonemap_cuda</code>.</p>
+
+<h2 id="s2-4"><span class="num">2.4</span>Windows installer and portable zip</h2>
+<h3>All-in-one installer (<code>OnScreen-Setup-&lt;version&gt;.exe</code>)</h3>
+<p>Built with <code>make installer-windows-msi</code> (Inno Setup). It bundles the server and worker, FFmpeg (Gyan.dev full build with NVENC, QSV, AMF and AV1), WinSW, portable PostgreSQL 17 and Redis for Windows. The wizard offers two modes:</p>
+<ul>
+  <li><strong>Full</strong> (default): installs to <code>C:\Program Files\OnScreen</code>, initialises a PostgreSQL cluster in <code>%ProgramData%\OnScreen\pgdata</code> (with <code>scram-sha-256</code> authentication), generates a random database password and <code>SECRET_KEY</code>, writes <code>.env</code>, applies migrations, and registers three Windows services (PostgreSQL, Redis, OnScreen). It then opens <code>http://localhost:7070</code> for setup.</li>
+  <li><strong>Worker</strong>: joins an existing server's fleet. Enter the primary's <code>DATABASE_URL</code>, <code>VALKEY_URL</code> and <code>SECRET_KEY</code> and this machine's <code>WORKER_ADDR</code>. The worker runs as an at-logon <em>interactive scheduled task</em> named <code>OnScreenWorker</code>, not a service, because a service runs in session 0 without GPU access.</li>
+</ul>
+<p>The install folder and <code>%ProgramData%\OnScreen</code> are restricted to SYSTEM and Administrators (Users read/execute on the program folder); <code>.env</code> and the service files are SYSTEM and Administrators only. Uninstalling stops and removes the services and task, and asks whether to delete the database and logs.</p>
+<h3>Portable zip (<code>onscreen-windows-amd64-&lt;version&gt;.zip</code>)</h3>
+<p>Built with <code>make installer-windows</code>. It runs PostgreSQL and Valkey in Docker Desktop:</p>
+<pre><code># elevated PowerShell
+cd "C:\Program Files\OnScreen"
+copy .env.example .env      # set SECRET_KEY at minimum
+.\start-deps.ps1            # Postgres + Valkey on 127.0.0.1 via Docker Desktop
+.\start.ps1                 # applies migrations, runs in the foreground
+.\install-service.ps1       # optional: register the OnScreen Windows service</code></pre>
+<p>Extract under <code>C:\Program Files</code>: a folder directly under <code>C:\</code> inherits write access for every signed-in user, which would let any local account replace the binaries of a service running as LocalSystem. <code>install-service.ps1</code> resets the folder permissions anyway. Logs go to <code>logs\onscreen.out.log</code> and <code>logs\onscreen.err.log</code>; manage the service with <code>Restart-Service OnScreen</code>.</p>
+
+<h2 id="s2-5"><span class="num">2.5</span>Linux portable tarball</h2>
+<p>Built with <code>make installer-linux</code>. It contains <code>server</code>, <code>worker</code>, <code>goose</code>, the migrations, <code>migrate.sh</code>, start and service scripts, and a Compose file for PostgreSQL and Valkey. It does <strong>not</strong> bundle FFmpeg: install your distribution's (<code>sudo apt install ffmpeg</code>), which already uses the right VAAPI driver for your GPU.</p>
+<pre><code>tar -xzf onscreen-linux-amd64-&lt;VERSION&gt;.tar.gz
+cd onscreen-linux-amd64-&lt;VERSION&gt;
+chmod +x *.sh server worker goose
+cp .env.example .env &amp;&amp; ${EDITOR:-nano} .env   # SECRET_KEY at minimum
+./start-deps.sh                                 # Postgres + Valkey in Docker
+./start.sh                                      # migrates, then runs in the foreground
+sudo ./install-service.sh                       # optional: systemd unit "onscreen"</code></pre>
+<p>The systemd unit runs as the invoking (sudo) user, applies migrations in <code>ExecStartPre</code>, and is hardened (<code>NoNewPrivileges</code>, <code>ProtectSystem=full</code>, <code>ProtectHome=read-only</code> and more). <code>install-service.sh</code> makes <code>.env</code> mode 0600. To update, stop the service, replace <code>server</code> and <code>worker</code>, and start it again; migrations run on start.</p>
+<p>For VAAPI, add the run user to the <code>video</code> (and on some distributions <code>render</code>) group, and check that <code>vainfo</code> lists <code>VAEntrypointEncSlice</code>.</p>
+
+<h2 id="s2-6"><span class="num">2.6</span>Building from source (bare metal)</h2>
+<pre><code># Debian/Ubuntu dependencies
+sudo apt install postgresql-16 valkey ffmpeg
+
+git clone https://github.com/CollinJAycock/OnScreen.git
+cd OnScreen
+make build      # web UI + TV app, copied into the embed dirs, then bin/server and bin/worker</code></pre>
+<p>Use <code>make build</code> rather than a bare <code>go build</code>: the server embeds the web UI from <code>internal/webui/dist</code>, and <code>make build</code> refreshes that copy.</p>
+<p>Create the database and run migrations:</p>
+<pre><code>CREATE USER onscreen WITH PASSWORD 'your-password';
+CREATE DATABASE onscreen OWNER onscreen;
+
+make migrate DATABASE_URL="postgres://onscreen:pass@localhost:5432/onscreen?sslmode=disable"
+# or: DATABASE_URL=... ./bin/server migrate</code></pre>
+<p>Put the configuration in an environment file and run the server (and, optionally, a worker) under systemd:</p>
+<pre class="long"><code># /etc/systemd/system/onscreen-server.service
+[Unit]
+Description=OnScreen Server
+After=network.target postgresql.service valkey.service
+
+[Service]
+Type=simple
+User=onscreen
+Group=onscreen
+EnvironmentFile=/etc/onscreen/env
+ExecStart=/usr/local/bin/server
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target</code></pre>
+<p>A matching <code>onscreen-worker.service</code> runs <code>/usr/local/bin/worker</code>. Enable both with <code>sudo systemctl enable --now onscreen-server onscreen-worker</code>.</p>
+<div class="note"><p>The server also reads a <code>.env</code> file on its own: first in the working directory, then next to the executable. Variables already set in the environment (by systemd, Docker, WinSW or the shell) always win over the file.</p></div>
+
+<h2 id="s2-7"><span class="num">2.7</span>First-run setup</h2>
+<p>On a fresh install the users table is empty, and whoever completes setup becomes the admin. Open the server in a browser and create the admin account.</p>
+<p>To keep a stranger from claiming a freshly exposed server, first-run setup is accepted only when:</p>
+<ul>
+  <li>the request comes from the local network: loopback, private ranges, link-local, Tailscale/CGNAT (<code>100.64.0.0/10</code>) or this host's own IPv6 /64s; <strong>and</strong></li>
+  <li>the browser addressed the server by IP, <code>localhost</code>, a single-label name, or a local suffix (<code>.local</code>, <code>.lan</code>, <code>.home</code>, <code>.home.arpa</code>, <code>.internal</code>).</li>
+</ul>
+<p>Set <code>ALLOW_PUBLIC_SETUP=true</code> only if you must finish setup over the internet, and finish it promptly.</p>
+<div class="warn"><p>Behind Docker Desktop, rootless Podman or docker-proxy on the IPv6 path, every client can appear to come from the private bridge gateway, so an internet client could pass the local check. Finish setup immediately after the first start and don't publish an unconfigured instance.</p></div>
+<p>After setup, the usual next steps are: set the <strong>Public URL</strong> (Settings &#9656; General &#9656; Server), add metadata keys (<a href="#s5-5">5.5</a>), create libraries (<a href="#s5-2">5.2</a>), check the encoders on the Transcode page (<a href="#s6-2">6.2</a>), turn on two-factor sign-in for your account (<a href="#s7-5">7.5</a>), and set up remote access (<a href="#ch4">chapter 4</a>).</p>
+
+<!-- ═══════════════════════════ 3 CONFIGURATION ═══════════════════════════ -->
+<h1 class="chapter" id="ch3"><span class="num">3</span>Configuration reference</h1>
+
+<h2 id="s3-1"><span class="num">3.1</span>How configuration works</h2>
+<p>OnScreen is configured in two places:</p>
+<ul>
+  <li><strong>Environment variables</strong> hold the bootstrap set the process needs before it can read the database: connection strings, <code>SECRET_KEY</code>, <code>NODE_ID</code>, bind addresses, paths and a few switches.</li>
+  <li><strong>The admin Settings pages</strong> hold everything else, stored in the database: the public URL, log level, CORS list, metadata and service keys, SSO, SMTP, transcode tuning, scheduled tasks, the worker fleet, tracing and more.</li>
+</ul>
+<p>Many environment variables are only the <em>initial default</em> for a value you can also edit in the UI; a saved UI value wins.</p>
+<ul>
+  <li><strong>Per node</strong> (Settings &#9656; General &#9656; Nodes): <code>LISTEN_ADDR</code>, <code>METRICS_ADDR</code>, <code>CACHE_PATH</code>, <code>WORKER_HEALTH_ADDR</code>, <code>STATIC_ABR_ROOT</code>, <code>SITE_ID</code>, <code>TRANSCODE_QSV_DECODE</code>, <code>DISABLE_EMBEDDED_WORKER</code>.</li>
+  <li><strong>Cluster-wide</strong> (Settings &#9656; General &#9656; System): <code>RETAIN_MONTHS</code>, <code>SERVER_NAME</code>, <code>DISCOVERY_ENABLED</code>, <code>DISCOVERY_PORT</code>, <code>TMDB_RATE_LIMIT</code>, <code>PUBLIC_ASSET_CACHE</code>, <code>STATIC_ABR_ENABLED</code>, and the scan settings.</li>
+  <li><strong>Settings &#9656; Transcode</strong>: the NVENC tuning, output ceilings and adaptive-bitrate ladder.</li>
+  <li><strong>Environment only</strong>: <code>NODE_ID</code>, <code>IGNORE_NODE_DB_CONFIG</code>, the connection strings and every other variable not listed above.</li>
+</ul>
+<div class="warn"><p><strong>Nothing is hot-reloadable.</strong> Changes to environment variables and to restart-required UI settings take effect when the process restarts. <code>SIGHUP</code> is handled but only logs a warning saying no setting was reloaded.</p></div>
+<figure class="short"><img src="img/settings-system.jpg" alt="Settings, General, System page"><figcaption><b>Figure 3-1.</b> Settings &#9656; General &#9656; System: cluster-wide values shared by every node.</figcaption></figure>
+<p>If a bad value saved under Nodes (an unreachable listen address, for example) locks a node out, start it with <code>IGNORE_NODE_DB_CONFIG=true</code> to boot from environment and defaults only.</p>
+
+<h2 id="s3-2"><span class="num">3.2</span>Environment variables</h2>
+<p>Defaults are the values in <code>internal/config/config.go</code>. An empty, zero or unparseable rate-limit value falls back to its default.</p>
+
+<h3>Required</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>DATABASE_URL</code></td><td>(required)</td><td>PostgreSQL connection string. Accepts a multi-host failover DSN (<code>...@primary:5432,standby:5432/onscreen?target_session_attrs=read-write</code>).</td></tr>
+  <tr><td><code>VALKEY_URL</code></td><td>(required)</td><td>Valkey/Redis connection string, e.g. <code>redis://localhost:6379</code>.</td></tr>
+  <tr><td><code>SECRET_KEY</code></td><td>(required)</td><td>32-byte key for token signing and AES-256-GCM encryption of stored secrets. Hex (64 chars), base64 (~44 chars) or a raw string of 32+ characters. See <a href="#s3-3">3.3</a>.</td></tr>
+</table>
+
+<h3>Database, cache and node identity</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>DATABASE_RO_URL</code></td><td><code>DATABASE_URL</code></td><td>Read-replica connection string for query offloading.</td></tr>
+  <tr><td><code>CACHE_PATH</code></td><td><code>~/.onscreen/cache/artwork</code> (image: <code>/var/cache/onscreen</code>)</td><td>Root of every on-disk cache: artwork, thumbnails, subtitles and OCR, Live TV, converted downloads (<code>downloads/</code>), optimized versions (<code>optimized/</code>).</td></tr>
+  <tr><td><code>NODE_ID</code></td><td>host name</td><td>Stable identity that keys this node's row under Settings &#9656; Nodes.</td></tr>
+  <tr><td><code>IGNORE_NODE_DB_CONFIG</code></td><td><code>false</code></td><td>Break-glass: ignore this node's saved Nodes settings.</td></tr>
+  <tr><td><code>AUTO_MIGRATE</code></td><td><code>false</code></td><td>Apply pending migrations at startup, before serving. For installs without a separate migrate step.</td></tr>
+</table>
+
+<h3>Server and network</h3>
+<table class="env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>LISTEN_ADDR</code></td><td><code>:7070</code></td><td>HTTP(S) API and web UI bind address.</td></tr>
+  <tr><td><code>METRICS_ADDR</code></td><td><code>127.0.0.1:7071</code></td><td>Prometheus <code>/metrics</code> and unauthenticated <code>/debug/pprof</code>. Keep private; in a container set <code>0.0.0.0:7071</code> and publish it to host loopback only.</td></tr>
+  <tr><td><code>TLS_CERT_FILE</code> / <code>TLS_KEY_FILE</code></td><td>(none)</td><td>PEM certificate chain and key for built-in HTTPS. Both or neither; setting one is a startup error.</td></tr>
+  <tr><td><code>TRUSTED_PROXIES</code></td><td>(none)</td><td>Comma-separated IPs/CIDRs allowed to set <code>X-Forwarded-*</code>. Unset trusts any loopback or private-network peer. See <a href="#s4-3">4.3</a>.</td></tr>
+  <tr><td><code>PUBLIC_SEGMENT_BASE_URL</code></td><td>(none)</td><td>Host that HLS playlists and segments are fetched from instead of the main host (<a href="#s4-5">4.5</a>).</td></tr>
+  <tr><td><code>ALLOW_PUBLIC_SETUP</code></td><td><code>false</code></td><td>Allow first-run admin creation from a public address.</td></tr>
+  <tr><td><code>SERVER_NAME</code></td><td><code>OnScreen</code></td><td>Name shown in LAN discovery and capability responses.</td></tr>
+  <tr><td><code>DISCOVERY_ENABLED</code></td><td><code>true</code></td><td>Answer LAN auto-discovery broadcasts.</td></tr>
+  <tr><td><code>DISCOVERY_PORT</code></td><td><code>7368</code></td><td>UDP port for LAN discovery.</td></tr>
+  <tr><td><code>RETAIN_MONTHS</code></td><td><code>24</code></td><td>Months of watch history to keep.</td></tr>
+</table>
+
+<h3>RTMP ingest ("go live")</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>RTMP_ENABLED</code></td><td><code>true</code></td><td>Embedded RTMP server that turns OBS/ffmpeg pushes into Live TV channels. A bind failure is logged and the rest of the server still starts.</td></tr>
+  <tr><td><code>RTMP_LISTEN_ADDR</code></td><td><code>:1935</code></td><td>RTMP listen address; must be reachable by broadcasters.</td></tr>
+  <tr><td><code>RTMP_PUBLIC_HOST</code></td><td>(none)</td><td>Host name shown in the ingest URL in the admin UI; empty uses the request's host.</td></tr>
+</table>
+
+<h3>Transcoding and workers</h3>
+<table class="env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>TRANSCODE_MAX_SESSIONS</code></td><td><code>max(1, cores/2)</code></td><td>Concurrent transcode sessions on this worker. Per-worker caps can also be set in the fleet section of Settings &#9656; Transcode.</td></tr>
+  <tr><td><code>TRANSCODE_ENCODERS</code></td><td>auto-detect</td><td>Encoder priority, e.g. <code>nvenc,software</code> (<a href="#s6-3">6.3</a>).</td></tr>
+  <tr><td><code>DISABLE_EMBEDDED_WORKER</code></td><td><code>false</code></td><td>Server only: don't run the in-process worker; use standalone workers.</td></tr>
+  <tr><td><code>WORKER_ADDR</code></td><td><code>:7073</code></td><td>Standalone worker: segment-server bind address <em>and</em> the address it registers for the server to proxy to. Must be routable from the server.</td></tr>
+  <tr><td><code>WORKER_HEALTH_ADDR</code></td><td><code>:7074</code></td><td>Standalone worker health server (<code>/health/live</code>, <code>/health/ready</code>).</td></tr>
+  <tr><td><code>TRANSCODE_MAX_BITRATE_KBPS</code></td><td><code>40000</code></td><td>Output bitrate ceiling (initial default for the UI value).</td></tr>
+  <tr><td><code>TRANSCODE_MAX_WIDTH</code> / <code>_HEIGHT</code></td><td><code>3840</code> / <code>2160</code></td><td>Output resolution ceiling (initial default).</td></tr>
+  <tr><td><code>TRANSCODE_ABR</code></td><td><code>false</code></td><td>Serve an adaptive-bitrate ladder instead of a single rendition.</td></tr>
+  <tr><td><code>TRANSCODE_ABR_MAX_HEIGHT</code></td><td><code>0</code></td><td>Hard cap on the ladder's top rung; 0 = source resolution.</td></tr>
+  <tr><td><code>TRANSCODE_ABR_AUTO_MAX_HEIGHT</code></td><td><code>1080</code></td><td>Top rung when the viewer hasn't picked a quality; 0 = source.</td></tr>
+  <tr><td><code>TRANSCODE_NVENC_PRESET</code></td><td><code>p4</code></td><td><code>p1</code> (fastest) to <code>p7</code> (best quality).</td></tr>
+  <tr><td><code>TRANSCODE_NVENC_TUNE</code></td><td><code>hq</code></td><td><code>hq</code>, <code>ll</code> or <code>ull</code>.</td></tr>
+  <tr><td><code>TRANSCODE_NVENC_RC</code></td><td><code>vbr</code></td><td><code>vbr</code>, <code>cbr</code> or <code>constqp</code>.</td></tr>
+  <tr><td><code>TRANSCODE_MAXRATE_RATIO</code></td><td><code>1.5</code></td><td>Peak-to-average bitrate ratio for all encoders.</td></tr>
+  <tr><td><code>TRANSCODE_QSV_DECODE</code></td><td><code>false</code></td><td>Intel Quick Sync HEVC decode into system memory. Opt in once the worker's QSV stack is known good.</td></tr>
+  <tr><td><code>TRANSCODE_QSV_VRAM</code></td><td><code>true</code></td><td>Keep decode, scale and encode in GPU memory when a QSV encoder is used (SDR). Falls back to software decode per job.</td></tr>
+  <tr><td><code>TRANSCODE_VAAPI_VRAM</code></td><td><code>true</code></td><td>The VAAPI equivalent of <code>TRANSCODE_QSV_VRAM</code>.</td></tr>
+  <tr><td><code>TRANSCODE_ENCODER_FAILOVER</code></td><td><code>true</code></td><td>When a hardware encoder can't get the GPU (e.g. GeForce NVENC session cap), retry on the next encoder the box has (QSV, then software).</td></tr>
+</table>
+
+<h3>Converted downloads (new in v2.6)</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>DOWNLOAD_MAX_CONVERSIONS</code></td><td><code>1</code></td><td>Conversions (downloads and optimized versions) encoding at once on this server: 1 or 2.</td></tr>
+  <tr><td><code>DOWNLOAD_CACHE_MAX_GB</code></td><td><code>50</code></td><td>Size limit of <code>CACHE_PATH/downloads</code>; the hourly cleanup evicts least-recently-used files past it.</td></tr>
+  <tr><td><code>DOWNLOAD_CACHE_TTL_HOURS</code></td><td><code>168</code></td><td>How long a finished file is kept after it was last requested or fetched.</td></tr>
+</table>
+
+<h3>DVR (new in v2.6)</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>ONSCREEN_DVR_POSTPROCESS_SCRIPT</code></td><td>(none)</td><td>Program run after each recording is post-processed, with the recording's path as its only argument (no shell).</td></tr>
+  <tr><td><code>ONSCREEN_COMSKIP_PATH</code></td><td>(none)</td><td>Path to <code>comskip</code> for commercial detection. Empty uses the built-in detector.</td></tr>
+  <tr><td><code>ONSCREEN_COMSKIP_INI</code></td><td>(none)</td><td>Passed to comskip as <code>--ini</code>.</td></tr>
+</table>
+<p class="small">These executables can only be set in the environment, never in the UI: a UI-settable program path would be code execution for anyone holding an admin session.</p>
+
+<h3>Scanning and metadata</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>SCAN_FILE_CONCURRENCY</code></td><td><code>cores &times; 2</code></td><td>Concurrent file-scan goroutines (initial default; Settings &#9656; System).</td></tr>
+  <tr><td><code>SCAN_LIBRARY_CONCURRENCY</code></td><td><code>2</code></td><td>Libraries scanned at once.</td></tr>
+  <tr><td><code>MISSING_FILE_GRACE_PERIOD</code></td><td><code>15m</code></td><td>Wait before a missing file is marked unavailable.</td></tr>
+  <tr><td><code>TMDB_API_KEY</code></td><td>(none)</td><td>TMDB v3 key; seeded into Settings on first run.</td></tr>
+  <tr><td><code>TMDB_RATE_LIMIT</code></td><td><code>5</code></td><td>TMDB requests per second.</td></tr>
+  <tr><td><code>TVDB_API_KEY</code></td><td>(none)</td><td>TheTVDB v4 key; seeded into Settings on first run.</td></tr>
+</table>
+
+<h3>Rate limits</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>OS_AUTH_RATE_LIMIT_PER_MIN</code></td><td><code>10</code></td><td>Requests per minute per address to the credential endpoints (sign-in, PIN switch, pairing claims).</td></tr>
+  <tr><td><code>OS_AUTH_RATE_LIMIT_FAIL_CLOSED</code></td><td><code>false</code></td><td>When Valkey is unreachable, refuse those requests with 503 instead of letting them through unlimited.</td></tr>
+  <tr><td><code>OS_TRANSCODE_START_RATE_LIMIT_PER_MIN</code></td><td><code>10</code></td><td>Transcode session starts per minute.</td></tr>
+</table>
+
+<h3>High availability and scale (all optional)</h3>
+<table class="keep env">
+  <thead><tr><th>Variable</th><th>Default</th><th>Meaning</th></tr></thead>
+  <tr><td><code>VALKEY_SENTINEL_ADDRS</code></td><td>(none)</td><td>Comma-separated Sentinel addresses. When set, Valkey is reached through Sentinel; <code>VALKEY_URL</code> still supplies auth, db and TLS.</td></tr>
+  <tr><td><code>VALKEY_SENTINEL_MASTER</code></td><td><code>onscreen</code></td><td>Sentinel master name.</td></tr>
+  <tr><td><code>VALKEY_SENTINEL_PASSWORD</code></td><td>(none)</td><td>Password for the Sentinels themselves.</td></tr>
+  <tr><td><code>PUBLIC_ASSET_CACHE</code></td><td><code>false</code></td><td>Send resized artwork as <code>Cache-Control: public</code> for a CDN. Only with a CDN in front.</td></tr>
+  <tr><td><code>STATIC_ABR_ENABLED</code></td><td><code>false</code></td><td>Pre-encode the ABR ladder of the most-played titles to the media store.</td></tr>
+  <tr><td><code>STATIC_ABR_ROOT</code></td><td>(none)</td><td>Key prefix (object storage) or directory for static-ABR output.</td></tr>
+  <tr><td><code>SITE_ID</code></td><td>(none)</td><td>This deployment's site name, reported on <code>/health/cluster</code>.</td></tr>
+</table>
+<p>There are no environment variables for the public URL, log level, CORS list, SSO, SMTP, object storage or tracing; they live in the Settings pages. <code>DEV_FRONTEND_URL</code> exists for development builds only and is ignored in production.</p>
+
+<h2 id="s3-3"><span class="num">3.3</span>Secrets and key rotation</h2>
+<h3><code>SECRET_KEY</code></h3>
+<p>The key signs access, stream and segment tokens and encrypts every secret OnScreen stores: metadata and service API keys, SSO and SMTP configuration, object-storage credentials, an uploaded TLS key, webhook signing secrets, notification-agent credentials, Radarr/Sonarr keys, users' TOTP secrets and scrobbling tokens.</p>
+<ul>
+  <li>Generate one with <code>openssl rand -hex 32</code>. The server refuses keys shorter than 32 bytes, keys with too little entropy, and keys that look like placeholders (containing <code>change-me</code>, <code>example</code>, <code>your-secret</code>, <code>placeholder</code>, <code>dev-secret</code> and similar).</li>
+  <li>Every server and worker in a fleet must use the <strong>same</strong> key: workers' segment servers authenticate the server with a bearer derived from it.</li>
+  <li><strong>Back it up out of band.</strong> Without it, encrypted settings and existing tokens cannot be recovered from a database backup.</li>
+</ul>
+<h3>Rotating <code>SECRET_KEY</code></h3>
+<p>You can't just change the key and restart: the new key can't decrypt the old secrets. Use the <code>rotate-key</code> tool (built from <code>cmd/rotate-key</code>), which re-encrypts everything in one transaction:</p>
+<pre><code># 1. New key
+openssl rand -hex 32
+
+# 2. Dry run: reports a per-table summary, commits nothing
+OLD_SECRET_KEY=&lt;current&gt; SECRET_KEY=&lt;new&gt; DATABASE_URL=&lt;dsn&gt; go run ./cmd/rotate-key
+
+# 3. Apply (rolls back on any error)
+OLD_SECRET_KEY=&lt;current&gt; SECRET_KEY=&lt;new&gt; DATABASE_URL=&lt;dsn&gt; go run ./cmd/rotate-key -apply
+
+# 4. Restart every server and worker with the new SECRET_KEY</code></pre>
+<p>If the dry run shows <code>rotated=0</code> for everything, <code>OLD_SECRET_KEY</code> isn't the key in use; stop and fix it. Do steps 3 and 4 in a maintenance window with the server stopped. Afterwards every user signs in again, in-flight streams reconnect, and links in digest emails already sent stop working. Values the old key can't decrypt are left untouched and reported as skipped.</p>
+<p>Rotating to the <em>same</em> key is a safe way to upgrade every stored secret to the current encryption envelope (<code>encv2:</code>).</p>
+<h3><code>DB_PASS</code></h3>
+<p>The Compose files require <code>DB_PASS</code> and have no default. An existing PostgreSQL volume keeps the password it was created with: set <code>DB_PASS</code> to that value, or change it first with <code>ALTER ROLE onscreen PASSWORD '...'</code>.</p>
+
+<h2 id="s3-4"><span class="num">3.4</span>Database and migrations</h2>
+<p>Schema migrations are managed with goose and embedded in the server binary. The server <strong>does not</strong> migrate on its own unless <code>AUTO_MIGRATE=true</code>; until pending migrations are applied, <code>GET /health/ready</code> stays unready (and the Docker health check, which probes it, reports unhealthy).</p>
+<p>Ways to apply migrations:</p>
+<pre><code># the Compose "migrate" service (2.2), or:
+make migrate DATABASE_URL="postgres://onscreen:pass@localhost:5432/onscreen?sslmode=disable"
+goose -dir internal/db/migrations postgres "$DATABASE_URL" up
+docker run --rm --network host --entrypoint /usr/local/bin/goose \
+  ghcr.io/collinjaycock/onscreen:2.6 -dir /migrations postgres "$DATABASE_URL" up
+DATABASE_URL=... ./bin/server migrate          # the binary embeds the migrations
+docker exec &lt;container&gt; /usr/local/bin/server migrate
+
+# status
+goose -dir internal/db/migrations postgres "$DATABASE_URL" status</code></pre>
+<p>The Windows installer, the Windows zip's <code>start.ps1</code>/<code>install-service.ps1</code> and the Linux tarball's <code>migrate.sh</code> (run by <code>start.sh</code> and the systemd unit) apply migrations for you.</p>
+<p>If the first migration fails creating an extension, create <code>pg_trgm</code>, <code>pgcrypto</code> and <code>unaccent</code> once as a superuser (on distributions that split them out, install the PostgreSQL contrib package).</p>
+
+<!-- ═══════════════════════════ 4 NETWORKING ═══════════════════════════ -->
+<h1 class="chapter" id="ch4"><span class="num">4</span>Networking and remote access</h1>
+
+<h2 id="s4-1"><span class="num">4.1</span>Ports</h2>
+<table class="keep">
+  <thead><tr><th>Port</th><th>Variable</th><th>Purpose</th><th>Exposure</th></tr></thead>
+  <tr><td><code>7070/tcp</code></td><td><code>LISTEN_ADDR</code></td><td>API and web UI</td><td>Public, behind TLS.</td></tr>
+  <tr><td><code>127.0.0.1:7071</code></td><td><code>METRICS_ADDR</code></td><td>Prometheus metrics and <strong>unauthenticated</strong> pprof</td><td>Private. pprof can leak live tokens.</td></tr>
+  <tr><td><code>1935/tcp</code></td><td><code>RTMP_LISTEN_ADDR</code></td><td>RTMP ingest</td><td>Reachable by broadcasters; publishes need a stream key.</td></tr>
+  <tr><td><code>7073/tcp</code></td><td><code>WORKER_ADDR</code></td><td>Standalone worker segment server</td><td>Reachable from the server; needs the <code>SECRET_KEY</code> bearer.</td></tr>
+  <tr><td><code>7074/tcp</code></td><td><code>WORKER_HEALTH_ADDR</code></td><td>Worker health checks</td><td>Private.</td></tr>
+  <tr><td><code>7368/udp</code></td><td><code>DISCOVERY_PORT</code></td><td>LAN auto-discovery</td><td>LAN only; disable on untrusted segments.</td></tr>
+</table>
+
+<h2 id="s4-2"><span class="num">4.2</span>Reverse proxy</h2>
+<p>In production, put OnScreen behind a reverse proxy that terminates TLS (or use built-in HTTPS, <a href="#s4-4">4.4</a>). OnScreen uses no WebSockets; its one long-lived connection is the server-sent events stream at <code>/api/v1/notifications/stream</code>, which needs buffering off and a long read timeout.</p>
+<h3>nginx</h3>
+<pre class="long"><code>upstream onscreen { server 127.0.0.1:7070; }
+
+server {
+    listen 80;
+    server_name media.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name media.example.com;
+    ssl_certificate     /etc/letsencrypt/live/media.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/media.example.com/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+
+    client_max_body_size 0;
+    proxy_buffering off;
+    proxy_request_buffering off;
+
+    location / {
+        proxy_pass http://onscreen;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # nginx is the edge: REPLACE any client-sent X-Forwarded-For.
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_http_version 1.1;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
+    location /metrics { deny all; }
+}</code></pre>
+<p>For a fuller configuration start from <code>docker/nginx.conf</code> in the repository. It keeps every <code>proxy_set_header</code> at server level, because nginx drops all inherited <code>proxy_set_header</code> lines in a location that sets one of its own. Losing <code>X-Forwarded-For</code> that way makes every client look like nginx's private address, which opens the local-only setup gate to the internet and collapses all per-IP rate limits into one bucket. Don't add <code>proxy_set_header</code> or <code>add_header</code> inside a location. Behind a CDN in front of nginx, use <code>real_ip_header</code> / <code>set_real_ip_from</code>.</p>
+<h3>Caddy</h3>
+<pre><code>media.example.com {
+    reverse_proxy localhost:7070 {
+        flush_interval -1
+    }
+}</code></pre>
+<p>Whatever the proxy, set <code>TRUSTED_PROXIES</code> to its address (next section) and set the <strong>Public URL</strong> in Settings &#9656; General &#9656; Server, then restart.</p>
+
+<h2 id="s4-3"><span class="num">4.3</span><code>TRUSTED_PROXIES</code> and client addresses</h2>
+<p>OnScreen uses the client's address for rate limits, the audit log, the first-run setup gate and, since v2.6, for deciding whether a viewer is at home or on the internet (<a href="#s4-7">4.7</a>). It reads <code>X-Forwarded-For</code> / <code>X-Real-IP</code> only from peers it trusts:</p>
+<ul>
+  <li><strong>Unset</strong> (default): any loopback or private-network peer is trusted. This keeps the common "proxy in a sibling container" setup working, but lets any LAN client forge its address (dodging login rate limits, forging the audit-log address). Private addresses in <code>X-Forwarded-For</code> are also treated as proxy hops, so LAN clients behind a proxy that sends only <code>X-Forwarded-For</code> share one rate-limit bucket.</li>
+  <li><strong>Set</strong> to your proxy's address(es), e.g. <code>TRUSTED_PROXIES=127.0.0.1,172.18.0.0/16</code>: only those peers may set forwarding headers.</li>
+</ul>
+<div class="warn"><p>Behind a reverse proxy or Cloudflare, the internet streaming limit works only if the proxy forwards the viewer's real address (the bundled nginx sample and <code>cloudflared</code> do) <strong>and</strong> the proxy's address is in <code>TRUSTED_PROXIES</code>. Otherwise every viewer looks like the proxy, which is usually on your network, and the limit never applies.</p></div>
+
+<h2 id="s4-4"><span class="num">4.4</span>HTTPS</h2>
+<p>Three options:</p>
+<ol>
+  <li><strong>A reverse proxy</strong> (<a href="#s4-2">4.2</a>). The best choice if you want automatic renewal (Caddy is the simplest).</li>
+  <li><strong>Certificate files:</strong> set <code>TLS_CERT_FILE</code> and <code>TLS_KEY_FILE</code> (PEM). The server then serves HTTPS on <code>LISTEN_ADDR</code> (often changed to <code>:443</code>). These win over an uploaded certificate.</li>
+  <li><strong>Upload in the UI:</strong> paste the certificate and key under Settings &#9656; General &#9656; Security &#9656; <em>HTTPS / TLS certificate</em>. They are stored encrypted and loaded at startup (restart required). This applies to the whole cluster.</li>
+</ol>
+<p>The server never renews certificates itself; with options 2 and 3, replace the certificate and restart on renewal (for example after <code>certbot certonly</code>).</p>
+
+<h2 id="s4-5"><span class="num">4.5</span>Cloudflare Tunnel and split segment access</h2>
+<p>Some remote-access setups can't carry bulk video through the main host name. A Cloudflare Tunnel, for example, has terms that restrict proxying self-hosted video and can throttle long streams. Set <code>PUBLIC_SEGMENT_BASE_URL</code> to a host that reaches <strong>the same server</strong> by a direct path (a DNS-only record, a port-forwarded <code>stream.</code> subdomain, a Tailscale name):</p>
+<pre><code>PUBLIC_SEGMENT_BASE_URL=https://stream.example.com</code></pre>
+<p>HLS manifests still come from the main host, but every segment and rung-playlist URL inside them points at <code>https://stream.example.com/api/v1/transcode/...</code>. The direct host must terminate TLS and reach the same OnScreen origin. Direct play (<code>/media/stream/...</code>), artwork and subtitles stay on the main host.</p>
+<p>With a tunnel, remember <code>TRUSTED_PROXIES</code> (<a href="#s4-3">4.3</a>): <code>cloudflared</code> forwards the viewer's address, but OnScreen only believes it from a trusted peer.</p>
+
+<h2 id="s4-6"><span class="num">4.6</span>Automatic router port mapping</h2>
+<div class="new"><p>Settings &#9656; General &#9656; Remote Access can ask your router to forward a public port to the server, using UPnP (IGD v1 and v2), PCP or NAT-PMP.</p></div>
+<figure class="short"><img src="img/settings-remote-access.jpg" alt="Remote Access settings page"><figcaption><b>Figure 4-1.</b> Settings &#9656; General &#9656; Remote Access, with its warning and the mapping status.</figcaption></figure>
+<ul>
+  <li><strong>Off by default.</strong> Turning it on exposes OnScreen to the whole internet. Serve HTTPS and turn on two-factor sign-in for every admin first; the page warns when either is missing. A VPN such as Tailscale reaches the server without opening a port at all.</li>
+  <li>Only the API listen port is mapped (you choose only the public port), TCP only, and never when the server listens on loopback only. In a cluster only one node maps.</li>
+  <li>The lease is one hour, renewed at half its lifetime, and removed when you turn the option off, change the port, or the server stops.</li>
+  <li>In Docker the server needs host networking to reach the router.</li>
+  <li>The server never tests its own reachability through an outside service. The Status card shows the router's public address and port; test from outside your network. A private "public" address means carrier-grade NAT or a second router, where mapping can't help.</li>
+</ul>
+
+<h2 id="s4-7"><span class="num">4.7</span>The home network and the internet limit</h2>
+<p>A viewer counts as <strong>at home</strong> when their address is loopback, private (<code>192.168.x</code>, <code>10.x</code>, <code>172.16&ndash;31.x</code>, <code>fd00::/8</code>), link-local, inside this server's own IPv6 network, or in <code>100.64.0.0/10</code> (so Tailscale devices count as home). Add more ranges, such as a VPN or office subnet, under Settings &#9656; Transcode &#9656; <em>Additional local networks</em>.</p>
+<p>Everyone else is <strong>remote</strong>, and can be held to a lower bitrate with the internet streaming limit (<a href="#s6-6">6.6</a>). Now Playing labels each stream LAN or remote.</p>
+
+<h2 id="s4-8"><span class="num">4.8</span>LAN discovery and CORS</h2>
+<p>The server answers LAN discovery on UDP 7368 so apps can find it. It replies only to loopback, private and link-local senders, with the server name, machine ID and version, unauthenticated. Turn it off with <code>DISCOVERY_ENABLED=false</code> (or in Settings &#9656; System) on untrusted networks.</p>
+<p><strong>CORS allowed origins</strong> (Settings &#9656; General &#9656; Server) controls cross-origin browser access to the API. The TV and desktop apps' origins are always allowed and don't need to be listed. The list is read at startup.</p>
+
+<!-- ═══════════════════════════ 5 LIBRARIES ═══════════════════════════ -->
+<h1 class="chapter" id="ch5"><span class="num">5</span>Libraries</h1>
+
+<h2 id="s5-1"><span class="num">5.1</span>Library types</h2>
+<table>
+  <thead><tr><th>Type</th><th>Holds</th><th>Metadata</th></tr></thead>
+  <tr><td>Movies</td><td>Films, with editions and multi-part rips</td><td>TMDB</td></tr>
+  <tr><td>TV Shows</td><td>Show &rarr; season &rarr; episode</td><td>TMDB, TheTVDB fallback</td></tr>
+  <tr><td>Anime</td><td>Shows with anime naming rules</td><td>AniList first, then TMDB/TheTVDB</td></tr>
+  <tr><td>Cartoons</td><td>Shows, kept as their own library type</td><td>TMDB</td></tr>
+  <tr><td>Music</td><td>Artist &rarr; album &rarr; track</td><td>File tags, MusicBrainz, Cover Art Archive</td></tr>
+  <tr><td>Audiobooks</td><td>Author &rarr; series &rarr; book &rarr; chapter</td><td>File tags and folders</td></tr>
+  <tr><td>Podcasts</td><td>RSS subscriptions or local files</td><td>The feed</td></tr>
+  <tr><td>Photos</td><td>Photos and camera RAW, with EXIF</td><td>EXIF</td></tr>
+  <tr><td>Home Videos</td><td>Personal videos, one file per item</td><td>File name and date</td></tr>
+  <tr><td>Books</td><td>EPUB, CBZ, CBR (and PDF in the OPDS catalog)</td><td>File</td></tr>
+  <tr><td>DVR Recordings</td><td>Live TV recordings</td><td>The program guide</td></tr>
+</table>
+<p class="small">A manga library type exists in the code but is hidden: the API and the New Library page don't offer it.</p>
+
+<h2 id="s5-2"><span class="num">5.2</span>Creating and configuring a library</h2>
+<p>Choose <strong>New Library</strong> on the home page. Give it a name, a type, one or more <strong>scan paths</strong> (as the server sees them; in Docker, the container path), the metadata <strong>agent</strong> (TMDB or None; DVR and podcast libraries default to None) and the <strong>language</strong>.</p>
+<figure class="short"><img src="img/library-new.jpg" alt="New Library page"><figcaption><b>Figure 5-1.</b> Creating a library.</figcaption></figure>
+<p>A library's <strong>Settings</strong> page (from the library's header) has further options, depending on the type: scan interval, seek-bar thumbnails, automatic subtitle download and its languages, episode order, collections from NFO files, saving NFO files, camera RAW pairing, face data, intro and credits detection, and visibility (a private library is visible only to users granted access).</p>
+<figure class="short"><img src="img/library-settings.jpg" alt="Library settings page"><figcaption><b>Figure 5-2.</b> A movie library's settings: identity, scan paths, metadata agent and language, scan interval, seek-bar thumbnails.</figcaption></figure>
+
+<h2 id="s5-3"><span class="num">5.3</span>Folder and file naming</h2>
+<p>OnScreen reads the conventions Plex, Jellyfin, Kodi and Sonarr/Radarr use. Keep one title per folder where you can.</p>
+<h3>Movies</h3>
+<pre><code>Movies/
+  Blade Runner (1982)/
+    Blade Runner (1982) {edition-Final Cut}.mkv
+    Blade Runner (1982) - Theatrical.mkv
+  Some Movie (2001)/
+    Some Movie (2001) cd1.mkv
+    Some Movie (2001) cd2.mkv</code></pre>
+<ul>
+  <li><strong>Editions</strong> (labels in the version picker): Plex's <code>{edition-...}</code> in the file or folder name, Jellyfin's <code>Title (Year) - Label</code> suffix, and common tags after the year such as <code>[Extended]</code>, Director's Cut, Extended Edition, Theatrical, Unrated, Uncut, IMAX, Remastered.</li>
+  <li><strong>Multi-part movies</strong>: <code>cd</code>, <code>part</code>, <code>pt</code>, <code>disc</code>, <code>disk</code> or <code>dvd</code> with a number, or <code>-a</code>/<code>-b</code>, after the year. They play as one movie on every app (the server joins the parts, so they are remuxed or transcoded, never direct-played). Part words <em>before</em> the year (&ldquo;Dune Part One (2021)&rdquo;) are part of the title.</li>
+</ul>
+<h3>TV shows, anime and cartoons</h3>
+<pre><code>TV Shows/
+  Show Name (2005)/
+    Season 01/
+      Show Name - S01E01 - Pilot.mkv
+      Show Name - S01E02-E03.mkv        (one multi-episode file)
+    Specials/
+      Show Name - S00E01.mkv</code></pre>
+<ul>
+  <li>Episodes: <code>S01E03</code> or <code>1x03</code>. Season folders: <code>Season 1</code>, <code>Season 01</code> or <code>S01</code>; <code>Season 00</code> and a <code>Specials</code> folder are season 0.</li>
+  <li><strong>Multi-episode files</strong> (new in v2.6): <code>S01E01E02</code>, <code>S01E01-E02</code>, <code>S01E01-02</code>, <code>S01E01.S01E02</code>, <code>1x01-1x02</code>, <code>1x01-02</code>. Shown as &ldquo;E1&ndash;E2&rdquo; and counted as both episodes.</li>
+  <li><strong>Anime</strong> absolute numbering: <code>[Group] Title - 01 [1080p].mkv</code> (spaced dash). The season comes from the <code>Season N</code> folder, else season 1.</li>
+  <li>Include the year (or a Sonarr qualifier like <code>(US)</code>) in the show folder: since v2.6 a show must match its folder's name and year before it is accepted automatically.</li>
+</ul>
+<h3>Music</h3>
+<p>Tags come first (ID3, Vorbis comments, MP4; MusicBrainz IDs and ReplayGain included). Without tags the folder layout <code>Artist/Album/01 - Track.ext</code> is used. Multi-disc albums are recognised from <code>DISCNUMBER</code> tags, <code>CD1</code>/<code>Disc 2</code> folders, or <code>1-05 Title</code> file names. Featured artists come from Picard's <code>ARTISTS</code> tag or &ldquo;feat.&rdquo; in the artist or title.</p>
+<h3>Audiobooks</h3>
+<pre><code>Audiobooks/Author/Series/Book/01 - Chapter.mp3   author &rarr; series &rarr; book &rarr; chapters
+Audiobooks/Author/Book/...                       author &rarr; book
+Audiobooks/Book.m4b                              a single-file book</code></pre>
+<p>A <code>cover.jpg</code> or <code>folder.jpg</code> in the book's folder is used as its cover.</p>
+<h3>Books, home videos, photos, podcasts</h3>
+<ul>
+  <li><strong>Books</strong>: one file (EPUB, CBZ, CBR) is one book; the title comes from the file name.</li>
+  <li><strong>Home videos</strong>: one file is one item; a leading date in the file name becomes its date, and files in a subfolder are grouped into a collection named after it.</li>
+  <li><strong>Photos</strong>: JPEG, HEIC, TIFF and camera RAW (CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, PEF). A RAW and a JPEG with the same name in the same folder become one photo unless you turn off <em>Pair RAW files with their JPEGs</em>.</li>
+  <li><strong>Podcasts</strong> subscribed by RSS download into <code>&lt;podcast&gt;/&lt;date&gt; &lt;episode title&gt;.mp3</code> inside the library folder; the <em>Refresh podcast feeds</em> task checks feeds hourly. Local podcast files use folder = show, file = episode.</li>
+</ul>
+
+<h2 id="s5-4"><span class="num">5.4</span>Scanning</h2>
+<ul>
+  <li>Scan a library with <strong>Scan</strong> on its page, or let its <em>Scan interval</em> run it. A <code>scan_library</code> scheduled task can also scan all or one library on a cron schedule.</li>
+  <li>A file that disappears is marked unavailable after <code>MISSING_FILE_GRACE_PERIOD</code> (15 minutes).</li>
+  <li>Files that are really HLS/DASH/concat/SDP playlists are refused at scan and playback (<code>UNSUPPORTED_CONTAINER</code>).</li>
+  <li>The banner at the top of the web app (&ldquo;Filling in artwork&rdquo;) reports items still waiting for artwork; the <em>Refresh missing artwork</em> task retries every two hours.</li>
+</ul>
+
+<h2 id="s5-5"><span class="num">5.5</span>Metadata agents and API keys</h2>
+<p>Service keys are stored encrypted in the database and edited in Settings &#9656; General (they are not environment variables, except that <code>TMDB_API_KEY</code>/<code>TVDB_API_KEY</code> seed the first value).</p>
+<figure class="short"><img src="img/settings-general.jpg" alt="Settings General page"><figcaption><b>Figure 5-3.</b> Settings &#9656; General: sharing, server (public URL, log level, CORS) and the start of the Metadata keys.</figcaption></figure>
+<table class="keep">
+  <thead><tr><th>Key (Settings &#9656; General)</th><th>Used for</th><th>Without it</th></tr></thead>
+  <tr><td>TMDB API Key</td><td>Movie and TV matching, artwork, ratings, genres, studios, franchise collections, Discover/requests</td><td>No movie/TV metadata.</td></tr>
+  <tr><td>TheTVDB API Key</td><td>Episode metadata fallback; DVD and absolute episode orders</td><td>TMDB only.</td></tr>
+  <tr><td>OMDb API Key + OMDb Daily Lookups <span class="kv">(v2.6)</span></td><td>IMDb, Rotten Tomatoes and Metacritic scores; the hourly task stays within the daily limit (1,000 by default)</td><td>No external scores.</td></tr>
+  <tr><td>fanart.tv API Key <span class="kv">(v2.6)</span></td><td>Clear logos, banners, disc art</td><td>Local files and AniList banners only.</td></tr>
+  <tr><td>OpenSubtitles (API key, optional username/password)</td><td>Subtitle search in the player and automatic subtitle download</td><td>No online subtitles.</td></tr>
+  <tr><td>Arr Notifications API Key</td><td>Authenticates Radarr/Sonarr webhooks to OnScreen</td><td>No arr webhooks.</td></tr>
+  <tr><td>Scrobbling apps (Last.fm, Trakt)</td><td>App credentials users' scrobbling links run under</td><td>No Last.fm/Trakt.</td></tr>
+</table>
+<p>AniList (anime) and MusicBrainz (music) need no key. Logos, banners and disc art are taken first from files next to your media with Kodi's names (<code>clearlogo.png</code>/<code>logo.png</code>, <code>banner.jpg</code>, <code>disc.png</code>/<code>discart.png</code>/<code>cdart.png</code>).</p>
+
+<h2 id="s5-6"><span class="num">5.6</span>Language and episode order</h2>
+<p><strong>Metadata language</strong> (library settings): movie and TV titles, summaries, genres, seasons and episodes come from TMDB in this language where TMDB has a translation; a missing summary falls back to English. Searches stay in English, so automatic matching is unaffected.</p>
+<div class="new"><p>The library language was stored but ignored before v2.6. Items already matched change on their next metadata refresh.</p></div>
+<p><strong>Episode order</strong> (TV, anime and cartoon libraries): <em>Aired</em> (default), <em>DVD</em> or <em>Absolute</em>, with a per-show override on the show's page. It uses TMDB episode groups for shows matched on TMDB and TheTVDB's orders for shows matched there; a show whose provider has no such order keeps aired order. Changing it refreshes the affected shows' episodes in the background.</p>
+
+<h2 id="s5-7"><span class="num">5.7</span>NFO files</h2>
+<ul>
+  <li><strong>Reading:</strong> an NFO's <code>&lt;studio&gt;</code> tags win over TMDB's. A movie library can import Kodi <code>&lt;set&gt;</code> (and optionally <code>&lt;tag&gt;</code>) groupings as collections: <em>Collections from NFO files</em>, off by default; a daily task picks up edited files. Sets that are TMDB film series OnScreen already groups are skipped.</li>
+  <li><strong>Writing</strong> (v2.6): <em>Save metadata as NFO files next to media</em> (movie and TV libraries, off by default) writes Kodi-compatible <code>.nfo</code>, <code>tvshow.nfo</code> and episode NFO files after a title is enriched, edited or re-matched. Only files OnScreen wrote (marked <code>&lt;!-- written by OnScreen --&gt;</code>) are ever replaced; a read-only folder only logs a warning. Not available with object storage.</li>
+</ul>
+
+<h2 id="s5-8"><span class="num">5.8</span>Editing metadata, Fix Match and labels</h2>
+<h3>Metadata editor with locks (v2.6)</h3>
+<p><strong>Edit Metadata</strong> on a movie, show or season page (or the pencil on an episode row) edits the title, sort title, original title, year, release date, content rating, critic rating, genres, tagline and summary. Every field you change is <strong>locked</strong>: scans, refreshes, re-enrichment and Fix Match leave it alone. Click a padlock, or <em>Unlock all</em>, to hand a field back. An edited content rating applies to rating-limited profiles at once.</p>
+<p>In a library, <strong>Select</strong> titles (Shift-click for a range) and choose <em>Edit metadata&hellip;</em> to set content rating, genres, labels and locks on up to 500 titles in one transaction.</p>
+<h3>Fix Match and Set Poster</h3>
+<p>Settings &#9656; Library &#9656; <strong>Fix Match</strong> lists unmatched items and lets you pick the right match (with a release-year filter); <strong>Set Poster</strong> lists items without artwork. Existing matches are never changed automatically, so use Fix Match on a wrong one.</p>
+<h3>Labels</h3>
+<p>Admins can label titles (&ldquo;kids&rdquo;, &ldquo;horror&rdquo;) from a title's <em>Labels</em> box or in bulk with <em>Add label&hellip;</em>. Labels are visible only to admins and are never changed by metadata refreshes. They drive per-user label restrictions (<a href="#s7-3">7.3</a>).</p>
+
+<h2 id="s5-9"><span class="num">5.9</span>Collections</h2>
+<ul>
+  <li><strong>Franchise collections</strong> are created from TMDB automatically once two films of a series are in the library.</li>
+  <li><strong>Manual collections</strong> (admins, v2.6): <em>New Collection</em> on the Collections page; add titles from a title page or a library selection. Order them by hand, release date or title, and choose the cover (a member's poster or an uploaded image).</li>
+  <li><strong>Smart collections</strong>: rules (movies and/or shows, genre, year range, minimum rating, libraries), refreshed when saved and hourly.</li>
+  <li><strong>Show on Home</strong> puts a collection on everyone's home screen as a row; each person sees only titles they are allowed to see.</li>
+</ul>
+
+<h2 id="s5-10"><span class="num">5.10</span>Library health and maintenance</h2>
+<p>Settings &#9656; Library &#9656; <strong>Library Health</strong> shows open problem reports from users, integrity-probe results, and unmatched and missing-art counts, with one-click Radarr/Sonarr re-grab. <strong>Maintenance</strong> can re-probe technical metadata (codecs, streams) for files.</p>
+<figure class="short"><img src="img/settings-library-health.jpg" alt="Library Health page"><figcaption><b>Figure 5-4.</b> Settings &#9656; Library &#9656; Library Health.</figcaption></figure>
+<p>The opt-in <em>Video integrity probe</em> task spot-decodes files to find damaged or fake releases before playback does. A file it marks damaged is refused by every app (<code>FILE_DAMAGED</code>, 422); replace it and rescan.</p>
+
+<!-- ═══════════════════════════ 6 TRANSCODING ═══════════════════════════ -->
+<h1 class="chapter" id="ch6"><span class="num">6</span>Transcoding and playback</h1>
+
+<h2 id="s6-1"><span class="num">6.1</span>How the play decision works</h2>
+<p>Before playing a file, every app asks the server how to play it (<code>POST /items/{id}/playback-decision</code>), sending a description of what the device can decode. The server answers with one of:</p>
+<table class="keep">
+  <thead><tr><th>Decision</th><th>What happens</th><th>Server cost</th></tr></thead>
+  <tr><td>Direct play</td><td>The device plays the original file.</td><td>File serving only.</td></tr>
+  <tr><td>Remux (direct stream)</td><td>Video is copied into HLS segments; audio is converted only if needed.</td><td>Low.</td></tr>
+  <tr><td>Transcode</td><td>Video is re-encoded (codec, bit depth, HDR, resolution or bitrate).</td><td>High; uses an encoder slot.</td></tr>
+</table>
+<div class="new"><p><strong>The server's decision is final.</strong> Every v2.6 app plays the answer and decides on its own only when it gets none. The streaming routes enforce it: <code>GET /media/stream/{id}</code> refuses a video the server would convert for that viewer (over the internet limit from outside, or over their quality profile) with 409 <code>TRANSCODE_REQUIRED</code>, and a damaged file with 422. Music, audiobooks, books and downloads are never refused. Older app builds that decide on their own, and casting (which sends the original file), lose the original for those viewers.</p></div>
+<p>Now Playing (Analytics) shows each stream's decision and the reasons for a transcode.</p>
+<figure><img src="img/analytics.jpg" alt="Analytics dashboard with Now Playing"><figcaption><b>Figure 6-1.</b> Analytics: Now Playing shows the user, device, LAN/remote, decision, source and output formats, the transcode reasons and a Stop button.</figcaption></figure>
+
+<h2 id="s6-2"><span class="num">6.2</span>The Transcode settings page</h2>
+<figure class="short"><img src="img/settings-transcode.jpg" alt="Transcode settings page"><figcaption><b>Figure 6-2.</b> Settings &#9656; Transcode: encoder tuning, output limits and the internet streaming limit. The page continues with adaptive bitrate and the transcode fleet.</figcaption></figure>
+<table class="keep">
+  <thead><tr><th>Section</th><th>Settings</th><th>Takes effect</th></tr></thead>
+  <tr><td>Encoder Tuning</td><td>NVENC preset, tune, rate control; peak bitrate ratio</td><td>After a restart. Applies to the built-in transcoder and converted downloads; remote workers use their own <code>TRANSCODE_NVENC_*</code> settings.</td></tr>
+  <tr><td>Output Limits</td><td>Max bitrate (kbps), max width, max height</td><td>After a restart.</td></tr>
+  <tr><td>Internet Streaming</td><td>Limit internet streams (Mbps); additional local networks</td><td>On the next stream, no restart.</td></tr>
+  <tr><td>Adaptive Bitrate (ABR)</td><td>Enable the ladder; hard max rung height; auto max rung height</td><td>After a restart.</td></tr>
+  <tr><td>Transcode Fleet</td><td>Embedded worker, local and remote workers: name, encoder, max sessions; worker credentials</td><td>Worker overrides are read when the worker starts.</td></tr>
+</table>
+
+<h2 id="s6-3"><span class="num">6.3</span>Encoders and tuning</h2>
+<p><code>TRANSCODE_ENCODERS</code> (or a worker's encoder in the fleet section) overrides auto-detection with a comma-separated priority list. Accepted tokens: <code>nvenc</code>, <code>qsv</code>, <code>vaapi</code>, <code>amf</code>, <code>software</code> (H.264), their explicit names (<code>h264_nvenc</code>, <code>libx264</code>&hellip;), the HEVC encoders (<code>hevc_nvenc</code>, <code>hevc_qsv</code>, <code>hevc_vaapi</code>, <code>hevc_amf</code>, <code>libx265</code>/<code>hevc_software</code>) and the AV1 encoders (<code>av1_nvenc</code>, <code>av1_qsv</code>, <code>av1_vaapi</code>, <code>av1_amf</code>, <code>libsvtav1</code>/<code>av1_software</code>). Unknown tokens are ignored; an empty result means software.</p>
+<ul>
+  <li><strong>Encoder failover</strong> (<code>TRANSCODE_ENCODER_FAILOVER</code>, on): a job whose hardware encoder can't get the GPU moves to the next encoder on the same machine (NVIDIA &rarr; QSV &rarr; software).</li>
+  <li><strong>Full-GPU-memory paths</strong> for Intel QSV and VAAPI are on by default and fall back to software decode per job; set <code>TRANSCODE_QSV_VRAM=false</code> / <code>TRANSCODE_VAAPI_VRAM=false</code> to force software.</li>
+  <li><strong>QSV HEVC decode</strong> into system memory is opt-in per worker (<code>TRANSCODE_QSV_DECODE</code>).</li>
+  <li><strong>Peak bitrate ratio</strong>: <code>maxrate = bitrate &times; ratio</code>; 1.0 caps bandwidth tightly, 2.0 suits fast LANs.</li>
+</ul>
+<p>To check which encoder a session used, look for the <code>starting ffmpeg</code> log line; its <code>encoder</code> field reports what was invoked.</p>
+
+<h2 id="s6-4"><span class="num">6.4</span>HDR tone mapping</h2>
+<p>HDR is tone-mapped to SDR for devices that can't show it. The worker picks the best filter available:</p>
+<ol>
+  <li><code>tonemap_cuda</code> (NVIDIA): scale and tone map entirely in GPU memory, no Vulkan needed.</li>
+  <li><code>libplacebo</code> (Vulkan, any vendor): needs the <code>graphics</code> capability in Docker.</li>
+  <li><code>scale_cuda</code> + <code>zscale</code> (NVIDIA): GPU downscale, CPU tone map.</li>
+  <li><code>tonemap_vaapi</code> (VAAPI encoders), where its startup probe passes.</li>
+  <li><code>zscale</code> + <code>tonemap</code> on the CPU.</li>
+</ol>
+<p>The player shows a notice when tone mapping is active.</p>
+
+<h2 id="s6-5"><span class="num">6.5</span>The worker fleet</h2>
+<ul>
+  <li>The <strong>embedded worker</strong> runs inside the server (its segment server binds loopback). Disable it with <code>DISABLE_EMBEDDED_WORKER=true</code> or in the fleet section when only standalone workers should transcode.</li>
+  <li><strong>Standalone workers</strong> (<code>worker</code> binary or <code>/usr/local/bin/worker</code> in the image, the Windows installer's Worker mode) register themselves when started. They need the server's <code>DATABASE_URL</code>, <code>VALKEY_URL</code> and the same <code>SECRET_KEY</code>, and a <code>WORKER_ADDR</code> the server can reach.</li>
+  <li>The Transcode page can reveal a worker's credentials (the real <code>DATABASE_URL</code> and <code>SECRET_KEY</code>) after you re-enter your password and 2FA code; the reveal is audited. Serve the API over TLS wherever this is reachable.</li>
+  <li><strong>Storage-less workers</strong>: a worker that can't see the file at its library path pulls the source from the server over HTTP (<code>/media/stream/{file_id}</code> with a 24-hour stream token), so no shared NFS/SMB mount is required. Multi-part movies are pulled part by part.</li>
+  <li><strong>Dispatch</strong> is cost-weighted and capability-aware: a 4K job weighs about four 1080p jobs, HDR jobs go to nodes that can tone map on the GPU, AV1 output to AV1-capable nodes, and burn-in and passthrough jobs to workers that advertise those features.</li>
+</ul>
+<div class="warn"><p>If the embedded worker is disabled and no standalone worker is running, remux and transcode sessions have nowhere to run. Direct play still works.</p></div>
+
+<h2 id="s6-6"><span class="num">6.6</span>Limits: quality, bitrate and streams</h2>
+<table class="keep">
+  <thead><tr><th>Limit</th><th>Where</th><th>Effect</th></tr></thead>
+  <tr><td>Output limits</td><td>Settings &#9656; Transcode</td><td>Ceiling on every transcode's bitrate and resolution.</td></tr>
+  <tr><td>Internet streaming limit <span class="kv">(v2.6)</span></td><td>Settings &#9656; Transcode &#9656; Internet Streaming (off by default)</td><td>A remote video over the limit is transcoded down (720p at 4 Mbps, 1080p from 8 Mbps) instead of played as the original; the ABR ladder never exceeds it. Music, audiobooks and podcasts are never limited.</td></tr>
+  <tr><td>Per-user bitrate cap and internet cap</td><td>Users &#9656; a user's menu &#9656; Streaming caps</td><td>A direct play above the cap is re-encoded down; transcodes are capped. A remote stream gets the lowest of the user's cap, their internet cap and the server limit.</td></tr>
+  <tr><td>Concurrent-stream limit</td><td>Users &#9656; Streaming caps</td><td>Since v2.6 counts direct plays too. Over the limit, playback is refused with 429 <code>TOO_MANY_SESSIONS</code> (&ldquo;Too many streams&rdquo;). Moving to the next episode or taking a stream over from another device is never refused.</td></tr>
+  <tr><td>Quality profile <span class="kv">(applied since v2.6)</span></td><td>Each user: Account &#9656; Playback quality (and in the TV and phone apps)</td><td>Maximum resolution, video and audio bitrate, and H.264 or HEVC for conversions. Anything above it is converted, at home too.</td></tr>
+  <tr><td>Watch limits</td><td>Users &#9656; Watch limits</td><td>Daily minutes and allowed hours (an end earlier than the start makes an overnight window).</td></tr>
+</table>
+<p>The adaptive-bitrate ladder (off by default) serves several renditions the player switches between; <em>Auto max rung height</em> (1080 by default) keeps automatic playback from climbing into a 4K rung the device can't decode.</p>
+
+<h2 id="s6-7"><span class="num">6.7</span>Optimized versions and converted downloads</h2>
+<p>Both are encoded on the server by the same runner, with its configured H.264 encoder (hardware where Settings &#9656; Transcode allows, else software), <code>DOWNLOAD_MAX_CONVERSIONS</code> at a time (1 by default, 2 at most). Each conversion holds one of the embedded worker's transcode slots, so conversions wait while playback is using every slot; users' downloads go before optimized versions.</p>
+<h3>Optimized versions (v2.6)</h3>
+<p>Admins choose <strong>Optimize&hellip;</strong> on a title, season, show, library or selection, with a profile: <em>Mobile</em> (720p, 4 Mbps), <em>TV</em> (1080p, 8 Mbps) or <em>Original quality, compatible</em> (source resolution, H.264 + AAC). When a device would otherwise need a full transcode, the server can hand it a fitting optimized version to direct-play instead (for apps that declare support; the web player does). Copies live in <code>CACHE_PATH/optimized</code>, never in library folders, and don't expire: they are deleted with the original file or by hand. Settings &#9656; Library &#9656; <strong>Optimized</strong> lists them all.</p>
+<figure class="short"><img src="img/settings-optimized.jpg" alt="Optimized versions page"><figcaption><b>Figure 6-3.</b> Settings &#9656; Library &#9656; Optimized.</figcaption></figure>
+<h3>Converted downloads (v2.6)</h3>
+<p>The Download button offers the original file or a smaller MP4 (1080p 8 Mbps, 720p 4 Mbps, 720p 2 Mbps, 480p 1 Mbps). A file is converted once per quality and shared. Users' streaming caps (and, from outside, the internet limit) bound the qualities offered. Finished files live in <code>CACHE_PATH/downloads</code>, kept for <code>DOWNLOAD_CACHE_TTL_HOURS</code> after last use and capped by <code>DOWNLOAD_CACHE_MAX_GB</code>. Downloads of any kind require <strong>Allow web downloads</strong> (Settings &#9656; General &#9656; Sharing).</p>
+
+<h2 id="s6-8"><span class="num">6.8</span>Subtitles</h2>
+<ul>
+  <li><strong>Text subtitles</strong> (embedded or next to the file) are rendered by the players.</li>
+  <li><strong>OCR</strong>: picture subtitles (PGS, VobSub, DVB) can be converted to text with FFmpeg and Tesseract, per stream from the player or for a whole library with the <em>OCR image subtitles</em> task (off by default; weekly once enabled). The Docker image ships Tesseract with English, Spanish, French, German, Italian, Portuguese, Japanese, Chinese (simplified and traditional), Korean, Russian and Arabic data.</li>
+  <li><strong>OpenSubtitles</strong> search in the player, and <strong>automatic download</strong> (v2.6, off by default): Settings &#9656; General &#9656; Automatic subtitle download, with languages (e.g. <code>en,es</code>) and a hearing-impaired preference; libraries can override it. The <em>Download missing subtitles</em> task runs every 6 hours and only fetches a language the file doesn't already have.</li>
+  <li><strong>Timing for everyone</strong> (v2.6): an admin can correct a subtitle's sync in the web player and choose <em>Save for everyone</em>; the offset is applied on the server for every app.</li>
+</ul>
+<div class="new">
+<p><strong>Image-subtitle burn-in.</strong> When a viewer picks a PGS or VobSub track on a server stream, they get its OCR'd text version if one exists; otherwise the subtitle is <strong>burned into the picture</strong> during a full re-encode. Admins don't need to enable anything.</p>
+<ul>
+  <li>A burn-in is always a full re-encode on a single rendition. The overlay runs on the CPU, so the session doesn't use the all-GPU-memory decode/scale/tone-map paths and counts as a heavier job. Output is 8-bit. The subtitle's timing offset applies.</li>
+  <li>Only workers that advertise the <code>burn_in_subtitles</code> feature get burn-in jobs. If none does (every worker is an older build), the start fails with 503 <code>BURN_IN_UNAVAILABLE</code>: update the workers. A multi-part movie can't be burned (<code>BURN_IN_UNSUPPORTED</code>).</li>
+  <li>Refusals happen before the viewer's current stream is touched, so what they're watching keeps playing.</li>
+</ul>
+</div>
+
+<h2 id="s6-9"><span class="num">6.9</span>Audio passthrough on remux</h2>
+<div class="new">
+<p>Apps that bitstream audio to an AV receiver can declare it, and the server then keeps that audio intact on a remux instead of converting it:</p>
+<ul>
+  <li>For the declared codecs (AC-3, E-AC-3, TrueHD, DTS) the client's channel limit is ignored, so a 7.1 TrueHD or DTS-HD track plays as-is instead of being downmixed to 5.1 AAC.</li>
+  <li>A remux copies the track. TrueHD and DTS are packaged in fMP4 segments, since MPEG-TS can't carry them; this needs a worker that advertises the <code>audio_passthrough</code> feature, otherwise the track is converted to AAC as before.</li>
+  <li>Full transcodes still output AAC. Apps that don't declare passthrough are unaffected. Track labels such as &ldquo;DTS-HD MA&rdquo; or &ldquo;Dolby TrueHD + Dolby Atmos&rdquo; appear for files scanned or re-probed from now on.</li>
+</ul>
+</div>
+
+<h2 id="s6-10"><span class="num">6.10</span>Dolby Vision</h2>
+<p>The scanner records the Dolby Vision profile separately and judges each file by its base layer:</p>
+<table class="keep">
+  <thead><tr><th>Stream</th><th>Plays as</th></tr></thead>
+  <tr><td>Profile 7 / 8.1 (HDR10 base layer)</td><td>HDR10</td></tr>
+  <tr><td>Profile 8.4 (HLG base layer)</td><td>HLG</td></tr>
+  <tr><td>Profile 8 / 9 record over SDR video</td><td>SDR</td></tr>
+  <tr><td>Profile 5 (no compatible base layer)</td><td>Refused by every app and by Optimize</td></tr>
+</table>
+<p>Playing the Dolby Vision layer itself on capable devices is not supported yet. Files an older version tagged as Dolby Vision are re-read once by the next scan.</p>
+
+<!-- ═══════════════════════════ 7 USERS & SECURITY ═══════════════════════════ -->
+<h1 class="chapter" id="ch7"><span class="num">7</span>Users and security</h1>
+
+<h2 id="s7-1"><span class="num">7.1</span>Users and invites</h2>
+<p>Settings &#9656; Users &#9656; <strong>Users</strong> lists accounts with their role and request settings. <strong>Create User</strong> makes an account directly; <strong>Invite User</strong> creates a link (valid for 7 days) the person uses to set up their own account. Each user's &ldquo;&hellip;&rdquo; menu holds library access, watch limits, labels, streaming caps, signed-in devices, password reset and deletion.</p>
+<figure class="short"><img src="img/settings-users.jpg" alt="Users page"><figcaption><b>Figure 7-1.</b> Settings &#9656; Users: accounts, roles and per-user request settings (test accounts on a development server).</figcaption></figure>
+<p><strong>New users</strong> settings apply to accounts created from then on (for example request auto-approve; household profiles start with it off). <strong>Request limits</strong> set default request quotas; over quota, a request still goes through but waits for approval. Admins are exempt.</p>
+<p>Sign-ins last at most 90 days; after that each device signs in again (TVs re-pair).</p>
+
+<h2 id="s7-2"><span class="num">7.2</span>Managed profiles, PINs and rating limits</h2>
+<ul>
+  <li>Each account can have up to six <strong>managed profiles</strong> (the <em>Profiles</em> page in the sidebar), each with its own watch state, favorites and language preferences, an optional 4-digit <strong>PIN</strong>, and a <strong>Max rating</strong>.</li>
+  <li>A PIN lets someone switch to that profile without a password. PIN switching can never enter an admin account.</li>
+  <li>The <strong>content-rating limit</strong> is enforced everywhere on-demand content appears: browsing, search, the home screen, collections, playback, photos and their EXIF, lyrics, subtitles. Unrated items count as most restrictive. Live TV channels carry no rating and are not covered.</li>
+  <li>A rating-limited profile's media requests always need approval.</li>
+</ul>
+
+<h2 id="s7-3"><span class="num">7.3</span>Per-user restrictions</h2>
+<ul>
+  <li><strong>Library access</strong>: which libraries a user can open. A private library is visible only to users granted it.</li>
+  <li><strong>Labels&hellip;</strong> (v2.6): &ldquo;Never show titles labelled&rdquo; hides titles with any of those labels; &ldquo;Only show titles labelled&rdquo; hides everything else (unlabelled titles too). A label on a show covers its episodes; on an artist or album, its tracks. Managed profiles inherit the restriction; saving signs them out so it applies at once. A hidden title behaves exactly like one above the rating limit.</li>
+  <li><strong>Watch limits</strong>: daily minutes and allowed hours.</li>
+  <li><strong>Streaming caps</strong>: bitrate, internet bitrate and concurrent streams (<a href="#s6-6">6.6</a>).</li>
+  <li><strong>View as user</strong> shows the server through a user's restrictions.</li>
+</ul>
+
+<h2 id="s7-4"><span class="num">7.4</span>Signed-in devices</h2>
+<p>Settings &#9656; General &#9656; Security (admins) or the Account page (everyone) lists each signed-in browser or app with its address, sign-in time and last use, with <strong>Sign out</strong> per device and <strong>Sign out everywhere else</strong>. Admins can see and sign out any user's devices from the Users page. Signing out one device doesn't affect the others.</p>
+<figure class="short"><img src="img/settings-security.jpg" alt="Security settings page"><figcaption><b>Figure 7-2.</b> Settings &#9656; General &#9656; Security: two-factor authentication and signed-in devices. The page continues with API keys and the HTTPS certificate.</figcaption></figure>
+
+<h2 id="s7-5"><span class="num">7.5</span>Two-factor authentication</h2>
+<p>Local accounts can enable TOTP two-factor sign-in (<strong>Enable 2FA</strong> on the Security page, or on <strong>Account</strong> for every user) with any authenticator app; recovery codes are issued at enrolment. Every app supports the second step at sign-in. Codes are single-use within their 30-second window. Sensitive admin actions (revealing worker credentials, restoring a backup) ask for the password and code again. Every user can also change their own password on the Account page; that signs out their other devices.</p>
+
+<h2 id="s7-6"><span class="num">7.6</span>Single sign-on (OIDC, SAML, LDAP)</h2>
+<p>Configure SSO under Settings &#9656; Users &#9656; <strong>SSO</strong>. There are no environment variables for it. Set the <strong>Public URL</strong> first (and restart) so the URLs OnScreen generates use your public host name.</p>
+<ul>
+  <li><strong>OpenID Connect</strong> (Authentik, Keycloak, Auth0, Azure AD&hellip;): redirect URI <code>https://media.example.com/api/v1/auth/oidc/callback</code>.</li>
+  <li><strong>SAML 2.0</strong>: SP metadata at <code>https://media.example.com/api/v1/auth/saml/metadata</code>; point OnScreen at the IdP's metadata URL. Sign-in is bound to the browser that started it.</li>
+  <li><strong>LDAP / Active Directory</strong>: host, bind credentials, StartTLS or LDAPS, with group sync. Leave <em>skip TLS verify</em> off in production.</li>
+</ul>
+<p>SAML provisions accounts just in time on first sign-in. Changing an integration's endpoint (OIDC issuer, LDAP host) requires re-entering its secret in the same save.</p>
+<figure class="short"><img src="img/settings-sso.jpg" alt="SSO settings page"><figcaption><b>Figure 7-3.</b> Settings &#9656; Users &#9656; SSO.</figcaption></figure>
+
+<h2 id="s7-7"><span class="num">7.7</span>Personal API keys</h2>
+<div class="new"><p>Long-lived keys (<code>osk_&hellip;</code>) for scripts and integrations such as Home Assistant and Kometa.</p></div>
+<ul>
+  <li>Created under Account &#9656; API keys (Settings &#9656; General &#9656; Security for admins), <em>full</em> or <em>read-only</em>, with an optional expiry. Shown once; the server stores only a hash.</li>
+  <li>Sent as <code>Authorization: Bearer osk_&hellip;</code> or <code>X-Api-Key: osk_&hellip;</code>, never in a URL.</li>
+  <li>A key acts as its owner with their <em>current</em> library access, rating limit and labels. Keys are refused for signing in, passwords, PINs, 2FA, pairing, profile switching, device and key management, user administration, data export, server settings and backups (403 <code>API_KEY_NOT_ALLOWED</code>). An admin's key can otherwise use the admin API, so give it only to software you trust.</li>
+  <li>Admins see every user's keys under <em>All API keys</em> and can revoke any; revocation applies on the next request. Creating and revoking are audited.</li>
+</ul>
+
+<h2 id="s7-8"><span class="num">7.8</span>Rate limits</h2>
+<table class="keep">
+  <thead><tr><th>Limit</th><th>Default</th></tr></thead>
+  <tr><td>Credential endpoints (sign-in, PIN switch, pairing claims), per address</td><td>10/min (<code>OS_AUTH_RATE_LIMIT_PER_MIN</code>)</td></tr>
+  <tr><td>Authenticated API calls, per session</td><td>1000/min</td></tr>
+  <tr><td>Device pairing (code creation and polling)</td><td>60/min</td></tr>
+  <tr><td>Transcode starts</td><td>10/min (<code>OS_TRANSCODE_START_RATE_LIMIT_PER_MIN</code>)</td></tr>
+  <tr><td>Discover (TMDB) search; OpenSubtitles search/download</td><td>60/min; 30/min</td></tr>
+  <tr><td>OPDS: wrong keys per address</td><td>10 within 15 minutes, then 429</td></tr>
+</table>
+<p>Rate limits are stored in Valkey. If Valkey is unreachable they fail open (counted in <code>onscreen_ratelimit_failopen_total</code>) unless <code>OS_AUTH_RATE_LIMIT_FAIL_CLOSED=true</code> for the credential endpoints.</p>
+
+<h2 id="s7-9"><span class="num">7.9</span>Audit log</h2>
+<p>Settings &#9656; Observability &#9656; <strong>Audit Log</strong> records admin, playback and authentication events: settings changes, sign-outs (<code>auth.session_revoked</code>), API key creation and deletion, data exports (<code>user.data_export</code>), bulk edits, playback stops, optimized-version requests, imports and more. Secrets are never logged.</p>
+
+<h2 id="s7-10"><span class="num">7.10</span>Security checklist</h2>
+<ul>
+  <li>Serve the API over TLS (reverse proxy, certificate files or an uploaded certificate).</li>
+  <li>Use a real random <code>SECRET_KEY</code>; if it was ever a placeholder, rotate it with <code>rotate-key</code>. Use the same key on every worker.</li>
+  <li>Keep <code>METRICS_ADDR</code> on loopback or firewall port 7071 (pprof is unauthenticated).</li>
+  <li>Set a strong <code>DB_PASS</code>.</li>
+  <li>Behind a reverse proxy, forward <code>X-Forwarded-For</code>/<code>-Proto</code> on every route and set <code>TRUSTED_PROXIES</code> to the proxy.</li>
+  <li>Before turning on automatic port mapping: HTTPS, two-factor sign-in for every admin, and a test from outside. Prefer a VPN when you don't need the server open to the internet.</li>
+  <li>Use an SMTP relay with TLS (port 465 or STARTTLS): cleartext to a remote relay is refused.</li>
+  <li>Disable LAN discovery on untrusted networks; leave LDAP <em>skip TLS verify</em> off.</li>
+  <li>Allow a notification agent to reach private addresses only for a self-hosted ntfy/Gotify on your LAN.</li>
+  <li>Windows: install under <code>%ProgramFiles%</code> and keep <code>.env</code> admin-only.</li>
+</ul>
+<div class="note"><p>Known, accepted limits: every shipped deployment connects to PostgreSQL as a superuser; the Windows services run as LocalSystem; the bundled Redis for Windows has no password (it listens on 127.0.0.1 only); installers and binaries are not code-signed. See <code>docs/security.md</code> for the full list of residual risks.</p></div>
+
+<!-- ═══════════════════════════ 8 LIVE TV ═══════════════════════════ -->
+<h1 class="chapter" id="ch8"><span class="num">8</span>Live TV and DVR</h1>
+
+<h2 id="s8-1"><span class="num">8.1</span>Tuners and live broadcasts</h2>
+<p>Settings &#9656; <strong>Live TV</strong> manages channel sources:</p>
+<ul>
+  <li><strong>HDHomeRun</strong>: enter the device's IP or URL; discovery runs immediately.</li>
+  <li><strong>M3U / IPTV</strong>: a playlist URL.</li>
+  <li><strong>Live broadcasts (RTMP)</strong>: create a broadcast, point OBS, ffmpeg or any RTMP encoder at the ingest URL (<code>rtmp://&lt;host&gt;:1935/live/&lt;key&gt;</code>) with its stream key, and it appears as a Live TV channel that can be watched and recorded. Set <code>RTMP_PUBLIC_HOST</code> if the URL shown should use a different host name.</li>
+</ul>
+<p>Each tuner is scanned when added and can be rescanned or disabled. The page also lists unmapped channels and all channels.</p>
+<figure class="short"><img src="img/settings-tv.jpg" alt="Live TV settings page"><figcaption><b>Figure 8-1.</b> Settings &#9656; Live TV: live broadcasts, tuners and the add-tuner form.</figcaption></figure>
+<p>Built-in limits: at most 6 concurrent live sessions, 8 concurrent DVR captures (3 per user), 100 schedules per user, and 12 hours per recording. Non-admins can't list or tune disabled channels.</p>
+
+<h2 id="s8-2"><span class="num">8.2</span>Program guide (EPG)</h2>
+<p>Add guide data under <strong>EPG sources</strong> as an XMLTV URL or an XMLTV file path. Channels are matched by channel number, then by display name or call sign. The <em>EPG refresh</em> task runs every 15 minutes. (Schedules Direct is not offered in the admin UI in v2.6.)</p>
+
+<h2 id="s8-3"><span class="num">8.3</span>Recordings and post-processing</h2>
+<p>Recordings land in a <em>DVR Recordings</em> library. The <em>DVR matcher</em> task (every minute) turns schedules into recordings, and <em>DVR retention purge</em> (daily) removes expired ones.</p>
+<div class="new">
+<p>Settings &#9656; Live TV &#9656; <strong>Recording post-processing</strong> decides what happens after a recording finishes. Everything is off by default:</p>
+<ul>
+  <li><strong>Remux</strong> into MKV (or MP4) with clean timestamps for reliable seeking. Fast and lossless; recommended.</li>
+  <li><strong>Transcode to save space</strong>: H.264 or HEVC at high, balanced or small-file quality, using the hardware encoders the Transcode settings allow.</li>
+  <li><strong>Delete original</strong>, only after the new file is checked (length within 2%, video and audio present). Otherwise the original moves to a hidden <code>.dvr-originals</code> folder that the scanner skips and retention removes with the recording.</li>
+  <li><strong>Post-processing script</strong>: <code>ONSCREEN_DVR_POSTPROCESS_SCRIPT</code> runs after each recording with its path as the only argument, with a 30-minute timeout; output goes to the server log. The settings page shows it read-only.</li>
+</ul>
+<p>Recordings are processed one at a time. The Recordings page shows the status; a failure leaves the original untouched, and admins can re-run it from the recording's &ldquo;&#8943;&rdquo; menu.</p>
+</div>
+
+<h2 id="s8-4"><span class="num">8.4</span>Commercial detection</h2>
+<p>Set <strong>Commercials</strong> in the same panel to <em>Mark</em> (a &ldquo;Skip Ad&rdquo; button in the web player during breaks) or <em>Cut</em> (breaks removed from the file during post-processing; needs remux or transcode).</p>
+<ul>
+  <li>With <code>ONSCREEN_COMSKIP_PATH</code> (and optionally <code>ONSCREEN_COMSKIP_INI</code>) set, OnScreen runs comskip.</li>
+  <li>Otherwise a built-in, deliberately conservative detector looks for black frames that coincide with silence: a break must contain at least two ads, last 30 seconds to 6 minutes, and have at least 3 minutes of programme on each side.</li>
+  <li>Admins can run <em>Detect commercials</em> on any finished recording; this never changes the file.</li>
+</ul>
+
+<!-- ═══════════════════════════ 9 INTEGRATIONS ═══════════════════════════ -->
+<h1 class="chapter" id="ch9"><span class="num">9</span>Integrations</h1>
+<p>Most integrations live under Settings &#9656; <strong>Integrations</strong>: Webhooks, Notifications, Arr Services, Plugins, Storage and Import.</p>
+
+<h2 id="s9-1"><span class="num">9.1</span>Radarr, Sonarr and requests</h2>
+<p>OnScreen has a built-in request workflow: users search TMDB (Discover) and request movies or TV seasons; admins approve in a queue, choosing the Radarr/Sonarr instance, quality profile and root folder, or let trusted users auto-approve. In-flight requests show live download status (the <em>Request download status</em> task polls every 5 minutes), and an Upcoming calendar shows the arr calendars.</p>
+<ul>
+  <li>Add instances under Integrations &#9656; <strong>Arr Services</strong>.</li>
+  <li>For Radarr/Sonarr to notify OnScreen, set the <strong>Arr Notifications API Key</strong> in Settings &#9656; General and use it in the arr's webhook connection.</li>
+  <li>Per-user quotas, auto-approve and a can-request switch are on the Users page. Each user can have at most 25 pending requests.</li>
+</ul>
+<figure class="short"><img src="img/settings-arr.jpg" alt="Arr Services page"><figcaption><b>Figure 9-1.</b> Settings &#9656; Integrations &#9656; Arr Services.</figcaption></figure>
+<p class="small">The Android TV, Fire TV, phone and Roku apps contain no request features; requests are made from the web app (and the Tizen and webOS apps).</p>
+
+<h2 id="s9-2"><span class="num">9.2</span>Scrobbling</h2>
+<p>Each user links their own ListenBrainz, Last.fm and Trakt accounts on <strong>Account &#9656; Scrobbling</strong> (<code>/account/scrobble</code>; the old Settings link redirects there). Last.fm and Trakt links run under the app credentials entered in Settings &#9656; General &#9656; <em>Scrobbling apps</em>; replacing those credentials later breaks existing links. Imported history (<a href="#s9-7">9.7</a>) is not scrobbled.</p>
+
+<h2 id="s9-3"><span class="num">9.3</span>OPDS book catalog</h2>
+<p>Book libraries are published as an OPDS 1.2 catalog at <code>/opds/</code> for KOReader, Moon+ Reader, Panels, Chunky, Thorium and others. Users sign in with any user name and a <strong>read-only API key as the password</strong>; account passwords are not accepted there. The catalog follows each user's library access, rating limit and labels, and is open only while <strong>Allow web downloads</strong> is on (otherwise 403 <code>DOWNLOADS_DISABLED</code>). Ten wrong keys in a row from one address lock it out for 15 minutes.</p>
+
+<h2 id="s9-4"><span class="num">9.4</span>M3U playlists</h2>
+<p>Playlists can be exported as <code>.m3u8</code> (paths relative to the library folder, or full server paths) and imported from <code>.m3u</code>/<code>.m3u8</code> files up to 1 MB and 10,000 lines. Import matches by path, by relative path, by the same folders on another drive or mount, then by artist and title; it never opens web addresses in the playlist.</p>
+
+<h2 id="s9-5"><span class="num">9.5</span>Webhooks and notification agents</h2>
+<ul>
+  <li><strong>Webhooks</strong> (Integrations &#9656; Webhooks) are signed with HMAC-SHA256 and retried; they are compatible with Overseerr/Tautulli-style receivers. Failed deliveries are counted in <code>onscreen_webhook_failures_total</code>.</li>
+  <li><strong>Notification agents</strong> (Integrations &#9656; Notifications): Discord, Telegram, ntfy, Gotify and email, for requests, reported problems, new content, failed tasks or backups, and transcode-worker outages. Secrets are encrypted and write-only. Discord and Telegram reach only their official hosts; ntfy/Gotify must use HTTPS unless the agent's <em>Allow private network</em> option is on (then plain HTTP is allowed only to private addresses). Email agents use the server's SMTP settings.</li>
+</ul>
+<figure class="short"><img src="img/settings-notifications.jpg" alt="Notifications page"><figcaption><b>Figure 9-2.</b> Settings &#9656; Integrations &#9656; Notifications.</figcaption></figure>
+
+<h2 id="s9-6"><span class="num">9.6</span>Plugins (MCP)</h2>
+<p>Plugins are external <strong>MCP servers</strong> that OnScreen calls; OnScreen is the MCP client. Register one under Integrations &#9656; <strong>Plugins</strong> with a name, role, endpoint URL and any extra allowed hosts. In this version the only role is <code>notification</code>: the plugin must expose an MCP Streamable HTTP endpoint and a <code>notify</code> tool, and receives events such as <code>media.play</code>, <code>media.stop</code>, <code>media.scrobble</code> and <code>library.scan.complete</code>.</p>
+<ul>
+  <li>Plugins must be reachable on a <strong>public</strong> IP; loopback, private and link-local endpoints are refused at dial time. Redirects are not followed.</li>
+  <li>Timeouts: 5 s to connect, 10 s per call. Three consecutive failures open a circuit breaker for five minutes; dropped dispatches are audited.</li>
+</ul>
+
+<h2 id="s9-7"><span class="num">9.7</span>Import from Plex, Jellyfin or Emby</h2>
+<div class="new"><p>Integrations &#9656; <strong>Import</strong> brings users' history over from the server you're leaving: watched state, resume points, ratings, favorites, playlists and play history.</p></div>
+<figure class="short"><img src="img/settings-import.jpg" alt="Import page"><figcaption><b>Figure 9-3.</b> Settings &#9656; Integrations &#9656; Import.</figcaption></figure>
+<ol>
+  <li>Add and scan your libraries in OnScreen first.</li>
+  <li>Connect with the old server's URL and token: for Plex the owner's <code>X-Plex-Token</code>; for Jellyfin and Emby an API key. The token is used for the run only and never stored.</li>
+  <li>Map each of its accounts to an OnScreen user (same-name users are suggested) and choose what to bring.</li>
+  <li><strong>Preview</strong> to see how much matches, then <strong>Import</strong>.</li>
+</ol>
+<p>Items are matched by file path first, shows by their folder, then by TMDB, TVDB or IMDb ID. Re-running writes only what's new, and anything a user already did on OnScreen is kept. Plays older than the watch-history retention are left out (the items still count as watched). A Plex server exposes resume points, ratings and playlists only for its owner; Jellyfin and Emby keep no per-play log, so each watched item brings one play. Tested against Jellyfin 12.2 and Emby 4.10; the Plex reader is tested against a model of its API.</p>
+
+<h2 id="s9-8"><span class="num">9.8</span>Email and the digest</h2>
+<p>Settings &#9656; Users &#9656; <strong>Email</strong> holds the SMTP settings (used for invites, password resets, email notification agents and digests) and a <em>Send test message</em> button. Port 465 uses implicit TLS; otherwise STARTTLS is used, and a non-loopback relay that doesn't offer it is refused.</p>
+<p>The <strong>digest</strong> (v2.6, off by default) is a weekly or monthly email of what was added, which users opt into on their Account page. The admin turns it on and picks the send day and hour on the Email page; links use the Public URL. Posters are embedded in the email, which carries no access tokens. The <em>Send digest emails</em> task checks hourly.</p>
+<figure class="short"><img src="img/settings-email.jpg" alt="Email settings page"><figcaption><b>Figure 9-4.</b> Settings &#9656; Users &#9656; Email.</figcaption></figure>
+
+<h2 id="s9-9"><span class="num">9.9</span>Object storage</h2>
+<p>Integrations &#9656; <strong>Storage</strong> switches media storage from local disk to S3-compatible object storage (AWS S3, MinIO, Backblaze B2, Wasabi, Cloudflare R2). Every read and write path then goes through it, and with a CDN base URL set, cacheable bytes are served by signed URLs. There is no environment variable for it. NFO writing is not available with object storage.</p>
+
+<!-- ═══════════════════════════ 10 TASKS & MAINTENANCE ═══════════════════════════ -->
+<h1 class="chapter" id="ch10"><span class="num">10</span>Tasks and maintenance</h1>
+
+<h2 id="s10-1"><span class="num">10.1</span>Scheduled tasks</h2>
+<p>Settings &#9656; Library &#9656; <strong>Tasks</strong> lists scheduled tasks with their cron schedule, next and last run, an on/off switch, and buttons to run a task now, edit it or delete it. <strong>New Task</strong> adds one (for example a database backup or a library scan). Times are server-local; schedules are standard 5-field cron.</p>
+<figure class="short"><img src="img/settings-tasks.jpg" alt="Tasks page"><figcaption><b>Figure 10-1.</b> Settings &#9656; Library &#9656; Tasks. Disabled tasks are greyed out.</figcaption></figure>
+<p>The server creates these tasks at startup if they are missing:</p>
+<table>
+  <thead><tr><th>Task</th><th>Schedule</th><th>Default</th></tr></thead>
+  <tr><td>DVR matcher</td><td>every minute</td><td>on</td></tr>
+  <tr><td>EPG refresh</td><td>every 15 min</td><td>on</td></tr>
+  <tr><td>DVR retention purge</td><td>daily 03:17</td><td>on</td></tr>
+  <tr><td>Refresh missing artwork</td><td>every 2 h</td><td>on</td></tr>
+  <tr><td>Refresh analytics (watch_plays)</td><td>every 10 min</td><td>on</td></tr>
+  <tr><td>Request download status (Radarr/Sonarr)</td><td>every 5 min</td><td>on</td></tr>
+  <tr><td>Refresh smart collections</td><td>hourly</td><td>on</td></tr>
+  <tr><td>Import NFO collections</td><td>daily 03:17</td><td>on (does nothing until a library opts in)</td></tr>
+  <tr><td>Refresh podcast feeds</td><td>hourly</td><td>on</td></tr>
+  <tr><td>Send digest emails</td><td>hourly</td><td>on (does nothing while the digest is off)</td></tr>
+  <tr><td>Refresh IMDb, Rotten Tomatoes and Metacritic scores</td><td>hourly</td><td>on (needs an OMDb key)</td></tr>
+  <tr><td>Seek-bar thumbnail backfill</td><td>daily 02:29</td><td>on</td></tr>
+  <tr><td>Converted download cache cleanup</td><td>hourly</td><td>on</td></tr>
+  <tr><td>Franchise collections</td><td>daily 04:53</td><td>on</td></tr>
+  <tr><td>Download missing subtitles</td><td>every 6 h</td><td>on (does nothing until automatic subtitle download is enabled)</td></tr>
+  <tr><td><strong>OCR image subtitles</strong></td><td>weekly, Sun 04:00</td><td><strong>off</strong></td></tr>
+  <tr><td><strong>Video integrity probe</strong></td><td>daily 03:41</td><td><strong>off</strong></td></tr>
+  <tr><td><strong>Music loudness analysis</strong> (v2.6)</td><td>daily 04:13</td><td><strong>off</strong></td></tr>
+  <tr><td><strong>Photo face detection</strong> (v2.6)</td><td>daily 01:53</td><td><strong>off</strong></td></tr>
+  <tr><td><strong>Chapter thumbnails backfill</strong> (v2.6)</td><td>daily 02:47</td><td><strong>off</strong></td></tr>
+</table>
+<p>The heavy sweeps are off by default and work in bounded batches when enabled (for example loudness analysis measures up to 500 files a night; face detection looks at up to 500 photos within 30 minutes). Face data is personal: whether to collect it is your decision, and a photo library's settings can delete all of it. Other task types you can add: <code>backup_database</code>, <code>scan_library</code>, and <code>static_abr_preencode</code> when static ABR is enabled.</p>
+
+<h2 id="s10-2"><span class="num">10.2</span>Backup and restore</h2>
+<p>Replication is not a backup. Keep independent copies of:</p>
+<ul>
+  <li><strong>The database.</strong> Options below.</li>
+  <li><strong><code>SECRET_KEY</code></strong>, stored out of band. Without it, encrypted settings in a restored database are unreadable.</li>
+  <li><strong>Media and artwork</strong>, with file-system snapshots or object-storage versioning. The artwork cache (<code>CACHE_PATH</code>) can be deleted; it is rebuilt on demand.</li>
+</ul>
+<h3>From the web UI</h3>
+<p>Settings &#9656; Observability &#9656; <strong>Backup</strong>: <em>Download backup</em> saves a PostgreSQL custom-format dump whose file name includes the schema version (<code>-vN.dump</code>). <em>Restore database</em> uploads such a dump and <strong>wipes and replaces</strong> the database; it asks you to type RESTORE and confirm your password (and 2FA code). A dump from an older schema is migrated after the restore; a dump from a newer server is refused (409 <code>DUMP_NEWER_THAN_SERVER</code>) unless you override.</p>
+<figure class="short"><img src="img/settings-backup.jpg" alt="Backup page"><figcaption><b>Figure 10-2.</b> Settings &#9656; Observability &#9656; Backup.</figcaption></figure>
+<h3>Scheduled backups</h3>
+<p>Add a <code>backup_database</code> task on the Tasks page with an <em>Output directory</em> and <em>Keep last N backups</em>. It needs <code>pg_dump</code> (looked for in <code>&lt;exe dir&gt;/pgsql/bin</code>, then <code>PATH</code>; the Docker image includes the PostgreSQL 17 client and a <code>/var/backups/onscreen</code> directory). Dumps are written owner-only. Mount the output directory on persistent storage.</p>
+<h3>From the command line</h3>
+<pre><code>pg_dump -U onscreen -Fc onscreen &gt; onscreen_$(date +%Y%m%d).dump
+pg_restore -U onscreen -d onscreen --clean onscreen_20261015.dump
+
+# cron, daily at 03:00
+0 3 * * * pg_dump -U onscreen -Fc onscreen &gt; /backups/onscreen_$(date +\%Y\%m\%d).dump</code></pre>
+<p>Test restores periodically.</p>
+
+<h2 id="s10-3"><span class="num">10.3</span>Upgrading from v2.5 to v2.6</h2>
+<ol>
+  <li><strong>Back up the database</strong> (and confirm you have <code>SECRET_KEY</code>).</li>
+  <li><strong>Pull the new image</strong> (<code>ghcr.io/collinjaycock/onscreen:2.6</code>) or install the new binaries/package. If you built the GPU image, rebuild it.</li>
+  <li><strong>Apply migrations 00037&ndash;00057</strong> (there is no 00053) with your migrate step, or set <code>AUTO_MIGRATE=true</code>. <code>/health/ready</code> stays unready until they are applied.</li>
+  <li><strong>Behind a reverse proxy or Cloudflare, set <code>TRUSTED_PROXIES</code></strong>, or the new internet streaming limit never applies (<a href="#s4-3">4.3</a>).</li>
+  <li><strong>Check three settings that used to be ignored</strong> and now apply: each library's metadata language (on the next metadata refresh), users' concurrent-stream limits (direct plays now count) and users' quality profiles (anything above is converted, at home too).</li>
+  <li><strong>Run a scan</strong> of your libraries. The next scan does one-off work without re-probing files: episodes filed as <code>E01</code> whose file is <code>E01-E02</code> become multi-episode items, editions and multi-part movies are read from file names, featured-artist credits are read, and photos are regrouped (told apart by file, with RAW + JPEG pairs as one photo).</li>
+  <li><strong>Optional:</strong> add OMDb and fanart.tv keys (Settings &#9656; General); enable the new off-by-default tasks you want (loudness analysis, face detection, chapter-thumbnail backfill) and automatic subtitle download; set the new environment variables if needed (<code>ONSCREEN_DVR_POSTPROCESS_SCRIPT</code>, <code>ONSCREEN_COMSKIP_PATH</code>/<code>_INI</code>, <code>DOWNLOAD_MAX_CONVERSIONS</code>, <code>DOWNLOAD_CACHE_TTL_HOURS</code>, <code>DOWNLOAD_CACHE_MAX_GB</code>).</li>
+  <li><strong>Update the apps.</strong> The server holds every app to its play decision; older app builds that decide on their own lose the original file for viewers over the internet limit or their quality profile, and casting a video over the viewer's quality profile fails.</li>
+  <li><strong>Update every standalone worker</strong> to v2.6. Image-subtitle burn-in and TrueHD/DTS passthrough are sent only to workers that advertise them.</li>
+</ol>
+<p>Existing show matches are kept even though matching is stricter now; use Fix Match on any that are wrong. The full list is in <code>CHANGELOG.md</code> under &ldquo;Upgrade notes (from v2.5.x)&rdquo; and in <code>docs/releases/v2.6.0.md</code>.</p>
+<div class="note"><p>Upgrading from v2.4 or earlier? Go through v2.5 first: it requires <code>DB_PASS</code> in Compose, refuses placeholder <code>SECRET_KEY</code> values, changes the nginx sample, and limits sign-ins to 90 days. See the v2.4.x &rarr; v2.5.0 section of <code>docs/deployment.md</code>.</p></div>
+
+<h2 id="s10-4"><span class="num">10.4</span>Monitoring, metrics and logs</h2>
+<h3>Health endpoints</h3>
+<table class="keep">
+  <thead><tr><th>Endpoint</th><th>Meaning</th></tr></thead>
+  <tr><td><code>GET /health/live</code></td><td>The process is up. Use for liveness checks.</td></tr>
+  <tr><td><code>GET /health/ready</code></td><td>Database and Valkey reachable <em>and</em> no pending migrations. The Docker image's health check uses it.</td></tr>
+  <tr><td><code>GET /health/cluster</code></td><td><code>{site_id, role, replication_lag_seconds}</code> for multi-site setups; 503 when the database is unreachable.</td></tr>
+  <tr><td><code>GET /health/version</code></td><td>The version only (build details are on the metrics port).</td></tr>
+  <tr><td>Worker <code>:7074/health/live</code>, <code>/health/ready</code></td><td>Standalone worker health.</td></tr>
+</table>
+<h3>Prometheus metrics</h3>
+<p><code>METRICS_ADDR</code> (default <code>127.0.0.1:7071</code>) serves <code>/metrics</code> with Go runtime and process metrics plus:</p>
+<table class="keep">
+  <thead><tr><th>Metric</th><th>Tracks</th></tr></thead>
+  <tr><td><code>onscreen_http_requests_total</code>, <code>onscreen_http_request_duration_seconds</code></td><td>Requests and latency by method, route template and status</td></tr>
+  <tr><td><code>onscreen_db_query_duration_seconds</code></td><td>Query duration by SQL verb</td></tr>
+  <tr><td><code>onscreen_transcode_sessions_active</code>, <code>onscreen_transcode_jobs_total</code></td><td>Active transcodes; jobs dispatched, queued or failed</td></tr>
+  <tr><td><code>onscreen_scanner_files_scanned_total</code></td><td>Files scanned per library</td></tr>
+  <tr><td><code>onscreen_watch_events_total</code></td><td>Watch events by type</td></tr>
+  <tr><td><code>onscreen_webhook_failures_total</code></td><td>Webhook deliveries that failed after all retries</td></tr>
+  <tr><td><code>onscreen_hub_cache_refresh_duration_seconds</code></td><td>Home-screen cache refresh time</td></tr>
+  <tr><td><code>onscreen_ratelimit_failopen_total</code></td><td>Requests let through because Valkey was unavailable</td></tr>
+</table>
+<p>Series with labels appear only after the first matching event.</p>
+<h3>Tracing, logs and analytics</h3>
+<ul>
+  <li><strong>OpenTelemetry tracing</strong> (OTLP/gRPC) is configured in Settings &#9656; Observability &#9656; Dashboards; restart after changing it. The repository's Compose file has a <code>tracing</code> profile that starts Jaeger.</li>
+  <li><strong>Logs</strong> are structured and written to standard output (<code>docker compose logs -f server</code>, <code>journalctl -u onscreen</code>, or the Windows <code>logs\</code> folder). The level is set in Settings &#9656; General &#9656; Server (restart required). Admins can also read the most recent 2,000 log entries through <code>GET /api/v1/admin/logs</code> where there is no shell access.</li>
+  <li><strong>Analytics</strong> (sidebar) shows plays, watch time, bandwidth, stream types, codecs, top titles and users, and Now Playing with an admin <strong>Stop</strong>: it tears down a transcode and, for two minutes, refuses that user's requests for that title from that address.</li>
+</ul>
+
+<h2 id="s10-5"><span class="num">10.5</span>High availability (optional)</h2>
+<p>A standard install is a single node. Every tier below is opt-in:</p>
+<ul>
+  <li><strong>Valkey Sentinel</strong>: deploy <code>docker/docker-compose.valkey-ha.yml</code> and set <code>VALKEY_SENTINEL_ADDRS</code>.</li>
+  <li><strong>PostgreSQL failover</strong>: <code>docker/docker-compose.postgres-ha.yml</code> (primary plus streaming standby) and a multi-host <code>DATABASE_URL</code>; automatic promotion needs an orchestrator (managed Multi-AZ, Patroni, repmgr) or a manual <code>pg_ctl promote</code>.</li>
+  <li><strong>Several API instances</strong> behind a load balancer; singleton work is leader-elected through Valkey. Settings &#9656; General &#9656; Nodes holds per-node values.</li>
+  <li><strong>Object storage and a CDN</strong> (<a href="#s9-9">9.9</a>), <code>PUBLIC_ASSET_CACHE</code>, and static-ABR pre-encoding.</li>
+  <li><strong>Multi-site DR</strong>: <code>SITE_ID</code> and <code>/health/cluster</code>.</li>
+</ul>
+<p>Procedures for each tier, failover and fail-back are in <code>docs/dr-runbook.md</code>.</p>
+
+<!-- ═══════════════════════════ 11 TROUBLESHOOTING ═══════════════════════════ -->
+<h1 class="chapter" id="ch11"><span class="num">11</span>Troubleshooting</h1>
+
+<h3>The server won't start: &ldquo;SECRET_KEY must be at least 32 bytes&rdquo; or &ldquo;looks like a placeholder&rdquo;</h3>
+<p>Generate a real key with <code>openssl rand -hex 32</code>. If an existing install used a placeholder, rotate it with <code>rotate-key</code> (<a href="#s3-3">3.3</a>) instead of replacing it, so stored secrets are re-encrypted rather than lost.</p>
+
+<h3>The server won't start: &ldquo;DATABASE_URL is required&rdquo;</h3>
+<p><code>DATABASE_URL</code>, <code>VALKEY_URL</code> and <code>SECRET_KEY</code> must all be set: check <code>.env</code>, the Compose file or the systemd <code>EnvironmentFile</code>. Setting only one of <code>TLS_CERT_FILE</code>/<code>TLS_KEY_FILE</code> is also a startup error.</p>
+
+<h3>Compose refuses to start: &ldquo;DB_PASS is required&rdquo;</h3>
+<p>Set <code>DB_PASS</code> in <code>.env</code>. For an existing database volume, use the password it was created with.</p>
+
+<h3>The container stays unhealthy, or sign-in fails after an upgrade</h3>
+<p>Migrations are pending: <code>/health/ready</code> stays unready until they are applied. Run the migrate step (<a href="#s3-4">3.4</a>) or set <code>AUTO_MIGRATE=true</code>.</p>
+
+<h3>Database connection refused</h3>
+<ul>
+  <li>Check PostgreSQL is running: <code>pg_isready -h localhost -p 5432</code>.</li>
+  <li>Local connections usually need <code>?sslmode=disable</code>.</li>
+  <li>Inside Compose, services connect by service name (<code>postgres</code>, <code>valkey</code>), not <code>localhost</code>.</li>
+  <li>&ldquo;Remaining connection slots are reserved&rdquo;: terminate idle connections (the pool reconnects) and give containers a stop grace period of at least 35 seconds so the server can drain.</li>
+</ul>
+
+<h3>Migrations fail</h3>
+<p>Create the <code>pg_trgm</code>, <code>pgcrypto</code> and <code>unaccent</code> extensions as a superuser, check the database user can create schema objects, and run <code>goose status</code> to see what was applied.</p>
+
+<h3>Files don't appear after a scan</h3>
+<ul>
+  <li>Check each library path is the path <em>the server</em> sees, and that the process can read it. In Docker: <code>docker compose exec server ls /media</code>.</li>
+  <li>Linux service: the unit runs as the installing user with <code>ProtectHome=read-only</code>; make the media readable by that user.</li>
+  <li>Look for scan errors: <code>docker compose logs server | grep -i scan</code>.</li>
+</ul>
+
+<h3>No cover art or metadata</h3>
+<p>Set a valid TMDB key in Settings &#9656; General and check the log for TMDB rate-limit errors (lower the TMDB rate limit in Settings &#9656; System). Wrong show matches: use Fix Match.</p>
+
+<h3>Remux or transcode fails while direct play works</h3>
+<ul>
+  <li>Check a worker is available: the embedded worker may be disabled (<code>DISABLE_EMBEDDED_WORKER</code> or the fleet section) with no standalone worker running.</li>
+  <li>A standalone worker with <code>WORKER_ADDR=:7073</code> makes the server proxy to its own loopback, so every playlist fails with 503. Use an address the server can reach.</li>
+  <li>Bare metal: confirm <code>ffmpeg -version</code> works for the service user (the Linux tarball relies on the distribution's FFmpeg).</li>
+  <li>Image subtitles burned in fail with <code>BURN_IN_UNAVAILABLE</code>: update your workers to v2.6.</li>
+  <li>&ldquo;Too many streams&rdquo; (<code>TOO_MANY_SESSIONS</code>): the user's concurrent-stream limit, which now counts direct plays.</li>
+  <li>Playback refused as damaged (<code>FILE_DAMAGED</code>): the integrity probe flagged the file; replace it and rescan.</li>
+</ul>
+
+<h3>The GPU isn't used</h3>
+<ul>
+  <li>Read the worker's <code>transcode worker ready</code> line and the <code>encoders available</code> log (<a href="#s2-3">2.3</a>).</li>
+  <li><code>libplacebo=false</code>: <code>NVIDIA_DRIVER_CAPABILITIES</code> lacks <code>graphics</code> as applied to the container.</li>
+  <li><code>cuda_scale=false</code> with <code>nvdec_hevc=true</code>: the host driver is older than 570 (CUDA mismatch), or <code>/var/cache/onscreen</code> isn't persistent and writable, so the JIT cache never warms. The first transcode after a fresh deploy being slow is that one-time warm-up.</li>
+  <li>VAAPI: <code>vainfo</code> must show encode entry points and the user must be in the <code>video</code>/<code>render</code> groups; the hardened systemd unit may need loosening for some drivers.</li>
+  <li>NVIDIA without Docker: <code>ffmpeg -hide_banner -encoders | grep nvenc</code> must list NVENC; some distribution builds lack it.</li>
+</ul>
+
+<h3>Every viewer shows as LAN, or the internet limit never applies</h3>
+<p>The proxy isn't forwarding the client address, or it isn't in <code>TRUSTED_PROXIES</code> (<a href="#s4-3">4.3</a>). With nginx, a location-level <code>proxy_set_header</code> silently drops the forwarded headers for that location.</p>
+
+<h3>First-run setup is refused</h3>
+<p>Open the server from the local network by IP or a local name (<a href="#s2-7">2.7</a>), or set <code>ALLOW_PUBLIC_SETUP=true</code> temporarily.</p>
+
+<h3>Notifications only appear after a page reload</h3>
+<p>The proxy is buffering or timing out the event stream at <code>/api/v1/notifications/stream</code>: set <code>proxy_buffering off</code> and a long <code>proxy_read_timeout</code> (nginx) or <code>flush_interval -1</code> (Caddy).</p>
+
+<h3>A node is unreachable after changing its listen address</h3>
+<p>Start it with <code>IGNORE_NODE_DB_CONFIG=true</code>, fix the value under Settings &#9656; General &#9656; Nodes, and restart without the flag.</p>
+
+<h3>High memory use during scans</h3>
+<p>Lower the file-scan concurrency in Settings &#9656; System (default <code>cores &times; 2</code>) and restart.</p>
+
+<h3>The desktop app says &ldquo;Failed to fetch&rdquo;</h3>
+<p>A server older than v2.5 refuses the desktop app's origin. Update the server, or add <code>http://tauri.localhost, tauri://localhost</code> to CORS allowed origins and restart.</p>
+
+<h3>Email isn't sent</h3>
+<p>A remote SMTP relay without TLS is refused; use port 465 or a relay that offers STARTTLS. Digests also need the digest turned on in Settings &#9656; Users &#9656; Email.</p>
+
+<!-- ═══════════════════════════ 12 APPENDIX ═══════════════════════════ -->
+<h1 class="chapter" id="ch12"><span class="num">12</span>Appendix</h1>
+
+<h2 id="s12-1"><span class="num">12.1</span>Ports</h2>
+<table class="keep">
+  <thead><tr><th>Default</th><th>Variable</th><th>Service</th></tr></thead>
+  <tr><td><code>7070/tcp</code></td><td><code>LISTEN_ADDR</code></td><td>API, web UI, TV web app (<code>/tvapp/</code>), OPDS (<code>/opds/</code>)</td></tr>
+  <tr><td><code>127.0.0.1:7071/tcp</code></td><td><code>METRICS_ADDR</code></td><td>Prometheus metrics, pprof</td></tr>
+  <tr><td><code>1935/tcp</code></td><td><code>RTMP_LISTEN_ADDR</code></td><td>RTMP ingest</td></tr>
+  <tr><td><code>7073/tcp</code></td><td><code>WORKER_ADDR</code></td><td>Standalone worker segment server</td></tr>
+  <tr><td><code>7074/tcp</code></td><td><code>WORKER_HEALTH_ADDR</code></td><td>Standalone worker health</td></tr>
+  <tr><td><code>7368/udp</code></td><td><code>DISCOVERY_PORT</code></td><td>LAN discovery</td></tr>
+  <tr><td><code>5432</code>, <code>6379</code></td><td>(Compose)</td><td>PostgreSQL and Valkey, published to 127.0.0.1 only</td></tr>
+</table>
+
+<h2 id="s12-2"><span class="num">12.2</span>File and directory locations</h2>
+<table>
+  <thead><tr><th>What</th><th>Location</th></tr></thead>
+  <tr><td>Cache root (Docker images)</td><td><code>/var/cache/onscreen</code> (<code>CACHE_PATH</code>); GPU image also <code>CUDA_CACHE_PATH=/var/cache/onscreen/nv</code></td></tr>
+  <tr><td>Cache root (binaries, default)</td><td><code>~/.onscreen/cache/artwork</code></td></tr>
+  <tr><td>Converted downloads / optimized versions</td><td><code>CACHE_PATH/downloads</code>, <code>CACHE_PATH/optimized</code></td></tr>
+  <tr><td>Backup directory (Docker images)</td><td><code>/var/backups/onscreen</code> (mode 0700)</td></tr>
+  <tr><td>Migrations</td><td>Image: <code>/migrations</code>; source: <code>internal/db/migrations</code>; embedded in the server binary</td></tr>
+  <tr><td>Binaries (image)</td><td><code>/usr/local/bin/server</code>, <code>/usr/local/bin/worker</code>, <code>/usr/local/bin/goose</code></td></tr>
+  <tr><td>Windows installer</td><td>Program: <code>C:\Program Files\OnScreen</code>; data and logs: <code>%ProgramData%\OnScreen</code> (PostgreSQL data in <code>pgdata</code>)</td></tr>
+  <tr><td>Windows zip logs</td><td><code>logs\onscreen.out.log</code>, <code>logs\onscreen.err.log</code> (10 MB rotation, 8 generations)</td></tr>
+  <tr><td>Linux tarball</td><td>Install directory with <code>.env</code>; systemd unit <code>/etc/systemd/system/onscreen.service</code></td></tr>
+  <tr><td><code>.env</code> lookup</td><td>Working directory, then the executable's directory</td></tr>
+  <tr><td>Kept DVR originals</td><td>Hidden <code>.dvr-originals</code> folder beside the recording</td></tr>
+</table>
+
+<h2 id="s12-3"><span class="num">12.3</span>Command-line tools</h2>
+<table class="keep">
+  <thead><tr><th>Tool (<code>cmd/</code>)</th><th>Purpose</th></tr></thead>
+  <tr><td><code>server</code></td><td>The OnScreen server. <code>server migrate</code> applies pending migrations to <code>DATABASE_URL</code> and exits.</td></tr>
+  <tr><td><code>worker</code></td><td>Standalone transcode worker.</td></tr>
+  <tr><td><code>rotate-key</code></td><td>Re-encrypts stored secrets from <code>OLD_SECRET_KEY</code> to <code>SECRET_KEY</code>; dry run unless <code>-apply</code>. Flags <code>-old-key</code>, <code>-new-key</code>, <code>-database-url</code> override the environment.</td></tr>
+  <tr><td><code>onscreen-cli</code></td><td>Terminal client that browses a server and plays through mpv (reads <code>ONSCREEN_USERNAME</code>/<code>ONSCREEN_PASSWORD</code>).</td></tr>
+  <tr><td><code>devtoken</code></td><td>Developer tool that mints admin tokens from <code>SECRET_KEY</code>. Not shipped in any installer; delete old copies.</td></tr>
+</table>
+<p>Useful <code>make</code> targets: <code>build</code>, <code>migrate</code>, <code>migrate-status</code>, <code>docker</code>, <code>installer-windows</code>, <code>installer-windows-msi</code>, <code>installer-linux</code>; <code>make help</code> lists them all.</p>
+
+<h2 id="s12-4"><span class="num">12.4</span>API documentation</h2>
+<ul>
+  <li>REST reference: <code>docs/api/openapi.yaml</code> (all routes under <code>/api/v1</code>).</li>
+  <li>Error codes: <code>docs/api/ERROR_CODES.md</code> (for example <code>TRANSCODE_REQUIRED</code>, <code>TOO_MANY_SESSIONS</code>, <code>FILE_DAMAGED</code>, <code>UNSUPPORTED_CONTAINER</code>, <code>BURN_IN_UNAVAILABLE</code>).</li>
+  <li>Personal API keys: <code>docs/api/api-keys.md</code>. OPDS: <code>docs/opds.md</code>. Plugins: <code>docs/plugins.md</code>.</li>
+  <li>Client capability profiles (how apps describe what they can play): <code>docs/capability-profiles.md</code>.</li>
+  <li>Deployment details, HA and security: <code>docs/deployment.md</code>, <code>docs/dr-runbook.md</code>, <code>docs/security.md</code>, <code>docs/key-rotation.md</code>.</li>
+</ul>
+
+</body>
+</html>

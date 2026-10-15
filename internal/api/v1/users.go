@@ -36,6 +36,10 @@ var (
 	// worker-credentials reveal) or "no local step-up is possible, fall back to
 	// the base gate" (restore).
 	ErrReauthNoLocalPassword = errors.New("re-verification requires a password-based account")
+	// ErrNoLocalPassword is returned by UserService.ChangePassword for an
+	// account with no local password to change: one that signs in through
+	// single sign-on or LDAP, or a managed profile.
+	ErrNoLocalPassword = errors.New("this account has no OnScreen password to change")
 )
 
 // SwitchableUser is a public-safe user representation for the user picker.
@@ -59,8 +63,10 @@ type PINSwitchResult struct {
 
 // UserService manages user profile operations.
 type UserService interface {
-	SetPIN(ctx context.Context, userID uuid.UUID, rawPIN, password string) error
-	ClearPIN(ctx context.Context, userID uuid.UUID, password string) error
+	// ChangePassword checks current against the stored hash and stores a
+	// hash of next. ErrInvalidCredentials when current is wrong,
+	// ErrNoLocalPassword when the account has no local password.
+	ChangePassword(ctx context.Context, userID uuid.UUID, current, next string) error
 	ListSwitchable(ctx context.Context, callerID uuid.UUID) ([]SwitchableUser, error)
 	VerifyPIN(ctx context.Context, callerID, targetID uuid.UUID, rawPIN string) (*PINSwitchResult, error)
 }
@@ -72,6 +78,7 @@ type UserDB interface {
 	SetUserAdmin(ctx context.Context, arg gen.SetUserAdminParams) error
 	BumpSessionEpoch(ctx context.Context, id uuid.UUID) error
 	DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error
+	DeleteOtherSessionsForUser(ctx context.Context, arg gen.DeleteOtherSessionsForUserParams) (int64, error)
 	CountAdmins(ctx context.Context) (int64, error)
 	UpdateUserPassword(ctx context.Context, arg gen.UpdateUserPasswordParams) error
 	ListManagedProfiles(ctx context.Context, parentUserID pgtype.UUID) ([]gen.ListManagedProfilesRow, error)
@@ -166,6 +173,12 @@ const (
 	// retries unaffected.
 	pinSwitchMaxFailures = 5
 	pinSwitchFailWindow  = 15 * time.Minute
+
+	// passwordChangeMaxFailures / passwordChangeFailWindow bound guesses at
+	// the current password through PUT /users/me/password, so a borrowed
+	// signed-in browser can't be used to brute-force the account password.
+	passwordChangeMaxFailures = 5
+	passwordChangeFailWindow  = 15 * time.Minute
 )
 
 // WithAudit attaches an audit logger. Returns the handler for chaining.
@@ -217,81 +230,6 @@ func (h *UserHandler) WithPINThrottle(t FailureThrottle) *UserHandler {
 func (h *UserHandler) WithPinSwitchPolicy(p PinSwitchPolicy) *UserHandler {
 	h.pinPolicy = p
 	return h
-}
-
-// ── PIN management (existing) ─────────────────────────────────────────────────
-
-// SetPIN handles PUT /api/v1/users/me/pin.
-// Body: {"pin":"1234","password":"currentPassword"}
-func (h *UserHandler) SetPIN(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Forbidden(w, r)
-		return
-	}
-	// A PIN-switched session must not set a PIN. SetPIN requires the account
-	// password, but a managed profile has none, so that check is skipped for it
-	// (PasswordHash == nil) — which would let a switched session set or change
-	// its own profile's PIN with no credential at all. Managed-profile PINs are
-	// managed by the owning account through the profile endpoints instead.
-	if blockSwitchedSession(w, r, "change a PIN") {
-		return
-	}
-
-	var body struct {
-		PIN      string `json:"pin"`
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.BadRequest(w, r, "invalid request body")
-		return
-	}
-
-	if err := h.users.SetPIN(r.Context(), claims.UserID, body.PIN, body.Password); err != nil {
-		switch {
-		case errors.Is(err, ErrBadPIN):
-			respond.BadRequest(w, r, err.Error())
-		case errors.Is(err, ErrInvalidCredentials):
-			respond.Forbidden(w, r)
-		default:
-			respond.InternalError(w, r)
-		}
-		return
-	}
-	respond.NoContent(w)
-}
-
-// ClearPIN handles DELETE /api/v1/users/me/pin.
-// Body: {"password":"currentPassword"}
-func (h *UserHandler) ClearPIN(w http.ResponseWriter, r *http.Request) {
-	claims := middleware.ClaimsFromContext(r.Context())
-	if claims == nil {
-		respond.Forbidden(w, r)
-		return
-	}
-	// Same reasoning as SetPIN: a passwordless managed profile would skip the
-	// password check, so a switched session could clear its own PIN.
-	if blockSwitchedSession(w, r, "change a PIN") {
-		return
-	}
-
-	var body struct {
-		Password string `json:"password"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-		respond.BadRequest(w, r, "invalid request body")
-		return
-	}
-
-	if err := h.users.ClearPIN(r.Context(), claims.UserID, body.Password); err != nil {
-		if errors.Is(err, ErrInvalidCredentials) {
-			respond.Forbidden(w, r)
-		} else {
-			respond.InternalError(w, r)
-		}
-		return
-	}
-	respond.NoContent(w)
 }
 
 // ── Admin user management ─────────────────────────────────────────────────────
@@ -589,6 +527,142 @@ func (h *UserHandler) ResetPassword(w http.ResponseWriter, r *http.Request) {
 		h.audit.Log(r.Context(), &claims.UserID, audit.ActionPasswordReset, targetID.String(), nil, audit.ClientIP(r))
 	}
 	respond.NoContent(w)
+}
+
+// ChangePassword handles PUT /api/v1/users/me/password — a signed-in user
+// changes their own password. Body: {"current_password":"…","new_password":"…"}.
+//
+// Refused for PIN-switched sessions (a profile switch must not reach the
+// account password) and for accounts with no local password (SSO / LDAP-only
+// accounts, managed profiles): 409 NO_LOCAL_PASSWORD. A wrong current password
+// is 403 INVALID_CREDENTIALS and counts toward a per-user lockout (429).
+//
+// On success every OTHER sign-in of the account ends: their refresh sessions
+// are deleted and the session epoch is bumped, so outstanding access and asset
+// tokens stop working too. This sign-in keeps its refresh session; its next
+// request refreshes onto the new epoch. A token minted before sign-ins carried
+// a session id can't tell this sign-in apart from the others, so then every
+// session ends, this one included, and the response says signed_out.
+func (h *UserHandler) ChangePassword(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil {
+		respond.Unauthorized(w, r)
+		return
+	}
+	if blockSwitchedSession(w, r, "change your password") {
+		return
+	}
+	if h.db == nil {
+		respond.InternalError(w, r)
+		return
+	}
+
+	var body struct {
+		CurrentPassword string `json:"current_password"`
+		NewPassword     string `json:"new_password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	if body.CurrentPassword == "" {
+		respond.BadRequest(w, r, "current_password is required")
+		return
+	}
+	if err := ValidatePassword(body.NewPassword); err != nil {
+		respond.BadRequest(w, r, err.Error())
+		return
+	}
+	if body.NewPassword == body.CurrentPassword {
+		respond.BadRequest(w, r, "the new password must be different from the current one")
+		return
+	}
+
+	ctx := r.Context()
+	failKey := "ratelimit:pwchange:" + claims.UserID.String()
+	if h.throttle != nil {
+		if allowed, _ := h.throttle.CheckFailures(ctx, failKey, passwordChangeMaxFailures); !allowed {
+			respond.Error(w, r, http.StatusTooManyRequests, "RATE_LIMITED",
+				"too many failed attempts; try again later")
+			return
+		}
+	}
+
+	if err := h.users.ChangePassword(ctx, claims.UserID, body.CurrentPassword, body.NewPassword); err != nil {
+		switch {
+		case errors.Is(err, ErrInvalidCredentials):
+			if h.throttle != nil {
+				h.throttle.IncrFailure(ctx, failKey, passwordChangeFailWindow)
+			}
+			respond.Error(w, r, http.StatusForbidden, "INVALID_CREDENTIALS", "your current password is incorrect")
+		case errors.Is(err, ErrNoLocalPassword):
+			respond.Error(w, r, http.StatusConflict, "NO_LOCAL_PASSWORD",
+				"this account signs in without an OnScreen password, so there is none to change")
+		default:
+			if h.logger != nil {
+				h.logger.ErrorContext(ctx, "change password", "user_id", claims.UserID, "err", err)
+			}
+			respond.InternalError(w, r)
+		}
+		return
+	}
+	if h.throttle != nil {
+		h.throttle.ResetFailures(ctx, failKey)
+	}
+
+	// The password is changed; now end the other sign-ins (see above). A
+	// failure here is a 500, so the caller knows the revocation didn't land,
+	// but the new password stays in force.
+	var revoked int64
+	signedOut := claims.SessionID == uuid.Nil
+	if signedOut {
+		if err := h.db.DeleteSessionsForUser(ctx, claims.UserID); err != nil {
+			h.logRevokeFailure(ctx, claims.UserID, err)
+			respond.InternalError(w, r)
+			return
+		}
+	} else {
+		n, err := h.db.DeleteOtherSessionsForUser(ctx, gen.DeleteOtherSessionsForUserParams{
+			UserID: claims.UserID, ID: claims.SessionID,
+		})
+		if err != nil {
+			h.logRevokeFailure(ctx, claims.UserID, err)
+			respond.InternalError(w, r)
+			return
+		}
+		revoked = n
+	}
+	if err := h.db.BumpSessionEpoch(ctx, claims.UserID); err != nil {
+		h.logRevokeFailure(ctx, claims.UserID, err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.segTokens != nil {
+		if err := h.segTokens.RevokeAllForUser(ctx, claims.UserID); err != nil && h.logger != nil {
+			h.logger.WarnContext(ctx, "revoke segment tokens after password change",
+				"user_id", claims.UserID, "err", err)
+		}
+	}
+	if h.audit != nil {
+		h.audit.Log(ctx, &claims.UserID, audit.ActionPasswordChange, claims.UserID.String(), map[string]any{
+			"other_sessions_revoked": revoked,
+			"signed_out":             signedOut,
+		}, audit.ClientIP(r))
+	}
+	if signedOut {
+		clearAuthCookies(w, r)
+	}
+	respond.Success(w, r, map[string]any{
+		"other_sessions_revoked": revoked,
+		"signed_out":             signedOut,
+	})
+}
+
+func (h *UserHandler) logRevokeFailure(ctx context.Context, userID uuid.UUID, err error) {
+	if h.logger != nil {
+		h.logger.ErrorContext(ctx, "password changed but other sign-ins not ended",
+			"user_id", userID, "err", err)
+	}
 }
 
 // ── PIN-based user switching ──────────────────────────────────────────────────
@@ -1066,11 +1140,10 @@ type preferencesResponse struct {
 	PreferredVideoCodec   *string `json:"preferred_video_codec,omitempty"`
 	ForcedSubtitlesOnly   bool    `json:"forced_subtitles_only"`
 	EpisodeUseShowPoster  bool    `json:"episode_use_show_poster"`
-	// HasPIN reports whether the CALLER's own account has a PIN set. The Settings
-	// page reads it here (a self-scoped call) rather than from the switchable
-	// list, which is scoped to the caller's managed children and never contains
-	// the caller.
-	HasPIN bool `json:"has_pin"`
+	// HasPassword reports whether the caller signs in with a local password
+	// (false for SSO / LDAP-only accounts and managed profiles), so the
+	// Account page offers PUT /users/me/password only when it can work.
+	HasPassword bool `json:"has_password"`
 	// HubLayout is the user's hub row customization (order + visibility).
 	// Omitted entirely when the user has never customized — clients render
 	// their default layout.
@@ -1118,7 +1191,7 @@ func (h *UserHandler) GetPreferences(w http.ResponseWriter, r *http.Request) {
 		PreferredVideoCodec:   row.PreferredVideoCodec,
 		ForcedSubtitlesOnly:   row.ForcedSubtitlesOnly,
 		EpisodeUseShowPoster:  row.EpisodeUseShowPoster,
-		HasPIN:                row.HasPin,
+		HasPassword:           row.HasPassword,
 	}
 	if len(row.HubLayout) > 0 {
 		// Tolerate a corrupt blob (manual DB edits) by omitting the field —

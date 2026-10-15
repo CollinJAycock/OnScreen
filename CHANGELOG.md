@@ -28,10 +28,13 @@ becomes final on every app. Release note:
   item, movie editions and multi-part movies are read from file names,
   featured-artist credits are read, and photos are regrouped (they are now
   told apart by file, not by name; RAW + JPEG pairs become one photo).
-- **Three settings now apply that used to be ignored.** Check them if they
+- **Four settings now apply that used to be ignored.** Check them if they
   were ever set: a library's metadata language (applies on the next metadata
-  refresh), a user's concurrent-stream limit (now counts direct plays) and a
-  user's quality profile (now converts anything above it, at home too).
+  refresh), a user's concurrent-stream limit (now counts direct plays), a
+  user's quality profile (now converts anything above it, at home too) and
+  Settings ▸ Transcode's encoder tuning (NVENC preset, tune, rate control and
+  peak-bitrate ratio, which now override `TRANSCODE_NVENC_*` /
+  `TRANSCODE_MAXRATE_RATIO` on the server itself).
 - **`GET /media/stream` follows the play decision.** A video the server would
   convert for the viewer (over the internet limit from outside the home
   network, or over their quality profile) is refused with 409
@@ -57,6 +60,13 @@ becomes final on every app. Release note:
 
 ### Added
 
+- **Your own sign-in settings on the Account page, for every user.** Change
+  your password (new `PUT /users/me/password`: needs the current one, ends
+  your other sign-ins; `GET /users/me/preferences` gains `has_password`), turn
+  two-factor sign-in on or off, pick preferred audio and subtitle languages,
+  and link Last.fm, ListenBrainz or Trakt
+  (`/account/scrobble`; `/settings/scrobble` redirects there). These were only
+  under Settings, which only admins can open.
 - **Audio passthrough on remux.** A client that bitstreams audio to a receiver
   can say so in its capability profile (`audioPassthrough=ac3:eac3:truehd:dts`
   in `X-Client-Capabilities`), and the server then keeps that audio intact:
@@ -909,6 +919,12 @@ becomes final on every app. Release note:
 
 ### Changed
 
+- **An account's own PIN is gone.** `PUT` / `DELETE /users/me/pin` and the
+  `has_pin` field of `GET /users/me/preferences` are removed, with the
+  Profile PIN block in Settings ▸ General. Switching only ever reached a
+  managed profile the account owns, so a PIN set on the account itself was
+  never checked. Managed profiles keep their PINs (Profiles page,
+  `/profiles`); no first-party app used the removed routes.
 - **The server's play decision is final.** Every app asks
   `POST /items/{id}/playback-decision` how to play a file, and now plays the
   answer; it decides on its own only when it gets no answer (an older server,
@@ -964,6 +980,15 @@ becomes final on every app. Release note:
     the codec choice picks H.264 or HEVC output. The web Account page has a
     new **Playback quality** section to set it. Values too small to play are
     refused with 400.
+  - **Encoder tuning** (Settings ▸ Transcode: NVENC preset, tune and rate
+    control, peak-bitrate ratio) was stored and never read: the server kept
+    the `TRANSCODE_NVENC_*` / `TRANSCODE_MAXRATE_RATIO` values. Saved values
+    now apply to the built-in transcoder and converted downloads after a
+    restart (the page used to say no restart was needed), the page shows the
+    running values, and values ffmpeg wouldn't take are refused with 400.
+    Remote workers keep their own environment settings.
+- **The web My Playlists page** (M3U import and export, smart playlists) had
+  no link; it's in the sidebar now.
 - **Shows auto-matched the wrong series.** Movies got a strict match in
   v2.5.0; shows hadn't. TMDB's show search took an exact name if there was
   one, else any show whose name began with the folder's ("Avatar" became the

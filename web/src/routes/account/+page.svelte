@@ -1,9 +1,15 @@
 <script lang="ts">
-  // Account page for every signed-in user. Admins manage the same list (and
-  // 2FA) under Settings ▸ Security; this is where everyone else sees which
-  // devices are signed in and signs one out.
+  // Account page for every signed-in user: their own sign-in settings
+  // (password, two-factor), languages, scrobbling, playback quality, devices,
+  // downloads, API keys and data. Settings is admin-only, so anything a user
+  // sets for their own account belongs here; Settings ▸ General / Security
+  // show the same language and 2FA controls to admins. PINs belong to managed
+  // profiles and are set on the Profiles page.
   import { onMount } from 'svelte';
   import { getApiBase, userApi } from '$lib/api';
+  import ChangePassword from '$lib/components/ChangePassword.svelte';
+  import TwoFactor from '$lib/components/TwoFactor.svelte';
+  import LanguagePrefs from '$lib/components/LanguagePrefs.svelte';
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import MyDownloads from '$lib/components/MyDownloads.svelte';
   import ApiKeys from '$lib/components/ApiKeys.svelte';
@@ -16,9 +22,18 @@
   // Panels, Chunky). Set once mounted: it needs window.location.
   let opdsUrl = $state('');
   let opdsCopied = $state(false);
+  // Whether the account signs in with an OnScreen password. SSO / LDAP-only
+  // accounts and managed profiles have none: no password to change, and
+  // two-factor only guards password sign-in. null until known; an older
+  // server that doesn't report it is taken as "has one".
+  let hasPassword = $state<boolean | null>(null);
   onMount(() => {
     opdsUrl = opdsCatalogUrl(getApiBase(), window.location.origin);
     void ensureCapabilities();
+    userApi.getPreferences().then(
+      (p) => { hasPassword = p.has_password ?? true; },
+      () => { hasPassword = true; },
+    );
   });
 
   async function copyOpds() {
@@ -78,6 +93,46 @@
     </p>
     <PlaybackQuality />
   </section>
+
+  <section class="card">
+    <h2>Languages</h2>
+    <p class="sub">
+      Audio and subtitle languages the player picks when a title has them,
+      on every device you sign in to.
+    </p>
+    <LanguagePrefs />
+  </section>
+
+  <section class="card">
+    <h2>Scrobbling</h2>
+    <p class="sub">
+      Send what you play to ListenBrainz, Last.fm or Trakt.
+    </p>
+    <a class="stats-link" href="/account/scrobble">Link your accounts →</a>
+  </section>
+
+  {#if hasPassword}
+    <section class="card">
+      <h2>Password</h2>
+      <p class="sub">
+        Changing it signs you out on your other devices; this browser stays
+        signed in.
+      </p>
+      <ChangePassword />
+    </section>
+
+    <section class="card">
+      <TwoFactor />
+    </section>
+  {:else if hasPassword === false}
+    <section class="card">
+      <h2>Password</h2>
+      <p class="sub">
+        You sign in through your organisation's sign-in or a profile, so there's
+        no OnScreen password to change here.
+      </p>
+    </section>
+  {/if}
 
   <section class="card">
     <h2>Signed-in devices</h2>

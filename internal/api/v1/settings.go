@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -1602,11 +1603,23 @@ func (h *SettingsHandler) Update(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
-// GetTranscodeConfig handles GET /api/v1/settings/transcode-config. Unset (0)
-// output ceilings are filled with the effective running caps so the page shows
-// the active values rather than blanks.
+// GetTranscodeConfig handles GET /api/v1/settings/transcode-config. Unset
+// encoder tuning and output ceilings are filled with the effective running
+// values so the page shows (and re-saves) what's active rather than blanks.
 func (h *SettingsHandler) GetTranscodeConfig(w http.ResponseWriter, r *http.Request) {
 	tc := h.svc.TranscodeConfigGet(r.Context())
+	if tc.NVENCPreset == "" {
+		tc.NVENCPreset = h.transcodeDefaults.NVENCPreset
+	}
+	if tc.NVENCTune == "" {
+		tc.NVENCTune = h.transcodeDefaults.NVENCTune
+	}
+	if tc.NVENCRC == "" {
+		tc.NVENCRC = h.transcodeDefaults.NVENCRC
+	}
+	if tc.MaxrateRatio <= 0 {
+		tc.MaxrateRatio = h.transcodeDefaults.MaxrateRatio
+	}
 	if tc.MaxBitrateKbps == 0 {
 		tc.MaxBitrateKbps = h.transcodeDefaults.MaxBitrateKbps
 	}
@@ -1631,11 +1644,41 @@ func (h *SettingsHandler) GetTranscodeConfig(w http.ResponseWriter, r *http.Requ
 	respond.Success(w, r, tc)
 }
 
+// validateEncoderTuning refuses NVENC preset / tune / rate-control and
+// maxrate-ratio values ffmpeg wouldn't take. Empty / 0 means "unset".
+func validateEncoderTuning(tc settings.TranscodeConfig) error {
+	oneOf := func(field, v string, allowed ...string) error {
+		if v == "" || slices.Contains(allowed, v) {
+			return nil
+		}
+		return fmt.Errorf("%s must be one of %s", field, strings.Join(allowed, ", "))
+	}
+	if err := oneOf("nvenc_preset", tc.NVENCPreset, "p1", "p2", "p3", "p4", "p5", "p6", "p7"); err != nil {
+		return err
+	}
+	if err := oneOf("nvenc_tune", tc.NVENCTune, "hq", "ll", "ull"); err != nil {
+		return err
+	}
+	if err := oneOf("nvenc_rc", tc.NVENCRC, "vbr", "cbr", "constqp"); err != nil {
+		return err
+	}
+	if tc.MaxrateRatio != 0 && (tc.MaxrateRatio < 1 || tc.MaxrateRatio > 5) {
+		return errors.New("maxrate_ratio must be between 1 and 5 (0 = default)")
+	}
+	return nil
+}
+
 // UpdateTranscodeConfig handles PUT /api/v1/settings/transcode-config.
 func (h *SettingsHandler) UpdateTranscodeConfig(w http.ResponseWriter, r *http.Request) {
 	var body settings.TranscodeConfig
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		respond.BadRequest(w, r, "invalid request body")
+		return
+	}
+	// Encoder tuning goes straight onto the ffmpeg command line, so only the
+	// values the page offers are accepted (empty = keep the server default).
+	if err := validateEncoderTuning(body); err != nil {
+		respond.BadRequest(w, r, err.Error())
 		return
 	}
 	// Internet streaming limit: 0 = unlimited; the extra home networks must

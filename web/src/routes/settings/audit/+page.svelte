@@ -60,7 +60,7 @@
     if (action.includes('delete')) return 'action-danger';
     if (action.includes('login_failed')) return 'action-danger';
     if (action.includes('create') || action.includes('login_success')) return 'action-success';
-    if (action.includes('role_change') || action.includes('password_reset')) return 'action-warn';
+    if (action.includes('role_change') || action.includes('password_reset') || action.includes('password_change')) return 'action-warn';
     return 'action-neutral';
   }
 

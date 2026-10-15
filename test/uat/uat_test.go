@@ -382,8 +382,9 @@ func (s *stubSessionItemQuerier) GetMediaItemByFilePath(_ context.Context, _ str
 // stubUserService implements v1.UserService.
 type stubUserService struct{}
 
-func (s *stubUserService) SetPIN(_ context.Context, _ uuid.UUID, _, _ string) error { return nil }
-func (s *stubUserService) ClearPIN(_ context.Context, _ uuid.UUID, _ string) error  { return nil }
+func (s *stubUserService) ChangePassword(_ context.Context, _ uuid.UUID, _, _ string) error {
+	return nil
+}
 func (s *stubUserService) ListSwitchable(_ context.Context, _ uuid.UUID) ([]v1.SwitchableUser, error) {
 	return nil, nil
 }
@@ -422,6 +423,9 @@ func (s *stubUserDB) BumpSessionEpoch(_ context.Context, id uuid.UUID) error {
 }
 func (s *stubUserDB) DeleteSessionsForUser(_ context.Context, _ uuid.UUID) error {
 	return nil
+}
+func (s *stubUserDB) DeleteOtherSessionsForUser(_ context.Context, _ gen.DeleteOtherSessionsForUserParams) (int64, error) {
+	return 0, nil
 }
 func (s *stubUserDB) getEpoch(id uuid.UUID) int64 {
 	if s.epochs == nil {

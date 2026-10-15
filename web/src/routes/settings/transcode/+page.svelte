@@ -310,7 +310,7 @@
         remote_max_bitrate_kbps: remoteLimitEnabled ? Math.max(1, Math.round(remoteLimitMbps * 1000)) : 0,
         local_networks: localNetworksText.split(/[\s,]+/).map((n) => n.trim()).filter(Boolean),
       });
-      toast.success('Encoder tuning saved — output limit and ABR changes need a restart');
+      toast.success('Saved — the internet limit applies now; encoder, output-limit and ABR changes after a restart');
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to save encoder tuning');
     } finally {
@@ -328,8 +328,10 @@
   <section>
     <div class="sec-label">Encoder Tuning</div>
     <div class="hint" style="margin-top: -0.5rem;">
-      Fine-tune FFmpeg encoding parameters for your GPU and network. These settings apply to all
-      new transcode sessions. Changes take effect on the next transcode job without restarting.
+      Fine-tune FFmpeg encoding parameters for your GPU and network. They apply to this server's
+      built-in transcoder and to converted downloads, and are read at startup, so
+      <strong>changes take effect after a server restart</strong>. Remote transcode workers use
+      their own <code>TRANSCODE_NVENC_*</code> and <code>TRANSCODE_MAXRATE_RATIO</code> settings.
     </div>
 
     <div class="field-row">

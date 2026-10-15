@@ -132,6 +132,12 @@ describe('layout sidebar', () => {
     expect(link.getAttribute('href')).toBe('/native/audio');
   });
 
+  // The playlists page had no way in: nothing linked to it.
+  it('links Playlists for every user', async () => {
+    await renderShell();
+    expect(screen.getByRole('link', { name: /Playlists/ }).getAttribute('href')).toBe('/playlists');
+  });
+
   // The store-review server: no TMDB key, no tuners, a reviewer that can't
   // request. Neither link may show, nor flash up while things load.
   it('hides Requests and Live TV from a non-admin until the server says they apply', async () => {
