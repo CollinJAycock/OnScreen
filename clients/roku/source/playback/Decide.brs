@@ -17,6 +17,15 @@
 ' remux. Roku silently fails on unsupported codecs (black screen,
 ' no error event), so a remux fallback is always safer than
 ' "let's try and see."
+'
+' For video this is the fallback: the server's play decision
+' (Playback_PlanFromServer below) is final when it answers. The
+' X-Client-Capabilities header (Client_CapabilitiesHeaderFor) mirrors
+' the container list here, so the server never direct-plays mkv or
+' ts — change both. Its audio list deliberately adds ac3 / eac3:
+' the server copies them into a remux (Dolby passthrough), and an
+' mp4 + ac3 the server direct-plays uses that same decoder. This
+' fallback stays conservative and leaves them out.
 
 ' Direct-play container set. mp4 / mov / m4v are the firmware-
 ' guaranteed wins on every Roku model since 2017. mkv direct play
@@ -41,7 +50,8 @@ end function
 ' ac3 / eac3 are widely supported on Roku TVs and Streaming Sticks
 ' but pre-2018 boxes need passthrough enabled at the OS level —
 ' keep them out of the direct list for the same reason mkv is
-' excluded above. Server-side remux re-encodes to aac.
+' excluded above. A server-side remux copies them (the capability
+' header declares them) and re-encodes anything else to aac.
 function Playback_DirectAudioCodecs() as Object
     return ["aac", "mp3"]
 end function
@@ -147,8 +157,12 @@ end function
 
 ' ── Server play decision (v2.6) ─────────────────────────────────────────
 ' Before a video plays, PlayerScene asks POST /items/{id}/playback-decision
-' { file_id } and turns the answer (an ApiResult_From result) into a plan
-' on top of the local decision:
+' { file_id } and turns the answer (an ApiResult_From result) into a plan.
+' The server's verdict is final, as on the other clients: it judged the
+' file against this Roku's X-Client-Capabilities header (Client.brs, from
+' roDeviceInfo — declaring the same direct-play limits as Playback_Decide
+' above) plus what the device can't know (the viewer's quality profile,
+' the internet bitrate cap, the integrity probe):
 '
 '   { kind: "limit", message }   429 TOO_MANY_SESSIONS: show message in a
 '                                "Too many streams" dialog; don't play.
@@ -158,14 +172,22 @@ end function
 '                                MP4, H.264 / AAC) with stream_token as its
 '                                ?token=; if it fails, play `fallback` once
 '                                (the source's own verdict, source_decision).
-'   { kind: "play", decision }   anything else: the local decision — demoted
-'                                to a transcode when the server says the
-'                                source must transcode (the viewer's quality
-'                                profile, a bitrate cap, a resolution
-'                                ceiling). The server never upgrades it.
+'   { kind: "unplayable", message }
+'                                unsupported (Dolby Vision) or damaged (the
+'                                integrity probe found the bitstream
+'                                undecodable): show message; don't play.
+'   { kind: "play", decision }   directPlay → direct, directStream → remux,
+'                                transcode → transcode (Playback_FromVerdict),
+'                                in either direction: a local remux the
+'                                server direct-plays becomes direct, a local
+'                                direct it remuxes becomes remux. Keeps the
+'                                local height hint and HEVC flag. A stack
+'                                still never direct-plays (Playback_ForStack
+'                                in PlayerScene's startPlayback).
 '
-' A failed call (older server without the endpoint, network) plays the
-' local decision as before. Depends on PlaybackStop.brs.
+' A failed call (older server without the endpoint, network, non-ok) or a
+' verdict this build doesn't know plays the local decision as before.
+' Depends on PlaybackStop.brs.
 function Playback_PlanFromServer(result as Dynamic, localDecision as Object) as Object
     limitMsg = PlaybackLimit_FromResult(result)
     if limitMsg <> "" then return { kind: "limit", message: limitMsg }
@@ -181,16 +203,32 @@ function Playback_PlanFromServer(result as Dynamic, localDecision as Object) as 
         return { kind: "optimized", url: ov.stream_url, token: playbackStr(ov.stream_token), fallback: fallback }
     end if
 
-    if playbackStr(d.decision) = "transcode" and (localDecision.mode = "direct" or localDecision.mode = "remux")
-        plan.decision = Playback_FromVerdict("transcode", localDecision)
-    end if
+    verdict = playbackStr(d.decision)
+    if verdict = "unsupported" then return { kind: "unplayable", message: Playback_UnsupportedMessage() }
+    if verdict = "damaged" then return { kind: "unplayable", message: Playback_DamagedMessage() }
+    serverDecision = Playback_FromVerdict(verdict, localDecision)
+    if serverDecision <> invalid then plan.decision = serverDecision
     return plan
+end function
+
+' The one "unsupported" case today is Dolby Vision profile 5 — the server
+' can't tonemap it (docs/dolby-vision.md). Shared with PlayerScene's local
+' Dolby Vision gate so both say the same thing.
+function Playback_UnsupportedMessage() as String
+    return "Dolby Vision is not supported."
+end function
+
+' Worded like the other clients: nothing can play an undecodable bitstream,
+' so there's no point retrying.
+function Playback_DamagedMessage() as String
+    return "This file is damaged and can't be played."
 end function
 
 ' A server verdict (directPlay / directStream / transcode) as this player's
 ' decision: direct, remux (video copy) or a full transcode at the local
-' decision's height. invalid for anything else (unsupported, damaged,
-' missing) — the caller keeps its own decision.
+' decision's height. invalid for anything else (unsupported and damaged,
+' which Playback_PlanFromServer refuses first; missing; unknown) — the
+' caller keeps its own decision.
 function Playback_FromVerdict(verdict as Dynamic, localDecision as Object) as Dynamic
     v = playbackStr(verdict)
     out = {
