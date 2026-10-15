@@ -35,7 +35,7 @@ class AuthRepositoryLogoutTest {
         coEvery { prefs.getAccessToken() } returns "at-old"
         coEvery { api.refreshAt(any(), any()) } returns ApiResponse(rotated())
 
-        val repo = AuthRepository(api, prefs, mockk(relaxed = true), mockk(relaxed = true))
+        val repo = AuthRepository(api, prefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
         repo.logout()
 
         coVerify { api.refreshAt("https://old.example:8443/api/v1/auth/refresh", any()) }
@@ -56,7 +56,7 @@ class AuthRepositoryLogoutTest {
         coEvery { prefs.getServerUrl() } returnsMany listOf("http://10.0.0.5:7070/", "http://other:7070")
         coEvery { prefs.getRefreshToken() } returns null
 
-        val repo = AuthRepository(api, prefs, mockk(relaxed = true), mockk(relaxed = true))
+        val repo = AuthRepository(api, prefs, mockk(relaxed = true), mockk(relaxed = true), mockk(relaxed = true))
         val got = kotlinx.coroutines.CompletableDeferred<String?>()
         repo.logoutDetached(andThen = { origin -> got.complete(origin) })
 

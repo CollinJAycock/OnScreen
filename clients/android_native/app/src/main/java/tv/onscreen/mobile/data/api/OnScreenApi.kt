@@ -345,6 +345,20 @@ interface OnScreenApi {
     @DELETE("api/v1/downloads/{job}")
     suspend fun deleteDownloadJob(@Path("job") jobId: String)
 
+    // ── Reading position sync (v2.6) ────────────────────────────────────────
+    // internal/api/v1/reading_progress.go. Books only; 404 otherwise and on an
+    // older server.
+
+    @GET("api/v1/items/{id}/reading-progress")
+    suspend fun getReadingProgress(@Path("id") itemId: String): ReadingProgressEnvelope
+
+    /** Newest by client time wins; the answer is what the server now holds. */
+    @PUT("api/v1/items/{id}/reading-progress")
+    suspend fun putReadingProgress(
+        @Path("id") itemId: String,
+        @Body body: ReadingProgressRequest,
+    ): ApiResponse<ReadingProgress>
+
     // ── Music discovery (v2.6) ──────────────────────────────────────────────
     // internal/api/v1/music.go. 404 on an older server (and for an item that
     // isn't a visible artist / album / track).
