@@ -13,6 +13,7 @@ import tv.onscreen.mobile.data.model.TranscodeRequest
 import tv.onscreen.mobile.data.model.TranscodeSession
 import javax.inject.Inject
 import javax.inject.Singleton
+import tv.onscreen.mobile.data.backgroundScope
 
 @Singleton
 class TranscodeRepository @Inject constructor(
@@ -83,7 +84,7 @@ class TranscodeRepository @Inject constructor(
         detachedScope.launch { stop(sessionId, token) }
     }
 
-    private val detachedScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val detachedScope = backgroundScope("TranscodeRepository")
 }
 
 /** What POST /items/{id}/playback-decision answered (see

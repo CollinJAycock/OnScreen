@@ -1,3 +1,4 @@
+import { onTestFinished, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte';
 import Page from './+page.svelte';
 import {
@@ -133,6 +134,10 @@ describe('notification agent helpers', () => {
   });
 
   it('reports the newer of last success / last error', () => {
+    // Freeze the clock: agent() stamps its times with Date.now() after `now`
+    // is read, so a millisecond tick made "2 hours ago" read "1 hour ago".
+    vi.useFakeTimers({ toFake: ['Date'] });
+    onTestFinished(() => { vi.useRealTimers(); });
     const now = Date.now();
     expect(agentStatus(agent(), now)).toEqual({ tone: 'ok', text: 'Last delivered 2 hours ago' });
     const failed = agentStatus(agent({ last_error: 'HTTP 401: Unauthorized', last_error_at: ago(HOUR) }), now);
