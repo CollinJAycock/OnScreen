@@ -391,6 +391,40 @@ class PlaybackHelperTest {
     }
 
     @Test
+    fun `a server transcode is capped at the panel like the local one`() {
+        // A 1080p stick: the server's "transcode" for a 4K source asks for
+        // 1080, as decide() does, not the source's 2160.
+        assertThat(PlaybackHelper.modeFor("transcode", file(height = 2160), panelHeight = 1080))
+            .isEqualTo(PlaybackMode.Transcode(1080))
+        assertThat(PlaybackHelper.modeFor("transcode", file(height = 2160), panelHeight = 2160))
+            .isEqualTo(PlaybackMode.Transcode(2160))
+        assertThat(PlaybackHelper.modeFor("transcode", file(height = 720), panelHeight = 720))
+            .isEqualTo(PlaybackMode.Transcode(720))
+        assertThat(PlaybackHelper.transcodeHeight(null, 2160)).isEqualTo(1080)
+        assertThat(PlaybackHelper.transcodeHeight(4320, 2160)).isEqualTo(2160)
+        assertThat(PlaybackHelper.transcodeHeight(1080, 720)).isEqualTo(720)
+    }
+
+    @Test
+    fun `a damaged file plays nowhere, not even where the local decision would direct play it`() {
+        // decide() direct plays this H.264 MP4; only the server knows the
+        // bitstream is broken.
+        val f = file()
+        assertThat(PlaybackHelper.decide(f)).isEqualTo(PlaybackMode.DirectPlay)
+        assertThat(PlaybackHelper.modeFor("damaged", f)).isNull()
+        assertThat(PlaybackHelper.modeFor("damaged", f, panelHeight = 1080)).isNull()
+    }
+
+    @Test
+    fun `a 409 on the direct stream is the server requiring a transcode`() {
+        assertThat(PlaybackHelper.isTranscodeRequired(playerError(badStatus(409)))).isTrue()
+        assertThat(PlaybackHelper.isTranscodeRequired(playerError(RuntimeException("wrapped", badStatus(409))))).isTrue()
+        assertThat(PlaybackHelper.isTranscodeRequired(playerError(badStatus(403)))).isFalse()
+        assertThat(PlaybackHelper.isTranscodeRequired(playerError(java.io.IOException("reset")))).isFalse()
+        assertThat(PlaybackHelper.isTranscodeRequired(playerError(null))).isFalse()
+    }
+
+    @Test
     fun `unsupported plays nowhere, and no verdict falls back to the local decision`() {
         assertThat(PlaybackHelper.modeFor("unsupported", file())).isNull()
         assertThat(PlaybackHelper.modeFor(null, file())).isEqualTo(PlaybackHelper.decide(file()))

@@ -304,8 +304,8 @@ class PlaybackViewModel @Inject constructor(
                 // transcode of the source, played directly.
                 val optimized = decision?.optimized
                 val mode = run {
-                    // "unsupported" (Dolby Vision) is handled below; no
-                    // verdict falls back to the local decision.
+                    // "unsupported" (Dolby Vision) and "damaged" are handled
+                    // below; no verdict falls back to the local decision.
                     val resolved = sourceMode(verdict, file)
                     android.util.Log.i(
                         "PlaybackViewModel",
@@ -313,6 +313,16 @@ class PlaybackViewModel @Inject constructor(
                             (optimized?.let { ", optimized version ${it.id} (source ${decision.source_decision})" } ?: ""),
                     )
                     resolved
+                }
+
+                // A damaged file (the integrity probe found its bitstream
+                // undecodable): nothing plays it — direct play stalls, a
+                // transcode comes out green — so say so instead of starting
+                // anything. The server's verdict only; the local decision
+                // can't tell.
+                if (verdict == PlaybackHelper.VERDICT_DAMAGED) {
+                    _uiState.value = PlaybackUiState(error = DAMAGED_SENTINEL)
+                    return@launch
                 }
 
                 // Dolby Vision is not supported: the server returns the "unsupported"
@@ -426,6 +436,10 @@ class PlaybackViewModel @Inject constructor(
         // the play decision or transcode start): the server's sentence, on
         // the fragment's "Too many streams" dialog.
         e is TooManyStreamsException -> StreamLimit.sentinel(e.message)
+        // The transcode-start integrity gate (422 FILE_DAMAGED): a damaged
+        // file reached without the play decision's verdict (the call failed,
+        // or a direct play escalated), shown as that verdict is.
+        e is HttpException && e.code() == 422 && e.apiError()?.code == "FILE_DAMAGED" -> DAMAGED_SENTINEL
         e is HttpException && e.code() == 403 -> {
             val err = e.apiError()
             when (err?.code) {
@@ -499,8 +513,8 @@ class PlaybackViewModel @Inject constructor(
     }
 
     /** The mode to play [file] in for the server's [verdict] (the local
-     *  decision when there is none, or "unsupported" — prepare refuses that
-     *  before playing). A part of a stacked movie never direct plays
+     *  decision when there is none, or "unsupported" / "damaged" — prepare
+     *  refuses those before playing). A part of a stacked movie never direct plays
      *  (PlaybackHelper.forStack). */
     private fun sourceMode(verdict: String?, file: ItemFile): PlaybackMode {
         val mode = PlaybackHelper.modeFor(verdict, file) ?: PlaybackHelper.decide(file)
@@ -874,8 +888,7 @@ class PlaybackViewModel @Inject constructor(
             try {
                 // Cap by the PANEL: re-requesting the source height on a
                 // 1080p stick dead-ended 4K titles instead of getting 1080p.
-                val height = (if (ctx.sourceHeight >= 2160) 2160 else 1080)
-                    .coerceAtMost(PlaybackHelper.displayHeightCap())
+                val height = PlaybackHelper.transcodeHeight(ctx.sourceHeight, PlaybackHelper.displayHeightCap())
                 val source = startTranscode(
                     itemId = ctx.itemId,
                     height = height,
@@ -911,9 +924,16 @@ class PlaybackViewModel @Inject constructor(
         val fb = optimizedFallback ?: return
         optimizedFallback = null
         if (refused) return
+        // A source the server won't stream at all (Dolby Vision, a damaged
+        // file): nothing to fall back to — say why, as prepare does, rather
+        // than letting the local decision play it.
+        sourceRefusal(fb.sourceVerdict)?.let { refusal ->
+            _uiState.value = _uiState.value.copy(error = refusal)
+            return
+        }
         viewModelScope.launch {
             try {
-                val mode = sourceMode(fb.sourceVerdict.takeIf { it != "unsupported" }, fb.file)
+                val mode = sourceMode(fb.sourceVerdict, fb.file)
                 android.util.Log.w(
                     "PlaybackViewModel",
                     "leaving the optimized version for the source: ${fb.sourceVerdict} -> $mode",
@@ -1039,6 +1059,20 @@ class PlaybackViewModel @Inject constructor(
             kotlinx.coroutines.CoroutineScope(
                 kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO,
             )
+
+        /** The error sentinel for a file the server judged "damaged": the
+         *  fragment shows its damaged-file dialog for it. */
+        const val DAMAGED_SENTINEL = "file_damaged"
+
+        /** The error sentinel for a source [verdict] that plays nowhere —
+         *  "damaged" or "unsupported" (Dolby Vision) — else null. The
+         *  optimized version's fallback reads source_decision with it (the
+         *  phone's OptimizedPlayback.sourceUnplayable). */
+        internal fun sourceRefusal(verdict: String?): String? = when (verdict) {
+            PlaybackHelper.VERDICT_DAMAGED -> DAMAGED_SENTINEL
+            PlaybackHelper.VERDICT_UNSUPPORTED -> "dolby_vision"
+            else -> null
+        }
 
         /** Mirrors the server's ocr.IsImageBased — the codecs whose VTT
          *  extraction is refused with 415 IMAGE_SUBTITLE. */

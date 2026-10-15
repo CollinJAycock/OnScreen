@@ -46,17 +46,42 @@ object PlaybackHelper {
     )
 
     /** The play mode for the server's decision [verdict] ("directPlay",
-     *  "directStream", "transcode"), falling back to the local [decide] when
-     *  the server gave none. Null for "unsupported" (Dolby Vision), which
-     *  plays nowhere. Shared by PlaybackViewModel.prepare and the background
-     *  service's chain to the next track. */
-    fun modeFor(verdict: String?, file: ItemFile): PlaybackMode? = when (verdict) {
+     *  "directStream", "transcode"), falling back to the local [decide] only
+     *  when the server gave none (a failed call) or a verdict this build
+     *  doesn't know. Null for the verdicts that play nowhere: "unsupported"
+     *  (Dolby Vision) and "damaged" (the integrity probe found the bitstream
+     *  undecodable) — the caller refuses those with a message. Shared by
+     *  PlaybackViewModel.prepare and the background service's chain to the
+     *  next track. */
+    fun modeFor(verdict: String?, file: ItemFile): PlaybackMode? = modeFor(verdict, file, displayHeightCap())
+
+    /** [modeFor] on a panel [panelHeight] rows tall: a server transcode is
+     *  capped there as the local [decide]'s is ([transcodeHeight]). */
+    internal fun modeFor(verdict: String?, file: ItemFile, panelHeight: Int): PlaybackMode? = when (verdict) {
         "directPlay" -> PlaybackMode.DirectPlay
         "directStream" -> PlaybackMode.Remux
-        "transcode" -> PlaybackMode.Transcode(if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080)
-        "unsupported" -> null
+        "transcode" -> PlaybackMode.Transcode(transcodeHeight(file.resolution_h, panelHeight))
+        VERDICT_UNSUPPORTED, VERDICT_DAMAGED -> null
         else -> decide(file)
     }
+
+    /** The server's verdict for a file whose content can't be played or
+     *  converted (Dolby Vision profile 5). */
+    const val VERDICT_UNSUPPORTED = "unsupported"
+
+    /** The server's verdict for a file the integrity probe marked damaged:
+     *  no client and no server pipeline plays it. */
+    const val VERDICT_DAMAGED = "damaged"
+
+    /**
+     * The transcode rung for a source [sourceHeight] rows tall (1080 when
+     * unknown): 2160 for 4K, else 1080 — never above the PANEL
+     * ([panelHeight]): asking a 1080p stick's server for a 2160 rung wastes
+     * encoder work on rows the display throws away, and the server's own
+     * "transcode" verdict carries no height of its own.
+     */
+    internal fun transcodeHeight(sourceHeight: Int?, panelHeight: Int): Int =
+        (if ((sourceHeight ?: 1080) >= 2160) 2160 else 1080).coerceAtMost(panelHeight)
 
     /**
      * [mode] for one part of a stacked movie (ItemFile.part_index, see
@@ -108,13 +133,8 @@ object PlaybackHelper {
             return PlaybackMode.Remux
         }
 
-        // Everything else needs full transcode. Cap at the PANEL height —
-        // asking a 1080p stick's server for a 2160 rung wastes encoder work
-        // on rows the display throws away.
-        val sourceH = file.resolution_h ?: 1080
-        val defaultHeight = (if (sourceH >= 2160) 2160 else 1080)
-            .coerceAtMost(displayHeightCap())
-        return PlaybackMode.Transcode(defaultHeight)
+        // Everything else needs full transcode, capped at the PANEL height.
+        return PlaybackMode.Transcode(transcodeHeight(file.resolution_h, displayHeightCap()))
     }
 
     // Device decoder inventory, probed once. The capabilities header is built from
@@ -389,6 +409,27 @@ object PlaybackHelper {
         while (cause != null) {
             if (cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
                 return cause.responseCode == 403 || cause.responseCode == 404
+            }
+            cause = cause.cause
+        }
+        return false
+    }
+
+    /**
+     * True when [error] is the server refusing a direct play of the file with
+     * `409 TRANSCODE_REQUIRED`: /media/stream won't serve a video file it
+     * would convert for this user (quality profile, internet bitrate cap,
+     * damaged). Only met when the play decision call failed and the local
+     * decision direct played. The fragment escalates every direct-play error
+     * to a transcode once (PlaybackViewModel.fallbackFromDirectPlay), this
+     * one included; this only names it in the log.
+     */
+    @androidx.annotation.OptIn(androidx.media3.common.util.UnstableApi::class)
+    fun isTranscodeRequired(error: Throwable): Boolean {
+        var cause: Throwable? = error
+        while (cause != null) {
+            if (cause is androidx.media3.datasource.HttpDataSource.InvalidResponseCodeException) {
+                return cause.responseCode == 409
             }
             cause = cause.cause
         }

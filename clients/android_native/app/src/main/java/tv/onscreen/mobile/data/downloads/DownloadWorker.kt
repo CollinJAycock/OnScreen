@@ -12,12 +12,14 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import com.squareup.moshi.Moshi
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import retrofit2.HttpException
 import tv.onscreen.mobile.R
+import tv.onscreen.mobile.data.api.ApiError
 import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.api.apiError
 import tv.onscreen.mobile.data.model.CreateDownloadJobRequest
@@ -67,6 +69,36 @@ class DownloadWorker @AssistedInject constructor(
         /** Consecutive failed status polls (offline, a server restart)
          *  before the conversion wait gives up to WorkManager's retry. */
         private const val MAX_POLL_FAILURES = 12
+
+        /**
+         * Where the ORIGINAL of [fileId] downloads from on [server]: the
+         * server's download route, /media/download/{file_id}, with the file's
+         * stream token (or the asset token) in `?token=` and Range resume as
+         * on /media/stream. Not /media/stream itself: that refuses a video
+         * file the server converts for this user (409 TRANSCODE_REQUIRED — a
+         * quality profile, an internet bitrate cap), and a download is the
+         * file as it is, whoever plays it later. Gated by the admin's
+         * downloads switch (403 DOWNLOADS_DISABLED), as converted copies are.
+         */
+        internal fun originalUrl(server: String, fileId: String, token: String): String =
+            "$server/media/download/$fileId?token=$token"
+
+        /** What a fetch the server refused with [code] and error [body]
+         *  shows on the row: the downloads-off sentence for 403
+         *  DOWNLOADS_DISABLED, else the bare status. */
+        internal fun refusalMessage(code: Int, body: String?): String {
+            val err = body?.takeIf { it.isNotBlank() }?.let {
+                try {
+                    errorMoshi.adapter(ApiError::class.java).fromJson(it)?.error
+                } catch (_: Exception) {
+                    null
+                }
+            }
+            return if (code == 403 && err?.code == "DOWNLOADS_DISABLED") DownloadChoices.DISABLED_MESSAGE else "HTTP $code"
+        }
+
+        // Error-path only; the generated ApiError adapter is found by reflection.
+        private val errorMoshi: Moshi by lazy { Moshi.Builder().build() }
     }
 
     private sealed interface Conversion {
@@ -199,12 +231,7 @@ class DownloadWorker @AssistedInject constructor(
                 markFailed(fileId, "Not signed in")
                 return Result.failure()
             }
-            // Match the player's URL builder: use `&token=` when the
-            // stream path already carries a query string. The earlier
-            // unconditional `?token=` produced malformed URLs on any
-            // stream_url with existing params.
-            val sep = if (file.stream_url.contains("?")) "&" else "?"
-            "$server${file.stream_url}${sep}token=$token"
+            originalUrl(server, file.id, token)
         } else {
             if (server.isEmpty()) {
                 markFailed(fileId, "Not signed in")
@@ -262,7 +289,9 @@ class DownloadWorker @AssistedInject constructor(
                     return@use
                 }
                 if (!resp.isSuccessful && resp.code != 206) {
-                    throw DownloadHttpException(resp.code)
+                    // The body is the server's error envelope: small.
+                    val errBody = if (resp.code in 400..499) runCatching { resp.body?.string() }.getOrNull() else null
+                    throw DownloadHttpException(resp.code, refusalMessage(resp.code, errBody))
                 }
                 // A resume request the server ignored: it answered 200 with
                 // the FULL body starting at byte 0, not 206 with the tail.
@@ -389,7 +418,7 @@ class DownloadWorker @AssistedInject constructor(
 
     /** Carries the HTTP status so the retry policy can tell a permanent 4xx
      *  apart from a transient 5xx/IO error. */
-    private class DownloadHttpException(val code: Int) : Exception("HTTP $code")
+    private class DownloadHttpException(val code: Int, message: String = "HTTP $code") : Exception(message)
 
     /** [converting]: the server is still making the copy ("Preparing …"). */
     private fun makeForegroundInfo(title: String, percent: Int, converting: Boolean = false): ForegroundInfo {

@@ -324,6 +324,104 @@ class PlayerViewModelTest {
         assertThat(src.startMs).isEqualTo(0L)
     }
 
+    @Test
+    fun `a damaged verdict plays nothing, even a file this device would direct play`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo ->
+            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.of("damaged")
+        }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+
+        val vm = newVm(itemRepo, transcodeRepo)
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        val s = vm.state.value
+        assertThat(s.source).isNull()
+        assertThat(s.errorTitle).isEqualTo(DAMAGED_TITLE)
+        assertThat(s.error).isEqualTo(DAMAGED_MESSAGE)
+        coVerify(exactly = 0) { transcodeRepo.start(any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a direct play refused with 409 becomes a transcode, once`() = runTest(dispatcher) {
+        // The decision call failed, so the local decision direct played a
+        // file the server converts for this user (a quality profile).
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo ->
+            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.Unavailable
+            coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } returns
+                TranscodeSession(session_id = "sess-9", playlist_url = "/transcode/sess-9.m3u8", token = "tok")
+        }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile().copy(resolution_h = 2160))
+
+        val vm = newVm(itemRepo, transcodeRepo)
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        val direct = vm.state.value.source as PlaybackSource.DirectPlay
+
+        assertThat(vm.escalateFromDirectPlay(42_000L)).isTrue()
+        advanceUntilIdle()
+
+        val src = vm.state.value.source as PlaybackSource.Hls
+        assertThat(src.playlistUrl).isEqualTo("http://srv/transcode/sess-9.m3u8")
+        assertThat(vm.state.value.error).isNull()
+        coVerify(exactly = 1) {
+            transcodeRepo.start(
+                itemId = "movie-1", height = 2160, positionMs = 42_000L, fileId = "f1",
+                videoCopy = false, audioStreamIndex = null, supportsHevc = any(),
+            )
+        }
+        // The direct play's player goes without a 'stopped' report, which
+        // would drop the new session.
+        assertThat(vm.swappedOut(direct)).isTrue()
+        // One-shot: a transcode that fails too shows its error.
+        assertThat(vm.escalateFromDirectPlay(42_000L)).isFalse()
+    }
+
+    @Test
+    fun `an escalated direct play of a damaged file shows the damaged message`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo ->
+            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.Unavailable
+            coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } throws retrofit2.HttpException(
+                retrofit2.Response.error<Any>(
+                    422,
+                    """{"error":{"code":"FILE_DAMAGED","message":"This file appears to be corrupt"}}"""
+                        .toResponseBody("application/json".toMediaTypeOrNull()),
+                ),
+            )
+        }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+
+        val vm = newVm(itemRepo, transcodeRepo)
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        assertThat(vm.escalateFromDirectPlay(0L)).isTrue()
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.errorTitle).isEqualTo(DAMAGED_TITLE)
+        assertThat(vm.state.value.error).isEqualTo(DAMAGED_MESSAGE)
+    }
+
+    @Test
+    fun `nothing to escalate when the server already transcodes`() = runTest(dispatcher) {
+        val itemRepo = itemRepo()
+        val transcodeRepo = mockk<TranscodeRepository>().also { repo ->
+            coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.of("transcode")
+            coEvery { repo.start(any(), any(), any(), any(), any(), any(), any()) } returns
+                TranscodeSession(session_id = "sess-1", playlist_url = "/transcode/sess-1.m3u8", token = "tok")
+        }
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(directPlayFile())
+
+        val vm = newVm(itemRepo, transcodeRepo)
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.source).isInstanceOf(PlaybackSource.Hls::class.java)
+        assertThat(vm.escalateFromDirectPlay(0L)).isFalse()
+    }
+
     private fun alacTrack() = ItemDetail(
         id = "track-7",
         library_id = "lib-m",
