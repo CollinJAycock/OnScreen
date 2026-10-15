@@ -50,6 +50,25 @@ wiki): metadata identical to `dovi_tool -m 2` on all 10,016 frames apart from
 extension-block order; packet timestamps identical to a plain remux, B-frames
 included; base layer bit-identical; no new decode errors.
 
+**Apps.** Only apps that can show Dolby Vision declare it:
+
+- **Android TV / Fire TV:** a hardware `video/dolby-vision` decoder for the
+  profile (DvheStn → 5, DvheDtb → 7, DvheSt → 8.1, and 8.4 when the screen
+  also shows HLG) and a connected screen that reports `HDR_TYPE_DOLBY_VISION`.
+  The Fire TV 4K Max has no profile 7 decoder, so it declares `5:8.1` and gets
+  profile 7 converted. Media3 reads `dvvC`/`dvcC` from fMP4 and Matroska and
+  picks the Dolby Vision decoder (profile 8 falls back to HEVC).
+- **LG (webOS):** every video plays through hls.js, which signals profile 8 as
+  a `dvh1.08.LL` supplemental codec and uses it only when MSE accepts it. The
+  app declares `5` / `8.1:8.4` when Luna reports
+  `tv.config.supportDolbyHDRContents` and MSE accepts `dvh1.05.06` /
+  `dvh1.08.06`; never `7`.
+- Everyone else (web, Samsung, Roku, Xbox, phone) gets the base layer.
+
+**Profile 5 is never re-encoded.** A client that lists it but would need a
+re-encode (over its size, bitrate or quality limit) gets `unsupported`, and
+transcode start refuses any profile 5 session that isn't a copy.
+
 **Not done:** tone-mapping profile 5 for screens without Dolby Vision (no
 profile 5 in the library); Dolby Vision in ABR ladders or optimized versions
 (both re-encode).
