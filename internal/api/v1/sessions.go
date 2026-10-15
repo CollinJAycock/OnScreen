@@ -21,6 +21,7 @@ import (
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/downloads"
 	"github.com/onscreen/onscreen/internal/notification"
 	"github.com/onscreen/onscreen/internal/streaming"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -81,6 +82,22 @@ type NativeSessionsHandler struct {
 	// remotePolicy supplies the admin's extra home networks so the LAN /
 	// remote label agrees with what the internet streaming limit enforces.
 	remotePolicy RemoteStreamPolicyReader
+	// optimized describes the optimized version a direct play is serving
+	// (WithOptimizedVersions). Optional; nil = such a card shows the source.
+	optimized SessionOptimizedLookup
+}
+
+// SessionOptimizedLookup reads an optimized version for a Now Playing card.
+// Satisfied by *downloads.OptimizeService.
+type SessionOptimizedLookup interface {
+	Get(ctx context.Context, id uuid.UUID) (downloads.OptimizedVersion, error)
+}
+
+// WithOptimizedVersions lets a direct-play card say it is playing an
+// optimized version, and describe that version as its output.
+func (h *NativeSessionsHandler) WithOptimizedVersions(l SessionOptimizedLookup) *NativeSessionsHandler {
+	h.optimized = l
+	return h
 }
 
 // NewNativeSessionsHandler creates a NativeSessionsHandler.
@@ -182,6 +199,17 @@ type activeSession struct {
 	// CanStop reports whether the admin stop endpoint can act on this card —
 	// false only for a direct play recorded before streams carried a user.
 	CanStop bool `json:"can_stop"`
+	// OptimizedVersion is set when the direct play is of an optimized
+	// version (Optimize…) rather than the source: Source stays the source
+	// file, Output is the version.
+	OptimizedVersion *nowPlayingOptimized `json:"optimized_version,omitempty"`
+}
+
+// nowPlayingOptimized names the optimized version a card is playing.
+type nowPlayingOptimized struct {
+	ID      string `json:"id"`
+	Profile string `json:"profile"`
+	Label   string `json:"label"`
 }
 
 // streamFormat is one side of a card's source → output line. Codec and
@@ -386,6 +414,8 @@ func (h *NativeSessionsHandler) collect(ctx context.Context, claims *auth.Claims
 		decision   string
 		hasBytes   bool
 		mi         *gen.SessionMediaItem
+		// optimizedID is the optimized version the bytes came from.
+		optimizedID uuid.UUID
 	}
 	groups := make(map[string]*streamGroup)
 	var order []string
@@ -441,6 +471,7 @@ func (h *NativeSessionsHandler) collect(ctx context.Context, claims *auth.Claims
 			g.bytesName = e.ClientName
 			if e.FileID != uuid.Nil {
 				g.fileID = e.FileID
+				g.optimizedID = e.OptimizedID
 			}
 		}
 		if g.path == "" {
@@ -498,12 +529,43 @@ func (h *NativeSessionsHandler) collect(ctx context.Context, claims *auth.Claims
 				as.BitrateKbps = &br
 			}
 		}
+		if g.optimizedID != uuid.Nil {
+			h.applyOptimized(ctx, &as, g.optimizedID)
+		}
 		ls := liveSession{userID: g.user, itemID: g.item, clientIP: g.ip, clientName: g.beatName}
 		h.attribute(ctx, lk, claims, &as, &ls)
 		ls.dto = as
 		out = append(out, ls)
 	}
 	return out
+}
+
+// applyOptimized marks a direct-play card as playing an optimized version:
+// the version is what the viewer receives (Output, and the bitrate shown).
+// A version deleted mid-play still reads as optimized, without the details.
+func (h *NativeSessionsHandler) applyOptimized(ctx context.Context, as *activeSession, id uuid.UUID) {
+	as.OptimizedVersion = &nowPlayingOptimized{ID: id.String()}
+	if h.optimized == nil {
+		return
+	}
+	v, err := h.optimized.Get(ctx, id)
+	if err != nil {
+		if !errors.Is(err, downloads.ErrOptimizedNotFound) {
+			h.logger.WarnContext(ctx, "sessions: optimized version lookup", "id", id, "err", err)
+		}
+		return
+	}
+	as.OptimizedVersion.Profile = v.Profile
+	as.OptimizedVersion.Label = optimizedProfileLabel(v.Profile)
+	as.Output = &streamFormat{
+		Container: optimizedContainer, VideoCodec: optimizedVideoCodec,
+		AudioCodec: optimizedAudioCodec, AudioChannels: optimizedAudioChannels,
+		Width: v.Width, Height: v.Height, BitrateKbps: v.BitrateKbps,
+	}
+	if v.BitrateKbps > 0 {
+		br := v.BitrateKbps
+		as.BitrateKbps = &br
+	}
 }
 
 // trackerCardID is a direct-play card's stable id. Attributed streams key on

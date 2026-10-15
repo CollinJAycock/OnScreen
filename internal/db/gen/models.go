@@ -129,20 +129,27 @@ type ContinueWatchingDismissal struct {
 }
 
 type DownloadConversion struct {
-	ID          uuid.UUID          `json:"id"`
-	MediaItemID uuid.UUID          `json:"media_item_id"`
-	MediaFileID uuid.UUID          `json:"media_file_id"`
-	Quality     string             `json:"quality"`
-	Status      string             `json:"status"`
-	Progress    float32            `json:"progress"`
-	Error       *string            `json:"error"`
-	SizeBytes   *int64             `json:"size_bytes"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
-	StartedAt   pgtype.Timestamptz `json:"started_at"`
-	CompletedAt pgtype.Timestamptz `json:"completed_at"`
-	LastUsedAt  pgtype.Timestamptz `json:"last_used_at"`
-	ExpiresAt   pgtype.Timestamptz `json:"expires_at"`
+	ID             uuid.UUID          `json:"id"`
+	MediaItemID    uuid.UUID          `json:"media_item_id"`
+	MediaFileID    uuid.UUID          `json:"media_file_id"`
+	Quality        string             `json:"quality"`
+	Status         string             `json:"status"`
+	Progress       float32            `json:"progress"`
+	Error          *string            `json:"error"`
+	SizeBytes      *int64             `json:"size_bytes"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+	StartedAt      pgtype.Timestamptz `json:"started_at"`
+	CompletedAt    pgtype.Timestamptz `json:"completed_at"`
+	LastUsedAt     pgtype.Timestamptz `json:"last_used_at"`
+	ExpiresAt      pgtype.Timestamptz `json:"expires_at"`
+	Purpose        string             `json:"purpose"`
+	RequestedBy    pgtype.UUID        `json:"requested_by"`
+	SourceFileHash *string            `json:"source_file_hash"`
+	Width          *int32             `json:"width"`
+	Height         *int32             `json:"height"`
+	BitrateKbps    *int32             `json:"bitrate_kbps"`
+	DurationMs     *int64             `json:"duration_ms"`
 }
 
 type DownloadJob struct {
@@ -226,6 +233,7 @@ type ExternalSubtitle struct {
 	Rating        *float32           `json:"rating"`
 	DownloadCount *int32             `json:"download_count"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	OffsetMs      int32              `json:"offset_ms"`
 }
 
 type HubRecentlyAdded struct {
@@ -313,6 +321,12 @@ type LibraryAccess struct {
 	UserID    uuid.UUID          `json:"user_id"`
 	LibraryID uuid.UUID          `json:"library_id"`
 	GrantedAt pgtype.Timestamptz `json:"granted_at"`
+}
+
+type LibraryPhotoSetting struct {
+	LibraryID      uuid.UUID          `json:"library_id"`
+	RawJpegPairing bool               `json:"raw_jpeg_pairing"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 }
 
 type LibrarySubtitleAutoDownload struct {
@@ -553,6 +567,28 @@ type Person struct {
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PhotoFace struct {
+	ID        uuid.UUID          `json:"id"`
+	ItemID    uuid.UUID          `json:"item_id"`
+	LibraryID uuid.UUID          `json:"library_id"`
+	PersonID  pgtype.UUID        `json:"person_id"`
+	X         float32            `json:"x"`
+	Y         float32            `json:"y"`
+	W         float32            `json:"w"`
+	H         float32            `json:"h"`
+	Score     float32            `json:"score"`
+	Source    string             `json:"source"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+}
+
+type PhotoFaceScan struct {
+	ItemID    uuid.UUID          `json:"item_id"`
+	LibraryID uuid.UUID          `json:"library_id"`
+	Faces     int32              `json:"faces"`
+	Status    string             `json:"status"`
+	ScannedAt pgtype.Timestamptz `json:"scanned_at"`
+}
+
 type PhotoMetadatum struct {
 	ItemID        uuid.UUID          `json:"item_id"`
 	TakenAt       pgtype.Timestamptz `json:"taken_at"`
@@ -572,6 +608,15 @@ type PhotoMetadatum struct {
 	GpsAlt        *float64           `json:"gps_alt"`
 	RawExif       []byte             `json:"raw_exif"`
 	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PhotoPerson struct {
+	ID        uuid.UUID          `json:"id"`
+	LibraryID uuid.UUID          `json:"library_id"`
+	Name      string             `json:"name"`
+	CreatedBy pgtype.UUID        `json:"created_by"`
+	CreatedAt pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt pgtype.Timestamptz `json:"updated_at"`
 }
 
 type Plugin struct {
@@ -737,6 +782,13 @@ type SubtitleAutoAttempt struct {
 	LastResult    *string            `json:"last_result"`
 }
 
+type SubtitleStreamOffset struct {
+	FileID      uuid.UUID          `json:"file_id"`
+	StreamIndex int32              `json:"stream_index"`
+	OffsetMs    int32              `json:"offset_ms"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type TaskRun struct {
 	ID        uuid.UUID          `json:"id"`
 	TaskID    uuid.UUID          `json:"task_id"`
@@ -856,6 +908,14 @@ type UserAudiobookRate struct {
 	BookID       uuid.UUID          `json:"book_id"`
 	PlaybackRate float32            `json:"playback_rate"`
 	UpdatedAt    pgtype.Timestamptz `json:"updated_at"`
+}
+
+type UserDigestPref struct {
+	UserID     uuid.UUID          `json:"user_id"`
+	Frequency  string             `json:"frequency"`
+	LastPeriod *string            `json:"last_period"`
+	LastSentAt pgtype.Timestamptz `json:"last_sent_at"`
+	UpdatedAt  pgtype.Timestamptz `json:"updated_at"`
 }
 
 type UserFavorite struct {

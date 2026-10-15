@@ -110,6 +110,30 @@ func TestIncrFailure_CounterAlwaysHasTTL(t *testing.T) {
 	}
 }
 
+// Failures reads the committed count without reserving: any number of reads
+// leave the count where IncrFailure put it, and a missing key reads as zero.
+func TestFailures_ReadsWithoutReserving(t *testing.T) {
+	r, mr, counter := newTestLimiter(t)
+	ctx := context.Background()
+	if n, err := r.Failures(ctx, "k"); err != nil || n != 0 {
+		t.Fatalf("empty: n=%d err=%v", n, err)
+	}
+	r.IncrFailure(ctx, "k", time.Minute)
+	r.IncrFailure(ctx, "k", time.Minute)
+	for i := 0; i < 20; i++ {
+		if n, err := r.Failures(ctx, "k"); err != nil || n != 2 {
+			t.Fatalf("read %d: n=%d err=%v", i, n, err)
+		}
+	}
+	if mr.Exists(failurePendingKey("k")) {
+		t.Error("Failures left a reservation behind")
+	}
+	mr.Close()
+	if n, err := r.Failures(ctx, "k"); err != nil || n != 0 || counter.Load() != 1 {
+		t.Fatalf("valkey down must fail open: n=%d err=%v failopen=%d", n, err, counter.Load())
+	}
+}
+
 func TestCheckFailures_FailsOpenWhenValkeyDown(t *testing.T) {
 	r, mr, counter := newTestLimiter(t)
 	mr.Close()

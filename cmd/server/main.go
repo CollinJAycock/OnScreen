@@ -28,11 +28,13 @@ import (
 	"github.com/onscreen/onscreen/internal/artwork"
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
+	"github.com/onscreen/onscreen/internal/bulkedit"
 	"github.com/onscreen/onscreen/internal/collections"
 	"github.com/onscreen/onscreen/internal/config"
 	"github.com/onscreen/onscreen/internal/db"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	dbmigrations "github.com/onscreen/onscreen/internal/db/migrations"
+	"github.com/onscreen/onscreen/internal/digest"
 	"github.com/onscreen/onscreen/internal/discovery"
 	"github.com/onscreen/onscreen/internal/domain/library"
 	"github.com/onscreen/onscreen/internal/domain/media"
@@ -45,6 +47,7 @@ import (
 	"github.com/onscreen/onscreen/internal/downloads"
 	"github.com/onscreen/onscreen/internal/email"
 	"github.com/onscreen/onscreen/internal/externalratings"
+	"github.com/onscreen/onscreen/internal/faces"
 	"github.com/onscreen/onscreen/internal/franchise"
 	"github.com/onscreen/onscreen/internal/intromarker"
 	"github.com/onscreen/onscreen/internal/itemlabel"
@@ -66,6 +69,7 @@ import (
 	"github.com/onscreen/onscreen/internal/photoimage"
 	"github.com/onscreen/onscreen/internal/plugin"
 	"github.com/onscreen/onscreen/internal/podcast"
+	"github.com/onscreen/onscreen/internal/portmap"
 	"github.com/onscreen/onscreen/internal/preencode"
 	"github.com/onscreen/onscreen/internal/requests"
 	"github.com/onscreen/onscreen/internal/safehttp"
@@ -80,6 +84,7 @@ import (
 	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/trickplay"
+	"github.com/onscreen/onscreen/internal/userstats"
 	"github.com/onscreen/onscreen/internal/valkey"
 	"github.com/onscreen/onscreen/internal/worker"
 
@@ -625,7 +630,9 @@ func run() error {
 		WithMissingFileGrace(func() time.Duration { return cfg.MissingFileGracePeriod }).
 		// Featured-artist credits (track_artists): "Appears on" on the
 		// artist page.
-		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)})
+		WithArtistCredits(musicCreditStore{q: gen.New(rwPool)}).
+		// Photo items keyed by file, and RAW + JPEG pairing.
+		WithPhotoStore(photoScanStore{q: gen.New(rwPool)})
 	notifBrokerEarly := notification.NewBroker()
 	notifServiceEarly := notification.NewService(gen.New(rwPool), notifBrokerEarly, logger)
 	libEnqueuer := &scanEnqueuer{
@@ -966,7 +973,10 @@ func run() error {
 		logger.Info("subtitle OCR enabled (ffmpeg + tesseract on PATH)")
 	}
 	subtitleHandler := v1.NewSubtitleHandler(subtitleSvc, mediaSvc, logger).
-		WithLibraryAccess(libSvc)
+		WithLibraryAccess(libSvc).
+		// Admin timing offsets for external subtitles and embedded streams.
+		WithOffsets(gen.New(rwPool)).
+		WithAudit(auditLogger)
 	// Automatic subtitle download: admin settings (server-wide + per-library)
 	// and the subtitle_auto_download task registered below.
 	subtitleAutoHandler := v1.NewSubtitleAutoHandler(settingsSvc, gen.New(rwPool),
@@ -1023,6 +1033,9 @@ func run() error {
 		WithCommercials(commercialMarkerLister{q: gen.New(roPool)}).
 		WithExternalSubtitles(subtitleSvc).
 		WithSubtitleCache(subtitleCacheRoot).
+		// Embedded subtitle streams' admin timing offsets: read from the
+		// primary so a change applies on the very next cue fetch.
+		WithSubtitleOffsets(gen.New(rwPool)).
 		WithSyncBroker(notifBrokerEarly).
 		WithAudit(auditLogger).
 		WithStreamTokenMaker(tokenMaker).
@@ -1043,12 +1056,17 @@ func run() error {
 		WithStudios(studioSvc).
 		// A metadata edit rewrites the item's NFO in save_nfo libraries.
 		WithNFOWriter(metaAgent).
+		// PATCH /items/bulk — one transaction on the read-write pool.
+		WithBulkEditor(bulkedit.New(rwPool)).
 		// A metadata edit drops the hub's cached trending row, which carries
 		// titles and was rating-filtered when fetched.
 		WithCacheInvalidator(hubHandler)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
+	// Faces, people, memories and photo-library settings (migration 00057).
+	photoPeopleHandler := v1.NewPhotoPeopleHandler(gen.New(rwPool), logger).
+		WithLibraryAccess(libSvc).WithAudit(auditLogger)
 
 	// A manual "mark watched" also goes to the user's Trakt history.
 	watchStateHandler := v1.NewWatchStateHandler(gen.New(rwPool), libSvc, logger).
@@ -1285,8 +1303,15 @@ func run() error {
 	downloadTTL := time.Duration(cfg.DownloadCacheTTLHours) * time.Hour
 	downloadEncoder := transcode.BestH264Encoder(configuredEncoders(
 		fleetCfg.EmbeddedEncoder, settingsSvc.TranscodeEncoders(ctx), cfg.TranscodeEncoders, allEncoders))
+	// Optimized versions (Optimize…) are the same encode, run by the same
+	// runner from the same queue, into CACHE_PATH/optimized — the server's
+	// writable data volume, not the libraries: those are often mounted
+	// read-only, and other media servers scanning the same folders would
+	// index the copies. They never expire (see internal/downloads).
+	optimizedRoot := cfg.CacheSubdir("optimized")
 	downloadRunner := downloads.NewRunner(rwPool, mediaSvc, downloads.RunnerConfig{
 		Root:          downloadRoot,
+		OptimizedRoot: optimizedRoot,
 		MaxConcurrent: cfg.DownloadMaxConversions,
 		TTL:           downloadTTL,
 		Encoder:       downloadEncoder,
@@ -1309,6 +1334,32 @@ func run() error {
 		WithWatchLimit(watchLimitStore)
 	logger.Info("converted downloads", "encoder", downloadEncoder,
 		"max_conversions", cfg.DownloadMaxConversions, "cache", downloadRoot)
+	optimizeSvc := downloads.NewOptimizeService(rwPool, mediaSvc, optimizedRoot, logger).WithRunner(downloadRunner)
+	optimizeHandler := v1.NewOptimizeHandler(optimizeSvc, logger).WithAudit(auditLogger)
+	// Playback: item detail lists the versions and /media/optimized serves
+	// them; the play decision hands them to optimized=1 clients; Now
+	// Playing names them.
+	itemHandler.WithOptimizedVersions(optimizeSvc)
+	nativeTranscodeHandler.WithOptimizedVersions(optimizeSvc)
+	nativeSessionsHandler.WithOptimizedVersions(optimizeSvc)
+
+	// ── Remote access: automatic router port mapping ─────────────────────────
+	// Settings ▸ Remote access, off by default. Only the master instance
+	// maps (see the RunIfMaster below), so a cluster opens one port on the
+	// router; the status travels through Valkey to whichever node an admin's
+	// request lands on.
+	remoteAccessStatus := portmap.SharedStatus{KV: valkeyClient}
+	portMapper := portmap.New(portmap.Config{ListenAddr: cfg.ListenAddr, Node: cfg.NodeID},
+		func(ctx context.Context) portmap.Settings {
+			ra := settingsSvc.RemoteAccess(ctx)
+			return portmap.Settings{Enabled: ra.MapPort, ExternalPort: ra.ExternalPort}
+		},
+		portmap.LANDiscoverer{Logger: logger}, logger).
+		WithPublisher(remoteAccessStatus.Publish)
+	remoteAccessHandler := v1.NewRemoteAccessHandler(settingsSvc, portMapper, cfg.ListenAddr,
+		cfg.TLSEnabled() || dbTLSConfig != nil, logger).
+		WithSharedStatus(remoteAccessStatus).
+		WithAudit(auditLogger)
 
 	// ── Email / SMTP (settings-driven) ───────────────────────────────────────
 	// Sender resolves SMTPConfig on every Send so admins can rotate creds and
@@ -1327,6 +1378,52 @@ func run() error {
 	})
 
 	emailHandler := v1.NewEmailHandler(emailSender, logger)
+
+	// ── A user's own stats + the digest email ────────────────────────────────
+	// My stats / Year in review read the watch_plays matview per user (read
+	// pool). The digest composes from the same queries and sends hourly-checked
+	// weekly / monthly emails; posters ride inline, resized by the artwork
+	// manager, so no asset URL or token ever goes into an email.
+	userStatsSvc := userstats.New(gen.New(roPool))
+	userStatsHandler := v1.NewUserStatsHandler(userStatsSvc, logger).WithLibraryAccess(libSvc)
+	digestSigner := digest.NewSigner(cfg.SecretKey)
+	// Links in emails: the admin's Base URL, else the startup default (which
+	// is only right on a single-host setup; the settings page says so).
+	digestBaseURL := func(ctx context.Context) string {
+		if b := settingsSvc.General(ctx).BaseURL; b != "" {
+			return b
+		}
+		return baseURL
+	}
+	digestSvc := digest.New(digest.Deps{
+		Store:  gen.New(rwPool),
+		Access: libSvc,
+		Stats:  userStatsSvc,
+		Posters: digest.ArtworkPosters{
+			ScanPaths: func(ctx context.Context, libraryID uuid.UUID) []string {
+				lib, err := libSvc.Get(ctx, libraryID)
+				if err != nil {
+					return nil
+				}
+				return lib.Paths
+			},
+			Exists: func(ctx context.Context, absPath string) bool {
+				_, err := artworkMgr.Store().Stat(ctx, absPath)
+				return err == nil
+			},
+			Resizer: artworkMgr,
+		},
+		Mailer:   emailSender,
+		Signer:   digestSigner,
+		Config:   settingsSvc.Digest,
+		BaseURL:  digestBaseURL,
+		Location: time.Local,
+		Logger:   logger,
+	})
+	digestHandler := v1.NewDigestHandler(gen.New(rwPool), settingsSvc, digestSvc, emailSender, digestSigner,
+		func(ctx context.Context) string { return settingsSvc.General(ctx).BaseURL }, logger).
+		WithAudit(auditLogger)
+
 	passwordResetDB := &passwordResetAdapter{q: gen.New(rwPool)}
 	passwordResetHandler := v1.NewPasswordResetHandler(passwordResetDB, emailSender, baseURL, logger).
 		WithSegmentTokenRevoker(segTokenMgr).
@@ -1576,6 +1673,35 @@ func run() error {
 	// worker slot as post-scan generation (seeded enabled below).
 	schedRegistry.Register("trickplay_backfill",
 		scheduler.NewTrickplayBackfillHandler(trickplayPlanner, logger))
+	// Face detection in photo libraries (opt-in, seeded disabled below):
+	// each photo's display file is decoded upright at 1024 px and searched
+	// with the pure-Go cascade in internal/faces. Matching is manual.
+	if faceDetector, err := faces.New(faces.Options{}); err != nil {
+		logger.Warn("face detector unavailable", "err", err)
+	} else {
+		schedRegistry.Register("face_detection", scheduler.NewFaceDetectionHandler(
+			photoFaceStore{q: gen.New(rwPool)},
+			func(ctx context.Context, itemID uuid.UUID) ([]faces.Box, error) {
+				files, err := mediaSvc.GetFiles(ctx, itemID)
+				if err != nil {
+					return nil, err
+				}
+				paths := make([]string, len(files))
+				for i, f := range files {
+					paths[i] = f.FilePath
+				}
+				src := scanner.PhotoDisplayPath(paths)
+				if src == "" {
+					return nil, fmt.Errorf("photo %s has no file", itemID)
+				}
+				img, err := photoImageSrv.DecodeUpright(ctx, src, 1024)
+				if err != nil {
+					return nil, err
+				}
+				return faceDetector.Detect(img)
+			},
+			logger))
+	}
 	// Chapter thumbnails for items whose sprites predate them (opt-in, seeded
 	// disabled below); new and regenerated sprites get them with the run.
 	schedRegistry.Register("chapter_thumbnails",
@@ -1583,7 +1709,8 @@ func run() error {
 	// Converted-download cache: expiry, size limit, orphans (seeded enabled).
 	schedRegistry.Register("download_cache_cleanup",
 		scheduler.NewDownloadCacheCleanupHandler(
-			downloads.NewCleaner(rwPool, downloadRoot, int64(cfg.DownloadCacheMaxGB)<<30, logger)))
+			downloads.NewCleaner(rwPool, downloadRoot, int64(cfg.DownloadCacheMaxGB)<<30, logger).
+				WithOptimized(optimizedRoot)))
 	// Nightly franchise-collection pass: bounded TMDB-collection backfill for
 	// movies enriched before franchise tracking, stale-snapshot refresh, and a
 	// DB-only reconcile (seeded enabled below).
@@ -1607,6 +1734,7 @@ func run() error {
 	// Podcast subscriptions: re-read every feed, download new episodes where
 	// auto-download is on, apply retention (seeded hourly).
 	schedRegistry.Register("podcast_refresh", scheduler.NewPodcastRefreshHandler(podcastSvc))
+	schedRegistry.Register("digest_send", scheduler.NewDigestSendHandler(digestSvc))
 	schedRegistry.Register("external_ratings", scheduler.NewExternalRatingsHandler(
 		externalratings.New(gen.New(rwPool), settingsSvc, logger)))
 	// Missing subtitles for new movies and episodes, from OpenSubtitles, when
@@ -1689,6 +1817,8 @@ func run() error {
 		Hub:             hubHandler,
 		Search:          searchHandler,
 		History:         historyHandler,
+		UserStats:       userStatsHandler,
+		Digest:          digestHandler,
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
@@ -1699,13 +1829,23 @@ func run() error {
 		Photos:          photosHandler,
 		Books:           booksHandler,
 		ReadingProgress: v1.NewReadingProgressHandler(gen.New(rwPool), libSvc, logger),
+		// OPDS catalog for e-reader apps; gated by the same downloads toggle
+		// as /media/download, which its acquisition links point at.
+		OPDS: v1.NewOPDSHandler(gen.New(roPool), tokenMaker, logger).
+			WithLibraryAccess(libSvc).
+			WithDownloadGate(settingsSvc).
+			WithArtworkStore(artworkMgr.Store),
+		UserExport: v1.NewUserExportHandler(gen.New(rwPool), logger).
+			WithLibraryAccess(libSvc).
+			WithAudit(auditLogger),
 		SubtitleAuto:    subtitleAutoHandler,
 		Trickplay:       trickplayHandler,
 		Subtitles:       subtitleHandler,
 		NativeTranscode: nativeTranscodeHandler,
 		Collections:     v1.NewCollectionHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithFranchise(gen.New(rwPool), requestsSvc).WithManual(gen.New(rwPool), smartCollections),
-		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		Playlists:       v1.NewPlaylistHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc).WithM3U(gen.New(rwPool)),
 		PhotoAlbums:     v1.NewPhotoAlbumHandler(gen.New(rwPool), logger).WithLibraryAccess(libSvc),
+		PhotoPeople:     photoPeopleHandler,
 		LiveTV:          liveTVHandler,
 		Lyrics:          lyricsHandler,
 		Arr:             arrHandler,
@@ -1734,6 +1874,8 @@ func run() error {
 		ArrServices:     arrServicesHandler,
 		Podcasts:        podcastHandler,
 		Downloads:       downloadsHandler,
+		Optimize:        optimizeHandler,
+		RemoteAccess:    remoteAccessHandler,
 		Imports:         importHandler,
 		Requests:        requestsHandler,
 		Discover:        discoverHandler,
@@ -2002,6 +2144,14 @@ func run() error {
 	// worker_fleet_down alerts: one node watches the transcode worker registry.
 	g.Go(func() error {
 		masterLock.RunIfMaster(gCtx, fleetMonitor.Run)
+		return nil
+	})
+
+	// Remote access port mapping: the master keeps the router's mapping (when
+	// the setting is on) and removes it when it stops being master or shuts
+	// down.
+	g.Go(func() error {
+		masterLock.RunIfMaster(gCtx, portMapper.Run)
 		return nil
 	})
 

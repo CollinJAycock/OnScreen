@@ -47,6 +47,9 @@ type SlotReserver interface {
 type RunnerConfig struct {
 	// Root is the download cache directory (CACHE_PATH/downloads).
 	Root string
+	// OptimizedRoot is where optimized versions are written
+	// (CACHE_PATH/optimized). Empty: optimize encodes fail with an error.
+	OptimizedRoot string
 	// MaxConcurrent is how many conversions run at once on this server
 	// (DOWNLOAD_MAX_CONVERSIONS, 1 or 2).
 	MaxConcurrent int
@@ -147,6 +150,11 @@ func (r *Runner) Run(ctx context.Context) error {
 	if err := os.MkdirAll(r.cfg.Root, 0o755); err != nil {
 		return fmt.Errorf("download cache dir: %w", err)
 	}
+	if r.cfg.OptimizedRoot != "" {
+		if err := os.MkdirAll(r.cfg.OptimizedRoot, 0o755); err != nil {
+			return fmt.Errorf("optimized versions dir: %w", err)
+		}
+	}
 	r.requeueStale(ctx)
 	lastStaleCheck := time.Now()
 	ticker := time.NewTicker(pollEvery)
@@ -215,8 +223,47 @@ func (r *Runner) requeueStale(ctx context.Context) {
 }
 
 // errCancelled: the conversion's row was deleted or left 'running' while it
-// encoded (the last job pointing at it was deleted).
+// encoded (the last job pointing at it was deleted, or an admin deleted the
+// optimized version).
 var errCancelled = errors.New("conversion cancelled")
+
+// rootFor is the directory a conversion's output belongs in: the download
+// cache, or the optimized-versions directory.
+func (r *Runner) rootFor(conv gen.DownloadConversion) string {
+	if conv.Purpose == PurposeOptimize {
+		return r.cfg.OptimizedRoot
+	}
+	return r.cfg.Root
+}
+
+// encodeResult is what a finished encode produced.
+type encodeResult struct {
+	size        int64
+	width       int
+	height      int
+	bitrateKbps int
+	durationMS  int64
+}
+
+// readyParams turns a result into the MarkDownloadConversionReady write.
+func (r *Runner) readyParams(id uuid.UUID, res encodeResult) gen.MarkDownloadConversionReadyParams {
+	p := gen.MarkDownloadConversionReadyParams{
+		ID: id, SizeBytes: &res.size, TtlSeconds: int64(r.cfg.TTL.Seconds()),
+	}
+	if res.width > 0 && res.height > 0 {
+		w, h := int32(res.width), int32(res.height)
+		p.Width, p.Height = &w, &h
+	}
+	if res.bitrateKbps > 0 {
+		b := int32(res.bitrateKbps)
+		p.BitrateKbps = &b
+	}
+	if res.durationMS > 0 {
+		d := res.durationMS
+		p.DurationMs = &d
+	}
+	return p
+}
 
 func (r *Runner) execute(parent context.Context, conv gen.DownloadConversion) {
 	ctx, cancel := context.WithCancel(parent)
@@ -231,33 +278,36 @@ func (r *Runner) execute(parent context.Context, conv gen.DownloadConversion) {
 	}()
 
 	start := time.Now()
-	log := r.logger.With("conversion_id", conv.ID, "file_id", conv.MediaFileID, "quality", conv.Quality)
+	root := r.rootFor(conv)
+	log := r.logger.With("conversion_id", conv.ID, "file_id", conv.MediaFileID, "quality", conv.Quality, "purpose", conv.Purpose)
 	log.InfoContext(ctx, "downloads: conversion started")
-	size, err := r.convert(ctx, conv)
+	res, err := r.convert(ctx, conv)
 	switch {
 	case err == nil:
-		n, merr := r.q.MarkDownloadConversionReady(parent, gen.MarkDownloadConversionReadyParams{
-			ID: conv.ID, SizeBytes: &size, TtlSeconds: int64(r.cfg.TTL.Seconds()),
-		})
+		n, merr := r.q.MarkDownloadConversionReady(parent, r.readyParams(conv.ID, res))
 		if merr != nil || n == 0 {
 			// Cancelled in the last instant, or the write failed: either
 			// way nothing points at the file.
-			_ = os.Remove(OutputPath(r.cfg.Root, conv.ID))
+			_ = os.Remove(OutputPath(root, conv.ID))
 			if merr != nil {
 				log.ErrorContext(parent, "downloads: mark ready", "err", merr)
 			}
 			return
 		}
-		log.InfoContext(parent, "downloads: conversion ready", "bytes", size, "took", time.Since(start).Round(time.Second))
+		log.InfoContext(parent, "downloads: conversion ready", "bytes", res.size, "took", time.Since(start).Round(time.Second))
 	case errors.Is(err, errCancelled) || parent.Err() != nil:
-		_ = os.Remove(partPath(r.cfg.Root, conv.ID))
+		if root != "" {
+			_ = os.Remove(partPath(root, conv.ID))
+		}
 		if parent.Err() == nil {
 			log.InfoContext(parent, "downloads: conversion cancelled")
 		}
 		// On shutdown the row stays 'running'; its heartbeat stops and the
 		// next start (here or on another server) requeues it.
 	default:
-		_ = os.Remove(partPath(r.cfg.Root, conv.ID))
+		if root != "" {
+			_ = os.Remove(partPath(root, conv.ID))
+		}
 		msg := err.Error()
 		if len(msg) > 1000 {
 			msg = msg[:1000]
@@ -372,25 +422,47 @@ func textSubtitleStreams(subtitleStreamsJSON []byte) []int {
 	return out
 }
 
-// convert encodes one conversion into the cache and returns the file size.
-func (r *Runner) convert(ctx context.Context, conv gen.DownloadConversion) (int64, error) {
+// planFor is the encode a conversion targets: its download rung, or its
+// optimize profile worked out against the source.
+func planFor(conv gen.DownloadConversion, f *media.File) (EncodePlan, error) {
+	if conv.Purpose == PurposeOptimize {
+		p, ok := OptimizeProfileByID(conv.Quality)
+		if !ok {
+			return EncodePlan{}, fmt.Errorf("unknown optimize profile %q", conv.Quality)
+		}
+		return p.Plan(f), nil
+	}
 	q, ok := QualityByID(conv.Quality)
 	if !ok {
-		return 0, fmt.Errorf("unknown quality %q", conv.Quality)
+		return EncodePlan{}, fmt.Errorf("unknown quality %q", conv.Quality)
+	}
+	return EncodePlan{BitrateKbps: q.Profile.Bitrate, MaxWidth: q.Profile.MaxWidth, MaxHeight: q.Profile.MaxHeight}, nil
+}
+
+// convert encodes one conversion into its directory and describes the
+// result.
+func (r *Runner) convert(ctx context.Context, conv gen.DownloadConversion) (encodeResult, error) {
+	root := r.rootFor(conv)
+	if root == "" {
+		return encodeResult{}, errors.New("optimized versions are not enabled on this server")
 	}
 	src, err := r.resolveSource(ctx, conv)
 	if err != nil {
-		return 0, err
+		return encodeResult{}, err
+	}
+	plan, err := planFor(conv, src.file)
+	if err != nil {
+		return encodeResult{}, err
 	}
 	input := src.input
 	if len(src.parts) > 0 {
-		listDir := filepath.Join(r.cfg.Root, ".lists")
+		listDir := filepath.Join(root, ".lists")
 		if err := os.MkdirAll(listDir, 0o700); err != nil {
-			return 0, fmt.Errorf("concat list dir: %w", err)
+			return encodeResult{}, fmt.Errorf("concat list dir: %w", err)
 		}
 		input = filepath.Join(listDir, conv.ID.String()+".ffconcat")
 		if err := ffsafe.WriteConcatList(input, src.parts); err != nil {
-			return 0, fmt.Errorf("concat list: %w", err)
+			return encodeResult{}, fmt.Errorf("concat list: %w", err)
 		}
 		defer func() { _ = os.Remove(input) }()
 	}
@@ -399,11 +471,11 @@ func (r *Runner) convert(ctx context.Context, conv gen.DownloadConversion) (int6
 	args := transcode.ProgressiveArgs{
 		InputPath:   input,
 		ConcatParts: src.parts,
-		OutputPath:  partPath(r.cfg.Root, conv.ID),
+		OutputPath:  partPath(root, conv.ID),
 		Encoder:     r.cfg.Encoder,
-		BitrateKbps: q.Profile.Bitrate,
-		MaxWidth:    q.Profile.MaxWidth,
-		MaxHeight:   q.Profile.MaxHeight,
+		BitrateKbps: plan.BitrateKbps,
+		MaxWidth:    plan.MaxWidth,
+		MaxHeight:   plan.MaxHeight,
 		// HDR10 / HLG sources are tonemapped to SDR when zscale exists.
 		NeedsToneMap: f.HDRType != nil && *f.HDRType != "",
 		HasZscale:    r.cfg.HasZscale,
@@ -437,20 +509,35 @@ func (r *Runner) convert(ctx context.Context, conv gen.DownloadConversion) (int6
 		err = r.runFFmpeg(encodeCtx, transcode.BuildProgressiveMP4(args), src.durationMS, progress)
 	}
 	if cancelled.Load() {
-		return 0, errCancelled
+		return encodeResult{}, errCancelled
 	}
 	if err != nil {
-		return 0, err
+		return encodeResult{}, err
 	}
-	final := OutputPath(r.cfg.Root, conv.ID)
+	final := OutputPath(root, conv.ID)
 	if err := os.Rename(args.OutputPath, final); err != nil {
-		return 0, fmt.Errorf("finalize output: %w", err)
+		return encodeResult{}, fmt.Errorf("finalize output: %w", err)
 	}
 	fi, err := os.Stat(final)
 	if err != nil {
-		return 0, fmt.Errorf("stat output: %w", err)
+		return encodeResult{}, fmt.Errorf("stat output: %w", err)
 	}
-	return fi.Size(), nil
+	res := encodeResult{size: fi.Size(), durationMS: src.durationMS}
+	res.width, res.height = transcode.FitWithin(args.SourceWidth, args.SourceHeight, args.MaxWidth, args.MaxHeight)
+	res.bitrateKbps = averageKbps(res.size, res.durationMS)
+	if res.bitrateKbps == 0 {
+		res.bitrateKbps = plan.BitrateKbps + transcode.DownloadAudioBitrateKbps
+	}
+	return res, nil
+}
+
+// averageKbps is a file's overall bitrate from its size and duration; 0 when
+// the duration is unknown.
+func averageKbps(size, durationMS int64) int {
+	if size <= 0 || durationMS <= 0 {
+		return 0
+	}
+	return int(size * 8 / durationMS) // bytes·8 / ms = kbit/s
 }
 
 // heartbeat writes progress every heartbeatEvery; when the write finds the

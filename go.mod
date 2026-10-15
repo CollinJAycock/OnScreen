@@ -12,12 +12,16 @@ require (
 	github.com/crewjam/saml v0.5.1
 	github.com/dhowden/tag v0.0.0-20240417053706-3d75831295e8
 	github.com/disintegration/imaging v1.6.2
+	github.com/esimov/pigo v1.4.6
 	github.com/exaring/otelpgx v0.11.1
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-chi/chi/v5 v5.3.1
 	github.com/go-ldap/ldap/v3 v3.4.14
 	github.com/google/uuid v1.6.0
+	github.com/huin/goupnp v1.3.0
 	github.com/jackc/pgx/v5 v5.10.0
+	github.com/jackpal/gateway v1.2.0
+	github.com/jackpal/go-nat-pmp v1.1.0
 	github.com/mark3labs/mcp-go v0.58.0
 	github.com/minio/minio-go/v7 v7.3.0
 	github.com/nwaples/rardecode/v2 v2.3.0

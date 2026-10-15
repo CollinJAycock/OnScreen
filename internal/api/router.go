@@ -62,6 +62,8 @@ type Handlers struct {
 	Hub             *v1.HubHandler
 	Search          *v1.SearchHandler
 	History         *v1.HistoryHandler
+	UserStats       *v1.UserStatsHandler // the caller's own stats + Year in review; optional
+	Digest          *v1.DigestHandler    // digest email opt-in, admin settings, unsubscribe; optional
 	Items           *v1.ItemHandler
 	ItemsAdmin      *v1.ItemBulkAdminHandler // admin bulk re-enrich / cleanup
 	WatchStatus     *v1.WatchStatusHandler   // per-user Plan to Watch / Watching / etc.
@@ -70,12 +72,15 @@ type Handlers struct {
 	Photos          *v1.PhotosHandler
 	Books           *v1.BookHandler
 	ReadingProgress *v1.ReadingProgressHandler // ebook position sync; optional
+	OPDS            *v1.OPDSHandler            // OPDS catalog of book libraries at /opds/; optional
+	UserExport      *v1.UserExportHandler      // "Download my data" ZIP; optional
 	SubtitleAuto    *v1.SubtitleAutoHandler    // automatic subtitle download settings; optional
 	Trickplay       *v1.TrickplayHandler
 	NativeTranscode *v1.NativeTranscodeHandler
 	Collections     *v1.CollectionHandler
 	Playlists       *v1.PlaylistHandler
 	PhotoAlbums     *v1.PhotoAlbumHandler
+	PhotoPeople     *v1.PhotoPeopleHandler // photo settings, faces, people, memories; optional
 	LiveTV          *v1.LiveTVHandler
 	Lyrics          *v1.LyricsHandler
 	Subtitles       *v1.SubtitleHandler
@@ -110,6 +115,12 @@ type Handlers struct {
 	// Downloads: converted (lower-quality) downloads — per-user jobs over a
 	// shared, size-limited encode cache.
 	Downloads *v1.DownloadsHandler
+	// Optimize: the admin's optimized versions (Optimize…) — queue, list,
+	// delete. Their stream route lives on Items.
+	Optimize *v1.OptimizeHandler
+	// RemoteAccess: admin Settings ▸ Remote access — automatic router port
+	// mapping (UPnP IGD / NAT-PMP / PCP) and its status. Optional.
+	RemoteAccess *v1.RemoteAccessHandler
 	// Imports: admin import of watch state, ratings, playlists and play
 	// history from a Plex, Jellyfin or Emby server.
 	Imports       *v1.ImportHandler
@@ -245,6 +256,10 @@ func NewRouter(h *Handlers) http.Handler {
 			// download from a mobile webview that can't carry cookies.
 			r.Get("/media/download/{id}", h.Items.DownloadFile)
 			r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
+			// An optimized version (Optimize…) for direct play. Same gates
+			// as /media/stream; a stream token bound to the version's id
+			// (optimized_versions[].stream_token) authenticates it.
+			r.Get("/media/optimized/{id}", h.Items.StreamOptimized)
 		}
 		if h.Subtitles != nil {
 			r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
@@ -513,11 +528,42 @@ func NewRouter(h *Handlers) http.Handler {
 		})
 	}
 
+	// ── OPDS catalog (/opds/) ────────────────────────────────────────────────
+	// Book libraries for e-reader apps. OPDSRequired adds HTTP Basic with a
+	// personal API key as the password (never the account password) to the
+	// usual carriers; it is mounted nowhere else. Every route is a GET. The
+	// cover route alone also takes the file-bound ?token= stream token the
+	// feed puts on its links. See docs/opds.md.
+	if h.OPDS != nil {
+		r.Route("/opds", func(r chi.Router) {
+			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
+				middleware.IPKey("ratelimit:opds")))
+			var failures middleware.FailureCounter
+			if h.RateLimiter != nil {
+				failures = h.RateLimiter
+			}
+			r.Group(func(r chi.Router) {
+				r.Use(h.Auth_mw.OPDSRequired(failures, false))
+				r.Get("/", h.OPDS.Root)
+				r.Get("/recent", h.OPDS.Recent)
+				r.Get("/search", h.OPDS.Search)
+				r.Get("/opensearch.xml", h.OPDS.OpenSearch)
+				r.Get("/libraries/{id}", h.OPDS.Library)
+			})
+			r.Group(func(r chi.Router) {
+				r.Use(h.Auth_mw.OPDSRequired(failures, true))
+				r.Get("/files/{fileId}/cover", h.OPDS.Cover)
+			})
+		})
+	}
+
 	// ── OnScreen native API (/api/v1/) ────────────────────────────────────────
 	r.Route("/api/v1", func(r chi.Router) {
 		// Limit request bodies to 1 MB to prevent memory exhaustion. The DB
-		// restore endpoint is exempt — it streams a large dump and caps itself.
-		r.Use(middleware.MaxBytesBody(1<<20, "/admin/restore"))
+		// restore endpoint is exempt — it streams a large dump and caps itself
+		// — and so is the M3U import, whose 1 MB file plus multipart framing
+		// would not fit; it caps its own body.
+		r.Use(middleware.MaxBytesBody(1<<20, "/admin/restore", "/playlists/import"))
 		// Public status endpoints — no rate limit (read-only, cheap).
 		r.Group(func(r chi.Router) {
 			r.Get("/setup/status", h.Auth.SetupStatus)
@@ -618,6 +664,19 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Use(v1.CaptureSessionClient)
 				r.Post("/auth/pair/code", h.Pair.CreateCode)
 				r.Get("/auth/pair/poll", h.Pair.Poll)
+			})
+		}
+
+		// Digest email unsubscribe link — no sign-in; the HMAC-signed token
+		// in the link is the credential and can only turn that user's digest
+		// off. GET shows a confirm page, POST (the button, or a mail client's
+		// RFC 8058 one-click) unsubscribes.
+		if h.Digest != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.RateLimit(h.RateLimiter, middleware.DigestUnsubscribeLimit,
+					middleware.IPKey("ratelimit:digestunsub")))
+				r.Get("/digest/unsubscribe", h.Digest.Unsubscribe)
+				r.Post("/digest/unsubscribe", h.Digest.Unsubscribe)
 			})
 		}
 
@@ -758,6 +817,16 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Put("/users/me/preferences", h.User.SetPreferences)
 				r.Put("/users/me/hub-layout", h.User.SetHubLayout)
 				r.Put("/users/me/quality-profile", h.User.SetQualityProfile)
+				// The caller's own stats (My stats) and Year in review.
+				if h.UserStats != nil {
+					r.Get("/users/me/stats", h.UserStats.Stats)
+					r.Get("/users/me/year-in-review", h.UserStats.YearInReview)
+				}
+				// The caller's digest email opt-in.
+				if h.Digest != nil {
+					r.Get("/users/me/digest", h.Digest.GetMine)
+					r.Put("/users/me/digest", h.Digest.SetMine)
+				}
 				// Signed-in devices: list the caller's sign-ins, sign one out,
 				// or sign out everywhere else.
 				if h.UserSessions != nil {
@@ -791,6 +860,19 @@ func NewRouter(h *Handlers) http.Handler {
 						r.Get("/admin/api-keys", h.APIKeys.AdminList)
 						r.Delete("/admin/api-keys/{id}", h.APIKeys.AdminDelete)
 					})
+				})
+			}
+
+			// "Download my data". Account data: a signed-in session only, never
+			// an API key. A small bucket, since each export pages through the
+			// whole watch history. Admins can export anyone (data requests).
+			if h.UserExport != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RefuseAPIKey)
+					r.Use(middleware.RateLimit(h.RateLimiter, userExportLimit,
+						middleware.SessionKey("ratelimit:user_export")))
+					r.Post("/users/me/export", h.UserExport.ExportMine)
+					r.With(h.Auth_mw.AdminRequired).Post("/users/{id}/export", h.UserExport.ExportUser)
 				})
 			}
 
@@ -899,6 +981,11 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Post("/settings/worker-credentials", h.Settings.WorkerCredentials)
 					r.Get("/settings/dvr", h.Settings.GetDVR)
 					r.Put("/settings/dvr", h.Settings.UpdateDVR)
+					if h.Digest != nil {
+						r.Get("/settings/digest", h.Digest.GetSettings)
+						r.Put("/settings/digest", h.Digest.UpdateSettings)
+						r.Post("/settings/digest/test", h.Digest.SendTest)
+					}
 					r.Get("/settings/transcode-config", h.Settings.GetTranscodeConfig)
 					r.Put("/settings/transcode-config", h.Settings.UpdateTranscodeConfig)
 					r.Get("/settings/storage", h.Settings.GetStorage)
@@ -915,6 +1002,33 @@ func NewRouter(h *Handlers) http.Handler {
 				})
 			}
 
+			// Optimized versions — admin only. Each request can queue an
+			// encode per item of a whole library; the queue shares the
+			// converted-download runner and its transcode slots.
+			if h.Optimize != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/optimize/profiles", h.Optimize.Profiles)
+					r.Post("/optimize", h.Optimize.Create)
+					r.Get("/optimize/jobs", h.Optimize.ListJobs)
+					r.Get("/optimize/jobs/{id}", h.Optimize.GetJob)
+					r.Delete("/optimize/jobs/{id}", h.Optimize.Delete)
+					r.Delete("/optimize/versions/{id}", h.Optimize.Delete)
+				})
+			}
+
+			// Remote access (automatic router port mapping) — admin only,
+			// not for API keys: turning it on exposes the server to the
+			// internet.
+			if h.RemoteAccess != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(middleware.RefuseAPIKey)
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/settings/remote-access", h.RemoteAccess.Get)
+					r.Put("/settings/remote-access", h.RemoteAccess.Update)
+				})
+			}
+
 			// Automatic subtitle download — admin only: the server-wide
 			// setting and the per-library overrides.
 			if h.SubtitleAuto != nil {
@@ -924,6 +1038,17 @@ func NewRouter(h *Handlers) http.Handler {
 					r.Put("/settings/subtitle-auto-download", h.SubtitleAuto.UpdateSettings)
 					r.Get("/libraries/{id}/subtitle-auto-download", h.SubtitleAuto.GetLibrary)
 					r.Put("/libraries/{id}/subtitle-auto-download", h.SubtitleAuto.UpdateLibrary)
+				})
+			}
+
+			// Photo libraries — admin only: per-library photo options (RAW +
+			// JPEG pairing) and deleting face data.
+			if h.PhotoPeople != nil {
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Get("/libraries/{id}/photo-settings", h.PhotoPeople.GetSettings)
+					r.Put("/libraries/{id}/photo-settings", h.PhotoPeople.UpdateSettings)
+					r.Delete("/admin/photos/face-data", h.PhotoPeople.DeleteFaceData)
 				})
 			}
 
@@ -1233,6 +1358,11 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Post("/playlists/{id}/items", h.Playlists.AddItem)
 				r.Delete("/playlists/{id}/items/{itemId}", h.Playlists.RemoveItem)
 				r.Put("/playlists/{id}/items/order", h.Playlists.Reorder)
+				// M3U export (a download) and import (a multipart upload,
+				// exempt from the 1 MB body cap above; the handler caps the
+				// file itself at 1 MB and 10,000 entries).
+				r.Get("/playlists/{id}/export.m3u8", h.Playlists.ExportM3U)
+				r.Post("/playlists/import", h.Playlists.ImportM3U)
 			}
 
 			// Photo albums — ownership-checked, per-user. Items must be type='photo'.
@@ -1320,6 +1450,9 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}", h.Items.Get)
 				r.Get("/items/{id}/children", h.Items.Children)
 				r.Patch("/items/{id}", h.Items.UpdateMetadata) // admin-gated inside the handler
+				// Bulk metadata edit for a library selection. chi matches the
+				// static segment before {id}. Admin-gated inside the handler.
+				r.Patch("/items/bulk", h.Items.BulkUpdateMetadata)
 				r.Put("/items/{id}/progress", h.Items.Progress)
 				r.Post("/items/{id}/enrich", h.Items.Enrich)
 				r.Put("/items/{id}/episode-order", h.Items.SetEpisodeOrder) // admin-gated inside the handler
@@ -1441,6 +1574,24 @@ func NewRouter(h *Handlers) http.Handler {
 				}
 			}
 
+			// Faces, people and memories in photo libraries. Every route
+			// applies the photos' library ACL, rating ceiling and label
+			// restriction; naming needs an unrestricted account (see
+			// PhotoPeopleHandler).
+			if h.PhotoPeople != nil {
+				r.Get("/photos/memories", h.PhotoPeople.Memories)
+				r.Get("/photos/people", h.PhotoPeople.People)
+				r.Get("/photos/people/{id}", h.PhotoPeople.Person)
+				r.Get("/photos/people/{id}/items", h.PhotoPeople.PersonItems)
+				r.Get("/photos/people/{id}/suggestions", h.PhotoPeople.PersonSuggestions)
+				r.Patch("/photos/people/{id}", h.PhotoPeople.UpdatePerson)
+				r.Delete("/photos/people/{id}", h.PhotoPeople.DeletePerson)
+				r.Get("/photos/faces", h.PhotoPeople.UnnamedFaces)
+				r.Put("/photos/faces/{id}", h.PhotoPeople.UpdateFace)
+				r.Delete("/photos/faces/{id}", h.PhotoPeople.DeleteFace)
+				r.Get("/items/{id}/faces", h.PhotoPeople.ItemFaces)
+			}
+
 			// Ebook reading position, synced across the user's devices.
 			if h.ReadingProgress != nil {
 				r.Get("/items/{id}/reading-progress", h.ReadingProgress.Get)
@@ -1486,6 +1637,13 @@ func NewRouter(h *Handlers) http.Handler {
 					Post("/items/{id}/subtitles/ocr", h.Subtitles.OCR)
 				r.Get("/items/{id}/subtitles/ocr/{jobId}", h.Subtitles.OCRStatus)
 				r.Delete("/items/{id}/subtitles/{subId}", h.Subtitles.Delete)
+				// Server-wide subtitle timing offsets (admin). The WebVTT
+				// routes shift the cues, so every client gets them.
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.AdminRequired)
+					r.Put("/subtitles/{id}/offset", h.Subtitles.SetOffset)
+					r.Put("/files/{file_id}/subtitle-streams/{index}/offset", h.Subtitles.SetStreamOffset)
+				})
 			}
 
 			// Favorites — per-user.
@@ -1673,6 +1831,10 @@ func serveEmbeddedFile(fsys fs.FS, w http.ResponseWriter, req *http.Request, nam
 // single click, so 60/min is far above real use while bounding the per-episode
 // write fan-out of show and season marks.
 var watchMarkLimit = middleware.RateLimitConfig{Limit: 60, Window: time.Minute}
+
+// userExportLimit caps "Download my data" archives per user. One is a click;
+// five a minute leaves room for a retry while bounding the history paging.
+var userExportLimit = middleware.RateLimitConfig{Limit: 5, Window: time.Minute}
 
 var artworkImageExts = map[string]string{
 	".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".tbn": "image/jpeg",

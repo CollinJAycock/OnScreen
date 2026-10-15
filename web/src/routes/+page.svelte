@@ -6,6 +6,23 @@
   import { toast } from '$lib/stores/toast';
   import { nextUpSubtitle, removeById, restoreAt } from '$lib/watchState';
   import { libraryGridHref } from '$lib/musicBrowse';
+  import { memoriesApi, type MemoryGroup } from '$lib/api';
+  import { isBrowserImage, localISODate, photoImageUrl } from '$lib/photos';
+
+  // Memories ("3 years ago today") — only fetched when the user can open a
+  // photo library, and only shown when there's something to show.
+  let memoryGroups: MemoryGroup[] = [];
+  let memoriesDate = '';
+
+  async function loadMemories(libs: Library[]) {
+    if (!libs.some((l) => l.type === 'photo')) { memoryGroups = []; return; }
+    memoriesDate = localISODate();
+    try {
+      memoryGroups = (await memoriesApi.get(memoriesDate))?.groups ?? [];
+    } catch {
+      memoryGroups = []; // older server, or none to show
+    }
+  }
 
   let libraries: Library[] = [];
   let continueTV: HubItem[] = [];
@@ -41,7 +58,7 @@
     // header and may render square; 'plain' is trending; 'libraries' is
     // the library-tile grid (default last, pinnable anywhere); 'next_up'
     // tiles are episodes labelled show title + "S2 · E5 — Title".
-    kind: 'continue' | 'plain' | 'library' | 'libraries' | 'next_up' | 'collection';
+    kind: 'continue' | 'plain' | 'library' | 'libraries' | 'next_up' | 'collection' | 'memories';
     libraryId?: string;
     collectionId?: string;
     libraryType?: string;
@@ -54,6 +71,8 @@
     { key: 'next_up',         title: 'Next Up',                    items: nextUp,         kind: 'next_up' },
     { key: 'continue_movies', title: 'Continue Watching Movies',   items: continueMovies, kind: 'continue' },
     { key: 'continue_other',  title: 'Continue Watching',          items: continueOther,  kind: 'continue' },
+    // Memories render from memoryGroups, not HubItems (see the renderer).
+    { key: 'memories',        title: 'Memories',                   items: [],             kind: 'memories' },
     { key: 'plan_to_watch',   title: 'Plan to Watch',              items: planToWatch,    kind: 'plain' },
     ...collectionRows.map((row): HubSection => ({
       key: `collection:${row.collection_id}`,
@@ -101,7 +120,9 @@
       key: e.section.key,
       title: e.section.title,
       enabled: e.enabled,
-      empty: e.section.kind !== 'libraries' && e.section.items.length === 0,
+      empty: e.section.kind === 'memories'
+        ? memoryGroups.length === 0
+        : e.section.kind !== 'libraries' && e.section.items.length === 0,
     }));
     editMode = true;
   }
@@ -244,6 +265,7 @@
         userApi.getPreferences().catch(() => null),
       ]);
       libraries = libs;
+      void loadMemories(libs);
       unpackContinue(hub);
       recentlyAddedByLibrary = hub.recently_added_by_library ?? [];
       trending = hub.trending ?? [];
@@ -468,6 +490,25 @@
             </div>
           {/if}
         </section>
+      {:else if entry.enabled && section.kind === 'memories'}
+        {#if memoryGroups.length > 0}
+          <section class="hub-section">
+            <h2 class="hub-title">
+              <a class="hub-title-link" href="/photos/memories?date={memoriesDate}">Memories</a>
+            </h2>
+            <div class="hub-scroll">
+              {#each memoryGroups as g, i (`${g.kind}-${g.year}`)}
+                <div class="hub-card-wrap">
+                  <a class="hub-card square" href="/photos/memories?date={memoriesDate}#m{i}">
+                    <img src={photoImageUrl(g.cover, { w: 300 })} alt={g.title} loading="lazy" />
+                    <div class="hub-label">{g.title}</div>
+                    <div class="hub-sublabel">{g.total.toLocaleString()} {g.total === 1 ? 'photo' : 'photos'}</div>
+                  </a>
+                </div>
+              {/each}
+            </div>
+          </section>
+        {/if}
       {:else if entry.enabled && section.items.length > 0}
         <section class="hub-section">
           {#if section.kind === 'library'}
@@ -490,7 +531,10 @@
               {@const square = section.kind === 'library' ? section.librarySquare : (section.kind === 'continue' && isSquare(item))}
               <div class="hub-card-wrap">
               <a class="hub-card" class:square href={hubHref(item)}>
-                {#if art}
+                {#if art && item.type === 'photo' && !isBrowserImage(art)}
+                  <!-- Camera RAW / HEIC / TIFF: the server renders it. -->
+                  <img src={photoImageUrl({ id: item.id, poster_path: art, updated_at: item.updated_at }, { w: 300 })} alt={item.title} loading="lazy" />
+                {:else if art}
                   <img src={assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)}
                        srcset="{assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=150`)} 150w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=300`)} 300w, {assetUrl(`/artwork/${encodeURI(art)}?v=${item.updated_at}&w=450`)} 450w"
                        sizes="(max-width: 768px) 130px, 220px"

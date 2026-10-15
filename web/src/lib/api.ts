@@ -143,6 +143,19 @@ export function assetUrl(path: string): string {
   return base + (base.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(assetTokenStore);
 }
 
+/** The file name a Content-Disposition header gives: the UTF-8
+ *  `filename*` form when present, else the plain `filename`. */
+export function filenameFromDisposition(header: string | null): string | null {
+  if (!header) return null;
+  const star = /filename\*\s*=\s*UTF-8''([^;]+)/i.exec(header);
+  if (star) {
+    try { return decodeURIComponent(star[1].trim()); } catch { /* fall through */ }
+  }
+  const plain = /filename\s*=\s*"([^"]*)"|filename\s*=\s*([^;]+)/i.exec(header);
+  const name = plain ? (plain[1] ?? plain[2] ?? '').trim() : '';
+  return name || null;
+}
+
 /** Build the request headers, attaching Authorization when a bearer
  *  token is cached. Browser builds skip the bearer (cookies cover
  *  auth there). */
@@ -939,6 +952,64 @@ export class ApiClient {
       },
     );
   }
+  /** POST a multipart form (a file upload with fields). The browser sets
+   *  the multipart Content-Type with its boundary, so ours is dropped. */
+  async postForm<T>(path: string, form: FormData): Promise<T> {
+    const finalPath = this.withViewAs('POST', path);
+    return this.requestWithRetry(
+      finalPath,
+      () => {
+        const headers = authHeaders();
+        delete headers['Content-Type'];
+        return fetch(apiBase + finalPath, {
+          method: 'POST',
+          headers,
+          credentials: credentialsMode(),
+          body: form,
+        });
+      },
+      async (resp) => {
+        const json = (await resp.json()) as ApiResponse<T> | ApiError;
+        if (!resp.ok) {
+          const err = json as ApiError;
+          throw new ApiRequestError(err.error?.message ?? `HTTP ${resp.status}`, resp.status, err.error?.code ?? '');
+        }
+        return (json as ApiResponse<T>).data;
+      },
+    );
+  }
+
+  /** Fetch a file the server sends as an attachment (an export), with the
+   *  same auth and refresh handling as the JSON calls. Returns the body and
+   *  the filename from Content-Disposition (or `fallbackName`). */
+  async fetchFile(method: 'GET' | 'POST', path: string, fallbackName: string): Promise<{ blob: Blob; filename: string }> {
+    const finalPath = this.withViewAs(method, path);
+    return this.requestWithRetry(
+      finalPath,
+      () => fetch(apiBase + finalPath, {
+        method,
+        headers: authHeaders(),
+        credentials: credentialsMode(),
+      }),
+      async (resp) => {
+        if (!resp.ok) {
+          let message = `HTTP ${resp.status}`;
+          let code = '';
+          try {
+            const err = (await resp.json()) as ApiError;
+            message = err.error?.message ?? message;
+            code = err.error?.code ?? '';
+          } catch { /* not JSON */ }
+          throw new ApiRequestError(message, resp.status, code);
+        }
+        return {
+          blob: await resp.blob(),
+          filename: filenameFromDisposition(resp.headers.get('Content-Disposition')) ?? fallbackName,
+        };
+      },
+    );
+  }
+
   /** POST that does NOT attempt the 401→refresh→logout cascade. For
    *  pre-session auth steps (TOTP verify) where a 401 means "wrong
    *  code, retry", not "session dead, bounce to /login". */
@@ -1380,6 +1451,101 @@ export const downloadsApi = {
   remove: (jobId: string) => api.del(`/downloads/${encodeURIComponent(jobId)}`),
 };
 
+// ── Optimized versions (admin "Optimize…") ───────────────────────────────────
+
+export type OptimizeProfileId = 'mobile_720p' | 'tv_1080p' | 'original_compatible';
+export type OptimizeStatus = 'queued' | 'running' | 'ready' | 'failed';
+
+export interface OptimizeProfile {
+  id: OptimizeProfileId;
+  label: string;
+  max_height: number;
+  bitrate_kbps: number;
+  /** The original-quality profile keeps the source resolution. */
+  keep_resolution?: boolean;
+}
+
+/** A playable optimized version (item detail optimized_versions, and the
+ *  play decision's optimized_version). */
+export interface OptimizedVersion {
+  id: string;
+  /** The source file it was made from. */
+  file_id: string;
+  profile: OptimizeProfileId;
+  label: string;
+  container: string;
+  video_codec: string;
+  audio_codec: string;
+  audio_channels: number;
+  width?: number;
+  height?: number;
+  bitrate_kbps?: number;
+  size_bytes?: number;
+  duration_ms?: number;
+  /** /media/optimized/{id} — pass through assetUrl. */
+  stream_url: string;
+  stream_token?: string;
+}
+
+/** One optimized version or the job producing it (admin list). */
+export interface OptimizeJob {
+  id: string;
+  item_id: string;
+  file_id: string;
+  library_id?: string;
+  title?: string;
+  item_type?: string;
+  show_title?: string;
+  season_index?: number;
+  episode_index?: number;
+  profile: OptimizeProfileId;
+  profile_label: string;
+  status: OptimizeStatus;
+  /** Encode progress, 0..1. */
+  progress: number;
+  error?: string;
+  size_bytes?: number;
+  width?: number;
+  height?: number;
+  bitrate_kbps?: number;
+  duration_ms?: number;
+  created_at: string;
+  started_at?: string;
+  completed_at?: string;
+}
+
+export interface OptimizeResult {
+  profile: OptimizeProfileId;
+  items: number;
+  queued: number;
+  existing: number;
+  skipped: number;
+  truncated?: boolean;
+  skipped_items?: { item_id: string; reason: string }[];
+}
+
+export type OptimizeSelection =
+  | { item_ids: string[] }
+  | { library_id: string }
+  | { collection_id: string };
+
+export const optimizeApi = {
+  profiles: () => api.get<OptimizeProfile[]>('/optimize/profiles'),
+  /** Queue an optimized version of every video item the selection covers. */
+  create: (selection: OptimizeSelection, profile: OptimizeProfileId) =>
+    api.post<OptimizeResult>('/optimize', { ...selection, profile }),
+  list: (params: { item_id?: string; library_id?: string; status?: OptimizeStatus; limit?: number; offset?: number } = {}) => {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(params)) {
+      if (v !== undefined && v !== '') qs.set(k, String(v));
+    }
+    const q = qs.toString();
+    return api.get<{ jobs: OptimizeJob[]; counts: Partial<Record<OptimizeStatus, number>> }>(`/optimize/jobs${q ? `?${q}` : ''}`);
+  },
+  /** Cancel a job or delete a finished version (same id space). */
+  remove: (id: string) => api.del(`/optimize/jobs/${encodeURIComponent(id)}`),
+};
+
 export const issuesApi = {
   /** The caller's own reports on an item, newest first. */
   listMine: (itemId: string) => api.get<MediaIssue[]>(`/items/${encodeURIComponent(itemId)}/issues`),
@@ -1511,6 +1677,11 @@ export const userApi = {
     captureTokens(await api.post<TokenPair>('/auth/pin-switch', { user_id: userId, pin })),
   getPreferences: () =>
     api.get<UserPreferences>('/users/me/preferences'),
+  /** "Download my data": a ZIP of everything the server keeps about the
+   *  signed-in user. */
+  exportMyData: () => api.fetchFile('POST', '/users/me/export', 'onscreen-data.zip'),
+  /** Admin: the same archive for another user (a data request). */
+  exportUserData: (userId: string) => api.fetchFile('POST', `/users/${userId}/export`, 'onscreen-data.zip'),
   setPreferences: (prefs: UserPreferences) =>
     api.put<void>('/users/me/preferences', prefs),
   // Full ordered hub layout; empty array resets to the default layout.
@@ -2306,7 +2477,48 @@ export const settingsApi = {
   getNode: (nodeID: string) => api.get<NodeSettings>(`/settings/node/${encodeURIComponent(nodeID)}`),
   updateNode: (nodeID: string, body: NodeSettings) => api.put<void>(`/settings/node/${encodeURIComponent(nodeID)}`, body),
   deleteNode: (nodeID: string) => api.delete(`/settings/node/${encodeURIComponent(nodeID)}`),
+  getRemoteAccess: () => api.get<RemoteAccess>('/settings/remote-access'),
+  updateRemoteAccess: (body: RemoteAccessUpdate) => api.put<RemoteAccess>('/settings/remote-access', body),
 };
+
+/** Settings ▸ Remote access: automatic router port mapping. */
+export interface RemoteAccessUpdate {
+  map_port: boolean;
+  /** 0 = the server's listen port. */
+  external_port: number;
+  protocol: 'TCP';
+}
+
+export type RemoteAccessState = 'disabled' | 'loopback_only' | 'standby' | 'no_gateway' | 'mapped' | 'error';
+
+export interface RemoteAccessStatus {
+  enabled: boolean;
+  state: RemoteAccessState;
+  gateway_found: boolean;
+  method?: 'upnp' | 'pcp' | 'nat-pmp';
+  gateway_addr?: string;
+  local_ip?: string;
+  internal_port?: number;
+  external_ip?: string;
+  external_port?: number;
+  lease_seconds?: number;
+  permanent?: boolean;
+  last_renewal?: string;
+  expires_at?: string;
+  last_error?: string;
+  last_error_at?: string;
+  node?: string;
+  updated_at: string;
+}
+
+export interface RemoteAccess extends RemoteAccessUpdate {
+  listen_addr: string;
+  listen_port?: number;
+  loopback_only: boolean;
+  https: boolean;
+  status: RemoteAccessStatus;
+  reachability_hint?: string;
+}
 
 // ── Filesystem browser ────────────────────────────────────────────────────────
 
@@ -2537,6 +2749,9 @@ export interface SubtitleStream {
   sdh?: boolean;
   /** The file marks this track default (absent from older servers). */
   default?: boolean;
+  /** The admin's server-wide timing correction in ms (positive = later),
+   *  already applied to the served cues. Absent from older servers. */
+  offset_ms?: number;
 }
 
 export interface ExternalSubtitle {
@@ -2549,6 +2764,8 @@ export interface ExternalSubtitle {
   source: string;
   source_id?: string;
   url: string;
+  /** Server-wide timing correction in ms, already applied to `url`'s cues. */
+  offset_ms?: number;
 }
 
 export interface SubtitleSearchResult {
@@ -2694,6 +2911,9 @@ export interface ItemDetail {
   // field from this when present.
   taken_at?: string;
   files: ItemFile[];
+  /** Pre-made MP4 copies (admin "Optimize…"), highest bitrate first. Never
+   *  part of files: playing files[0] still plays the source. */
+  optimized_versions?: OptimizedVersion[];
   markers?: Marker[];
   tmdb_id?: number;
   tvdb_id?: number;
@@ -2751,6 +2971,33 @@ export interface MetadataEdit {
   content_rating?: string;
   genres?: string[];
   unlock_fields?: string[];
+}
+
+/** PATCH /items/bulk body (admin): one edit for up to 500 items. */
+export interface BulkEditRequest {
+  item_ids: string[];
+  set?: { content_rating?: string | null; genres?: string[] };
+  add_genres?: string[];
+  remove_genres?: string[];
+  add_labels?: string[];
+  remove_labels?: string[];
+  lock?: string[];
+  unlock?: string[];
+}
+
+export interface BulkEditSkip {
+  item_id: string;
+  title?: string;
+  field?: string;
+  reason: 'locked' | 'not_applicable' | 'not_found';
+}
+
+export interface BulkEditResult {
+  matched: number;
+  updated: number;
+  labels_added: number;
+  labels_removed: number;
+  skipped: BulkEditSkip[];
 }
 
 export interface MetadataEditResult {
@@ -3064,8 +3311,36 @@ export const playlistApi = {
   removeItem: (playlistId: string, itemId: string) =>
     api.delete(`/playlists/${playlistId}/items/${itemId}`),
   reorder: (playlistId: string, itemIds: string[]) =>
-    api.put<void>(`/playlists/${playlistId}/items/order`, { item_ids: itemIds })
+    api.put<void>(`/playlists/${playlistId}/items/order`, { item_ids: itemIds }),
+  /** The playlist as an .m3u8 download: paths relative to the library
+   *  root, or the server's absolute paths. */
+  exportM3U: (id: string, absolute = false) =>
+    api.fetchFile('GET', `/playlists/${id}/export.m3u8${absolute ? '?paths=absolute' : ''}`, 'playlist.m3u8'),
+  /** Create a playlist from an .m3u / .m3u8 file. */
+  importM3U: (file: File, name?: string) => {
+    const form = new FormData();
+    form.append('file', file, file.name);
+    if (name && name.trim()) form.append('name', name.trim());
+    return api.postForm<M3UImportResult>('/playlists/import', form);
+  },
 };
+
+/** How one imported playlist line was matched. */
+export type M3UMatchMethod = 'path' | 'relative' | 'suffix' | 'tags';
+
+/** POST /playlists/import result. */
+export interface M3UImportResult {
+  playlist: Playlist;
+  total: number;
+  matched: number;
+  unmatched: number;
+  added: number;
+  by_method: Record<M3UMatchMethod, number>;
+  matches: { line: number; entry: string; item_id: string; title: string; method: M3UMatchMethod }[];
+  matches_truncated: boolean;
+  unmatched_entries: { line: number; entry: string; reason: 'url' | 'not_found' }[];
+  unmatched_truncated: boolean;
+}
 
 // ── Photos: map + albums ─────────────────────────────────────────────────────
 
@@ -3152,6 +3427,133 @@ export const photoAlbumApi = {
     api.delete(`/photo-albums/${encodeURIComponent(albumId)}/items/${encodeURIComponent(mediaItemId)}`),
 };
 
+/** A face on a photo. The box is normalised to 0..1 of the upright photo. */
+export interface PhotoFace {
+  id: string;
+  item_id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  score: number;
+  source?: 'auto' | 'manual';
+  person_id?: string;
+  person_name?: string;
+}
+
+/** A face shown cropped from its photo (people covers, unnamed faces,
+ *  suggestions). */
+export interface PhotoFaceThumb {
+  id: string;
+  item_id: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  score?: number;
+}
+
+export interface PhotoPerson {
+  id: string;
+  library_id: string;
+  name: string;
+  photo_count: number;
+  cover?: PhotoFaceThumb;
+  /** Whether the caller may rename / delete / name faces. */
+  can_edit: boolean;
+}
+
+export interface PhotoListItem {
+  id: string;
+  library_id: string;
+  title: string;
+  poster_path?: string;
+  taken_at?: string;
+  width?: number;
+  height?: number;
+  orientation?: number;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Faces, people and the face-data admin action (migration 00057). Face
+ *  matching is manual: faces are detected, people are named by hand. */
+export const photoPeopleApi = {
+  itemFaces: (itemId: string) =>
+    api.get<{ faces: PhotoFace[]; can_edit: boolean }>(`/items/${encodeURIComponent(itemId)}/faces`),
+  /** Name a face. A name the library already has reuses that person; an
+   *  empty name (or person_id null) unnames it. */
+  nameFace: (faceId: string, name: string) =>
+    api.put<PhotoFace>(`/photos/faces/${encodeURIComponent(faceId)}`, { name }),
+  assignFace: (faceId: string, personId: string | null) =>
+    api.put<PhotoFace>(`/photos/faces/${encodeURIComponent(faceId)}`, { person_id: personId }),
+  deleteFace: (faceId: string) => api.delete(`/photos/faces/${encodeURIComponent(faceId)}`),
+  unnamedFaces: async (libraryId: string, limit = 60, offset = 0) =>
+    (await api.requestList<PhotoFaceThumb>(
+      `/photos/faces?library_id=${encodeURIComponent(libraryId)}&limit=${limit}&offset=${offset}`,
+    )).items,
+  people: async (libraryId: string) =>
+    (await api.requestList<PhotoPerson>(`/photos/people?library_id=${encodeURIComponent(libraryId)}`)).items,
+  person: (id: string) => api.get<PhotoPerson>(`/photos/people/${encodeURIComponent(id)}`),
+  personItems: (id: string, limit = 200, offset = 0) =>
+    api.requestList<PhotoListItem>(`/photos/people/${encodeURIComponent(id)}/items?limit=${limit}&offset=${offset}`),
+  suggestions: async (id: string, limit = 24) =>
+    (await api.requestList<PhotoFaceThumb>(`/photos/people/${encodeURIComponent(id)}/suggestions?limit=${limit}`)).items,
+  renamePerson: (id: string, name: string) =>
+    api.patch<PhotoPerson>(`/photos/people/${encodeURIComponent(id)}`, { name }),
+  deletePerson: (id: string) => api.delete(`/photos/people/${encodeURIComponent(id)}`),
+  /** Admin: delete every face, person and detection record of a library. */
+  deleteFaceData: (libraryId: string) =>
+    api.delete(`/admin/photos/face-data?library_id=${encodeURIComponent(libraryId)}`),
+};
+
+export interface PhotoLibrarySettings {
+  library_id: string;
+  raw_jpeg_pairing: boolean;
+}
+
+/** Admin: per-library photo options. */
+export const photoSettingsApi = {
+  get: (libraryId: string) =>
+    api.get<PhotoLibrarySettings>(`/libraries/${encodeURIComponent(libraryId)}/photo-settings`),
+  update: (libraryId: string, rawJpegPairing: boolean) =>
+    api.put<PhotoLibrarySettings>(`/libraries/${encodeURIComponent(libraryId)}/photo-settings`, {
+      raw_jpeg_pairing: rawJpegPairing,
+    }),
+};
+
+export interface MemoryPhoto {
+  id: string;
+  library_id: string;
+  title: string;
+  poster_path?: string;
+  taken_at: string;
+  width?: number;
+  height?: number;
+  orientation?: number;
+  updated_at: string;
+}
+
+export interface MemoryGroup {
+  kind: 'on_this_day' | 'this_week';
+  year: number;
+  years_ago: number;
+  title: string;
+  total: number;
+  cover: MemoryPhoto;
+  items: MemoryPhoto[];
+}
+
+export interface MemoriesResponse {
+  date: string;
+  groups: MemoryGroup[];
+}
+
+export const memoriesApi = {
+  /** date is the viewer's local YYYY-MM-DD, so "today" follows them. */
+  get: (date: string) => api.get<MemoriesResponse>(`/photos/memories?date=${encodeURIComponent(date)}`),
+};
+
 export interface ManagedProfile {
   id: string;
   username: string;
@@ -3225,6 +3627,11 @@ export const itemApi = {
   // unlock_fields releases locks.
   editMetadata: (id: string, fields: MetadataEdit) =>
     api.patch<MetadataEditResult>(`/items/${id}`, fields),
+  // Admin bulk edit for a library selection: content rating, genres,
+  // labels and locks on up to 500 items in one transaction. Locked fields
+  // are skipped (and reported) unless the request unlocks them.
+  bulkEdit: (body: BulkEditRequest) =>
+    api.patch<BulkEditResult>('/items/bulk', body),
   remove: (id: string) => api.delete(`/items/${id}`),
   // Cross-device transfer — list distinct clients the user has
   // recently scrobbled from (drives the "Play on…" picker), and
@@ -3331,6 +3738,14 @@ export const subtitleApi = {
   }) => api.post<OCRJob>(`/items/${itemId}/subtitles/ocr`, body),
   ocrStatus: (itemId: string, jobId: string) =>
     api.get<OCRJob>(`/items/${itemId}/subtitles/ocr/${jobId}`),
+  // Admin: the server-wide timing correction (ms, positive = later) of an
+  // external subtitle or an embedded stream. The server shifts the cues it
+  // serves, so every client gets corrected timing.
+  setOffset: (subId: string, offsetMs: number) =>
+    api.put<ExternalSubtitle>(`/subtitles/${subId}/offset`, { offset_ms: offsetMs }),
+  setStreamOffset: (fileId: string, streamIndex: number, offsetMs: number) =>
+    api.put<{ file_id: string; stream_index: number; offset_ms: number }>(
+      `/files/${fileId}/subtitle-streams/${streamIndex}/offset`, { offset_ms: offsetMs }),
 };
 
 export interface OCRJob {
@@ -4049,6 +4464,8 @@ export interface ActiveSession {
   transcode_reasons?: string[];
   /** Whether POST /sessions/{id}/stop can act on this card. */
   can_stop?: boolean;
+  /** Set when the direct play is of an optimized version, not the source. */
+  optimized_version?: { id: string; profile?: string; label?: string };
 }
 
 /** One side of a Now Playing card's source → output line. Codec/container
@@ -4222,6 +4639,16 @@ export interface TranscodeSession {
   seg0_audio_gap_sec: number;
 }
 
+export interface PlaybackDecision {
+  decision: string;
+  file_id: string;
+  reason?: string;
+  max_bitrate_kbps?: number;
+  optimized_version?: OptimizedVersion;
+  source_decision?: string;
+  source_reason?: string;
+}
+
 export const transcodeApi = {
   start: (itemId: string, height: number, positionMs: number, fileId?: string, videoCopy?: boolean, audioStreamIndex?: number, supportsHEVC?: boolean, supportsAV1?: boolean) =>
     api.post<TranscodeSession>(`/items/${itemId}/transcode`, {
@@ -4235,11 +4662,11 @@ export const transcodeApi = {
     }),
   // Server-authoritative play decision (capability profiles). Returns the
   // server's verdict for a file given the client's X-Client-Capabilities header.
-  // Currently consumed in shadow mode (compared against the local decision) —
-  // see the watch page. docs/capability-profiles.md.
+  // The web sends optimized=1, so a source that would transcode may come back
+  // as directPlay of an optimized_version (reason optimized_version), with the
+  // source's own verdict in source_decision. docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
-    api.post<{ decision: string; file_id: string; reason?: string; max_bitrate_kbps?: number }>(
-      `/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
+    api.post<PlaybackDecision>(`/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)
 };

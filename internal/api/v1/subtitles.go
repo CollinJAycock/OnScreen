@@ -2,19 +2,24 @@ package v1
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
+	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/observability"
@@ -34,12 +39,23 @@ type SubtitleService interface {
 	OCRStream(ctx context.Context, opts subtitles.OCROpts) (gen.ExternalSubtitle, error)
 }
 
+// SubtitleOffsetStore persists the admin timing offsets of external
+// subtitles and embedded subtitle streams (migration 00055). Satisfied by
+// *gen.Queries.
+type SubtitleOffsetStore interface {
+	SetExternalSubtitleOffset(ctx context.Context, arg gen.SetExternalSubtitleOffsetParams) (gen.ExternalSubtitle, error)
+	UpsertSubtitleStreamOffset(ctx context.Context, arg gen.UpsertSubtitleStreamOffsetParams) error
+	DeleteSubtitleStreamOffset(ctx context.Context, arg gen.DeleteSubtitleStreamOffsetParams) error
+}
+
 // SubtitleHandler exposes search/download/list endpoints for external subtitles.
 // Library access is enforced via the items the subtitles attach to.
 type SubtitleHandler struct {
 	svc     SubtitleService
 	media   ItemMediaService
 	access  LibraryAccessChecker
+	offsets SubtitleOffsetStore // optional; nil 404s the offset endpoints
+	audit   *audit.Logger
 	ocrJobs *subtitles.OCRJobStore
 	logger  *slog.Logger
 	// ocrInFlight tracks concurrent OCR jobs per user. Tesseract is
@@ -73,6 +89,18 @@ func NewSubtitleHandler(svc SubtitleService, media ItemMediaService, logger *slo
 // WithLibraryAccess wires per-user library filtering.
 func (h *SubtitleHandler) WithLibraryAccess(a LibraryAccessChecker) *SubtitleHandler {
 	h.access = a
+	return h
+}
+
+// WithOffsets enables the admin subtitle-offset endpoints.
+func (h *SubtitleHandler) WithOffsets(s SubtitleOffsetStore) *SubtitleHandler {
+	h.offsets = s
+	return h
+}
+
+// WithAudit records offset changes in the audit log.
+func (h *SubtitleHandler) WithAudit(a *audit.Logger) *SubtitleHandler {
+	h.audit = a
 	return h
 }
 
@@ -116,6 +144,9 @@ type ExternalSubtitleJSON struct {
 	Source   string  `json:"source"`
 	SourceID *string `json:"source_id,omitempty"`
 	URL      string  `json:"url"`
+	// OffsetMS is the server-wide timing correction (positive = later),
+	// already applied to the cues URL serves.
+	OffsetMS int32 `json:"offset_ms"`
 }
 
 // writeSubtitlesNotConfigured is the feature-off answer for search and
@@ -644,10 +675,199 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
+	serveVTT(w, r, data, int(row.OffsetMs))
+}
+
+// serveVTT writes a WebVTT body shifted by the track's server offset
+// (subtitles.ShiftVTT). The ETag hashes what is sent, offset included, and
+// clients must revalidate (no-cache): an admin's offset change then reaches
+// every player on its next load instead of after a day-long max-age, and an
+// unchanged track still costs only a 304.
+func serveVTT(w http.ResponseWriter, r *http.Request, data []byte, offsetMS int) {
+	data = subtitles.ShiftVTT(data, offsetMS)
+	sum := sha256.Sum256(data)
+	etag := `"` + hex.EncodeToString(sum[:12]) + `"`
 	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	w.Header().Set("Cache-Control", "private, max-age=86400")
+	// `private`: subtitle routes are ACL + rating gated per request on
+	// token-free same-origin URLs, so a shared cache must not serve one
+	// user's authorized cues to another.
+	w.Header().Set("Cache-Control", "private, no-cache")
+	w.Header().Set("ETag", etag)
+	if etagMatches(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
 	_, _ = w.Write(data)
+}
+
+// etagMatches reports whether an If-None-Match header names etag (or "*").
+func etagMatches(header, etag string) bool {
+	if header == "" {
+		return false
+	}
+	for _, t := range strings.Split(header, ",") {
+		t = strings.TrimPrefix(strings.TrimSpace(t), "W/")
+		if t == etag || t == "*" {
+			return true
+		}
+	}
+	return false
+}
+
+// decodeOffset reads {"offset_ms": n} and validates the range, writing the
+// 400 / 422 itself. ok is false when it did.
+func decodeOffset(w http.ResponseWriter, r *http.Request) (int, bool) {
+	var body struct {
+		OffsetMS *int `json:"offset_ms"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil || body.OffsetMS == nil {
+		respond.BadRequest(w, r, `body must be {"offset_ms": <milliseconds>}`)
+		return 0, false
+	}
+	if err := subtitles.ValidateOffset(*body.OffsetMS); err != nil {
+		respond.ValidationError(w, r, err.Error())
+		return 0, false
+	}
+	return *body.OffsetMS, true
+}
+
+// SetOffset handles PUT /api/v1/subtitles/{id}/offset with
+// {"offset_ms": n}: the server-wide timing correction of one external
+// subtitle, positive = later, within ±10 minutes. Admin-only. Every client
+// gets the shifted cues from /media/external-subtitles/{id}. Returns the
+// updated subtitle.
+func (h *SubtitleHandler) SetOffset(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	if h.offsets == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	subID, err := uuid.Parse(chi.URLParam(r, "id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid subtitle id")
+		return
+	}
+	offset, ok := decodeOffset(w, r)
+	if !ok {
+		return
+	}
+	prev, err := h.svc.Get(r.Context(), subID)
+	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	row, err := h.offsets.SetExternalSubtitleOffset(r.Context(), gen.SetExternalSubtitleOffsetParams{
+		ID: subID, OffsetMs: int32(offset),
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "subtitles: set offset", "id", subID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionSubtitleOffset, subID.String(),
+			map[string]any{
+				"kind": "external", "file_id": row.FileID.String(),
+				"from_ms": prev.OffsetMs, "offset_ms": offset,
+			}, audit.ClientIP(r))
+	}
+	respond.Success(w, r, toExternalSubtitleJSON(row))
+}
+
+// SetStreamOffset handles PUT
+// /api/v1/files/{file_id}/subtitle-streams/{index}/offset with
+// {"offset_ms": n}: the same correction for an embedded text subtitle
+// stream, by its absolute index (subtitle_streams[].index). Admin-only.
+// /media/subtitles/{file_id}/{index} serves the shifted cues. Image-based
+// streams (PGS, VobSub) are 415: they are never served as text, so an
+// offset would do nothing — their OCR'd copy is an external subtitle with an
+// offset of its own. Responds {"file_id", "stream_index", "offset_ms"}.
+func (h *SubtitleHandler) SetStreamOffset(w http.ResponseWriter, r *http.Request) {
+	claims := middleware.ClaimsFromContext(r.Context())
+	if claims == nil || !claims.IsAdmin {
+		respond.Forbidden(w, r)
+		return
+	}
+	if h.offsets == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	fileID, err := uuid.Parse(chi.URLParam(r, "file_id"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid file id")
+		return
+	}
+	idx, err := strconv.Atoi(chi.URLParam(r, "index"))
+	if err != nil || idx < 0 {
+		respond.BadRequest(w, r, "invalid stream index")
+		return
+	}
+	offset, ok := decodeOffset(w, r)
+	if !ok {
+		return
+	}
+	file, err := h.media.GetFile(r.Context(), fileID)
+	if err != nil {
+		if errors.Is(err, media.ErrNotFound) {
+			respond.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "subtitles: get file for offset", "id", fileID, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	var stream *SubtitleStreamJSON
+	for _, s := range parseJSONBSubtitleStreams(file.SubtitleStreams) {
+		if s.Index == idx {
+			s := s
+			stream = &s
+			break
+		}
+	}
+	if stream == nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if ocr.IsImageBased(stream.Codec) {
+		respond.Error(w, r, http.StatusUnsupportedMediaType, "IMAGE_SUBTITLE",
+			"image-based subtitles aren't served as text; set the offset on the OCR'd subtitle instead")
+		return
+	}
+	if offset == 0 {
+		err = h.offsets.DeleteSubtitleStreamOffset(r.Context(), gen.DeleteSubtitleStreamOffsetParams{
+			FileID: fileID, StreamIndex: int32(idx),
+		})
+	} else {
+		err = h.offsets.UpsertSubtitleStreamOffset(r.Context(), gen.UpsertSubtitleStreamOffsetParams{
+			FileID: fileID, StreamIndex: int32(idx), OffsetMs: int32(offset),
+		})
+	}
+	if err != nil {
+		h.logger.ErrorContext(r.Context(), "subtitles: set stream offset",
+			"file_id", fileID, "stream", idx, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	if h.audit != nil {
+		h.audit.Log(r.Context(), &claims.UserID, audit.ActionSubtitleOffset, fileID.String(),
+			map[string]any{"kind": "embedded", "stream_index": idx, "offset_ms": offset}, audit.ClientIP(r))
+	}
+	respond.Success(w, r, map[string]any{
+		"file_id":      fileID.String(),
+		"stream_index": idx,
+		"offset_ms":    offset,
+	})
 }
 
 // ── helpers ────────────────────────────────────────────────────────────────
@@ -747,5 +967,6 @@ func toExternalSubtitleJSON(row gen.ExternalSubtitle) ExternalSubtitleJSON {
 		Source:   row.Source,
 		SourceID: row.SourceID,
 		URL:      "/media/external-subtitles/" + row.ID.String(),
+		OffsetMS: row.OffsetMs,
 	}
 }

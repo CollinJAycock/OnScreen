@@ -20,9 +20,25 @@ func (q *Queries) DeleteExternalSubtitle(ctx context.Context, id uuid.UUID) erro
 	return err
 }
 
+const deleteSubtitleStreamOffset = `-- name: DeleteSubtitleStreamOffset :exec
+DELETE FROM subtitle_stream_offsets
+WHERE file_id = $1::uuid AND stream_index = $2::int
+`
+
+type DeleteSubtitleStreamOffsetParams struct {
+	FileID      uuid.UUID `json:"file_id"`
+	StreamIndex int32     `json:"stream_index"`
+}
+
+// Offset back to 0: the table is sparse.
+func (q *Queries) DeleteSubtitleStreamOffset(ctx context.Context, arg DeleteSubtitleStreamOffsetParams) error {
+	_, err := q.db.Exec(ctx, deleteSubtitleStreamOffset, arg.FileID, arg.StreamIndex)
+	return err
+}
+
 const getExternalSubtitle = `-- name: GetExternalSubtitle :one
 SELECT id, file_id, language, title, forced, sdh, source, source_id,
-       storage_path, rating, download_count, created_at
+       storage_path, rating, download_count, created_at, offset_ms
 FROM external_subtitles
 WHERE id = $1
 `
@@ -43,8 +59,28 @@ func (q *Queries) GetExternalSubtitle(ctx context.Context, id uuid.UUID) (Extern
 		&i.Rating,
 		&i.DownloadCount,
 		&i.CreatedAt,
+		&i.OffsetMs,
 	)
 	return i, err
+}
+
+const getSubtitleStreamOffset = `-- name: GetSubtitleStreamOffset :one
+SELECT COALESCE((SELECT offset_ms FROM subtitle_stream_offsets
+                 WHERE file_id = $1::uuid
+                   AND stream_index = $2::int), 0)::int AS offset_ms
+`
+
+type GetSubtitleStreamOffsetParams struct {
+	FileID      uuid.UUID `json:"file_id"`
+	StreamIndex int32     `json:"stream_index"`
+}
+
+// One embedded stream's offset; 0 when none is set.
+func (q *Queries) GetSubtitleStreamOffset(ctx context.Context, arg GetSubtitleStreamOffsetParams) (int32, error) {
+	row := q.db.QueryRow(ctx, getSubtitleStreamOffset, arg.FileID, arg.StreamIndex)
+	var offset_ms int32
+	err := row.Scan(&offset_ms)
+	return offset_ms, err
 }
 
 const hasOCRForStream = `-- name: HasOCRForStream :one
@@ -87,7 +123,7 @@ DO UPDATE SET
     rating         = EXCLUDED.rating,
     download_count = EXCLUDED.download_count
 RETURNING id, file_id, language, title, forced, sdh, source, source_id,
-          storage_path, rating, download_count, created_at
+          storage_path, rating, download_count, created_at, offset_ms
 `
 
 type InsertExternalSubtitleParams struct {
@@ -130,13 +166,14 @@ func (q *Queries) InsertExternalSubtitle(ctx context.Context, arg InsertExternal
 		&i.Rating,
 		&i.DownloadCount,
 		&i.CreatedAt,
+		&i.OffsetMs,
 	)
 	return i, err
 }
 
 const listExternalSubtitlesForFile = `-- name: ListExternalSubtitlesForFile :many
 SELECT id, file_id, language, title, forced, sdh, source, source_id,
-       storage_path, rating, download_count, created_at
+       storage_path, rating, download_count, created_at, offset_ms
 FROM external_subtitles
 WHERE file_id = $1
 ORDER BY language, COALESCE(rating, 0) DESC, created_at DESC
@@ -164,6 +201,7 @@ func (q *Queries) ListExternalSubtitlesForFile(ctx context.Context, fileID uuid.
 			&i.Rating,
 			&i.DownloadCount,
 			&i.CreatedAt,
+			&i.OffsetMs,
 		); err != nil {
 			return nil, err
 		}
@@ -173,4 +211,94 @@ func (q *Queries) ListExternalSubtitlesForFile(ctx context.Context, fileID uuid.
 		return nil, err
 	}
 	return items, nil
+}
+
+const listSubtitleStreamOffsets = `-- name: ListSubtitleStreamOffsets :many
+SELECT file_id, stream_index, offset_ms
+FROM subtitle_stream_offsets
+WHERE file_id = ANY($1::uuid[])
+`
+
+type ListSubtitleStreamOffsetsRow struct {
+	FileID      uuid.UUID `json:"file_id"`
+	StreamIndex int32     `json:"stream_index"`
+	OffsetMs    int32     `json:"offset_ms"`
+}
+
+// Every embedded-stream offset on the given files, for item details.
+func (q *Queries) ListSubtitleStreamOffsets(ctx context.Context, fileIds []uuid.UUID) ([]ListSubtitleStreamOffsetsRow, error) {
+	rows, err := q.db.Query(ctx, listSubtitleStreamOffsets, fileIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSubtitleStreamOffsetsRow{}
+	for rows.Next() {
+		var i ListSubtitleStreamOffsetsRow
+		if err := rows.Scan(&i.FileID, &i.StreamIndex, &i.OffsetMs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const setExternalSubtitleOffset = `-- name: SetExternalSubtitleOffset :one
+UPDATE external_subtitles
+SET offset_ms = $1::int
+WHERE id = $2::uuid
+RETURNING id, file_id, language, title, forced, sdh, source, source_id,
+          storage_path, rating, download_count, created_at, offset_ms
+`
+
+type SetExternalSubtitleOffsetParams struct {
+	OffsetMs int32     `json:"offset_ms"`
+	ID       uuid.UUID `json:"id"`
+}
+
+// Admin timing correction for one external subtitle (see migration 00055).
+// The serve path shifts the cues by it; a re-download of the same release
+// (InsertExternalSubtitle's upsert) keeps it.
+func (q *Queries) SetExternalSubtitleOffset(ctx context.Context, arg SetExternalSubtitleOffsetParams) (ExternalSubtitle, error) {
+	row := q.db.QueryRow(ctx, setExternalSubtitleOffset, arg.OffsetMs, arg.ID)
+	var i ExternalSubtitle
+	err := row.Scan(
+		&i.ID,
+		&i.FileID,
+		&i.Language,
+		&i.Title,
+		&i.Forced,
+		&i.Sdh,
+		&i.Source,
+		&i.SourceID,
+		&i.StoragePath,
+		&i.Rating,
+		&i.DownloadCount,
+		&i.CreatedAt,
+		&i.OffsetMs,
+	)
+	return i, err
+}
+
+const upsertSubtitleStreamOffset = `-- name: UpsertSubtitleStreamOffset :exec
+INSERT INTO subtitle_stream_offsets (file_id, stream_index, offset_ms)
+VALUES ($1::uuid, $2::int, $3::int)
+ON CONFLICT (file_id, stream_index)
+DO UPDATE SET offset_ms = EXCLUDED.offset_ms, updated_at = NOW()
+`
+
+type UpsertSubtitleStreamOffsetParams struct {
+	FileID      uuid.UUID `json:"file_id"`
+	StreamIndex int32     `json:"stream_index"`
+	OffsetMs    int32     `json:"offset_ms"`
+}
+
+// Admin timing correction for one embedded subtitle stream (non-zero; a
+// zero offset goes through DeleteSubtitleStreamOffset).
+func (q *Queries) UpsertSubtitleStreamOffset(ctx context.Context, arg UpsertSubtitleStreamOffsetParams) error {
+	_, err := q.db.Exec(ctx, upsertSubtitleStreamOffset, arg.FileID, arg.StreamIndex, arg.OffsetMs)
+	return err
 }

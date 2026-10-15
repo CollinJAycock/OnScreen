@@ -38,6 +38,7 @@ import (
 	"golang.org/x/image/draw"
 
 	"github.com/onscreen/onscreen/internal/ffsafe"
+	"github.com/onscreen/onscreen/internal/rawpreview"
 )
 
 // Server serves photo derivatives.
@@ -135,6 +136,35 @@ func (s *Server) Serve(ctx context.Context, w io.Writer, sourcePath string, opts
 	return err
 }
 
+// DecodeUpright decodes sourcePath (any format Serve handles, RAW included),
+// applies its EXIF orientation and scales it to fit inside maxDim×maxDim
+// (0 = full size). Shares Serve's decode semaphore. Used by background
+// analysis (face detection), so the result isn't cached.
+func (s *Server) DecodeUpright(ctx context.Context, sourcePath string, maxDim int) (image.Image, error) {
+	if s.resizeSem != nil {
+		select {
+		case s.resizeSem <- struct{}{}:
+			defer func() { <-s.resizeSem }()
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	src, autoRotated, err := decodeSource(ctx, sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("decode %s: %w", sourcePath, err)
+	}
+	if !autoRotated {
+		if orient := readOrientation(sourcePath); orient > 1 {
+			src = applyOrientation(src, orient)
+		}
+	}
+	b := src.Bounds()
+	if maxDim > 0 && (b.Dx() > maxDim || b.Dy() > maxDim) {
+		src = resize(src, maxDim, maxDim, FitContain)
+	}
+	return src, nil
+}
+
 func (o Options) withDefaults() Options {
 	if o.Quality <= 0 || o.Quality > 100 {
 		o.Quality = 85
@@ -201,6 +231,19 @@ func decodeBoundedJPEG(out *bytes.Buffer, what string) (image.Image, error) {
 // EXIF orientation was already applied during decode (true for HEIC and
 // audiobook covers, both of which are decoded by ffmpeg with -autorotate).
 func decodeSource(ctx context.Context, sourcePath string) (image.Image, bool, error) {
+	if rawpreview.IsRAW(sourcePath) {
+		// Camera RAW: the embedded camera-rendered JPEG (or an optional
+		// external decoder), with the orientation recorded in the RAW's
+		// own EXIF applied here — previews rarely carry it themselves.
+		img, orient, err := rawpreview.Decode(ctx, sourcePath)
+		if err != nil {
+			return nil, false, err
+		}
+		if orient > 1 {
+			img = applyOrientation(img, orient)
+		}
+		return img, true, nil
+	}
 	if isHEIC(sourcePath) {
 		img, err := decodeHEIC(ctx, sourcePath)
 		return img, true, err

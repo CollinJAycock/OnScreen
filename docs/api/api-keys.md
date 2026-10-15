@@ -49,6 +49,10 @@ artwork and subtitle file routes. They are **never** accepted in a query
 string (`?token=`, `?api_key=`): a URL ends up in access logs, browser
 history and `Referer` headers, which is no place for a long-lived secret.
 
+The OPDS book catalog (`/opds/`) also takes a key as the **password of HTTP
+Basic** sign-in, since that is all e-reader apps can send; the username is
+ignored. Nowhere else accepts Basic. See [docs/opds.md](../opds.md).
+
 ## What a key can do
 
 A key acts as the user who made it, with **that user's current** library
@@ -73,6 +77,7 @@ refused (403 `API_KEY_NOT_ALLOWED`) on:
 - signed-in device management and API key management;
 - claiming a TV's pairing code, and switching profiles by PIN;
 - user administration and invites;
+- downloading an account's data (`/users/me/export`, `/users/{id}/export`);
 - server settings and backups (even for an admin's key).
 
 An admin's key can otherwise use the admin API — refreshing libraries,

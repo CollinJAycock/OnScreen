@@ -81,6 +81,14 @@ func Recover(logger *slog.Logger) func(http.Handler) http.Handler {
 			rw := &recoverWriter{ResponseWriter: w}
 			defer func() {
 				if v := recover(); v != nil {
+					// http.ErrAbortHandler is a handler deliberately cutting a
+					// streamed response short (a download that failed half
+					// way): re-panic so net/http drops the connection instead
+					// of ending the body cleanly, which would hand the client
+					// a truncated file that looks complete.
+					if v == http.ErrAbortHandler {
+						panic(v)
+					}
 					stack := debug.Stack()
 					logger.ErrorContext(r.Context(), "panic recovered",
 						"panic", sanitizePanicValue(v),

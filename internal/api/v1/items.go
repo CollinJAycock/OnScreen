@@ -1,6 +1,7 @@
 package v1
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -217,6 +218,8 @@ type ItemHandler struct {
 	externalRatings ItemExternalRatingsDB
 	// optional; caches a metadata edit invalidates (items_metadata.go)
 	caches ItemCacheInvalidator
+	// optional; when set, PATCH /items/bulk is admin-served (items_bulk.go)
+	bulk BulkMetadataEditor
 	// optional; when set, PUT /items/{id}/episode-order is admin-served
 	// (items_episode_order.go)
 	episodeOrder ItemEpisodeOrderSetter
@@ -238,11 +241,17 @@ type ItemHandler struct {
 	// chapterThumbs reports which file's chapters have thumbnails next to
 	// the item's trickplay sprites; nil = chapters carry no thumb_url.
 	chapterThumbs ChapterThumbLookup
+	// optimized lists and serves the item's optimized versions
+	// (optimize.go); nil = detail carries none and /media/optimized 404s.
+	optimized OptimizedLister
 	// optional; movie and show details list their studios / networks
 	// (items_studios.go)
 	studios ItemStudioReader
 	// optional; a metadata edit rewrites the item's NFO (items_studios.go)
 	nfoWriter ItemNFOWriter
+	// optional; embedded subtitle streams' server timing offsets, applied by
+	// ServeSubtitle and listed on item details (items_subtitle_offsets.go)
+	subOffsets SubtitleStreamOffsetReader
 }
 
 // ChapterThumbLookup returns the file whose chapters have thumbnails
@@ -539,6 +548,9 @@ type SubtitleStreamJSON struct {
 	// Default: the file marks this track default (ffprobe disposition).
 	// False on files probed before the field; a metadata reprobe fills it.
 	Default bool `json:"default"`
+	// OffsetMS is the server-wide timing correction (positive = later)
+	// /media/subtitles/{file}/{index} already applies to the cues.
+	OffsetMS int32 `json:"offset_ms"`
 }
 
 // ItemFileResponse is the API representation of a media file.
@@ -725,6 +737,12 @@ type ItemDetailResponse struct {
 	TakenAt *time.Time         `json:"taken_at,omitempty"`
 	Files   []ItemFileResponse `json:"files"`
 	Markers []MarkerJSON       `json:"markers,omitempty"`
+	// OptimizedVersions are the item's pre-made MP4 copies (Optimize…,
+	// migration 00056), highest bitrate first — extra versions a client may
+	// play from their stream_url. Never part of files, so a client that
+	// plays files[0] keeps playing the source. Omitted when there are none
+	// (additive, v2.6).
+	OptimizedVersions []OptimizedVersionJSON `json:"optimized_versions,omitempty"`
 
 	// External IDs surfaced for the manual poster-picker UI: when
 	// tmdb_id is set, the picker can skip the "search TMDB for the
@@ -1082,6 +1100,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		}
 		out.Files = append(out.Files, fr)
 	}
+	h.applySubtitleStreamOffsets(r.Context(), out.Files)
 
 	// A stacked movie plays as one stream, so its running time is the sum of
 	// its parts (the primary version's). The metadata runtime would do too,
@@ -1125,6 +1144,8 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			h.logger.WarnContext(r.Context(), "list markers", "item_id", id, "err", err)
 		}
 	}
+
+	out.OptimizedVersions = h.optimizedVersionsFor(r.Context(), claims, item)
 
 	if item.Type == "movie" {
 		out.Collection = h.franchiseRef(r.Context(), claims, id)
@@ -3063,14 +3084,38 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The admin's timing correction for this stream (0 = none). Applied to
+	// the served cues only: the cache below holds the stream as extracted,
+	// so an offset change takes effect on the next request without a
+	// re-extraction, and serveVTT's ETag covers the shifted bytes.
+	offset := h.subtitleStreamOffset(r.Context(), fileID, streamIdx)
+
 	// Uncached fallback (no cache dir wired — tests / minimal deployments):
-	// stream ffmpeg straight to the client, the original behaviour.
+	// stream ffmpeg straight to the client, the original behaviour. With an
+	// offset the output is buffered so the cues can be shifted.
+	if h.subtitleCacheDir == "" && offset != 0 {
+		var buf bytes.Buffer
+		cmd := exec.CommandContext(r.Context(), "ffmpeg",
+			append(ffsafe.InputProtocolArgs(file.FilePath),
+				"-i", file.FilePath, "-map", fmt.Sprintf("0:%d", streamIdx),
+				"-f", "webvtt", "-v", "quiet", "pipe:1")...)
+		cmd.Stdout = &buf
+		if err := cmd.Run(); err != nil {
+			h.logger.WarnContext(r.Context(), "subtitle extraction failed",
+				"file_id", fileID, "stream", streamIdx, "err", err)
+			respond.InternalError(w, r)
+			return
+		}
+		serveVTT(w, r, buf.Bytes(), offset)
+		return
+	}
 	if h.subtitleCacheDir == "" {
 		w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
 		// `private`: embedded-subtitle extraction is ACL + rating gated per
 		// request on a token-free same-origin URL, so a shared cache must not
-		// serve one user's authorized cues to another.
-		w.Header().Set("Cache-Control", "private, max-age=86400")
+		// serve one user's authorized cues to another. no-cache, as in
+		// serveVTT, so a later offset change isn't hidden behind a max-age.
+		w.Header().Set("Cache-Control", "private, no-cache")
 		// -protocol_whitelist confines the demuxer to local protocols so a
 		// crafted source file cannot turn this extraction (whose WebVTT output
 		// is returned straight to the caller) into an SSRF or remote fetch. It
@@ -3095,7 +3140,7 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 	// (and the proxy's own retry of a slow first one) is instant.
 	cachePath := filepath.Join(h.subtitleCacheDir, "embedded", fileID.String(), strconv.Itoa(streamIdx)+".vtt")
 	if data, rerr := os.ReadFile(cachePath); rerr == nil {
-		serveCachedVTT(w, data)
+		serveVTT(w, r, data, offset)
 		return
 	}
 
@@ -3128,18 +3173,8 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 				"subtitle is being prepared from the source file; retry in a moment")
 			return
 		}
-		serveCachedVTT(w, res.Val.([]byte))
+		serveVTT(w, r, res.Val.([]byte), offset)
 	}
-}
-
-func serveCachedVTT(w http.ResponseWriter, data []byte) {
-	w.Header().Set("Content-Type", "text/vtt; charset=utf-8")
-	// `private`: embedded-subtitle extraction is ACL + rating gated per
-	// request on a token-free same-origin URL, so a shared cache must not
-	// serve one user's authorized cues to another.
-	w.Header().Set("Cache-Control", "private, max-age=86400")
-	w.Header().Set("Content-Length", strconv.Itoa(len(data)))
-	_, _ = w.Write(data)
 }
 
 // extractEmbeddedSubtitleToCache runs ffmpeg to convert one embedded subtitle

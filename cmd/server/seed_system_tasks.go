@@ -130,6 +130,17 @@ var requiredSystemTasks = []systemTask{
 		enabled:  true,
 	},
 	{
+		name:     "Send digest emails",
+		taskType: "digest_send",
+		// Hourly at :19: sends the weekly / monthly digest to each opted-in
+		// user once their period's send day and hour (Settings > Email, server
+		// time) have come. A user gets each period at most once, empty digests
+		// are skipped, and sends are paced. While the digest is off server-wide
+		// (the default) or SMTP isn't configured it does nothing.
+		cronExpr: "19 * * * *",
+		enabled:  true,
+	},
+	{
 		name:     "Refresh IMDb, Rotten Tomatoes and Metacritic scores",
 		taskType: "external_ratings",
 		// Hourly at :41: looks up movies' and shows' scores on OMDb, the
@@ -178,6 +189,17 @@ var requiredSystemTasks = []systemTask{
 		// integrity-probe precedent: a heavy opt-in sweep, one click to
 		// enable in the Tasks UI.
 		cronExpr: "13 4 * * *",
+		enabled:  false,
+	},
+	{
+		name:     "Photo face detection",
+		taskType: "face_detection",
+		// Nightly at 1:53am local (prime-offset, clear of the 2-4am block).
+		// Finds faces in photos not yet looked at — a downscaled decode and
+		// a cascade pass per photo, newest first, up to 500 photos within a
+		// 30-minute budget — so people can be named. Seeded DISABLED: face
+		// data is personal, so collecting it is the operator's decision.
+		cronExpr: "53 1 * * *",
 		enabled:  false,
 	},
 	{

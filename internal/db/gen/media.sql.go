@@ -5570,6 +5570,58 @@ func (q *Queries) ListYearsWithCounts(ctx context.Context, arg ListYearsWithCoun
 	return items, nil
 }
 
+const lockMediaItemsForBulkEdit = `-- name: LockMediaItemsForBulkEdit :many
+SELECT id, library_id, type, title, content_rating, genres, locked_fields
+FROM media_items
+WHERE id = ANY($1::uuid[]) AND deleted_at IS NULL
+ORDER BY id
+FOR UPDATE
+`
+
+type LockMediaItemsForBulkEditRow struct {
+	ID            uuid.UUID `json:"id"`
+	LibraryID     uuid.UUID `json:"library_id"`
+	Type          string    `json:"type"`
+	Title         string    `json:"title"`
+	ContentRating *string   `json:"content_rating"`
+	Genres        []string  `json:"genres"`
+	LockedFields  []string  `json:"locked_fields"`
+}
+
+// The rows a bulk metadata edit (PATCH /api/v1/items/bulk) works on, read
+// inside its transaction and row-locked so an enrichment can't land between
+// this read and the per-item EditMediaItemMetadata writes (the add / remove
+// genre lists are merged in Go from what this returns). Deleted items are
+// left out; the caller reports them. Ordered by id so two overlapping bulk
+// edits take their row locks in the same order.
+func (q *Queries) LockMediaItemsForBulkEdit(ctx context.Context, ids []uuid.UUID) ([]LockMediaItemsForBulkEditRow, error) {
+	rows, err := q.db.Query(ctx, lockMediaItemsForBulkEdit, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LockMediaItemsForBulkEditRow{}
+	for rows.Next() {
+		var i LockMediaItemsForBulkEditRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.LibraryID,
+			&i.Type,
+			&i.Title,
+			&i.ContentRating,
+			&i.Genres,
+			&i.LockedFields,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const markMediaFileActive = `-- name: MarkMediaFileActive :exec
 UPDATE media_files
 SET status        = 'active',

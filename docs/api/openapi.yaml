@@ -37,7 +37,9 @@ info:
     may only make GET/HEAD requests (403 `API_KEY_READ_ONLY` otherwise).
     Keys are refused with 403 `API_KEY_NOT_ALLOWED` on sign-in, refresh,
     2FA, PIN, profile, signed-in device and API key management, device
-    pairing, user administration, invites, server settings and backups. See
+    pairing, user administration, invites, server settings, backups and
+    account data export. The `/opds/` catalog also takes a key as the
+    password of HTTP Basic (and nowhere else accepts Basic). See
     [docs/api/api-keys.md](api-keys.md).
   license:
     name: AGPL-3.0
@@ -87,6 +89,8 @@ tags:
     description: Seekbar thumbnail previews and chapter thumbnails.
   - name: Downloads
     description: Converted (lower-quality) downloads — per-user jobs over a shared encode cache.
+  - name: Optimize
+    description: Optimized versions (admin) — pre-made MP4 copies players direct-play instead of a live transcode.
   - name: Transcode
     description: HLS transcode sessions (start, stop, segments).
   - name: Notifications
@@ -97,6 +101,13 @@ tags:
     description: User profile, PIN management, managed profiles, admin user management.
   - name: Settings
     description: Server-wide settings (admin only).
+  - name: OPDS
+    description: |
+      OPDS 1.2 catalog of book libraries for e-reader apps, under `/opds/`
+      (not `/api/v1`). Atom XML. HTTP Basic with a personal API key as the
+      password (never the account password), or any credential the API
+      takes. GET only. While downloads are disabled server-wide every route
+      answers 403 `DOWNLOADS_DISABLED`. See [docs/opds.md](../opds.md). v2.6.
   - name: Audiobooks
     description: Per-user listening speed and bookmarks for audiobooks.
   - name: Scrobbling
@@ -1194,6 +1205,94 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
+  /api/v1/items/bulk:
+    patch:
+      summary: Edit metadata of many items at once (admin)
+      tags: [Items]
+      description: |
+        *(v2.6)* One edit applied to up to 500 items in a single
+        transaction: if any item's write fails, none is changed. Item
+        types may be mixed. Unknown fields are rejected with 400.
+
+        - `set.content_rating` applies to movies, shows, episodes, music
+          videos, home videos, audiobooks, books and podcasts.
+        - `set.genres` (replace) or `add_genres` / `remove_genres` (merge,
+          case-insensitive; removes first) apply to movies, shows, albums,
+          artists, music videos, audiobooks, books and podcasts. Sending
+          `set.genres` with a merge list is a 400. A merge that leaves an
+          item's genres as they were doesn't touch (or lock) it.
+        - `add_labels` / `remove_labels` work like
+          `POST /api/v1/labels/apply` on every item.
+        - `lock` / `unlock` add or drop field locks (lock names as for
+          `PATCH /api/v1/items/{id}`) without changing values.
+
+        As in the single-item editor, every field written is locked. A
+        field an item's type doesn't carry is skipped and reported
+        (`not_applicable`), and so is a field the item has locked
+        (`locked`) — unless the same request lists it in `unlock`: the
+        unlock comes first, the new value is written and locked again. Ids
+        without a live item are reported as `not_found`. NFO files of the
+        updated items are rewritten in the background in libraries that
+        save them. Audited as one `item.bulk_edit` event.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_ids]
+              properties:
+                item_ids:
+                  type: array
+                  minItems: 1
+                  maxItems: 500
+                  items: { type: string, format: uuid }
+                set:
+                  type: object
+                  properties:
+                    content_rating: { type: string, nullable: true, maxLength: 32, description: 'Empty string or null clears.' }
+                    genres:
+                      type: array
+                      maxItems: 50
+                      items: { type: string, maxLength: 100 }
+                      description: 'The full list; [] clears.'
+                add_genres:    { type: array, maxItems: 50, items: { type: string, maxLength: 100 } }
+                remove_genres: { type: array, maxItems: 50, items: { type: string, maxLength: 100 } }
+                add_labels:    { type: array, items: { type: string } }
+                remove_labels: { type: array, items: { type: string } }
+                lock:          { type: array, items: { type: string }, description: 'Lock names to add. Can''t overlap unlock.' }
+                unlock:        { type: array, items: { type: string }, description: 'Lock names to drop, applied before the writes.' }
+      responses:
+        '200':
+          description: Applied.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      matched:        { type: integer, description: 'Live items among item_ids.' }
+                      updated:        { type: integer, description: 'Items whose metadata or locks were written.' }
+                      labels_added:   { type: integer, description: 'Items the label add changed.' }
+                      labels_removed: { type: integer, description: 'Items the label remove changed.' }
+                      skipped:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            item_id: { type: string, format: uuid }
+                            title:   { type: string }
+                            field:   { type: string, description: 'Absent for not_found.' }
+                            reason:  { type: string, enum: [locked, not_applicable, not_found] }
+        '400':
+          description: 'Invalid body: no or too many ids, a duplicate or malformed id, nothing to change, an unknown field or lock name, set.genres with a merge list, a lock name in both lock and unlock.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/items/{id}/children:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     get:
@@ -2062,6 +2161,84 @@ paths:
       responses:
         '204': { description: Deleted. }
 
+  /api/v1/subtitles/{id}/offset:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid }, description: 'External subtitle id.' }
+    put:
+      summary: Set an external subtitle's timing offset (admin)
+      tags: [Subtitles]
+      description: |
+        *(v2.6, migration 00055)* A server-wide correction for a mistimed
+        subtitle, applied for everyone: `/media/external-subtitles/{id}`
+        serves every cue shifted by it (positive = later; a cue pushed
+        before 0 starts at 0, one that also ends at or before 0 is
+        dropped). Clients need no change. 0 removes the correction.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offset_ms]
+              properties:
+                offset_ms: { type: integer, minimum: -600000, maximum: 600000 }
+      responses:
+        '200':
+          description: The updated subtitle.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/ExternalSubtitle' }
+        '400': { description: 'Missing or malformed offset_ms.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: 'offset_ms outside ±600000 (10 minutes).' }
+
+  /api/v1/files/{file_id}/subtitle-streams/{index}/offset:
+    parameters:
+      - { in: path, name: file_id, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: index, required: true, schema: { type: integer, minimum: 0 }, description: 'Absolute stream index, as in subtitle_streams[].index.' }
+    put:
+      summary: Set an embedded subtitle stream's timing offset (admin)
+      tags: [Subtitles]
+      description: |
+        *(v2.6, migration 00055)* The same correction for an embedded text
+        subtitle stream; `/media/subtitles/{fileId}/{streamIndex}` serves
+        the shifted cues. Image-based streams (PGS, VobSub, DVB) are 415 —
+        they're never served as text; set the offset on their OCR'd copy.
+        Converted downloads still carry the embedded stream's original
+        timing.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [offset_ms]
+              properties:
+                offset_ms: { type: integer, minimum: -600000, maximum: 600000 }
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      file_id:      { type: string, format: uuid }
+                      stream_index: { type: integer }
+                      offset_ms:    { type: integer }
+        '400': { description: 'Bad file id, stream index or body.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: 'No such file, or the file has no subtitle stream at that index.' }
+        '415': { description: 'IMAGE_SUBTITLE: the stream is image-based.' }
+        '422': { description: 'offset_ms outside ±600000 (10 minutes).' }
+
   # ── Trickplay ──────────────────────────────────────────────────────────────
   /api/v1/items/{id}/trickplay:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -2158,6 +2335,18 @@ paths:
         got before. Both fields are additive — a client that ignores
         them still sees `transcode`. A client that skips this endpoint
         and fetches `/media/stream` directly is not held to the limit.
+
+        **Optimized versions (v2.6).** A client that declares
+        `optimized=1` in `X-Client-Capabilities` may get `decision:
+        directPlay` with `reason: optimized_version` and an
+        `optimized_version` to play from its `stream_url`, when the source
+        would otherwise need a video transcode (any cause, the internet
+        limit included) and an admin-made optimized version fits the
+        client's profile and bitrate cap. `file_id` stays the source's;
+        `source_decision` / `source_reason` carry the source's own verdict
+        for the client's fallback (the version has only the default audio
+        track). Clients that don't send `optimized=1` never get this
+        verdict.
       requestBody:
         required: false
         content:
@@ -2181,11 +2370,20 @@ paths:
                       file_id: { type: string, format: uuid }
                       reason:
                         type: string
-                        enum: [remote_bitrate_limit, user_bitrate_limit]
-                        description: Set only when the server overrode a capability verdict (v2.6).
+                        enum: [remote_bitrate_limit, user_bitrate_limit, optimized_version]
+                        description: Set only when the server overrode a capability verdict (v2.6). `optimized_version` only for `optimized=1` clients.
                       max_bitrate_kbps:
                         type: integer
                         description: The bitrate cap the transcode will be held to, with `reason` (v2.6).
+                      optimized_version:
+                        allOf: [{ $ref: '#/components/schemas/OptimizedVersion' }]
+                        description: With `reason optimized_version` — the version to direct-play (v2.6).
+                      source_decision:
+                        type: string
+                        description: The source file's own verdict, when an optimized version replaced it (v2.6).
+                      source_reason:
+                        type: string
+                        description: The source file's own reason (e.g. `remote_bitrate_limit`), when an optimized version replaced it (v2.6).
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -2543,6 +2741,173 @@ paths:
                 properties:
                   data: { type: array, items: { $ref: '#/components/schemas/DownloadJob' } }
 
+  # ── Optimized versions ─────────────────────────────────────────────────────
+  /media/optimized/{id}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - in: query
+        name: token
+        required: false
+        schema: { type: string }
+        description: |
+          Optional stream token bound to this optimized version
+          (`optimized_versions[].stream_token`), or an asset token.
+    get:
+      summary: Direct-play an optimized version
+      description: |
+        The optimized version's MP4 (H.264 + AAC, faststart) with `Range`
+        support. Same gates as `/media/stream/{id}` on the item: library
+        ACL, rating ceiling, label restriction, parental watch limit, admin
+        playback stop. 404 once the version is deleted, or its source file
+        was deleted or replaced in place. Shows on Now Playing as a direct
+        play with `optimized_version` set (v2.6).
+      tags: [Optimize, Items]
+      responses:
+        '200': { description: The file., content: { video/mp4: {} } }
+        '206': { description: Partial content (range request). }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/optimize/profiles:
+    get:
+      summary: The "Optimize…" profiles (admin)
+      tags: [Optimize]
+      responses:
+        '200':
+          description: Profiles, smallest first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        id:              { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+                        label:           { type: string, example: 'Mobile · 720p 4 Mbps' }
+                        max_height:      { type: integer }
+                        bitrate_kbps:    { type: integer }
+                        keep_resolution: { type: boolean, description: 'The original-quality profile keeps the source resolution and picks the bitrate per file.' }
+
+  /api/v1/optimize:
+    post:
+      summary: Queue optimized versions (admin)
+      description: |
+        Queues an optimized version at `profile` for every video item the
+        selection covers — set exactly one of `item_ids` (movies,
+        episodes; shows and seasons expand to their episodes; at most 500),
+        `library_id` or `collection_id`. At most 5000 items per request
+        (`truncated` says the rest were left out). Each item's best file is
+        encoded (a stacked movie's parts as one file) by the converted-
+        download runner, sharing its queue, encoder and transcode slots
+        (downloads go first). Items that already have the version are left
+        alone; items that can't be converted (no video, damaged, Dolby
+        Vision profile 5, a playlist container) are reported as skipped.
+        Versions never expire: they are removed when the source file is
+        deleted or replaced, or by `DELETE /api/v1/optimize/versions/{id}`.
+        Audited as `optimize.request`.
+      tags: [Optimize]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [profile]
+              properties:
+                profile:       { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+                item_ids:      { type: array, items: { type: string, format: uuid } }
+                library_id:    { type: string, format: uuid }
+                collection_id: { type: string, format: uuid }
+      responses:
+        '200':
+          description: What the request did.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      profile:   { type: string }
+                      items:     { type: integer, description: Video items the selection expanded to. }
+                      queued:    { type: integer }
+                      existing:  { type: integer, description: Already optimized, or queued / encoding. }
+                      skipped:   { type: integer }
+                      truncated: { type: boolean }
+                      skipped_items:
+                        type: array
+                        description: Up to 50 skips, with the reason.
+                        items:
+                          type: object
+                          properties:
+                            item_id: { type: string, format: uuid }
+                            reason:  { type: string }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such collection. }
+        '422': { description: 'Bad profile, or not exactly one selector.' }
+
+  /api/v1/optimize/jobs:
+    get:
+      summary: Optimized versions and their jobs (admin)
+      description: Newest first, with per-status totals under the item/library filter.
+      tags: [Optimize]
+      parameters:
+        - { in: query, name: item_id,    schema: { type: string, format: uuid } }
+        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+        - { in: query, name: status,     schema: { type: string, enum: [queued, running, ready, failed] } }
+        - { in: query, name: limit,      schema: { type: integer, default: 100, maximum: 500 } }
+        - { in: query, name: offset,     schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Jobs.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      jobs:   { type: array, items: { $ref: '#/components/schemas/OptimizeJob' } }
+                      counts: { type: object, additionalProperties: { type: integer }, example: { queued: 3, running: 1, ready: 40 } }
+
+  /api/v1/optimize/jobs/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: One optimized version or job (admin)
+      tags: [Optimize]
+      responses:
+        '200':
+          description: The job.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OptimizeJob' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      summary: Cancel an optimize job, or delete its version (admin)
+      description: Same as `DELETE /api/v1/optimize/versions/{id}` (one id space). Audited as `optimize.delete`.
+      tags: [Optimize]
+      responses:
+        '204': { description: Removed. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/optimize/versions/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Delete an optimized version (admin)
+      description: Removes the version and its file; a queued or running job is cancelled. Players go back to the source.
+      tags: [Optimize]
+      responses:
+        '204': { description: Removed. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /media/subtitles/{fileId}/{streamIndex}:
     parameters:
       - { in: path, name: fileId,      required: true, schema: { type: string, format: uuid } }
@@ -2550,11 +2915,17 @@ paths:
     get:
       summary: Serve an embedded subtitle as VTT
       tags: [Subtitles]
+      description: |
+        Cues are shifted by the stream's admin offset (v2.6). Sent with an
+        ETag and `Cache-Control: private, no-cache`, so an offset change
+        reaches clients on their next load; an unchanged track revalidates
+        with 304.
       responses:
         '200':
           description: Subtitle.
           content:
             text/vtt: {}
+        '304': { description: 'If-None-Match matched the current ETag.' }
 
   /media/external-subtitles/{subId}:
     parameters:
@@ -2562,11 +2933,15 @@ paths:
     get:
       summary: Serve a downloaded external subtitle
       tags: [Subtitles]
+      description: |
+        Cues are shifted by the subtitle's admin offset (v2.6); same ETag
+        and revalidation behaviour as /media/subtitles.
       responses:
         '200':
           description: Subtitle.
           content:
             text/vtt: {}
+        '304': { description: 'If-None-Match matched the current ETag.' }
 
   /artwork/{path}:
     parameters:
@@ -2785,6 +3160,300 @@ paths:
                             taken_at:  { type: string, format: date-time, nullable: true }
                             thumb_url: { type: string }
                       total: { type: integer }
+
+  /api/v1/photos/memories:
+    get:
+      summary: Memories — photos from this day in earlier years
+      description: |
+        Groups the caller's photos (every photo library they can open, with
+        their rating ceiling and label restriction) by past year: photos
+        taken on this month-day become "N years ago today" (±1 day when the
+        libraries hold under 2000 dated photos); a year with none that day
+        but at least three within three days becomes "This week N years
+        ago". Most recent year first, at most 10 groups, each with a cover
+        (the photo with the most faces, else the middle one) and up to 30
+        photos in time order, spread across the day rather than one burst.
+        Matching uses the EXIF taken date in the server's time zone. An
+        empty `groups` means nothing to show. Added in v2.6 (migration
+        00057).
+      tags: [Photos]
+      parameters:
+        - in: query
+          name: date
+          description: The viewer's local day; defaults to today on the server.
+          schema: { type: string, format: date, example: '2026-10-14' }
+      responses:
+        '200':
+          description: Memories.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      date: { type: string, format: date }
+                      groups:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            kind:      { type: string, enum: [on_this_day, this_week] }
+                            year:      { type: integer }
+                            years_ago: { type: integer }
+                            title:     { type: string, example: '3 years ago today' }
+                            total:     { type: integer, description: Photos in the group before the 30-photo pick. }
+                            cover:     { $ref: '#/components/schemas/MemoryPhoto' }
+                            items:
+                              type: array
+                              items: { $ref: '#/components/schemas/MemoryPhoto' }
+        '400': { description: date is not YYYY-MM-DD. }
+
+  /api/v1/photos/people:
+    get:
+      summary: People named in a photo library
+      description: |
+        People with at least one photo the caller may see (library grant,
+        rating ceiling, label restriction), most photos first, each with
+        the largest visible face as `cover`. Faces come from the opt-in
+        `face_detection` task; who is who is named by hand (no automatic
+        matching). Added in v2.6 (migration 00057).
+      tags: [Photos]
+      parameters:
+        - { in: query, name: library_id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: People.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PhotoPerson' }
+        '404': { description: No access to the library. }
+
+  /api/v1/photos/people/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: One person
+      description: 404 when none of their photos is visible to the caller (unless the caller may edit people).
+      tags: [Photos]
+      responses:
+        '200':
+          description: The person.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoPerson' }
+        '404': { description: Not found or not visible. }
+    patch:
+      summary: Rename a person
+      description: Admins and unrestricted users with access to the library.
+      tags: [Photos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name: { type: string, maxLength: 100 }
+      responses:
+        '200': { description: Renamed. }
+        '403': { description: The caller may not edit people. }
+        '409': { description: Another person in the library has this name. }
+        '422': { description: Empty or invalid name. }
+    delete:
+      summary: Remove a person (their faces stay, unnamed)
+      tags: [Photos]
+      responses:
+        '204': { description: Removed. }
+        '403': { description: The caller may not edit people. }
+
+  /api/v1/photos/people/{id}/items:
+    get:
+      summary: A person's photos the caller may see, newest first
+      tags: [Photos]
+      parameters:
+        - { in: path,  name: id,     required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit,  schema: { type: integer, default: 100, maximum: 500 } }
+        - { in: query, name: offset, schema: { type: integer, default: 0 } }
+      responses:
+        '200': { description: Photos, same shape as GET /api/v1/photos rows; meta.total is the visible count. }
+
+  /api/v1/photos/people/{id}/suggestions:
+    get:
+      summary: Unnamed faces that may be this person
+      description: |
+        Unnamed faces on photos taken within twelve hours of one of the
+        person's photos, photos with fewer faces first, then larger faces.
+        A heuristic to narrow manual naming, not face matching.
+      tags: [Photos]
+      parameters:
+        - { in: path,  name: id,    required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit, schema: { type: integer, default: 24, maximum: 100 } }
+      responses:
+        '200':
+          description: Faces.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PhotoFaceThumb' }
+
+  /api/v1/photos/faces:
+    get:
+      summary: Unnamed faces in a photo library
+      tags: [Photos]
+      parameters:
+        - { in: query, name: library_id, required: true, schema: { type: string, format: uuid } }
+        - { in: query, name: limit,      schema: { type: integer, default: 60, maximum: 200 } }
+        - { in: query, name: offset,     schema: { type: integer, default: 0 } }
+      responses:
+        '200':
+          description: Faces, larger and more confident first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PhotoFaceThumb' }
+
+  /api/v1/photos/faces/{id}:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    put:
+      summary: Name (or unname) a face
+      description: |
+        `{"name": "Alice"}` assigns the library's person called Alice,
+        creating them if new (names are unique per library, case-
+        insensitively). `{"person_id": "<uuid>"}` assigns an existing person
+        of the same library. `{"person_id": null}` or `{"name": ""}`
+        unnames the face. Admins and unrestricted users with access to the
+        photo's library.
+      tags: [Photos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:      { type: string, nullable: true, maxLength: 100 }
+                person_id: { type: string, format: uuid, nullable: true }
+      responses:
+        '200':
+          description: The face.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoFace' }
+        '403': { description: The caller may not name faces. }
+        '404': { description: Face not found, or its photo isn't visible. }
+        '422': { description: Invalid name, or person_id is not a person of this library. }
+    delete:
+      summary: Remove a box that isn't a face
+      tags: [Photos]
+      responses:
+        '204': { description: Removed. }
+        '403': { description: The caller may not edit faces. }
+
+  /api/v1/items/{id}/faces:
+    get:
+      summary: Face boxes on a photo
+      description: Boxes are normalised to 0..1 of the upright photo. 404 when the photo isn't visible to the caller.
+      tags: [Photos]
+      parameters:
+        - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Faces, and whether the caller may name them.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      faces:
+                        type: array
+                        items: { $ref: '#/components/schemas/PhotoFace' }
+                      can_edit: { type: boolean }
+
+  /api/v1/libraries/{id}/photo-settings:
+    parameters:
+      - { in: path, name: id, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Photo-library options (admin)
+      tags: [Photos]
+      responses:
+        '200':
+          description: Options; defaults when never set.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PhotoLibrarySettings' }
+        '404': { description: Not a photo library. }
+    put:
+      summary: Set photo-library options (admin)
+      description: |
+        `raw_jpeg_pairing` (default true): a camera RAW and a JPEG (or other
+        image) with the same name in the same folder are one photo showing
+        the JPEG, with the RAW as a second file served by the original
+        download. A change regroups the library on its next scan.
+        Audit-logged.
+      tags: [Photos]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PhotoLibrarySettings' }
+      responses:
+        '200': { description: Saved. }
+        '404': { description: Not a photo library. }
+
+  /api/v1/admin/photos/face-data:
+    delete:
+      summary: Delete all face data (admin)
+      description: |
+        Deletes every face, person and face-detection record in one photo
+        library (`library_id`) or in all of them. Audit-logged. With the
+        `face_detection` task still enabled, photos are detected again on
+        its next run.
+      tags: [Photos]
+      parameters:
+        - { in: query, name: library_id, schema: { type: string, format: uuid } }
+      responses:
+        '200':
+          description: Counts deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      faces:  { type: integer }
+                      people: { type: integer }
+                      scans:  { type: integer }
 
   # ── Collections ────────────────────────────────────────────────────────────
   /api/v1/collections:
@@ -3229,6 +3898,68 @@ paths:
       responses:
         '204': { description: Reordered. }
 
+  /api/v1/playlists/{id}/export.m3u8:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: Export a playlist as extended M3U
+      tags: [Playlists]
+      description: |
+        The playlist (static or smart) as an `.m3u8` attachment: `#EXTM3U`,
+        then `#EXTINF:<seconds>,<artist> - <title>` and a path per item.
+        Paths are relative to the item's library root (forward slashes) by
+        default, or the server's absolute paths with `?paths=absolute`.
+        Items the caller can't see (library access, rating ceiling, label
+        restriction) and items without a file are left out. Own playlists
+        only (404 otherwise). v2.6.
+      parameters:
+        - { in: query, name: paths, required: false, schema: { type: string, enum: [relative, absolute], default: relative } }
+      responses:
+        '200':
+          description: The playlist.
+          content:
+            audio/x-mpegurl:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/playlists/import:
+    post:
+      summary: Create a playlist from an M3U file
+      tags: [Playlists]
+      description: |
+        Multipart upload of an `.m3u` (UTF-8 or Latin-1) or `.m3u8` (UTF-8)
+        playlist, at most 1 MB and 10,000 entries (413
+        `PLAYLIST_TOO_LARGE`). Creates a static playlist owned by the caller
+        from the entries that match an item the caller can see, trying in
+        order: the exact absolute path; the path relative to `base_dir` or a
+        library root; the same file name and parent folders under another
+        mount point (case-insensitive, either slash); the `#EXTINF` artist
+        and title against tracks. Entries are only matched as strings —
+        never opened or fetched — so an `http(s)://` entry is reported
+        unmatched with reason `url`. A file listed twice is added once.
+        v2.6.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file:     { type: string, format: binary, description: The .m3u / .m3u8 file. }
+                name:     { type: string, description: Playlist name; defaults to the file name. }
+                base_dir: { type: string, description: The server directory the playlist came from, for its relative entries. }
+      responses:
+        '201':
+          description: The new playlist and how each line was matched.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/M3UImportResult' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '413': { description: File over 1 MB or over 10,000 entries (`PLAYLIST_TOO_LARGE`). }
+
   # ── Users / profile ────────────────────────────────────────────────────────
   /api/v1/users/me/pin:
     put:
@@ -3411,6 +4142,50 @@ paths:
         404. Audited as `api_key.delete`. v2.6.
       responses:
         '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/users/me/export:
+    post:
+      summary: Download my data
+      tags: [Users]
+      description: |
+        A ZIP (streamed as an attachment) of JSON files plus a README.txt:
+        profile and preferences, signed-in devices (no token material), API
+        keys (name, prefix, dates — never the key or its hash), scrobble
+        link status (no tokens), watch history (newest 100,000 play
+        events), watch progress and marks, watch-status lists, ratings,
+        favorites, reading progress, audiobook speeds and bookmarks,
+        playlists and other owned collections (with items), requests,
+        reported issues and the in-app notification inbox. Items carry
+        title and external ids (TMDB, TVDB, IMDb, MusicBrainz, AniList); an
+        item the caller can't see now is written as its id with
+        `unavailable: true`. Requires a signed-in session: API keys are
+        refused (403 `API_KEY_NOT_ALLOWED`). Rate-limited to 5 a minute.
+        Audited as `user.data_export`. v2.6.
+      responses:
+        '200':
+          description: The archive.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/users/{id}/export:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Download a user's data (admin)
+      tags: [Users]
+      description: |
+        `POST /users/me/export` for any user, for answering a data request.
+        Admin only; API keys refused. Audited as `user.data_export` with
+        `by_admin: true`. 404 for an unknown user. v2.6.
+      responses:
+        '200':
+          description: The archive.
+          content:
+            application/zip:
+              schema: { type: string, format: binary }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
@@ -4570,6 +5345,57 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { description: DVR or post-processing is not enabled on this server. }
+
+  /api/v1/settings/remote-access:
+    get:
+      summary: Remote access — automatic router port mapping (admin)
+      description: |
+        `map_port` ("Map a port on my router automatically", default off),
+        `external_port` (0 = the listen port) and `protocol` (TCP), plus
+        the mapping's live status from the node that maps (only the master
+        node of a cluster does): router found, method (UPnP IGD, PCP,
+        NAT-PMP), external IP and port, lease, last renewal, last error.
+        `reachability_hint` suggests what to test next; the server never
+        checks its own reachability through an outside service. Not
+        available to API keys.
+      tags: [Settings]
+      responses:
+        '200':
+          description: Setting and status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/RemoteAccess' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Change remote access (admin)
+      description: |
+        Turning `map_port` on exposes the server to the internet. The
+        mapping node adds, changes or removes the mapping within seconds.
+        Audited as `settings.update`. Not available to API keys.
+      tags: [Settings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                map_port:      { type: boolean }
+                external_port: { type: integer, minimum: 0, maximum: 65535, description: '0 = the listen port.' }
+                protocol:      { type: string, enum: [TCP] }
+      responses:
+        '200':
+          description: The saved setting and current status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/RemoteAccess' }
+        '422': { description: Port out of range, or a protocol other than TCP. }
 
   /api/v1/settings/system:
     get:
@@ -6002,6 +6828,187 @@ paths:
       responses:
         '204': { description: Sent. }
 
+  /api/v1/users/me/stats:
+    get:
+      summary: The caller's own viewing and listening stats
+      description: >
+        Aggregated from the caller's plays (the analytics play history,
+        refreshed every few minutes). Only ever the caller's own; a managed
+        profile sees its own. Titles the caller can't see (library access,
+        content-rating ceiling, label restrictions) are left out of every
+        number. Time is how far into each title a play got (its final
+        position, capped at the title's length); a play counts as finished at
+        90%. Days, months and the heatmap bucket in `tz`. v2.6.
+      tags: [Users]
+      parameters:
+        - name: range
+          in: query
+          schema: { type: string, default: 30d, example: 'year:2026' }
+          description: '`30d`, `90d`, `365d`, `all` or `year:YYYY` (2000 to the current year).'
+        - name: tz
+          in: query
+          schema: { type: string, default: UTC, example: America/Detroit }
+          description: IANA time zone; anything unknown falls back to UTC.
+      responses:
+        '200':
+          description: Stats.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/UserStats' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/users/me/year-in-review:
+    get:
+      summary: The caller's year in review
+      description: >
+        A curated summary of one calendar year (in `tz`) for the caller, with
+        the same visibility rules as `/users/me/stats`. `previous_year` is
+        present only when the year before has plays; `first_play`,
+        `busiest_day` and `top_device` are null when the year has none.
+        "New artists" are artists whose first play by the caller falls in the
+        year, as far back as the play history reaches. v2.6.
+      tags: [Users]
+      parameters:
+        - { name: year, in: query, schema: { type: integer, example: 2026 }, description: Defaults to the current year. }
+        - { name: tz, in: query, schema: { type: string, default: UTC } }
+      responses:
+        '200':
+          description: Year in review.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/YearInReview' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/v1/users/me/digest:
+    get:
+      summary: The caller's digest email setting
+      description: >
+        `available` is false while an admin has digests off or SMTP isn't
+        configured; `has_email` is false when the account has no email
+        address (nothing can be sent until one is added). v2.6.
+      tags: [Users, Email]
+      responses:
+        '200':
+          description: Setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MyDigest' }
+    put:
+      summary: Set the caller's digest frequency
+      tags: [Users, Email]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [frequency]
+              properties:
+                frequency: { type: string, enum: [off, weekly, monthly] }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/MyDigest' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/settings/digest:
+    get:
+      summary: Get the digest email settings (admin)
+      description: >
+        Off by default. `weekday` (0 = Sunday) and `hour` are in the server's
+        time zone (`server_timezone`): weekly digests go out then and cover
+        the seven days before; monthly ones go out on the 1st at `hour` and
+        cover the previous month. `smtp_configured`, `base_url` (Settings ▸
+        General, used for links) and `server_timezone` are read-only. v2.6.
+      tags: [Settings, Email]
+      responses:
+        '200':
+          description: Settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DigestSettings' }
+    put:
+      summary: Replace the digest email settings (admin)
+      description: Read-only fields in the body are ignored. Audit-logged as `settings.update`.
+      tags: [Settings, Email]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DigestSettings' }
+      responses:
+        '200':
+          description: The saved settings.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/DigestSettings' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/settings/digest/test:
+    post:
+      summary: Send the calling admin a test digest now (admin)
+      description: >
+        Sends the caller's own digest of the current period to their account's
+        email address, even if nothing is new, digests are off, or they haven't
+        opted in. Doesn't count as their digest for the period. 400 when SMTP
+        isn't configured or the account has no email address.
+      tags: [Settings, Email]
+      responses:
+        '200': { description: 'Sent. Body `{"data": {"message": "Test digest sent to …"}}`.' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/digest/unsubscribe:
+    get:
+      summary: Digest unsubscribe confirmation page (no sign-in)
+      description: >
+        The link in every digest email. Returns a small HTML page with an
+        Unsubscribe button; it does not unsubscribe by itself (mail scanners
+        fetch links). The token is an HMAC-signed user id that can only turn
+        that user's digest off. 400 page for an invalid token. Rate-limited per
+        IP.
+      tags: [Email]
+      security: []
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Confirmation page (text/html). }
+        '400': { description: Invalid token (text/html). }
+    post:
+      summary: Unsubscribe from the digest (no sign-in)
+      description: >
+        Turns the token's user's digest off. Also the target of the email's
+        `List-Unsubscribe` / `List-Unsubscribe-Post: List-Unsubscribe=One-Click`
+        headers (RFC 8058), so mail apps can unsubscribe in one click.
+      tags: [Email]
+      security: []
+      parameters:
+        - { name: token, in: query, required: true, schema: { type: string } }
+      responses:
+        '200': { description: Done page (text/html). }
+        '400': { description: Invalid token (text/html). }
+
   /api/v1/fs/browse:
     get:
       summary: Browse server filesystem (admin)
@@ -6491,6 +7498,113 @@ paths:
       responses:
         '204': { description: Deleted. }
 
+  # ── OPDS (outside /api/v1) ─────────────────────────────────────────────────
+  /opds/:
+    get:
+      summary: OPDS root navigation feed
+      tags: [OPDS]
+      description: |
+        "Recently added" plus one entry per book library the caller can
+        open. Links `search` to `/opds/opensearch.xml`. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      responses:
+        '200':
+          description: Navigation feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=navigation:
+              schema: { type: string }
+        '401': { description: "No or bad credentials; carries `WWW-Authenticate: Basic`." }
+        '403': { description: Downloads are disabled on the server (`DOWNLOADS_DISABLED`). }
+        '429': { description: Too many failed Basic sign-ins from this address. }
+
+  /opds/libraries/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: OPDS acquisition feed of one book library
+      tags: [OPDS]
+      description: |
+        Books by title, 50 per page (`?page=N`, `rel="next"` / `previous`
+        links). Each entry has author, year, genres, summary, an
+        acquisition link to `/media/download/{fileId}?token=…` with the
+        book's media type (EPUB, PDF, CBZ, CBR …), and cover + thumbnail
+        links. The `token` is a stream token bound to that one file (24 h,
+        revoked with the key or session that listed it). Only books under
+        the caller's rating ceiling and label restriction. 404 for a library
+        that isn't a book library the caller can open. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      parameters:
+        - { in: query, name: page, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Acquisition feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=acquisition:
+              schema: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /opds/recent:
+    get:
+      summary: OPDS feed of recently added books
+      tags: [OPDS]
+      description: Newest books across the caller's book libraries, paged like a library feed. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      parameters:
+        - { in: query, name: page, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Acquisition feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=acquisition:
+              schema: { type: string }
+
+  /opds/search:
+    get:
+      summary: OPDS search
+      tags: [OPDS]
+      description: Books matching `q` (title, author, full text), paged like a library feed. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      parameters:
+        - { in: query, name: q, required: true, schema: { type: string, maxLength: 200 } }
+        - { in: query, name: page, required: false, schema: { type: integer, minimum: 1, default: 1 } }
+      responses:
+        '200':
+          description: Acquisition feed.
+          content:
+            application/atom+xml;profile=opds-catalog;kind=acquisition:
+              schema: { type: string }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /opds/opensearch.xml:
+    get:
+      summary: OpenSearch description for the OPDS catalog
+      tags: [OPDS]
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      responses:
+        '200':
+          description: OpenSearch description (template `/opds/search?q={searchTerms}`).
+          content:
+            application/opensearchdescription+xml:
+              schema: { type: string }
+
+  /opds/files/{fileId}/cover:
+    parameters:
+      - { in: path, name: fileId, required: true, schema: { type: string, format: uuid } }
+    get:
+      summary: Cover of the book a file belongs to
+      tags: [OPDS]
+      description: |
+        Same library, rating and label checks as the file. Besides the
+        catalog's credentials, accepts the file-bound `?token=` stream
+        token the feed puts on its links. 404 when hidden or missing. v2.6.
+      security: [{ opdsBasic: [] }, { bearerAuth: [] }, { cookieAuth: [] }, { apiKeyHeader: [] }]
+      responses:
+        '200':
+          description: The cover image.
+          content:
+            image/jpeg:
+              schema: { type: string, format: binary }
+        '404': { $ref: '#/components/responses/NotFound' }
+
 components:
   securitySchemes:
     bearerAuth:
@@ -6509,6 +7623,14 @@ components:
         A personal API key (`osk_…`, v2.6). The same key is also accepted as
         `Authorization: Bearer osk_…`. Not accepted on the credential and
         account-security endpoints (403 `API_KEY_NOT_ALLOWED`).
+    opdsBasic:
+      type: http
+      scheme: basic
+      description: |
+        `/opds/` only (v2.6): HTTP Basic whose password is a personal API key
+        (`osk_…`); the username is ignored. The account password is never
+        accepted. Ten failed attempts from one address lock it out for 15
+        minutes (429).
 
   parameters:
     UUID:
@@ -7018,6 +8140,13 @@ components:
             Clients with no subtitle-language preference show it. False on
             files probed before the field until a metadata reprobe
             (POST /api/v1/maintenance/reprobe-metadata).
+        offset_ms:
+          type: integer
+          description: |
+            v2.6. The admin's server-wide timing correction in ms
+            (positive = later), already applied to the cues
+            /media/subtitles/{fileId}/{index} serves. Informational:
+            clients must not shift by it again. 0 when none.
     ExternalSubtitle:
       type: object
       properties:
@@ -7025,6 +8154,12 @@ components:
         language: { type: string }
         format:   { type: string }
         url:      { type: string }
+        offset_ms:
+          type: integer
+          description: |
+            v2.6. The admin's server-wide timing correction in ms
+            (positive = later), already applied to the cues `url` serves.
+            Informational: clients must not shift by it again.
     Chapter:
       type: object
       properties:
@@ -7178,6 +8313,10 @@ components:
         updated_at:     { type: integer, format: int64 }
         files:          { type: array, items: { $ref: '#/components/schemas/ItemFile' } }
         markers:        { type: array, items: { $ref: '#/components/schemas/Marker' } }
+        optimized_versions:
+          type: array
+          items: { $ref: '#/components/schemas/OptimizedVersion' }
+          description: Pre-made MP4 copies (admin "Optimize…"), highest bitrate first. Never part of `files`. Omitted when none (v2.6).
         musicbrainz_id:               { type: string, format: uuid, nullable: true, description: 'Primary MBID for the row''s type (recording for tracks, release-group for albums, artist for artists).' }
         musicbrainz_release_id:       { type: string, format: uuid, nullable: true }
         musicbrainz_release_group_id: { type: string, format: uuid, nullable: true }
@@ -7557,6 +8696,81 @@ components:
         completed_at:  { type: string, format: date-time }
         expires_at:    { type: string, format: date-time, description: 'When a ready file may leave the cache.' }
         file_url:      { type: string, description: 'Present when ready: `/api/v1/downloads/{id}/file`.' }
+    OptimizedVersion:
+      type: object
+      description: A playable optimized version (item detail, play decision).
+      properties:
+        id:             { type: string, format: uuid }
+        file_id:        { type: string, format: uuid, description: The source file it was made from. }
+        profile:        { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+        label:          { type: string }
+        container:      { type: string, example: mp4 }
+        video_codec:    { type: string, example: h264 }
+        audio_codec:    { type: string, example: aac }
+        audio_channels: { type: integer, example: 2 }
+        width:          { type: integer }
+        height:         { type: integer }
+        bitrate_kbps:   { type: integer }
+        size_bytes:     { type: integer, format: int64 }
+        duration_ms:    { type: integer, format: int64 }
+        stream_url:     { type: string, description: '`/media/optimized/{id}`' }
+        stream_token:   { type: string, description: 24 h token bound to this version, for players that authenticate through the URL. }
+    OptimizeJob:
+      type: object
+      properties:
+        id:            { type: string, format: uuid }
+        item_id:       { type: string, format: uuid }
+        file_id:       { type: string, format: uuid }
+        library_id:    { type: string, format: uuid }
+        title:         { type: string }
+        item_type:     { type: string }
+        show_title:    { type: string }
+        season_index:  { type: integer }
+        episode_index: { type: integer }
+        profile:       { type: string, enum: [mobile_720p, tv_1080p, original_compatible] }
+        profile_label: { type: string }
+        status:        { type: string, enum: [queued, running, ready, failed] }
+        progress:      { type: number, description: 'Encode progress, 0..1.' }
+        error:         { type: string }
+        size_bytes:    { type: integer, format: int64 }
+        width:         { type: integer }
+        height:        { type: integer }
+        bitrate_kbps:  { type: integer }
+        duration_ms:   { type: integer, format: int64 }
+        created_at:    { type: string, format: date-time }
+        started_at:    { type: string, format: date-time }
+        completed_at:  { type: string, format: date-time }
+    RemoteAccess:
+      type: object
+      properties:
+        map_port:          { type: boolean }
+        external_port:     { type: integer, description: 0 = the listen port. }
+        protocol:          { type: string, enum: [TCP] }
+        listen_addr:       { type: string, example: ':7070' }
+        listen_port:       { type: integer }
+        loopback_only:     { type: boolean, description: The server listens on loopback only; nothing is ever mapped. }
+        https:             { type: boolean, description: This server serves HTTPS itself. }
+        reachability_hint: { type: string }
+        status:
+          type: object
+          properties:
+            enabled:       { type: boolean }
+            state:         { type: string, enum: [disabled, loopback_only, standby, no_gateway, mapped, error] }
+            gateway_found: { type: boolean }
+            method:        { type: string, enum: [upnp, pcp, nat-pmp] }
+            gateway_addr:  { type: string }
+            local_ip:      { type: string }
+            internal_port: { type: integer }
+            external_ip:   { type: string }
+            external_port: { type: integer }
+            lease_seconds: { type: integer }
+            permanent:     { type: boolean, description: The router only grants permanent mappings (re-asserted every 30 min). }
+            last_renewal:  { type: string, format: date-time }
+            expires_at:    { type: string, format: date-time }
+            last_error:    { type: string }
+            last_error_at: { type: string, format: date-time }
+            node:          { type: string, description: The cluster node doing the mapping. }
+            updated_at:    { type: string, format: date-time }
     TrickplayStatus:
       type: object
       description: |
@@ -7745,6 +8959,13 @@ components:
         can_stop:
           type: boolean
           description: Whether POST /api/v1/sessions/{id}/stop can act on this card.
+        optimized_version:
+          type: object
+          description: Set when the direct play is of an optimized version, not the source; `output` is then the version (v2.6).
+          properties:
+            id:      { type: string, format: uuid }
+            profile: { type: string }
+            label:   { type: string }
     StreamFormat:
       type: object
       description: One side of a Now Playing card's source → output. Codec/container values are scanner identifiers ("hevc", "truehd", "matroska"; "hls" for a server session's output).
@@ -7790,6 +9011,59 @@ components:
           items: { type: string }
           description: '*(v2.6)* See blocked_labels.'
         created_at: { type: string, format: date-time }
+
+    # ── Photos: faces, people, memories (v2.6, migration 00057) ────────────
+    PhotoFace:
+      type: object
+      description: A face on a photo; the box is normalised to 0..1 of the upright photo.
+      properties:
+        id:          { type: string, format: uuid }
+        item_id:     { type: string, format: uuid }
+        x:           { type: number }
+        y:           { type: number }
+        w:           { type: number }
+        h:           { type: number }
+        score:       { type: number, description: Detector confidence. }
+        source:      { type: string, enum: [auto, manual] }
+        person_id:   { type: string, format: uuid, nullable: true }
+        person_name: { type: string, nullable: true }
+    PhotoFaceThumb:
+      type: object
+      description: A face to show cropped from its photo (GET /api/v1/items/{item_id}/image).
+      properties:
+        id:      { type: string, format: uuid }
+        item_id: { type: string, format: uuid }
+        x:       { type: number }
+        y:       { type: number }
+        w:       { type: number }
+        h:       { type: number }
+        score:   { type: number }
+    PhotoPerson:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        library_id:  { type: string, format: uuid }
+        name:        { type: string }
+        photo_count: { type: integer, description: Photos visible to the caller. }
+        cover:       { $ref: '#/components/schemas/PhotoFaceThumb' }
+        can_edit:    { type: boolean, description: Whether the caller may rename / remove people and name faces. }
+    PhotoLibrarySettings:
+      type: object
+      properties:
+        library_id:       { type: string, format: uuid, readOnly: true }
+        raw_jpeg_pairing: { type: boolean, default: true }
+    MemoryPhoto:
+      type: object
+      properties:
+        id:          { type: string, format: uuid }
+        library_id:  { type: string, format: uuid }
+        title:       { type: string }
+        poster_path: { type: string, nullable: true }
+        taken_at:    { type: string, format: date-time }
+        width:       { type: integer, nullable: true }
+        height:      { type: integer, nullable: true }
+        orientation: { type: integer, nullable: true }
+        updated_at:  { type: string, format: date-time }
 
     # ── Collections / Playlists ────────────────────────────────────────────
     Collection:
@@ -7872,6 +9146,45 @@ components:
         item_count: { type: integer, format: int64 }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+    M3UImportResult:
+      type: object
+      description: Result of POST /playlists/import (v2.6).
+      properties:
+        playlist: { $ref: '#/components/schemas/Playlist' }
+        total:     { type: integer, description: Media lines in the file. }
+        matched:   { type: integer }
+        unmatched: { type: integer }
+        added:     { type: integer, description: Distinct items in the new playlist. }
+        by_method:
+          type: object
+          description: Matched lines per method.
+          properties:
+            path:     { type: integer }
+            relative: { type: integer }
+            suffix:   { type: integer }
+            tags:     { type: integer }
+        matches:
+          type: array
+          description: Matched lines (first 500).
+          items:
+            type: object
+            properties:
+              line:    { type: integer }
+              entry:   { type: string }
+              item_id: { type: string, format: uuid }
+              title:   { type: string }
+              method:  { type: string, enum: [path, relative, suffix, tags] }
+        matches_truncated: { type: boolean }
+        unmatched_entries:
+          type: array
+          description: Unmatched lines (first 500).
+          items:
+            type: object
+            properties:
+              line:   { type: integer }
+              entry:  { type: string }
+              reason: { type: string, enum: [url, not_found] }
+        unmatched_truncated: { type: boolean }
     PlaylistItem:
       type: object
       properties:
@@ -8546,3 +9859,158 @@ components:
               free_bytes:  { type: integer, format: int64 }
               total_bytes: { type: integer, format: int64 }
         queue_count: { type: integer, nullable: true, description: Downloads the instance is tracking; null when the queue could not be read. }
+
+    StatsTotals:
+      type: object
+      properties:
+        plays:          { type: integer, format: int64 }
+        watch_ms:       { type: integer, format: int64, description: 'Time watched: movies, episodes, music videos, home videos.' }
+        listen_ms:      { type: integer, format: int64, description: 'Time listened: tracks, audiobooks, podcasts.' }
+        hours_watched:  { type: number, description: watch_ms in hours, one decimal. }
+        hours_listened: { type: number, description: listen_ms in hours, one decimal. }
+        items_finished: { type: integer, format: int64, description: Distinct titles played to 90% or more. }
+        books_read:     { type: integer, format: int64, description: Ebooks/comics marked read plus audiobooks finished. }
+        active_days:    { type: integer, format: int64 }
+
+    StatsTitle:
+      type: object
+      properties:
+        id:           { type: string, format: uuid, description: 'The movie, show, artist or album (never the episode or track).' }
+        title:        { type: string }
+        year:         { type: integer }
+        poster_path:  { type: string, description: 'Artwork path for /artwork/{path}.' }
+        parent_title: { type: string, description: "An album's artist." }
+        plays:        { type: integer, format: int64, description: 'Plays (for a show, episodes played).' }
+        ms:           { type: integer, format: int64 }
+
+    StatsCount:
+      type: object
+      properties:
+        plays: { type: integer, format: int64 }
+        ms:    { type: integer, format: int64 }
+
+    UserStats:
+      type: object
+      properties:
+        range:    { type: string, example: 30d }
+        since:    { type: string, format: date-time }
+        until:    { type: string, format: date-time }
+        timezone: { type: string }
+        totals:   { $ref: '#/components/schemas/StatsTotals' }
+        by_type:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { type: { type: string, example: episode } } }
+        top_genres:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { genre: { type: string } } }
+        top_titles:
+          type: object
+          description: Up to 10 per list, by plays then time.
+          properties:
+            movies:  { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+            shows:   { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+            artists: { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+            albums:  { type: array, items: { $ref: '#/components/schemas/StatsTitle' } }
+        by_month:
+          type: array
+          description: Every month of the range (zero-filled); for `all`, from the first month with plays.
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { month: { type: string, example: '2026-10' } } }
+        heatmap:
+          type: array
+          description: Sparse; cells without plays are absent.
+          items:
+            type: object
+            properties:
+              weekday: { type: integer, minimum: 1, maximum: 7, description: 1 = Monday. }
+              hour:    { type: integer, minimum: 0, maximum: 23 }
+              plays:   { type: integer, format: int64 }
+        longest_streak:
+          type: object
+          properties:
+            days:  { type: integer }
+            start: { type: string, format: date }
+            end:   { type: string, format: date }
+        devices:
+          type: array
+          items:
+            allOf:
+              - { $ref: '#/components/schemas/StatsCount' }
+              - { type: object, properties: { device: { type: string } } }
+
+    YearInReview:
+      type: object
+      properties:
+        year:           { type: integer }
+        timezone:       { type: string }
+        has_data:       { type: boolean }
+        totals:         { $ref: '#/components/schemas/StatsTotals' }
+        longest_streak: { $ref: '#/components/schemas/UserStats/properties/longest_streak' }
+        top_movies:     { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_shows:      { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_artists:    { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_albums:     { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        top_genres:     { $ref: '#/components/schemas/UserStats/properties/top_genres' }
+        top_device:
+          nullable: true
+          allOf:
+            - { $ref: '#/components/schemas/StatsCount' }
+            - { type: object, properties: { device: { type: string } } }
+        first_play:
+          type: object
+          nullable: true
+          properties:
+            id:           { type: string, format: uuid }
+            type:         { type: string }
+            title:        { type: string }
+            year:         { type: integer }
+            parent_title: { type: string }
+            poster_path:  { type: string }
+            occurred_at:  { type: string, format: date-time }
+        busiest_day:
+          type: object
+          nullable: true
+          properties:
+            date:  { type: string, format: date }
+            plays: { type: integer, format: int64 }
+            ms:    { type: integer, format: int64 }
+        new_artists:
+          type: object
+          properties:
+            count: { type: integer, format: int64 }
+            top:   { type: array, maxItems: 5, items: { $ref: '#/components/schemas/StatsTitle' } }
+        by_month: { $ref: '#/components/schemas/UserStats/properties/by_month' }
+        previous_year:
+          type: object
+          nullable: true
+          properties:
+            year:   { type: integer }
+            totals: { $ref: '#/components/schemas/StatsTotals' }
+
+    MyDigest:
+      type: object
+      properties:
+        frequency:    { type: string, enum: [off, weekly, monthly] }
+        last_sent_at: { type: string, format: date-time }
+        has_email:    { type: boolean }
+        available:    { type: boolean, description: False while digests are off server-wide or SMTP isn't configured. }
+
+    DigestSettings:
+      type: object
+      properties:
+        enabled:                   { type: boolean, default: false }
+        weekday:                   { type: integer, minimum: 0, maximum: 6, default: 1, description: 0 = Sunday. Weekly send day. }
+        hour:                      { type: integer, minimum: 0, maximum: 23, default: 8 }
+        include_continue_watching: { type: boolean, default: true }
+        include_stats:             { type: boolean, default: true }
+        smtp_configured:           { type: boolean, readOnly: true }
+        base_url:                  { type: string, readOnly: true, description: 'Settings ▸ General Base URL; "" when unset.' }
+        server_timezone:           { type: string, readOnly: true }

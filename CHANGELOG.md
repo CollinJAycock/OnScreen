@@ -601,6 +601,233 @@ API change lands only when every first-party client moves with it — see
     and `GET`/`PUT /libraries/{id}/subtitle-auto-download`.
   - **Migration 00050** adds the per-library overrides and the
     per-title-and-language attempt log.
+- **Playlists to and from other players (M3U).** A playlist page has an
+  "Export .m3u8" button, and the Playlists page an "Import playlist" one.
+  - **Export** writes an extended M3U with each item's length, artist and
+    title. Paths are relative to the library folder, so a player that mounts
+    the same music elsewhere can use it; tick "Full server paths" for a
+    player on the server itself. Only items you can see are written.
+  - **Import** takes an `.m3u` or `.m3u8` file (up to 1 MB and 10,000 lines)
+    and makes a new playlist of the lines it can place: by exact path, by path
+    relative to a library folder, by the same folders and file name on another
+    drive or mount (`M:\Music\…` and `/mnt/music/…` match, in any letter
+    case), and finally by the artist and title on the `#EXTINF` line. It then
+    lists the lines it couldn't place. Web addresses in a playlist are never
+    opened, and only items you can see are matched.
+  - **API (additive):** `GET /playlists/{id}/export.m3u8` (`?paths=absolute`
+    for server paths) and `POST /playlists/import` (multipart `file`, optional
+    `name`). No migration.
+- **Read your books in an e-reader app (OPDS).** Book libraries are published
+  as an OPDS catalog at `/opds/`, so KOReader, Moon+ Reader, Panels, Chunky
+  and other reader apps can browse, search and download your EPUB, PDF, CBZ
+  and CBR books, with covers, authors and "Recently added".
+  - **Signing in:** make a read-only key under Account ▸ API keys and enter
+    it as the password (any user name). Your account password is not
+    accepted there. The Account page shows the catalog's address.
+  - **What you see** follows your library access, content-rating limit and
+    labels, as in the web app.
+  - The catalog hands out book files, so it is only open while "Allow web
+    downloads" is on (Settings ▸ General).
+  - Guide: [docs/opds.md](docs/opds.md). No migration.
+- **Download my data.** Account ▸ Your data ▸ "Download my data" gives you a
+  ZIP of what the server keeps about your account, as JSON files with a
+  README: profile and preferences, watch history and progress, ratings,
+  favorites, playlists, reading positions, audiobook bookmarks, requests,
+  reported problems, notifications, signed-in devices and API key names.
+  Titles carry their TMDB, TVDB, IMDb and MusicBrainz ids so the data means
+  something elsewhere. Passwords, PINs, two-factor secrets, keys and sign-in
+  tokens are never included.
+  - Admins can download any user's data to answer a data request.
+  - Every export is recorded in the audit log (`user.data_export`). API keys
+    can't make one; it needs a signed-in session.
+  - **API (additive):** `POST /users/me/export`, and for admins
+    `POST /users/{id}/export`. No migration.
+- **Edit many titles at once.** In a library, admins can select titles and
+  change their metadata in one go.
+  - **Selecting:** "Select", the checkbox that appears on a tile on hover, or
+    a long press on a touch screen. Shift-click selects everything between
+    two tiles; "Select all on page" takes every title loaded so far.
+  - **Editing:** "Edit metadata…" sets or clears the content rating; adds,
+    removes or replaces genres; adds or removes labels; and locks or unlocks
+    any field. Every field starts at "leave unchanged".
+  - **Locks work as in the single-title editor.** A field you set is locked,
+    so refreshes and Fix Match keep it. A field a title already has locked is
+    skipped and listed afterwards, unless you unlock it in the same edit.
+    A field that doesn't apply to a title (a content rating on an album, say)
+    is skipped too.
+  - The whole edit succeeds or fails as one, up to 500 titles at a time.
+    Libraries that save NFO files get them rewritten afterwards. The edit is
+    recorded once in the audit log (`item.bulk_edit`).
+  - "Mark watched" and "Mark unwatched" also work on the selection, and "Add
+    to collection…" takes just its movies and shows.
+  - **API (additive, admin):** `PATCH /items/bulk`. No migration.
+- **Fix subtitle timing for everyone.** When a subtitle is out of sync, an
+  admin can correct it on the server once, and every player and app gets the
+  corrected timing — the TV and phone apps included, without an update.
+  - **In the web player:** the subtitle menu's Sync control now moves the
+    subtitles in steps of 0.1 s and 1 s and shows the current value. This
+    adjustment only affects your own session. Admins also get "Save for
+    everyone", which stores the adjustment on the server and resets their
+    local one.
+  - It works for downloaded and OCR'd subtitles and for text subtitles inside
+    the video file, up to 10 minutes either way. Subtitles that would start
+    before the beginning start at 0; ones that would end before it are
+    dropped.
+  - Players fetch subtitles fresh enough to see a change straight away.
+  - **Not covered yet:** converted downloads still carry an embedded
+    subtitle's original timing. Image-based subtitles (PGS, VobSub) are never
+    sent as text; correct the OCR'd copy instead.
+  - **API (additive, admin):** `PUT /subtitles/{id}/offset` and
+    `PUT /files/{file_id}/subtitle-streams/{index}/offset`. Subtitle tracks in
+    item details gain `offset_ms`, for information only: the server has
+    already applied it.
+  - **Migration 00055** adds the offset to downloaded subtitles and a table
+    for embedded subtitle offsets.
+- **My stats and Year in review.** Everyone now has their own stats page
+  (My stats, in the sidebar and on the Account page): hours watched and
+  listened, plays, titles finished, books read, activity by month, a
+  weekday-by-hour chart of when you play, time by type and genre, your top
+  movies, shows, artists and albums, your longest streak of days and the
+  devices you use most. Pick the last 30 or 90 days, 12 months, all time or a
+  single year.
+  - **Year in review** (`/year/2026`) sums up a year on cards that look good
+    in a screenshot or printed: headline numbers, top fives, the first thing
+    you played, your busiest day, new artists you discovered and how the year
+    compares with the one before.
+  - **Only yours:** each person sees only their own numbers, and a profile
+    sees its own. Titles you can't see (library access, rating limit, label
+    restrictions) are left out, as in your history. Admins keep the
+    server-wide Analytics page.
+  - Numbers refresh every few minutes, like Analytics. Time counts how far you
+    got into each title, so sampling a film for five minutes counts as five
+    minutes.
+  - **API (additive):** `GET /users/me/stats?range=30d|90d|365d|all|year:YYYY`
+    and `GET /users/me/year-in-review?year=YYYY` (both take `tz`).
+  - **Migration 00054** adds an index so these stay fast on long histories.
+- **Digest email.** People can get a weekly or monthly email of what was added
+  to their libraries: new movies, shows (new episodes grouped per show), music
+  albums and books, with posters. Turn it on under Account ▸ Email me a
+  digest.
+  - It can also list what you're in the middle of and your own numbers for the
+    week or month. Only titles you're allowed to see are included.
+  - An admin turns digests on and picks the day and hour under Settings ▸
+    Email (off by default), and can send themselves a test digest. Links use
+    the Base URL from Settings ▸ General. Without SMTP nothing is sent and the
+    page says so.
+  - The new "Send digest emails" task checks every hour. Each person gets each
+    week or month once, a digest with nothing new isn't sent, and sends are
+    spaced out. People without an email address are skipped.
+  - Posters are attached to the email itself, so it shows them without
+    signing in and carries no link that grants access to the server. Every
+    digest has an unsubscribe link that works without signing in, and mail
+    apps can offer one-click unsubscribe.
+  - **API (additive):** `GET`/`PUT /users/me/digest`; admin
+    `GET`/`PUT /settings/digest` and `POST /settings/digest/test`;
+    `GET`/`POST /digest/unsubscribe?token=…` (no sign-in).
+  - **Migration 00054** adds the per-user digest setting.
+- **Optimize.** Admins can make smaller, universally playable copies of
+  movies and episodes ahead of time, so a phone, a weak TV box or a viewer
+  away from home plays a copy directly instead of holding a live transcode
+  for the whole film.
+  - **Making them:** "Optimize…" on a movie, episode, show or season page,
+    on a library ("Optimize…" next to Scan, for the whole library) or on
+    titles selected in a library. Pick a profile: Mobile (720p, 4 Mbps), TV
+    (1080p, 8 Mbps) or Original quality, compatible (the source's
+    resolution, re-encoded to H.264 + AAC so every device can play it).
+  - **Progress:** a title's page lists its optimized versions with their
+    progress and a delete button; Settings ▸ Library ▸ Optimized lists every
+    one on the server, by status.
+  - **Playing them:** when a player would otherwise need a full transcode —
+    a codec or HDR it can't play, or a bitrate limit away from home — the
+    server hands it an optimized version that fits its profile and its
+    limits, and it plays directly. The web player does this now; Now Playing
+    shows "Optimized" on such a stream. Phone and TV apps keep playing the
+    original (and transcoding) until they are updated to ask for it.
+  - **Storage:** copies live in `CACHE_PATH/optimized`, not in the library
+    folders. They don't expire: they are deleted when the original file is
+    deleted or replaced, or when you delete them.
+  - **Server load:** copies are encoded by the converted-download runner —
+    the same encoder choice, the same `DOWNLOAD_MAX_CONVERSIONS` limit and
+    the same transcode slots — with users' downloads going first.
+  - **API (all additive):** `POST /optimize`, `GET /optimize/profiles`,
+    `GET /optimize/jobs`, `GET`/`DELETE /optimize/jobs/{id}`,
+    `DELETE /optimize/versions/{id}` (admin), `GET /media/optimized/{id}`,
+    `optimized_versions` on item detail (never part of `files`), and for
+    clients that send `optimized=1` in `X-Client-Capabilities`, a play
+    decision of `directPlay` with `reason: optimized_version` and
+    `optimized_version`.
+  - **Migration 00056** lets `download_conversions` hold optimized versions
+    (`purpose`, the source's hash, the output's size and bitrate).
+- **Remote access: map a port on the router automatically.** Settings ▸
+  General ▸ Remote access can ask your router to forward a port to the
+  server, so it can be reached from outside your network without setting up
+  port forwarding by hand.
+  - It speaks UPnP (IGD v1 and v2), PCP and NAT-PMP, keeps the mapping alive
+    while the server runs, and removes it when you turn it off or the server
+    stops. Only the server's own port is mapped (you can choose the public
+    port), never when the server listens on loopback only, and in a cluster
+    only one node maps.
+  - The page shows whether a router was found, the public address and port,
+    the last renewal and any error, with advice on testing from outside —
+    and warns plainly that this opens the server to the internet: turn on
+    HTTPS and two-factor sign-in first. It is off unless you turn it on.
+  - **API (additive, admin, not for API keys):**
+    `GET`/`PUT /settings/remote-access`.
+- **Camera RAW photos.** Photo libraries now pick up CR2, CR3, NEF, ARW, DNG,
+  RAF, ORF, RW2 and PEF files.
+  - **Showing them:** thumbnails and the viewer use the full-size JPEG the
+    camera embeds in the RAW, read directly from the file, so nothing extra
+    needs installing. A RAW without one falls back to `exiftool`, `dcraw`,
+    `dcraw_emu` or `ffmpeg` when one is on the server's PATH.
+  - **Date, camera, lens, exposure and GPS** are read from the RAW, so RAW
+    photos land on the timeline and the map like JPEGs.
+  - **RAW + JPEG pairs:** when a RAW and a JPEG with the same name sit in the
+    same folder, they are one photo. The JPEG is shown, and "Download
+    original" in the viewer gives you the RAW. A new option on a photo
+    library's settings page, "Pair RAW files with their JPEGs" (on by
+    default), lists them separately instead; the next scan regroups.
+  - **Photos are now told apart by file, not by name:** two folders' IMG_0001.JPG
+    are two photos. Before, every photo with the same file name in a library
+    was one photo. Existing libraries are sorted out on their next scan.
+  - HEIC and TIFF photos now show in the web app's grid, albums, map and
+    viewer too.
+- **Faces and people in photo libraries.** OnScreen can find the faces in
+  your photos so you can name the people in them.
+  - **Finding faces** is a new task, "Photo face detection" (Settings ▸ Tasks),
+    **off by default**: face data is personal, so turning it on is your call.
+    It runs nightly, looking at up to 500 new photos within 30 minutes each
+    time, with a face detector built into OnScreen (nothing is sent anywhere).
+  - **Naming:** hover over a photo in the viewer to see its faces, and click
+    one to name it; a name the library already has adds the photo to that
+    person. Admins and regular members name faces; managed profiles with a
+    rating or label limit only see the names.
+  - **Matching is manual.** OnScreen finds faces but doesn't recognise who is
+    who: there's no face-recognition model it can ship that is good enough
+    and free to redistribute. To speed naming up, a person's page suggests
+    unnamed faces taken around the same time as their photos.
+  - **People pages:** "People" in a photo library lists everyone named, with
+    the unnamed faces to work through; a person's page shows their photos
+    and can rename or remove them.
+  - **Privacy:** face data belongs to its library and is shown only to people
+    who can see the photo — library access, rating limits and labels all
+    apply, and a person whose photos you can't see doesn't appear. "Delete
+    all face data" on a photo library's settings page removes every face and
+    name in it (recorded in the audit log).
+- **Memories.** "On this day" for your photos: the home screen shows a
+  Memories row — "3 years ago today", or "This week 5 years ago" when a year
+  has nothing on the day — whenever there is something to show, and only if
+  you have a photo library. Each memory opens as a slideshow; up to 30 photos
+  are picked across the day rather than from one burst. Small libraries
+  count the day either side too.
+  - **API (all additive):** `GET /photos/memories`, `GET /photos/people`,
+    `GET`/`PATCH`/`DELETE /photos/people/{id}`, `GET /photos/people/{id}/items`
+    and `/suggestions`, `GET /photos/faces`, `PUT`/`DELETE /photos/faces/{id}`,
+    `GET /items/{id}/faces`; admin `GET`/`PUT /libraries/{id}/photo-settings`
+    and `DELETE /admin/photos/face-data`. `GET /items/{id}/image` shows the
+    JPEG of a RAW + JPEG pair and decodes RAW files.
+  - **Migration 00057** adds `library_photo_settings`, `photo_people`,
+    `photo_faces` and `photo_face_scans`, and takes photos out of the
+    title-uniqueness index on `media_items`.
 
 ### Changed
 

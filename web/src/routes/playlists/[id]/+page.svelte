@@ -4,6 +4,7 @@
   import { goto } from '$app/navigation';
   import { playlistApi, assetUrl, type Playlist, type PlaylistItem } from '$lib/api';
   import { confirmAction } from '$lib/native';
+  import { saveBlob } from '$lib/fileDownload';
 
   let playlist: Playlist | null = null;
   let items: PlaylistItem[] = [];
@@ -16,6 +17,24 @@
   let saving = false;
 
   let reorderPending = false;
+
+  // Export as .m3u8: paths relative to the library root by default (for a
+  // player that mounts the library elsewhere), or the server's own paths.
+  let exportAbsolute = false;
+  let exporting = false;
+
+  async function exportPlaylist() {
+    exporting = true;
+    error = '';
+    try {
+      const { blob, filename } = await playlistApi.exportM3U(id, exportAbsolute);
+      saveBlob(blob, filename);
+    } catch (e: unknown) {
+      error = e instanceof Error ? e.message : 'Export failed';
+    } finally {
+      exporting = false;
+    }
+  }
 
   $: id = $page.params.id!;
 
@@ -136,6 +155,14 @@
           {#if playlist.description}<p class="description">{playlist.description}</p>{/if}
         </div>
         <button class="btn-edit" on:click={startEdit}>Edit</button>
+        <button class="btn-edit" on:click={exportPlaylist} disabled={exporting}
+          title="Download as an .m3u8 playlist for other players">
+          {exporting ? 'Exporting…' : 'Export .m3u8'}
+        </button>
+        <label class="abs-toggle" title="Write the files' full paths on the server instead of paths relative to the library folder">
+          <input type="checkbox" bind:checked={exportAbsolute} />
+          Full server paths
+        </label>
         <button class="btn-delete" on:click={deletePlaylist}>Delete</button>
       {/if}
       <span class="count">{items.length} item{items.length !== 1 ? 's' : ''}</span>
@@ -220,6 +247,12 @@
     cursor: pointer;
   }
   .btn-edit:hover { color: var(--text-secondary); }
+  .btn-edit:disabled { opacity: 0.5; cursor: default; }
+  .abs-toggle {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    font-size: 0.72rem; color: var(--text-muted); cursor: pointer;
+  }
+  .abs-toggle input { width: auto; margin: 0; }
   .btn-delete:hover { color: #f87171; border-color: rgba(248,113,113,0.3); }
 
   .edit-form { display: flex; gap: 0.5rem; align-items: center; flex: 1; flex-wrap: wrap; }

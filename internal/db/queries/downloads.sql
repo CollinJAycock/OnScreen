@@ -1,5 +1,8 @@
 -- Converted downloads (migration 00051): per-user download_jobs pointing at
 -- shared download_conversions, one live encode per (file, quality).
+-- download_conversions also holds the admin's optimized versions (purpose
+-- 'optimize', migration 00056; queries in optimize.sql): they share the
+-- queue and the runner, never the download cache or its eviction.
 
 -- name: GetOrCreateDownloadConversion :one
 -- Returns the live (queued / running / ready) encode of this file at this
@@ -24,14 +27,16 @@ SELECT * FROM download_conversions WHERE id = $1;
 
 -- name: ClaimQueuedDownloadConversion :one
 -- Moves the oldest queued encode to running for this runner. SKIP LOCKED so
--- two servers sharing the database never claim the same row.
+-- two servers sharing the database never claim the same row. Downloads go
+-- before optimized versions: a user is waiting on a download, while an
+-- admin's library-wide optimize can be thousands of rows deep.
 UPDATE download_conversions
 SET status = 'running', started_at = NOW(), updated_at = NOW(),
     progress = 0, error = NULL
 WHERE id = (
     SELECT id FROM download_conversions
     WHERE status = 'queued'
-    ORDER BY created_at
+    ORDER BY (purpose = 'optimize'), created_at
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 )
@@ -45,10 +50,20 @@ SET progress = @progress, updated_at = NOW()
 WHERE id = @id AND status = 'running';
 
 -- name: MarkDownloadConversionReady :execrows
+-- A finished encode. A download gets its cache expiry; an optimized version
+-- never expires (expires_at stays NULL). The output's dimensions, average
+-- bitrate and duration are recorded for the play decision.
 UPDATE download_conversions
 SET status = 'ready', progress = 1, size_bytes = @size_bytes,
     completed_at = NOW(), updated_at = NOW(), last_used_at = NOW(),
-    expires_at = NOW() + (sqlc.arg(ttl_seconds)::bigint * INTERVAL '1 second'), error = NULL
+    expires_at = CASE
+        WHEN purpose = 'download'
+            THEN NOW() + (sqlc.arg(ttl_seconds)::bigint * INTERVAL '1 second')
+        ELSE NULL
+    END,
+    width = sqlc.narg(width), height = sqlc.narg(height),
+    bitrate_kbps = sqlc.narg(bitrate_kbps), duration_ms = sqlc.narg(duration_ms),
+    error = NULL
 WHERE id = @id AND status = 'running';
 
 -- name: MarkDownloadConversionFailed :exec
@@ -81,21 +96,21 @@ WHERE dc.id = @id
 -- name: ListExpiredDownloadConversions :many
 -- Ready files past their expiry: the cleanup task evicts them.
 SELECT * FROM download_conversions
-WHERE status = 'ready' AND expires_at < NOW()
+WHERE purpose = 'download' AND status = 'ready' AND expires_at < NOW()
 ORDER BY expires_at;
 
 -- name: ListReadyDownloadConversionsLRU :many
 -- Every ready file, least recently used first: the cleanup task walks this
 -- to bring the cache back under its size limit.
 SELECT * FROM download_conversions
-WHERE status = 'ready'
+WHERE purpose = 'download' AND status = 'ready'
 ORDER BY last_used_at, completed_at;
 
 -- name: ListLiveDownloadConversionIDs :many
 -- Ids whose files belong in the cache (queued, running or ready); anything
 -- else in the cache directory is an orphan.
 SELECT id FROM download_conversions
-WHERE status IN ('queued', 'running', 'ready');
+WHERE purpose = 'download' AND status IN ('queued', 'running', 'ready');
 
 -- name: MarkDownloadConversionExpired :exec
 UPDATE download_conversions
@@ -103,8 +118,9 @@ SET status = 'expired', updated_at = NOW()
 WHERE id = @id AND status = 'ready';
 
 -- name: PurgeOldDownloadConversions :execrows
--- Forgets failed and expired encodes after the retention window. Jobs that
--- pointed at them keep reading as expired (conversion_id goes NULL).
+-- Forgets failed and expired encodes after the retention window — failed
+-- optimized versions too. Jobs that pointed at them keep reading as expired
+-- (conversion_id goes NULL).
 DELETE FROM download_conversions
 WHERE status IN ('failed', 'expired') AND updated_at < @before;
 

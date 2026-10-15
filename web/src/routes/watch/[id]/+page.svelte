@@ -2,7 +2,7 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit, type EpisodeOrder, type MetadataEditResult } from '$lib/api';
+  import { itemApi, mediaApi, libraryApi, peopleApi, transcodeApi, userApi, subtitleApi, assetUrl, apiBeacon, ApiRequestError, type ItemDetail, type ChildItem, type ItemFile, type MediaItem, type MatchCandidate, type PosterCandidate, type AudioStream, type SubtitleStream, type ExternalSubtitle, type SubtitleSearchResult, type Credit, type EpisodeOrder, type MetadataEditResult, type OptimizedVersion } from '$lib/api';
   import { externalRatingChips } from '$lib/externalRatings';
   import { heroLogoPath, studioKindLabel } from '$lib/studios';
   import { cssUrl } from '$lib/cssurl';
@@ -33,6 +33,7 @@
   import FranchiseShelf from '$lib/components/FranchiseShelf.svelte';
   import ReportProblemButton from '$lib/components/ReportProblemButton.svelte';
   import DownloadMenu from '$lib/components/DownloadMenu.svelte';
+  import OptimizePanel from '$lib/components/OptimizePanel.svelte';
   import RequestMoreSeasonsButton from '$lib/components/RequestMoreSeasonsButton.svelte';
   import MetadataEditor from '$lib/components/MetadataEditor.svelte';
   import ItemMetadataEditor from '$lib/components/ItemMetadataEditor.svelte';
@@ -53,6 +54,9 @@
     type SubtitleOutline,
   } from './subtitle-style';
   import { pickPreferredSubtitle } from './subtitle-select';
+  // Subtitle sync: the session-only adjustment and the admin's
+  // "Save for everyone" server offset. Tested in subtitle-offset.test.ts.
+  import { OFFSET_STEPS_MS, stepDelay, formatOffset, offsetToSave } from './subtitle-offset';
   // Watched marks + the show / season Play target. Pure helpers, tested
   // in $lib/watchState.test.ts.
   import type { UpNext } from '$lib/api';
@@ -211,6 +215,12 @@
     sdh: boolean;
     url: string;
     origin: 'embedded' | 'external';
+    // Where an admin's "Save for everyone" sends the offset, and the
+    // server offset already baked into the cues at url.
+    fileId: string;
+    streamIndex?: number; // embedded
+    subId?: string;       // external
+    offsetMs: number;
   };
   let selectedSubtitle: PickedSubtitle | null = null;
   const subtitleSizes = ['small', 'medium', 'large'] as const satisfies readonly SubtitleSize[];
@@ -229,7 +239,43 @@
     saveSubtitleStyle(subtitleStyle);
   }
   // Subtitle delay in seconds (positive = subs appear later, negative = earlier).
+  // Session-only and local to this player; it applies on top of the cues the
+  // server sends, which already carry any saved server offset.
   let subtitleDelay = 0;
+  // Server offsets saved from this page, by picked-subtitle key — the item
+  // payload behind textSubtitles still has the old value.
+  let savedSubtitleOffsets: Record<string, number> = {};
+  let savingSubtitleOffset = false;
+  $: selectedServerOffset = selectedSubtitle
+    ? (savedSubtitleOffsets[selectedSubtitle.key] ?? selectedSubtitle.offsetMs)
+    : 0;
+
+  // Admin "Save for everyone": fold the local adjustment into the server
+  // offset, reload the (now server-shifted) cues, then drop the local
+  // adjustment so the timing on screen doesn't jump.
+  async function saveSubtitleOffset() {
+    const sel = selectedSubtitle;
+    if (!sel || savingSubtitleOffset || subtitleDelay === 0) return;
+    const next = offsetToSave(selectedServerOffset, subtitleDelay);
+    savingSubtitleOffset = true;
+    try {
+      if (sel.origin === 'external' && sel.subId) {
+        await subtitleApi.setOffset(sel.subId, next);
+      } else if (sel.streamIndex !== undefined) {
+        await subtitleApi.setStreamOffset(sel.fileId, sel.streamIndex, next);
+      } else {
+        return;
+      }
+      savedSubtitleOffsets = { ...savedSubtitleOffsets, [sel.key]: next };
+      await loadSubtitleCues(sel.url);
+      subtitleDelay = 0;
+      toast.success(`Subtitle timing saved for everyone (${formatOffset(next)})`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Could not save the subtitle timing');
+    } finally {
+      savingSubtitleOffset = false;
+    }
+  }
 
   // ── Cast / Chromecast ──────────────────────────────────────────────
   // SDK loaded asynchronously via cast_sender.js — only available on
@@ -412,7 +458,9 @@
   async function loadSubtitleCues(url: string) {
     const fetchId = ++subtitleFetchId;
     try {
-      const resp = await fetch(url);
+      // no-cache: revalidate (a 304 when unchanged) so a server offset an
+      // admin just saved is picked up instead of a cached copy.
+      const resp = await fetch(url, { cache: 'no-cache' });
       if (!resp.ok || fetchId !== subtitleFetchId) return;
       const vtt = await resp.text();
       allCues = parseWebVTT(vtt);
@@ -554,6 +602,9 @@
       sdh: s.sdh ?? false,
       url: assetUrl(`/media/subtitles/${file.id}/${s.index}`),
       origin: 'embedded',
+      fileId: file.id,
+      streamIndex: s.index,
+      offsetMs: s.offset_ms ?? 0,
     };
   }
   function externalToPicked(ext: ExternalSubtitle): PickedSubtitle {
@@ -569,6 +620,9 @@
       // get the URL back unchanged and rely on the auth cookie.
       url: assetUrl(ext.url),
       origin: 'external',
+      fileId: ext.file_id,
+      subId: ext.id,
+      offsetMs: ext.offset_ms ?? 0,
     };
   }
 
@@ -758,7 +812,11 @@
   // can't see (it isn't on media.File). Falls back to the local heuristic when
   // the server verdict isn't available yet (still fetching, fetch failed, or a
   // non-source file). See docs/capability-profiles.md.
-  let serverDecision: { fileId: string; decision: string } | null = null;
+  // decision is the verdict for the SOURCE file (source_decision when the
+  // server offered an optimized version instead), so every helper below keeps
+  // judging the source; optimized is the pre-made version to play in place
+  // of a transcode, when the server chose one (reason optimized_version).
+  let serverDecision: { fileId: string; decision: string; optimized?: OptimizedVersion } | null = null;
   let decisionFetchedFor = '';
 
   function serverDecisionFor(file: ItemFile | undefined): string | null {
@@ -774,6 +832,19 @@
     const d = serverDecisionFor(file);
     if (d !== null) return d === 'directPlay' && (file?.faststart ?? true);
     return canDirectPlayDecision(file, clientCaps); // fallback: no server verdict
+  }
+  /** The optimized version the server chose for this file in place of a
+   *  transcode, if any. It carries only the default audio track. */
+  function optimizedFor(file: ItemFile | undefined): OptimizedVersion | null {
+    if (!file || !serverDecision || serverDecision.fileId !== file.id) return null;
+    return serverDecision.optimized ?? null;
+  }
+  // The optimized version currently on screen (direct play of its MP4).
+  let playingOptimized: OptimizedVersion | null = null;
+  function playOptimized(v: OptimizedVersion) {
+    playingOptimized = v;
+    videoEl.src = assetUrl(v.stream_url);
+    videoEl.load();
   }
   function canRemuxVideo(file: ItemFile | undefined): boolean {
     const d = serverDecisionFor(file);
@@ -830,7 +901,11 @@
     if (!item) return;
     try {
       const srv = await transcodeApi.decide(item.id, file.id);
-      serverDecision = { fileId: srv.file_id || file.id, decision: srv.decision };
+      serverDecision = {
+        fileId: srv.file_id || file.id,
+        decision: srv.source_decision ?? srv.decision,
+        optimized: srv.reason === 'optimized_version' ? srv.optimized_version : undefined,
+      };
       const local = canDirectPlayDecision(file, clientCaps)
         ? 'directPlay'
         : canRemuxVideoDecision(file, clientCaps)
@@ -2076,6 +2151,12 @@
       // Stream-copy the video and only transcode audio → fast, lossless video.
       const posMs = item.view_offset_ms > 0 ? item.view_offset_ms : 0;
       await switchToTranscode(0, posMs, true);
+    } else if (!needsAudioSwitch && optimizedFor(file)) {
+      // The source would need a full transcode (codec, HDR, or over the
+      // streaming limit) and the server has an optimized version that fits:
+      // direct-play the pre-made MP4 instead. Same resume handling as any
+      // direct play (loadedmetadata seeks to view_offset_ms).
+      playOptimized(optimizedFor(file)!);
     } else {
       // Full transcode needed (non-browser video codec like HEVC/VC-1/MPEG-2/AV1).
       // Match source resolution tier: 4K sources default to 4K (server's
@@ -2177,6 +2258,9 @@
       } else if (canRemuxVideo(file)) {
         // "Auto" but can't direct-play → remux (video copy + audio transcode).
         await switchToTranscode(0, posMs, true);
+      } else if (selectedAudioIndex <= 0 && optimizedFor(file)) {
+        // "Auto" and the server has an optimized version: play it directly.
+        await switchToOptimized(optimizedFor(file)!, posMs);
       } else {
         // "Auto" but nothing is browser-compatible → full transcode.
         // Match source resolution so 4K sources stay 4K instead of being
@@ -2208,6 +2292,23 @@
     }
   }
 
+  // switchToOptimized moves playback onto an optimized version's MP4 (direct
+  // play), resuming at posMs.
+  async function switchToOptimized(v: OptimizedVersion, posMs: number) {
+    const wasPlaying = videoEl && !videoEl.paused;
+    destroyHls();
+    await stopTranscodeSession();
+    hlsOffsetSec = 0;
+    hlsActive = false;
+    playOptimized(v);
+    const restore = () => {
+      videoEl.removeEventListener('loadedmetadata', restore);
+      if (posMs > 0) videoEl.currentTime = posMs / 1000;
+      if (wasPlaying) void videoEl.play().catch(() => {});
+    };
+    videoEl.addEventListener('loadedmetadata', restore);
+  }
+
   async function switchToDirectPlay(posMs: number) {
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
@@ -2218,6 +2319,7 @@
     hlsActive = false;
 
     const file = item!.files[0];
+    playingOptimized = null;
     videoEl.src = file.stream_url;
     videoEl.load();
 
@@ -2258,6 +2360,7 @@
     // stopped, holding a stream slot — while its hls.js instance leaked
     // attached to a detached media element.
     if (switchingTranscode) return;
+    playingOptimized = null;
     const wasPlaying = videoEl && !videoEl.paused;
     codecEscalationArmed = true; // re-arm: new pipeline gets one decode attempt
     switchingTranscode = true; // gate codec-escalation during the destroy→attach gap
@@ -3882,15 +3985,31 @@
                           >{o[0].toUpperCase() + o.slice(1)}</button>
                         {/each}
                       </div>
-                      <div class="subtitle-size-row">
+                      <div class="subtitle-size-row subtitle-sync-row">
                         <span class="subtitle-size-label">Sync</span>
-                        <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay -= 0.5}>-0.5s</button>
-                        <span class="subtitle-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-                        <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay += 0.5}>+0.5s</button>
+                        {#each OFFSET_STEPS_MS.slice(0, 2) as step}
+                          <button class="subtitle-size-btn" aria-label="Subtitles {Math.abs(step) >= 1000 ? '1 second' : '100 milliseconds'} earlier"
+                            on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step <= -1000 ? '−1s' : '−0.1'}</button>
+                        {/each}
+                        <span class="subtitle-delay-value" aria-live="polite">{formatOffset(subtitleDelay * 1000)}</span>
+                        {#each OFFSET_STEPS_MS.slice(2) as step}
+                          <button class="subtitle-size-btn" aria-label="Subtitles {step >= 1000 ? '1 second' : '100 milliseconds'} later"
+                            on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step >= 1000 ? '+1s' : '+0.1'}</button>
+                        {/each}
                         {#if subtitleDelay !== 0}
                           <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>Reset</button>
                         {/if}
                       </div>
+                      {#if isAdmin}
+                        <div class="subtitle-size-row subtitle-sync-row">
+                          <span class="subtitle-size-label">Server</span>
+                          <span class="subtitle-delay-value" title="Saved for everyone; already applied to the cues">{formatOffset(selectedServerOffset)}</span>
+                          <button class="subtitle-size-btn"
+                            disabled={subtitleDelay === 0 || savingSubtitleOffset}
+                            title="Store this timing on the server so every player and app gets it"
+                            on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? 'Saving…' : 'Save for everyone'}</button>
+                        </div>
+                      {/if}
                     {/if}
                   </div>
                 {/if}
@@ -4009,12 +4128,12 @@
               <button
                 class="icon-btn small quality-btn"
                 on:click|stopPropagation={() => { if (isMobile) { openMobileMenu('quality'); } else { showQualityMenu = !showQualityMenu; showSubtitleMenu = false; showAudioMenu = false; } }}
-                title="Quality"
+                title={playingOptimized ? `Quality — playing the optimized version (${playingOptimized.label})` : 'Quality'}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M12 20h9M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
                 </svg>
-                <span class="quality-label">{selectedQuality.label === 'Auto (Direct Play)' ? 'Auto' : selectedQuality.label}</span>
+                <span class="quality-label">{playingOptimized ? 'Optimized' : selectedQuality.label === 'Auto (Direct Play)' ? 'Auto' : selectedQuality.label}</span>
               </button>
 
               {#if showQualityMenu}
@@ -4257,15 +4376,30 @@
                   >{o[0].toUpperCase() + o.slice(1)}</button>
                 {/each}
               </div>
-              <div class="subtitle-size-row" style="padding: 0.5rem 1.25rem;">
+              <div class="subtitle-size-row subtitle-sync-row" style="padding: 0.5rem 1.25rem;">
                 <span class="subtitle-size-label">Sync</span>
-                <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay -= 0.5}>-0.5s</button>
-                <span class="subtitle-delay-value">{subtitleDelay > 0 ? '+' : ''}{subtitleDelay.toFixed(1)}s</span>
-                <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay += 0.5}>+0.5s</button>
+                {#each OFFSET_STEPS_MS.slice(0, 2) as step}
+                  <button class="subtitle-size-btn" aria-label="Subtitles {Math.abs(step) >= 1000 ? '1 second' : '100 milliseconds'} earlier"
+                    on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step <= -1000 ? '−1s' : '−0.1'}</button>
+                {/each}
+                <span class="subtitle-delay-value" aria-live="polite">{formatOffset(subtitleDelay * 1000)}</span>
+                {#each OFFSET_STEPS_MS.slice(2) as step}
+                  <button class="subtitle-size-btn" aria-label="Subtitles {step >= 1000 ? '1 second' : '100 milliseconds'} later"
+                    on:click|stopPropagation={() => subtitleDelay = stepDelay(subtitleDelay, step)}>{step >= 1000 ? '+1s' : '+0.1'}</button>
+                {/each}
                 {#if subtitleDelay !== 0}
                   <button class="subtitle-size-btn" on:click|stopPropagation={() => subtitleDelay = 0}>Reset</button>
                 {/if}
               </div>
+              {#if isAdmin && selectedSubtitle}
+                <div class="subtitle-size-row subtitle-sync-row" style="padding: 0.5rem 1.25rem;">
+                  <span class="subtitle-size-label">Server</span>
+                  <span class="subtitle-delay-value" title="Saved for everyone; already applied to the cues">{formatOffset(selectedServerOffset)}</span>
+                  <button class="subtitle-size-btn"
+                    disabled={subtitleDelay === 0 || savingSubtitleOffset}
+                    on:click|stopPropagation={saveSubtitleOffset}>{savingSubtitleOffset ? 'Saving…' : 'Save for everyone'}</button>
+                </div>
+              {/if}
             {/if}
           {:else if showBottomSheet === 'audio'}
             <div class="bottom-sheet-title">Audio Track</div>
@@ -4510,6 +4644,12 @@
     <!-- Admin labels (what per-user label restrictions match). -->
     {#if isAdmin}
       <ItemLabels itemId={item.id} labels={item.labels ?? []} />
+    {/if}
+
+    <!-- Optimize… (admin): pre-made lower-bitrate MP4 versions the player
+         direct-plays instead of transcoding; with their progress. -->
+    {#if isAdmin && ['movie', 'episode', 'show', 'season', 'home_video', 'music_video'].includes(item.type)}
+      <OptimizePanel itemId={item.id} itemType={item.type} title={item.title} />
     {/if}
 
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
@@ -5779,7 +5919,11 @@
     color: rgba(255,255,255,0.7);
     min-width: 2.5rem;
     text-align: center;
+    font-variant-numeric: tabular-nums;
   }
+  /* Sync: four steps, the value, Reset, and the admin's server row. */
+  .subtitle-sync-row { flex-wrap: wrap; }
+  .subtitle-size-btn:disabled { opacity: 0.45; cursor: default; }
 
   /* ── Detail view (shows / seasons) ───────────────── */
   .detail-page {

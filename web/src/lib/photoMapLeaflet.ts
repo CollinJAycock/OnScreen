@@ -21,8 +21,9 @@ const MAX_ZOOM = 19;
 const MARKER_PX = 44;
 
 export interface PhotoMapOptions {
-  /** URL for a marker thumbnail from a photo's poster_path. */
-  thumbUrl: (posterPath: string) => string;
+  /** URL for a marker thumbnail from a photo's poster_path (and id, for
+   *  formats the server has to render, such as camera RAW). */
+  thumbUrl: (posterPath: string, id: string) => string;
   /** After every pan / zoom settles (Leaflet's moveend). */
   onViewChange: () => void;
   /** A marker was clicked (or activated with Enter). */
@@ -59,7 +60,7 @@ export async function createPhotoMap(el: HTMLElement, opts: PhotoMapOptions): Pr
     const cover = c.points.find((p) => p.poster_path);
     if (cover?.poster_path) {
       const img = document.createElement('img');
-      img.src = opts.thumbUrl(cover.poster_path);
+      img.src = opts.thumbUrl(cover.poster_path, cover.id);
       img.alt = '';
       img.draggable = false;
       el.appendChild(img);

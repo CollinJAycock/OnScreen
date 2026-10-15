@@ -3,6 +3,7 @@
   import { settingsApi } from '$lib/api';
   import type { SMTPSettings } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import DigestSettings from '$lib/components/DigestSettings.svelte';
 
   let loading = true;
   let saving = false;
@@ -156,6 +157,8 @@
         </button>
       </div>
     </section>
+
+    <DigestSettings />
   </div>
 {/if}
 

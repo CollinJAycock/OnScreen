@@ -246,6 +246,149 @@ re-read the real admin's session.
 - Cookie / CSRF handling is unchanged: a key is a header credential and is
   never set as a cookie.
 
+**OPDS catalog** (v2.6; `/opds/`; [usage](opds.md))
+
+- The only place HTTP Basic is read (`middleware.OPDSRequired`). The Basic
+  password must be a personal API key; the username is ignored. The account
+  password is **never** accepted over Basic — a reader app polling
+  unattended would otherwise be a password-guessing surface with no second
+  factor — and a non-key password fails before any hashing. Everywhere else
+  `Authorization: Basic` is not a credential, so the `RefuseAPIKey` routes
+  can't be reached with a key this way.
+- Every route is a GET, so a `read_only` key suffices. A key used here acts
+  exactly as in a header: the owner's current library access, rating
+  ceiling and label restriction, revoked on the next request.
+- Failed Basic attempts are counted per client address; ten within 15
+  minutes (counted from the last failure) lock the address out with 429
+  before its key is looked up. Successes aren't counted, so a reader
+  fetching a page of covers at once is never throttled. The whole group also
+  sits behind the per-address session-class limiter.
+- Feeds list only book libraries the caller may open and, in SQL, only books
+  under their rating ceiling and label restriction. Acquisition links point
+  at the existing `/media/download/{fileId}` route (library, rating, label,
+  watch-limit, playback-stop and downloads-toggle checks) with a stream
+  token bound to that one file — the established `?token=` scheme, needed
+  because reader apps don't reliably send credentials on links. Feed
+  responses are `Cache-Control: private, no-store`, since they carry those
+  tokens. The cover route takes the same file-bound token (its `{fileId}`
+  makes the binding check apply); the feed routes take no `?token=` at all.
+- The catalog is a download channel, so while downloads are disabled
+  server-wide (Settings → General) every OPDS route answers 403
+  `DOWNLOADS_DISABLED`.
+- Covers are served only for `book` items, from the poster path the scanner
+  recorded, restricted to image extensions and to the item's library roots.
+
+**M3U playlist import / export** (v2.6; `/api/v1/playlists/import`,
+`/api/v1/playlists/{id}/export.m3u8`)
+
+- An imported playlist's entries are strings matched against the paths the
+  scanner recorded. The server never opens, stats or fetches them; an
+  `http(s)://` entry is reported unmatched. Every lookup applies the
+  caller's library access, rating ceiling and label restriction, so an
+  import can't confirm the existence of (or add) an item the caller can't
+  see.
+- The upload is capped at 1 MB and 10,000 entries (exempt from the general
+  1 MB body cap only so the multipart framing fits; the handler caps its
+  own body). Candidate queries are bounded.
+- Export leaves out items the caller can't see. Its absolute-path option
+  reveals server file paths, but only for the caller's own visible items.
+
+**Personal data export** (v2.6; `POST /api/v1/users/me/export`,
+`POST /api/v1/users/{id}/export`)
+
+- Account data, so API keys are refused (`RefuseAPIKey`, and again in the
+  handler, which also refuses purpose-scoped tokens). The admin route is
+  admin-only. Both are audit-logged as `user.data_export` and rate-limited
+  to five a minute per user.
+- The export queries name their columns, so password hashes, PINs, TOTP
+  secrets and recovery codes, refresh-token hashes, API key hashes and
+  scrobble tokens can't reach the archive by a later column addition.
+- Item references are resolved under the exporting caller's visibility; an
+  item they can't see is written as its id only.
+- The archive streams as it is built (the watch history is keyset-paged and
+  capped at 100,000 events). A failure part-way aborts the connection
+  (`http.ErrAbortHandler`, which `middleware.Recover` now re-panics) rather
+  than ending a truncated ZIP as if it were complete.
+
+**My stats and the digest email** (v2.6; `/api/v1/users/me/stats`,
+`/api/v1/users/me/year-in-review`, `/api/v1/users/me/digest`,
+`/api/v1/settings/digest`, `/api/v1/digest/unsubscribe`)
+
+- Stats are only ever the caller's own (no user parameter). Every aggregate,
+  and every title in a digest email, passes the viewer's library access,
+  rating ceiling and label restriction. The digest builds that viewer from the
+  recipient's stored user row and library grants, the same values their tokens
+  carry.
+- Digest posters are inline (CID) attachments resized on the server. The email
+  carries no `/artwork` URL and no asset or stream token, so a forwarded or
+  leaked digest grants nothing. Titles and every other stored string are
+  HTML-escaped; links are built only from the admin's Base URL (http/https
+  only) and item UUIDs.
+- The unsubscribe link needs no sign-in. Its token is the user id plus an
+  HMAC-SHA256 under a key derived from `SECRET_KEY` (domain-separated), so it
+  can't be guessed or forged for another user and can only turn that user's
+  digest off. `GET` shows a confirmation page and changes nothing (mail
+  scanners prefetch links); `POST` unsubscribes and is the RFC 8058
+  `List-Unsubscribe-Post` one-click target. The route is rate-limited per IP.
+  Rotating `SECRET_KEY` invalidates links in digests already sent.
+- Admin digest settings sit in the settings group (admin only, no API keys)
+  and are audit-logged as `settings.update`.
+
+**Automatic router port mapping** (v2.6; Settings ▸ General ▸ Remote access,
+`/api/v1/settings/remote-access`)
+
+- Off by default. Turned on, the server asks the home router — UPnP IGD
+  (v1/v2, WANIPConnection / WANPPPConnection), PCP or NAT-PMP — to forward a
+  public TCP port to its API listen port, which exposes OnScreen to the whole
+  internet. The settings page says so and recommends HTTPS (Settings ▸
+  Security, or a TLS reverse proxy) and two-factor sign-in for every admin
+  before it is enabled.
+- Only the API listen port is ever mapped (the admin chooses only the public
+  port), TCP only. Nothing is mapped when the server listens on loopback only
+  (`127.0.0.0/8`, `::1`, `localhost`). The lease is 1 hour, renewed at half
+  its granted lifetime; the mapping is removed when the setting is turned
+  off, when the public port changes (the old one first), when the node stops
+  being master and on shutdown. A crashed server's mapping ends when its
+  lease does.
+- In a cluster only the master instance (the Valkey master lock that runs
+  the other singletons) maps, so one router port is opened; the status is
+  shared through Valkey.
+- Every add, renewal and removal is logged with the router, method, public
+  port and internal address; changing the setting is audit-logged
+  (`settings.update`). The endpoints are admin-only and refused to personal
+  API keys.
+- Discovery stays on the LAN: SSDP multicast for UPnP, and PCP / NAT-PMP only
+  to a default gateway on a private network. The URLs an SSDP answer names
+  (device description, SOAP control URL) are fetched with a client that only
+  connects to private-network addresses — never the internet and never this
+  host's loopback, where the unauthenticated metrics / pprof port lives —
+  follows no redirects, times out after 5 s and reads at most 1 MiB.
+- The server never checks its own reachability through an outside service;
+  the status shows the router's public address and port and advises testing
+  from outside the network, and flags a private "public" address (carrier-
+  grade NAT or a second router), where the mapping can't help.
+
+**Optimized versions** (v2.6; admin "Optimize…", `/api/v1/optimize`,
+`/media/optimized/{id}`)
+
+- Admin-only to create, list and delete; each request and delete is
+  audit-logged (`optimize.request`, `optimize.delete`). A request is capped
+  at 500 item ids or 5000 expanded items.
+- Encodes run through the converted-download runner, so every input passes
+  the same checks: inactive, damaged, Dolby Vision profile 5 and
+  playlist / reference-container sources are refused, ffmpeg opens inputs
+  through `internal/ffsafe`, and a stacked movie is joined from a
+  server-written concat list.
+- Output goes to `CACHE_PATH/optimized`, never into a library folder.
+- `/media/optimized/{id}` applies every gate `/media/stream` applies to the
+  item — library ACL, rating ceiling, label restriction, parental watch
+  limit and an admin's playback stop — on every request, Range continuations
+  included. A stream token for it is bound to the version's id, like a file's.
+- A version is never served for a source that was replaced in place (its
+  content hash no longer matches), even before the cleanup task deletes it.
+- The play decision offers a version only to clients that declare
+  `optimized=1` and only within the viewer's bitrate cap and internet limit.
+
 ## Deployment, packaging & supply-chain hardening
 
 Changes to the shipped compose files, reverse-proxy sample, installers and CI.
@@ -522,6 +665,10 @@ ntfy / Gotify server must use `https`.
 - [ ] Set the same `SECRET_KEY` on every fleet worker; never use a dev placeholder.
 - [ ] Use a TLS SMTP relay (port 465 or STARTTLS); cleartext to a remote relay is refused.
 - [ ] Disable LAN discovery on untrusted segments.
+- [ ] Before turning on Remote access ▸ "Map a port on my router
+      automatically": serve HTTPS, turn on two-factor sign-in for every admin,
+      and test from outside your network. Prefer a VPN (Tailscale, WireGuard)
+      when you don't need the server open to the internet.
 - [ ] Leave LDAP `skip_tls_verify` off in production.
 - [ ] Turn on a notification agent's "Allow private network" only for a
       self-hosted ntfy / Gotify on your LAN.

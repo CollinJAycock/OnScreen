@@ -31,9 +31,22 @@ type playbackDecisionResponse struct {
 	// remote_bitrate_limit (or user_bitrate_limit) = the client is outside
 	// the home network and the source exceeds its streaming cap, so it must
 	// transcode. Additive — clients that ignore it just see "transcode".
+	// optimized_version = the source would need a transcode, and the server
+	// chose a pre-made optimized version instead (OptimizedVersion); only
+	// ever sent to a client that declared optimized=1.
 	Reason string `json:"reason,omitempty"`
 	// MaxBitrateKbps is the cap the transcode will be held to, with Reason.
 	MaxBitrateKbps int `json:"max_bitrate_kbps,omitempty"`
+	// OptimizedVersion, with reason optimized_version and decision
+	// directPlay, is the version to play from its stream_url. file_id stays
+	// the source's.
+	OptimizedVersion *OptimizedVersionJSON `json:"optimized_version,omitempty"`
+	// SourceDecision / SourceReason are the verdict for the source file
+	// itself when an optimized version replaced it — what the client falls
+	// back to if it can't play the version (e.g. a non-default audio track,
+	// which the version doesn't carry).
+	SourceDecision string `json:"source_decision,omitempty"`
+	SourceReason   string `json:"source_reason,omitempty"`
 }
 
 // Decision handles POST /api/v1/items/{id}/playback-decision. It resolves the
@@ -164,19 +177,37 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	// clients are untouched.
 	var reason string
 	var capKbps int
-	if decision == transcode.DecisionDirectPlay || decision == transcode.DecisionDirectStream {
+	var bc streamCap
+	if decision == transcode.DecisionDirectPlay || decision == transcode.DecisionDirectStream ||
+		(caps.AcceptsOptimized && wantsOptimized(decision)) {
 		var userCaps StreamCaps
 		if h.userCaps != nil {
 			userCaps, _ = h.userCaps.GetStreamCaps(ctx, claims.UserID)
 		}
-		bc := resolveStreamCap(ctx, userCaps, h.remotePolicy, audit.ClientIP(r), file)
-		if why, ok := remoteDecisionOverride(bc, file); ok {
-			decision, reason, capKbps = transcode.DecisionTranscode, why, bc.Kbps
+		bc = resolveStreamCap(ctx, userCaps, h.remotePolicy, audit.ClientIP(r), file)
+		if decision != transcode.DecisionTranscode {
+			if why, ok := remoteDecisionOverride(bc, file); ok {
+				decision, reason, capKbps = transcode.DecisionTranscode, why, bc.Kbps
+			}
 		}
+	}
+
+	// Optimized version: a client that declared optimized=1 and would now
+	// transcode gets a pre-made version that fits its profile and its
+	// bitrate cap, played directly, instead. The source's own verdict rides
+	// along for the client's fallback.
+	var optimized *OptimizedVersionJSON
+	var sourceDecision, sourceReason string
+	if v := h.optimizedChoice(ctx, itemID, file, decision, caps, serverCaps, bc.Kbps); v != nil {
+		ov := toOptimizedVersionJSON(*v, h.tokens, claims)
+		optimized = &ov
+		sourceDecision, sourceReason = decision.String(), reason
+		decision, reason, capKbps = transcode.DecisionDirectPlay, ReasonOptimizedVersion, 0
 	}
 
 	h.logger.DebugContext(ctx, "playback decision",
 		"item_id", itemID, "file_id", file.ID, "decision", decision.String(), "reason", reason,
+		"optimized", optimized != nil,
 		"profile_header", hasProfile, "max_audio_channels", caps.MaxAudioChannels,
 		"supports_hevc", caps.SupportsHEVC, "supports_av1", caps.SupportsAV1)
 	// Echo the resolved profile for debugging (same header transcode-start sets).
@@ -189,9 +220,12 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	// client's ApiResponse<T> parser expects — using respond.JSON here (raw body)
 	// made all clients fail to parse and silently fall back to local decisions.
 	respond.Success(w, r, playbackDecisionResponse{
-		Decision:       decision.String(),
-		FileID:         file.ID.String(),
-		Reason:         reason,
-		MaxBitrateKbps: capKbps,
+		Decision:         decision.String(),
+		FileID:           file.ID.String(),
+		Reason:           reason,
+		MaxBitrateKbps:   capKbps,
+		OptimizedVersion: optimized,
+		SourceDecision:   sourceDecision,
+		SourceReason:     sourceReason,
 	})
 }

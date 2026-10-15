@@ -31,11 +31,13 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("hub", h.Hub != nil, h.Hub)
 	check("search", h.Search != nil, h.Search)
 	check("history", h.History != nil, h.History)
+	check("user_stats", h.UserStats != nil, h.UserStats)
 	check("favorites", h.Favorites != nil, h.Favorites)
 	check("collections", h.Collections != nil, h.Collections)
 	check("playlists", h.Playlists != nil, h.Playlists)
 	check("photo_albums", h.PhotoAlbums != nil, h.PhotoAlbums)
 	check("photos", h.Photos != nil, h.Photos)
+	check("photo_people", h.PhotoPeople != nil, h.PhotoPeople)
 	check("books", h.Books != nil, h.Books)
 	// These five also take a .WithLibraryAccess checker and also fail open
 	// without it, but were missing from the assertion — so the guarantee this
@@ -56,6 +58,8 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("watch_state", h.WatchState != nil, h.WatchState)
 	check("music", h.Music != nil, h.Music)
 	check("reading_progress", h.ReadingProgress != nil, h.ReadingProgress)
+	check("opds", h.OPDS != nil, h.OPDS)
+	check("user_export", h.UserExport != nil, h.UserExport)
 
 	if len(missing) > 0 {
 		sort.Strings(missing)
