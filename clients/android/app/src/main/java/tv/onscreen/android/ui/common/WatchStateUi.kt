@@ -1,5 +1,6 @@
 package tv.onscreen.android.ui.common
 
+import tv.onscreen.android.data.model.EpisodeRange
 import tv.onscreen.android.data.model.HubItem
 import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.model.UpNext
@@ -16,17 +17,21 @@ import tv.onscreen.android.data.model.WatchStateValue
 object WatchStateUi {
 
     /** "S2 · E5". A missing season drops the S half; a missing or 0 episode
-     *  number (the server's "unknown") drops the E half. */
-    fun episodeCode(season: Int?, episode: Int?): String {
+     *  number (the server's "unknown") drops the E half. A multi-episode file
+     *  (v2.6, [episodeEnd] past [episode]) reads "S1 · E1–E2". */
+    fun episodeCode(season: Int?, episode: Int?, episodeEnd: Int? = null): String {
         val parts = mutableListOf<String>()
         if (season != null) parts.add("S$season")
-        if (episode != null && episode > 0) parts.add("E$episode")
+        if (episode != null && episode > 0) {
+            val end = EpisodeRange.end(episode, episodeEnd)
+            parts.add(if (end != null) "E$episode–E$end" else "E$episode")
+        }
         return parts.joinToString(" · ")
     }
 
     /** Second line of an episode tile: "S2 · E5 — Episode title". */
     fun nextUpSubtitle(item: HubItem): String {
-        val code = episodeCode(item.season_number, item.episode_number)
+        val code = episodeCode(item.season_number, item.episode_number, item.episode_number_end)
         return if (code.isNotEmpty()) "$code — ${item.title}" else item.title
     }
 
@@ -53,7 +58,7 @@ object WatchStateUi {
      */
     fun upNextAction(u: UpNext?): UpNextAction? {
         val ep = u?.episode ?: return null
-        val code = episodeCode(ep.season_number, ep.episode_number)
+        val code = episodeCode(ep.season_number, ep.episode_number, ep.episode_number_end)
         return when (u.mode) {
             UpNextMode.Resume ->
                 UpNextAction(UpNextAction.Kind.Resume, ep.id, (ep.view_offset_ms ?: 0L).coerceAtLeast(0L), code)

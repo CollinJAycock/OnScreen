@@ -53,6 +53,38 @@ class WatchStateUiTest {
     }
 
     @Test
+    fun `a multi-episode file reads as a range on tiles and the Play button`() {
+        // v2.6: episode_number_end on hub items and up-next.
+        assertThat(WatchStateUi.episodeCode(1, 1, 2)).isEqualTo("S1 · E1–E2")
+        assertThat(WatchStateUi.episodeCode(null, 3, 4)).isEqualTo("E3–E4")
+        // An end that doesn't run past the start is a single episode.
+        assertThat(WatchStateUi.episodeCode(1, 2, 2)).isEqualTo("S1 · E2")
+        assertThat(WatchStateUi.episodeCode(1, 0, 2)).isEqualTo("S1")
+
+        val tile = HubItem(
+            id = "e1", title = "Pilot", type = "episode",
+            show_title = "The Show", season_number = 1, episode_number = 1, episode_number_end = 2,
+        )
+        assertThat(WatchStateUi.episodeTileTitles(tile)).isEqualTo("The Show" to "S1 · E1–E2 — Pilot")
+
+        val play = WatchStateUi.upNextAction(UpNext("next", ep(1, 1).copy(episode_number_end = 2)))!!
+        assertThat(play.code).isEqualTo("S1 · E1–E2")
+    }
+
+    @Test
+    fun `hub items and up-next decode episode_number_end, null where omitted`() {
+        val moshi = com.squareup.moshi.Moshi.Builder().build()
+        val hub = moshi.adapter(HubItem::class.java).fromJson(
+            """{"id":"e","title":"T","type":"episode","season_number":1,"episode_number":1,"episode_number_end":2}""",
+        )!!
+        val old = moshi.adapter(UpNextEpisode::class.java).fromJson(
+            """{"id":"e","season_number":1,"episode_number":3}""",
+        )!!
+        assertThat(hub.episode_number_end).isEqualTo(2)
+        assertThat(old.episode_number_end).isNull()
+    }
+
+    @Test
     fun `non-episode tiles or tiles without a show title keep the plain title`() {
         assertThat(WatchStateUi.episodeTileTitles(HubItem(id = "m", title = "Movie", type = "movie"))).isNull()
         assertThat(WatchStateUi.episodeTileTitles(HubItem(id = "e", title = "Orphan", type = "episode"))).isNull()
