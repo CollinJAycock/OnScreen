@@ -245,6 +245,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
                 onPlayFromStart = { id -> nav.navigateDebounced(Routes.player(id, fromStart = true)) },
                 onPlayAt = { id, ms -> nav.navigateDebounced(Routes.player(id, startMs = ms)) },
+                onPlayVersion = { id, fileId -> nav.navigateDebounced(Routes.player(id, fileId = fileId)) },
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onOpenBook = { id -> nav.navigateDebounced(Routes.book(id)) },
                 // Redirect destinations for photo / book_author /

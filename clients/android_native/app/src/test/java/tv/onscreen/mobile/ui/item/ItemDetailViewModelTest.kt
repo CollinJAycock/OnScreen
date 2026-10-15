@@ -14,6 +14,8 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.After
 import org.junit.Before
 import org.junit.Test
@@ -63,6 +65,90 @@ class ItemDetailViewModelTest {
 
     private fun chapter(id: String, index: Int) =
         ChildItem(id = id, title = "Ch-$id", type = "audiobook_chapter", index = index)
+
+    // ── Download → original or a converted copy (v2.6) ──────────────────
+
+    private fun movieWith(vararg files: tv.onscreen.mobile.data.model.ItemFile) =
+        detail("m", "movie").copy(files = files.toList())
+
+    private fun file(id: String, part: Int? = null) = tv.onscreen.mobile.data.model.ItemFile(
+        id = id, stream_url = "/media/stream/$id", container = "mkv", part_index = part,
+    )
+
+    private fun http(code: Int, body: String) = retrofit2.HttpException(
+        retrofit2.Response.error<Any>(code, body.toResponseBody("application/json".toMediaTypeOrNull())),
+    )
+
+    private fun loadedVm(d: ItemDetail): ItemDetailViewModel {
+        coEvery { repo.getItem(d.id) } returns d
+        coEvery { downloads.enqueue(any(), any(), any(), any(), any(), any(), any(), any()) } returns Unit
+        return vm().also { it.load(d.id) }
+    }
+
+    @Test
+    fun `an older server downloads the original at once, as before`() = runTest(dispatcher) {
+        val d = movieWith(file("f1"))
+        val vm = loadedVm(d)
+        coEvery { repo.downloadOptions("m", "f1") } throws http(404, """{"error":{"code":"NOT_FOUND","message":"x"}}""")
+        advanceUntilIdle()
+
+        vm.requestDownload("m", ItemVersions.of(d.files).single())
+        advanceUntilIdle()
+
+        coVerify { downloads.enqueue("f1", "m", "T-m", "movie", "mkv", null, null, null) }
+        assertThat(vm.state.value.downloadChoice).isNull()
+    }
+
+    @Test
+    fun `a server that converts asks which size, and the pick is enqueued`() = runTest(dispatcher) {
+        val d = movieWith(file("f1"))
+        val vm = loadedVm(d)
+        coEvery { repo.downloadOptions("m", "f1") } returns tv.onscreen.mobile.data.model.DownloadOptions(
+            file_id = "f1",
+            qualities = listOf(tv.onscreen.mobile.data.model.DownloadQuality(id = "720p_4mbps", label = "720p · 4 Mbps")),
+        )
+        advanceUntilIdle()
+
+        vm.requestDownload("m", ItemVersions.of(d.files).single())
+        advanceUntilIdle()
+        val choice = vm.state.value.downloadChoice!!
+        assertThat(choice.choices.map { it.quality }).containsExactly("original", "720p_4mbps").inOrder()
+
+        vm.chooseDownload(choice.choices.last())
+        advanceUntilIdle()
+
+        coVerify { downloads.enqueue("f1", "m", "T-m", "movie", "mkv", null, "720p_4mbps", "720p · 4 Mbps") }
+        assertThat(vm.state.value.downloadChoice).isNull()
+    }
+
+    @Test
+    fun `downloads turned off on the server say so and download nothing`() = runTest(dispatcher) {
+        val d = movieWith(file("f1"))
+        val vm = loadedVm(d)
+        coEvery { repo.downloadOptions(any(), any()) } throws
+            http(403, """{"error":{"code":"DOWNLOADS_DISABLED","message":"file downloads are disabled on this server"}}""")
+        advanceUntilIdle()
+
+        vm.requestDownload("m", ItemVersions.of(d.files).single())
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.downloadError).isEqualTo(tv.onscreen.mobile.data.downloads.DownloadChoices.DISABLED_MESSAGE)
+        coVerify(exactly = 0) { downloads.enqueue(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `a stacked movie is never downloaded as its first part`() = runTest(dispatcher) {
+        val d = movieWith(file("cd1", part = 1), file("cd2", part = 2))
+        val vm = loadedVm(d)
+        coEvery { repo.downloadOptions("m", "cd1") } throws http(404, "{}")
+        advanceUntilIdle()
+
+        vm.requestDownload("m", ItemVersions.of(d.files).single())
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.downloadError).isEqualTo(tv.onscreen.mobile.data.downloads.DownloadChoices.STACKED_MESSAGE)
+        coVerify(exactly = 0) { downloads.enqueue(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
 
     @Test
     fun `an album's Play waits on its tracks, the download manifest does not`() = runTest(dispatcher) {

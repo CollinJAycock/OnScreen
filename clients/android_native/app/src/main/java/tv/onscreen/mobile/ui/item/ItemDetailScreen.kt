@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -33,6 +34,7 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -54,6 +56,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -74,7 +78,10 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import tv.onscreen.mobile.R
 import tv.onscreen.mobile.data.artworkUrl
+import tv.onscreen.mobile.data.api.apiError
+import tv.onscreen.mobile.data.downloads.DownloadChoices
 import tv.onscreen.mobile.data.downloads.DownloadEntry
+import tv.onscreen.mobile.data.downloads.DownloadStatus
 import tv.onscreen.mobile.data.downloads.DownloadWorker
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.model.ItemDetail
@@ -84,6 +91,7 @@ import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.FavoritesRepository
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.playback.MusicQueue
+import tv.onscreen.mobile.ui.player.ChapterNav
 import tv.onscreen.mobile.ui.components.ErrorState
 import tv.onscreen.mobile.ui.components.LoadingState
 import tv.onscreen.mobile.ui.watch.episodeNumberLabel
@@ -290,7 +298,57 @@ class ItemDetailViewModel @Inject constructor(
         }
     }
 
-    fun startDownload(fileId: String, itemId: String) {
+    /** The version the picker is on (its file id); the page's first until
+     *  the user picks another. */
+    fun selectVersion(fileId: String) {
+        _state.value = _state.value.copy(selectedFileId = fileId)
+    }
+
+    /**
+     * Download tapped on [version]. Asks the server what it can offer
+     * (v2.6 converted downloads) and then, per [DownloadChoices.plan]:
+     * downloads the original at once (nothing smaller on offer, or an older
+     * server), asks which size to take, or says why it can't (downloads
+     * turned off; a stacked movie the server can't convert — its first file
+     * is only part 1, so the original is never offered for one).
+     */
+    fun requestDownload(itemId: String, version: ItemVersions.Version) {
+        if (_state.value.downloadPending) return
+        _state.value = _state.value.copy(downloadPending = true)
+        viewModelScope.launch {
+            val options = try {
+                DownloadChoices.Options.Offered(repo.downloadOptions(itemId, version.fileId))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (isDownloadsDisabled(e)) DownloadChoices.Options.Disabled else DownloadChoices.Options.Unavailable
+            }
+            _state.value = _state.value.copy(downloadPending = false)
+            when (val plan = DownloadChoices.plan(options, stacked = version.stacked)) {
+                DownloadChoices.Plan.Original -> startDownload(version.fileId, itemId, quality = null)
+                is DownloadChoices.Plan.Blocked -> _state.value = _state.value.copy(downloadError = plan.message)
+                is DownloadChoices.Plan.Choose -> _state.value = _state.value.copy(
+                    downloadChoice = DownloadChoiceUi(itemId, version.fileId, plan.choices),
+                )
+            }
+        }
+    }
+
+    /** The user picked [choice] in the size dialog (or dismissed it: null). */
+    fun chooseDownload(choice: DownloadChoices.Choice?) {
+        val pending = _state.value.downloadChoice ?: return
+        _state.value = _state.value.copy(downloadChoice = null)
+        if (choice == null || !choice.enabled) return
+        val quality = choice.quality.takeIf { it != DownloadChoices.ORIGINAL }
+        startDownload(pending.fileId, pending.itemId, quality, qualityLabel = choice.label.takeIf { quality != null })
+    }
+
+    private fun isDownloadsDisabled(e: Exception): Boolean {
+        val http = e as? retrofit2.HttpException ?: return false
+        return http.code() == 403 && http.apiError()?.code == "DOWNLOADS_DISABLED"
+    }
+
+    private fun startDownload(fileId: String, itemId: String, quality: String?, qualityLabel: String? = null) {
         viewModelScope.launch {
             // Catch + surface in UI state. An uncaught throw here
             // crashes the process (viewModelScope's default handler
@@ -308,6 +366,8 @@ class ItemDetailViewModel @Inject constructor(
                     itemType = detail?.type ?: "movie",
                     container = file?.container,
                     posterPath = detail?.poster_path,
+                    quality = quality,
+                    qualityLabel = qualityLabel,
                 )
             } catch (e: Exception) {
                 android.util.Log.e("ItemDetailVM", "enqueue failed", e)
@@ -384,6 +444,19 @@ data class ItemDetailUi(
      *  screen reads this to show a Toast, then calls clearDownloadError
      *  so the same message doesn't fire again on recompose. */
     val downloadError: String? = null,
+    /** The version the picker is on (a file id); null = the first. */
+    val selectedFileId: String? = null,
+    /** Download tapped: the server is being asked what it can offer. */
+    val downloadPending: Boolean = false,
+    /** The size dialog, while it is up. */
+    val downloadChoice: DownloadChoiceUi? = null,
+)
+
+/** The "Download" size dialog: [choices] for [fileId] of [itemId]. */
+data class DownloadChoiceUi(
+    val itemId: String,
+    val fileId: String,
+    val choices: List<DownloadChoices.Choice>,
 )
 
 /** UI-friendly snapshot of a single file's download state. Driven by
@@ -397,6 +470,9 @@ sealed class DownloadButtonState {
      *  worker yet. Distinct from InProgress so the user sees that
      *  the request landed even when bytes haven't started flowing. */
     data object Queued : DownloadButtonState()
+    /** The server is still making the smaller copy asked for; [progress]
+     *  0..1 of its encode. */
+    data class Converting(val progress: Float) : DownloadButtonState()
     data class InProgress(val downloadedBytes: Long, val totalBytes: Long) : DownloadButtonState() {
         val ratio: Float
             get() = if (totalBytes <= 0) 0f else (downloadedBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)
@@ -406,9 +482,10 @@ sealed class DownloadButtonState {
 
     companion object {
         fun fromEntry(e: DownloadEntry): DownloadButtonState = when (e.status) {
-            "completed" -> Completed
-            "failed" -> Failed(e.error)
-            "queued" -> Queued
+            DownloadStatus.COMPLETED -> Completed
+            DownloadStatus.FAILED -> Failed(e.error)
+            DownloadStatus.QUEUED -> Queued
+            DownloadStatus.CONVERTING -> Converting(e.convert_progress.toFloat().coerceIn(0f, 1f))
             else -> InProgress(e.downloaded_bytes, e.size_bytes)
         }
     }
@@ -417,12 +494,18 @@ sealed class DownloadButtonState {
 @Composable
 private fun DownloadButton(
     state: DownloadButtonState,
+    /** Asking the server what it can offer, after a tap. */
+    pending: Boolean,
     onDownload: () -> Unit,
     onDelete: () -> Unit,
 ) {
     when (state) {
-        DownloadButtonState.NotDownloaded -> OutlinedButton(onClick = onDownload) {
-            Icon(Icons.Default.Download, contentDescription = null)
+        DownloadButtonState.NotDownloaded -> OutlinedButton(onClick = onDownload, enabled = !pending) {
+            if (pending) {
+                CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+            } else {
+                Icon(Icons.Default.Download, contentDescription = null)
+            }
             Spacer(Modifier.width(6.dp))
             Text("Download")
         }
@@ -430,6 +513,18 @@ private fun DownloadButton(
             Icon(Icons.Default.Downloading, contentDescription = null)
             Spacer(Modifier.width(6.dp))
             Text("Queued — Cancel")
+        }
+        is DownloadButtonState.Converting -> Column {
+            OutlinedButton(onClick = onDelete) {
+                Icon(Icons.Default.Downloading, contentDescription = null)
+                Spacer(Modifier.width(6.dp))
+                Text("Preparing ${(state.progress * 100).toInt()}% — Cancel")
+            }
+            Spacer(Modifier.height(4.dp))
+            LinearProgressIndicator(
+                progress = { state.progress },
+                modifier = Modifier.width(160.dp),
+            )
         }
         is DownloadButtonState.InProgress -> Column {
             OutlinedButton(onClick = onDelete) {
@@ -470,12 +565,61 @@ private fun DownloadButton(
                 )
             }
         }
-        is DownloadButtonState.Failed -> OutlinedButton(onClick = onDownload) {
+        is DownloadButtonState.Failed -> OutlinedButton(onClick = onDownload, enabled = !pending) {
             Icon(Icons.Default.Close, contentDescription = null)
             Spacer(Modifier.width(6.dp))
             Text("Retry")
         }
     }
+}
+
+/** "Download" → which size: the original, or a smaller copy the server
+ *  converts first ("720p · 4 Mbps"). One above the user's streaming limit is
+ *  listed but can't be picked, with the reason under it. */
+@Composable
+private fun DownloadQualityDialog(
+    choices: List<DownloadChoices.Choice>,
+    onPick: (DownloadChoices.Choice) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Download") },
+        text = {
+            Column {
+                Text(
+                    "A smaller copy takes less space; the server prepares it before it downloads.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Spacer(Modifier.height(8.dp))
+                choices.forEach { c ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(enabled = c.enabled) { onPick(c) }
+                            .padding(vertical = 10.dp),
+                    ) {
+                        Text(
+                            c.label,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = if (c.enabled) MaterialTheme.colorScheme.onSurface
+                                else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                        )
+                        c.note?.let {
+                            Text(
+                                it,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 private fun formatDuration(ms: Long): String {
@@ -496,6 +640,8 @@ fun ItemDetailScreen(
     /** Play an item from a given position (an audiobook bookmark: the
      *  book or chapter it's in, and where). */
     onPlayAt: (String, Long) -> Unit,
+    /** Play a given version (file) of the item — the version picker's. */
+    onPlayVersion: (String, String) -> Unit = { id, _ -> onPlay(id) },
     onOpenItem: (String) -> Unit,
     onOpenPhoto: (String) -> Unit,
     onOpenAuthor: (String) -> Unit,
@@ -530,6 +676,14 @@ fun ItemDetailScreen(
         val msg = ui.downloadError ?: return@LaunchedEffect
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
         vm.clearDownloadError()
+    }
+    // Download → which size (original, or a smaller copy the server makes).
+    ui.downloadChoice?.let { pending ->
+        DownloadQualityDialog(
+            choices = pending.choices,
+            onPick = vm::chooseDownload,
+            onDismiss = { vm.chooseDownload(null) },
+        )
     }
     LaunchedEffect(watchUi.message) {
         val msg = watchUi.message ?: return@LaunchedEffect
@@ -608,6 +762,10 @@ fun ItemDetailScreen(
                     val discs = remember(d.type, ui.children) {
                         if (d.type == "album") albumDiscGroups(ui.children) else emptyList()
                     }
+                    // The item's versions: an edition each, a stacked movie's
+                    // parts as one (ItemVersions).
+                    val versions = remember(d.files) { ItemVersions.of(d.files) }
+                    val version = ItemVersions.pick(versions, ui.selectedFileId)
                     // Children list can run long (50-episode anime
                     // seasons, 200-track classical albums) and chapter
                     // tables likewise — render the whole page in a
@@ -640,9 +798,21 @@ fun ItemDetailScreen(
                         }
                         item(key = "header") {
                             Column(modifier = Modifier.padding(16.dp)) {
-                                Text(d.title, style = MaterialTheme.typography.headlineSmall)
-                                if (d.year != null) {
-                                    Text(d.year.toString(), style = MaterialTheme.typography.bodyMedium)
+                                DetailTitle(d, ui.serverUrl)
+                                // Year, then the studios / networks (v2.6).
+                                detailMetaLine(d.year, d.studios)?.let { line ->
+                                    Text(line, style = MaterialTheme.typography.bodyMedium)
+                                }
+                                // Editions / a stacked movie's parts (v2.6):
+                                // one chip per version when there is a choice.
+                                // Play and Download act on the one picked.
+                                if (versions.size > 1 && version != null) {
+                                    Spacer(Modifier.height(12.dp))
+                                    VersionPicker(
+                                        versions = versions,
+                                        selectedFileId = version.fileId,
+                                        onSelect = vm::selectVersion,
+                                    )
                                 }
                                 Spacer(Modifier.height(16.dp))
                                 // What Play resolves to isn't known yet: a
@@ -699,7 +869,13 @@ fun ItemDetailScreen(
                                         // to the chapter to resume.)
                                         val label = if (isBook) "Read" else leafLabel
                                         Button(onClick = {
-                                            if (isBook) onOpenBook(itemId) else onPlay(itemId)
+                                            when {
+                                                isBook -> onOpenBook(itemId)
+                                                // A version picked among several.
+                                                versions.size > 1 && version != null ->
+                                                    onPlayVersion(itemId, version.fileId)
+                                                else -> onPlay(itemId)
+                                            }
                                         }) {
                                             Icon(Icons.Default.PlayArrow, contentDescription = null)
                                             Spacer(Modifier.width(6.dp))
@@ -735,17 +911,19 @@ fun ItemDetailScreen(
                                             Text("Play")
                                         }
                                     }
-                                    // Only the first file is downloadable
-                                    // from the detail page for now —
-                                    // multi-file items (audiobooks with
-                                    // chapters) would need a per-file
-                                    // picker, scoped out for v1 of offline.
-                                    d.files.firstOrNull()?.let { file ->
+                                    // One version is downloadable from the
+                                    // detail page — the one picked, keyed by
+                                    // its file (a stacked movie's part 1).
+                                    // Multi-file items (audiobooks with
+                                    // chapters) would need a per-file picker,
+                                    // scoped out for v1 of offline.
+                                    version?.let { v ->
                                         Spacer(Modifier.width(8.dp))
                                         DownloadButton(
-                                            state = downloadStates[file.id] ?: DownloadButtonState.NotDownloaded,
-                                            onDownload = { vm.startDownload(file.id, itemId) },
-                                            onDelete = { vm.deleteDownload(file.id) },
+                                            state = downloadStates[v.fileId] ?: DownloadButtonState.NotDownloaded,
+                                            pending = ui.downloadPending,
+                                            onDownload = { vm.requestDownload(itemId, v) },
+                                            onDelete = { vm.deleteDownload(v.fileId) },
                                         )
                                     }
                                 }
@@ -827,7 +1005,22 @@ fun ItemDetailScreen(
                                     modifier = Modifier
                                         .fillMaxWidth()
                                         .padding(horizontal = 16.dp, vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
                                 ) {
+                                    // The chapter's still, when the server has
+                                    // one (v2.6 thumb_url). Decorative.
+                                    ChapterNav.thumbUrl(ui.serverUrl, c)?.let { url ->
+                                        coil.compose.AsyncImage(
+                                            model = url,
+                                            contentDescription = null,
+                                            contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                            modifier = Modifier
+                                                .width(80.dp)
+                                                .aspectRatio(16f / 9f)
+                                                .background(MaterialTheme.colorScheme.surfaceVariant),
+                                        )
+                                        Spacer(Modifier.width(12.dp))
+                                    }
                                     Text(
                                         text = "${i + 1}. ${c.title}",
                                         style = MaterialTheme.typography.bodyMedium,
@@ -934,6 +1127,68 @@ private fun AudioBadgeRow(labels: List<String>) {
                     label,
                     style = MaterialTheme.typography.labelMedium,
                     modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                )
+            }
+        }
+    }
+}
+
+/**
+ * The title: a movie's or show's clear logo when it has one (v2.6), else the
+ * text. The logo is a transparent PNG fetched at its own size; it falls back
+ * to the text if it fails to load, and reads as the title to accessibility
+ * services either way.
+ */
+@Composable
+private fun DetailTitle(d: ItemDetail, serverUrl: String) {
+    val logo = detailLogoUrl(serverUrl, d)
+    var logoFailed by remember(logo) { mutableStateOf(false) }
+    if (logo != null && !logoFailed) {
+        coil.compose.AsyncImage(
+            model = logo,
+            contentDescription = d.title,
+            contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+            alignment = Alignment.CenterStart,
+            onError = { logoFailed = true },
+            modifier = Modifier
+                .fillMaxWidth(0.75f)
+                .heightIn(max = 96.dp)
+                .semantics { heading() },
+        )
+    } else {
+        Text(
+            d.title,
+            style = MaterialTheme.typography.headlineSmall,
+            modifier = Modifier.semantics { heading() },
+        )
+    }
+}
+
+/** One chip per version (edition, or a stacked movie as one "· 2 parts"
+ *  version). FlowRow, so long edition names wrap on a narrow phone. */
+@OptIn(ExperimentalLayoutApi::class, ExperimentalMaterial3Api::class)
+@Composable
+private fun VersionPicker(
+    versions: List<ItemVersions.Version>,
+    selectedFileId: String,
+    onSelect: (String) -> Unit,
+) {
+    Column {
+        Text("Version", style = MaterialTheme.typography.labelLarge)
+        Spacer(Modifier.height(4.dp))
+        FlowRow {
+            versions.forEach { v ->
+                val selected = v.fileId == selectedFileId
+                FilterChip(
+                    selected = selected,
+                    onClick = { onSelect(v.fileId) },
+                    label = { Text(v.label) },
+                    leadingIcon = if (selected) {
+                        { Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp)) }
+                    } else {
+                        null
+                    },
+                    modifier = Modifier.padding(end = 8.dp),
                 )
             }
         }
