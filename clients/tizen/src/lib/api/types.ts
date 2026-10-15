@@ -131,6 +131,13 @@ export interface SubtitleStream {
   /** The file marks this track default: shown when the user has no
    *  subtitle preference (lib/subtitleSelect). Absent from older servers. */
   default?: boolean;
+  /** A bitmap track (PGS, VobSub, DVB, XSUB): no WebVTT, so it shows as its
+   *  OCR'd text version or burned in (lib/player/burnIn). Absent from
+   *  servers before burn-in, which can't burn. */
+  image_based?: boolean;
+  /** An image track's text version: the id of the files[].external_subtitles
+   *  entry OCR'd from it (source "ocr", source_id "stream_<index>"). */
+  text_version_id?: string;
 }
 
 export interface Chapter {

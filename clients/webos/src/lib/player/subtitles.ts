@@ -8,7 +8,11 @@
 //  - embedded tracks: /media/subtitles/{fileId}/{index}, where index is the
 //    ABSOLUTE ffprobe stream index (the server's ServeSubtitle maps
 //    `0:<index>`; not the subtitle ordinal). Image tracks (PGS, VobSub, DVB,
-//    XSUB) can't become WebVTT (the server answers 415) and aren't offered.
+//    XSUB) can't become WebVTT (the server answers 415): one with an OCR'd
+//    text version shows that, one without is burned into the picture by a
+//    transcode ($lib/player/burnIn). Servers that don't say which tracks
+//    are image-based (no image_based) can't burn: their image tracks aren't
+//    offered.
 //  - downloaded / OCR'd tracks: files[].external_subtitles, at their `url`.
 //
 // Cue times are CONTENT time (the whole file's clock), so they are compared
@@ -18,8 +22,9 @@
 // Pure (types and labels only) so the parser, the option building and the
 // timing are unit-tested.
 
-import type { ItemFile } from '../api/types';
+import type { ItemFile, SubtitleStream } from '../api/types';
 import { subtitleLabel } from '../langName';
+import { burnKey } from './burnIn';
 import { toContentMs } from './session';
 
 /** Bitmap subtitle codecs the server can't serve as WebVTT. */
@@ -35,12 +40,19 @@ export function isImageSubtitle(codec: string | null | undefined): boolean {
   return IMAGE_SUBTITLE_CODECS.has((codec ?? '').toLowerCase());
 }
 
+/** Whether a track is a bitmap one: the server's image_based where it
+ *  says, else by codec. */
+export function isImageStream(s: Pick<SubtitleStream, 'codec' | 'image_based'>): boolean {
+  return typeof s.image_based === 'boolean' ? s.image_based : isImageSubtitle(s.codec);
+}
+
 /** One row of the subtitle picker. */
 export interface SubtitleOption {
   /** Stable across item refreshes and session re-issues: 'emb:<stream
-   *  index>' or 'ext:<external id>'. The choice is kept by key, so a
-   *  re-issue (a seek, an audio switch) or a refreshed item after a
-   *  download never moves it to another track. */
+   *  index>', 'ext:<external id>' (an image track's OCR text too) or
+   *  'burn:<stream index>'. The choice is kept by key, so a re-issue (a
+   *  seek, an audio switch) or a refreshed item after a download never
+   *  moves it to another track. */
   key: string;
   label: string;
   language: string;
@@ -50,23 +62,73 @@ export interface SubtitleOption {
   isDefault: boolean;
   /** An external row (downloaded, or OCR'd from an image track). */
   downloaded: boolean;
-  /** Server path of the WebVTT (signed with api.assetUrl at fetch time). */
+  /** Server path of the WebVTT (signed with api.assetUrl at fetch time);
+   *  '' for a burn row, which has none. */
   path: string;
+  /** A burn row (an image track with no text version): the stream's
+   *  ABSOLUTE index, which the session burns into the picture. */
+  burnIndex?: number;
   /** External rows: their id, and the provider's id (the OpenSubtitles
    *  file id of a download). */
   externalId?: string;
   sourceId?: string;
 }
 
-/** The picker's rows for a file: embedded text tracks in stream order, then
- *  the external ones in the server's order. */
+/** The picker's rows for a file: embedded tracks in stream order, then the
+ *  external ones in the server's order. An image track is its OCR'd text
+ *  version when that is ready (the external row moves up to the track's
+ *  place, under the track's own label), else a "(burned in)" row; on a
+ *  server that doesn't flag image tracks it isn't offered. */
 export function buildSubtitleOptions(
   file: Pick<ItemFile, 'id' | 'subtitle_streams' | 'external_subtitles'> | null | undefined,
 ): SubtitleOption[] {
   if (!file) return [];
   const rows: SubtitleOption[] = [];
+  const externals = (file.external_subtitles ?? []).filter((e) => !!e.url);
+  // External rows shown as an image track's text version, not again below.
+  const taken = new Set<string>();
   for (const s of file.subtitle_streams ?? []) {
-    if (isImageSubtitle(s.codec)) continue;
+    if (isImageStream(s)) {
+      // An older server: no burn-in, and no telling which track is which.
+      if (typeof s.image_based !== 'boolean') continue;
+      const label = subtitleLabel({
+        language: s.language,
+        title: s.title,
+        forced: s.forced,
+        sdh: !!s.sdh,
+        downloaded: false,
+        fallback: `Track ${s.index}`,
+      });
+      const text = s.text_version_id ? externals.find((e) => e.id === s.text_version_id) : undefined;
+      if (text) {
+        taken.add(text.id);
+        rows.push({
+          key: `ext:${text.id}`,
+          label,
+          language: s.language ?? '',
+          forced: !!s.forced,
+          sdh: !!s.sdh,
+          isDefault: !!s.default,
+          downloaded: false,
+          path: text.url,
+          externalId: text.id,
+          sourceId: text.source_id ?? undefined,
+        });
+      } else {
+        rows.push({
+          key: burnKey(s.index),
+          label: `${label} (burned in)`,
+          language: s.language ?? '',
+          forced: !!s.forced,
+          sdh: !!s.sdh,
+          isDefault: !!s.default,
+          downloaded: false,
+          path: '',
+          burnIndex: s.index,
+        });
+      }
+      continue;
+    }
     rows.push({
       key: `emb:${s.index}`,
       label: subtitleLabel({
@@ -85,8 +147,8 @@ export function buildSubtitleOptions(
       path: `/media/subtitles/${file.id}/${s.index}`,
     });
   }
-  for (const e of file.external_subtitles ?? []) {
-    if (!e.url) continue;
+  for (const e of externals) {
+    if (taken.has(e.id)) continue;
     rows.push({
       key: `ext:${e.id}`,
       label: subtitleLabel({

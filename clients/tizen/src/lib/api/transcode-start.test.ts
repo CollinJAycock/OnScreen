@@ -15,5 +15,13 @@ describe('transcode.start', () => {
     const [url, body] = post.mock.calls[0] as unknown as [string, Record<string, unknown>];
     expect(url).toBe('/api/v1/items/i1/transcode');
     expect(body).toMatchObject({ file_id: 'f1', video_copy: true, supports_hevc: true, segment_container: 'ts' });
+    expect(body).not.toHaveProperty('burn_subtitle_stream_index');
+  });
+
+  it('sends a burn-in as the absolute stream index (0 included)', async () => {
+    post.mockClear();
+    await transcode.start({ itemId: 'i1', height: 0, positionMs: 0, videoCopy: false, burnSubtitleStreamIndex: 0 });
+    const [, body] = post.mock.calls[0] as unknown as [string, Record<string, unknown>];
+    expect(body).toMatchObject({ video_copy: false, burn_subtitle_stream_index: 0 });
   });
 });

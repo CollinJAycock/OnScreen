@@ -249,6 +249,10 @@ export interface TranscodeStartOpts {
    *  capability header; an explicit one says the same thing (including a
    *  runtime demotion's false) without depending on the header. */
   supportsAV1?: boolean;
+  /** Burn this image subtitle track into the picture: its ABSOLUTE stream
+   *  index (subtitle_streams[].index). Always a full re-encode, so it goes
+   *  with videoCopy false (lib/player/burnIn). Omitted = no burn. */
+  burnSubtitleStreamIndex?: number;
   /** Speed an audio-only source up on the server (a book on a TV that
    *  ignores playbackRate, see lib/player/tempoMedia). */
   audioRate?: number;
@@ -269,7 +273,10 @@ export const transcode = {
       // and video in one track run: PLAYER_ERROR_NOT_SUPPORTED_FILE on the
       // Q80B), and plays HEVC in TS. Servers before the field ignore it.
       segment_container: 'ts',
-      ...(opts.audioRate ? { audio_rate: opts.audioRate } : {})
+      ...(opts.audioRate ? { audio_rate: opts.audioRate } : {}),
+      ...(opts.burnSubtitleStreamIndex !== undefined
+        ? { burn_subtitle_stream_index: opts.burnSubtitleStreamIndex }
+        : {})
     }),
   // Server-authoritative play decision (capability profiles). Returns
   // "directPlay" | "directStream" | "transcode" (and an optimized version,
