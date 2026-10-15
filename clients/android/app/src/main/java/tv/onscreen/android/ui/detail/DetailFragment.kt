@@ -550,6 +550,10 @@ class DetailFragment : Fragment() {
             else -> R.string.episodes
         })
         header.visibility = View.VISIBLE
+        // An artist's tabs are different kinds of rows (Albums, Music Videos,
+        // Appears On, Similar Artists), so the header names the open tab
+        // rather than always reading "Albums".
+        val headerFor: (ChildItem) -> Unit = { group -> if (item.type == "artist") header.text = group.title }
         // Tabs render whenever the children fall into more than one
         // group: shows with seasons (the original case), and artists
         // with both albums and music videos (per v2.0 — music_video
@@ -615,8 +619,15 @@ class DetailFragment : Fragment() {
                 isFocusable = true
                 isFocusableInTouchMode = true
                 isSelected = season.id == currentSeasonId
+                // D-pad past either end of the strip stays on it: with nothing
+                // beside the end pill, focus search jumped up to the action
+                // buttons (RIGHT from "Similar Artists" landed on Shuffle).
+                id = View.generateViewId()
+                if (i == 0) nextFocusLeftId = id
+                if (i == seasons.size - 1) nextFocusRightId = id
                 setOnClickListener {
                     currentSeasonId = season.id
+                    headerFor(season)
                     for (ci in 0 until tabsContainer.childCount) {
                         tabsContainer.getChildAt(ci).isSelected = (ci == i)
                     }
@@ -631,6 +642,7 @@ class DetailFragment : Fragment() {
         }
 
         val activeSeason = seasons.entries.firstOrNull { it.key.id == currentSeasonId } ?: seasons.entries.first()
+        headerFor(activeSeason.key)
         episodeAdapter?.submit(activeSeason.value)
 
         // First bind of a show / season: bring the up-next episode (and its
