@@ -80,11 +80,14 @@ end function
 ' the fetch Tasks include Client.brs but not the playback Decide.brs. Mirrors
 ' Playback_SupportsHevc's roDeviceInfo probe. The server uses this for transcode
 ' target selection and the POST /items/{id}/playback-decision endpoint, which
-' the player asks before every video (for the stream limit, optimized versions
-' and quality-profile demotions — its own Playback_Decide still picks direct
-' vs. remux). The maxbitdepth/hdr fields are starting values — verify per
-' device before trusting the server's directPlay verdicts. See
-' docs/capability-profiles.md for the grammar.
+' the player asks before every video and whose verdict is final
+' (Playback_PlanFromServer) — so the header declares the same direct-play
+' limits as Playback_Decide (Decide.brs): mp4 / mov / m4v only (no mkv, no
+' ts — the Video node gets streamFormat "mp4"), aac / mp3 audio only (ac3 /
+' eac3 need passthrough on older boxes; a remux re-encodes them to aac). The
+' maxbitdepth/hdr fields are starting values — verify per device before
+' trusting the server's directPlay verdicts. See docs/capability-profiles.md
+' for the grammar.
 function Client_CapabilitiesHeader() as String
     supportsHevc = false
     info = CreateObject("roDeviceInfo")
@@ -103,8 +106,10 @@ function Client_CapabilitiesHeaderFor(supportsHevc as Boolean) as String
     video = "h264"
     if supportsHevc then video = video + ":h265"
     header = "videoDecoder=" + video
-    header = header + ",audioDecoder=aac:ac3:eac3:mp3:flac"
-    header = header + ",protocols=mp4:ts"
+    ' Playback_DirectAudioCodecs / Playback_DirectContainers (the server's
+    ' "mp4" covers mov and m4v).
+    header = header + ",audioDecoder=aac:mp3"
+    header = header + ",protocols=mp4"
     header = header + ",maxWidth=3840,maxHeight=2160"
     header = header + ",maxAudioChannels=6"
     header = header + ",maxbitdepth=10,hdr=1"
