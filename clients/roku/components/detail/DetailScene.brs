@@ -8,13 +8,27 @@
 ' POST /items/{id}/issues, each on a one-shot ApiCallTask (never HTTP on
 ' the render thread). Labels and rules live in source/util/WatchState.brs
 ' and ReportProblem.brs.
+'
+' Versions (v2.6): an item with two or more versions (files[].edition
+' names one; the parts of a multi-part movie are one version — see
+' source/playback/Versions.brs) gets a Version button; the pick rides to
+' PlayerScene as its fileId.
+'
+' Music (v2.6): an artist page adds "Similar artists" and "Appears on"
+' rows (GET /music/artists/{id}/similar, /appears-on) under its albums;
+' artist and album pages get an Instant mix button (GET /music/mix?seed=)
+' that plays the mix as PlayerScene's queue. Rows are tracked by kind in
+' m.rowKinds ("children", "similar", "appears").
 
 sub init()
     m.fanart = m.top.findNode("fanart")
     m.title = m.top.findNode("title")
+    m.logo = m.top.findNode("logo")
     m.meta = m.top.findNode("meta")
     m.summary = m.top.findNode("summary")
     m.playBtn = m.top.findNode("playBtn")
+    m.versionBtn = m.top.findNode("versionBtn")
+    m.mixBtn = m.top.findNode("mixBtn")
     m.markBtn = m.top.findNode("markBtn")
     m.reportBtn = m.top.findNode("reportBtn")
     m.childrenHeader = m.top.findNode("childrenHeader")
@@ -27,6 +41,12 @@ sub init()
 
     m.item = invalid
     m.children = []
+    ' An artist's Similar artists / Appears on rows, and the kind of each
+    ' row in the list ("children", "similar", "appears").
+    m.similar = []
+    m.appearsOn = []
+    m.rowKinds = []
+    m.mixLoading = false
 
     ' Up-next (shows / seasons): the response, whether it has landed
     ' (a failed call leaves m.upNext invalid but m.upNextLoaded true),
@@ -45,16 +65,23 @@ sub init()
     m.menuId = ""
     m.childMenu = invalid   ' { child, actions[] } for the * menu
     m.reportTarget = invalid ' { id, fileId, title }
+    ' Versions of the item (Versions_Group) and the picked one's primary
+    ' file id ("" = the first, which is what Play starts by default).
+    m.versions = []
+    m.selectedFileId = ""
     ' In-flight ApiCallTasks, held so they aren't collected mid-request.
     m.pendingCalls = []
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.childrenTask.observeField("state", "onChildrenTaskState")
     m.playBtn.observeField("buttonSelected", "onPlayPressed")
+    m.versionBtn.observeField("buttonSelected", "onVersionPressed")
+    m.mixBtn.observeField("buttonSelected", "onMixPressed")
     m.markBtn.observeField("buttonSelected", "onMarkPressed")
     m.reportBtn.observeField("buttonSelected", "onReportPressed")
     m.childrenList.observeField("rowItemSelected", "onChildSelected")
     m.childrenList.observeField("rowItemFocused", "onChildFocused")
+    m.logo.observeField("loadStatus", "onLogoLoadStatus")
     m.top.observeField("itemId", "onItemIdSet")
 
     if m.top.itemId <> invalid and m.top.itemId <> ""
@@ -86,6 +113,7 @@ sub onItemTaskState()
     m.item = item
     renderItem()
     if firstLoad and WatchState_IsContainer(item.type) then fetchUpNext()
+    if firstLoad and WatchState_Str(item.type) = "artist" then fetchArtistRows()
 end sub
 
 sub onChildrenTaskState()
@@ -164,10 +192,52 @@ sub renderItem()
     end if
 
     m.title.text = item.title
-    m.meta.text = buildMetaLine(item)
+    renderLogo(item, serverUrl)
+    m.meta.text = DetailMeta_Line(item)
     if item.summary <> invalid then m.summary.text = item.summary
 
     renderButtons()
+end sub
+
+' Movies and shows with a clear logo (logo_path, v2.6) show it in place of
+' the title text. The PNG is fetched at its original size (no ?w=, which
+' would re-encode it as a JPEG without transparency); the title stays up
+' until it has loaded and comes back if it fails.
+sub renderLogo(item as Object, serverUrl as Dynamic)
+    t = WatchState_Str(item.type)
+    path = WatchState_Str(item.logo_path)
+    if (t <> "movie" and t <> "show") or path = "" or serverUrl = invalid
+        m.logo.visible = false
+        m.title.visible = true
+        return
+    end if
+    uri = AssetArtworkOriginal(serverUrl, path, Prefs_GetAssetTokenStr())
+    if m.logo.uri <> uri then m.logo.uri = uri
+end sub
+
+sub onLogoLoadStatus()
+    status = m.logo.loadStatus
+    if status = "ready"
+        ' Shrink the box to the scaled bitmap so the logo sits flush left
+        ' (scaleToFit centres it in its box) with its bottom just above the
+        ' meta line, whatever its aspect ratio.
+        bw = m.logo.bitmapWidth
+        bh = m.logo.bitmapHeight
+        if bw > 0 and bh > 0
+            scale = 640 / bw
+            if 170 / bh < scale then scale = 170 / bh
+            w = Int(bw * scale)
+            h = Int(bh * scale)
+            m.logo.width = w
+            m.logo.height = h
+            m.logo.translation = [0, 70 - h]
+        end if
+        m.logo.visible = true
+        m.title.visible = false
+    else if status = "failed"
+        m.logo.visible = false
+        m.title.visible = true
+    end if
 end sub
 
 ' ── Action buttons ─────────────────────────────────────────────────
@@ -200,6 +270,16 @@ sub renderButtons()
     m.playBtn.text = playLabel
     m.playBtn.visible = (playLabel <> "")
 
+    ' Version picker, for a playable item with a choice of versions.
+    m.versions = []
+    if m.playBtn.visible and isLeafType(t) then m.versions = Versions_Group(item.files)
+    if m.versions.Count() > 1
+        m.versionBtn.text = "Version: " + Versions_Label(selectedVersion(), selectedVersionIndex() + 1)
+        m.versionBtn.visible = true
+    else
+        m.versionBtn.visible = false
+    end if
+
     ' Mark watched / unwatched.
     markLabel = ""
     if WatchState_IsMarkableLeaf(t)
@@ -213,6 +293,8 @@ sub renderButtons()
     end if
     m.markBtn.text = markLabel
     m.markBtn.visible = (markLabel <> "")
+
+    m.mixBtn.visible = (t = "artist" or t = "album")
 
     m.reportBtn.visible = ReportProblem_IsReportable(t)
 
@@ -240,7 +322,7 @@ sub layoutButtons()
 
     m.visibleButtons = []
     x = 0
-    for each b in [m.playBtn, m.markBtn, m.reportBtn]
+    for each b in [m.playBtn, m.versionBtn, m.mixBtn, m.markBtn, m.reportBtn]
         if b.visible
             b.translation = [x, 0]
             x = x + b.minWidth + 24
@@ -288,6 +370,78 @@ sub restoreFocus()
     end if
 end sub
 
+' ── Versions ───────────────────────────────────────────────────────
+
+' Index into m.versions of the picked version (0 when none is picked or
+' the pick is gone after a reload).
+function selectedVersionIndex() as Integer
+    if m.selectedFileId = "" then return 0
+    for i = 0 to m.versions.Count() - 1
+        if m.versions[i].primary.id = m.selectedFileId then return i
+    end for
+    return 0
+end function
+
+function selectedVersion() as Object
+    return m.versions[selectedVersionIndex()]
+end function
+
+' The picked version's file id for Play / Report, or "" for the default.
+function selectedFileId() as String
+    if m.versions.Count() < 2 then return ""
+    return selectedVersion().primary.id
+end function
+
+sub onVersionPressed()
+    if m.versions.Count() < 2 then return
+    labels = []
+    for i = 0 to m.versions.Count() - 1
+        label = Versions_Label(m.versions[i], i + 1)
+        if i = selectedVersionIndex() then label = "● " + label
+        labels.push(label)
+    end for
+    labels.push("Cancel")
+    Menu_Show("version", "Version", "", labels)
+end sub
+
+' ── Music: artist rows + instant mix ───────────────────────────────
+
+sub fetchArtistRows()
+    if m.item = invalid then return
+    startCall("GET", ApiMusicSimilarArtists(m.item.id), invalid, { action: "similar" })
+    startCall("GET", ApiMusicAppearsOn(m.item.id), invalid, { action: "appears" })
+end sub
+
+' A failed call (an older server without the endpoints) leaves its row out.
+sub onArtistRowDone(res as Dynamic, kind as String)
+    rows = []
+    if res <> invalid and res.ok = true then rows = Music_Rows(res.data)
+    if kind = "similar" then m.similar = rows else m.appearsOn = rows
+    renderChildren()
+end sub
+
+sub onMixPressed()
+    if m.item = invalid or m.mixLoading then return
+    m.mixLoading = true
+    m.mixBtn.text = "Loading mix…"
+    startCall("GET", ApiMusicMix(m.item.id), invalid, { action: "mix" })
+end sub
+
+' Play the mix as a queue: its first track now, the rest by auto-advance.
+sub onMixDone(res as Dynamic)
+    m.mixLoading = false
+    m.mixBtn.text = "Instant mix"
+    queue = []
+    if res <> invalid and res.ok = true then queue = Music_QueueFromMix(res.data)
+    if queue.Count() = 0
+        msg = "Couldn't make an instant mix. Try again later."
+        if res <> invalid and res.ok = true then msg = "There isn't enough music around this yet to make a mix."
+        Menu_ShowMessage("mixFailed", "Instant mix", msg)
+        return
+    end if
+    getMainScene().callFunc("navigateToWithParams", "PlayerScene", queue[0].id, { queue: queue })
+end sub
+
 ' ── Up next (shows / seasons) ──────────────────────────────────────
 
 sub fetchUpNext()
@@ -323,7 +477,12 @@ end sub
 ' ── Children row ───────────────────────────────────────────────────
 
 sub renderChildren()
-    if m.children.Count() = 0
+    prevKinds = m.rowKinds
+    m.rowKinds = []
+    if m.children.Count() > 0 then m.rowKinds.push("children")
+    if m.similar.Count() > 0 then m.rowKinds.push("similar")
+    if m.appearsOn.Count() > 0 then m.rowKinds.push("appears")
+    if m.rowKinds.Count() = 0
         m.childrenHeader.visible = false
         m.childrenList.visible = false
         m.optionsHint.visible = false
@@ -331,25 +490,8 @@ sub renderChildren()
         return
     end if
 
-    ' Header label depends on the parent type — same wording the
-    ' Android detail page uses so users see the same mental model
-    ' across surfaces.
     parentType = ""
     if m.item <> invalid then parentType = m.item.type
-    if parentType = "album"
-        m.childrenHeader.text = "Tracks"
-    else if parentType = "audiobook"
-        m.childrenHeader.text = "Chapters"
-    else if parentType = "artist"
-        m.childrenHeader.text = "Albums"
-    else if parentType = "book_author" or parentType = "book_series"
-        m.childrenHeader.text = "Books"
-    else if parentType = "show"
-        m.childrenHeader.text = "Seasons"
-    else
-        m.childrenHeader.text = "Episodes"
-    end if
-    m.childrenHeader.visible = true
 
     ' Episode stills are landscape; everything else is a poster.
     if parentType = "season"
@@ -360,25 +502,108 @@ sub renderChildren()
         m.childrenList.rowHeights = [300]
     end if
 
-    ' A refresh (after a watched mark) keeps the cursor where it was.
+    ' A refresh (after a watched mark, or a row arriving) keeps the cursor
+    ' on the same row and card.
+    keepKind = ""
     keepIdx = -1
-    if m.childrenList.content <> invalid and m.childrenList.rowItemFocused <> invalid and m.childrenList.rowItemFocused.Count() > 1
-        keepIdx = m.childrenList.rowItemFocused[1]
+    focused = m.childrenList.rowItemFocused
+    if m.childrenList.content <> invalid and focused <> invalid and focused.Count() > 1
+        if focused[0] >= 0 and focused[0] < prevKinds.Count()
+            keepKind = prevKinds[focused[0]]
+            keepIdx = focused[1]
+        end if
     end if
 
     serverUrl = Prefs_GetServerUrl()
-    token = Prefs_GetAccessToken()
 
     root = createObject("roSGNode", "ContentNode")
-    row = root.createChild("ContentNode")
+    for each kind in m.rowKinds
+        row = root.createChild("ContentNode")
+        row.title = rowTitle(kind)
+        if kind = "children"
+            addChildCards(row, serverUrl)
+        else if kind = "similar"
+            for each a in m.similar
+                addCard(row, a.id, Music_Str(a.title), "artist", a, "", a.poster_path, serverUrl)
+            end for
+        else if kind = "appears"
+            for each t in m.appearsOn
+                addCard(row, t.id, Music_Str(t.title), "track", t, Music_AppearanceSubtitle(t), t.album_poster_path, serverUrl)
+            end for
+        end if
+    end for
+    m.childrenList.content = root
+    m.childrenList.visible = true
+    m.childrenHeader.visible = true
+
+    headerRow = 0
+    newRow = -1
+    for i = 0 to m.rowKinds.Count() - 1
+        if m.rowKinds[i] = keepKind then newRow = i
+    end for
+    if newRow >= 0 and (keepIdx > 0 or newRow > 0)
+        rowSize = root.getChild(newRow).getChildCount()
+        if keepIdx > rowSize - 1 then keepIdx = rowSize - 1
+        if keepIdx < 0 then keepIdx = 0
+        m.childrenList.jumpToRowItem = [newRow, keepIdx]
+        headerRow = newRow
+    end if
+    m.childrenHeader.text = rowTitle(m.rowKinds[headerRow])
+
+    ' A page with no buttons (book_author / book_series) starts on the
+    ' row. Wait for the item, though: until it lands no buttons exist
+    ' yet, and the Play button should win on a show that has them.
+    if m.item <> invalid and m.visibleButtons.Count() = 0 and not Menu_IsOpen() then focusChildren()
+    jumpToUpNext()
+end sub
+
+' Header over a row. The children row's depends on the parent type — same
+' wording the Android detail page uses so users see the same mental model
+' across surfaces.
+function rowTitle(kind as String) as String
+    if kind = "similar" then return "Similar artists"
+    if kind = "appears" then return "Appears on"
+    parentType = ""
+    if m.item <> invalid then parentType = WatchState_Str(m.item.type)
+    if parentType = "album" then return "Tracks"
+    if parentType = "audiobook" then return "Chapters"
+    if parentType = "artist" then return "Albums"
+    if parentType = "book_author" or parentType = "book_series" then return "Books"
+    if parentType = "show" then return "Seasons"
+    return "Episodes"
+end function
+
+' One card: title, id, itemType (routes the OK press), watch badge /
+' subtitle (CardFields) and art.
+sub addCard(row as Object, id as String, title as String, itemType as String, data as Object, subtitle as String, artPath as Dynamic, serverUrl as Dynamic)
+    node = row.createChild("ContentNode")
+    node.title = title
+    node.id = id
+    node.addField("itemType", "string", false)
+    node.itemType = itemType
+    CardFields_Apply(node, data, subtitle)
+    if artPath <> invalid and serverUrl <> invalid
+        node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 400, Prefs_GetAssetTokenStr())
+    end if
+end sub
+
+sub addChildCards(row as Object, serverUrl as Dynamic)
+    token = Prefs_GetAccessToken()
     for each child in m.children
         node = row.createChild("ContentNode")
         ' Episodes + chapters: prefix the index for at-a-glance
         ' ordering ("1. Pilot"). Tracks and other types use the
         ' plain title — index numbers on a Pink Floyd album are
-        ' just visual noise next to the track name.
-        if child.index <> invalid and (child.type = "episode" or child.type = "audiobook_chapter")
-            node.title = child.index.ToStr() + ". " + child.title
+        ' just visual noise next to the track name. A multi-episode
+        ' file reads as its range ("1–2. Pilot").
+        nums = ""
+        if child.type = "episode"
+            nums = WatchState_EpisodeNumbers(child.index, child.index_end, "")
+        else if child.index <> invalid and child.type = "audiobook_chapter"
+            nums = child.index.ToStr()
+        end if
+        if nums <> ""
+            node.title = nums + ". " + child.title
         else
             node.title = child.title
         end if
@@ -395,18 +620,6 @@ sub renderChildren()
             node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 400, Prefs_GetAssetTokenStr())
         end if
     end for
-    m.childrenList.content = root
-    m.childrenList.visible = true
-    if keepIdx > 0
-        if keepIdx > m.children.Count() - 1 then keepIdx = m.children.Count() - 1
-        m.childrenList.jumpToRowItem = [0, keepIdx]
-    end if
-
-    ' A page with no buttons (book_author / book_series) starts on the
-    ' row. Wait for the item, though: until it lands no buttons exist
-    ' yet, and the Play button should win on a show that has them.
-    if m.item <> invalid and m.visibleButtons.Count() = 0 and not Menu_IsOpen() then focusChildren()
-    jumpToUpNext()
 end sub
 
 ' Children of the carousel were OK-pressed — fire the player for
@@ -427,7 +640,7 @@ sub onChildSelected()
     if childNode = invalid then return
     childType = ""
     if childNode.itemType <> invalid then childType = childNode.itemType
-    if childType = "season" or childType = "album" or childType = "book_series" or childType = "audiobook"
+    if childType = "season" or childType = "album" or childType = "artist" or childType = "book_series" or childType = "audiobook"
         getMainScene().callFunc("navigateToWithItem", "DetailScene", childNode.id)
     else
         getMainScene().callFunc("navigateToWithItem", "PlayerScene", childNode.id)
@@ -435,6 +648,11 @@ sub onChildSelected()
 end sub
 
 sub onChildFocused()
+    ' The header names the row in view (one row shows at a time).
+    focused = m.childrenList.rowItemFocused
+    if focused <> invalid and focused.Count() > 1 and focused[0] >= 0 and focused[0] < m.rowKinds.Count()
+        m.childrenHeader.text = rowTitle(m.rowKinds[focused[0]])
+    end if
     updateOptionsHint()
 end sub
 
@@ -445,6 +663,8 @@ end sub
 function focusedChild() as Dynamic
     focused = m.childrenList.rowItemFocused
     if focused = invalid or focused.Count() < 2 then return invalid
+    ' Only the item's own children have options.
+    if focused[0] < 0 or focused[0] >= m.rowKinds.Count() or m.rowKinds[focused[0]] <> "children" then return invalid
     idx = focused[1]
     if idx < 0 or idx >= m.children.Count() then return invalid
     return m.children[idx]
@@ -556,7 +776,14 @@ sub onPlayPressed()
         end if
         target = m.children[0].id
     end if
-    getMainScene().callFunc("navigateToWithItem", "PlayerScene", target)
+    ' A picked version applies to this item's own Play only.
+    fileId = ""
+    if target = m.item.id then fileId = selectedFileId()
+    if fileId <> ""
+        getMainScene().callFunc("navigateToWithParams", "PlayerScene", target, { fileId: fileId })
+    else
+        getMainScene().callFunc("navigateToWithItem", "PlayerScene", target)
+    end if
 end sub
 
 sub onMarkPressed()
@@ -591,6 +818,9 @@ sub onReportPressed()
     if m.item = invalid then return
     fileId = invalid
     if m.item.files <> invalid and m.item.files.Count() > 0 and m.item.files[0] <> invalid then fileId = m.item.files[0].id
+    ' The picked version is the one being reported.
+    picked = selectedFileId()
+    if picked <> "" then fileId = picked
     openReportMenu({ id: m.item.id, fileId: fileId, title: m.item.title })
 end sub
 
@@ -606,7 +836,12 @@ sub openReportMenu(target as Object)
 end sub
 
 sub onMenuChoice(menuId as String, index as Integer)
-    if menuId = "markAll"
+    if menuId = "version"
+        if index >= 0 and index < m.versions.Count()
+            m.selectedFileId = m.versions[index].primary.id
+            renderButtons()
+        end if
+    else if menuId = "markAll"
         if index = 0 then markContainer(true)
         if index = 1 then markContainer(false)
     else if menuId = "confirmUnwatchShow"
@@ -697,6 +932,10 @@ sub onApiCallDone(evt as Object)
     if ctx = invalid then return
     if ctx.action = "upnext"
         onUpNextDone(res)
+    else if ctx.action = "similar" or ctx.action = "appears"
+        onArtistRowDone(res, ctx.action)
+    else if ctx.action = "mix"
+        onMixDone(res)
     else if ctx.action = "mark"
         onMarkDone(res, ctx)
     else if ctx.action = "report"
@@ -706,34 +945,6 @@ end sub
 
 function isLeafType(t as String) as Boolean
     return t = "movie" or t = "episode" or t = "track" or t = "audiobook_chapter" or t = "podcast_episode"
-end function
-
-function buildMetaLine(item as Object) as String
-    parts = []
-    if item.year <> invalid then parts.push(item.year.ToStr())
-    if item.content_rating <> invalid and item.content_rating <> "" then parts.push(item.content_rating)
-    if item.duration_ms <> invalid and item.duration_ms > 0
-        mins = Int(item.duration_ms / 60000)
-        if mins >= 60
-            h = Int(mins / 60)
-            mm = mins mod 60
-            parts.push(h.ToStr() + "h " + mm.ToStr() + "m")
-        else
-            parts.push(mins.ToStr() + "m")
-        end if
-    end if
-    if item.rating <> invalid and item.rating > 0
-        parts.push("★ " + Str(item.rating))
-    end if
-    if item.genres <> invalid and item.genres.Count() > 0
-        parts.push(item.genres[0])
-    end if
-    out = ""
-    for i = 0 to parts.Count() - 1
-        if i > 0 then out = out + "  ·  "
-        out = out + parts[i]
-    end for
-    return out
 end function
 
 function getMainScene() as Object

@@ -88,12 +88,15 @@ npm run package
 ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
 ```
 
-**Local-only test coverage** (291 cases as of v2.5): `UrlEncodePath`,
+**Local-only test coverage** (423 cases as of v2.6): `UrlEncodePath`,
 `AssetStream`/`AssetArtwork` and API path contracts, `Json_Parse`/
 `UnwrapData`/`UnwrapList` envelope handling, string utils, the playback
 decision, trickplay VTT parsing, next-sibling order, and the v2.5 watch
 logic — `ApiResult_From` (status + error envelope), admin-stop message
-parsing, up-next labels, card badges, home rows and "Report a problem".
+parsing, up-next labels, card badges, home rows and "Report a problem" —
+plus the v2.6 additions: multi-episode ranges, version grouping, the
+server play decision plan, the too-many-streams mapping, the capability
+header, the detail meta line and the music queue.
 Anything that depends on `roUrlTransfer`, `roRegistrySection`, or
 SceneGraph nodes can only be exercised on real Roku hardware, so keep
 logic in `source/` and scenes thin.
@@ -158,6 +161,14 @@ universal anyway.
   Watch filter (no filter UI to hang it on), audiobook speed (no
   playback-rate control on the Video / Audio node), Trakt / Last.fm
   linking (done on the web).
+- **v2.6** — multi-episode files labelled as ranges ("E1–E2") with
+  auto-advance past the range; a Version picker (editions) with
+  multi-part movies played as one; the server play decision before every
+  video (too-many-streams dialog, quality-profile demotions, optimized
+  versions via `optimized=1`); clear logos and studios on the detail
+  page; Similar artists / Appears on rows and Instant mix. Not here:
+  chapter thumbnails (no chapter list on Roku) and the Playback quality
+  setting (no settings screen).
 
 ## What's not done yet
 

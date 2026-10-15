@@ -35,23 +35,48 @@ end function
 
 ' "S2 · E5". A missing season drops the S half; a missing or 0 episode
 ' number (the server's "unknown") drops the E half; both missing → "".
-function WatchState_EpisodeCode(season as Dynamic, episode as Dynamic) as String
+' episodeEnd is the last episode a multi-episode file covers (index_end /
+' episode_number_end, v2.6): "S1 · E1–E2". Ignored unless past episode.
+function WatchState_EpisodeCode(season as Dynamic, episode as Dynamic, episodeEnd = invalid as Dynamic) as String
     s = WatchState_Num(season, -1)
-    e = WatchState_Num(episode, -1)
     out = ""
     if s >= 0 then out = "S" + s.ToStr()
-    if e > 0
+    if WatchState_Num(episode, -1) > 0
         if out <> "" then out = out + " · "
-        out = out + "E" + e.ToStr()
+        out = out + "E" + WatchState_EpisodeNumbers(episode, episodeEnd, "E")
     end if
     return out
+end function
+
+' An episode's number, or its range for a multi-episode file: "5", or
+' "1–2" for an "S01E01-E02" file (index 1, index_end 2). endPrefix goes in
+' front of the last number ("E" → "1–E2"). "" when the number is missing
+' or 0; an end that isn't past the start is ignored.
+function WatchState_EpisodeNumbers(episode as Dynamic, episodeEnd as Dynamic, endPrefix as String) as String
+    e = WatchState_Num(episode, -1)
+    if e <= 0 then return ""
+    out = e.ToStr()
+    last = WatchState_Num(episodeEnd, -1)
+    if last > e then out = out + "–" + endPrefix + last.ToStr()
+    return out
+end function
+
+' The number the next episode starts after: index_end for a
+' multi-episode file, else index. -1 when the row has no number.
+function WatchState_LastEpisodeIndex(item as Dynamic) as Integer
+    if item = invalid or type(item) <> "roAssociativeArray" then return -1
+    e = WatchState_Num(item.index, -1)
+    if e < 0 then return -1
+    last = WatchState_Num(item.index_end, -1)
+    if last > e then return last
+    return e
 end function
 
 ' Second line of an episode tile: "S2 · E5 — Episode title", or just the
 ' title when the numbers are missing.
 function WatchState_NextUpSubtitle(item as Object) as String
     title = WatchState_Str(item.title)
-    code = WatchState_EpisodeCode(item.season_number, item.episode_number)
+    code = WatchState_EpisodeCode(item.season_number, item.episode_number, item.episode_number_end)
     if code = "" then return title
     if title = "" then return code
     return code + " — " + title
@@ -83,7 +108,7 @@ function WatchState_UpNextAction(u as Dynamic) as Dynamic
     epId = WatchState_Str(ep.id)
     if epId = "" then return invalid
     mode = WatchState_Str(u.mode)
-    code = WatchState_EpisodeCode(ep.season_number, ep.episode_number)
+    code = WatchState_EpisodeCode(ep.season_number, ep.episode_number, ep.episode_number_end)
     action = { kind: "", label: "", episodeId: epId, seasonId: WatchState_Str(ep.season_id) }
     if mode = "resume"
         action.kind = "resume"

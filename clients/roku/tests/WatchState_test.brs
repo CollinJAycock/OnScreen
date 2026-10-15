@@ -27,6 +27,19 @@ sub testEpisodeCode()
     runStr("code: specials season 0 kept", WatchState_EpisodeCode(0, 2), "S0 · E2")
     runStr("code: both missing", WatchState_EpisodeCode(invalid, invalid), "")
     runStr("code: non-numeric ignored", WatchState_EpisodeCode("2", 5), "E5")
+    runStr("code: multi-episode range", WatchState_EpisodeCode(1, 1, 2), "S1 · E1–E2")
+    runStr("code: range end not past start ignored", WatchState_EpisodeCode(1, 3, 3), "S1 · E3")
+    runStr("code: range end without start", WatchState_EpisodeCode(1, invalid, 2), "S1")
+
+    runStr("numbers: single", WatchState_EpisodeNumbers(5, invalid, ""), "5")
+    runStr("numbers: range", WatchState_EpisodeNumbers(1, 2, ""), "1–2")
+    runStr("numbers: range with prefix", WatchState_EpisodeNumbers(1, 3, "E"), "1–E3")
+    runStr("numbers: missing", WatchState_EpisodeNumbers(invalid, 2, ""), "")
+
+    runInt("last index: single", WatchState_LastEpisodeIndex(ParseJson("{""index"":4}")), 4)
+    runInt("last index: range", WatchState_LastEpisodeIndex(ParseJson("{""index"":1,""index_end"":2}")), 2)
+    runInt("last index: end before start", WatchState_LastEpisodeIndex(ParseJson("{""index"":5,""index_end"":2}")), 5)
+    runInt("last index: none", WatchState_LastEpisodeIndex(ParseJson("{}")), -1)
 end sub
 
 sub testHubTileText()
@@ -34,6 +47,9 @@ sub testHubTileText()
     t = WatchState_HubTileText(nextUp)
     runStr("tile: episode shows the show on top", t.title, "Lost")
     runStr("tile: episode subtitle", t.subtitle, "S2 · E5 — The Fire")
+
+    multi = ParseJson("{""id"":""e1"",""type"":""episode"",""title"":""Pilot"",""show_title"":""Lost"",""season_number"":1,""episode_number"":1,""episode_number_end"":2}")
+    runStr("tile: multi-episode subtitle", WatchState_HubTileText(multi).subtitle, "S1 · E1–E2 — Pilot")
 
     noNums = ParseJson("{""id"":""e"",""type"":""episode"",""title"":""Pilot"",""show_title"":""Lost""}")
     runStr("tile: subtitle without numbers is the title", WatchState_HubTileText(noNums).subtitle, "Pilot")
@@ -64,6 +80,9 @@ sub testUpNextAction()
     a = WatchState_UpNextAction(upNext("{""mode"":""next"",""episode"":{""id"":""e5"",""season_id"":""s3"",""season_number"":3,""episode_number"":5}}"))
     runStr("upnext: next label", a.label, "Play S3 · E5")
     runStr("upnext: next kind", a.kind, "play")
+
+    a = WatchState_UpNextAction(upNext("{""mode"":""next"",""episode"":{""id"":""e1"",""season_id"":""s1"",""season_number"":1,""episode_number"":1,""episode_number_end"":2}}"))
+    runStr("upnext: multi-episode label", a.label, "Play S1 · E1–E2")
 
     a = WatchState_UpNextAction(upNext("{""mode"":""start"",""episode"":{""id"":""e1"",""season_id"":""s1"",""season_number"":1,""episode_number"":1}}"))
     runStr("upnext: start label", a.label, "Play S1 · E1")

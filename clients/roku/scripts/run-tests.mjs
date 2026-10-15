@@ -54,6 +54,26 @@ const suites = [
     test: 'tests/PlaybackDecide_test.brs',
   },
   {
+    name: 'PlaybackPlan',
+    sources: ['source/util/Json.brs', 'source/api/ApiResult.brs', 'source/playback/PlaybackStop.brs', 'source/playback/Decide.brs'],
+    test: 'tests/PlaybackPlan_test.brs',
+  },
+  {
+    name: 'Versions',
+    sources: ['source/playback/Decide.brs', 'source/playback/Versions.brs'],
+    test: 'tests/Versions_test.brs',
+  },
+  {
+    name: 'Music',
+    sources: ['source/api/Endpoints.brs', 'source/playback/Siblings.brs', 'source/util/Music.brs'],
+    test: 'tests/Music_test.brs',
+  },
+  {
+    name: 'Capabilities',
+    sources: ['source/api/Client.brs'],
+    test: 'tests/Capabilities_test.brs',
+  },
+  {
     name: 'Trickplay',
     sources: ['source/playback/Trickplay.brs'],
     test: 'tests/Trickplay_test.brs',
@@ -87,6 +107,11 @@ const suites = [
     name: 'HubRows',
     sources: ['source/util/HubRows.brs'],
     test: 'tests/HubRows_test.brs',
+  },
+  {
+    name: 'DetailMeta',
+    sources: ['source/util/DetailMeta.brs'],
+    test: 'tests/DetailMeta_test.brs',
   },
   {
     name: 'ReportProblem',

@@ -34,6 +34,26 @@
 ' shows the admin's message (onAdminStop). A full transcode stopped by an
 ' admin is only torn down server-side (no 403 window), so it ends like
 ' any other playback error.
+'
+' Too many streams (v2.6): an account over its admin-set stream limit is
+' refused with 429 TOO_MANY_SESSIONS by the play decision, transcode start
+' and the stream routes (seen by the same probe). The server's sentence
+' goes up in a "Too many streams" dialog (onStreamLimit) — no retry, no
+' fallback.
+'
+' Versions (v2.6): m.top.fileId picks the version (Versions_Pick, default
+' the first). A multi-part movie (files[].part_index) is one version that
+' never direct-plays: its session starts from part 1's file_id and the
+' server streams every part as one movie (item.duration_ms is the whole).
+'
+' Server play decision (v2.6): before a video plays, POST
+' /items/{id}/playback-decision (onDecisionDone, Playback_PlanFromServer).
+' Playback_Decide still picks direct vs. remux; the server can refuse the
+' stream (too many streams), demote it to a transcode (the viewer's quality
+' profile, bitrate caps), or hand over an optimized version — a pre-made
+' MP4 played directly from its stream_url with its own stream_token. A
+' failed optimized version falls back once to the source's verdict.
+' Progress always reports against the item.
 
 sub init()
     m.video = m.top.findNode("video")
@@ -86,6 +106,21 @@ sub init()
     m.adminStopped = false
     m.probing = false
     m.exitDialog = invalid
+    ' Whether dismissing m.exitDialog leaves the player (every dialog but a
+    ' refused audio switch, which keeps the current stream playing).
+    m.exitDialogLeaves = true
+    ' The local Playback_Decide verdict while the server decision is in
+    ' flight, and the source's verdict to fall back to once if an
+    ' optimized version fails to play (invalid otherwise / once used).
+    m.localDecision = invalid
+    m.optimizedFallback = invalid
+    ' True when m.file is part 1 of a multi-part movie.
+    m.stacked = false
+    ' Latched once the too-many-streams message is up.
+    m.limitShown = false
+    ' The audio row that was active before a re-issue, restored when the
+    ' re-issue is refused.
+    m.audioIndexBeforeReissue = 0
     ' In-flight ApiCallTasks (progress beacons, the probe), held so they
     ' aren't collected mid-request.
     m.playerCalls = []
@@ -173,7 +208,14 @@ sub onItemTaskState()
         return
     end if
     m.item = item
-    m.file = item.files[0]
+    version = Versions_Pick(item.files, m.top.fileId)
+    if version = invalid
+        bailToHome()
+        return
+    end if
+    ' Part 1 of a multi-part movie, else the version's one file.
+    m.file = version.primary
+    m.stacked = version.files.Count() > 1
 
     ' Fire markers + children fetches in parallel — neither blocks
     ' the playback start. Markers come back as an array (often
@@ -182,7 +224,10 @@ sub onItemTaskState()
     m.markersTask.path = "/api/v1/items/" + m.top.itemId + "/markers"
     m.markersTask.control = "RUN"
 
-    if item.parent_id <> invalid and item.parent_id <> ""
+    if hasQueue()
+        ' An instant mix: the next track is the queue's, not the album's.
+        m.nextSibling = nextInQueue(m.top.queue, m.top.itemId)
+    else if item.parent_id <> invalid and item.parent_id <> ""
         m.childrenTask.path = ApiItemChildren(item.parent_id)
         m.childrenTask.control = "RUN"
     end if
@@ -202,11 +247,47 @@ sub onItemTaskState()
         return
     end if
 
+    ' Videos ask the server first (onDecisionDone): it may refuse the
+    ' stream, demote it to a transcode or offer an optimized version.
+    ' Audio plays straight away.
+    m.localDecision = decision
+    if lcaseSafe(m.file.video_codec) <> ""
+        startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
+        return
+    end if
+    startPlayback(decision, -1)
+end sub
+
+' The server's play decision landed: refuse (too many streams), play its
+' optimized version, or play the (possibly demoted) local decision. A
+' failed call plays the local decision.
+sub onDecisionDone(result as Dynamic)
+    if m.adminStopped or m.limitShown then return
+    plan = Playback_PlanFromServer(result, m.localDecision)
+    if plan.kind = "limit"
+        onStreamLimit(plan.message)
+    else if plan.kind = "optimized"
+        startOptimizedPlayback(plan)
+    else
+        startPlayback(plan.decision, -1)
+    end if
+end sub
+
+' Start decision (a Playback_Decide-shaped { mode, height, videoCopy,
+' supportsHevc }): direct play, or a remux / transcode session.
+' audioStreamIndex is the transcode's audio_stream_index (-1 = server
+' default).
+sub startPlayback(decision as Object, audioStreamIndex as Integer)
     serverUrl = Prefs_GetServerUrl()
     if serverUrl = invalid
         bailToHome()
         return
     end if
+
+    ' One part of a multi-part movie is never the movie: every path that
+    ' plays the source comes through here, so this is the one place a
+    ' stack turns a direct play into a session over all its parts.
+    if m.stacked then decision = Playback_ForStack(decision)
 
     m.playbackMode = decision.mode
     if decision.mode = "direct"
@@ -221,7 +302,7 @@ sub onItemTaskState()
     m.transcodeTask.height = decision.height
     m.transcodeTask.videoCopy = decision.videoCopy
     m.transcodeTask.supportsHevc = decision.supportsHevc
-    m.transcodeTask.audioStreamIndex = -1
+    m.transcodeTask.audioStreamIndex = audioStreamIndex
     m.transcodeTask.positionMs = 0
     m.transcodeTask.control = "RUN"
     ' Cache the inputs so the audio picker can re-issue at a new
@@ -263,6 +344,56 @@ sub startDirectPlayback(serverUrl as String)
     m.video.setFocus(true)
 end sub
 
+' Play the optimized version the server chose: an MP4 (H.264 / AAC) served
+' from its own stream_url, authenticated by its stream_token in ?token=
+' like a file stream (the purpose=asset token when an older build sent
+' none). Errors fall back once to the source's verdict (onVideoState →
+' probe → fallBackFromOptimized).
+sub startOptimizedPlayback(plan as Object)
+    serverUrl = Prefs_GetServerUrl()
+    if serverUrl = invalid
+        bailToHome()
+        return
+    end if
+    token = plan.token
+    if token = "" then token = Prefs_GetAssetTokenStr()
+    if token = invalid or token = ""
+        startPlayback(plan.fallback, -1)
+        return
+    end if
+
+    m.playbackMode = "optimized"
+    m.optimizedFallback = plan.fallback
+    ' Probed like a direct play when the Video node errors.
+    m.directStreamPath = AssetOptimizedPath(plan.url, token)
+
+    content = createObject("roSGNode", "ContentNode")
+    content.title = m.item.title
+    content.url = serverUrl + m.directStreamPath
+    content.streamFormat = "mp4"
+    if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
+        content.playStart = Int(m.item.view_offset_ms / 1000)
+    end if
+
+    m.video.content = content
+    m.video.control = "play"
+    m.video.setFocus(true)
+end sub
+
+' The optimized version didn't play (or the viewer wants an audio track it
+' doesn't carry): play the source's own verdict instead, once, from where
+' the version got to.
+sub fallBackFromOptimized(audioStreamIndex as Integer)
+    fb = m.optimizedFallback
+    if fb = invalid then return
+    m.optimizedFallback = invalid
+    posMs = Int(m.video.position * 1000)
+    if posMs > 0 then m.item.view_offset_ms = posMs
+    m.video.control = "stop"
+    m.directStreamPath = ""
+    startPlayback(fb, audioStreamIndex)
+end sub
+
 sub onTranscodeTaskState()
     if m.transcodeTask.state <> "done" then return
     if m.adminStopped
@@ -278,6 +409,19 @@ sub onTranscodeTaskState()
     if stopMsg <> invalid and stopMsg <> ""
         m.reissuing = false
         onAdminStop(stopMsg)
+        return
+    end if
+    ' Refused over the account's stream limit. A first start can't play at
+    ' all; a refused audio switch leaves the current session playing.
+    limitMsg = m.transcodeTask.limitMessage
+    if limitMsg <> invalid and limitMsg <> ""
+        if m.reissuing
+            m.reissuing = false
+            m.activeAudioIndex = m.audioIndexBeforeReissue
+            showPlayerDialog(PlaybackLimit_Title(), limitMsg, false)
+        else
+            onStreamLimit(limitMsg)
+        end if
         return
     end if
     sess = m.transcodeTask.result
@@ -328,8 +472,9 @@ end sub
 sub onVideoState()
     state = m.video.state
     ' Stopped by an admin: the message is up and the player is on its
-    ' way out — the stop's own state changes mean nothing more.
-    if m.adminStopped then return
+    ' way out — the stop's own state changes mean nothing more. Same once
+    ' the too-many-streams message is up.
+    if m.adminStopped or m.limitShown then return
     if state = "paused"
         ' Discrete pause report — pushes the resume offset to the
         ' server immediately (a paused player is exactly when another
@@ -367,7 +512,7 @@ sub onVideoState()
         ' stream. Re-request one byte of the stream URL (same token) and
         ' read the answer: 403 PLAYBACK_STOPPED → the admin's message;
         ' anything else → the usual bail (onPlayerCallDone "probe").
-        if m.playbackMode = "direct" and m.directStreamPath <> "" and not m.probing
+        if (m.playbackMode = "direct" or m.playbackMode = "optimized") and m.directStreamPath <> "" and not m.probing
             m.probing = true
             startPlayerCall("GET", m.directStreamPath, invalid, { action: "probe" }, false, { Range: "bytes=0-0" })
             return
@@ -505,8 +650,18 @@ end sub
 
 sub goToNext(target as Object)
     stopTranscodeSession()
-    getMainScene().callFunc("navigateToWithItem", "PlayerScene", target.id)
+    if hasQueue()
+        ' Carry the queue on, so the track after next is the queue's too.
+        getMainScene().callFunc("navigateToWithParams", "PlayerScene", target.id, { queue: m.top.queue })
+    else
+        getMainScene().callFunc("navigateToWithItem", "PlayerScene", target.id)
+    end if
 end sub
+
+function hasQueue() as Boolean
+    q = m.top.queue
+    return q <> invalid and type(q) = "roArray" and q.Count() > 0
+end function
 
 ' ── Progress reporting ─────────────────────────────────────────────
 
@@ -595,11 +750,21 @@ sub onPlayerCallDone(evt as Object)
     stopMsg = PlaybackStop_FromResult(t.result)
     if ctx.action = "progress"
         if stopMsg <> "" then onAdminStop(stopMsg)
+    else if ctx.action = "decision"
+        onDecisionDone(t.result)
     else if ctx.action = "probe"
         m.probing = false
-        if m.adminStopped then return
+        if m.adminStopped or m.limitShown then return
+        limitMsg = PlaybackLimit_FromResult(t.result)
         if stopMsg <> ""
             onAdminStop(stopMsg)
+        else if limitMsg <> ""
+            ' The stream route refused a direct play over the account's
+            ' stream limit.
+            onStreamLimit(limitMsg)
+        else if m.playbackMode = "optimized" and m.optimizedFallback <> invalid
+            ' The optimized version itself failed: the source's verdict.
+            fallBackFromOptimized(-1)
         else
             ' A real playback error — the pre-probe behaviour.
             stopTranscodeSession()
@@ -627,6 +792,20 @@ sub onAdminStop(message as String)
     m.video.control = "stop"
     stopTranscodeSession()
     showExitDialog("Playback stopped", message)
+end sub
+
+' The account is already playing as many streams as it may: show the
+' server's sentence in a "Too many streams" dialog; OK / Back leaves the
+' player. Never retried and never played some other way. Latched.
+sub onStreamLimit(message as String)
+    if m.adminStopped or m.limitShown then return
+    m.limitShown = true
+    m.syncTimer.control = "stop"
+    m.nextSibling = invalid
+    m.upNext.visible = false
+    m.video.control = "stop"
+    stopTranscodeSession()
+    showExitDialog(PlaybackLimit_Title(), message)
 end sub
 
 ' ── Cross-device sync ──────────────────────────────────────────────
@@ -870,13 +1049,20 @@ sub onTrackPickerSelect()
         if m.file <> invalid and m.file.audio_streams <> invalid
             picked = m.file.audio_streams[idx]
             if picked <> invalid and idx <> m.activeAudioIndex
+                m.audioIndexBeforeReissue = m.activeAudioIndex
                 m.activeAudioIndex = idx
                 ' Server-side audio_stream_index is the stream's
                 ' "index" field (the ffprobe stream index), not its
                 ' position in the array. Pass that through.
                 streamIdx = picked.index
                 if streamIdx = invalid then streamIdx = idx
-                reissueAudioTrack(streamIdx)
+                if m.playbackMode = "optimized" and m.optimizedFallback <> invalid
+                    ' The optimized version carries only the default audio
+                    ' track: switch to the source for the picked one.
+                    fallBackFromOptimized(streamIdx)
+                else
+                    reissueAudioTrack(streamIdx)
+                end if
             end if
         end if
         closeTrackPicker()
@@ -1081,11 +1267,14 @@ sub deleteTranscodeSession(sess as Object)
     })
 end sub
 
-' Best-effort stream-format guess from file extension. The Go
-' server returns the original filename in `path`; Roku's Video
-' node uses streamFormat to pick mp4 / hls / dash demuxers.
-function guessStreamFormat(path as String) as String
-    if path = invalid then return "mp4"
+' Best-effort stream-format guess from file extension. Roku's Video
+' node uses streamFormat to pick mp4 / hls / dash demuxers. Item
+' detail's files[] carry no `path`, so path is usually invalid (→ mp4,
+' which is what direct play's mp4 / mov / m4v containers need); typed
+' Dynamic because an invalid passed to an `as String` parameter is a
+' Type Mismatch that would end every direct play.
+function guessStreamFormat(path as Dynamic) as String
+    if path = invalid or (type(path) <> "String" and type(path) <> "roString") then return "mp4"
     lower = LCase(path)
     if Right(lower, 5) = ".m3u8" then return "hls"
     if Right(lower, 4) = ".mpd" then return "dash"
@@ -1107,13 +1296,21 @@ sub showUnsupportedDialog(msg as String)
 end sub
 
 ' One-button dialog that leaves the player when dismissed — the Dolby
-' Vision refusal and an admin stop. Every other failure bails silently.
+' Vision refusal, an admin stop and too many streams. Every other failure
+' bails silently.
 sub showExitDialog(title as String, msg as String)
+    showPlayerDialog(title, msg, true)
+end sub
+
+' One-button dialog; leaves the player when dismissed if leave is true,
+' else hands the keys back to the video.
+sub showPlayerDialog(title as String, msg as String, leave as Boolean)
     dlg = createObject("roSGNode", "Dialog")
     dlg.title = title
     dlg.message = msg
     dlg.buttons = ["OK"]
     m.exitDialog = dlg
+    m.exitDialogLeaves = leave
     ' OK press fires buttonSelected; Back press fires wasClosed. Either way we
     ' tear down + go Home (the handler guards against a double bail).
     dlg.observeField("buttonSelected", "onExitDialogClosed")
@@ -1126,7 +1323,11 @@ sub onExitDialogClosed()
     if m.exitDialog = invalid then return
     m.exitDialog.close = true
     m.exitDialog = invalid
-    bailToHome()
+    if m.exitDialogLeaves
+        bailToHome()
+    else
+        m.video.setFocus(true)
+    end if
 end sub
 
 function getMainScene() as Object

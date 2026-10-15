@@ -10,6 +10,9 @@ sub Main()
     runCase("progress", ApiItemProgress(id), "/api/v1/items/" + id + "/progress")
     runCase("stream path", AssetStreamPath("f-1", "tok"), "/media/stream/f-1?token=tok")
     runCase("stream url is origin + path", AssetStream("http://x", "f-1", "tok"), "http://x" + AssetStreamPath("f-1", "tok"))
+    runCase("playback decision", ApiItemPlaybackDecision(id), "/api/v1/items/" + id + "/playback-decision")
+    runCase("optimized stream path", AssetOptimizedPath("/media/optimized/v-1", "tok"), "/media/optimized/v-1?token=tok")
+    runCase("optimized stream path with a query", AssetOptimizedPath("/media/optimized/v-1?x=1", "tok"), "/media/optimized/v-1?x=1&token=tok")
 
     print "DONE: Endpoints_test"
 end sub

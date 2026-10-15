@@ -4,6 +4,7 @@ sub Main()
     testMultiDiscAlbum()
     testTrackWithoutDisc()
     testEpisodesKeepExactNext()
+    testMultiEpisodeFiles()
     testGuards()
 
     print "DONE: Siblings_test"
@@ -59,6 +60,31 @@ sub testEpisodesKeepExactNext()
         nextSiblingOf({ id: "e1", type: "episode", index: 1 }, kids), "e2")
     runIdCase("episode after a gap has no next",
         nextSiblingOf({ id: "e3", type: "episode", index: 3 }, [kids[0], kids[1]]), "")
+end sub
+
+sub testMultiEpisodeFiles()
+    ' Parsed JSON: index_end is present only on the multi-episode row.
+    json = "[{""id"":""e1-2"",""type"":""episode"",""index"":1,""index_end"":2},"
+    json = json + "{""id"":""e3"",""type"":""episode"",""index"":3},"
+    json = json + "{""id"":""e4-5"",""type"":""episode"",""index"":4,""index_end"":5},"
+    json = json + "{""id"":""e6"",""type"":""episode"",""index"":6}]"
+    kids = ParseJson(json)
+    runIdCase("multi-episode file is followed by the episode after its range",
+        nextSiblingOf(kids[0], kids), "e3")
+    runIdCase("single episode is followed by a multi-episode file",
+        nextSiblingOf(kids[1], kids), "e4-5")
+    runIdCase("second multi-episode file skips the episode it covers",
+        nextSiblingOf(kids[2], kids), "e6")
+
+    ' A stray single-episode row for a covered number is never picked.
+    withCovered = [kids[0], { id: "e2", type: "episode", index: 2 }, kids[1]]
+    runIdCase("covered episode is not looked for",
+        nextSiblingOf(kids[0], withCovered), "e3")
+    runIdCase("multi-episode file at the end has no next",
+        nextSiblingOf(kids[0], [kids[0]]), "")
+    ' An index_end that isn't past index (malformed) reads as a single episode.
+    runIdCase("index_end not past index is ignored",
+        nextSiblingOf({ id: "x", type: "episode", index: 3, index_end: 3 }, kids), "e4-5")
 end sub
 
 sub testGuards()

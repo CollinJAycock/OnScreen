@@ -28,6 +28,15 @@
 
     <interface>
         <field id="itemId" type="string" />
+        <!-- The version to play (a files[].id from the detail page's
+             version picker); "" plays the first. Naming any part of a
+             multi-part movie plays the whole movie from part 1. Set
+             before itemId. -->
+        <field id="fileId" type="string" />
+        <!-- A play queue (an instant mix): [{ id, title, type }] in play
+             order, itemId among them. When set, auto-advance follows the
+             queue instead of the item's album. -->
+        <field id="queue" type="array" />
     </interface>
 
     <script type="text/brightscript" uri="PlayerScene.brs" />
@@ -38,6 +47,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Decide.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Siblings.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Versions.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
 
     <children>

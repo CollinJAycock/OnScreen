@@ -75,6 +75,14 @@ function ApiItemTrickplay(id as String) as String
     return "/api/v1/items/" + id + "/trickplay"
 end function
 
+' POST { file_id } → { decision, file_id, reason?, optimized_version?,
+' source_decision? } — the server's play verdict for this client's
+' X-Client-Capabilities. 429 TOO_MANY_SESSIONS when the account is over its
+' stream limit. See Playback_PlanFromServer.
+function ApiItemPlaybackDecision(id as String) as String
+    return "/api/v1/items/" + id + "/playback-decision"
+end function
+
 ' Asset routes (auth via ?token= query param via the asset-route
 ' middleware on the Go server; the Roku Video / Poster nodes can't
 ' attach an Authorization header to their HTTP fetches). The server
@@ -97,6 +105,15 @@ end function
 ' takes (it prepends the configured server itself).
 function AssetStreamPath(fileId as String, token as String) as String
     return "/media/stream/" + fileId + "?token=" + token
+end function
+
+' An optimized version's stream (optimized_version.stream_url, a path like
+' /media/optimized/{id}) with its token as ?token= — stream_token, bound to
+' the version, or the purpose=asset token when an older build sent none.
+function AssetOptimizedPath(streamUrl as String, token as String) as String
+    sep = "?"
+    if Instr(1, streamUrl, "?") > 0 then sep = "&"
+    return streamUrl + sep + "token=" + token
 end function
 
 ' Pairing endpoints. PairCode mints a PIN + device_token for the
@@ -201,6 +218,25 @@ function ApiPlaybackTransfer() as String
     return "/api/v1/playback/transfer"
 end function
 
+' ── Music discovery (v2.6) ──────────────────────────────────────────────
+' Similar artists: [{ id, title, poster_path?, score, shared_genres,
+' co_listened }], best first. Appears on: tracks on other artists' albums
+' the artist is credited on, [{ id, title, album_title, album_poster_path?,
+' album_artist_title?, … }]. Instant mix: ~50 tracks to play in order,
+' [{ id, title, album_title, artist_title?, file_id, … }], seeded by a
+' track, album or artist id. All list envelopes; see Music.brs.
+function ApiMusicSimilarArtists(artistId as String) as String
+    return "/api/v1/music/artists/" + artistId + "/similar?limit=20"
+end function
+
+function ApiMusicAppearsOn(artistId as String) as String
+    return "/api/v1/music/artists/" + artistId + "/appears-on?limit=50"
+end function
+
+function ApiMusicMix(seedId as String) as String
+    return "/api/v1/music/mix?seed=" + seedId
+end function
+
 ' ── User language preferences ───────────────────────────────────────────
 ' GET returns { preferred_audio_lang, preferred_subtitle_lang,
 ' forced_subtitles_only, … }. PlayerScene reads preferred_subtitle_lang +
@@ -212,6 +248,13 @@ end function
 
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
     return serverUrl + "/artwork/" + UrlEncodePath(path) + "?w=" + width.ToStr() + "&token=" + accessToken
+end function
+
+' Artwork at its original size and format — for clear logos (logo_path,
+' v2.6), which are transparent PNGs: ?w= / ?h= re-encode as JPEG and lose
+' the transparency, so no resize params.
+function AssetArtworkOriginal(serverUrl as String, path as String, accessToken as String) as String
+    return serverUrl + "/artwork/" + UrlEncodePath(path) + "?token=" + accessToken
 end function
 
 ' Encode a slash-preserving path segment. Roku has no built-in

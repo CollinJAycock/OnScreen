@@ -12,15 +12,19 @@
 ' disc 1.
 '
 ' Other types (episodes, chapters, podcast episodes) take the exact next
-' number, as they always have.
+' number, as they always have. A multi-episode file ("S01E01-E02": index 1,
+' index_end 2, v2.6) is followed by the episode after the last one it
+' covers — E3, never the E2 it already played.
 function nextSiblingOf(item as Object, kids as Object) as Dynamic
     if item = invalid or kids = invalid or item.index = invalid then return invalid
 
     if item.type <> "track"
+        after = item.index
+        if item.index_end <> invalid and item.index_end > after then after = item.index_end
         for each k in kids
             ' k <> invalid guards a malformed children row; k.index is
             ' checked before the comparison for the same reason.
-            if k <> invalid and k.type = item.type and k.index <> invalid and k.index = item.index + 1
+            if k <> invalid and k.type = item.type and k.index <> invalid and k.index = after + 1
                 return k
             end if
         end for
@@ -49,6 +53,20 @@ function nextSiblingOf(item as Object, kids as Object) as Dynamic
         end if
     end for
     return best
+end function
+
+' The entry after currentId in a play queue (an instant mix: [{ id, title,
+' type }]), or invalid at the end / when currentId isn't queued.
+function nextInQueue(queue as Dynamic, currentId as String) as Dynamic
+    if queue = invalid or type(queue) <> "roArray" then return invalid
+    found = false
+    for each q in queue
+        if q <> invalid and type(q) = "roAssociativeArray" and q.id <> invalid
+            if found then return q
+            if q.id = currentId then found = true
+        end if
+    end for
+    return invalid
 end function
 
 function siblingDisc(row as Object) as Integer
