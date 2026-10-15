@@ -54,11 +54,19 @@ end sub
 ' are launch / bail targets, not destinations you Back into, so the
 ' user exits the channel from there.
 sub navigateToWithItem(name as String, itemId as String)
+    navigateToWithParams(name, itemId, {})
+end sub
+
+' navigateToWithItem plus more interface fields for the new scene, set
+' before mount like itemId: params is { field: value } (e.g. PlayerScene's
+' fileId for a chosen version). Fields the scene doesn't declare are
+' skipped. Kept on the frame, so Back re-mounts the scene the same way.
+sub navigateToWithParams(name as String, itemId as String, params as Object)
     if isRootScene(name)
         m.navStack = []
     end if
-    m.navStack.push({ name: name, itemId: itemId })
-    mountScene(name, itemId)
+    m.navStack.push({ name: name, itemId: itemId, params: params })
+    mountScene(name, itemId, params)
 end sub
 
 ' True for the scenes that form the bottom of the back-stack. Pressing
@@ -69,9 +77,10 @@ function isRootScene(name as String) as Boolean
 end function
 
 ' Swap the active child for a fresh instance of `name` with `itemId`
-' pre-set. Does NOT touch the back-stack — both forward navigation
-' and Back-pop funnel through here for the actual mount.
-sub mountScene(name as String, itemId as String)
+' (and any params fields) pre-set. Does NOT touch the back-stack — both
+' forward navigation and Back-pop funnel through here for the actual
+' mount.
+sub mountScene(name as String, itemId as String, params as Dynamic)
     if m.currentChild <> invalid
         m.content.removeChild(m.currentChild)
     end if
@@ -81,6 +90,11 @@ sub mountScene(name as String, itemId as String)
         ' than mounting an invalid pointer.
         print "MainScene: unknown child scene "; name
         return
+    end if
+    if params <> invalid and type(params) = "roAssociativeArray"
+        for each field in params
+            if child.hasField(field) then child.setField(field, params[field])
+        end for
     end if
     if itemId <> "" and child.hasField("itemId")
         child.itemId = itemId
@@ -126,6 +140,6 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
     ' Drop the current frame and re-mount the one beneath it.
     m.navStack.pop()
     parent = m.navStack.peek()
-    mountScene(parent.name, parent.itemId)
+    mountScene(parent.name, parent.itemId, parent.params)
     return true
 end function

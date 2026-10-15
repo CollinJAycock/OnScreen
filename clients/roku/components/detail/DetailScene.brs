@@ -8,6 +8,11 @@
 ' POST /items/{id}/issues, each on a one-shot ApiCallTask (never HTTP on
 ' the render thread). Labels and rules live in source/util/WatchState.brs
 ' and ReportProblem.brs.
+'
+' Versions (v2.6): an item with two or more versions (files[].edition
+' names one; the parts of a multi-part movie are one version — see
+' source/playback/Versions.brs) gets a Version button; the pick rides to
+' PlayerScene as its fileId.
 
 sub init()
     m.fanart = m.top.findNode("fanart")
@@ -16,6 +21,7 @@ sub init()
     m.meta = m.top.findNode("meta")
     m.summary = m.top.findNode("summary")
     m.playBtn = m.top.findNode("playBtn")
+    m.versionBtn = m.top.findNode("versionBtn")
     m.markBtn = m.top.findNode("markBtn")
     m.reportBtn = m.top.findNode("reportBtn")
     m.childrenHeader = m.top.findNode("childrenHeader")
@@ -46,12 +52,17 @@ sub init()
     m.menuId = ""
     m.childMenu = invalid   ' { child, actions[] } for the * menu
     m.reportTarget = invalid ' { id, fileId, title }
+    ' Versions of the item (Versions_Group) and the picked one's primary
+    ' file id ("" = the first, which is what Play starts by default).
+    m.versions = []
+    m.selectedFileId = ""
     ' In-flight ApiCallTasks, held so they aren't collected mid-request.
     m.pendingCalls = []
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.childrenTask.observeField("state", "onChildrenTaskState")
     m.playBtn.observeField("buttonSelected", "onPlayPressed")
+    m.versionBtn.observeField("buttonSelected", "onVersionPressed")
     m.markBtn.observeField("buttonSelected", "onMarkPressed")
     m.reportBtn.observeField("buttonSelected", "onReportPressed")
     m.childrenList.observeField("rowItemSelected", "onChildSelected")
@@ -244,6 +255,16 @@ sub renderButtons()
     m.playBtn.text = playLabel
     m.playBtn.visible = (playLabel <> "")
 
+    ' Version picker, for a playable item with a choice of versions.
+    m.versions = []
+    if m.playBtn.visible and isLeafType(t) then m.versions = Versions_Group(item.files)
+    if m.versions.Count() > 1
+        m.versionBtn.text = "Version: " + Versions_Label(selectedVersion(), selectedVersionIndex() + 1)
+        m.versionBtn.visible = true
+    else
+        m.versionBtn.visible = false
+    end if
+
     ' Mark watched / unwatched.
     markLabel = ""
     if WatchState_IsMarkableLeaf(t)
@@ -284,7 +305,7 @@ sub layoutButtons()
 
     m.visibleButtons = []
     x = 0
-    for each b in [m.playBtn, m.markBtn, m.reportBtn]
+    for each b in [m.playBtn, m.versionBtn, m.markBtn, m.reportBtn]
         if b.visible
             b.translation = [x, 0]
             x = x + b.minWidth + 24
@@ -330,6 +351,40 @@ sub restoreFocus()
     else if m.childrenList.visible
         focusChildren()
     end if
+end sub
+
+' ── Versions ───────────────────────────────────────────────────────
+
+' Index into m.versions of the picked version (0 when none is picked or
+' the pick is gone after a reload).
+function selectedVersionIndex() as Integer
+    if m.selectedFileId = "" then return 0
+    for i = 0 to m.versions.Count() - 1
+        if m.versions[i].primary.id = m.selectedFileId then return i
+    end for
+    return 0
+end function
+
+function selectedVersion() as Object
+    return m.versions[selectedVersionIndex()]
+end function
+
+' The picked version's file id for Play / Report, or "" for the default.
+function selectedFileId() as String
+    if m.versions.Count() < 2 then return ""
+    return selectedVersion().primary.id
+end function
+
+sub onVersionPressed()
+    if m.versions.Count() < 2 then return
+    labels = []
+    for i = 0 to m.versions.Count() - 1
+        label = Versions_Label(m.versions[i], i + 1)
+        if i = selectedVersionIndex() then label = "● " + label
+        labels.push(label)
+    end for
+    labels.push("Cancel")
+    Menu_Show("version", "Version", "", labels)
 end sub
 
 ' ── Up next (shows / seasons) ──────────────────────────────────────
@@ -607,7 +662,14 @@ sub onPlayPressed()
         end if
         target = m.children[0].id
     end if
-    getMainScene().callFunc("navigateToWithItem", "PlayerScene", target)
+    ' A picked version applies to this item's own Play only.
+    fileId = ""
+    if target = m.item.id then fileId = selectedFileId()
+    if fileId <> ""
+        getMainScene().callFunc("navigateToWithParams", "PlayerScene", target, { fileId: fileId })
+    else
+        getMainScene().callFunc("navigateToWithItem", "PlayerScene", target)
+    end if
 end sub
 
 sub onMarkPressed()
@@ -642,6 +704,9 @@ sub onReportPressed()
     if m.item = invalid then return
     fileId = invalid
     if m.item.files <> invalid and m.item.files.Count() > 0 and m.item.files[0] <> invalid then fileId = m.item.files[0].id
+    ' The picked version is the one being reported.
+    picked = selectedFileId()
+    if picked <> "" then fileId = picked
     openReportMenu({ id: m.item.id, fileId: fileId, title: m.item.title })
 end sub
 
@@ -657,7 +722,12 @@ sub openReportMenu(target as Object)
 end sub
 
 sub onMenuChoice(menuId as String, index as Integer)
-    if menuId = "markAll"
+    if menuId = "version"
+        if index >= 0 and index < m.versions.Count()
+            m.selectedFileId = m.versions[index].primary.id
+            renderButtons()
+        end if
+    else if menuId = "markAll"
         if index = 0 then markContainer(true)
         if index = 1 then markContainer(false)
     else if menuId = "confirmUnwatchShow"

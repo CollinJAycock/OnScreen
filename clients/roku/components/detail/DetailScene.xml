@@ -16,6 +16,9 @@
           Play       "Resume 12m" on a part-watched leaf; on a show or
                      season it comes from GET /items/{id}/up-next:
                      "Resume S3 · E4" / "Play S3 · E5" / "Watch again"
+          Version    "Version: Director's Cut" when the item has two or
+                     more versions (editions, a multi-part movie counts
+                     as one); OK picks the one Play starts
           Mark       "Mark watched" / "Mark unwatched" (movies,
                      episodes); "Mark all…" on shows and seasons
                      (confirmation before unwatching a whole show)
@@ -40,6 +43,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/DetailMeta.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Versions.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/ReportProblem.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
@@ -101,6 +105,13 @@
                         minWidth="400"
                         maxWidth="400"
                         focusBitmapBlendColor="0x7c6af7ff" />
+                <Button id="versionBtn"
+                        text=""
+                        showFocusFootprint="true"
+                        minWidth="480"
+                        maxWidth="480"
+                        focusBitmapBlendColor="0x7c6af7ff"
+                        visible="false" />
                 <Button id="markBtn"
                         text=""
                         showFocusFootprint="true"

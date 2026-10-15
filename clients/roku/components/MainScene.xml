@@ -21,6 +21,7 @@
              functions declared here. -->
         <function name="navigateTo" />
         <function name="navigateToWithItem" />
+        <function name="navigateToWithParams" />
         <function name="runDetachedCall" />
     </interface>
 

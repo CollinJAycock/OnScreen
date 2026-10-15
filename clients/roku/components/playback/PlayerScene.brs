@@ -41,6 +41,11 @@
 ' goes up in a "Too many streams" dialog (onStreamLimit) — no retry, no
 ' fallback.
 '
+' Versions (v2.6): m.top.fileId picks the version (Versions_Pick, default
+' the first). A multi-part movie (files[].part_index) is one version that
+' never direct-plays: its session starts from part 1's file_id and the
+' server streams every part as one movie (item.duration_ms is the whole).
+'
 ' Server play decision (v2.6): before a video plays, POST
 ' /items/{id}/playback-decision (onDecisionDone, Playback_PlanFromServer).
 ' Playback_Decide still picks direct vs. remux; the server can refuse the
@@ -109,6 +114,8 @@ sub init()
     ' optimized version fails to play (invalid otherwise / once used).
     m.localDecision = invalid
     m.optimizedFallback = invalid
+    ' True when m.file is part 1 of a multi-part movie.
+    m.stacked = false
     ' Latched once the too-many-streams message is up.
     m.limitShown = false
     ' The audio row that was active before a re-issue, restored when the
@@ -201,7 +208,14 @@ sub onItemTaskState()
         return
     end if
     m.item = item
-    m.file = item.files[0]
+    version = Versions_Pick(item.files, m.top.fileId)
+    if version = invalid
+        bailToHome()
+        return
+    end if
+    ' Part 1 of a multi-part movie, else the version's one file.
+    m.file = version.primary
+    m.stacked = version.files.Count() > 1
 
     ' Fire markers + children fetches in parallel — neither blocks
     ' the playback start. Markers come back as an array (often
@@ -266,6 +280,11 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
         bailToHome()
         return
     end if
+
+    ' One part of a multi-part movie is never the movie: every path that
+    ' plays the source comes through here, so this is the one place a
+    ' stack turns a direct play into a session over all its parts.
+    if m.stacked then decision = Playback_ForStack(decision)
 
     m.playbackMode = decision.mode
     if decision.mode = "direct"

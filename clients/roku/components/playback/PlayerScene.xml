@@ -28,6 +28,11 @@
 
     <interface>
         <field id="itemId" type="string" />
+        <!-- The version to play (a files[].id from the detail page's
+             version picker); "" plays the first. Naming any part of a
+             multi-part movie plays the whole movie from part 1. Set
+             before itemId. -->
+        <field id="fileId" type="string" />
     </interface>
 
     <script type="text/brightscript" uri="PlayerScene.brs" />
@@ -38,6 +43,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Decide.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Siblings.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Versions.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
 
     <children>

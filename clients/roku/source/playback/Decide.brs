@@ -130,6 +130,21 @@ function Playback_Decide(file as Object, supportsHevc as Boolean) as Object
     return out
 end function
 
+' A multi-part movie (cd1 + cd2, files[].part_index — Versions_StackOf)
+' never direct-plays: one file is one part. A session started with part 1's
+' file_id streams every part as one movie, so a direct verdict becomes a
+' remux (the parts' video is copied); remux and transcode stand. Mirrors
+' transcode.ForStack on the server.
+function Playback_ForStack(decision as Object) as Object
+    if decision.mode <> "direct" then return decision
+    return {
+        mode: "remux",
+        height: decision.height,
+        videoCopy: true,
+        supportsHevc: decision.supportsHevc
+    }
+end function
+
 ' ── Server play decision (v2.6) ─────────────────────────────────────────
 ' Before a video plays, PlayerScene asks POST /items/{id}/playback-decision
 ' { file_id } and turns the answer (an ApiResult_From result) into a plan
