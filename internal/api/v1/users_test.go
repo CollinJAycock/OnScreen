@@ -26,6 +26,9 @@ type mockUserService struct {
 	setPINErr   error
 	clearPINErr error
 
+	changePasswordErr    error
+	changePasswordCalled bool
+
 	switchableUsers []SwitchableUser
 	switchableErr   error
 
@@ -39,6 +42,10 @@ func (m *mockUserService) SetPIN(_ context.Context, _ uuid.UUID, _, _ string) er
 }
 func (m *mockUserService) ClearPIN(_ context.Context, _ uuid.UUID, _ string) error {
 	return m.clearPINErr
+}
+func (m *mockUserService) ChangePassword(_ context.Context, _ uuid.UUID, _, _ string) error {
+	m.changePasswordCalled = true
+	return m.changePasswordErr
 }
 func (m *mockUserService) ListSwitchable(_ context.Context, _ uuid.UUID) ([]SwitchableUser, error) {
 	if m.switchableErr != nil {
@@ -100,6 +107,12 @@ type mockUserDB struct {
 
 	updatePasswordErr error
 
+	// Session revocation bookkeeping (ChangePassword).
+	epochBumps         int
+	allSessionsDeleted int
+	otherSessions      int64     // rows DeleteOtherSessionsForUser reports
+	keptSessionID      uuid.UUID // the session DeleteOtherSessionsForUser spared
+
 	lastInheritParams *gen.SetProfileInheritLibraryAccessParams
 	inheritRows       int64
 	inheritErr        error
@@ -122,8 +135,18 @@ func (m *mockUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) {
 func (m *mockUserDB) DeleteUser(_ context.Context, _ uuid.UUID) error {
 	return m.deleteUserErr
 }
-func (m *mockUserDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error      { return nil }
-func (m *mockUserDB) DeleteSessionsForUser(_ context.Context, _ uuid.UUID) error { return nil }
+func (m *mockUserDB) BumpSessionEpoch(_ context.Context, _ uuid.UUID) error {
+	m.epochBumps++
+	return nil
+}
+func (m *mockUserDB) DeleteSessionsForUser(_ context.Context, _ uuid.UUID) error {
+	m.allSessionsDeleted++
+	return nil
+}
+func (m *mockUserDB) DeleteOtherSessionsForUser(_ context.Context, arg gen.DeleteOtherSessionsForUserParams) (int64, error) {
+	m.keptSessionID = arg.ID
+	return m.otherSessions, nil
+}
 
 func (m *mockUserDB) SetUserAdmin(_ context.Context, _ gen.SetUserAdminParams) error {
 	return m.setAdminErr
@@ -290,6 +313,134 @@ func TestUser_SetPIN_InvalidBody(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want %d", rec.Code, http.StatusBadRequest)
+	}
+}
+
+// ── ChangePassword ───────────────────────────────────────────────────────────
+
+func changePasswordRequest(claims *auth.Claims, body string) *http.Request {
+	req := httptest.NewRequest("PUT", "/api/v1/users/me/password", strings.NewReader(body))
+	if claims != nil {
+		req = req.WithContext(middleware.WithClaims(req.Context(), claims))
+	}
+	return req
+}
+
+const goodPasswordChange = `{"current_password":"old-password","new_password":"new-password-1"}`
+
+func TestUser_ChangePassword_EndsOtherSignInsKeepsThisOne(t *testing.T) {
+	db := &mockUserDB{otherSessions: 3}
+	h := NewUserHandler(&mockUserService{}).WithDB(db)
+	sid := uuid.New()
+
+	rec := httptest.NewRecorder()
+	h.ChangePassword(rec, changePasswordRequest(&auth.Claims{UserID: uuid.New(), SessionID: sid}, goodPasswordChange))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200 (%s)", rec.Code, rec.Body.String())
+	}
+	if db.keptSessionID != sid {
+		t.Errorf("kept session %v, want the caller's %v", db.keptSessionID, sid)
+	}
+	if db.allSessionsDeleted != 0 {
+		t.Error("deleted every session, including the caller's")
+	}
+	if db.epochBumps != 1 {
+		t.Errorf("epoch bumps: got %d, want 1 (old access tokens must stop working)", db.epochBumps)
+	}
+	var resp struct {
+		Data struct {
+			Revoked   int64 `json:"other_sessions_revoked"`
+			SignedOut bool  `json:"signed_out"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatal(err)
+	}
+	if resp.Data.Revoked != 3 || resp.Data.SignedOut {
+		t.Errorf("response: got %+v, want 3 revoked, not signed out", resp.Data)
+	}
+}
+
+func TestUser_ChangePassword_NoSessionIDSignsOutEverywhere(t *testing.T) {
+	// A token from before sign-ins carried a session id can't be told apart
+	// from the others, so every session ends and the cookies are cleared.
+	db := &mockUserDB{}
+	h := NewUserHandler(&mockUserService{}).WithDB(db)
+
+	rec := httptest.NewRecorder()
+	h.ChangePassword(rec, changePasswordRequest(&auth.Claims{UserID: uuid.New()}, goodPasswordChange))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want 200", rec.Code)
+	}
+	if db.allSessionsDeleted != 1 || db.epochBumps != 1 {
+		t.Errorf("got %d full deletes / %d bumps, want 1 / 1", db.allSessionsDeleted, db.epochBumps)
+	}
+	if !strings.Contains(rec.Body.String(), `"signed_out":true`) {
+		t.Errorf("body %s should say signed_out", rec.Body.String())
+	}
+}
+
+func TestUser_ChangePassword_Refusals(t *testing.T) {
+	user := &auth.Claims{UserID: uuid.New(), SessionID: uuid.New()}
+	cases := []struct {
+		name     string
+		claims   *auth.Claims
+		body     string
+		svcErr   error
+		wantCode int
+		wantErr  string
+	}{
+		{"no caller", nil, goodPasswordChange, nil, http.StatusUnauthorized, ""},
+		{"PIN-switched session", &auth.Claims{UserID: uuid.New(), Switched: true}, goodPasswordChange, nil, http.StatusForbidden, "PIN_SESSION_FORBIDDEN"},
+		{"bad body", user, "nope", nil, http.StatusBadRequest, ""},
+		{"no current password", user, `{"new_password":"new-password-1"}`, nil, http.StatusBadRequest, ""},
+		{"new password too short", user, `{"current_password":"old-password","new_password":"x"}`, nil, http.StatusBadRequest, ""},
+		{"unchanged password", user, `{"current_password":"same-password","new_password":"same-password"}`, nil, http.StatusBadRequest, ""},
+		{"wrong current password", user, goodPasswordChange, ErrInvalidCredentials, http.StatusForbidden, "INVALID_CREDENTIALS"},
+		{"no local password", user, goodPasswordChange, ErrNoLocalPassword, http.StatusConflict, "NO_LOCAL_PASSWORD"},
+		{"service failure", user, goodPasswordChange, errors.New("db down"), http.StatusInternalServerError, ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := &mockUserDB{}
+			h := NewUserHandler(&mockUserService{changePasswordErr: tc.svcErr}).WithDB(db)
+			rec := httptest.NewRecorder()
+			h.ChangePassword(rec, changePasswordRequest(tc.claims, tc.body))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status: got %d, want %d (%s)", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if code, _ := errorCode(t, rec); tc.wantErr != "" && code != tc.wantErr {
+				t.Errorf("code: got %q, want %q", code, tc.wantErr)
+			}
+			if db.epochBumps != 0 || db.allSessionsDeleted != 0 {
+				t.Error("sessions revoked on a refused change")
+			}
+		})
+	}
+}
+
+func TestUser_ChangePassword_WrongPasswordCountsTowardLockout(t *testing.T) {
+	th := &fakeThrottle{allowed: true}
+	svc := &mockUserService{changePasswordErr: ErrInvalidCredentials}
+	h := NewUserHandler(svc).WithDB(&mockUserDB{}).WithPINThrottle(th)
+	rec := httptest.NewRecorder()
+	h.ChangePassword(rec, changePasswordRequest(&auth.Claims{UserID: uuid.New(), SessionID: uuid.New()}, goodPasswordChange))
+	if rec.Code != http.StatusForbidden || th.incrCalls != 1 {
+		t.Fatalf("got %d with %d failures recorded, want 403 and 1", rec.Code, th.incrCalls)
+	}
+
+	// Locked out: refused before the password is even checked.
+	th.allowed = false
+	svc.changePasswordCalled = false
+	rec = httptest.NewRecorder()
+	h.ChangePassword(rec, changePasswordRequest(&auth.Claims{UserID: uuid.New(), SessionID: uuid.New()}, goodPasswordChange))
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("status: got %d, want 429", rec.Code)
+	}
+	if svc.changePasswordCalled {
+		t.Error("password checked while locked out")
 	}
 }
 

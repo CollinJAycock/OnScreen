@@ -1671,6 +1671,13 @@ export const userApi = {
     api.put<void>('/users/me/pin', { pin, password }),
   clearPin: (password: string) =>
     api.del('/users/me/pin', { password }),
+  /** Change the signed-in user's own password. Ends their other sign-ins;
+   *  signed_out is true when this one ended too (a pre-session-id token). */
+  changePassword: (currentPassword: string, newPassword: string) =>
+    api.put<{ other_sessions_revoked: number; signed_out: boolean }>('/users/me/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    }),
   listSwitchable: () =>
     api.get<SwitchableUser[]>('/users/switchable'),
   pinSwitch: async (userId: string, pin: string) =>
@@ -1965,6 +1972,10 @@ export interface UserPreferences {
   // the Settings page reads its own PIN status here (the switchable-profiles
   // list is scoped to managed children and never contains the caller).
   has_pin?: boolean;
+  // Whether the account signs in with an OnScreen password (false for SSO /
+  // LDAP-only accounts and managed profiles): the Account page offers
+  // "Change password" only when there's one to change. Absent before v2.6.
+  has_password?: boolean;
   // Hub row customization — absent until the user customizes.
   hub_layout?: HubRowPref[];
   // The quality profile (PUT /users/me/quality-profile). null = no limit.
