@@ -78,6 +78,20 @@ func (q QualityProfile) overQuality(file *media.File) bool {
 	return q.audioOver(file)
 }
 
+// minKbpsPerChannel is the AAC bitrate per channel below which a
+// multichannel encode sounds worse than a stereo one at the same total.
+const minKbpsPerChannel = 40
+
+// audioChannels lowers a multichannel AAC output to stereo when the audio
+// bitrate can't give each channel minKbpsPerChannel (96 kbps of 5.1 is
+// 16 kbps a channel; as stereo it is 48).
+func (q QualityProfile) audioChannels(channels int) int {
+	if q.MaxAudioBitrateKbps > 0 && channels > 2 && q.MaxAudioBitrateKbps/channels < minKbpsPerChannel {
+		return 2
+	}
+	return channels
+}
+
 // outputCodec applies the codec preference to Start's output choice: "h264"
 // turns HEVC and AV1 output off; "hevc" asks for HEVC whenever the client
 // decodes it and the video is re-encoded.

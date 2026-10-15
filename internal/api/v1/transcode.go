@@ -888,6 +888,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// default). Used by both the single-session job and the ABR ladder below.
 	audioChannels := transcode.TargetAudioChannels(
 		transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx), caps.MaxAudioChannels)
+	audioChannels = streamCaps.Quality.audioChannels(audioChannels)
 
 	isSourceHEVC := file.VideoCodec != nil && (strings.EqualFold(*file.VideoCodec, "hevc") || strings.EqualFold(*file.VideoCodec, "h265"))
 	isSourceAV1 := file.VideoCodec != nil && strings.EqualFold(*file.VideoCodec, "av1")

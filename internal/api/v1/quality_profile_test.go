@@ -120,6 +120,14 @@ func TestQualityProfileHelpers(t *testing.T) {
 		t.Error("no preference changed the automatic choice")
 	}
 
+	for _, tc := range []struct{ cap, in, want int }{
+		{0, 6, 6}, {96, 6, 2}, {192, 6, 2}, {256, 6, 6}, {96, 2, 2}, {320, 8, 8}, {256, 8, 2},
+	} {
+		if got := (QualityProfile{MaxAudioBitrateKbps: tc.cap}).audioChannels(tc.in); got != tc.want {
+			t.Errorf("audioChannels(cap %d, %d ch) = %d, want %d", tc.cap, tc.in, got, tc.want)
+		}
+	}
+
 	br := int64(20_000_000)
 	movie := &media.File{VideoCodec: strPtr("h264"), Bitrate: &br}
 	c := streamCap{Kbps: 12000, Remote: true, RemoteBinding: true}.withQuality(QualityProfile{MaxVideoBitrateKbps: 6000}, movie)
