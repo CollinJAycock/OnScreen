@@ -51,6 +51,7 @@ fun SettingsScreen(
     onOpenAbout: () -> Unit,
     onOpenSecurity: () -> Unit,
     onOpenScrobble: () -> Unit,
+    onOpenPlaybackQuality: () -> Unit = {},
     vm: SettingsViewModel = hiltViewModel(),
 ) {
     val downloadOnWifiOnly by vm.downloadOnWifiOnly.collectAsStateWithLifecycle(initialValue = true)
@@ -103,6 +104,13 @@ fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
 
             SectionHeader("Playback")
+
+            ActionRow(
+                title = "Playback quality",
+                description = "Maximum resolution and bitrate, and the format used when converting. " +
+                    "Saved to your account and applied on every device.",
+                onClick = onOpenPlaybackQuality,
+            )
 
             ReplayGainSettings(
                 mode = replayGainMode,

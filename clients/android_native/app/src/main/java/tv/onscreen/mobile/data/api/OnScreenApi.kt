@@ -399,6 +399,12 @@ interface OnScreenApi {
     @PUT("api/v1/users/me/preferences")
     suspend fun setPreferences(@Body body: UserPreferences): ApiResponse<UserPreferences>
 
+    /** The user's own playback-quality profile (v2.6). REPLACES all five
+     *  fields — see QualityProfile.request. 204; 400 for an invalid value;
+     *  404 on an older server. */
+    @PUT("api/v1/users/me/quality-profile")
+    suspend fun setQualityProfile(@Body body: QualityProfileRequest)
+
     // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
 
     @GET("api/v1/users/me/scrobble")

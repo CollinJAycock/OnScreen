@@ -28,6 +28,18 @@ data class UserPreferences(
     val hub_layout: List<HubRowPref>? = null,
 )
 
+/** Body for PUT /users/me/quality-profile (v2.6). The endpoint REPLACES the
+ *  whole profile — a null (omitted) limit is cleared — so every save sends all
+ *  five, built by QualityProfile.request from a fresh read. */
+@JsonClass(generateAdapter = true)
+data class QualityProfileRequest(
+    val max_video_height: Int?,
+    val max_video_bitrate_kbps: Int?,
+    val max_audio_bitrate_kbps: Int?,
+    val preferred_video_codec: String?,
+    val forced_subtitles_only: Boolean,
+)
+
 /** One entry of the saved hub layout: a row [key] and whether it's shown. */
 @JsonClass(generateAdapter = true)
 data class HubRowPref(

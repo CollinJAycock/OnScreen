@@ -32,6 +32,8 @@ object Routes {
     const val ABOUT = "about"
     const val SECURITY = "security"
     const val SCROBBLE = "scrobble"
+    /** The account's server-side playback-quality profile (v2.6). */
+    const val PLAYBACK_QUALITY = "playback-quality"
 
     fun library(id: String) = "library/$id"
     fun item(id: String) = "item/$id"

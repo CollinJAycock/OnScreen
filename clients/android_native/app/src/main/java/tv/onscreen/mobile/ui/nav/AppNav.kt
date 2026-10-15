@@ -45,6 +45,7 @@ import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
 import tv.onscreen.mobile.ui.series.SeriesScreen
 import tv.onscreen.mobile.ui.settings.AboutScreen
+import tv.onscreen.mobile.ui.settings.PlaybackQualityScreen
 import tv.onscreen.mobile.ui.settings.ScrobbleScreen
 import tv.onscreen.mobile.ui.settings.SecurityScreen
 import tv.onscreen.mobile.ui.settings.SettingsScreen
@@ -147,7 +148,11 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 onOpenAbout = { nav.navigateDebounced(Routes.ABOUT) },
                 onOpenSecurity = { nav.navigateDebounced(Routes.SECURITY) },
                 onOpenScrobble = { nav.navigateDebounced(Routes.SCROBBLE) },
+                onOpenPlaybackQuality = { nav.navigateDebounced(Routes.PLAYBACK_QUALITY) },
             )
+        }
+        composable(Routes.PLAYBACK_QUALITY) {
+            PlaybackQualityScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.ABOUT) {
             AboutScreen(onBack = { nav.popBackStack() })
