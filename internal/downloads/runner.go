@@ -395,7 +395,7 @@ func Convertible(f *media.File) error {
 		return scanner.ErrUnsafeContainer
 	}
 	if f.HDRType != nil && strings.EqualFold(*f.HDRType, "dolby_vision") {
-		return errors.New("Dolby Vision is not supported")
+		return errors.New("the file is Dolby Vision, which is not supported")
 	}
 	return nil
 }

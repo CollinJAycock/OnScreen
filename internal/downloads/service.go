@@ -26,11 +26,11 @@ const (
 	StatusExpired = "expired"
 )
 
-// ErrNotFound: no such job, or not the caller's.
+// ErrNotFound means no such job, or not the caller's.
 var ErrNotFound = errors.New("downloads: job not found")
 
-// ErrNotReady: the job's file isn't available (still encoding, failed, or
-// expired).
+// ErrNotReady means the job's file isn't available (still encoding,
+// failed, or expired).
 var ErrNotReady = errors.New("downloads: file not ready")
 
 // Job is one user's converted download as the API shows it.
