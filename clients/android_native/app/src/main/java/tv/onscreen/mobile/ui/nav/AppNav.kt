@@ -327,12 +327,18 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                     type = NavType.LongType
                     defaultValue = -1L
                 },
+                navArgument("fileId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { entry ->
             PlayerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
                 fromStart = entry.arguments!!.getBoolean("fromStart"),
                 startMs = entry.arguments!!.getLong("startMs").takeIf { it >= 0 },
+                fileId = entry.arguments!!.getString("fileId"),
                 onClose = { nav.popBackStack() },
                 onNext = { nextId ->
                     // Replace current player route with the next

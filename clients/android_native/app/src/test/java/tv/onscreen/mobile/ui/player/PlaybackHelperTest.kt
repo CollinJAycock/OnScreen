@@ -60,4 +60,34 @@ class PlaybackHelperTest {
         val mode = PlaybackHelper.decide(file(container = "avi", video = "mpeg2", height = 2160))
         assertThat((mode as PlaybackMode.Transcode).height).isEqualTo(2160)
     }
+
+    @Test
+    fun `server verdicts map to modes, and no verdict to the local decision`() {
+        val f = file()
+        assertThat(PlaybackHelper.modeFor("directPlay", f)).isEqualTo(PlaybackMode.DirectPlay)
+        assertThat(PlaybackHelper.modeFor("directStream", f)).isEqualTo(PlaybackMode.Remux)
+        assertThat(PlaybackHelper.modeFor("transcode", f)).isEqualTo(PlaybackMode.Transcode(1080))
+        assertThat(PlaybackHelper.modeFor("transcode", file(height = 2160))).isEqualTo(PlaybackMode.Transcode(2160))
+        assertThat(PlaybackHelper.modeFor(null, file(container = "avi"))).isEqualTo(PlaybackMode.Remux)
+    }
+
+    @Test
+    fun `one part of a stacked movie never direct-plays`() {
+        // Server unreachable: the local decision would direct-play cd1 alone
+        // and stop where it ends. A remux session from any part's file_id
+        // streams every part as one movie.
+        val part = file().copy(part_index = 1)
+        assertThat(PlaybackHelper.modeFor(null, part)).isEqualTo(PlaybackMode.Remux)
+        assertThat(PlaybackHelper.modeFor("directPlay", part)).isEqualTo(PlaybackMode.Remux)
+        // Anything that already goes through the server stays as it is.
+        assertThat(PlaybackHelper.modeFor("transcode", part)).isEqualTo(PlaybackMode.Transcode(1080))
+        // A file that isn't a part is untouched.
+        assertThat(PlaybackHelper.forStack(PlaybackMode.DirectPlay, file())).isEqualTo(PlaybackMode.DirectPlay)
+    }
+
+    @Test
+    fun `the capability header declares optimized versions`() {
+        val header = PlaybackHelper.clientCapabilitiesHeader()
+        assertThat(header.split(",")).contains("optimized=1")
+    }
 }

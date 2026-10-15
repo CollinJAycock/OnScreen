@@ -43,6 +43,36 @@ object PlaybackHelper {
         return PlaybackMode.Transcode(defaultHeight)
     }
 
+    /**
+     * The [PlaybackMode] for a server verdict on [file] — "directPlay" |
+     * "directStream" | "transcode" — or this device's own [decide] when there
+     * is none (server unreachable, an older server, an unknown verdict).
+     * "unsupported" / "damaged" are the caller's to refuse before this.
+     *
+     * One part of a stacked movie never plays alone ([forStack]).
+     */
+    fun modeFor(verdict: String?, file: ItemFile): PlaybackMode {
+        val mode = when (verdict) {
+            "directPlay" -> PlaybackMode.DirectPlay
+            "directStream" -> PlaybackMode.Remux
+            "transcode" -> PlaybackMode.Transcode(if ((file.resolution_h ?: 1080) >= 2160) 2160 else 1080)
+            else -> decide(file)
+        }
+        return forStack(mode, file)
+    }
+
+    /**
+     * A part of a stacked movie ("cd1" + "cd2", [ItemFile.part_index]) is one
+     * file of the movie: direct play would stream that part alone and stop
+     * where it ends. A remux / transcode session started with any part's
+     * file_id streams every part as one movie, so a direct play becomes a
+     * remux — the server's own rule (transcode.ForStack); it never answers
+     * directPlay for a part, so this matters when the decision came from
+     * [decide].
+     */
+    fun forStack(mode: PlaybackMode, file: ItemFile): PlaybackMode =
+        if (file.part_index != null && mode is PlaybackMode.DirectPlay) PlaybackMode.Remux else mode
+
     /** Decoder support probed once from MediaCodecList — the platform's own
      *  answer, rather than the "phones from the last several years all have
      *  HEVC" assumption this used to hardcode. Cheap (one enumeration) and
@@ -96,6 +126,10 @@ object PlaybackHelper {
             "maxAudioChannels=8",
             "maxbitdepth=10",
             "hdr=1",
+            // Protocol, not decode: this client plays a play decision's
+            // optimized_version (a pre-made H.264/AAC MP4) by direct play,
+            // falling back to source_decision if it fails (§13).
+            "optimized=1",
         ).joinToString(",")
     }
 }

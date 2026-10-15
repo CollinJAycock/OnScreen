@@ -76,4 +76,21 @@ class ChapterNavTest {
         assertThat(ChapterNav.displayTitle(blank, 6)).isEqualTo("Chapter 7")
         assertThat(ChapterNav.displayTitle(whitespaceOnly, 0)).isEqualTo("Chapter 1")
     }
+
+    @Test
+    fun `thumbUrl makes the server-relative thumbnail absolute`() {
+        val c = chapter("One", 0, 100).copy(thumb_url = "/trickplay/item-1/chapter_001.jpg")
+        assertThat(ChapterNav.thumbUrl("http://srv:7070/", c))
+            .isEqualTo("http://srv:7070/trickplay/item-1/chapter_001.jpg")
+        assertThat(ChapterNav.thumbUrl("http://srv", c.copy(thumb_url = "https://cdn/x.jpg")))
+            .isEqualTo("https://cdn/x.jpg")
+    }
+
+    @Test
+    fun `thumbUrl is null without a thumbnail or a server`() {
+        // An older server, or sprites not generated yet: no thumb_url.
+        assertThat(ChapterNav.thumbUrl("http://srv", chapter("One", 0, 100))).isNull()
+        assertThat(ChapterNav.thumbUrl("http://srv", chapter("One", 0, 100).copy(thumb_url = " "))).isNull()
+        assertThat(ChapterNav.thumbUrl("", chapter("One", 0, 100).copy(thumb_url = "/t.jpg"))).isNull()
+    }
 }

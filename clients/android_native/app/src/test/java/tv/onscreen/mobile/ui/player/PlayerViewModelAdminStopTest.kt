@@ -35,6 +35,7 @@ import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.NotificationsRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
+import tv.onscreen.mobile.data.repository.PlayDecisionResult
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
 
 /**
@@ -90,7 +91,7 @@ class PlayerViewModelAdminStopTest {
     }
 
     private fun transcodeRepo(verdict: String?): TranscodeRepository = mockk<TranscodeRepository>().also {
-        coEvery { it.decide(any(), any()) } returns verdict
+        coEvery { it.decide(any(), any()) } returns (verdict?.let { PlayDecisionResult.of(it) } ?: PlayDecisionResult.Unavailable)
         every { it.stopDetached(any(), any()) } returns Unit
     }
 

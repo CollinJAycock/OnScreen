@@ -42,6 +42,7 @@ import tv.onscreen.mobile.data.repository.ListeningSpeed
 import tv.onscreen.mobile.data.repository.NotificationsRepository
 import tv.onscreen.mobile.data.repository.PreferencesRepository
 import tv.onscreen.mobile.data.repository.TranscodeRepository
+import tv.onscreen.mobile.data.repository.PlayDecisionResult
 import tv.onscreen.mobile.data.repository.WatchLimitRepository
 import tv.onscreen.mobile.playback.StopAfterItem
 
@@ -104,7 +105,7 @@ class PlayerViewModelAudiobookTest {
 
     private fun newVm(items: ItemRepository, books: AudiobookRepository): PlayerViewModel {
         val transcode = mockk<TranscodeRepository>(relaxed = true).also {
-            coEvery { it.decide(any(), any()) } returns "directPlay"
+            coEvery { it.decide(any(), any()) } returns PlayDecisionResult.of("directPlay")
         }
         val prefs = mockk<PreferencesRepository>().also { coEvery { it.get() } returns UserPreferences() }
         val server = mockk<ServerPrefs>(relaxed = true).also {

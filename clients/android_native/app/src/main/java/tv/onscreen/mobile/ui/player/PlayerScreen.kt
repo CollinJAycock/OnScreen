@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -56,6 +57,7 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -133,9 +135,11 @@ fun PlayerScreen(
     /** Start exactly here instead (an audiobook bookmark), even when the
      *  item is already the one playing in the background. */
     startMs: Long? = null,
+    /** Play this version (file) of the item — the detail page's pick. */
+    fileId: String? = null,
     vm: PlayerViewModel = hiltViewModel(),
 ) {
-    LaunchedEffect(itemId) { vm.prepare(itemId, fromStart, startMs) }
+    LaunchedEffect(itemId) { vm.prepare(itemId, fromStart, startMs, fileId) }
     val ui by vm.state.collectAsStateWithLifecycle()
     BackHandler(onBack = onClose)
 
@@ -201,6 +205,18 @@ fun PlayerScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
                 modifier = Modifier.padding(24.dp),
             ) {
+                // "Too many streams" over the server's sentence about the
+                // user's concurrent-stream limit (StreamLimit).
+                ui.errorTitle?.let { title ->
+                    Text(
+                        title,
+                        color = Color.White,
+                        style = MaterialTheme.typography.titleMedium,
+                        textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                        modifier = Modifier.semantics { heading() },
+                    )
+                    Spacer(Modifier.height(8.dp))
+                }
                 Text(
                     ui.error!!,
                     color = Color.White,
@@ -315,7 +331,12 @@ private fun PlayerHost(
     // MIME hint when we know the container — helps ExoPlayer pick the right
     // extractor for offline files where the file:// scheme carries no
     // Content-Type header.
-    val containerHint = ui.item?.files?.firstOrNull()?.container?.let { c ->
+    // An optimized version names its own container (an MP4, whatever the
+    // source's): hinting the source's would point ExoPlayer at the wrong
+    // extractor.
+    val hintContainer = (source as? PlaybackSource.DirectPlay)?.container
+        ?: ui.item?.files?.firstOrNull()?.container
+    val containerHint = hintContainer?.let { c ->
         when (c.lowercase()) {
             "mp4", "m4v", "m4a", "m4b" -> "video/mp4"
             "mkv" -> "video/x-matroska"
@@ -335,8 +356,11 @@ private fun PlayerHost(
     // nothing to select there. Direct play reads the container's own streams
     // and side-loads only the attached ("downloaded") files.
     val isHls = source is PlaybackSource.Hls
-    val subtitleRows = remember(ui.subtitleTracks, isHls) { SubtitleTracks.rows(ui.subtitleTracks, isHls) }
-    val sideLoads = remember(ui.subtitleTracks, isHls) { SubtitleTracks.sideLoads(ui.subtitleTracks, isHls) }
+    // An optimized version's MP4 carries no subtitles either: it takes them
+    // side-loaded, as a session does.
+    val sideLoadAll = isHls || source.isOptimized
+    val subtitleRows = remember(ui.subtitleTracks, sideLoadAll) { SubtitleTracks.rows(ui.subtitleTracks, sideLoadAll) }
+    val sideLoads = remember(ui.subtitleTracks, sideLoadAll) { SubtitleTracks.sideLoads(ui.subtitleTracks, sideLoadAll) }
     val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
         if (serviceAudio) {
             null
@@ -857,6 +881,11 @@ private fun PlayerHost(
                 val stopped = playbackStoppedMessage(error)
                 if (stopped != null) {
                     vm.onStreamRefusedByAdminStop(stopped)
+                    return
+                }
+                // An optimized version that won't play: the VM moves to the
+                // source's own verdict once (a new source, so a new player).
+                if (source.isOptimized && vm.fallBackFromOptimized(player.currentPosition + vm.hlsOffsetMs)) {
                     return
                 }
                 playbackError = error
@@ -1478,6 +1507,7 @@ private fun PlayerHost(
         val activeChapters = ui.item?.files?.firstOrNull()?.chapters.orEmpty()
         ChapterPickerDialog(
             chapters = activeChapters,
+            serverUrl = vm.serverOrigin().orEmpty(),
             currentPositionMs = player.currentPosition + vm.hlsOffsetMs,
             onSeek = { ms ->
                 // Chapter marks are CONTENT-absolute, the player's timeline
@@ -2356,6 +2386,8 @@ private fun <T> StylePickerRow(
 @Composable
 private fun ChapterPickerDialog(
     chapters: List<tv.onscreen.mobile.data.model.Chapter>,
+    /** For the chapters' thumbnails (server-relative thumb_url). */
+    serverUrl: String,
     currentPositionMs: Long,
     onSeek: (Long) -> Unit,
     onDismiss: () -> Unit,
@@ -2386,6 +2418,21 @@ private fun ChapterPickerDialog(
                             .padding(vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
+                        // The chapter's still, once the server has made the
+                        // item's seek-bar sprites (v2.6). Decorative: the
+                        // title says which chapter it is.
+                        ChapterNav.thumbUrl(serverUrl, chapter)?.let { url ->
+                            coil.compose.AsyncImage(
+                                model = url,
+                                contentDescription = null,
+                                contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                                modifier = Modifier
+                                    .width(96.dp)
+                                    .aspectRatio(16f / 9f)
+                                    .background(MaterialTheme.colorScheme.surfaceVariant),
+                            )
+                            Spacer(Modifier.width(12.dp))
+                        }
                         Text(
                             text = ChapterNav.formatStart(chapter.start_ms),
                             style = MaterialTheme.typography.labelMedium,
