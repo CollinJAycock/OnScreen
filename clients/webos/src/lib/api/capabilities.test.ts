@@ -3,6 +3,7 @@ import {
   PROBE_TYPES,
   buildClientCapabilitiesHeader,
   clientCapabilitiesHeader,
+  dolbyVisionProfiles,
   type CapabilityProbes,
 } from './capabilities';
 import { FHD_PANEL, UHD_PANEL } from '../platform';
@@ -81,6 +82,47 @@ describe('buildClientCapabilitiesHeader', () => {
       'videoDecoder=h264:h265,audioDecoder=aac:mp3:opus:flac,protocols=mp4:webm:mov,' +
         'maxWidth=1920,maxHeight=1080,maxAudioChannels=6,maxbitdepth=8,hdr=0,optimized=1',
     );
+  });
+});
+
+describe('Dolby Vision (dovi)', () => {
+  const dvTV = { panelDv: true, panelHdr: true };
+
+  it('declares 5, 8.1 and 8.4 on a Dolby Vision TV whose MSE takes dvh1', () => {
+    const p = probes(ALL, dvTV);
+    expect(dolbyVisionProfiles(p)).toEqual(['5', '8.1', '8.4']);
+    expect(keys(buildClientCapabilitiesHeader(p)).dovi).toBe('5:8.1:8.4');
+  });
+
+  it('declares only what MSE takes', () => {
+    const no5 = probes(ALL.filter((t) => t !== PROBE_TYPES.dv5), dvTV);
+    expect(keys(buildClientCapabilitiesHeader(no5)).dovi).toBe('8.1:8.4');
+    const only5 = probes(ALL.filter((t) => t !== PROBE_TYPES.dv8), dvTV);
+    expect(keys(buildClientCapabilitiesHeader(only5)).dovi).toBe('5');
+  });
+
+  it('never declares profile 7 (MSE takes one layer)', () => {
+    expect(dolbyVisionProfiles(probes(ALL, dvTV))).not.toContain('7');
+  });
+
+  // MSE answering yes isn't enough: the panel has to show it, or a working
+  // HDR10 stream becomes a failed Dolby Vision one. Unknown counts as no.
+  it('declares nothing unless the TV says it shows Dolby Vision', () => {
+    for (const panelDv of [false, null, undefined]) {
+      expect(keys(buildClientCapabilitiesHeader(probes(ALL, { panelHdr: true, panelDv }))).dovi).toBeUndefined();
+    }
+  });
+
+  it('declares nothing without HEVC Main 10, or once HEVC is demoted', () => {
+    const noMain10 = probes(ALL.filter((t) => t !== PROBE_TYPES.hevc10), dvTV);
+    expect(dolbyVisionProfiles(noMain10)).toEqual([]);
+    const demoted = probes(ALL, { ...dvTV, isDemoted: (c) => c === 'hevc' });
+    expect(keys(buildClientCapabilitiesHeader(demoted)).dovi).toBeUndefined();
+  });
+
+  it('probes the codec strings hls.js appends', () => {
+    expect(PROBE_TYPES.dv8).toBe('video/mp4; codecs="dvh1.08.06"');
+    expect(PROBE_TYPES.dv5).toBe('video/mp4; codecs="dvh1.05.06"');
   });
 });
 

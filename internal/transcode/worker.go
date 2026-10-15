@@ -113,6 +113,7 @@ type Worker struct {
 	cudaTonemap      atomic.Bool       // all-VRAM CUDA HDR→SDR (scale_cuda+tonemap_cuda) works here; probed in the background (cold JIT), flips on when warmed
 	hasTonemapOpenCL bool              // tonemap_opencl filter available in FFmpeg
 	hasZscale        bool              // zscale filter available (libzimg) for software tonemap
+	dvConvert        bool              // ffmpeg's dovi_rpu filter converts Dolby Vision profile 7 to 8.1 (OnScreen's patch); see WorkerFeatureDVConvert
 	hasLibfdkAAC     bool              // libfdk_aac encoder available; preferred over native aac (far faster first segment on multichannel)
 	hasLibplacebo    bool              // libplacebo+Vulkan HDR→SDR tonemap works (GPU, vendor-agnostic; preferred over zscale)
 	openclDevices    []OpenCLDevice    // platform.device list for `-init_hw_device opencl=ocl:...`
@@ -238,6 +239,9 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 	}
 	hasTonemapOCL := ProbeFilter(ctx, "tonemap_opencl")
 	hasZscale := ProbeFilter(ctx, "zscale")
+	// Dolby Vision profile 7 → 8.1 conversion needs OnScreen's patched
+	// dovi_rpu filter; advertised as WorkerFeatureDVConvert only if present.
+	dvConvert := ProbeDVConvert(ctx)
 	// Prefer libfdk_aac over native aac — far faster first segment on
 	// multichannel audio (see BuildArgs.HasLibfdkAAC).
 	hasLibfdkAAC := ProbeEncoder(ctx, "libfdk_aac")
@@ -290,6 +294,7 @@ func NewWorker(id, addr string, store *SessionStore, encoders []Encoder, maxSess
 		encoderLabels:    labels,
 		hasTonemapOpenCL: hasTonemapOCL,
 		hasZscale:        hasZscale,
+		dvConvert:        dvConvert,
 		hasLibfdkAAC:     hasLibfdkAAC,
 		hasLibplacebo:    hasLibplacebo,
 		cudaHevcDecode:   cudaHevcDecode,
@@ -371,6 +376,7 @@ func (w *Worker) Start(ctx context.Context) error {
 		"tonemap_vaapi", w.vaapiTonemap, // GPU HDR→SDR on VAAPI (probe-gated at startup)
 		"tonemap_opencl", w.hasTonemapOpenCL,
 		"zscale", w.hasZscale,
+		"dv_p7_to_p81", w.dvConvert,
 		"libfdk_aac", w.hasLibfdkAAC,
 		"libplacebo", w.hasLibplacebo,
 		"readrate_catchup", w.readrateCatchup,
@@ -399,7 +405,7 @@ func (w *Worker) register(ctx context.Context) error {
 		// strength of it told the scheduler this node could take an HDR job
 		// cheaply when it could not.
 		HasGPUTonemap: w.hasLibplacebo || w.cudaTonemap.Load() || w.vaapiTonemap,
-		Features:      workerFeatures,
+		Features:      w.features(),
 		RegisteredAt:  time.Now(),
 	})
 }
@@ -717,6 +723,8 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				HasZscale:            w.hasZscale,
 				ForceFMP4:            job.ForcesFMP4(),
 				AudioPassthrough:     job.AudioPassthrough,
+				DolbyVision:          job.DolbyVision,
+				DVProfileKey:         job.DVProfileKey,
 				BurnSubtitle:         job.BurnSubtitle,
 				TSSegments:           job.TSSegments,
 				AudioRate:            job.AudioRate,
@@ -1429,4 +1437,14 @@ func EncoderNames(encoders []Encoder) []string {
 		names[i] = string(e)
 	}
 	return names
+}
+
+// features is what this worker advertises: everything its build understands
+// (workerFeatures), plus the ones that depend on what its ffmpeg can do.
+func (w *Worker) features() []string {
+	f := append([]string(nil), workerFeatures...)
+	if w.dvConvert {
+		f = append(f, WorkerFeatureDVConvert)
+	}
+	return f
 }

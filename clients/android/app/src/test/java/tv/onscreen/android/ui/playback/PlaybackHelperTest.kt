@@ -560,6 +560,57 @@ class PlaybackHelperTest {
     }
 
     @Test
+    fun `Dolby Vision is shown only by a screen that lists it`() {
+        assertThat(PlaybackHelper.displayShowsDolbyVision(intArrayOf(1, 2, 3))).isTrue()
+        // The Firestick's TV: HDR10, HLG and HDR10+, no Dolby Vision.
+        assertThat(PlaybackHelper.displayShowsDolbyVision(intArrayOf(2, 3, 4))).isFalse()
+        assertThat(PlaybackHelper.displayShowsDolbyVision(intArrayOf())).isFalse()
+        // A platform that can't say gets the base layer.
+        assertThat(PlaybackHelper.displayShowsDolbyVision(null)).isFalse()
+    }
+
+    @Test
+    fun `dovi lists the profiles the decoders take, only for a Dolby Vision screen`() {
+        // CodecProfileLevel.DolbyVisionProfile*: DvheDtr 0x10, DvheStn 0x20
+        // (5), DvheDtb 0x80 (7), DvheSt 0x100 (8), DvavSe 0x200.
+        // A Fire TV 4K Max reports DvheDtr, DvheStn, DvheSt and DvavSe.
+        val fireTv = listOf(0x10, 0x20, 0x100, 0x200)
+        assertThat(PlaybackHelper.doviKey(fireTv, screenDv = true, hlg = false)).isEqualTo("dovi=5:8.1")
+        assertThat(PlaybackHelper.doviKey(fireTv, screenDv = true, hlg = true)).isEqualTo("dovi=5:8.1:8.4")
+        // On a TV without Dolby Vision the key is left out: base layer.
+        assertThat(PlaybackHelper.doviKey(fireTv, screenDv = false, hlg = true)).isNull()
+        // A dual-layer decoder adds 7.
+        assertThat(PlaybackHelper.doviKey(listOf(0x20, 0x80, 0x100), screenDv = true, hlg = false))
+            .isEqualTo("dovi=5:7:8.1")
+        // No Dolby Vision decoder, or only ones the server never sends
+        // (DvheDtr profile 4, DvavSe 9): left out.
+        assertThat(PlaybackHelper.doviKey(emptyList(), screenDv = true, hlg = true)).isNull()
+        assertThat(PlaybackHelper.doviKey(listOf(0x10, 0x200), screenDv = true, hlg = true)).isNull()
+    }
+
+    @Test
+    fun `Dolby Vision is refused by the server's verdict, or locally for profile 5 the device didn't declare`() {
+        val p5 = "dolby_vision"
+        fun refuses(verdict: String?, mode: PlaybackMode?, hdr: String?, optimized: Boolean = false, declares5: Boolean = false) =
+            PlaybackHelper.refusesDolbyVision(verdict, mode, hdr, optimized, declares5)
+        // The server's "unsupported" always wins.
+        assertThat(refuses("unsupported", null, null, declares5 = true)).isTrue()
+        // Profile 5 on a device that didn't declare it: refused, with or without a verdict.
+        assertThat(refuses(null, PlaybackMode.DirectPlay, p5)).isTrue()
+        assertThat(refuses("directPlay", PlaybackMode.DirectPlay, p5)).isTrue()
+        // Declared: the server's direct play or remux plays, as does the local decision.
+        assertThat(refuses("directPlay", PlaybackMode.DirectPlay, p5, declares5 = true)).isFalse()
+        assertThat(refuses("directStream", PlaybackMode.Remux, p5, declares5 = true)).isFalse()
+        assertThat(refuses(null, PlaybackMode.DirectPlay, p5, declares5 = true)).isFalse()
+        // A re-encode of profile 5 comes out green: refused even when declared.
+        assertThat(refuses("transcode", PlaybackMode.Transcode(1080), p5, declares5 = true)).isTrue()
+        // An optimized version is SDR H.264, whatever its source.
+        assertThat(refuses("transcode", PlaybackMode.Transcode(1080), p5, optimized = true)).isFalse()
+        // Profiles 7 and 8 read as their base layer: never refused here.
+        assertThat(refuses(null, PlaybackMode.DirectPlay, "hdr10")).isFalse()
+    }
+
+    @Test
     fun `10-bit VP9 is claimed only for a Profile 2 decoder`() {
         // SHIELD's hardware VP9 decoder: Profile 0 only.
         assertThat(PlaybackHelper.decodesVp9Profile2(listOf(CodecProfileLevel.VP9Profile0))).isFalse()

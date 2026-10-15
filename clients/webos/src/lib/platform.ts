@@ -11,9 +11,11 @@
 //     it only sizes an FHD answer from Luna (see resolvePanelSize).
 //   - Luna `com.webos.service.config/getConfigs` through PalmServiceBridge,
 //     the call LG's own webOSTV.js deviceInfo() and Shaka make:
-//     tv.model.supportHDR (the panel shows HDR10) and tv.hw.panelResolution
-//     ('UD' on UHD sets). Asynchronous, so it is asked once and the answer
-//     kept in localStorage: a panel never changes.
+//     tv.model.supportHDR (the panel shows HDR10), tv.hw.panelResolution
+//     ('UD' on UHD sets) and tv.config.supportDolbyHDRContents (the set shows
+//     Dolby Vision; webOSTV.js reports it as deviceInfo().dolbyVision).
+//     Asynchronous, so it is asked once and the answer kept in localStorage:
+//     a panel never changes.
 //
 // matchMedia('(dynamic-range: high)') needs Chrome 98, so on webOS 6/22/23
 // (Chromium 79/87/94) it is always false; that is why HDR asks Luna.
@@ -35,11 +37,15 @@ export interface PanelCaps {
   hdr: boolean | null;
   /** tv.hw.panelResolution: true for UHD / 8K, false for FHD / HD. */
   uhd: boolean | null;
+  /** tv.config.supportDolbyHDRContents: the set shows Dolby Vision. */
+  dv: boolean | null;
 }
 
 export const CONFIG_URI = 'luna://com.webos.service.config/getConfigs';
-export const CONFIG_NAMES = ['tv.model.supportHDR', 'tv.hw.panelResolution'];
-export const CAPS_CACHE_KEY = 'onscreen:panel-caps';
+export const CONFIG_NAMES = ['tv.model.supportHDR', 'tv.hw.panelResolution', 'tv.config.supportDolbyHDRContents'];
+/** v2 added the Dolby Vision key: a TV that cached the v1 answer (no dv) asks
+ *  Luna once more instead of never learning it. */
+export const CAPS_CACHE_KEY = 'onscreen:panel-caps-v2';
 /** Give up on a Luna call that never answers. */
 export const PROBE_TIMEOUT_MS = 5000;
 
@@ -105,7 +111,12 @@ export function parseConfigsResponse(raw: unknown): PanelCaps | null {
   return {
     hdr: flag(configs['tv.model.supportHDR']),
     uhd: uhdFromPanelResolution(configs['tv.hw.panelResolution']),
+    dv: flag(configs['tv.config.supportDolbyHDRContents']),
   };
+}
+
+function knowsAnything(caps: PanelCaps): boolean {
+  return caps.hdr !== null || caps.uhd !== null || caps.dv !== null;
 }
 
 /**
@@ -131,8 +142,8 @@ export function readCachedCaps(store: KeyValueStore | null): PanelCaps | null {
   try {
     const v = parseObject(store?.getItem(CAPS_CACHE_KEY) ?? null);
     if (!v) return null;
-    const caps = { hdr: flag(v.hdr), uhd: flag(v.uhd) };
-    return caps.hdr === null && caps.uhd === null ? null : caps;
+    const caps = { hdr: flag(v.hdr), uhd: flag(v.uhd), dv: flag(v.dv) };
+    return knowsAnything(caps) ? caps : null;
   } catch {
     return null; // storage blocked
   }
@@ -185,7 +196,7 @@ export function probePanelCaps(env: ProbeEnv, done: (caps: PanelCaps | null) => 
       /* already closed */
     }
     bridge = null;
-    if (caps && (caps.hdr !== null || caps.uhd !== null)) writeCachedCaps(env.store, caps);
+    if (caps && knowsAnything(caps)) writeCachedCaps(env.store, caps);
     done(caps);
   }
   try {
@@ -267,4 +278,9 @@ export function readPanelSize(): PanelSize {
 /** Luna's HDR answer: true / false, null while unknown. */
 export function panelHdr(): boolean | null {
   return liveCaps()?.hdr ?? null;
+}
+
+/** Luna's Dolby Vision answer: true / false, null while unknown. */
+export function panelDolbyVision(): boolean | null {
+  return liveCaps()?.dv ?? null;
 }

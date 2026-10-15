@@ -813,13 +813,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// "dolby_vision" only for profile 5 (a file with an HDR10 / HLG / SDR base
 	// layer reads as that base), whose IPT colour an HDR10 tonemap turns green
 	// and purple (docs/dolby-vision.md). Return a clear error the client shows as
-	// "Dolby Vision is not supported". Honors a DV-capable client (dovi=1), which
-	// would direct-play and not hit transcode-start anyway. This mirrors the
+	// "Dolby Vision is not supported". A client that lists profile 5 (dovi=5 or
+	// dovi=1) gets it, kept as Dolby Vision on a remux. This mirrors the
 	// transcode.Decide DecisionUnsupported verdict the playback-decision endpoint
 	// returns, so the client refusing up-front and a client that skips the
 	// decision both end at the same clear message.
 	if file.HDRType != nil && strings.EqualFold(*file.HDRType, "dolby_vision") {
-		if dvCaps, _ := clientCaps(r, body); !dvCaps.SupportsDV {
+		if dvCaps, _ := clientCaps(r, body); !dvCaps.SupportsDVProfile("5") {
 			h.logger.InfoContext(ctx, "transcode: refusing Dolby Vision (unsupported)",
 				"item_id", itemID, "file_id", file.ID)
 			respond.Error(w, r, http.StatusUnsupportedMediaType,
@@ -932,6 +932,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		h.logger.InfoContext(ctx, "transcode: video copy refused, the play decision is transcode",
 			"item_id", itemID, "file_id", file.ID)
 		body.VideoCopy = false
+	}
+	// Dolby Vision profile 5 can only be copied: a re-encode tone-maps its IPT
+	// colour as HDR10 (green and purple). A client that lists profile 5 still
+	// reaches here when it asks for, or needs, a re-encode.
+	if !body.VideoCopy && transcode.DVProfileKey(*file) == "5" {
+		h.logger.InfoContext(ctx, "transcode: refusing a Dolby Vision profile 5 re-encode",
+			"item_id", itemID, "file_id", file.ID)
+		respond.Error(w, r, http.StatusUnsupportedMediaType,
+			"DOLBY_VISION_UNSUPPORTED", "Dolby Vision is not supported")
+		return
 	}
 
 	if body.VideoCopy {
@@ -1113,6 +1123,20 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+	// Dolby Vision on a video copy: kept (the configuration record and each
+	// frame's metadata go into the fMP4 segments) for a client that decodes
+	// the file's profile, or profile 7 converted to 8.1 for one that takes
+	// 8.1, where a worker can. Needs fMP4, so not for a client that asked for
+	// TS segments; anyone else gets the base layer as before.
+	dvMode := transcode.DVNone
+	if body.VideoCopy && !tsSegments && !sourceAudioOnly && h.sessions != nil {
+		canConvert := h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureDVConvert)
+		if m := transcode.PlanDolbyVision(*file, caps, canConvert); m != transcode.DVNone &&
+			h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureDolbyVision) {
+			dvMode = m
+		}
+	}
+
 	// An audio-only source over the viewer's audio bitrate is re-encoded to
 	// it, not copied (a video's audio track has no reliable bitrate of its
 	// own here; its re-encode is capped by AudioBitrateKbps below).
@@ -1272,9 +1296,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		HEVCOutput:  sessVout.HEVC,
 		AV1Output:   sessVout.AV1,
 		TSSegments:  tsSegments,
-		// A TrueHD/DTS passthrough remux is fMP4 whatever its video codec;
-		// the playlist handler reads this back to wait for .m4s.
-		FMP4Segments: audioPassthrough,
+		// A TrueHD/DTS passthrough remux is fMP4 whatever its video codec, and
+		// so is a Dolby Vision copy; the playlist handler reads this back to
+		// wait for .m4s.
+		FMP4Segments: audioPassthrough || dvMode != transcode.DVNone,
 		// Display only here (ABR children read it from their parent): Now
 		// Playing names the copied track's codec, not the first track's.
 		AudioStreamIndex: audioStreamIdx,
@@ -1368,6 +1393,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		AudioRate:        audioRate,
 		AudioPassthrough: audioPassthrough,
 		BurnSubtitle:     burn,
+		DolbyVision:      dvMode,
+		DVProfileKey:     transcode.DVProfileKey(*file),
 		EnqueuedAt:       time.Now(),
 	}
 	h.logger.InfoContext(ctx, "transcode job created",
@@ -1392,6 +1419,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		"audio_channels", audioChannels,
 		"audio_passthrough", audioPassthrough,
 		"burn_subtitle", burn != nil,
+		"dolby_vision", string(dvMode),
 		"client_profile", hasProfile,
 	)
 
@@ -2181,4 +2209,17 @@ func rewritePlaylist(data []byte, sessionID, token, baseURL string) []byte {
 		buf.WriteString(line + "\n")
 	}
 	return buf.Bytes()
+}
+
+// dvConvertAvailable reports whether a profile 7 file could be converted to
+// Dolby Vision 8.1 for this client: it takes 8.1 but not 7, and a worker has
+// the conversion. The fleet is asked only for such a file, so other decisions
+// don't touch the registry.
+func (h *NativeTranscodeHandler) dvConvertAvailable(ctx context.Context, file *media.File, caps transcode.ClientCapabilities) bool {
+	if h.sessions == nil || transcode.DVProfileKey(*file) != "7" ||
+		caps.SupportsDVProfile("7") || !caps.SupportsDVProfile("8.1") {
+		return false
+	}
+	return h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureDolbyVision) &&
+		h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureDVConvert)
 }

@@ -30,8 +30,13 @@ type ClientCapabilities struct {
 	// the profile doesn't mention HLG, in which case SupportsHDR covers it. An
 	// HDR10 display isn't necessarily an HLG one: SHIELD outputs HDR10 but sends
 	// HLG flagged as SDR (dark, green picture).
-	SupportsHLG  *bool
-	SupportsDV   bool // Dolby Vision
+	SupportsHLG *bool
+	SupportsDV  bool // Dolby Vision: any profile (len(DVProfiles) > 0)
+	// DVProfiles lists the Dolby Vision profile keys the client decodes and
+	// displays: "5", "7", "8.1", "8.4" (see DVProfileKey). dovi=1 means the
+	// single-layer ones, 5 / 8.1 / 8.4 — a profile 7 decoder is rare enough
+	// that a client has to name it.
+	DVProfiles   []string
 	SupportsHEVC bool // H.265
 	SupportsAV1  bool
 	// AcceptsOptimized (optimized=1) says the client plays the
@@ -125,7 +130,8 @@ func ParseCapabilities(header string) ClientCapabilities {
 			hlg := parseInt(val) > 0 || strings.EqualFold(val, "true")
 			caps.SupportsHLG = &hlg
 		case "dovi", "dolbyvision":
-			caps.SupportsDV = parseInt(val) > 0 || strings.EqualFold(val, "true")
+			caps.DVProfiles = parseDVProfiles(val, vals)
+			caps.SupportsDV = len(caps.DVProfiles) > 0
 		case "optimized":
 			caps.AcceptsOptimized = parseInt(val) > 0 || strings.EqualFold(val, "true")
 		}
@@ -215,4 +221,41 @@ func parseInt(s string) int {
 		n = n*10 + int(c-'0')
 	}
 	return n
+}
+
+// parseDVProfiles reads the dovi value: a profile list (5:8.1:8.4, also 8 for
+// 8.1 and 8.x for both single-layer 8s), or a bare flag (1 / true → 5, 8.1,
+// 8.4; 0 / false → none).
+func parseDVProfiles(val string, vals []string) []string {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "", "0", "false":
+		return nil
+	case "1", "true":
+		return []string{"5", "8.1", "8.4"}
+	}
+	var out []string
+	add := func(k string) {
+		for _, have := range out {
+			if have == k {
+				return
+			}
+		}
+		out = append(out, k)
+	}
+	for _, v := range vals {
+		switch strings.ToLower(strings.TrimSpace(v)) {
+		case "5", "05":
+			add("5")
+		case "7", "07":
+			add("7")
+		case "8", "08", "8.1", "08.1":
+			add("8.1")
+		case "8.4", "08.4":
+			add("8.4")
+		case "8.x":
+			add("8.1")
+			add("8.4")
+		}
+	}
+	return out
 }

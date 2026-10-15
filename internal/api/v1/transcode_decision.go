@@ -175,7 +175,10 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	// The viewer's resolution ceiling (quality profile) bounds the verdict
 	// like a display that can't show more.
 	caps = userCaps.Quality.applyTo(caps)
-	serverCaps := transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}
+	serverCaps := transcode.ServerCaps{
+		MaxHeight: h.cfg.TranscodeMaxHeight,
+		DVConvert: h.dvConvertAvailable(ctx, file, caps),
+	}
 	decision := transcode.Decide(*file, caps, serverCaps)
 	if parts != nil {
 		// Never directPlay: one file is one part. The session concatenates

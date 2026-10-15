@@ -68,6 +68,18 @@ func (d Decision) String() string {
 // here — it isn't on media.File; clients refine a DirectPlay verdict with their
 // own faststart check (see docs/capability-profiles.md).
 func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Decision {
+	d := decide(file, caps, serverCaps)
+	// Profile 5 can only be copied: a re-encode tone-maps its IPT colour as if
+	// it were HDR10 and comes out green and purple. A client that lists
+	// profile 5 still gets "unsupported" when it would need one (over its
+	// resolution, bitrate or quality limit).
+	if d == DecisionTranscode && DVProfileKey(file) == "5" {
+		return DecisionUnsupported
+	}
+	return d
+}
+
+func decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Decision {
 	// Damaged file (integrity-probe verdict): client-independent, so it
 	// pre-empts every capability check — there is no client for which an
 	// undecodable bitstream plays, and no escape hatch like DV's dovi=1.
@@ -116,15 +128,18 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	// (hevc_cuvid drops the RPU tonemap_cuda would need), so a client that can't
 	// direct-play it gets an explicit "unsupported" verdict and shows a clear
 	// message rather than a green/purple transcode (see docs/dolby-vision.md). A
-	// future DV-capable client (dovi=1) direct-plays and never reaches here.
-	if strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDV {
+	// client that lists profile 5 (dovi=5, or dovi=1) plays it as Dolby Vision.
+	if strings.EqualFold(hdrType, "dolby_vision") && !caps.SupportsDVProfile("5") {
 		return DecisionUnsupported
 	}
+	// A client that decodes the file's Dolby Vision profile shows it as Dolby
+	// Vision, so its HDR answer for the base layer doesn't matter.
+	dv := PlanDolbyVision(file, caps, serverCaps.DVConvert)
 	// Other HDR (HDR10 / HDR10+ / HLG): if the client can't display it, tonemap
 	// (transcode). These carry a standard base that tonemap_cuda handles fine.
 	// HLG is judged by the client's hlg answer when it gave one (see
 	// clientSupportsHDR).
-	if isHDR(hdrType) && !clientSupportsHDR(caps, hdrType) {
+	if dv == DVNone && isHDR(hdrType) && !clientSupportsHDR(caps, hdrType) {
 		return DecisionTranscode
 	}
 
@@ -174,8 +189,10 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		return DecisionTranscode
 	}
 
-	// Video is client-decodable. If audio + container are also fine, play as-is.
-	if clientSupportsAudio && clientSupportsContainer {
+	// Video is client-decodable. If audio + container are also fine, play as-is
+	// — unless the file is Dolby Vision profile 7 for a client that only takes
+	// 8.1: as-is it gets the base layer, so the server remuxes it to convert.
+	if clientSupportsAudio && clientSupportsContainer && dv != DVToP81 {
 		return DecisionDirectPlay
 	}
 
@@ -217,6 +234,10 @@ type ServerCaps struct {
 	MaxBitrateKbps int
 	MaxWidth       int
 	MaxHeight      int
+	// DVConvert: a worker can convert Dolby Vision profile 7 to 8.1 while
+	// remuxing (WorkerFeatureDVConvert), so a profile 7 file for a client
+	// that takes 8.1 but not 7 is remuxed instead of played as-is.
+	DVConvert bool
 }
 
 // canonicalVideoCodec normalises codec names from ffprobe to standard identifiers.
@@ -307,7 +328,7 @@ func isHDR(hdrType string) bool {
 func clientSupportsHDR(caps ClientCapabilities, hdrType string) bool {
 	switch strings.ToLower(hdrType) {
 	case "dolby_vision":
-		return caps.SupportsDV
+		return caps.SupportsDVProfile("5")
 	case "hdr10", "hdr10plus":
 		return caps.SupportsHDR
 	case "hlg":

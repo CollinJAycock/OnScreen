@@ -60,6 +60,26 @@ becomes final on every app. Release note:
 
 ### Added
 
+- **Dolby Vision for apps that decode it.** The capability profile's `dovi`
+  key takes a profile list (`dovi=5:8.1:8.4`, plus `7`; `dovi=1` means
+  `5:8.1:8.4`). A file whose profile the app lists plays as Dolby Vision:
+  profile 5 is no longer refused for it, the HDR tone-map check is skipped,
+  and a remux keeps the Dolby Vision configuration record and per-frame
+  metadata (fMP4 segments, `-strict unofficial`; `dvh1` sample entry for
+  profile 5). Profile 7 for an app that takes only 8.1 is converted to 8.1
+  while remuxing, on workers whose ffmpeg has OnScreen's `dovi_rpu`
+  conversion patch (the GPU image; worker feature `dolby_vision_p7_to_p81`);
+  elsewhere it plays from its HDR10 base layer as before. Profile 5 is never
+  re-encoded (it would come out green): an app that lists it but would need a
+  re-encode gets `unsupported` / 415 `DOLBY_VISION_UNSUPPORTED`. Apps that
+  don't send `dovi` are unchanged.
+  - **Android TV / Fire TV** sends `dovi` when the box has a hardware Dolby
+    Vision decoder for the profile and the connected screen reports Dolby
+    Vision (the Fire TV 4K Max: `5:8.1`, plus `8.4` on an HLG screen; it
+    has no profile 7 decoder, so profile 7 is converted for it).
+  - **LG (webOS)** sends `dovi` when the TV reports Dolby Vision
+    (`tv.config.supportDolbyHDRContents`) and its MSE accepts `dvh1` (`5`,
+    `8.1:8.4`).
 - **Your own sign-in settings on the Account page, for every user.** Change
   your password (new `PUT /users/me/password`: needs the current one, ends
   your other sign-ins; `GET /users/me/preferences` gains `has_password`), turn

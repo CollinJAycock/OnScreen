@@ -1,5 +1,78 @@
 # Dolby Vision — handling strategy + decision
 
+## Update 2026-10-15: Dolby Vision for clients that decode it
+
+A client lists the profiles it decodes in its capability profile (`dovi=5:8.1:8.4`,
+plus `7` for the rare dual-layer decoder; `dovi=1` means `5:8.1:8.4`), and gets
+Dolby Vision for those. Everyone else is unchanged: the base layer, as below.
+
+| File | Client lists | Result |
+|---|---|---|
+| 8.1 / 8.4 / 5 | that profile | Direct play, or a remux that keeps Dolby Vision |
+| 7 | `7` | The same |
+| 7 | `8.1` only | Remuxed and converted to 8.1, on a worker that can |
+| 5 | not `5` | Refused, as before |
+| anything | nothing | The base layer, as before |
+
+**Keeping it on a remux.** ffmpeg drops the configuration record when it copies
+HEVC into fMP4 unless the muxer runs at `-strict unofficial` or lower; the
+per-frame metadata (RPU NAL units) survives either way. So a Dolby Vision copy
+is always fMP4 with `-strict unofficial` (or `-2`, which TrueHD passthrough
+already sets), tagged `hvc1` for profiles 7/8 (the record sits alongside, and a
+plain HEVC decoder ignores it) and `dvh1` for profile 5. Checked on Dune Part
+One (profile 8): `dvvC` in the init segment, RPU on every frame. A re-encode
+never carries Dolby Vision.
+
+**Converting profile 7.** Most streaming players (Fire TV's included) can't
+decode profile 7's two layers. The usual answer is to drop the enhancement layer
+and rewrite each frame's metadata for a single-layer decoder (dovi_tool's
+mode 2). dovi_tool can't do it inside a remux: it reads and writes raw HEVC,
+which has no timestamps, so B-frame presentation times are lost (checked on a
+profile 7 sample: every frame's PTS became its DTS, and decoded frames came out
+of time order). Upstream ffmpeg's `dovi_rpu` filter only strips or compresses,
+and jellyfin-ffmpeg has no conversion either (Jellyfin strips Dolby Vision for
+clients that don't take profile 7). OnScreen therefore patches `dovi_rpu` in its
+own ffmpeg build with a `convert_p81` option
+(`docker/patches/0005-dovi-rpu-convert-p7-to-p81.patch`); a worker advertises
+`dolby_vision_p7_to_p81` only when its ffmpeg has it (`ffmpeg -h bsf=dovi_rpu`).
+That is the GPU image (`docker/Dockerfile.ffmpeg`); the standard image uses
+Alpine's ffmpeg and the Windows installer Gyan's, so there profile 7 keeps
+playing from its base layer.
+
+The patch does what dovi_tool's mode 2 does, frame by frame: it drops every
+enhancement-layer NAL unit, sets `disable_residual_flag`, removes the NLQ data,
+turns a full enhancement layer's mapping curves into the identity (a minimal one
+keeps its mapping), gives the display-management block the 8.1 matrices, and
+rewrites the configuration record to profile 8, compatibility 1. It copies every
+other NAL unit byte for byte in its own framing, so the stream's parameter sets
+and timestamps are untouched. Checked on three profile 7 FEL samples (Kodi
+wiki): metadata identical to `dovi_tool -m 2` on all 10,016 frames apart from
+extension-block order; packet timestamps identical to a plain remux, B-frames
+included; base layer bit-identical; no new decode errors.
+
+**Apps.** Only apps that can show Dolby Vision declare it:
+
+- **Android TV / Fire TV:** a hardware `video/dolby-vision` decoder for the
+  profile (DvheStn → 5, DvheDtb → 7, DvheSt → 8.1, and 8.4 when the screen
+  also shows HLG) and a connected screen that reports `HDR_TYPE_DOLBY_VISION`.
+  The Fire TV 4K Max has no profile 7 decoder, so it declares `5:8.1` and gets
+  profile 7 converted. Media3 reads `dvvC`/`dvcC` from fMP4 and Matroska and
+  picks the Dolby Vision decoder (profile 8 falls back to HEVC).
+- **LG (webOS):** every video plays through hls.js, which signals profile 8 as
+  a `dvh1.08.LL` supplemental codec and uses it only when MSE accepts it. The
+  app declares `5` / `8.1:8.4` when Luna reports
+  `tv.config.supportDolbyHDRContents` and MSE accepts `dvh1.05.06` /
+  `dvh1.08.06`; never `7`.
+- Everyone else (web, Samsung, Roku, Xbox, phone) gets the base layer.
+
+**Profile 5 is never re-encoded.** A client that lists it but would need a
+re-encode (over its size, bitrate or quality limit) gets `unsupported`, and
+transcode start refuses any profile 5 session that isn't a copy.
+
+**Not done:** tone-mapping profile 5 for screens without Dolby Vision (no
+profile 5 in the library); Dolby Vision in ABR ladders or optimized versions
+(both re-encode).
+
 ## Update 2026-10-06: only profile 5 is refused
 
 The June decision below rested on two premises that turned out wrong:

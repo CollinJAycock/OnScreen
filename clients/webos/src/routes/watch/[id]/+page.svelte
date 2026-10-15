@@ -10,6 +10,7 @@
     supportsHEVC,
     supportsAV1,
     demoteCodec,
+    declaresDolbyVision5,
     type ChildItem,
     type ItemDetail,
     type Chapter,
@@ -3189,16 +3190,19 @@
         }
         optimizedVersion = optimizedVersionOf(decision);
         const verdict = sourceVerdict(decision);
-        // Dolby Vision is not supported — the server returns the "unsupported"
-        // verdict (DV can't be tonemapped correctly server-side; see
-        // docs/dolby-vision.md). Show a clear message instead of a broken
-        // transcode. The hdr_type check covers a failed/absent decision call.
-        if (verdict === 'unsupported' ||
-            (file.hdr_type ?? '').toLowerCase() === 'dolby_vision') {
+        // Dolby Vision profile 5 (hdr_type dolby_vision) can't be tone-mapped
+        // server-side (docs/dolby-vision.md): the server answers "unsupported"
+        // unless this TV declares profile 5 (dovi=5, a Dolby Vision panel whose
+        // MSE takes dvh1.05), and then plays it as Dolby Vision. Show a clear
+        // message instead of a broken transcode. With no verdict (the decision
+        // call failed), the file's hdr_type decides: refused, or for a TV that
+        // declares 5, a remux that keeps it (a re-encode would lose it).
+        const dvProfile5 = (file.hdr_type ?? '').toLowerCase() === 'dolby_vision';
+        if (verdict === 'unsupported' || (!verdict && dvProfile5 && !declaresDolbyVision5())) {
           showFatal('Dolby Vision is not supported', { retryable: false });
           return;
         }
-        videoCopy = verdict ? verdict !== 'transcode' : false;
+        videoCopy = verdict ? verdict !== 'transcode' : dvProfile5;
         sessionVideoCopy = videoCopy;
       }
       // Never rejects (best-effort).

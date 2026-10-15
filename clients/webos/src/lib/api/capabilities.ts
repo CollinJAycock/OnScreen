@@ -13,7 +13,7 @@
 // feeds it the live ones. The panel's size and HDR come from lib/platform
 // (PalmSystem.deviceInfo, and Luna getConfigs where the bridge answers).
 
-import { panelHdr, readPanelSize, startPanelProbe, type PanelSize } from '../platform';
+import { panelDolbyVision, panelHdr, readPanelSize, startPanelProbe, type PanelSize } from '../platform';
 
 /** The MSE type strings each claim is probed with. hls.js hands MSE fMP4,
  *  so every probe names the mp4 container. */
@@ -26,6 +26,15 @@ export const PROBE_TYPES = {
   vp9: 'video/mp4; codecs="vp09.00.10.08"',
   // VP9 Profile 2 (10-bit).
   vp9Profile2: 'video/mp4; codecs="vp09.02.10.10"',
+  // Dolby Vision, in the form hls.js asks MSE about. A server remux that
+  // keeps Dolby Vision is fMP4: profile 8 (7 converted to 8.1, and 8.x) as an
+  // hvc1 sample entry with a dvvC box, which hls.js 1.6 turns into a
+  // supplemental "dvh1.08.LL" and appends as dvh1 only when MSE takes it
+  // (else the HDR10 base layer, quietly); profile 5 as a dvh1 sample entry
+  // with dvcC, appended as "dvh1.05.LL" with no fallback. Level 06 is UHD at
+  // 24 fps, what films are.
+  dv8: 'video/mp4; codecs="dvh1.08.06"',
+  dv5: 'video/mp4; codecs="dvh1.05.06"',
 } as const;
 
 function isTypeSupported(s: string): boolean {
@@ -111,6 +120,26 @@ export interface CapabilityProbes {
   /** matchMedia('(dynamic-range: high)'), the answer before Luna (always
    *  false before Chrome 98, i.e. on webOS 6/22/23). */
   mediaHdr: boolean;
+  /** Luna's tv.config.supportDolbyHDRContents: true / false, null (or
+   *  absent) when unknown. */
+  panelDv?: boolean | null;
+}
+
+/**
+ * The Dolby Vision profile keys to declare (the server's dovi grammar):
+ * "8.1" and "8.4" when MSE takes dvh1.08, "5" when it takes dvh1.05. Only
+ * when the TV itself says it shows Dolby Vision (Luna; unknown counts as no,
+ * since a claim the panel can't honour turns a working HDR10 stream into a
+ * failed one) and its HEVC Main 10 decoder isn't demoted. Never "7": MSE
+ * can't take a second layer; the server converts 7 to 8.1 for an "8.1"
+ * client where it can.
+ */
+export function dolbyVisionProfiles(p: CapabilityProbes): string[] {
+  if (p.panelDv !== true || p.isDemoted('hevc') || !p.isTypeSupported(PROBE_TYPES.hevc10)) return [];
+  const out: string[] = [];
+  if (p.isTypeSupported(PROBE_TYPES.dv5)) out.push('5');
+  if (p.isTypeSupported(PROBE_TYPES.dv8)) out.push('8.1', '8.4');
+  return out;
 }
 
 /**
@@ -122,6 +151,8 @@ export interface CapabilityProbes {
  *   - maxWidth / maxHeight from the panel, so an FHD set isn't sent 4K.
  *   - hdr from the panel's own answer when Luna gave one, else the media
  *     query (the long-standing behaviour).
+ *   - dovi only on a Dolby Vision TV whose MSE takes it (dolbyVisionProfiles);
+ *     without the key the server sends the base layer, as before.
  */
 export function buildClientCapabilitiesHeader(p: CapabilityProbes): string {
   const hevc = !p.isDemoted('hevc') && p.isTypeSupported(PROBE_TYPES.hevc);
@@ -147,6 +178,8 @@ export function buildClientCapabilitiesHeader(p: CapabilityProbes): string {
   ];
   if (vp9) keys.push(`vp9MaxBitDepth=${vp9Profile2 ? 10 : 8}`);
   keys.push(`hdr=${hdr ? 1 : 0}`);
+  const dovi = dolbyVisionProfiles(p);
+  if (dovi.length) keys.push(`dovi=${dovi.join(':')}`);
   // Plays an optimized version (an H.264/AAC MP4 made ahead of time) when
   // the decision hands one out instead of a transcode (v2.6; older servers
   // ignore the key). See the watch page's startStream.
@@ -167,11 +200,23 @@ function mediaQueryHdr(): boolean {
  *  first call also starts the one-off Luna panel probe. */
 export function clientCapabilitiesHeader(): string {
   startPanelProbe();
-  return buildClientCapabilitiesHeader({
+  return buildClientCapabilitiesHeader(liveProbes());
+}
+
+function liveProbes(): CapabilityProbes {
+  return {
     isTypeSupported,
     isDemoted: (codec) => demoted.has(codec),
     panel: readPanelSize(),
     panelHdr: panelHdr(),
     mediaHdr: mediaQueryHdr(),
-  });
+    panelDv: panelDolbyVision(),
+  };
+}
+
+/** Whether this TV declares Dolby Vision profile 5 (dovi=5), so the server
+ *  plays a profile 5 file to it instead of refusing it. The watch page's
+ *  local "not supported" fallback reads it. */
+export function declaresDolbyVision5(): boolean {
+  return dolbyVisionProfiles(liveProbes()).includes('5');
 }

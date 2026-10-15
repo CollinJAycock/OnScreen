@@ -28,7 +28,10 @@ import (
 // copy in Start).
 func videoCopyRefused(file media.File, caps transcode.ClientCapabilities, hasProfile bool, q QualityProfile, server transcode.ServerCaps) bool {
 	if hasProfile {
-		return transcode.Decide(file, caps, server) == transcode.DecisionTranscode
+		// "unsupported" here is Dolby Vision profile 5 that would need a
+		// re-encode; Start refuses that once the copy is off.
+		d := transcode.Decide(file, caps, server)
+		return d == transcode.DecisionTranscode || d == transcode.DecisionUnsupported
 	}
 	return q.overResolution(&file)
 }

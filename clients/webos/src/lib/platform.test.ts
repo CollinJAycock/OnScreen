@@ -85,17 +85,25 @@ describe('getConfigs reply', () => {
       returnValue: true,
       configs: { 'tv.model.supportHDR': true, 'tv.hw.panelResolution': 'UD' },
     });
-    expect(parseConfigsResponse(reply)).toEqual({ hdr: true, uhd: true });
+    expect(parseConfigsResponse(reply)).toEqual({ hdr: true, uhd: true, dv: null });
   });
 
   it('reads string values and an FHD panel', () => {
     const reply = { returnValue: true, configs: { 'tv.model.supportHDR': 'false', 'tv.hw.panelResolution': 'FHD' } };
-    expect(parseConfigsResponse(reply)).toEqual({ hdr: false, uhd: false });
+    expect(parseConfigsResponse(reply)).toEqual({ hdr: false, uhd: false, dv: null });
+  });
+
+  // webOSTV.js's deviceInfo().dolbyVision is this key.
+  it('reads Dolby Vision', () => {
+    const yes = { returnValue: true, configs: { 'tv.config.supportDolbyHDRContents': true } };
+    expect(parseConfigsResponse(yes)?.dv).toBe(true);
+    const no = { returnValue: true, configs: { 'tv.config.supportDolbyHDRContents': 'false' } };
+    expect(parseConfigsResponse(no)?.dv).toBe(false);
   });
 
   it('leaves a missing key unknown', () => {
     const reply = { returnValue: true, configs: {}, missingConfigs: ['tv.model.supportHDR'] };
-    expect(parseConfigsResponse(reply)).toEqual({ hdr: null, uhd: null });
+    expect(parseConfigsResponse(reply)).toEqual({ hdr: null, uhd: null, dv: null });
   });
 
   it('is null for a failed or denied call', () => {
@@ -133,14 +141,21 @@ describe('resolvePanelSize', () => {
 describe('caps cache', () => {
   it('round-trips an answer', () => {
     const store = memoryStore();
-    writeCachedCaps(store, { hdr: true, uhd: null });
-    expect(readCachedCaps(store)).toEqual({ hdr: true, uhd: null });
+    writeCachedCaps(store, { hdr: true, uhd: null, dv: true });
+    expect(readCachedCaps(store)).toEqual({ hdr: true, uhd: null, dv: true });
   });
 
   it('ignores an empty or broken entry', () => {
     expect(readCachedCaps(memoryStore({ [CAPS_CACHE_KEY]: '{' }))).toBeNull();
-    expect(readCachedCaps(memoryStore({ [CAPS_CACHE_KEY]: '{"hdr":null,"uhd":null}' }))).toBeNull();
+    expect(readCachedCaps(memoryStore({ [CAPS_CACHE_KEY]: '{"hdr":null,"uhd":null,"dv":null}' }))).toBeNull();
     expect(readCachedCaps(null)).toBeNull();
+  });
+
+  // The v1 entry never asked about Dolby Vision; a new key means a TV that
+  // cached it asks Luna once more.
+  it("doesn't read the v1 entry", () => {
+    expect(CAPS_CACHE_KEY).not.toBe('onscreen:panel-caps');
+    expect(readCachedCaps(memoryStore({ 'onscreen:panel-caps': '{"hdr":true,"uhd":true}' }))).toBeNull();
   });
 
   it('survives a store that throws', () => {
@@ -153,7 +168,7 @@ describe('caps cache', () => {
       },
     };
     expect(readCachedCaps(broken)).toBeNull();
-    expect(() => writeCachedCaps(broken, { hdr: true, uhd: true })).not.toThrow();
+    expect(() => writeCachedCaps(broken, { hdr: true, uhd: true, dv: null })).not.toThrow();
   });
 });
 
@@ -183,12 +198,16 @@ describe('probePanelCaps', () => {
   }
 
   it('asks getConfigs for HDR and the panel class, then caches the answer', async () => {
-    const fake = fakeBridge({ returnValue: true, configs: { 'tv.model.supportHDR': true, 'tv.hw.panelResolution': 'UD' } });
+    const fake = fakeBridge({
+      returnValue: true,
+      configs: { 'tv.model.supportHDR': true, 'tv.hw.panelResolution': 'UD', 'tv.config.supportDolbyHDRContents': true },
+    });
     const store = memoryStore();
     const caps = await new Promise((resolve) => probePanelCaps({ createBridge: () => fake.bridge, store }, resolve));
-    expect(caps).toEqual({ hdr: true, uhd: true });
+    expect(caps).toEqual({ hdr: true, uhd: true, dv: true });
     expect(fake.calls).toEqual([[CONFIG_URI, JSON.stringify({ configNames: CONFIG_NAMES })]]);
-    expect(readCachedCaps(store)).toEqual({ hdr: true, uhd: true });
+    expect(CONFIG_NAMES).toContain('tv.config.supportDolbyHDRContents');
+    expect(readCachedCaps(store)).toEqual({ hdr: true, uhd: true, dv: true });
     expect(fake.cancelled()).toBe(1);
   });
 
