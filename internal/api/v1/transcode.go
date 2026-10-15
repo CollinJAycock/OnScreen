@@ -1286,9 +1286,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		HEVCOutput:  sessVout.HEVC,
 		AV1Output:   sessVout.AV1,
 		TSSegments:  tsSegments,
-		// A TrueHD/DTS passthrough remux is fMP4 whatever its video codec;
-		// the playlist handler reads this back to wait for .m4s.
-		FMP4Segments: audioPassthrough,
+		// A TrueHD/DTS passthrough remux is fMP4 whatever its video codec, and
+		// so is a Dolby Vision copy; the playlist handler reads this back to
+		// wait for .m4s.
+		FMP4Segments: audioPassthrough || dvMode != transcode.DVNone,
 		// Display only here (ABR children read it from their parent): Now
 		// Playing names the copied track's codec, not the first track's.
 		AudioStreamIndex: audioStreamIdx,
