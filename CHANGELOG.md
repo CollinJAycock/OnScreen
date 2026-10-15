@@ -46,6 +46,11 @@ becomes final on every app. Release note:
   `ONSCREEN_COMSKIP_PATH`, `ONSCREEN_COMSKIP_INI`, `DOWNLOAD_MAX_CONVERSIONS`,
   `DOWNLOAD_CACHE_TTL_HOURS` and `DOWNLOAD_CACHE_MAX_GB`. New optional keys
   in Settings ▸ General: OMDb and fanart.tv.
+- **Upgrade remote transcode workers too.** Burned-in picture subtitles
+  and TrueHD / DTS passthrough only go to workers that advertise them (v2.6
+  workers do; the embedded worker always does). With only older remote
+  workers, a burn-in request is refused with 503 `BURN_IN_UNAVAILABLE` and
+  TrueHD / DTS keep being converted to AAC.
 - **New tasks off until enabled:** music loudness analysis, photo face
   detection, chapter-thumbnail backfill and automatic subtitle download.
 - **Built with Go 1.26.9 and x/net 0.60.0** (GO-2026-6612, -6613, -6617).
