@@ -24,7 +24,7 @@ var ErrNotFound = errNotFound
 func (c *Client) GetTVSeasons(ctx context.Context, tmdbID int) (*metadata.TVSeasonList, error) {
 	var tv tmdbTVSeasons
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	params.Set("append_to_response", "content_ratings,external_ids")
 	if err := c.get(ctx, fmt.Sprintf("/tv/%d", tmdbID), params, &tv); err != nil {
 		return nil, fmt.Errorf("tmdb tv seasons %d: %w", tmdbID, err)

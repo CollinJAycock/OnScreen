@@ -35,7 +35,7 @@ func (c *Client) MovieCollection(ctx context.Context, movieTMDBID int) (*metadat
 func (c *Client) GetCollection(ctx context.Context, collectionID int) (*metadata.CollectionDetail, error) {
 	var resp tmdbCollection
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	if err := c.get(ctx, fmt.Sprintf("/collection/%d", collectionID), params, &resp); err != nil {
 		return nil, fmt.Errorf("tmdb get collection %d: %w", collectionID, err)
 	}

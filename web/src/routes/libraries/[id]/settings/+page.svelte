@@ -352,6 +352,11 @@
             </select>
           </div>
         </div>
+        <p class="check-help">
+          Movie and TV titles, summaries and genres come from TMDB in this language where TMDB has a
+          translation; a missing summary falls back to English. Items already matched change on their
+          next metadata refresh.
+        </p>
         {#if hasEpisodes}
           <div class="field">
             <label for="episode-order">Episode order</label>
