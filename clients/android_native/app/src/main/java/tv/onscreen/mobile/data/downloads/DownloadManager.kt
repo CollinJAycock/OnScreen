@@ -10,6 +10,7 @@ import androidx.work.WorkManager
 import androidx.work.workDataOf
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
+import tv.onscreen.mobile.data.api.OnScreenApi
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -21,6 +22,9 @@ class OnScreenDownloadManager @Inject constructor(
     @ApplicationContext private val context: Context,
     val store: DownloadStore,
     private val prefs: PlaybackPrefs,
+    // Lazy: only a cancelled conversion calls the server, and the API's
+    // OkHttp client already reaches back to the download store.
+    private val api: dagger.Lazy<OnScreenApi>,
 ) {
     private val wm: WorkManager get() = WorkManager.getInstance(context)
 
@@ -47,26 +51,38 @@ class OnScreenDownloadManager @Inject constructor(
         itemType: String,
         container: String?,
         posterPath: String? = null,
+        /** A converted copy's quality id (v2.6), or null for the original. */
+        quality: String? = null,
+        qualityLabel: String? = null,
     ) {
+        // A failed attempt at another quality left a partial file under its
+        // own container's name; this attempt writes a different file, so the
+        // stale one goes (a retry of the SAME quality keeps it, to resume).
+        store.get(fileId)?.let { prior ->
+            if (prior.status == DownloadStatus.FAILED && prior.quality != quality) store.remove(fileId)
+        }
         // Atomic check-then-set under the store mutex: only (re)queue when
         // there's no entry or the prior attempt failed. Doing get()+upsert()
         // separately let two concurrent enqueues (or an enqueue racing the
         // worker's first write) both see "absent" and double-write / stomp an
         // in-flight row.
         store.update(fileId) { existing ->
-            if (existing != null && existing.status != "failed") {
-                null // already present (queued/downloading/completed) — leave it
+            if (existing != null && existing.status != DownloadStatus.FAILED) {
+                null // already present (queued/converting/downloading/completed) — leave it
             } else {
                 DownloadEntry(
                     file_id = fileId,
                     item_id = itemId,
                     item_title = itemTitle,
                     item_type = itemType,
-                    container = container,
+                    // A converted copy is always an MP4.
+                    container = if (quality != null) CONVERTED_CONTAINER else container,
                     size_bytes = 0L,
                     downloaded_bytes = 0L,
-                    status = "queued",
+                    status = DownloadStatus.QUEUED,
                     poster_path = posterPath,
+                    quality = quality,
+                    quality_label = qualityLabel,
                 )
             }
         }
@@ -79,6 +95,7 @@ class OnScreenDownloadManager @Inject constructor(
             .setInputData(workDataOf(
                 DownloadWorker.KEY_FILE_ID to fileId,
                 DownloadWorker.KEY_ITEM_ID to itemId,
+                DownloadWorker.KEY_QUALITY to quality,
             ))
             .setConstraints(
                 Constraints.Builder()
@@ -96,7 +113,13 @@ class OnScreenDownloadManager @Inject constructor(
 
     suspend fun delete(fileId: String) {
         cancel(fileId)
+        val entry = store.get(fileId)
         store.remove(fileId)
+        // A copy the server is still encoding for us: drop the job too, which
+        // cancels the encode when nobody else is waiting for it. Best-effort —
+        // the server expires an abandoned job on its own.
+        val job = entry?.job_id?.takeIf { entry.status == DownloadStatus.CONVERTING }
+        if (job != null) runCatching { api.get().deleteDownloadJob(job) }
     }
 
     /** Cancel every in-flight download and erase all downloaded media.
@@ -127,4 +150,9 @@ class OnScreenDownloadManager @Inject constructor(
         wm.getWorkInfosForUniqueWorkFlow(workTag(fileId))
 
     private fun workTag(fileId: String) = "download_$fileId"
+
+    companion object {
+        /** Every converted download is an MP4. */
+        const val CONVERTED_CONTAINER = "mp4"
+    }
 }

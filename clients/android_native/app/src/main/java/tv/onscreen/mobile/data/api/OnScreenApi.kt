@@ -317,6 +317,34 @@ interface OnScreenApi {
         @Query("token") token: String,
     )
 
+    // ── Converted downloads (v2.6) ──────────────────────────────────────────
+    // internal/api/v1/downloads.go. Every route answers 403 DOWNLOADS_DISABLED
+    // while the server's download toggle is off, and 404 on an older server.
+
+    /** The qualities a smaller copy of the item can be made in, and which of
+     *  them this user may take. */
+    @GET("api/v1/items/{id}/downloads")
+    suspend fun getDownloadOptions(
+        @Path("id") itemId: String,
+        @Query("file_id") fileId: String? = null,
+    ): ApiResponse<DownloadOptions>
+
+    /** 201 with a new job, 200 with the user's existing one for this file and
+     *  quality. 403 QUALITY_ABOVE_LIMIT, 422 NOT_CONVERTIBLE, 429
+     *  TOO_MANY_DOWNLOADS (three already being prepared). */
+    @POST("api/v1/items/{id}/downloads")
+    suspend fun createDownloadJob(
+        @Path("id") itemId: String,
+        @Body body: CreateDownloadJobRequest,
+    ): ApiResponse<DownloadJob>
+
+    @GET("api/v1/downloads/{job}")
+    suspend fun getDownloadJob(@Path("job") jobId: String): ApiResponse<DownloadJob>
+
+    /** 204. Cancels the encode when nobody else is waiting for it. */
+    @DELETE("api/v1/downloads/{job}")
+    suspend fun deleteDownloadJob(@Path("job") jobId: String)
+
     // ── Search ──────────────────────────────────────────────────────────────
 
     @GET("api/v1/search")

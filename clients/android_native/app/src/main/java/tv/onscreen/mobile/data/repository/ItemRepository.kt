@@ -54,6 +54,12 @@ open class ItemRepository @Inject constructor(
     open suspend fun getChildren(id: String): List<ChildItem> =
         api.getChildren(id).data
 
+    /** What sizes a download of [fileId] can come in (v2.6 converted
+     *  downloads). Throws the HttpException: 403 DOWNLOADS_DISABLED while
+     *  the server's toggle is off, 404 on an older server. */
+    open suspend fun downloadOptions(itemId: String, fileId: String?): tv.onscreen.mobile.data.model.DownloadOptions =
+        api.getDownloadOptions(itemId, fileId).data
+
     /** [durationMs] null: not known — the field is left out (see
      *  ProgressRequest.duration_ms). */
     open suspend fun updateProgress(
