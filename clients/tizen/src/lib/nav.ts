@@ -15,6 +15,7 @@
 import { goto } from '$app/navigation';
 import { writable } from 'svelte/store';
 import { focusMemory } from './focus/memory';
+import { clearQueue, setQueue, type QueueEntry } from './player/queue';
 
 const backStack: string[] = [];
 
@@ -80,8 +81,24 @@ export const playerEpoch = writable(0);
  *  track → Back landed on a bare track page. `push: false` leaves the stack
  *  as it is (after resetStack). The item already open in the player starts
  *  over in a fresh player (see playerEpoch). `fileId` plays that version
- *  (the detail page's version picker); none = the default one. */
+ *  (the detail page's version picker); none = the default one. A play
+ *  queue there was (an Instant mix) ends here: see playQueue. */
 export function playItem(id: string, startMs?: number, opts: { push?: boolean; fileId?: string } = {}) {
+  clearQueue();
+  openPlayer(id, startMs, opts);
+}
+
+/** Play `entries` as a queue from the first (an Instant mix): the player
+ *  steps through them in this order (lib/player/queue) until something
+ *  else is played. Nothing happens for an empty list. */
+export function playQueue(entries: readonly QueueEntry[], opts: { push?: boolean } = {}) {
+  setQueue(entries);
+  const first = entries.find((e) => !!e?.id);
+  if (!first) return;
+  openPlayer(first.id, 0, opts);
+}
+
+function openPlayer(id: string, startMs: number | undefined, opts: { push?: boolean; fileId?: string }) {
   if (startMs !== undefined) startOverrides.set(id, Math.max(0, startMs));
   else startOverrides.delete(id);
   if (opts.fileId) fileOverrides.set(id, opts.fileId);
@@ -113,6 +130,7 @@ export function forgetHistory() {
   backStack.length = 0;
   startOverrides.clear();
   fileOverrides.clear();
+  clearQueue();
   focusMemory.clear();
 }
 

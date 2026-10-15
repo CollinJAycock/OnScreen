@@ -134,6 +134,7 @@
   import { PROGRESS_UPDATED_EVENT, events } from '$lib/events';
   import { goBack, replaceTo, takeFileOverride, takeStartOverride } from '$lib/nav';
   import { isStackPart, playableFile } from '$lib/player/versions';
+  import { queueNeighbours } from '$lib/player/queue';
   import {
     TOO_MANY_STREAMS_TITLE,
     optimizedVersionOf,
@@ -2519,7 +2520,19 @@
   // "Track N of M".
   function loadNextSibling() {
     const it = item;
-    if (!it || !it.parent_id) return;
+    if (!it) return;
+    // A play queue (an Instant mix) with this item in it: its order, not the
+    // album's, and its end is the end (lib/player/queue).
+    const queued = queueNeighbours(it.id);
+    if (queued) {
+      prevSibling = queued.prev;
+      nextSibling = queued.next;
+      queuePosition = queued.position;
+      queueTotal = queued.total;
+      nextLoad = Promise.resolve(queued.next);
+      return;
+    }
+    if (!it.parent_id) return;
     if (
       it.type !== 'episode' &&
       it.type !== 'track' &&

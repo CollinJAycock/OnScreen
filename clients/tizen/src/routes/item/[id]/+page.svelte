@@ -9,6 +9,7 @@
     type ItemDetail,
     type ChildItem,
     type IssueKind,
+    type SimilarArtist,
     type UpNext
   } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
@@ -27,7 +28,8 @@
   import PosterCard from '$lib/components/PosterCard.svelte';
   import OptionsDialog from '$lib/components/OptionsDialog.svelte';
   import ReportProblemDialog from '$lib/components/ReportProblemDialog.svelte';
-  import { goBack, openChild as openChildNav, playItem } from '$lib/nav';
+  import { goBack, openChild as openChildNav, playItem, playQueue } from '$lib/nav';
+  import { appearsOnAlbums, appearsOnSubtitle, canMix, mixQueue, type AppearsOnAlbum } from '$lib/music';
   import {
     childWatchBadge,
     endpointMissing,
@@ -109,8 +111,16 @@
   // Artist pages: albums and loose music videos (v2.0 music_video) as two
   // tabs, like Android's Albums / Music Videos tabs.
   let artistTab = $state<'albums' | 'videos'>('albums');
-  // Play All / Shuffle need a request or two to find their track.
+  // Play All / Shuffle need a request or two to find their track; Instant
+  // mix one.
   let resolving = $state(false);
+
+  // Music discovery (v2.6): an artist's "Similar artists" and "Appears on"
+  // rows (empty, so not shown, on an older server), and Instant mix on an
+  // artist, album or track, hidden once a /music route answered 404.
+  let similarArtists = $state<SimilarArtist[]>([]);
+  let appearsOn = $state<AppearsOnAlbum[]>([]);
+  let mixAvailable = $state(true);
 
   // Back to this page (from a child page or the player): the hero's first
   // button and the grid's first card hold their autofocus while the element
@@ -291,6 +301,11 @@
       // the user pick a book from the grid below.
       out.push({ key: 'play', label: 'Play', primary: true, onclick: playContainer });
     }
+    // Instant mix (v2.6): about 50 tracks around this artist, album or
+    // track, played as a queue.
+    if (canMix(it.type) && mixAvailable) {
+      out.push({ key: 'mix', label: 'Instant mix', onclick: () => void playMix() });
+    }
     if (leafWatch) {
       const watched = it.watch_state === 'watched';
       out.push({
@@ -378,6 +393,8 @@
               children = it.type === 'book_author' ? authorOrder(raw) : raw;
             }),
             isWatchContainer(it.type) ? loadUpNext() : Promise.resolve(),
+            // Part of the first load, so Back to a card in these rows finds it.
+            it.type === 'artist' ? loadArtistDiscovery(it.id) : Promise.resolve(),
           ]);
         }
         actionsReady = true;
@@ -596,6 +613,51 @@
       if (!alive) return;
       if (e instanceof Unauthorized) goto('#/login');
       else showStatus("Couldn't start playback.");
+    } finally {
+      resolving = false;
+    }
+  }
+
+  // An artist's Similar artists and Appears on rows. Best-effort and never
+  // rejects: a failure leaves a row out; a 404 is an older server, which
+  // has no Instant mix either.
+  async function loadArtistDiscovery(artistId: string): Promise<void> {
+    await Promise.all([
+      (async () => {
+        try {
+          const list = await endpoints.music.similar(artistId);
+          if (alive) similarArtists = Array.isArray(list) ? list : [];
+        } catch (e) {
+          if (endpointMissing(e)) mixAvailable = false;
+        }
+      })(),
+      (async () => {
+        try {
+          const tracks = await endpoints.music.appearsOn(artistId);
+          if (alive) appearsOn = appearsOnAlbums(tracks);
+        } catch {
+          // Best-effort: no row.
+        }
+      })(),
+    ]);
+  }
+
+  // Instant mix: the server's mix from this artist / album / track, played
+  // as a queue from its first track (nav.playQueue).
+  async function playMix() {
+    const it = item;
+    if (!it || resolving) return;
+    resolving = true;
+    try {
+      const queue = mixQueue(await endpoints.music.mix(it.id));
+      if (!alive) return;
+      if (queue.length > 0) playQueue(queue);
+      else showStatus('Nothing to mix yet');
+    } catch (e) {
+      if (!alive) return;
+      if (e instanceof Unauthorized) goto('#/login');
+      else if (endpointMissing(e)) showStatus("This server can't make an Instant mix.");
+      else showStatus("Couldn't make a mix.");
     } finally {
       resolving = false;
     }
@@ -871,7 +933,7 @@
               data-focus-key={`action:${a.key}`}
               data-focus-control
               onclick={a.onclick}
-              disabled={(marking && a.key !== 'play') || (resolving && (a.key === 'play' || a.key === 'shuffle'))}
+              disabled={(marking && a.key !== 'play') || (resolving && (a.key === 'play' || a.key === 'shuffle' || a.key === 'mix'))}
             >
               {a.label}
             </button>
@@ -985,6 +1047,41 @@
                   onclick={() => openChild(child.id)}
                 />
               {/if}
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      {#if item.type === 'artist' && similarArtists.length > 0}
+        <!-- Rows: Left / Right stay in a row (data-focus-row). -->
+        <section class="children music-section">
+          <h2>Similar artists</h2>
+          <div class="music-row" data-focus-row>
+            {#each similarArtists as artist (artist.id)}
+              <PosterCard
+                title={artist.title}
+                posterPath={artist.poster_path}
+                focusKey={`similar:${artist.id}`}
+                onclick={() => openChild(artist.id)}
+              />
+            {/each}
+          </div>
+        </section>
+      {/if}
+
+      {#if item.type === 'artist' && appearsOn.length > 0}
+        <!-- Other artists' albums this one is credited on. -->
+        <section class="children music-section">
+          <h2>Appears on</h2>
+          <div class="music-row" data-focus-row>
+            {#each appearsOn as album (album.id)}
+              <PosterCard
+                title={album.title}
+                posterPath={album.posterPath}
+                subtitle={appearsOnSubtitle(album)}
+                focusKey={`appears:${album.id}`}
+                onclick={() => openChild(album.id)}
+              />
             {/each}
           </div>
         </section>
@@ -1260,6 +1357,32 @@
     grid-template-columns: repeat(auto-fill, 240px);
     column-gap: var(--card-gap);
     row-gap: calc(var(--card-gap) + 24px);
+  }
+
+  /* An artist's discovery rows: one line of cards that scrolls sideways,
+     out to the page's edges (the content is padded), with the same inset
+     kept at both ends of the scroll (see HubRow). */
+  .music-section {
+    margin-top: 48px;
+  }
+  .music-row {
+    display: flex;
+    overflow-x: auto;
+    margin: 0 calc(-1 * var(--page-pad));
+    padding: 16px 0 32px var(--page-pad);
+    scroll-padding: 0 var(--page-pad);
+  }
+  .music-row::after {
+    content: '';
+    flex: 0 0 var(--page-pad);
+  }
+  /* A margin, not flexbox `gap` (Chromium 79); :global() for the cards,
+     another component's elements (and no :where(), Chrome 88). */
+  .music-row > :global(* + *) {
+    margin-left: var(--card-gap);
+  }
+  .music-row::-webkit-scrollbar {
+    display: none;
   }
 
   .error {

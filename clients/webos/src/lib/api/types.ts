@@ -279,6 +279,53 @@ export interface UpNext {
   };
 }
 
+// ── Music discovery (v2.6) ─────────────────────────────────────────────────
+
+/** GET /music/artists/{id}/similar: an artist like this one. */
+export interface SimilarArtist {
+  id: string;
+  title: string;
+  poster_path?: string;
+  updated_at: number;
+  /** Similarity in [0, 1]. */
+  score: number;
+  shared_genres: string[];
+  co_listened: boolean;
+}
+
+/** GET /music/artists/{id}/appears-on: a track on another artist's album
+ *  this artist is credited on (featured, or a compilation's performer). */
+export interface ArtistAppearance {
+  id: string;
+  title: string;
+  index?: number;
+  disc_number?: number;
+  duration_ms?: number;
+  /** "featured" | "artist". */
+  role: string;
+  album_id: string;
+  album_title: string;
+  album_year?: number;
+  album_poster_path?: string;
+  album_updated_at: number;
+  album_artist_id?: string;
+  album_artist_title?: string;
+}
+
+/** GET /music/mix?seed=: one track of an Instant mix. */
+export interface MixTrack {
+  id: string;
+  title: string;
+  duration_ms?: number;
+  index?: number;
+  album_id: string;
+  album_title: string;
+  album_poster_path?: string;
+  artist_id?: string;
+  artist_title?: string;
+  file_id: string;
+}
+
 // ── Report a problem (v2.5) ────────────────────────────────────────────────
 
 export type IssueKind = 'video' | 'audio' | 'subtitles' | 'wrong_match' | 'other';

@@ -1,6 +1,7 @@
 import { api } from './client';
 import type { TokenPair } from './client';
 import type {
+  ArtistAppearance,
   Channel,
   ChildItem,
   CollectionItem,
@@ -21,6 +22,7 @@ import type {
   MediaIssue,
   MediaItem,
   MediaRequest,
+  MixTrack,
   NowNext,
   OnlineSubtitle,
   PairCodeResponse,
@@ -30,6 +32,7 @@ import type {
   ScrobbleLinkResult,
   ScrobbleStatus,
   SearchResult,
+  SimilarArtist,
   TraktLinkStart,
   TranscodeSession,
   UpNext,
@@ -155,6 +158,22 @@ export const items = {
   playbackRate: (id: string) => api.get<PlaybackRate>(`/api/v1/items/${id}/playback-rate`),
   setPlaybackRate: (id: string, rate: number) =>
     api.put<void>(`/api/v1/items/${id}/playback-rate`, { rate })
+};
+
+// ── Music discovery (v2.6) ────────────────────────────────────────────────
+// Older servers have none of these routes (404): the artist page leaves
+// its rows out and Instant mix says it isn't available.
+
+export const music = {
+  /** Artists like this one, most similar first. */
+  similar: (artistID: string, limit = 20) =>
+    api.get<SimilarArtist[]>(`/api/v1/music/artists/${artistID}/similar?limit=${limit}`),
+  /** Tracks on other artists' albums this one is credited on, newest
+   *  album first. */
+  appearsOn: (artistID: string) => api.get<ArtistAppearance[]>(`/api/v1/music/artists/${artistID}/appears-on`),
+  /** An Instant mix (about 50 tracks, freshly shuffled) from an artist,
+   *  album or track. */
+  mix: (seedID: string) => api.get<MixTrack[]>(`/api/v1/music/mix?seed=${encodeURIComponent(seedID)}`)
 };
 
 // ── Report a problem (v2.5) ────────────────────────────────────────────────

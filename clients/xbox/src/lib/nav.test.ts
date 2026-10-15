@@ -11,6 +11,7 @@ import {
   forgetHistory,
   goBack,
   playItem,
+  playQueue,
   playerEpoch,
   pushTo,
   replaceTo,
@@ -18,6 +19,7 @@ import {
   takeFileOverride,
   takeStartOverride,
 } from './nav';
+import { queueNeighbours } from './player/queue';
 
 const ITEM = 'a3c1';
 const NEXT = 'b7d2';
@@ -114,6 +116,38 @@ describe('playItem', () => {
     playItem(ITEM, undefined, { fileId: 'cut-2' });
     playItem(ITEM);
     expect(takeFileOverride(ITEM)).toBeUndefined();
+  });
+});
+
+describe('playQueue (Instant mix)', () => {
+  const mix = [
+    { id: ITEM, title: 'One', type: 'track' },
+    { id: NEXT, title: 'Two', type: 'track' },
+  ];
+
+  it('opens the first track from the top and keeps the queue as the player moves on', () => {
+    at('#/item/artist-1');
+    playQueue(mix);
+    expect(goto).toHaveBeenCalledWith(`#/watch/${ITEM}`);
+    expect(takeStartOverride(ITEM)).toBe(0);
+    expect(queueNeighbours(ITEM)?.next?.id).toBe(NEXT);
+    at(`#/watch/${ITEM}`);
+    replaceTo(`#/watch/${NEXT}`, { id: NEXT, ms: 0 });
+    expect(queueNeighbours(NEXT)?.position).toBe(2);
+  });
+
+  it('ends when something else is played, or on sign-out', () => {
+    playQueue(mix);
+    playItem('other');
+    expect(queueNeighbours(ITEM)).toBeNull();
+    playQueue(mix);
+    forgetHistory();
+    expect(queueNeighbours(ITEM)).toBeNull();
+  });
+
+  it('does nothing for an empty mix', () => {
+    playQueue([]);
+    expect(goto).not.toHaveBeenCalled();
   });
 });
 
