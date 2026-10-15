@@ -1835,6 +1835,17 @@ class PlayerViewModel @Inject constructor(
         stopForAdmin(message)
     }
 
+    /** The screen-owned player's stream was refused with 429
+     *  TOO_MANY_SESSIONS (see streamLimitMessage): end playback showing the
+     *  server's sentence under "Too many streams". Setting the error tears the
+     *  player down; no retry. */
+    fun onStreamLimited(message: String) {
+        if (_state.value.error != null) return
+        optimizedFallback = null
+        stopActiveTranscode()
+        _state.update { it.copy(error = message, errorTitle = StreamLimit.TITLE) }
+    }
+
     /** End playback because an admin stopped it, showing [text]. Setting
      *  [PlayerUiState.error] tears the player host down (which also sends the
      *  terminal 'stopped' report, like the web player saves progress before it

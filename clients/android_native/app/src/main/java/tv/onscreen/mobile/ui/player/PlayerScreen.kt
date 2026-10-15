@@ -883,6 +883,14 @@ private fun PlayerHost(
                     vm.onStreamRefusedByAdminStop(stopped)
                     return
                 }
+                // The concurrent-stream limit, met at the stream itself: the
+                // same "Too many streams" as at the decision — no retry, and
+                // not an optimized fallback (that would be refused too).
+                val limited = streamLimitMessage(error)
+                if (limited != null) {
+                    vm.onStreamLimited(limited)
+                    return
+                }
                 // An optimized version that won't play: the VM moves to the
                 // source's own verdict once (a new source, so a new player).
                 if (source.isOptimized && vm.fallBackFromOptimized(player.currentPosition + vm.hlsOffsetMs)) {

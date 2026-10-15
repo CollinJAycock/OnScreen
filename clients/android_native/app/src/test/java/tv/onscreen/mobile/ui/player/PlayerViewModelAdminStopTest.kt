@@ -265,4 +265,28 @@ class PlayerViewModelAdminStopTest {
         assertThat(playbackStoppedMessageFromBody(null)).isNull()
         assertThat(playbackStoppedMessage(RuntimeException("boom", java.io.IOException("reset")))).isNull()
     }
+
+    @Test
+    fun `a refused stream body parses only the stream-limit envelope`() {
+        val limit = """{"error":{"code":"TOO_MANY_SESSIONS","message":"Your account can play 2 streams at a time."}}"""
+        assertThat(streamLimitMessageFromBody(limit.toByteArray()))
+            .isEqualTo("Your account can play 2 streams at a time.")
+        assertThat(streamLimitMessageFromBody("""{"error":{"code":"RATE_LIMITED","message":"x"}}""".toByteArray()))
+            .isNull()
+        assertThat(streamLimitMessageFromBody(null)).isNull()
+        assertThat(streamLimitMessage(RuntimeException("boom", java.io.IOException("reset")))).isNull()
+    }
+
+    @Test
+    fun `a stream refused for the stream limit ends playback under Too many streams`() = runTest(dispatcher) {
+        val vm = newVm(itemRepo(directFile), transcodeRepo("directPlay"))
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        assertThat(vm.state.value.source).isNotNull()
+
+        vm.onStreamLimited("Your account can play one stream at a time.")
+
+        assertThat(vm.state.value.errorTitle).isEqualTo("Too many streams")
+        assertThat(vm.state.value.error).isEqualTo("Your account can play one stream at a time.")
+    }
 }
