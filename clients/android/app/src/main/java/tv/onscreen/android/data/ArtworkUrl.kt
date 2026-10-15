@@ -22,6 +22,16 @@ fun artworkUrl(serverUrl: String, path: String, width: Int = 500): String {
     return "${normaliseScheme(serverUrl)}/artwork/${encoded}?w=$width"
 }
 
+/**
+ * [artworkUrl] without the resize: the image as stored. For transparent
+ * art (a clear logo, v2.6) — the server re-encodes a resized image as JPEG,
+ * which fills the transparency in.
+ */
+fun artworkOriginalUrl(serverUrl: String, path: String): String {
+    val encoded = path.split("/").joinToString("/") { Uri.encode(it) }
+    return "${normaliseScheme(serverUrl)}/artwork/${encoded}"
+}
+
 /** Lowercase the scheme prefix of an http(s) URL. Pass-through for
  *  values that don't start with http:// / https:// in any casing. */
 internal fun normaliseScheme(url: String): String {

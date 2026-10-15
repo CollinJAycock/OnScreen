@@ -11,7 +11,10 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
+import coil.dispose
+import coil.load
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.isVisible
 import androidx.leanback.app.VideoSupportFragment
@@ -327,6 +330,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         /** Load tries for a side-loaded subtitle (see playSource). */
         private const val SUBTITLE_LOAD_TRIES = 8
 
+        /** View tag of the overlay's clear logo (bindPlayerLogo). */
+        private const val PLAYER_LOGO_TAG = "player_title_logo"
+
         /** [bookSpeed]: set when chaining from one chapter of a book to the
          *  next — the speed the book was playing at (see goToNextEpisode).
          *  [startPaused]: open at [startMs] without playing (see
@@ -511,15 +517,16 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     }
                 }
 
-                glue?.title = state.item?.title ?: ""
-                glue?.subtitle = state.item?.year?.toString() ?: ""
-
                 markers = state.markers
                 dismissedMarkers.clear()
                 chapters = state.file?.chapters ?: emptyList()
                 currentItemType = state.item?.type.orEmpty()
                 currentItem = state.item
                 currentFile = state.file
+
+                // After currentItem: the title block's logo reads it.
+                glue?.title = state.item?.title ?: ""
+                glue?.subtitle = state.item?.year?.toString() ?: ""
 
                 applyListeningSpeed(state.listeningRate)
                 refreshSecondaryActions()
@@ -1184,6 +1191,23 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val host = VideoSupportFragmentGlueHost(this)
 
         glue = object : PlaybackTransportControlGlue<LeanbackPlayerAdapter>(requireContext(), adapter) {
+            // The overlay's title block, as the glue's own (title + subtitle),
+            // plus a movie's clear logo in place of the title (bindPlayerLogo).
+            override fun onCreateRowPresenter(): androidx.leanback.widget.PlaybackRowPresenter {
+                val rp = super.onCreateRowPresenter()
+                (rp as? androidx.leanback.widget.PlaybackTransportRowPresenter)?.setDescriptionPresenter(
+                    object : androidx.leanback.widget.AbstractDetailsDescriptionPresenter() {
+                        override fun onBindDescription(vh: ViewHolder, item: Any) {
+                            val g = item as androidx.leanback.media.PlaybackBaseControlGlue<*>
+                            vh.title.text = g.title
+                            vh.subtitle.text = g.subtitle
+                            bindPlayerLogo(vh)
+                        }
+                    },
+                )
+                return rp
+            }
+
             override fun onCreatePrimaryActions(adapter: ArrayObjectAdapter) {
                 // Order: Rewind, [PlayPause inserted by super], FastForward.
                 // PlaybackTransportControlGlue inserts its own play/pause
@@ -2003,16 +2027,89 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         speedAction?.label1 = getString(R.string.speed_label, AudiobookSpeed.label(speed))
     }
 
+    /**
+     * The overlay's title as a clear logo (v2.6), for a movie that has one:
+     * an image above the title text, which is hidden once the logo has
+     * loaded (and stays when it fails or there is none). The logo carries
+     * the title as its content description. Posted: the presenter sets the
+     * title's visibility from its text after this bind returns, and a cached
+     * logo can load before that.
+     */
+    private fun bindPlayerLogo(vh: androidx.leanback.widget.AbstractDetailsDescriptionPresenter.ViewHolder) {
+        val column = vh.view as? ViewGroup ?: return
+        var logoView = column.findViewWithTag<ImageView>(PLAYER_LOGO_TAG)
+        val item = currentItem
+        val path = item?.let { tv.onscreen.android.ui.detail.DetailMeta.logoPath(it) }
+        if (path == null || serverUrl.isEmpty()) {
+            logoView?.visibility = View.GONE
+            return
+        }
+        if (logoView == null) {
+            val ctx = column.context
+            val dp = ctx.resources.displayMetrics.density
+            logoView = ImageView(ctx).apply {
+                tag = PLAYER_LOGO_TAG
+                adjustViewBounds = true
+                scaleType = ImageView.ScaleType.FIT_START
+                maxHeight = (96 * dp).toInt()
+                maxWidth = (420 * dp).toInt()
+                visibility = View.GONE
+            }
+            column.addView(
+                logoView, 0,
+                ViewGroup.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT),
+            )
+        }
+        val logo = logoView
+        logo.contentDescription = item.title
+        logo.load(tv.onscreen.android.data.artworkOriginalUrl(serverUrl, path)) {
+            listener(
+                onSuccess = { _, _ ->
+                    logo.post {
+                        logo.visibility = View.VISIBLE
+                        vh.title.visibility = View.GONE
+                    }
+                },
+                onError = { _, _ -> logo.post { logo.visibility = View.GONE } },
+            )
+        }
+    }
+
     private fun showChapterPicker() {
         if (chapters.isEmpty()) return
         val labels = chapters.mapIndexed { i, c ->
             val title = c.title.ifBlank { getString(R.string.chapter_n, i + 1) }
             "${i + 1}. $title · ${fmtTimecode(c.start_ms)}"
         }.toTypedArray()
+        // v2.6: chapters with thumbnails list as frame + label rows. A
+        // chapter without one (or a server that sends none) gets an empty
+        // frame; with none at all the list stays text-only.
+        val thumbs = chapters.map { PlaybackHelper.chapterThumbUrl(serverUrl, it.thumb_url) }
+        val rows: android.widget.ListAdapter = if (thumbs.any { it != null }) {
+            object : android.widget.ArrayAdapter<String>(requireContext(), R.layout.item_chapter_row, R.id.chapter_label, labels) {
+                override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
+                    val row = super.getView(position, convertView, parent)
+                    val thumb = row.findViewById<ImageView>(R.id.chapter_thumb)
+                    val url = thumbs[position]
+                    if (url != null) {
+                        thumb.load(url) {
+                            placeholder(R.color.bg_elevated)
+                            error(R.color.bg_elevated)
+                        }
+                    } else {
+                        thumb.dispose()
+                        thumb.setImageDrawable(null)
+                    }
+                    return row
+                }
+            }
+        } else {
+            android.widget.ArrayAdapter(requireContext(), android.R.layout.select_dialog_item, labels)
+        }
 
         AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
             .setTitle(R.string.chapters)
-            .setItems(labels) { d, idx ->
+            .setAdapter(rows) { d, idx ->
                 val target = chapters[idx].start_ms
                 // Server stores chapter offsets in content-time; HLS
                 // sessions need the player-time translation through

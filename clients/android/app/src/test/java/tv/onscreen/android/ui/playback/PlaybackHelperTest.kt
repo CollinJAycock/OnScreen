@@ -543,6 +543,18 @@ class PlaybackHelperTest {
     }
 
     @Test
+    fun `a chapter thumbnail resolves against the server, and none stays none`() {
+        assertThat(PlaybackHelper.chapterThumbUrl("http://srv:7070/", "/trickplay/i/chapter_001.jpg"))
+            .isEqualTo("http://srv:7070/trickplay/i/chapter_001.jpg")
+        assertThat(PlaybackHelper.chapterThumbUrl("http://srv", "trickplay/i/chapter_002.jpg"))
+            .isEqualTo("http://srv/trickplay/i/chapter_002.jpg")
+        assertThat(PlaybackHelper.chapterThumbUrl("http://srv", "https://cdn/x.jpg")).isEqualTo("https://cdn/x.jpg")
+        assertThat(PlaybackHelper.chapterThumbUrl("http://srv", null)).isNull()
+        assertThat(PlaybackHelper.chapterThumbUrl("http://srv", " ")).isNull()
+        assertThat(PlaybackHelper.chapterThumbUrl("", "/trickplay/i/chapter_001.jpg")).isNull()
+    }
+
+    @Test
     fun `the header declares that optimized versions are played`() {
         // v2.6 (docs/capability-profiles.md §13): without it the server never
         // offers an optimized version in place of a transcode.

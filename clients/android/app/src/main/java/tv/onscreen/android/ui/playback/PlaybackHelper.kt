@@ -640,6 +640,15 @@ object PlaybackHelper {
     private const val HDR_TYPE_HLG = 3
     private const val HDR_TYPE_HDR10_PLUS = 4
 
+    /** The absolute URL of a chapter's thumbnail (Chapter.thumb_url, v2.6:
+     *  server-relative, /trickplay/...), or null when it has none. */
+    fun chapterThumbUrl(serverUrl: String, thumbUrl: String?): String? {
+        val t = thumbUrl?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        if (t.startsWith("http://", ignoreCase = true) || t.startsWith("https://", ignoreCase = true)) return t
+        if (serverUrl.isEmpty()) return null
+        return serverUrl.trimEnd('/') + "/" + t.trimStart('/')
+    }
+
     /** The header key declaring that this player plays optimized versions
      *  (docs/capability-profiles.md §13). */
     internal const val OPTIMIZED_KEY = "optimized=1"

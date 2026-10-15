@@ -18,8 +18,20 @@ data class ItemDetail(
     val duration_ms: Long? = null,
     val poster_path: String? = null,
     val fanart_path: String? = null,
+    /** v2.6. A transparent clear logo (PNG), served through /artwork/ like
+     *  the poster but fetched WITHOUT ?w= (a resize re-encodes it as JPEG and
+     *  loses the transparency): see artworkOriginalUrl. Null when the item
+     *  has none, and from older servers. */
+    val logo_path: String? = null,
+    /** v2.6. A wide banner and disc / CD art, like [logo_path]. Not shown
+     *  by this app yet; decoded so they're at hand. */
+    val banner_path: String? = null,
+    val disc_art_path: String? = null,
     val content_rating: String? = null,
     val genres: List<String> = emptyList(),
+    /** v2.6. A movie's production companies or a show's networks, in the
+     *  provider's order. Empty when none, and from older servers. */
+    val studios: List<StudioRef> = emptyList(),
     val parent_id: String? = null,
     val index: Int? = null,
     /** v2.6. The last episode a multi-episode file covers (see
@@ -33,4 +45,13 @@ data class ItemDetail(
      *  | "unwatched" (manual marks included). Omitted for other types and by
      *  older servers; shows and seasons use GET /items/{id}/up-next instead. */
     val watch_state: String? = null,
+)
+
+/** A studio or network on an item ([ItemDetail.studios]). [kind] is
+ *  "studio" or "network". */
+@JsonClass(generateAdapter = true)
+data class StudioRef(
+    val id: String = "",
+    val name: String = "",
+    val kind: String? = null,
 )
