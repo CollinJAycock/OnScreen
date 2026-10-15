@@ -376,9 +376,16 @@ sub renderChildren()
         ' Episodes + chapters: prefix the index for at-a-glance
         ' ordering ("1. Pilot"). Tracks and other types use the
         ' plain title — index numbers on a Pink Floyd album are
-        ' just visual noise next to the track name.
-        if child.index <> invalid and (child.type = "episode" or child.type = "audiobook_chapter")
-            node.title = child.index.ToStr() + ". " + child.title
+        ' just visual noise next to the track name. A multi-episode
+        ' file reads as its range ("1–2. Pilot").
+        nums = ""
+        if child.type = "episode"
+            nums = WatchState_EpisodeNumbers(child.index, child.index_end, "")
+        else if child.index <> invalid and child.type = "audiobook_chapter"
+            nums = child.index.ToStr()
+        end if
+        if nums <> ""
+            node.title = nums + ". " + child.title
         else
             node.title = child.title
         end if
