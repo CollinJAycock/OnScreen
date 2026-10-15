@@ -672,7 +672,7 @@ func (c *Client) GetSeason(ctx context.Context, showTMDBID, seasonNum int) (*met
 	var s tmdbSeason
 	path := fmt.Sprintf("/tv/%d/season/%d", showTMDBID, seasonNum)
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	if err := c.get(ctx, path, params, &s); err != nil {
 		return nil, fmt.Errorf("tmdb get season %d/%d: %w", showTMDBID, seasonNum, err)
 	}
@@ -691,14 +691,53 @@ func (c *Client) GetSeason(ctx context.Context, showTMDBID, seasonNum int) (*met
 			ThumbURL:   imageURL(e.StillPath),
 		})
 	}
-	return &metadata.SeasonResult{
+	res := &metadata.SeasonResult{
 		Number:    s.SeasonNumber,
 		Name:      s.Name,
 		Summary:   s.Overview,
 		AirDate:   air,
 		PosterURL: imageURL(s.PosterPath),
 		Episodes:  episodes,
-	}, nil
+	}
+	if c.localized(ctx) && seasonHasGaps(res) {
+		if def, err := c.GetSeason(c.fallbackCtx(ctx), showTMDBID, seasonNum); err == nil {
+			fillSeasonGaps(res, def)
+		}
+	}
+	return res, nil
+}
+
+// seasonHasGaps reports whether a localized season is missing an overview
+// — its own or an episode's — that the default language might have.
+func seasonHasGaps(s *metadata.SeasonResult) bool {
+	if s.Summary == "" {
+		return true
+	}
+	for _, e := range s.Episodes {
+		if e.Summary == "" {
+			return true
+		}
+	}
+	return false
+}
+
+// fillSeasonGaps copies the default-language overviews into the ones the
+// localized season left empty, matching episodes by number. Titles stay
+// localized: TMDB already answers an untranslated episode name with its
+// own placeholder in the requested language.
+func fillSeasonGaps(s, def *metadata.SeasonResult) {
+	if s.Summary == "" {
+		s.Summary = def.Summary
+	}
+	byNum := make(map[int]string, len(def.Episodes))
+	for _, e := range def.Episodes {
+		byNum[e.EpisodeNum] = e.Summary
+	}
+	for i := range s.Episodes {
+		if s.Episodes[i].Summary == "" {
+			s.Episodes[i].Summary = byNum[s.Episodes[i].EpisodeNum]
+		}
+	}
 }
 
 // GetEpisode implements metadata.Agent.
@@ -706,12 +745,12 @@ func (c *Client) GetEpisode(ctx context.Context, showTMDBID, seasonNum, episodeN
 	var e tmdbEpisode
 	path := fmt.Sprintf("/tv/%d/season/%d/episode/%d", showTMDBID, seasonNum, episodeNum)
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	if err := c.get(ctx, path, params, &e); err != nil {
 		return nil, fmt.Errorf("tmdb get episode %d/%d/%d: %w", showTMDBID, seasonNum, episodeNum, err)
 	}
 	air, _ := time.Parse("2006-01-02", e.AirDate)
-	return &metadata.EpisodeResult{
+	res := &metadata.EpisodeResult{
 		ShowTMDBID: showTMDBID,
 		SeasonNum:  seasonNum,
 		EpisodeNum: e.EpisodeNumber,
@@ -720,7 +759,13 @@ func (c *Client) GetEpisode(ctx context.Context, showTMDBID, seasonNum, episodeN
 		AirDate:    air,
 		Rating:     e.VoteAverage,
 		ThumbURL:   imageURL(e.StillPath),
-	}, nil
+	}
+	if res.Summary == "" && c.localized(ctx) {
+		if def, err := c.GetEpisode(c.fallbackCtx(ctx), showTMDBID, seasonNum, episodeNum); err == nil {
+			res.Summary = def.Summary
+		}
+	}
+	return res, nil
 }
 
 // RefreshMovie implements metadata.Agent.
@@ -730,7 +775,7 @@ func (c *Client) RefreshMovie(ctx context.Context, tmdbID int) (*metadata.MovieR
 	var movie tmdbMovie
 	path := fmt.Sprintf("/movie/%d", tmdbID)
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	params.Set("append_to_response", "release_dates")
 	if err := c.get(ctx, path, params, &movie); err != nil {
 		return nil, fmt.Errorf("tmdb refresh movie %d: %w", tmdbID, err)
@@ -743,6 +788,14 @@ func (c *Client) RefreshMovie(ctx context.Context, tmdbID int) (*metadata.MovieR
 	res.Collection = movie.BelongsToCollection.toRef()
 	res.CollectionChecked = true
 	res.Studios = studiosOf(movie.ProductionCompanies)
+	if res.Summary == "" && c.localized(ctx) {
+		if def, err := c.RefreshMovie(c.fallbackCtx(ctx), tmdbID); err == nil {
+			res.Summary = def.Summary
+			if res.Tagline == "" {
+				res.Tagline = def.Tagline
+			}
+		}
+	}
 	return res, nil
 }
 
@@ -753,7 +806,7 @@ func (c *Client) RefreshTV(ctx context.Context, tmdbID int) (*metadata.TVShowRes
 	var tv tmdbTV
 	path := fmt.Sprintf("/tv/%d", tmdbID)
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	params.Set("append_to_response", "content_ratings,external_ids")
 	if err := c.get(ctx, path, params, &tv); err != nil {
 		return nil, fmt.Errorf("tmdb refresh tv %d: %w", tmdbID, err)
@@ -773,6 +826,11 @@ func (c *Client) RefreshTV(ctx context.Context, tmdbID int) (*metadata.TVShowRes
 		result.TVDBID = tvdbID
 		if result.IMDBID == "" {
 			result.IMDBID = imdbID
+		}
+	}
+	if result.Summary == "" && c.localized(ctx) {
+		if def, err := c.RefreshTV(c.fallbackCtx(ctx), tmdbID); err == nil {
+			result.Summary = def.Summary
 		}
 	}
 
@@ -815,7 +873,7 @@ func (c *Client) listImages(ctx context.Context, path string) ([]metadata.Poster
 	// param, which would hide the un-localized release poster if the
 	// account language is non-English.
 	params := url.Values{}
-	params.Set("include_image_language", "en,null,"+strings.SplitN(c.language, "-", 2)[0])
+	params.Set("include_image_language", "en,null,"+strings.SplitN(c.lang(ctx), "-", 2)[0])
 
 	var resp struct {
 		Posters []struct {

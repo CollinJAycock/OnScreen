@@ -404,6 +404,7 @@ func inShowCascade(ctx context.Context) bool {
 // Enrich implements MetadataAgent. It's called for newly discovered files.
 // Errors are logged but never propagated — a metadata failure must not abort a scan.
 func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.File) error {
+	ctx = e.withLibraryLanguage(ctx, item.LibraryID)
 	agent := e.agentFn()
 	if agent == nil {
 		// No metadata agent, but a movie's NFO collections are still
@@ -2353,6 +2354,7 @@ func (e *Enricher) MatchItem(ctx context.Context, itemID uuid.UUID, tmdbID int) 
 	if err != nil {
 		return fmt.Errorf("get item %s: %w", itemID, err)
 	}
+	ctx = e.withLibraryLanguage(ctx, item.LibraryID)
 
 	files, err := e.updater.GetFiles(ctx, itemID)
 	if err != nil {

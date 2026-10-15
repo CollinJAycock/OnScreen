@@ -721,6 +721,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				HasLibplacebo:        w.hasLibplacebo,
 				AudioCodec:           job.AudioCodec,
 				AudioChannels:        job.AudioChannels,
+				AudioBitrateKbps:     job.AudioBitrateKbps,
 				AudioStreamIndex:     job.AudioStreamIndex,
 				SubtitleStreams:      job.SubtitleStreams,
 				EncoderOpts:          w.encoderOpts,

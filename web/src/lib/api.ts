@@ -1684,6 +1684,10 @@ export const userApi = {
   exportUserData: (userId: string) => api.fetchFile('POST', `/users/${userId}/export`, 'onscreen-data.zip'),
   setPreferences: (prefs: UserPreferences) =>
     api.put<void>('/users/me/preferences', prefs),
+  /** The viewer's own playback quality limits, applied by the server on
+   *  every device (see QualityProfileUpdate). */
+  setQualityProfile: (p: QualityProfileUpdate) =>
+    api.put<void>('/users/me/quality-profile', p),
   // Full ordered hub layout; empty array resets to the default layout.
   setHubLayout: (rows: HubRowPref[]) =>
     api.put<void>('/users/me/hub-layout', { rows }),
@@ -1963,6 +1967,21 @@ export interface UserPreferences {
   has_pin?: boolean;
   // Hub row customization — absent until the user customizes.
   hub_layout?: HubRowPref[];
+  // The quality profile (PUT /users/me/quality-profile). null = no limit.
+  max_video_bitrate_kbps?: number | null;
+  max_audio_bitrate_kbps?: number | null;
+  max_video_height?: number | null;
+  preferred_video_codec?: string | null;
+}
+
+/** PUT /users/me/quality-profile. Replaces the whole profile: a null clears
+ *  that limit, so forced_subtitles_only must be echoed from a fresh read. */
+export interface QualityProfileUpdate {
+  max_video_bitrate_kbps: number | null;
+  max_audio_bitrate_kbps: number | null;
+  max_video_height: number | null;
+  preferred_video_codec: string | null;
+  forced_subtitles_only: boolean;
 }
 
 // One entry of the per-user hub layout. key: "continue_tv",

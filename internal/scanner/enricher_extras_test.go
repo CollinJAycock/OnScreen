@@ -415,3 +415,52 @@ func strp(p *string) string {
 	}
 	return *p
 }
+
+// langAgent records the metadata language each agent call was made in.
+type langAgent struct {
+	*mockAgent
+	langs []string
+}
+
+func (a *langAgent) SearchMovie(ctx context.Context, title string, year int) (*metadata.MovieResult, error) {
+	a.langs = append(a.langs, metadata.LanguageFrom(ctx))
+	return a.mockAgent.SearchMovie(ctx, title, year)
+}
+
+func (a *langAgent) RefreshMovie(ctx context.Context, id int) (*metadata.MovieResult, error) {
+	a.langs = append(a.langs, metadata.LanguageFrom(ctx))
+	return a.mockAgent.RefreshMovie(ctx, id)
+}
+
+// The library's metadata language reaches the agent on both the scan path
+// (Enrich) and Fix Match (MatchItem); it used to be saved and never read.
+func TestEnrichPassesLibraryLanguageToAgent(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "Amelie (2001)")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	itemID := uuid.New()
+	updater := newMockUpdater()
+	updater.items[itemID] = &media.Item{ID: itemID, Type: "movie", Title: "Amelie"}
+	updater.files[itemID] = []media.File{{ID: uuid.New(), MediaItemID: itemID, FilePath: filepath.Join(dir, "Amelie (2001).mkv"), Status: "active"}}
+	agent := &langAgent{mockAgent: &mockAgent{searchMovieResult: &metadata.MovieResult{TMDBID: 194, Title: "Le Fabuleux Destin d'Amélie Poulain", Year: 2001}}}
+	extras := newFakeExtras(false)
+	extras.lang = "fr"
+	e := newExtrasEnricher(t, root, agent, updater, &extrasArtwork{}, extras, nil)
+
+	if err := e.Enrich(context.Background(), updater.items[itemID], &updater.files[itemID][0]); err != nil {
+		t.Fatalf("Enrich: %v", err)
+	}
+	if err := e.MatchItem(context.Background(), itemID, 194); err != nil {
+		t.Fatalf("MatchItem: %v", err)
+	}
+	if len(agent.langs) < 2 {
+		t.Fatalf("agent calls = %d, want a search and a refresh", len(agent.langs))
+	}
+	for i, l := range agent.langs {
+		if l != "fr" {
+			t.Errorf("call %d made in %q, want the library's fr", i, l)
+		}
+	}
+}

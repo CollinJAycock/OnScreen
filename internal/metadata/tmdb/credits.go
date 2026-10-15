@@ -68,7 +68,7 @@ func (c *Client) PersonDetails(ctx context.Context, tmdbID int) (*metadata.Perso
 	var p tmdbPerson
 	path := fmt.Sprintf("/person/%d", tmdbID)
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	if err := c.get(ctx, path, params, &p); err != nil {
 		return nil, fmt.Errorf("tmdb person %d: %w", tmdbID, err)
 	}

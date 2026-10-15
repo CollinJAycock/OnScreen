@@ -53,6 +53,8 @@ func startReasons(file *media.File, caps transcode.ClientCapabilities, decision 
 		label := "Over the user's bitrate cap"
 		if bitrateCap.RemoteBinding {
 			label = "Over the internet streaming limit"
+		} else if bitrateCap.QualityBinding {
+			label = "Over the viewer's quality setting"
 		}
 		out = append(out, fmt.Sprintf("%s (%s > %s)", label, fmtMbps(srcKbps), fmtMbps(capKbps)))
 	}

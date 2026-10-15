@@ -744,6 +744,7 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		BitrateKbps:      rung.BitrateKbps,
 		AudioCodec:       "aac",
 		AudioChannels:    parent.AudioChannels,
+		AudioBitrateKbps: parent.AudioBitrateKbps,
 		AudioStreamIndex: parent.AudioStreamIndex,
 		NeedsToneMap:     parent.NeedsToneMap,
 		EnqueuedAt:       time.Now(),

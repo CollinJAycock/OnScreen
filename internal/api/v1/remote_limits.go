@@ -98,6 +98,9 @@ type streamCap struct {
 	// is what sets Kbps — i.e. on the LAN this stream would be allowed more.
 	// It picks the reason shown to the client and on Now Playing.
 	RemoteBinding bool
+	// QualityBinding reports the viewer's own quality profile sets Kbps (see
+	// QualityProfile) — a choice, so it applies on the LAN too.
+	QualityBinding bool
 	// RemoteLimited reports an internet limit applies to this request at all
 	// (remote video, with the user's or the server's internet cap set). Only
 	// then does the play decision enforce Kbps: a LAN client — or a remote one

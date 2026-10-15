@@ -27,7 +27,14 @@ WHERE id = sqlc.arg('id');
 SELECT
     COALESCE(u.max_concurrent_streams, p.max_concurrent_streams)   AS max_concurrent_streams,
     COALESCE(u.max_stream_bitrate_kbps, p.max_stream_bitrate_kbps) AS max_stream_bitrate_kbps,
-    COALESCE(u.max_remote_stream_bitrate_kbps, p.max_remote_stream_bitrate_kbps) AS max_remote_stream_bitrate_kbps
+    COALESCE(u.max_remote_stream_bitrate_kbps, p.max_remote_stream_bitrate_kbps) AS max_remote_stream_bitrate_kbps,
+    -- The user's own quality profile (PUT /users/me/quality-profile): a
+    -- choice, not a cap an admin set, so a profile keeps its own and never
+    -- inherits the parent's.
+    u.max_video_bitrate_kbps,
+    u.max_audio_bitrate_kbps,
+    u.max_video_height,
+    u.preferred_video_codec
 FROM users u
 LEFT JOIN users p ON p.id = u.parent_user_id
 WHERE u.id = $1;

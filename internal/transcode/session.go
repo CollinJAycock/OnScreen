@@ -87,6 +87,9 @@ type Session struct {
 	// children (preserves the source 5.1/7.1 instead of downmixing to stereo).
 	AudioChannels int  `json:"audio_channels,omitempty"`
 	NeedsToneMap  bool `json:"needs_tone_map,omitempty"`
+	// AudioBitrateKbps is the ABR children's AAC bitrate, held down by the
+	// viewer's quality profile; 0 = the channel-count default.
+	AudioBitrateKbps int `json:"audio_bitrate_kbps,omitempty"`
 	// FrameRate (parent ABR session) is the source fps. The predicted
 	// variant playlist and each child's restart offset are quantized to the
 	// frame ffmpeg actually forces a keyframe on (ceil(i*SegmentDuration*fps)
@@ -1044,6 +1047,10 @@ type TranscodeJob struct {
 	// disagreeing timelines together and the player stalled or jumped. Zero
 	// leaves ffmpeg's default behaviour untouched (all non-ABR paths).
 	OutputTSOffsetSec float64 `json:"output_ts_offset_sec,omitempty"`
+	// AudioBitrateKbps is the AAC bitrate (BuildArgs.AudioBitrateKbps), set
+	// when the viewer's quality profile holds it below the channel-count
+	// default; 0 = that default. A worker that predates it ignores it.
+	AudioBitrateKbps int `json:"audio_bitrate_kbps,omitempty"`
 	// AudioOnly / NoAudio mirror BuildArgs: the source has no video stream /
 	// no audio stream, so the corresponding map + codec args must be omitted
 	// (a hard -map of a missing stream kills ffmpeg instantly). Zero values

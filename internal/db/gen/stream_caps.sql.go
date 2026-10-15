@@ -15,16 +15,27 @@ const getUserStreamCaps = `-- name: GetUserStreamCaps :one
 SELECT
     COALESCE(u.max_concurrent_streams, p.max_concurrent_streams)   AS max_concurrent_streams,
     COALESCE(u.max_stream_bitrate_kbps, p.max_stream_bitrate_kbps) AS max_stream_bitrate_kbps,
-    COALESCE(u.max_remote_stream_bitrate_kbps, p.max_remote_stream_bitrate_kbps) AS max_remote_stream_bitrate_kbps
+    COALESCE(u.max_remote_stream_bitrate_kbps, p.max_remote_stream_bitrate_kbps) AS max_remote_stream_bitrate_kbps,
+    -- The user's own quality profile (PUT /users/me/quality-profile): a
+    -- choice, not a cap an admin set, so a profile keeps its own and never
+    -- inherits the parent's.
+    u.max_video_bitrate_kbps,
+    u.max_audio_bitrate_kbps,
+    u.max_video_height,
+    u.preferred_video_codec
 FROM users u
 LEFT JOIN users p ON p.id = u.parent_user_id
 WHERE u.id = $1
 `
 
 type GetUserStreamCapsRow struct {
-	MaxConcurrentStreams       *int32 `json:"max_concurrent_streams"`
-	MaxStreamBitrateKbps       *int32 `json:"max_stream_bitrate_kbps"`
-	MaxRemoteStreamBitrateKbps *int32 `json:"max_remote_stream_bitrate_kbps"`
+	MaxConcurrentStreams       *int32  `json:"max_concurrent_streams"`
+	MaxStreamBitrateKbps       *int32  `json:"max_stream_bitrate_kbps"`
+	MaxRemoteStreamBitrateKbps *int32  `json:"max_remote_stream_bitrate_kbps"`
+	MaxVideoBitrateKbps        *int32  `json:"max_video_bitrate_kbps"`
+	MaxAudioBitrateKbps        *int32  `json:"max_audio_bitrate_kbps"`
+	MaxVideoHeight             *int32  `json:"max_video_height"`
+	PreferredVideoCodec        *string `json:"preferred_video_codec"`
 }
 
 // Resolves against the EFFECTIVE OWNER: a managed profile with no caps of its
@@ -42,7 +53,15 @@ type GetUserStreamCapsRow struct {
 func (q *Queries) GetUserStreamCaps(ctx context.Context, id uuid.UUID) (GetUserStreamCapsRow, error) {
 	row := q.db.QueryRow(ctx, getUserStreamCaps, id)
 	var i GetUserStreamCapsRow
-	err := row.Scan(&i.MaxConcurrentStreams, &i.MaxStreamBitrateKbps, &i.MaxRemoteStreamBitrateKbps)
+	err := row.Scan(
+		&i.MaxConcurrentStreams,
+		&i.MaxStreamBitrateKbps,
+		&i.MaxRemoteStreamBitrateKbps,
+		&i.MaxVideoBitrateKbps,
+		&i.MaxAudioBitrateKbps,
+		&i.MaxVideoHeight,
+		&i.PreferredVideoCodec,
+	)
 	return i, err
 }
 

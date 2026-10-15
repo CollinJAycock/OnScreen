@@ -259,6 +259,31 @@ func (t *Tracker) remove(keys ...string) {
 	t.mu.Unlock()
 }
 
+// HasStream reports whether the tracker already holds a live stream of the
+// item for this viewer and client — byte traffic or a progress heartbeat —
+// i.e. whether a request continues a playback rather than starting one.
+// One key lookup per form; cheap enough to run on every range request.
+func (t *Tracker) HasStream(userID uuid.UUID, clientIP string, mediaItemID uuid.UUID) bool {
+	keys := []string{bytesEntryKey(userID, clientIP, mediaItemID), heartbeatEntryKey(userID, clientIP, mediaItemID)}
+	if t.v != nil {
+		for _, k := range keys {
+			if _, err := t.v.Get(context.Background(), streamKey(k)); err == nil {
+				return true
+			}
+		}
+		return false
+	}
+	cutoff := time.Now().Add(-entryTTL)
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, k := range keys {
+		if e, ok := t.entries[k]; ok && !e.LastSeen.Before(cutoff) {
+			return true
+		}
+	}
+	return false
+}
+
 // List returns all entries seen within entryTTL. Expired in-memory entries
 // are pruned on each call; Valkey entries expire automatically via TTL.
 func (t *Tracker) List() []Entry {

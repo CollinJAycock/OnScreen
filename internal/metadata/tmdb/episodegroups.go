@@ -66,7 +66,7 @@ func (c *Client) GetEpisodeOrdering(ctx context.Context, tmdbID int, order strin
 
 	var group tmdbEpisodeGroup
 	params := url.Values{}
-	params.Set("language", c.language)
+	params.Set("language", c.lang(ctx))
 	if err := c.get(ctx, "/tv/episode_group/"+url.PathEscape(groupID), params, &group); err != nil {
 		return nil, fmt.Errorf("tmdb episode group %s: %w", groupID, err)
 	}

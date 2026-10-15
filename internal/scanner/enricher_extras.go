@@ -265,6 +265,17 @@ func (e *Enricher) libraryLanguage(ctx context.Context, libraryID uuid.UUID) str
 	return lang
 }
 
+// withLibraryLanguage marks ctx with the library's metadata language, so
+// the TMDB details the enrichment fetches come back in it (see
+// metadata.WithLanguage). A library with no language, or one that can't be
+// read, keeps the agent's default.
+func (e *Enricher) withLibraryLanguage(ctx context.Context, libraryID uuid.UUID) context.Context {
+	if metadata.LanguageFrom(ctx) != "" {
+		return ctx
+	}
+	return metadata.WithLanguage(ctx, e.libraryLanguage(ctx, libraryID))
+}
+
 func remoteURLFor(slot *artSlot, art metadata.ExtraArt) string {
 	switch slot {
 	case &logoSlot:
