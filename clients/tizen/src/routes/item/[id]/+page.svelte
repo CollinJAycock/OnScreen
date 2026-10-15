@@ -393,11 +393,12 @@
               children = it.type === 'book_author' ? authorOrder(raw) : raw;
             }),
             isWatchContainer(it.type) ? loadUpNext() : Promise.resolve(),
-            // Part of the first load, so Back to a card in these rows finds it.
-            it.type === 'artist' ? loadArtistDiscovery(it.id) : Promise.resolve(),
           ]);
         }
         actionsReady = true;
+        // An artist's discovery rows, behind the buttons and the albums but
+        // still part of the first load, so Back to a card in them finds it.
+        if (it.type === 'artist') await loadArtistDiscovery(it.id);
 
         // Show context (show/season/episode): assemble the show's
         // season list + selected season's episodes so the page renders
