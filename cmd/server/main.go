@@ -813,6 +813,10 @@ func run() error {
 	// read live. Shared by the play decision / transcode start and the Now
 	// Playing LAN / remote label so the two can't disagree.
 	remotePolicy := remoteStreamPolicyAdapter{svc: settingsSvc}
+	// An admin-set per-user concurrent-stream limit counts direct plays as
+	// well as transcode sessions; checked by the play decision, transcode
+	// start and the direct stream routes.
+	streamLimit := v1.NewStreamLimit(streamCapsAdapter{q: gen.New(roPool)}, sessionStore, streamTracker)
 	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger).
 		WithRemotePolicy(remotePolicy)
 	// Stable per-server identifier surfaced on the public capabilities endpoint,
@@ -900,7 +904,8 @@ func run() error {
 		// read at start.
 		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)}).
 		// Server-wide internet streaming limit for remote clients.
-		WithRemotePolicy(remotePolicy)
+		WithRemotePolicy(remotePolicy).
+		WithStreamLimit(streamLimit)
 
 	// Attach the SECRET_KEY-derived bearer to every API→worker segment/seghead
 	// proxy request, matching what each worker's segment server now requires.
@@ -1022,6 +1027,7 @@ func run() error {
 
 	ratingsSvc := ratings.New(gen.New(rwPool))
 	itemHandler := v1.NewItemHandler(mediaSvc, watchSvc, sessionStore, metaAgent, matchAdapter, webhookDispatcher, favoritesChecker, streamTracker, logger).
+		WithStreamLimit(streamLimit).
 		WithEpisodePoster(gen.New(roPool)).
 		WithLibraryAccess(libSvc).
 		WithWatchLimit(watchLimitStore).

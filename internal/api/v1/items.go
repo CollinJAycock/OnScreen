@@ -201,6 +201,9 @@ type ItemHandler struct {
 	stops     *PlaybackStopGuard // optional; refuses a direct play an admin just stopped (WithPlaybackStops)
 	subs      ExternalSubLister
 	tracker   *streaming.Tracker
+	// streamLimit enforces an admin-set concurrent-stream limit on direct
+	// plays (StreamFile, StreamOptimized). Optional.
+	streamLimit *StreamLimit
 	sync      *notification.Broker
 	audit     *audit.Logger
 	tokens    *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file
@@ -459,6 +462,13 @@ func (h *ItemHandler) WithEpisodePoster(db EpisodePosterDB) *ItemHandler {
 // which is the pre-existing behaviour.
 func (h *ItemHandler) WithStreamTokenMaker(m *auth.TokenMaker) *ItemHandler {
 	h.tokens = m
+	return h
+}
+
+// WithStreamLimit attaches the concurrent-stream limit the direct stream
+// routes enforce (see StreamLimit).
+func (h *ItemHandler) WithStreamLimit(l *StreamLimit) *ItemHandler {
+	h.streamLimit = l
 	return h
 }
 
@@ -2827,6 +2837,12 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 		// Admin stop: refuse this (user, item, client) for the stop window so
 		// a client that ignores the playback.stop event stops too.
 		if playbackStopBlocks(w, r, h.stops, claims.UserID, file.MediaItemID) {
+			return
+		}
+		// Admin-set concurrent-stream limit: a new direct play counts.
+		if h.streamLimit.BlocksNewStream(w, r, streamRequest{
+			user: claims.UserID, clientIP: canonicalIP(audit.ClientIP(r)), item: file.MediaItemID,
+		}) {
 			return
 		}
 		// Accrue usage from the serving path itself (throttled; restricted

@@ -106,6 +106,10 @@
   // player, or the server refuses the stream with 403 PLAYBACK_STOPPED. The
   // video is torn down and replaced by this message ($lib/playback-stop).
   let adminStopMessage = '';
+  // Set when the server refuses playback because the account is at its
+  // concurrent-stream limit (429 TOO_MANY_SESSIONS) — from the play decision
+  // or from transcode start. Shown in place of the video.
+  let streamLimitMessage = '';
 
   // Video element reference
   let videoEl: HTMLVideoElement;
@@ -916,6 +920,10 @@
       }
     } catch (e) {
       serverDecision = null; // fall back to the local heuristic
+      if (e instanceof ApiRequestError && e.code === 'TOO_MANY_SESSIONS') {
+        handleStreamLimit(e.message);
+        return;
+      }
       console.warn('[capability] decision fetch failed, using local: ' + String(e));
     }
   }
@@ -1359,6 +1367,7 @@
     blocked = false;
     blockedMessage = '';
     adminStopMessage = '';
+    streamLimitMessage = '';
     loading = true;
     transcodeSessionId = null;
     transcodeToken = null;
@@ -2052,6 +2061,22 @@
     destroyHls();
   }
 
+  // The account is at its concurrent-stream limit: stop whatever started and
+  // say so. A direct play refused by the stream route has no message of its
+  // own (the <video> element only sees a failed request), so the play
+  // decision's refusal is the one the viewer reads.
+  function handleStreamLimit(text: string) {
+    streamLimitMessage = text;
+    error = '';
+    buffering = false;
+    paused = true;
+    if (videoEl && !videoEl.paused) videoEl.pause();
+    stopProgressTimer();
+    cancelAutoplay(true);
+    void stopTranscodeSession();
+    destroyHls();
+  }
+
   async function startPlayback() {
     // Parental watch-limit pre-flight — block before any stream or
     // transcode starts so a restricted child never sees even a few
@@ -2415,6 +2440,8 @@
         handleParentalBlock(e.message);
       } else if (e instanceof ApiRequestError && e.code === PLAYBACK_STOPPED_CODE) {
         handleAdminStop(e.message);
+      } else if (e instanceof ApiRequestError && e.code === 'TOO_MANY_SESSIONS') {
+        handleStreamLimit(e.message);
       } else if (e instanceof ApiRequestError && e.code === 'FILE_DAMAGED') {
         // Server integrity gate (422): flip to the fileDamaged panel — a
         // decision-skipping start attempt ends at the same message a
@@ -3508,6 +3535,16 @@
       </svg>
       <p class="blocked-title">Playback stopped</p>
       <p class="blocked-text">{adminStopMessage}</p>
+      <button class="back-btn" on:click={goBack}>← Back</button>
+    </div>
+  {:else if streamLimitMessage}
+    <div class="center-msg" role="alert">
+      <svg class="blocked-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" width="44" height="44">
+        <rect x="2" y="4" width="20" height="13" rx="2"/>
+        <path d="M8 21h8M12 17v4"/>
+      </svg>
+      <p class="blocked-title">Too many streams</p>
+      <p class="blocked-text">{streamLimitMessage}</p>
       <button class="back-btn" on:click={goBack}>← Back</button>
     </div>
   {:else if fileDamaged}

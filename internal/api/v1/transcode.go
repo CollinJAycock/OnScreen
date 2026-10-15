@@ -93,6 +93,9 @@ type NativeTranscodeHandler struct {
 	logger   *slog.Logger
 	killer   SessionKiller        // optional — set for embedded worker deployments
 	userCaps UserStreamCapsReader // optional — per-user admin concurrent/bitrate caps
+	// streamLimit counts direct plays toward an admin-set concurrent-stream
+	// limit. Optional — nil = only transcode sessions count.
+	streamLimit *StreamLimit
 	// remotePolicy is the server-wide internet streaming limit + extra home
 	// networks (Settings ▸ Transcode). Optional — nil = no internet limit.
 	remotePolicy RemoteStreamPolicyReader
@@ -169,6 +172,13 @@ func (h *NativeTranscodeHandler) LibraryAccessWired() bool { return h.access != 
 // only the server-wide concurrent + bitrate limits.
 func (h *NativeTranscodeHandler) WithUserCaps(c UserStreamCapsReader) *NativeTranscodeHandler {
 	h.userCaps = c
+	return h
+}
+
+// WithStreamLimit attaches the concurrent-stream limit that counts direct
+// plays as well as transcode sessions (see StreamLimit).
+func (h *NativeTranscodeHandler) WithStreamLimit(l *StreamLimit) *NativeTranscodeHandler {
+	h.streamLimit = l
 	return h
 }
 
@@ -630,6 +640,19 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	maxSessionsPerUser := 5
 	if streamCaps.ConcurrentStreams > 0 {
 		maxSessionsPerUser = streamCaps.ConcurrentStreams
+		// An admin limit counts direct plays too: each one on another device
+		// takes a slot, and the session cap below (including the atomic
+		// re-count in CreateWithUserCap) gets what is left.
+		direct := h.streamLimit.directStreams(ctx, streamRequest{
+			user: claims.UserID, clientIP: canonicalIP(audit.ClientIP(r)), item: itemID,
+		})
+		if direct >= maxSessionsPerUser {
+			h.logger.WarnContext(ctx, "per-user stream limit reached",
+				"user_id", claims.UserID, "direct", direct, "cap", maxSessionsPerUser)
+			refuseStreamLimit(w, r, direct, maxSessionsPerUser)
+			return
+		}
+		maxSessionsPerUser -= direct
 	}
 	if active, err := h.sessions.CountByUser(ctx, claims.UserID); err == nil && active >= maxSessionsPerUser {
 		h.logger.WarnContext(ctx, "per-user transcode session cap reached",

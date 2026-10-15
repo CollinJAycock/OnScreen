@@ -428,4 +428,3 @@ func TestArtworkPosters(t *testing.T) {
 		t.Error("escaping path accepted")
 	}
 }
-

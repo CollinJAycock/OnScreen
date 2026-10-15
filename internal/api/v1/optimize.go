@@ -279,6 +279,11 @@ func (h *ItemHandler) StreamOptimized(w http.ResponseWriter, r *http.Request) {
 		if playbackStopBlocks(w, r, h.stops, claims.UserID, item.ID) {
 			return
 		}
+		if h.streamLimit.BlocksNewStream(w, r, streamRequest{
+			user: claims.UserID, clientIP: canonicalIP(audit.ClientIP(r)), item: item.ID,
+		}) {
+			return
+		}
 		h.usageAccrue.Tick(ctx, h.logger, claims.UserID)
 		h.noteDirectPlay(r, claims.UserID, item.ID)
 	}

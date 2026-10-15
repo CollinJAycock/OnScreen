@@ -159,6 +159,14 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 		}
 	}
 
+	// An admin-set concurrent-stream limit, counting direct plays: refuse
+	// here, before the client starts a stream the server would cut off.
+	if h.streamLimit.Blocks(w, r, streamRequest{
+		user: claims.UserID, clientIP: canonicalIP(audit.ClientIP(r)), item: itemID,
+	}) {
+		return
+	}
+
 	caps, hasProfile := clientCaps(r, body)
 	serverCaps := transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}
 	decision := transcode.Decide(*file, caps, serverCaps)
