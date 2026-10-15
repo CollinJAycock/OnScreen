@@ -62,6 +62,13 @@ releases.
 | `TOO_MANY_SESSIONS` | 429 | Per-user concurrent session cap reached (default 5). Stop one of the user's existing sessions before starting another. |
 | `FILE_DAMAGED` | 422 | `POST /items/{id}/transcode` on a file the opt-in `integrity_probe` task marked damaged (its stream fails software decode partway through even though the header parses). The playback-decision endpoint gives the same file a "damaged" verdict. Replace the file and re-scan. |
 | `UNSUPPORTED_CONTAINER` | 415 | The file isn't a playable media container — typically an HLS/M3U playlist or other reference file in place of real media. Returned by `POST /items/{id}/transcode` and `POST /items/{id}/playback-decision`, before ffprobe or ffmpeg ever opens the file. |
+| `INVALID_SUBTITLE_STREAM` | 400 | `burn_subtitle_stream_index` on `POST /items/{id}/transcode` isn't one of the file's `subtitle_streams[].index`. |
+| `SUBTITLE_NOT_IMAGE` | 400 | `burn_subtitle_stream_index` names a text subtitle track. Only picture tracks (PGS, VobSub, DVB, XSUB) are burned in; the player renders text tracks itself. |
+| `BURN_IN_UNSUPPORTED` | 400 | A burn-in was asked for on a movie stored in several parts (cd1 + cd2), which has no single subtitle stream to paint. |
+| `BURN_IN_UNAVAILABLE` | 503 | A burn-in was asked for, but no transcode worker advertises the `burn_in_subtitles` feature (every worker is an older build). Update the workers. |
+
+All four burn-in refusals are given before the caller's current session for
+the item is replaced, so the stream they're watching keeps playing.
 
 Generic codes (`INTERNAL` / `NOT_FOUND` / `FORBIDDEN`) still cover the rest of
 the transcode surface; when adding new specific failure modes (codec rejection,

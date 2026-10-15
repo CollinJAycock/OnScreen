@@ -2448,7 +2448,7 @@ paths:
                 properties:
                   data: { $ref: '#/components/schemas/TranscodeStartResponse' }
         '400':
-          description: 'Malformed request (`code: BAD_REQUEST`): a negative `height` or one over the server maximum, an invalid `file_id`, or an `audio_stream_index` past the last audio track of the file.'
+          description: 'Malformed request (`code: BAD_REQUEST`): a negative `height` or one over the server maximum, an invalid `file_id`, or an `audio_stream_index` past the last audio track of the file. v2.6: a refused `burn_subtitle_stream_index` answers `INVALID_SUBTITLE_STREAM`, `SUBTITLE_NOT_IMAGE` or `BURN_IN_UNSUPPORTED` (see the request field).'
         '404':
           description: 'Item not found, or item type is not transcodable (e.g. audiobook / book / photo).'
         '422':
@@ -2485,6 +2485,9 @@ paths:
             counts the user's direct plays on other devices too.
         '503':
           description: |
+            v2.6: `BURN_IN_UNAVAILABLE` when a burn-in was asked for and no
+            transcode worker can do one yet (every worker predates it).
+
             Returned by the playlist sub-endpoint
             (`/api/v1/transcode/sessions/{sid}/playlist.m3u8`) when seg 0
             doesn't land within the handler's 60 s deadline. The deadline is
@@ -8180,6 +8183,14 @@ components:
         channels: { type: integer }
         language: { type: string }
         title:    { type: string }
+        profile:
+          type: string
+          description: |
+            v2.6. ffprobe's codec profile, which tells the lossless and
+            object-audio variants from their core codec: "DTS-HD MA",
+            "Dolby TrueHD + Dolby Atmos", "Dolby Digital Plus + Dolby Atmos",
+            "LC". Absent when ffprobe gives none, and on files probed before
+            the field until a metadata reprobe.
     SubtitleStream:
       type: object
       properties:
@@ -8203,6 +8214,19 @@ components:
             (positive = later), already applied to the cues
             /media/subtitles/{fileId}/{index} serves. Informational:
             clients must not shift by it again. 0 when none.
+        image_based:
+          type: boolean
+          description: |
+            v2.6. A picture subtitle (PGS, VobSub, DVB, XSUB), which
+            /media/subtitles can't serve as text. Play it through its OCR'd
+            text version (`text_version_id`) or burn it into a transcode
+            (`burn_subtitle_stream_index` on POST /items/{id}/transcode).
+        text_version_id:
+          type: string
+          description: |
+            v2.6. The id of this stream's OCR'd text version among the file's
+            `external_subtitles` (source "ocr", source_id "stream_<index>").
+            Absent until one has been made.
     ExternalSubtitle:
       type: object
       properties:
@@ -8884,7 +8908,7 @@ components:
             + `.m4s` segment shape.
         audio_stream_index:
           type: integer
-          description: 'Audio track to play, counted among audio streams only: its position in the file''s `audio_streams` array (0 = first), not that entry''s absolute `index`. nil/omitted = default (first) audio stream. Past the last audio track: 400. On a remux (`video_copy`) this track is passed through untouched only when it is AAC, AC3, E-AC3 or MP3, the client declares that codec, and its channels fit the client''s maximum; otherwise it is re-encoded to AAC. Re-issuing the session with a different index drives the in-player audio picker.'
+          description: 'Audio track to play, counted among audio streams only: its position in the file''s `audio_streams` array (0 = first), not that entry''s absolute `index`. nil/omitted = default (first) audio stream. Past the last audio track: 400. On a remux (`video_copy`) this track is passed through untouched only when it is AAC, AC3, E-AC3 or MP3, the client declares that codec, and its channels fit the client''s maximum, or (v2.6) when the client lists its codec in the `audioPassthrough` capability, whatever its channels: AC3, E-AC3, TrueHD or DTS, the last two packaged as fMP4 segments (not for an audio-only file or a `segment_container: ts` request); otherwise it is re-encoded to AAC. Re-issuing the session with a different index drives the in-player audio picker.'
         supports_hevc:
           type: boolean
           description: 'Client can decode HEVC (H.265). Server uses this to pick HEVC output when transcoding (saves bandwidth) and to enable the HEVC-source remux path.'
@@ -8919,6 +8943,26 @@ components:
             (Samsung's webview), e.g. an audiobook at 1.5x. Clamped to 0.5-3;
             ignored for a video source. The stream's clock then runs at
             content / rate; the response's audio_rate says what was applied.
+        burn_subtitle_stream_index:
+          type: integer
+          nullable: true
+          description: |
+            v2.6. Paint a picture subtitle stream (PGS, VobSub, DVB, XSUB)
+            into the video: the stream's ABSOLUTE index, the same number as
+            the file's `subtitle_streams[].index`. null/omitted = no burn-in.
+            A burn-in is always a full video re-encode on a single rendition:
+            `video_copy` is ignored, and neither the adaptive ladder nor a
+            pre-encoded one is used. The stream's timing offset applies (its
+            own, else its OCR'd text version's). Validated before the
+            caller's current session for the item is replaced, so a refusal
+            leaves it playing: 400 `INVALID_SUBTITLE_STREAM` (not one of the
+            file's subtitle streams), 400 `SUBTITLE_NOT_IMAGE` (a text track;
+            the player renders those itself), 400 `BURN_IN_UNSUPPORTED` (a
+            movie stored in several parts), 503 `BURN_IN_UNAVAILABLE` (no
+            transcode worker advertises the burn-in feature yet). Seeking:
+            a cue already showing at the start position may be skipped,
+            depending on where the container seek lands; subtitles show from
+            the next cue at the latest. Output is 8-bit.
     TranscodeStartResponse:
       type: object
       description: |
@@ -8968,6 +9012,13 @@ components:
             session (request `audio_rate`). Absent or 0 when none was
             applied: a client that asked for a speed and gets 0 back is
             on a server without it, and plays at 1x.
+        burned_subtitle_stream_index:
+          type: integer
+          description: |
+            v2.6. Echoes `burn_subtitle_stream_index` when the session paints
+            that subtitle stream into the picture. Absent otherwise, which is
+            also what a server without burn-in answers: a client that asked
+            and gets no echo should show the track another way.
 
     # ── Notifications / Sessions ───────────────────────────────────────────
     Notification:

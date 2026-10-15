@@ -249,6 +249,10 @@ export interface TranscodeStartOpts {
    *  capability header; an explicit one says the same thing (including a
    *  runtime demotion's false) without depending on the header. */
   supportsAV1?: boolean;
+  /** Burn this image subtitle track into the picture: its ABSOLUTE stream
+   *  index (subtitle_streams[].index). Always a full re-encode, so it goes
+   *  with videoCopy false (lib/player/burnIn). Omitted = no burn. */
+  burnSubtitleStreamIndex?: number;
 }
 
 export const transcode = {
@@ -260,7 +264,10 @@ export const transcode = {
       video_copy: opts.videoCopy ?? false,
       audio_stream_index: opts.audioStreamIndex ?? null,
       supports_hevc: opts.supportsHEVC ?? false,
-      supports_av1: opts.supportsAV1 ?? false
+      supports_av1: opts.supportsAV1 ?? false,
+      ...(opts.burnSubtitleStreamIndex !== undefined
+        ? { burn_subtitle_stream_index: opts.burnSubtitleStreamIndex }
+        : {})
     }),
   // Server-authoritative play decision (capability profiles). Returns
   // "directPlay" | "directStream" | "transcode" (and an optimized version,

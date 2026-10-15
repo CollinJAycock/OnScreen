@@ -492,6 +492,13 @@ object PlaybackHelper {
         val dts: Boolean = false,
         /** The audio output takes 8-channel TrueHD as a bitstream ([onAudioOutputChanged]). */
         val truehd: Boolean = false,
+        /** The audio output takes AC-3 (5.1), 8-channel E-AC-3 (or E-AC-3
+         *  with Atmos) and 8-channel DTS-HD as a bitstream: the header's
+         *  audioPassthrough key ([audioPassthroughKey]) with [dts] and
+         *  [truehd]. */
+        val ac3: Boolean = false,
+        val eac3: Boolean = false,
+        val dtsHd: Boolean = false,
         val width: Int = 3840,
         val height: Int = 2160,
         /** The screen shows HDR10 ([displayShowsHdr10]). */
@@ -541,8 +548,8 @@ object PlaybackHelper {
     /**
      * The audio output changed (a receiver switched on or off, the TV's
      * surround setting, a different HDMI sink): what it takes as a bitstream
-     * decides the DTS and TrueHD claims, so the header is rebuilt when that
-     * changes. Registered at app start (OnScreenApp) through Media3's
+     * decides the DTS and TrueHD claims and the audioPassthrough key, so the
+     * header is rebuilt when that changes. Registered at app start (OnScreenApp) through Media3's
      * AudioCapabilitiesReceiver, which reads the HDMI sink the same way the
      * player's audio sink does.
      */
@@ -553,22 +560,51 @@ object PlaybackHelper {
         // takes DTS but fewer channels than a film has refuses it. With no
         // DTS decoder to fall back on, that film played silently (no audio
         // track selected, no error). 8 channels: what the header claims.
-        fun passthrough(mime: String) = audio.isPassthroughPlaybackSupported(
+        fun passthrough(mime: String, channels: Int = 8) = audio.isPassthroughPlaybackSupported(
             androidx.media3.common.Format.Builder()
                 .setSampleMimeType(mime)
-                .setChannelCount(8)
+                .setChannelCount(channels)
                 .setSampleRate(48_000)
                 .build(),
             androidx.media3.common.AudioAttributes.DEFAULT,
         )
         val dts = passthrough(androidx.media3.common.MimeTypes.AUDIO_DTS)
         val truehd = passthrough(androidx.media3.common.MimeTypes.AUDIO_TRUEHD)
-        if (dts == output.dts && truehd == output.truehd) return
+        // AC-3 carries 5.1 at most: asked for 8 channels, every sink refuses it.
+        val ac3 = passthrough(androidx.media3.common.MimeTypes.AUDIO_AC3, channels = 6)
+        // E-AC-3 with Atmos (JOC) is checked on its own: Media3 falls back to
+        // plain E-AC-3 for it when the sink doesn't list JOC, so either says
+        // the receiver takes the bitstream.
+        val eac3 = passthrough(androidx.media3.common.MimeTypes.AUDIO_E_AC3) ||
+            passthrough(androidx.media3.common.MimeTypes.AUDIO_E_AC3_JOC)
+        val dtsHd = passthrough(androidx.media3.common.MimeTypes.AUDIO_DTS_HD)
+        val now = output
+        if (dts == now.dts && truehd == now.truehd && ac3 == now.ac3 && eac3 == now.eac3 && dtsHd == now.dtsHd) return
+        fun yn(b: Boolean) = if (b) "yes" else "no"
         android.util.Log.i(
             "PlaybackHelper",
-            "audio output takes as a bitstream: 8-channel DTS ${if (dts) "yes" else "no"}, 8-channel TrueHD ${if (truehd) "yes" else "no"}",
+            "audio output takes as a bitstream: 8-channel DTS ${yn(dts)}, 8-channel DTS-HD ${yn(dtsHd)}, " +
+                "8-channel TrueHD ${yn(truehd)}, 5.1 AC-3 ${yn(ac3)}, 8-channel E-AC-3 ${yn(eac3)}",
         )
-        updateOutput { it.copy(dts = dts, truehd = truehd) }
+        updateOutput { it.copy(dts = dts, truehd = truehd, ac3 = ac3, eac3 = eac3, dtsHd = dtsHd) }
+    }
+
+    /**
+     * The header's audioPassthrough key (docs/capability-profiles.md): the
+     * codecs the HDMI output takes as a bitstream, in the server's canonical
+     * names, or null when it takes none (the key is then left out). The
+     * server copies these into a remux untouched whatever maxAudioChannels
+     * says — the receiver decodes them, not this box — instead of converting
+     * a 7.1 TrueHD track to 5.1 AAC.
+     */
+    internal fun audioPassthroughKey(ac3: Boolean, eac3: Boolean, truehd: Boolean, dts: Boolean): String? {
+        val codecs = buildList {
+            if (eac3) add("eac3")
+            if (ac3) add("ac3")
+            if (truehd) add("truehd")
+            if (dts) add("dts")
+        }
+        return if (codecs.isEmpty()) null else "audioPassthrough=" + codecs.joinToString(":")
     }
 
     /**
@@ -752,7 +788,7 @@ object PlaybackHelper {
             // offers (a pre-made H.264/AAC MP4) as a direct play, falling
             // back to the source's verdict (PlaybackViewModel).
             OPTIMIZED_KEY,
-        )
+        ) + listOfNotNull(audioPassthroughKey(out.ac3, out.eac3, out.truehd, dts = out.dts || out.dtsHd))
         return (keys + depthAndHdrKeys(supports10Bit(), supportsVp9Profile2(), out.hdr, out.hlg)).joinToString(",")
     }
 

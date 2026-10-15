@@ -112,6 +112,42 @@ data class SubtitleTrackSource(
     val embeddedIndex: Int? = null,
 )
 
+/**
+ * An image-based subtitle stream (PGS / VobSub / DVB) the picker offers on a
+ * server session, which can't carry it as text: picking it plays its OCR'd
+ * text version when there is one ([textTrackId]), else restarts the session
+ * with the picture track burned into the video.
+ *
+ * @property streamIndex the stream's ABSOLUTE index (SubtitleStream.index),
+ *   what burn_subtitle_stream_index takes.
+ * @property textTrackId the side-load id (`sub:ext:{id}`) of the stream's
+ *   text version, when the server has one and it is among the side-loads.
+ */
+data class ImageSubtitleOption(
+    val streamIndex: Int,
+    val label: String,
+    val textTrackId: String?,
+)
+
+/** Why a burn-in pick didn't take: the player says so and stays on the
+ *  stream it has. */
+enum class BurnInFailure {
+    /** 400 BURN_IN_UNSUPPORTED: nothing can be burned into this video (a
+     *  stacked movie). */
+    UNSUPPORTED,
+
+    /** 400 INVALID_SUBTITLE_STREAM / SUBTITLE_NOT_IMAGE: not a picture track
+     *  of this file (any more). */
+    UNAVAILABLE,
+
+    /** 503 BURN_IN_UNAVAILABLE: no transcode worker on the server can burn
+     *  subtitles in (an older remote worker). */
+    SERVER,
+
+    /** Anything else: the new session didn't start. */
+    FAILED,
+}
+
 data class PlaybackUiState(
     val source: PlaybackSource? = null,
     val item: ItemDetail? = null,
@@ -144,6 +180,9 @@ data class PlaybackUiState(
      *  item sits in, for the now-playing screen when the item has no art of
      *  its own. Looked up with [nowPlaying]; null until then. */
     val parentPosterPath: String? = null,
+    /** The ABSOLUTE index of the image-based subtitle stream burned into the
+     *  playing session's video, or null. Text tracks stay off meanwhile. */
+    val burnedSubtitleIndex: Int? = null,
     val error: String? = null,
 )
 
@@ -159,6 +198,16 @@ class PlaybackViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(PlaybackUiState())
     val uiState: StateFlow<PlaybackUiState> = _uiState
+
+    private val _burnInFailure = MutableStateFlow<BurnInFailure?>(null)
+
+    /** A burn-in pick (or its undoing) that didn't take, until the fragment
+     *  has said so ([burnInFailureShown]). */
+    val burnInFailure: StateFlow<BurnInFailure?> = _burnInFailure
+
+    fun burnInFailureShown() {
+        _burnInFailure.value = null
+    }
 
     private var transcodeSessionId: String? = null
     private var transcodeToken: String? = null
@@ -191,6 +240,12 @@ class PlaybackViewModel @Inject constructor(
          *  re-issue must carry it forward or the user's language choice
          *  silently resets to the server default. */
         val audioStreamIndex: Int? = null,
+        /** The image-based subtitle stream burned into the CURRENT session
+         *  (absolute index), carried forward by a seek re-issue or an audio
+         *  switch like the audio track. [height] and [videoCopy] stay the
+         *  unburned session's, so taking the burn off goes back to it (a
+         *  remux again); startTranscode re-encodes while this is set. */
+        val burnSubtitleIndex: Int? = null,
     )
 
     // Set while the active source is a direct play, so a fatal ExoPlayer
@@ -612,7 +667,7 @@ class PlaybackViewModel @Inject constructor(
         // tracks that silently never displayed. Skip them here; on direct
         // play ExoPlayer renders them natively from the container.
         val embedded = if (fileTok == null) emptyList() else file.subtitle_streams
-            .filterNot { isImageBasedSubtitle(it.codec) }
+            .filterNot { isImageBased(it) }
             .map { s ->
                 SubtitleTrackSource(
                     // ABSOLUTE stream index here — /media/subtitles/{fileId}/{index}
@@ -660,6 +715,7 @@ class PlaybackViewModel @Inject constructor(
         videoCopy: Boolean,
         serverUrl: String,
         audioStreamIndex: Int? = null,
+        burnSubtitleIndex: Int? = null,
     ): PlaybackSource.Hls? {
         // Capture the outgoing session but DON'T tear it down yet. Stopping
         // first meant a failed start (server 5xx, network blip, rate limit)
@@ -670,15 +726,24 @@ class PlaybackViewModel @Inject constructor(
         val priorSessionId = transcodeSessionId
         val priorToken = transcodeToken
 
+        // Burning a subtitle in always re-encodes the video. A remux (height
+        // 0, "auto") then asks for the height a transcode of this file would
+        // get, as the direct-play fallback does.
+        val burning = burnSubtitleIndex != null
         val session = transcodeRepo.start(
             itemId = itemId,
-            height = height,
+            height = if (burning && videoCopy) {
+                PlaybackHelper.transcodeHeight(_uiState.value.file?.resolution_h, PlaybackHelper.displayHeightCap())
+            } else {
+                height
+            },
             positionMs = posMs,
             fileId = fileId,
-            videoCopy = videoCopy,
+            videoCopy = videoCopy && !burning,
             audioStreamIndex = audioStreamIndex,
             supportsHevc = PlaybackHelper.supportsHevc(),
             supportsAv1 = PlaybackHelper.supportsAv1(),
+            burnSubtitleStreamIndex = burnSubtitleIndex,
         )
 
         // The server ended this playback while the start was in flight. It
@@ -719,7 +784,7 @@ class PlaybackViewModel @Inject constructor(
         val startInStreamMs = PlaybackHelper.hlsStartMs(posMs, stream.offsetMs, seg0SkipMs)
 
         hlsOffsetMs = stream.offsetMs
-        lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl, audioStreamIndex)
+        lastTranscodeRequest = TranscodeRequest(itemId, fileId, height, videoCopy, serverUrl, audioStreamIndex, burnSubtitleIndex)
 
         // New session is live — now retire the one it replaces.
         if (priorSessionId != null && priorToken != null && priorSessionId != session.session_id) {
@@ -777,6 +842,8 @@ class PlaybackViewModel @Inject constructor(
                     videoCopy = req.videoCopy,
                     serverUrl = req.serverUrl,
                     audioStreamIndex = audioStreamOrdinal,
+                    // A burned-in subtitle stays burned in.
+                    burnSubtitleIndex = req.burnSubtitleIndex,
                 ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source)
             } catch (e: Exception) {
@@ -817,6 +884,7 @@ class PlaybackViewModel @Inject constructor(
                     videoCopy = req.videoCopy,
                     serverUrl = req.serverUrl,
                     audioStreamIndex = req.audioStreamIndex,
+                    burnSubtitleIndex = req.burnSubtitleIndex,
                 ) ?: return@launch // stopped meanwhile; the new session is already retired
                 _uiState.value = _uiState.value.copy(source = source)
             } catch (e: Exception) {
@@ -826,6 +894,82 @@ class PlaybackViewModel @Inject constructor(
                 adminStopSentinel(e)?.let { _uiState.value = _uiState.value.copy(error = it) }
             } finally {
                 reissueInFlight = false
+            }
+        }
+    }
+
+    /**
+     * The image-based subtitle streams the picker offers: on a server session
+     * only (direct play draws them from the container itself, and an
+     * optimized version has no session to burn them into), and only from a
+     * server that marks them (image_based, v2.6) — the one that also takes
+     * burn_subtitle_stream_index. An older server ignores that field, so a
+     * "burned in" pick there would play without subtitles.
+     */
+    fun imageSubtitles(): List<ImageSubtitleOption> {
+        val state = _uiState.value
+        if (state.source !is PlaybackSource.Hls) return emptyList()
+        return imageSubtitleOptions(state.subtitles, state.subtitleSources)
+    }
+
+    /**
+     * The viewer picked the image-based stream [streamIndex] (absolute) on a
+     * server session, [currentPositionMs] into the stream. Returns the
+     * side-load id of its OCR'd text version for the caller to select, the
+     * session left as it is (a burned-in subtitle is taken off); null when
+     * there is none, and the session restarts here with the stream burned
+     * into the video instead (the owner's choice: text if ready, else burn).
+     */
+    fun pickImageSubtitle(streamIndex: Int, currentPositionMs: Long): String? {
+        val option = imageSubtitles().firstOrNull { it.streamIndex == streamIndex } ?: return null
+        option.textTrackId?.let {
+            clearBurnedSubtitle(currentPositionMs)
+            return it
+        }
+        val req = lastTranscodeRequest ?: return null
+        if (req.burnSubtitleIndex != streamIndex) {
+            restartBurned(req.copy(burnSubtitleIndex = streamIndex), currentPositionMs + hlsOffsetMs)
+        }
+        return null
+    }
+
+    /**
+     * The viewer picked Off or a text subtitle: a burned-in one is taken off
+     * by restarting the session without it at [currentPositionMs] (in the
+     * stream). Nothing to do when none is burned in.
+     */
+    fun clearBurnedSubtitle(currentPositionMs: Long) {
+        val req = lastTranscodeRequest ?: return
+        if (req.burnSubtitleIndex == null) return
+        restartBurned(req.copy(burnSubtitleIndex = null), currentPositionMs + hlsOffsetMs)
+    }
+
+    /** Restart the session as [req] at content position [posMs] — the audio
+     *  switch's re-issue, with a subtitle burned in or taken off. On a
+     *  refusal the session already playing carries on, and the fragment says
+     *  why ([burnInFailure]). */
+    private fun restartBurned(req: TranscodeRequest, posMs: Long) {
+        if (refused) return
+        viewModelScope.launch {
+            try {
+                val source = startTranscode(
+                    itemId = req.itemId,
+                    height = req.height,
+                    posMs = posMs.coerceAtLeast(0L),
+                    fileId = req.fileId,
+                    videoCopy = req.videoCopy,
+                    serverUrl = req.serverUrl,
+                    audioStreamIndex = req.audioStreamIndex,
+                    burnSubtitleIndex = req.burnSubtitleIndex,
+                ) ?: return@launch // stopped meanwhile; the new session is already retired
+                _uiState.value = _uiState.value.copy(source = source, burnedSubtitleIndex = req.burnSubtitleIndex)
+            } catch (e: Exception) {
+                adminStopSentinel(e)?.let {
+                    _uiState.value = _uiState.value.copy(error = it)
+                    return@launch
+                }
+                android.util.Log.w("PlaybackViewModel", "subtitle burn-in change failed", e)
+                _burnInFailure.value = burnInFailureOf(e)
             }
         }
     }
@@ -1095,6 +1239,46 @@ class PlaybackViewModel @Inject constructor(
             PlaybackHelper.VERDICT_UNSUPPORTED -> "dolby_vision"
             else -> null
         }
+
+        /** The [BurnInFailure] for a failed burn-in restart [e]. */
+        internal fun burnInFailureOf(e: Exception): BurnInFailure {
+            if (e is HttpException && e.code() == 503 && e.apiError()?.code == "BURN_IN_UNAVAILABLE") {
+                return BurnInFailure.SERVER
+            }
+            if (e !is HttpException || e.code() != 400) return BurnInFailure.FAILED
+            return when (e.apiError()?.code) {
+                "BURN_IN_UNSUPPORTED" -> BurnInFailure.UNSUPPORTED
+                "INVALID_SUBTITLE_STREAM", "SUBTITLE_NOT_IMAGE" -> BurnInFailure.UNAVAILABLE
+                else -> BurnInFailure.FAILED
+            }
+        }
+
+        /**
+         * The picker's image-based rows for a server session: every stream
+         * the server marks image_based, in the file's order, labelled as the
+         * text ones are, with the side-load id of its OCR'd text version when
+         * that is among [sources].
+         */
+        internal fun imageSubtitleOptions(
+            streams: List<SubtitleStream>,
+            sources: List<SubtitleTrackSource>,
+        ): List<ImageSubtitleOption> {
+            val loadable = sources.mapTo(HashSet()) { it.trackId }
+            return streams.filter { it.image_based == true }.map { s ->
+                ImageSubtitleOption(
+                    streamIndex = s.index,
+                    label = SubtitleLabel.of(
+                        s.language, s.title, s.forced, s.sdh, downloaded = false, fallback = "Track ${s.index}",
+                    ),
+                    textTrackId = s.text_version_id?.let { "sub:ext:$it" }?.takeIf { it in loadable },
+                )
+            }
+        }
+
+        /** Whether [stream] is picture-based: the server's word (v2.6), else
+         *  judged by its codec. */
+        fun isImageBased(stream: SubtitleStream): Boolean =
+            stream.image_based ?: isImageBasedSubtitle(stream.codec)
 
         /** Mirrors the server's ocr.IsImageBased — the codecs whose VTT
          *  extraction is refused with 415 IMAGE_SUBTITLE. */

@@ -16,6 +16,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Before
+import kotlinx.coroutines.flow.first
 import org.junit.Test
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.ResponseBody.Companion.toResponseBody
@@ -2459,5 +2460,150 @@ class PlayerViewModelTest {
         advanceUntilIdle()
 
         assertThat(vm.state.value.nextSibling?.id).isEqualTo("ep-3")
+    }
+
+    // ── Image-based subtitles on a remux / transcode: OCR text, else burn-in ──
+
+    /** The film with a PGS track at absolute index 4, OCR'd into the
+     *  attached text file [textVersion] when there is one. */
+    private fun pgsFile(textVersion: String? = null) = transcodeFile().copy(
+        stream_token = "st-file",
+        audio_streams = threeAudioStreams,
+        subtitle_streams = listOf(
+            SubtitleStream(4, "hdmv_pgs_subtitle", "eng", "English", false, image_based = true, text_version_id = textVersion),
+        ),
+        external_subtitles = listOfNotNull(
+            textVersion?.let {
+                tv.onscreen.mobile.data.model.ExternalSubtitle(id = it, language = "eng", url = "/media/external-subtitles/$it")
+            },
+        ),
+    )
+
+    /** A view model remuxing [file], each later session "sess-2", "sess-3"… */
+    private fun kotlinx.coroutines.test.TestScope.burnable(
+        file: ItemFile,
+        repo: TranscodeRepository = mockk(relaxed = true),
+        decision: String = "directStream",
+    ): Pair<PlayerViewModel, TranscodeRepository> {
+        coEvery { repo.decide(any(), any()) } returns PlayDecisionResult.of(decision)
+        coEvery { repo.start(any(), any(), any(), any(), any(), any(), any(), any()) } returnsMany
+            (1..6).map { session(it) }
+        val itemRepo = itemRepo()
+        coEvery { itemRepo.getItem("movie-1") } returns movieDetail(file)
+        val sp = serverPrefs()
+        coEvery { sp.getAssetToken() } returns "as-24h"
+        val vm = newVm(itemRepo, repo, sp)
+        vm.prepare("movie-1")
+        advanceUntilIdle()
+        return vm to repo
+    }
+
+    @Test
+    fun `an image track with a text version selects it without a new session`() = runTest(dispatcher) {
+        val (vm, repo) = burnable(pgsFile(textVersion = "ocr-1"))
+
+        // The picker lists the PGS stream, standing for its text version.
+        val rows = SubtitleTracks.rows(vm.state.value.subtitleTracks, hls = true, session = true)
+        assertThat(rows.map { it.trackId }).containsExactly("sub:emb:4")
+        assertThat(rows.single().textTrackId).isEqualTo("sub:ext:ocr-1")
+
+        assertThat(vm.pickImageSubtitle(4, currentPositionMs = 5_000L)).isEqualTo("sub:ext:ocr-1")
+        advanceUntilIdle()
+
+        // Only prepare()'s own session: the text version is already side-loaded.
+        coVerify(exactly = 1) { repo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+        assertThat(vm.state.value.burnedSubtitleIndex).isNull()
+    }
+
+    @Test
+    fun `an image track without a text version restarts the session burned in`() = runTest(dispatcher) {
+        val (vm, repo) = burnable(pgsFile())
+
+        assertThat(vm.pickImageSubtitle(4, currentPositionMs = 5_000L)).isNull()
+        advanceUntilIdle()
+
+        // A full re-encode (the remux's "auto" height becomes the file's), at
+        // the current position, on the audio playing.
+        coVerify(exactly = 1) { repo.start("movie-1", 1080, 5_000L, "f2", false, 0, any(), 4) }
+        assertThat(vm.state.value.burnedSubtitleIndex).isEqualTo(4)
+        assertThat(vm.playlist()).isEqualTo("http://srv/t/sess-2.m3u8")
+    }
+
+    @Test
+    fun `Off while burned in goes back to the unburned session`() = runTest(dispatcher) {
+        val (vm, repo) = burnable(pgsFile())
+        vm.pickImageSubtitle(4, currentPositionMs = 5_000L)
+        advanceUntilIdle()
+
+        vm.clearBurnedSubtitle(currentPositionMs = 10_000L)
+        advanceUntilIdle()
+
+        // A remux again, without the burn.
+        coVerify(exactly = 1) { repo.start("movie-1", 0, 10_000L, "f2", true, 0, any(), null) }
+        assertThat(vm.state.value.burnedSubtitleIndex).isNull()
+
+        // Nothing burned in: Off starts nothing.
+        vm.clearBurnedSubtitle(currentPositionMs = 12_000L)
+        advanceUntilIdle()
+        coVerify(exactly = 3) { repo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
+    }
+
+    @Test
+    fun `an audio switch keeps the subtitle burned in`() = runTest(dispatcher) {
+        val (vm, repo) = burnable(pgsFile())
+        vm.pickImageSubtitle(4, currentPositionMs = 5_000L)
+        advanceUntilIdle()
+
+        vm.switchAudioStream(audioRow = 2, currentPositionMs = 20_000L)
+        advanceUntilIdle()
+
+        coVerify(exactly = 1) { repo.start("movie-1", 1080, 20_000L, "f2", false, 2, any(), 4) }
+        assertThat(vm.state.value.burnedSubtitleIndex).isEqualTo(4)
+        assertThat(vm.state.value.sessionAudioRow).isEqualTo(2)
+    }
+
+    @Test
+    fun `a refused burn-in says why and keeps the stream playing`() = runTest(dispatcher) {
+        val (vm, repo) = burnable(pgsFile())
+        val playing = vm.state.value.source
+        coEvery { repo.start(any(), any(), any(), any(), any(), any(), any(), 4) } throws
+            httpError(400, """{"error":{"code":"BURN_IN_UNSUPPORTED","message":"stacked"}}""")
+
+        vm.pickImageSubtitle(4, currentPositionMs = 5_000L)
+        advanceUntilIdle()
+
+        assertThat(vm.burnInFailures.first()).isEqualTo(BurnInFailure.UNSUPPORTED)
+        assertThat(vm.state.value.source).isSameInstanceAs(playing)
+        assertThat(vm.state.value.burnedSubtitleIndex).isNull()
+        assertThat(vm.state.value.error).isNull()
+        coVerify(exactly = 0) { repo.stopDetached("sess-1", "tok-1") }
+    }
+
+    @Test
+    fun `the burn-in refusals map to their messages`() {
+        fun err(code: String) = httpError(400, """{"error":{"code":"$code","message":"x"}}""")
+        assertThat(BurnInFailure.of(err("INVALID_SUBTITLE_STREAM"))).isEqualTo(BurnInFailure.UNAVAILABLE)
+        assertThat(BurnInFailure.of(err("SUBTITLE_NOT_IMAGE"))).isEqualTo(BurnInFailure.UNAVAILABLE)
+        assertThat(BurnInFailure.of(err("BURN_IN_UNSUPPORTED"))).isEqualTo(BurnInFailure.UNSUPPORTED)
+        assertThat(BurnInFailure.of(httpError(503, """{"error":{"code":"BURN_IN_UNAVAILABLE","message":"x"}}""")))
+            .isEqualTo(BurnInFailure.SERVER)
+        assertThat(BurnInFailure.of(httpError(503, "{}"))).isEqualTo(BurnInFailure.FAILED)
+        assertThat(BurnInFailure.of(RuntimeException("offline"))).isEqualTo(BurnInFailure.FAILED)
+    }
+
+    @Test
+    fun `direct play leaves image tracks to the player`() = runTest(dispatcher) {
+        val file = directPlayFile().copy(
+            subtitle_streams = listOf(SubtitleStream(4, "hdmv_pgs_subtitle", "eng", "English", false, image_based = true)),
+        )
+        val (vm, repo) = burnable(file, decision = "directPlay")
+        assertThat(vm.state.value.source).isInstanceOf(PlaybackSource.DirectPlay::class.java)
+
+        // Listed from the container, never burned in.
+        assertThat(SubtitleTracks.rows(vm.state.value.subtitleTracks, hls = false).map { it.trackId })
+            .containsExactly("sub:emb:4")
+        assertThat(vm.pickImageSubtitle(4, currentPositionMs = 5_000L)).isNull()
+        advanceUntilIdle()
+        coVerify(exactly = 0) { repo.start(any(), any(), any(), any(), any(), any(), any(), any()) }
     }
 }

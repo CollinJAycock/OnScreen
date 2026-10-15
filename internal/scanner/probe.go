@@ -68,6 +68,7 @@ type ffprobeStream struct {
 	BitRate          string            `json:"bit_rate"`
 	Channels         int               `json:"channels"`
 	ChannelLayout    string            `json:"channel_layout"`
+	Profile          string            `json:"profile"`
 	SampleRate       string            `json:"sample_rate"`
 	BitsPerRawSample string            `json:"bits_per_raw_sample"`
 	BitsPerSample    int               `json:"bits_per_sample"`
@@ -355,7 +356,7 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 		case "audio":
 			lang := s.Tags["language"]
 			title := s.Tags["title"]
-			audioStreams = append(audioStreams, map[string]any{
+			stream := map[string]any{
 				"index":          s.Index,
 				"codec":          s.CodecName,
 				"channels":       s.Channels,
@@ -364,7 +365,14 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 				"bit_depth":      streamBitDepth(&s),
 				"language":       lang,
 				"title":          title,
-			})
+			}
+			// The codec profile is what tells "DTS-HD MA" from plain DTS and
+			// "TrueHD + Atmos" / "E-AC-3 + Atmos" (JOC) from the bare codec,
+			// for the client's track label. Additive: older rows lack it.
+			if p := audioProfile(s.Profile); p != "" {
+				stream["profile"] = p
+			}
+			audioStreams = append(audioStreams, stream)
 			if result.AudioCodec == nil {
 				result.AudioCodec = &s.CodecName
 				// First-audio-stream characteristics populate the top-level
@@ -523,6 +531,16 @@ func parseIntSafe(s string) int {
 // bits, which equals raw depth for most codecs but not all). Returns 0 when
 // ffprobe exposes neither — common for lossy formats where "bit depth" is
 // not a meaningful concept.
+// audioProfile is ffprobe's profile name for an audio stream, or "" when it
+// has none to give ("unknown" is ffprobe's word for none).
+func audioProfile(p string) string {
+	p = strings.TrimSpace(p)
+	if strings.EqualFold(p, "unknown") {
+		return ""
+	}
+	return p
+}
+
 func streamBitDepth(s *ffprobeStream) int {
 	if s.BitsPerRawSample != "" {
 		if n, err := strconv.Atoi(s.BitsPerRawSample); err == nil && n > 0 {

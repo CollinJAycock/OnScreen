@@ -41,6 +41,19 @@ func TestDecisionReasons_Table(t *testing.T) {
 			want: []string{"7.1 audio → client max 5.1"},
 		},
 		{
+			// The receiver decodes a passed-through codec, so neither the
+			// decoder list nor the channel cap is a reason (as in Decide).
+			name: "7.1 truehd passed through: no audio reason",
+			file: func() media.File {
+				f := baseFile()
+				f.AudioCodec = strPtr("truehd")
+				f.AudioStreams = sevenOne
+				return f
+			},
+			caps: "videoDecoder=h264,audioDecoder=aac,protocols=mkv,maxAudioChannels=6,audioPassthrough=truehd",
+			want: nil,
+		},
+		{
 			name: "undecodable audio codec plus container",
 			file: func() media.File {
 				f := baseFile()

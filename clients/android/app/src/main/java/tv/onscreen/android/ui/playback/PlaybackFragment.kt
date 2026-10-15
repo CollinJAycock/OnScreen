@@ -414,6 +414,22 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         }
         startPaused = arguments?.getBoolean(ARG_START_PAUSED, false) ?: false
 
+        // A subtitle burn-in the server refused (or a session that didn't
+        // start): say so. The stream already playing carries on.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.burnInFailure.collect { failure ->
+                failure ?: return@collect
+                val text = when (failure) {
+                    BurnInFailure.UNSUPPORTED -> R.string.subtitles_burn_in_unsupported
+                    BurnInFailure.UNAVAILABLE -> R.string.subtitles_burn_in_unavailable
+                    BurnInFailure.SERVER -> R.string.subtitles_burn_in_server
+                    BurnInFailure.FAILED -> R.string.subtitles_burn_in_failed
+                }
+                Toast.makeText(requireContext(), text, Toast.LENGTH_LONG).show()
+                viewModel.burnInFailureShown()
+            }
+        }
+
         viewLifecycleOwner.lifecycleScope.launch {
             serverUrl = prefs.serverUrl.first() ?: ""
             matchFrameRateEnabled = prefs.matchFrameRate.first()
@@ -509,7 +525,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                         // source re-emit here is usually an audio-track
                         // switch re-issuing the session, and re-applying the
                         // SAVED pref silently undid what the user just chose.
-                        if (userSubtitleChoice != null) {
+                        // A burned-in subtitle keeps text tracks off.
+                        if (userSubtitleChoice != null || state.burnedSubtitleIndex != null) {
                             applyPreferredTracks(state.preferredAudioLang, null, false)
                             applySubtitleChoice()
                         } else {
@@ -2229,6 +2246,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val label: String,
         val trackId: String?,      // side-load format id, null = container track
         val containerOrdinal: Int, // ordinal among container text groups, -1 = side-load
+        /** Server session: an image-based stream (absolute index), played
+         *  as its OCR'd text version ([trackId], when it has one) or burned
+         *  in (PlaybackViewModel.pickImageSubtitle). */
+        val imageStreamIndex: Int? = null,
     )
 
     private fun subtitleRows(): List<SubtitleRow> {
@@ -2238,9 +2259,20 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         return if (sideLoadsAll) {
             // Every renderable track is a side-load (the session playlist,
             // or an optimized version's MP4, carries no text streams).
-            // Image-based tracks are already filtered out — the server can't
-            // serve them as VTT.
-            sources.map { s -> SubtitleRow(s.label, s.trackId, -1) }
+            // Image-based tracks aren't among them — the server can't serve
+            // them as VTT. On a server session they are listed in the file's
+            // order with the text ones, each standing for its OCR'd text
+            // version (no separate row for that) or a burn-in.
+            val images = viewModel.imageSubtitles()
+            val covered = images.mapNotNullTo(HashSet()) { it.textTrackId }
+            val streamRows = sources.filter { it.embeddedIndex != null }.map { s ->
+                s.embeddedIndex!! to SubtitleRow(s.label, s.trackId, -1)
+            } + images.map { o ->
+                o.streamIndex to SubtitleRow(o.label, o.textTrackId, -1, imageStreamIndex = o.streamIndex)
+            }
+            streamRows.sortedBy { it.first }.map { it.second } +
+                sources.filter { it.embeddedIndex == null && it.trackId !in covered }
+                    .map { s -> SubtitleRow(s.label, s.trackId, -1) }
         } else {
             // Direct play: container tracks render natively (PGS included) in
             // container order, plus any external side-loads on the end.
@@ -2258,7 +2290,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     private fun showSubtitlePicker() {
         val rows = subtitleRows()
         val labels = mutableListOf(getString(R.string.off))
-        labels.addAll(rows.map { it.label })
+        val burned = viewModel.uiState.value.burnedSubtitleIndex
+        labels.addAll(
+            rows.map {
+                if (burned != null && it.imageStreamIndex == burned) getString(R.string.subtitles_burned_in, it.label) else it.label
+            },
+        )
         // "Find more online…" entry tacks an OpenSubtitles search on
         // the end of the picker. Index = labels.size — beyond every
         // track row — so the radio-row indices for real tracks don't
@@ -2450,6 +2487,10 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
     /** Index into [rows] of the currently-rendering track, or -1 for off. */
     private fun selectedSubtitleRow(rows: List<SubtitleRow>): Int {
+        // Burned into the picture: no text track renders, the row is it.
+        viewModel.uiState.value.burnedSubtitleIndex?.let { burned ->
+            return rows.indexOfFirst { it.imageStreamIndex == burned }
+        }
         val groups = player?.currentTracks?.groups
             ?.filter { it.type == C.TRACK_TYPE_TEXT } ?: return -1
         val active = groups.firstOrNull { it.isSelected } ?: return -1
@@ -2462,12 +2503,26 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     }
 
     private fun selectSubtitleRow(row: SubtitleRow) {
+        val pos = player?.currentPosition ?: 0L
+        if (row.imageStreamIndex != null) {
+            // Its text version, selected like any side-load; or nothing to
+            // select here: the session restarts with it burned in, and the
+            // previous choice holds until that lands (or is refused).
+            val textId = viewModel.pickImageSubtitle(row.imageStreamIndex, pos) ?: return
+            userSubtitleChoice = "id:$textId"
+            applySubtitleChoice()
+            return
+        }
         userSubtitleChoice = row.trackId?.let { "id:$it" } ?: "ord:${row.containerOrdinal}"
+        // A burned-in subtitle comes off: the session restarts without it,
+        // and this choice applies to the new one.
+        viewModel.clearBurnedSubtitle(pos)
         applySubtitleChoice()
     }
 
     private fun disableSubtitles() {
         userSubtitleChoice = "off"
+        viewModel.clearBurnedSubtitle(player?.currentPosition ?: 0L)
         val exo = player ?: return
         exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
             .clearOverridesOfType(C.TRACK_TYPE_TEXT)
@@ -2481,7 +2536,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  session needs the choice re-resolved against its new groups. */
     private fun applySubtitleChoice() {
         val exo = player ?: return
-        val choice = userSubtitleChoice ?: return
+        // A subtitle burned into the picture: a text track on top of it
+        // would show every line twice.
+        val choice = if (viewModel.uiState.value.burnedSubtitleIndex != null) "off" else userSubtitleChoice ?: return
         if (choice == "off") {
             exo.trackSelectionParameters = exo.trackSelectionParameters.buildUpon()
                 .clearOverridesOfType(C.TRACK_TYPE_TEXT)

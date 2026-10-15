@@ -57,10 +57,15 @@ func TestVideoOutput_ServerAndClientAgreeOnContainer(t *testing.T) {
 			name: "H.264 source remux", encoder: EncoderCopy,
 			wantExt: ".ts", wantTagV: "", wantSegTyp: "mpegts",
 		},
-		// ForceFMP4 is ignored on a remux — the source codec already decided.
+		// ForceFMP4 on a remux: a TrueHD/DTS passthrough track needs fMP4
+		// even under H.264 video, which keeps its untagged avc1.
 		{
-			name: "H.264 remux ignores ForceFMP4", encoder: EncoderCopy, forceFMP4: true,
-			wantExt: ".ts", wantTagV: "", wantSegTyp: "mpegts",
+			name: "H.264 remux under ForceFMP4", encoder: EncoderCopy, forceFMP4: true,
+			wantExt: ".m4s", wantTagV: "", wantSegTyp: "fmp4",
+		},
+		{
+			name: "HEVC remux under ForceFMP4 ignores a TS request", encoder: EncoderCopy, srcHEVC: true, forceFMP4: true, tsSegments: true,
+			wantExt: ".m4s", wantTagV: "hvc1", wantSegTyp: "fmp4",
 		},
 
 		// ── Re-encode: the container follows the ENCODER.

@@ -147,6 +147,22 @@ func TestParseIntSafe(t *testing.T) {
 	}
 }
 
+// The audio profile is stored as ffprobe names it, minus its "unknown"
+// placeholder (ffprobe's compact output prints that for TrueHD without Atmos).
+func TestAudioProfile(t *testing.T) {
+	for in, want := range map[string]string{
+		"DTS-HD MA":                  "DTS-HD MA",
+		"Dolby TrueHD + Dolby Atmos": "Dolby TrueHD + Dolby Atmos",
+		" LC ":                       "LC",
+		"unknown":                    "",
+		"":                           "",
+	} {
+		if got := audioProfile(in); got != want {
+			t.Errorf("audioProfile(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestIsLosslessAudio(t *testing.T) {
 	alac := "alac"
 	aac := "aac"

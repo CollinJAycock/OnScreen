@@ -49,6 +49,8 @@
     <script type="text/brightscript" uri="pkg:/source/playback/Siblings.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Versions.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/TranscodeRequest.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Subtitles.brs" />
 
     <children>
         <Video id="video"

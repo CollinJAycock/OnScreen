@@ -967,6 +967,9 @@ func run() error {
 		}
 	}, "")
 	subtitleSvc := subtitles.New(subtitleProvider, gen.New(rwPool), subtitleCacheRoot, logger)
+	// A subtitle burn-in shifts by the stream's offset, or its OCR'd text
+	// version's: read from the primary, like ServeSubtitle's.
+	nativeTranscodeHandler.WithBurnInOffsets(gen.New(rwPool), subtitleSvc)
 	// OCR engine wires PGS/VOBSUB → WebVTT via ffmpeg + tesseract. The binaries
 	// ship in the runtime image; if they're missing here (dev box without them
 	// installed) OCR endpoints return ErrNoOCR — no crash at startup.

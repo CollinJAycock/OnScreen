@@ -550,6 +550,11 @@ type AudioStreamJSON struct {
 	Channels int    `json:"channels"`
 	Language string `json:"language"`
 	Title    string `json:"title"`
+	// Profile is ffprobe's codec profile ("DTS-HD MA", "Dolby TrueHD +
+	// Dolby Atmos", "Dolby Digital Plus + Dolby Atmos", "LC"), which tells
+	// the lossless and object-audio variants apart from their core codec.
+	// Absent for files scanned before it was stored, until a re-probe.
+	Profile string `json:"profile,omitempty"`
 }
 
 // SubtitleStreamJSON is the API representation of a subtitle stream.
@@ -572,6 +577,15 @@ type SubtitleStreamJSON struct {
 	// OffsetMS is the server-wide timing correction (positive = later)
 	// /media/subtitles/{file}/{index} already applies to the cues.
 	OffsetMS int32 `json:"offset_ms"`
+	// ImageBased: a picture subtitle (PGS, VobSub, DVB, XSUB) the player
+	// can't render as text. It plays through its OCR'd text version
+	// (TextVersionID) or burned into the picture by a transcode
+	// (burn_subtitle_stream_index).
+	ImageBased bool `json:"image_based"`
+	// TextVersionID is the id of this stream's OCR'd text version among the
+	// file's external_subtitles (source "ocr", source_id "stream_<index>"),
+	// when one has been made.
+	TextVersionID string `json:"text_version_id,omitempty"`
 }
 
 // ItemFileResponse is the API representation of a media file.
@@ -1115,6 +1129,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 				for _, row := range rows {
 					fr.ExternalSubtitles = append(fr.ExternalSubtitles, toExternalSubtitleJSON(row))
 				}
+				linkOCRTextVersions(fr.SubtitleStreams, fr.ExternalSubtitles)
 			} else if err != nil {
 				h.logger.WarnContext(r.Context(), "list external subs", "file_id", f.ID, "err", err)
 			}
@@ -2944,6 +2959,7 @@ func parseJSONBAudioStreams(data []byte) []AudioStreamJSON {
 			Channels: int(asFloat64(s["channels"])),
 			Language: asString(s["language"]),
 			Title:    asString(s["title"]),
+			Profile:  asString(s["profile"]),
 		})
 	}
 	return out
@@ -3007,9 +3023,25 @@ func parseJSONBSubtitleStreams(data []byte) []SubtitleStreamJSON {
 			Forced:   asBool(s["forced"]),
 			SDH:      asBool(s["sdh"]),
 			Default:  asBool(s["default"]),
+			// From the codec, so rows scanned before the field have it too.
+			ImageBased: ocr.IsImageBased(asString(s["codec"])),
 		})
 	}
 	return out
+}
+
+// linkOCRTextVersions points each image subtitle stream at its OCR'd text
+// version among the file's external subtitles (TextVersionID).
+func linkOCRTextVersions(streams []SubtitleStreamJSON, ext []ExternalSubtitleJSON) {
+	for i := range streams {
+		want := "stream_" + strconv.Itoa(streams[i].Index)
+		for _, e := range ext {
+			if e.Source == "ocr" && e.SourceID != nil && *e.SourceID == want {
+				streams[i].TextVersionID = e.ID
+				break
+			}
+		}
+	}
 }
 
 func asString(v any) string {

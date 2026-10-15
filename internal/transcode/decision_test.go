@@ -1,6 +1,7 @@
 package transcode
 
 import (
+	"strconv"
 	"testing"
 
 	"github.com/google/uuid"
@@ -343,6 +344,52 @@ func TestDecide_TrueHDInContainer(t *testing.T) {
 		{"dts in ts is carried", withAudio("dts", "mpegts", "h264"), client + ",audioDecoder=aac:dts", DecisionDirectPlay},
 		{"truehd in mkv, no truehd claim: remux", withAudio("truehd", "matroska", "h264"), oldClient, DecisionDirectStream},
 		{"truehd in m2ts, no truehd claim: remux", withAudio("truehd", "mpegts", "h264"), oldClient, DecisionDirectStream},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := Decide(tc.file(), ParseCapabilities(tc.caps), defaultServerCaps); got != tc.want {
+				t.Errorf("caps %q: want %s, got %s", tc.caps, tc.want, got)
+			}
+		})
+	}
+}
+
+// TestDecide_AudioPassthrough pins Phase 3 of the capability profiles: a codec
+// the client bitstreams to a receiver (audioPassthrough) is playable whatever
+// the client's own channel cap, since the receiver decodes it. A 7.1 TrueHD
+// track on a 5.1 client direct-plays from MKV and remuxes from MPEG-TS (the
+// container rule still stands) instead of transcoding to downmix. Without the
+// key, the same client decides exactly as before.
+func TestDecide_AudioPassthrough(t *testing.T) {
+	withAudio := func(audio, container string, channels int) func() media.File {
+		return func() media.File {
+			f := baseFile()
+			f.AudioCodec = strPtr(audio)
+			f.Container = strPtr(container)
+			f.AudioStreams = []byte(`[{"codec":"` + audio + `","channels":` + strconv.Itoa(channels) + `}]`)
+			return f
+		}
+	}
+	const client = "videoDecoder=h264:h265,protocols=mp4:mkv:ts,maxAudioChannels=6,audioDecoder=aac:ac3:eac3:truehd:dts"
+	const passthrough = client + ",audioPassthrough=ac3:eac3:truehd:dts"
+
+	cases := []struct {
+		name string
+		file func() media.File
+		caps string
+		want Decision
+	}{
+		{"7.1 truehd in mkv, passthrough: direct play", withAudio("truehd", "matroska", 8), passthrough, DecisionDirectPlay},
+		{"7.1 truehd in ts, passthrough: remux (TS can't carry it)", withAudio("truehd", "mpegts", 8), passthrough, DecisionDirectStream},
+		{"7.1 dts in mkv, passthrough: direct play", withAudio("dts", "matroska", 8), passthrough, DecisionDirectPlay},
+		{"7.1 truehd in mkv, no passthrough: remux to downmix", withAudio("truehd", "matroska", 8), client, DecisionDirectStream},
+		{"7.1 dts in mkv, no passthrough: remux to downmix", withAudio("dts", "matroska", 8), client, DecisionDirectStream},
+		{"5.1 truehd in mkv, no passthrough: direct play", withAudio("truehd", "matroska", 6), client, DecisionDirectPlay},
+		// Passthrough doesn't need audioDecoder to list the codec.
+		{"7.1 truehd, passthrough only", withAudio("truehd", "matroska", 8),
+			"videoDecoder=h264,protocols=mkv,maxAudioChannels=2,audioDecoder=aac,audioPassthrough=truehd", DecisionDirectPlay},
+		// A passed-through codec doesn't lift the cap off a different one.
+		{"7.1 aac, truehd passthrough: remux to downmix", withAudio("aac", "matroska", 8), passthrough, DecisionDirectStream},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

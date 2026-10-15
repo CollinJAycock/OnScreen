@@ -46,12 +46,51 @@ becomes final on every app. Release note:
   `ONSCREEN_COMSKIP_PATH`, `ONSCREEN_COMSKIP_INI`, `DOWNLOAD_MAX_CONVERSIONS`,
   `DOWNLOAD_CACHE_TTL_HOURS` and `DOWNLOAD_CACHE_MAX_GB`. New optional keys
   in Settings ▸ General: OMDb and fanart.tv.
+- **Upgrade remote transcode workers too.** Burned-in picture subtitles
+  and TrueHD / DTS passthrough only go to workers that advertise them (v2.6
+  workers do; the embedded worker always does). With only older remote
+  workers, a burn-in request is refused with 503 `BURN_IN_UNAVAILABLE` and
+  TrueHD / DTS keep being converted to AAC.
 - **New tasks off until enabled:** music loudness analysis, photo face
   detection, chapter-thumbnail backfill and automatic subtitle download.
 - **Built with Go 1.26.9 and x/net 0.60.0** (GO-2026-6612, -6613, -6617).
 
 ### Added
 
+- **Audio passthrough on remux.** A client that bitstreams audio to a receiver
+  can say so in its capability profile (`audioPassthrough=ac3:eac3:truehd:dts`
+  in `X-Client-Capabilities`), and the server then keeps that audio intact:
+  - the play decision ignores the client's channel cap for those codecs, so a
+    7.1 TrueHD or DTS-HD track plays as-is instead of being downmixed to 5.1
+    AAC;
+  - a remux copies the track, TrueHD and DTS included; those two are packaged
+    as fMP4 segments, since MPEG-TS can't carry them to a player;
+  - opt-in: clients that don't send the key decide exactly as before. Full
+    transcodes keep AAC audio.
+  - Item details' `audio_streams[]` gain `profile` ("DTS-HD MA", "Dolby
+    TrueHD + Dolby Atmos", "Dolby Digital Plus + Dolby Atmos") for track labels,
+    on files scanned or re-probed from now on.
+  - Workers advertise the new `audio_passthrough` feature; until one does, a
+    TrueHD/DTS remux converts to AAC as before.
+- **Burned-in picture subtitles.** PGS, VobSub, DVB and XSUB subtitles can now
+  be painted into the picture during a transcode, for players that can't show
+  them and when there's no OCR'd text version.
+  - `POST /items/{id}/transcode` takes `burn_subtitle_stream_index` (the
+    stream's `subtitle_streams[].index`) and answers with
+    `burned_subtitle_stream_index`. A burn-in is always a full re-encode on a
+    single rendition (`video_copy` and the adaptive ladder are set aside).
+  - Refusals, before the current stream is touched: 400
+    `INVALID_SUBTITLE_STREAM` (not a subtitle stream of the file),
+    `SUBTITLE_NOT_IMAGE` (a text track; the player renders those) and
+    `BURN_IN_UNSUPPORTED` (a movie stored in parts); 503
+    `BURN_IN_UNAVAILABLE` when no worker can do it yet.
+  - Item details' `subtitle_streams[]` gain `image_based` and
+    `text_version_id` (the stream's OCR'd text version, when there is one).
+  - The subtitle timing offset applies (the stream's, else its OCR version's).
+    The overlay runs on the CPU, so a burn-in turns off the all-GPU-memory
+    decode/scale/tonemap paths for that session and counts as a heavier job.
+    Output is 8-bit. Workers advertise the `burn_in_subtitles` feature, and
+    only those get burn-in jobs.
 - **Manual collections.** Admins can now make their own movie and TV
   collections ("Halloween night", "Best Picture winners") and share them with
   everyone, alongside the automatic TMDB film series.

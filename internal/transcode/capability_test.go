@@ -2,6 +2,7 @@ package transcode
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -306,5 +307,32 @@ func TestClientCapabilities_SupportsContainer_NoDeclaration(t *testing.T) {
 	}
 	if caps.SupportsContainer("avi") {
 		t.Error("expected avi not supported when no containers declared")
+	}
+}
+
+// audioPassthrough is opt-in and canonical: aliases fold onto the names
+// CanonicalAudioCodec gives (dts-hd → dts, e-ac-3 → eac3), repeats collapse,
+// and codecs that can't be bitstreamed (aac, flac) are dropped, so they can't
+// lift the channel cap off audio the client decodes itself.
+func TestParseCapabilities_AudioPassthrough(t *testing.T) {
+	caps := ParseCapabilities("audioDecoder=aac,audioPassthrough=AC3:e-ac-3:TrueHD:dts-hd:dts:aac:flac")
+	want := []string{"ac3", "eac3", "truehd", "dts"}
+	if strings.Join(caps.AudioPassthrough, ",") != strings.Join(want, ",") {
+		t.Fatalf("AudioPassthrough = %v, want %v", caps.AudioPassthrough, want)
+	}
+	for _, c := range []string{"dts", "DTS-HD", "dtshd", "truehd", "eac3", "E-AC-3", "ac3"} {
+		if !caps.PassesThroughAudio(c) {
+			t.Errorf("PassesThroughAudio(%q) = false, want true", c)
+		}
+	}
+	for _, c := range []string{"aac", "flac", "opus", ""} {
+		if caps.PassesThroughAudio(c) {
+			t.Errorf("PassesThroughAudio(%q) = true, want false", c)
+		}
+	}
+	// audioDecoder alone never declares passthrough: the phone lists dts
+	// there without being able to output it.
+	if got := ParseCapabilities("audioDecoder=aac:ac3:eac3:dts:truehd"); len(got.AudioPassthrough) != 0 {
+		t.Errorf("audioDecoder alone gave AudioPassthrough %v, want none", got.AudioPassthrough)
 	}
 }

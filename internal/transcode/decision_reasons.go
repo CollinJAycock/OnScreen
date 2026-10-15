@@ -108,14 +108,17 @@ func DecisionReasons(file media.File, caps ClientCapabilities) []Reason {
 	audioBad, containerBad := false, false
 	if audioAlias != "" {
 		srcCh := SourceAudioChannels(file.AudioStreams, -1)
+		// A passed-through codec is the receiver's to decode, so neither the
+		// client's decoder list nor its channel cap is a reason (as in Decide).
+		passthrough := caps.PassesThroughAudio(audioAlias)
 		switch {
-		case !caps.SupportsAudioCodec(audioAlias):
+		case !caps.SupportsAudioCodec(audioAlias) && !passthrough:
 			audioBad = true
 			add(ReasonAudio, "%s audio not supported by client", audioCodecLabel(audioAlias))
 		case !containerCarriesAudio(containerAlias, audioAlias):
 			audioBad = true
 			add(ReasonAudio, "%s audio in %s not supported by client", audioCodecLabel(audioAlias), containerLabel(containerAlias))
-		case caps.MaxAudioChannels > 0 && srcCh > caps.MaxAudioChannels:
+		case !passthrough && caps.MaxAudioChannels > 0 && srcCh > caps.MaxAudioChannels:
 			audioBad = true
 			add(ReasonAudio, "%s audio → client max %s", ChannelLabel(srcCh), ChannelLabel(caps.MaxAudioChannels))
 		}

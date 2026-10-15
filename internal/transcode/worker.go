@@ -399,6 +399,7 @@ func (w *Worker) register(ctx context.Context) error {
 		// strength of it told the scheduler this node could take an HDR job
 		// cheaply when it could not.
 		HasGPUTonemap: w.hasLibplacebo || w.cudaTonemap.Load() || w.vaapiTonemap,
+		Features:      workerFeatures,
 		RegisteredAt:  time.Now(),
 	})
 }
@@ -714,7 +715,9 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				NeedsToneMap:         job.NeedsToneMap,
 				CudaTonemap:          cudaTonemapUsable,
 				HasZscale:            w.hasZscale,
-				ForceFMP4:            job.ForceFMP4,
+				ForceFMP4:            job.ForcesFMP4(),
+				AudioPassthrough:     job.AudioPassthrough,
+				BurnSubtitle:         job.BurnSubtitle,
 				TSSegments:           job.TSSegments,
 				AudioRate:            job.AudioRate,
 				HasLibfdkAAC:         w.hasLibfdkAAC,
@@ -749,14 +752,21 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// BuildArgs. Cleared on fallback below like the CUDA flags. qsvVRAM takes
 		// the system-memory QSVDecode's place when set (BuildArgs gates QSVDecode
 		// behind !QSVVRAM).
-		qsvVRAMUsable = w.qsvVRAM && !job.NeedsToneMap && IsQSVEncoder(enc) &&
+		//
+		// A subtitle burn-in turns every all-GPU-memory path off (the four
+		// *VRAM / *Tonemap flags below): the overlay is a CPU filter, so the
+		// frames it paints on have to be in system memory. The system-memory
+		// decode paths (QSVDecode, CudaHevcDecode) and the GPU-assisted HDR
+		// fallback (which ends in hwdownload) stay.
+		burnIn := job.BurnSubtitle != nil
+		qsvVRAMUsable = w.qsvVRAM && !job.NeedsToneMap && !burnIn && IsQSVEncoder(enc) &&
 			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
-		vaapiVRAMUsable = w.vaapiVRAM && !job.NeedsToneMap && IsVAAPIEncoder(enc) &&
+		vaapiVRAMUsable = w.vaapiVRAM && !job.NeedsToneMap && !burnIn && IsVAAPIEncoder(enc) &&
 			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
 		// All-VRAM VAAPI HDR (the HDR counterpart of vaapiVRAMUsable): keep the
 		// HDR→SDR tonemap on the GPU (scale_vaapi→tonemap_vaapi) instead of CPU
 		// zscale. Probe-gated (w.vaapiTonemap); software-zscale fallback on failure.
-		vaapiTonemapUsable = w.vaapiTonemap && job.NeedsToneMap && IsVAAPIEncoder(enc) &&
+		vaapiTonemapUsable = w.vaapiTonemap && job.NeedsToneMap && !burnIn && IsVAAPIEncoder(enc) &&
 			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
 		cudaHevcUsable = w.cudaHevcDecode && job.IsHEVC && enc != "copy"
 		// Full-VRAM scale_cuda path is SDR-only (HEVC or H.264): HDR re-encodes
@@ -764,10 +774,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// (cudaHevcUsable) decode. BuildArgs picks VRAM over the system-memory
 		// path when both are set, so the two don't conflict. H.264 shares the
 		// HEVC-validated probe — h264_cuvid is at least as reliable.
-		cudaVRAMUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && enc != "copy"
+		cudaVRAMUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && !burnIn && enc != "copy"
 		// All-VRAM CUDA HDR (preferred on NVIDIA): cuvid→scale_cuda→tonemap_cuda
 		// →NVENC, no Vulkan. The HDR analogue of cudaVRAMUsable.
-		cudaTonemapUsable = w.cudaTonemap.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap &&
+		cudaTonemapUsable = w.cudaTonemap.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap && !burnIn &&
 			IsNVENCEncoder(enc) && enc != "copy"
 		// GPU-assisted HDR fallback (scale_cuda + CPU zscale tonemap): used when
 		// tonemap_cuda is unavailable AND libplacebo is unavailable. Requires the
@@ -797,7 +807,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// container from, so any disagreement with what ffmpeg actually wrote is a
 	// playlist that never becomes ready. Remux is the case that breaks a naive
 	// IsHEVCEncoder(encoder) — see videooutput.go.
-	vout := ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4, job.TSSegments)
+	vout := ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForcesFMP4(), job.TSSegments)
 	actualHEVC, actualAV1 := vout.HEVC, vout.AV1
 	segExt := vout.SegExt()
 
@@ -1033,7 +1043,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// (and the session's HEVC/AV1 flags, via runFFmpeg → SetWorkerInfo)
 		// defensively so the playlist handler waits on the right segment extension.
 		actualEncoder = enc
-		vout = ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForceFMP4, job.TSSegments)
+		vout = ResolveVideoOutput(actualEncoder, job.IsHEVC, job.IsAV1, job.ForcesFMP4(), job.TSSegments)
 		actualHEVC, actualAV1 = vout.HEVC, vout.AV1
 		segExt = vout.SegExt()
 		exitErr, selfExited = runFFmpeg(buildTranscodeArgs(false, job.StartOffsetSec, 0, ""))

@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -26,10 +27,12 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
+	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/mediastore"
 	"github.com/onscreen/onscreen/internal/scanner"
+	"github.com/onscreen/onscreen/internal/subtitles/ocr"
 	"github.com/onscreen/onscreen/internal/transcode"
 	"github.com/onscreen/onscreen/internal/valkey"
 )
@@ -140,6 +143,12 @@ type NativeTranscodeHandler struct {
 	// optimized lets the play decision hand an optimized=1 client a pre-made
 	// optimized version instead of a transcode (optimize.go). Optional.
 	optimized OptimizedLister
+
+	// subOffsets and extSubs give a subtitle burn-in its timing offset: the
+	// stream's admin offset, else the offset set on its OCR'd text version.
+	// Optional; without them a burn-in runs unshifted.
+	subOffsets SubtitleStreamOffsetReader
+	extSubs    ExternalSubLister
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.
@@ -157,6 +166,14 @@ func NewNativeTranscodeHandler(
 		cfg:      cfg,
 		logger:   logger,
 	}
+}
+
+// WithBurnInOffsets lets a subtitle burn-in apply the stream's timing offset
+// (see burnInOffsetMS).
+func (h *NativeTranscodeHandler) WithBurnInOffsets(offsets SubtitleStreamOffsetReader, subs ExternalSubLister) *NativeTranscodeHandler {
+	h.subOffsets = offsets
+	h.extSubs = subs
+	return h
 }
 
 // WithLibraryAccess attaches per-library ACL enforcement to Start.
@@ -329,6 +346,12 @@ type transcodeStartRequest struct {
 	// an audiobook at 1.5x. Clamped to 0.5-3; ignored for a video source.
 	// The stream's clock then runs at content / rate (the client scales it).
 	AudioRate *float64 `json:"audio_rate,omitempty"`
+	// BurnSubtitleStreamIndex paints an image subtitle stream (PGS, VobSub,
+	// DVB, XSUB) into the picture: the ABSOLUTE stream index, the number item
+	// details give as subtitle_streams[].index. nil = no burn-in. A burn-in is
+	// always a full video re-encode (video_copy is ignored) on a single
+	// rendition, never the ABR ladder or a pre-encoded one.
+	BurnSubtitleStreamIndex *int `json:"burn_subtitle_stream_index"`
 }
 
 // clientCaps resolves the effective client playback capabilities for a transcode
@@ -390,6 +413,87 @@ type transcodeStartResponse struct {
 	// (request audio_rate), 0 when none: a client that asked for one and
 	// gets 0 back is on a server without it, and plays at 1x.
 	AudioRate float64 `json:"audio_rate,omitempty"`
+	// BurnedSubtitleStreamIndex echoes burn_subtitle_stream_index when the
+	// session paints that stream into the picture; absent otherwise, which
+	// is also what a server without burn-in answers.
+	BurnedSubtitleStreamIndex *int `json:"burned_subtitle_stream_index,omitempty"`
+}
+
+// Burn-in refusals. The first three are the caller's to fix (400); the last
+// is the fleet's (503): every registered worker predates burn-in.
+const (
+	codeInvalidSubtitleStream = "INVALID_SUBTITLE_STREAM"
+	codeSubtitleNotImage      = "SUBTITLE_NOT_IMAGE"
+	codeBurnInUnsupported     = "BURN_IN_UNSUPPORTED"
+	codeBurnInUnavailable     = "BURN_IN_UNAVAILABLE"
+)
+
+// burnInRefusal checks a burn_subtitle_stream_index against the file it would
+// burn from. It returns the error code and message to refuse with, or "" when
+// the stream can be burned. parts is the stacked-movie part list (nil for a
+// lone file): a concat of parts has no single stream numbering to point at.
+func burnInRefusal(file *media.File, parts []media.File, streamIdx int) (code, msg string) {
+	var found *SubtitleStreamJSON
+	for _, s := range parseJSONBSubtitleStreams(file.SubtitleStreams) {
+		if s.Index == streamIdx {
+			s := s
+			found = &s
+			break
+		}
+	}
+	switch {
+	case found == nil:
+		return codeInvalidSubtitleStream, fmt.Sprintf(
+			"burn_subtitle_stream_index %d is not a subtitle stream of this file", streamIdx)
+	case !ocr.IsImageBased(found.Codec):
+		return codeSubtitleNotImage, fmt.Sprintf(
+			"subtitle stream %d (%s) is text; the player renders text subtitles itself", streamIdx, found.Codec)
+	case parts != nil:
+		return codeBurnInUnsupported, "subtitles can't be burned into a movie stored in several parts"
+	}
+	return "", ""
+}
+
+// burnInOffsetMS is the timing correction a burn-in applies to an embedded
+// stream: the stream's admin offset (subtitle_stream_offsets) when one is
+// set, else the offset on the stream's OCR'd text version, which is where an
+// admin who fixed the timing of an image track will have set it (the stream
+// offset endpoint refuses image streams). 0 when neither exists or a lookup
+// fails: the burn-in still plays, just unshifted.
+func (h *NativeTranscodeHandler) burnInOffsetMS(ctx context.Context, fileID uuid.UUID, streamIdx int) int64 {
+	if h.subOffsets != nil {
+		off, err := h.subOffsets.GetSubtitleStreamOffset(ctx, gen.GetSubtitleStreamOffsetParams{
+			FileID: fileID, StreamIndex: int32(streamIdx),
+		})
+		if err != nil {
+			h.logger.WarnContext(ctx, "burn-in: subtitle stream offset", "file_id", fileID, "stream", streamIdx, "err", err)
+		} else if off != 0 {
+			return int64(off)
+		}
+	}
+	if h.extSubs != nil {
+		rows, err := h.extSubs.List(ctx, fileID)
+		if err != nil {
+			h.logger.WarnContext(ctx, "burn-in: list external subtitles", "file_id", fileID, "err", err)
+			return 0
+		}
+		if row := ocrVersionOf(rows, streamIdx); row != nil {
+			return int64(row.OffsetMs)
+		}
+	}
+	return 0
+}
+
+// ocrVersionOf finds the OCR'd text version of embedded stream streamIdx among
+// a file's external subtitles (source "ocr", source_id "stream_<index>").
+func ocrVersionOf(rows []gen.ExternalSubtitle, streamIdx int) *gen.ExternalSubtitle {
+	want := "stream_" + strconv.Itoa(streamIdx)
+	for i := range rows {
+		if rows[i].Source == "ocr" && rows[i].SourceID != nil && *rows[i].SourceID == want {
+			return &rows[i]
+		}
+	}
+	return nil
 }
 
 // Start handles POST /api/v1/items/{id}/transcode.
@@ -534,6 +638,28 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 				"audio_stream_index %d is out of range: this file has %d audio tracks", audioStreamIdx, n))
 			return
 		}
+	}
+
+	// Subtitle burn-in: judged here, like the audio track, before supersede
+	// below retires the session the viewer is watching, so a refused burn
+	// leaves that stream playing. The fleet check is a 503 rather than a
+	// silent no-burn: a worker that predates burn-in would drop the field and
+	// play the title without the subtitles the viewer asked for.
+	var burn *transcode.SubtitleBurn
+	if body.BurnSubtitleStreamIndex != nil {
+		idx := *body.BurnSubtitleStreamIndex
+		if code, msg := burnInRefusal(file, parts, idx); code != "" {
+			respond.Error(w, r, http.StatusBadRequest, code, msg)
+			return
+		}
+		if !h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureBurnSubtitles) {
+			respond.Error(w, r, http.StatusServiceUnavailable, codeBurnInUnavailable,
+				"no transcode worker on this server can burn in subtitles yet; update the workers")
+			return
+		}
+		burn = &transcode.SubtitleBurn{StreamIndex: idx, OffsetMS: h.burnInOffsetMS(ctx, file.ID, idx)}
+		// Always a re-encode: there is no picture to paint on in a copy.
+		body.VideoCopy = false
 	}
 
 	// The gates below run on every file the session will read: the one
@@ -720,8 +846,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// Not for a stacked movie: a pre-encoded ladder covers one file, and
 	// serving part 1's would end the movie there. Not when the source is over
 	// this request's bitrate cap either: the pre-encoded rungs aren't clamped
-	// to it, so the live ladder below (which is) serves.
-	if h.staticEnabled && h.cfg.TranscodeABR && !body.VideoCopy && parts == nil && !bitrateCap.overCap(file) &&
+	// to it, so the live ladder below (which is) serves. Not for a burn-in:
+	// the pre-encoded rungs carry no subtitles.
+	if h.staticEnabled && h.cfg.TranscodeABR && !body.VideoCopy && parts == nil && burn == nil && !bitrateCap.overCap(file) &&
 		file.FileHash != nil && h.staticAvailable(ctx, file.ID, *file.FileHash) {
 		token := ""
 		if h.tokens != nil {
@@ -960,14 +1087,30 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// track, so picking a DTS track behind an AC3 one used to pass the DTS
 	// through untouched to a client that can't decode it — no sound. An
 	// unidentifiable stream ("") is never copied.
-	audioCopy := false
+	//
+	// A codec the client passes through to a receiver (audioPassthrough) is
+	// copied whatever its channel count, the receiver being the one to decode
+	// it. That includes TrueHD and DTS, which no player demuxes out of MPEG-TS:
+	// their copy is packaged as fMP4 (audioPassthrough below → ForceFMP4), so
+	// it needs a worker that knows to (WorkerFeatureAudioPassthrough), a client
+	// that didn't ask for TS segments, and a video track (an audio-only
+	// session is always MPEG-TS). Failing any of those, they're converted to
+	// AAC as before. Only clients that declared audioPassthrough get any of
+	// this: audioDecoder alone never widens the copy.
+	tsSegments := strings.EqualFold(body.SegmentContainer, "ts")
+	audioCopy, audioPassthrough := false, false
 	if selCodec := transcode.SourceAudioCodec(file, audioStreamIdx); body.VideoCopy && selCodec != "" {
 		alias := transcode.CanonicalAudioCodec(selCodec)
 		srcCh := transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx)
 		chFit := caps.MaxAudioChannels <= 0 || srcCh <= 0 || srcCh <= caps.MaxAudioChannels
 		switch alias {
 		case "aac", "ac3", "eac3", "mp3": // valid in both MPEG-TS and fMP4
-			audioCopy = caps.SupportsAudioCodec(alias) && chFit
+			audioCopy = (caps.SupportsAudioCodec(alias) && chFit) || caps.PassesThroughAudio(alias)
+		case "truehd", "dts":
+			if caps.PassesThroughAudio(alias) && !tsSegments && !sourceAudioOnly &&
+				h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureAudioPassthrough) {
+				audioCopy, audioPassthrough = true, true
+			}
 		}
 	}
 	// An audio-only source over the viewer's audio bitrate is re-encoded to
@@ -987,10 +1130,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// The worker overwrites these via SetWorkerInfo once it knows the encoder
 	// it actually got, but the client can ask for the playlist before that
 	// lands, so the initial guess has to be right on its own.
-	tsSegments := strings.EqualFold(body.SegmentContainer, "ts")
 	sessVout := transcode.VideoOutput{HEVC: preferHEVC, AV1: preferAV1, TSSegments: tsSegments}
 	if body.VideoCopy {
-		sessVout = transcode.ResolveVideoOutput(transcode.EncoderCopy, isSourceHEVC, isSourceAV1, false, tsSegments)
+		sessVout = transcode.ResolveVideoOutput(transcode.EncoderCopy, isSourceHEVC, isSourceAV1, audioPassthrough, tsSegments)
 	}
 
 	// For remux, use the source file bitrate (video is copied unchanged).
@@ -1014,6 +1156,15 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		playMeta.audioCodec = "copy"
 		playMeta.audioChannels = transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx)
 	}
+	if burn != nil {
+		// The burn-in is the reason when nothing else is (startReasons'
+		// "Requested by client" fallback); otherwise one more.
+		rest := playMeta.reasons
+		if len(rest) == 1 && rest[0] == "Requested by client" {
+			rest = nil
+		}
+		playMeta.reasons = append([]string{"Burning in image subtitles"}, rest...)
+	}
 
 	// ── Adaptive-bitrate ladder (on-demand) ───────────────────────────────
 	// When ABR is enabled and this is a full re-encode of a file with a
@@ -1025,8 +1176,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// pick means "give me exactly this" — serving a single rendition makes
 	// rung-switching (and therefore thrash) structurally impossible, which is
 	// what a user who picked 1080p/4K expects. Auto still gets the adaptive
-	// ladder.
-	if h.cfg.TranscodeABR && decision == "transcode" && body.Height == 0 &&
+	// ladder. A subtitle burn-in runs as a single rendition too: every rung
+	// would need its own overlay, and each rung restart (seek, switch) would
+	// repeat the software burn.
+	if h.cfg.TranscodeABR && decision == "transcode" && body.Height == 0 && burn == nil &&
 		file.DurationMS != nil && *file.DurationMS > 0 && sourceH > 0 {
 		srcBitrate := 0
 		if file.Bitrate != nil {
@@ -1119,6 +1272,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		HEVCOutput:  sessVout.HEVC,
 		AV1Output:   sessVout.AV1,
 		TSSegments:  tsSegments,
+		// A TrueHD/DTS passthrough remux is fMP4 whatever its video codec;
+		// the playlist handler reads this back to wait for .m4s.
+		FMP4Segments: audioPassthrough,
 		// Display only here (ABR children read it from their parent): Now
 		// Playing names the copied track's codec, not the first track's.
 		AudioStreamIndex: audioStreamIdx,
@@ -1210,6 +1366,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		PreferAV1:        preferAV1,
 		TSSegments:       tsSegments,
 		AudioRate:        audioRate,
+		AudioPassthrough: audioPassthrough,
+		BurnSubtitle:     burn,
 		EnqueuedAt:       time.Now(),
 	}
 	h.logger.InfoContext(ctx, "transcode job created",
@@ -1232,6 +1390,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		"supports_hevc", caps.SupportsHEVC,
 		"supports_av1", caps.SupportsAV1,
 		"audio_channels", audioChannels,
+		"audio_passthrough", audioPassthrough,
+		"burn_subtitle", burn != nil,
 		"client_profile", hasProfile,
 	)
 
@@ -1240,6 +1400,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		h.logger.ErrorContext(ctx, "dispatch transcode job failed", "session_id", sessionID, "err", err)
 		// Clean up the orphaned Valkey session — FFmpeg will never start.
 		_ = h.sessions.Delete(ctx, sessionID)
+		// The fleet changed between the feature checks above and here: the
+		// only worker that could take this job went away.
+		if errors.Is(err, transcode.ErrNoCapableWorker) && burn != nil {
+			respond.Error(w, r, http.StatusServiceUnavailable, codeBurnInUnavailable,
+				"no transcode worker on this server can burn in subtitles yet; update the workers")
+			return
+		}
 		respond.InternalError(w, r)
 		return
 	}
@@ -1298,14 +1465,19 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	respond.Success(w, r, transcodeStartResponse{
+	resp := transcodeStartResponse{
 		SessionID:       sessionID,
 		PlaylistURL:     playlistURL,
 		Token:           segTok,
 		StartOffsetSec:  startOffsetSec,
 		Seg0AudioGapSec: seg0AudioGap,
 		AudioRate:       audioRate,
-	})
+	}
+	if burn != nil {
+		idx := burn.StreamIndex
+		resp.BurnedSubtitleStreamIndex = &idx
+	}
+	respond.Success(w, r, resp)
 }
 
 // lazyReprobe fills in source metadata a scan left NULL (codec, resolution,

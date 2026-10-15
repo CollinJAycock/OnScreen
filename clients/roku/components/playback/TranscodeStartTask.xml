@@ -22,12 +22,17 @@
         <field id="supportsHevc" type="boolean" />
         <!-- audio_stream_index is an optional re-issue param. -1
              means "use server default" (the standard first run);
-             non-negative is the index from item.files[0].audio_streams
-             that the user picked from the in-player Audio picker.
+             non-negative is the POSITION in the file's audio_streams of
+             the track picked in the in-player Audio picker (the server
+             maps `-map 0:a:N`), not its ffprobe stream index.
              positionMs lets a re-issue resume at the exact second
              instead of restarting from 0. -->
         <field id="audioStreamIndex" type="integer" value="-1" />
         <field id="positionMs" type="integer" value="0" />
+        <!-- The ABSOLUTE index (subtitle_streams[].index) of an
+             image-based subtitle to burn into the picture; -1 = none.
+             Burning always re-encodes the video (video_copy false). -->
+        <field id="burnSubtitleStreamIndex" type="integer" value="-1" />
         <field id="result" type="assocArray" />
         <!-- Set when the server refused the start because an admin
              stopped this stream (403 PLAYBACK_STOPPED): the sentence to
@@ -38,12 +43,18 @@
              TOO_MANY_SESSIONS): the server's sentence. "" otherwise.
              Written before `result`. -->
         <field id="limitMessage" type="string" />
+        <!-- Set when the server refused the start with 400 (an audio
+             track out of range, or a subtitle it can't burn in): a short
+             sentence for the dialog. "" otherwise. Written before
+             `result`. -->
+        <field id="refusal" type="string" />
     </interface>
 
     <script type="text/brightscript" uri="TranscodeStartTask.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/ApiResult.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/TranscodeRequest.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
