@@ -8,6 +8,8 @@ import {
   demoteCodec,
   isCodecDemoted,
   resetDemotedCodecs,
+  settleWithin,
+  VERDICT_WAIT_MS,
   type ClientCaps,
 } from './playback-decision';
 import type { ItemFile } from './api';
@@ -206,5 +208,42 @@ describe('runtime codec demotion', () => {
     demoteCodec('hevc');
     demoteCodec('hevc');
     expect(JSON.parse(sessionStorage.getItem('onscreen:demoted-codecs') ?? '[]')).toEqual(['hevc']);
+  });
+});
+
+describe('settleWithin', () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it('resolves true as soon as the verdict lands inside the bound', async () => {
+    let land!: () => void;
+    const verdict = new Promise<void>((r) => (land = r));
+    const waited = settleWithin(verdict, VERDICT_WAIT_MS);
+    await vi.advanceTimersByTimeAsync(100);
+    land();
+    await expect(waited).resolves.toBe(true);
+  });
+
+  it('treats a failed verdict fetch as settled (local fallback), never rejects', async () => {
+    await expect(settleWithin(Promise.reject(new Error('boom')), VERDICT_WAIT_MS)).resolves.toBe(true);
+  });
+
+  it('gives up after the bound so a slow server cannot hang playback', async () => {
+    const never = new Promise<void>(() => {});
+    let result: boolean | undefined;
+    void settleWithin(never, VERDICT_WAIT_MS).then((v) => (result = v));
+    await vi.advanceTimersByTimeAsync(VERDICT_WAIT_MS - 1);
+    expect(result).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(result).toBe(false);
+  });
+
+  it('a verdict landing after the timeout does not flip the result', async () => {
+    let land!: () => void;
+    const late = new Promise<void>((r) => (land = r));
+    const waited = settleWithin(late, 50);
+    await vi.advanceTimersByTimeAsync(50);
+    land();
+    await expect(waited).resolves.toBe(false);
   });
 });

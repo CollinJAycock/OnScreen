@@ -12,7 +12,7 @@
   import { getClientName } from '$lib/api';
   import { isStopForPlayer, adminStopText, PLAYBACK_STOPPED_CODE } from '$lib/playback-stop';
   import { parseAtParam } from '$lib/playback-transfer';
-  import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision } from '$lib/playback-decision';
+  import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision, settleWithin, VERDICT_WAIT_MS } from '$lib/playback-decision';
   import { groupVersions, playableDurationMs, promoteVersion, versionLabel } from '$lib/fileVersions';
   import { capabilities } from '$lib/stores/capabilities';
   import { onlineSubtitlesVisible } from '$lib/featureGates';
@@ -814,14 +814,19 @@
   // is authoritative for codec / container / audio / HDR / bit-depth. We refine
   // it locally only for faststart — a progressive-download concern the server
   // can't see (it isn't on media.File). Falls back to the local heuristic when
-  // the server verdict isn't available yet (still fetching, fetch failed, or a
-  // non-source file). See docs/capability-profiles.md.
+  // the server verdict isn't available (fetch failed, slower than
+  // VERDICT_WAIT_MS, or a non-source file) — the initial start waits for it
+  // (awaitServerVerdict), so the heuristic is a fallback, not a head start.
+  // See docs/capability-profiles.md.
   // decision is the verdict for the SOURCE file (source_decision when the
   // server offered an optimized version instead), so every helper below keeps
   // judging the source; optimized is the pre-made version to play in place
   // of a transcode, when the server chose one (reason optimized_version).
   let serverDecision: { fileId: string; decision: string; optimized?: OptimizedVersion } | null = null;
   let decisionFetchedFor = '';
+  // The verdict fetch currently on the wire, so the playback start waits on
+  // the reactive fetch instead of issuing a second one.
+  let decisionInFlight: { fileId: string; done: Promise<void> } | null = null;
 
   function serverDecisionFor(file: ItemFile | undefined): string | null {
     // A verdict for a file whose codec has since been runtime-demoted is
@@ -928,6 +933,44 @@
     }
   }
 
+  /** requestServerDecision starts the verdict fetch for the current item's
+   *  source file and records it as in flight. The one entry point for the
+   *  fetch — the reactive per-item trigger and awaitServerVerdict both go
+   *  through it — so a verdict is never requested twice for one file. */
+  function requestServerDecision(file: ItemFile): Promise<void> {
+    if (!item) return Promise.resolve();
+    decisionFetchedFor = item.id;
+    const done = fetchServerDecision(file); // never rejects
+    decisionInFlight = { fileId: file.id, done };
+    void done.then(() => {
+      if (decisionInFlight?.done === done) decisionInFlight = null;
+    });
+    return done;
+  }
+
+  /** awaitServerVerdict holds a playback start until the server's verdict for
+   *  `file` is in, so the start follows the server rather than racing it with
+   *  the local heuristic. Bounded by VERDICT_WAIT_MS; past that (or when the
+   *  fetch already failed for this item) the caller proceeds on the local
+   *  fallback, as it always has. A late verdict still lands in serverDecision
+   *  for later quality / version switches. */
+  async function awaitServerVerdict(file: ItemFile): Promise<void> {
+    if (!item || serverDecisionFor(file) !== null) return;
+    // A runtime-demoted codec's verdict is ignored anyway (serverDecisionFor).
+    if (isCodecDemoted(file.video_codec)) return;
+    let pending: Promise<void>;
+    if (decisionInFlight?.fileId === file.id) {
+      pending = decisionInFlight.done; // the reactive fetch — don't double up
+    } else if (decisionFetchedFor !== item.id) {
+      pending = requestServerDecision(file); // nothing asked for this file yet
+    } else {
+      return; // fetched for this item and failed — local fallback
+    }
+    if (!(await settleWithin(pending, VERDICT_WAIT_MS))) {
+      console.warn(`[capability] no decision after ${VERDICT_WAIT_MS} ms, using local`);
+    }
+  }
+
   // HLS transcode state
   let hlsInstance: Hls | null = null;
   let transcodeSessionId: string | null = null;
@@ -1004,11 +1047,12 @@
   $: fileDamaged = damagedReactive(sourceFile, serverDecision, serverSaidDamaged);
   $: canAuto = !dvUnsupported && !fileDamaged && autoPlayable(sourceFile, serverDecision);
   // Fetch the server play decision once per item (sourceFile is item.files[0]).
+  // startPlayback waits on this same fetch (awaitServerVerdict).
   $: if (sourceFile && item && decisionFetchedFor !== item.id) {
     decisionFetchedFor = item.id;
     serverDecision = null; // reset until the new item's verdict resolves
     serverSaidDamaged = false; // per-file gate result; new item starts clean
-    void fetchServerDecision(sourceFile);
+    void requestServerDecision(sourceFile);
   }
   $: availableQualities = qualityOptions.filter(
     q => {
@@ -1376,6 +1420,7 @@
     // one, so the single-shot escalation is re-armed. Same for the stall-
     // restart budget: one damaged title must not exhaust it for the next.
     mediaErrorEscalated = false;
+    directPlayRetried = false;
     stallRestarts = 0;
     pageEnteredAt = Date.now();
     cancelAutoplay();
@@ -2124,6 +2169,18 @@
     if (!item?.files?.[0]?.stream_url || !videoEl) return;
 
     const file = item.files[0];
+    // The server's play decision is final: hold the start until its verdict
+    // is in (bounded — a slow server falls back to the local heuristic), so
+    // we never begin a direct play the server would refuse with 409
+    // TRANSCODE_REQUIRED. Usually already resolved: the reactive fetch went
+    // out when the item loaded, in parallel with the pre-flights above.
+    const startedFor = item.id;
+    buffering = true;
+    await awaitServerVerdict(file);
+    buffering = false;
+    // While we waited the viewer may have moved on, or the decision refused
+    // the stream outright (429 TOO_MANY_SESSIONS → handleStreamLimit).
+    if (item?.id !== startedFor || item.files?.[0]?.id !== file.id || streamLimitMessage || !videoEl) return;
     // Dolby Vision — refuse rather than play a broken transcode. The dvUnsupported
     // player branch shows "Dolby Vision is not supported"; don't start a stream.
     if (isUnsupported(file)) {
@@ -2245,6 +2302,10 @@
     const posMs = Math.floor(currentTime * 1000);
     skipAutoSeek = true;
     const file = item.files[0];
+    // Same as the initial start: follow the server's verdict for the new
+    // file, not the local heuristic (bounded wait, local fallback).
+    await awaitServerVerdict(file);
+    if (item?.files?.[0]?.id !== file.id || streamLimitMessage) return;
     if (canDirectPlay(file)) {
       await switchToDirectPlay(posMs);
     } else if (canRemuxVideo(file)) {
@@ -2769,6 +2830,32 @@
       skipAutoSeek = false;
     }
     videoEl.play().catch(() => {});
+  }
+
+  // One transcode retry per item for a direct play that failed on the
+  // local-fallback path (no server verdict). The server refuses a direct
+  // /media/stream request for a video it would convert for this user (quality
+  // profile, remote bitrate cap, damaged file) with 409 TRANSCODE_REQUIRED —
+  // the <video> element only sees a failed load, never reaches
+  // loadedmetadata, so onVideoLoaded's escalation can't catch it and the
+  // player sat on a black frame. The transcode start applies the same rules
+  // (and answers FILE_DAMAGED for a damaged file, which flips to its panel).
+  let directPlayRetried = false;
+  function onVideoError() {
+    if (directPlayRetried || hlsActive || switchingTranscode || playingOptimized) return;
+    if (blocked || adminStopMessage || streamLimitMessage) return; // torn down on purpose
+    const file = item?.files?.[0];
+    // Only a direct play of the source (hls.js attaches a blob: URL). Audio-
+    // only plays through the same element and never transcodes here; with a
+    // server verdict in hand the direct play was the server's call.
+    if (!item || !file?.video_codec || videoEl.getAttribute('src') !== file.stream_url) return;
+    if (serverDecisionFor(file) !== null) return;
+    directPlayRetried = true;
+    const posMs = videoEl.currentTime > 0
+      ? Math.round(videoEl.currentTime * 1000)
+      : (item.view_offset_ms > 0 ? item.view_offset_ms : 0);
+    console.warn(`[capability] direct play failed (media error ${videoEl.error?.code ?? '?'}), retrying via transcode`);
+    void switchToTranscode(file.resolution_h ?? 1080, posMs);
   }
 
   function onWaiting()  { buffering = true; }
@@ -3582,6 +3669,7 @@
       bind:this={videoEl}
       class="video"
       on:loadedmetadata={onVideoLoaded}
+      on:error={onVideoError}
       on:timeupdate={onTimeUpdate}
       on:play={onPlay}
       on:pause={onPause}
