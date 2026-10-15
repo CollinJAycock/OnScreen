@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { episodeNumber, formatRuntime, formatTimecode, genreLine, numberedTitle, resumeLabel } from './detailText';
+import {
+  episodeNumber,
+  formatRuntime,
+  formatTimecode,
+  genreLine,
+  numberedTitle,
+  resumeLabel,
+  studioLine,
+} from './detailText';
 
 describe('formatTimecode / resumeLabel', () => {
   it('uses h:mm:ss past an hour and m:ss below it', () => {
@@ -53,6 +61,20 @@ describe('genreLine', () => {
     expect(genreLine([])).toBe('');
     expect(genreLine(undefined)).toBe('');
     expect(genreLine(null)).toBe('');
+  });
+});
+
+describe('studioLine', () => {
+  it('names up to two studios or networks, in the order given', () => {
+    expect(studioLine([{ name: 'A24' }])).toBe('A24');
+    expect(studioLine([{ name: 'HBO' }, { name: 'BBC' }, { name: 'Sky' }])).toBe('HBO, BBC');
+  });
+
+  it('drops blank and repeated names, and is empty without studios', () => {
+    expect(studioLine([{ name: ' ' }, { name: 'HBO' }, { name: 'HBO' }])).toBe('HBO');
+    expect(studioLine([])).toBe('');
+    expect(studioLine(undefined)).toBe('');
+    expect(studioLine(null)).toBe('');
   });
 });
 

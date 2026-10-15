@@ -134,6 +134,16 @@ export interface Chapter {
   title: string;
   start_ms: number;
   end_ms: number;
+  /** The chapter's thumbnail (/trickplay/{item}/chapter_NNN.jpg, asset
+   *  token like the trickplay sprites), once the item's seek-bar sprites
+   *  exist. Absent otherwise and on older servers (v2.6). */
+  thumb_url?: string;
+}
+
+/** A studio or network on an item detail (v2.6). */
+export interface ItemStudio {
+  id: string;
+  name: string;
 }
 
 /** A subtitle file attached to a media file (downloaded from OpenSubtitles,
@@ -191,8 +201,17 @@ export interface ItemDetail {
   duration_ms?: number;
   poster_path?: string;
   fanart_path?: string;
+  /** Extra artwork (v2.6), served through /artwork/ like poster_path: a
+   *  transparent clear logo (PNG: fetched without ?w= / ?h=, which
+   *  re-encode as JPEG, see lib/artwork), a wide banner and disc art. */
+  logo_path?: string;
+  banner_path?: string;
+  disc_art_path?: string;
   content_rating?: string;
   genres: string[];
+  /** A movie's production companies or a show's networks, in the
+   *  provider's order (v2.6; absent when none and on older servers). */
+  studios?: ItemStudio[];
   parent_id?: string;
   /** The parent's parent: an episode's show (episode → season → show). */
   grandparent_id?: string;

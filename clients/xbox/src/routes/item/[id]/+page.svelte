@@ -39,7 +39,8 @@
   } from '$lib/watchState';
   import { canReportProblem, openKinds } from '$lib/reportProblem';
   import { pickContainerStart, resolvePlayAll, resolveShuffle } from '$lib/playPick';
-  import { formatRuntime, genreLine, numberedTitle, resumeLabel } from '$lib/detailText';
+  import { formatRuntime, genreLine, numberedTitle, resumeLabel, studioLine } from '$lib/detailText';
+  import { logoArtworkPath, showsLogo } from '$lib/artwork';
   import { latestOnly } from '$lib/latest';
 
   // Back from the player: how long to wait before reading the item again
@@ -135,6 +136,13 @@
   const posterUrl = $derived(
     item?.poster_path ? api.assetUrl(`/artwork/${item.poster_path}?w=480`) : ''
   );
+  // A movie's or show's clear logo (v2.6) in place of the title text, at its
+  // own size (lib/artwork). The text comes back if the image doesn't load.
+  const logoUrl = $derived.by(() => {
+    const path = item && showsLogo(item.type) ? logoArtworkPath(item.logo_path) : '';
+    return path ? api.assetUrl(path) : '';
+  });
+  let logoFailedUrl = $state('');
 
   // Artist children: albums (plus anything that isn't a music video, so a
   // future child type still shows up) and the artist's music videos.
@@ -156,6 +164,8 @@
   // Meta line, worded like Android's: "2h 5m" and up to three genres.
   const runtime = $derived(formatRuntime(item?.duration_ms));
   const genres = $derived(genreLine(item?.genres));
+  // A movie's studios / a show's networks (v2.6; absent on older servers).
+  const studios = $derived(studioLine(item?.studios));
 
   // book_author + book_series have no playable file of their own and
   // we deliberately hide the "Play first child" button because the
@@ -796,13 +806,22 @@
           <img class="hero-poster" src={posterUrl} alt="" />
         {/if}
         <div class="hero-text">
-          <h1>{item.title}</h1>
+          {#if logoUrl && logoFailedUrl !== logoUrl}
+            <!-- The logo stands for the title; its alt keeps the title for
+                 screen readers. -->
+            <h1>
+              <img class="title-logo" src={logoUrl} alt={item.title} onerror={() => (logoFailedUrl = logoUrl)} />
+            </h1>
+          {:else}
+            <h1>{item.title}</h1>
+          {/if}
           <div class="meta">
             {#if item.year}<span>{item.year}</span>{/if}
             {#if item.content_rating}<span class="pill">{item.content_rating}</span>{/if}
             {#if runtime}<span>{runtime}</span>{/if}
             {#if item.rating}<span>★ {item.rating.toFixed(1)}</span>{/if}
             {#if genres}<span>{genres}</span>{/if}
+            {#if studios}<span>{studios}</span>{/if}
             {#if item.watch_state === 'watched'}<span class="watched-pill">Watched</span>{/if}
           </div>
           {#if item.summary}<p class="summary">{item.summary}</p>{/if}
@@ -1045,6 +1064,16 @@
   h1 {
     font-size: var(--font-2xl);
     margin: 0 0 20px;
+  }
+
+  /* A clear logo in place of the title, about a title's footprint. (No CSS
+     min(): Tizen 5.5 runs Chromium 69.) */
+  .title-logo {
+    display: block;
+    max-width: 640px;
+    max-height: 200px;
+    object-fit: contain;
+    object-position: left center;
   }
 
   /* Wrapping rows (.meta, .actions, .season-chips) space their children

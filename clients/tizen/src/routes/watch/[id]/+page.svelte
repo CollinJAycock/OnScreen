@@ -96,8 +96,9 @@
     actionRowKey,
     barSeekMs,
     chapterAt,
-    chapterRowLabel,
+    chapterPickerRows,
     pickerWindow,
+    PICKER_VISIBLE_THUMB_ROWS,
     playerActions,
     subtitlePickerRows,
     transportButtons,
@@ -130,6 +131,7 @@
   } from '$lib/player/chrome';
   import { PROGRESS_UPDATED_EVENT, events } from '$lib/events';
   import { goBack, replaceTo, takeStartOverride } from '$lib/nav';
+  import { logoArtworkPath, showsLogo } from '$lib/artwork';
   import { clientName } from '$lib/device';
   import {
     PLAYBACK_STOP_EVENT,
@@ -563,11 +565,23 @@
       return subtitlePickerRows(subtitleOptions, activeSubtitleKey, onlineSubsAvailable, status);
     }
     if (chapterPickerOpen) {
-      return chapters.map((c, i) => ({ label: chapterRowLabel(c, i), current: i === chapterPickerCurrent }));
+      return chapterPickerRows(chapters, chapterPickerCurrent);
     }
     return [];
   });
-  const pickerSpan = $derived(pickerWindow(pickerCursor, pickerRows.length));
+  // Rows with chapter thumbnails are taller: fewer of them fit the panel.
+  const pickerThumbs = $derived(pickerRows.some((r) => !!r.thumb));
+  const pickerSpan = $derived(
+    pickerWindow(pickerCursor, pickerRows.length, pickerThumbs ? PICKER_VISIBLE_THUMB_ROWS : undefined)
+  );
+
+  // A movie's clear logo (v2.6) in place of the title on the controls; the
+  // text comes back if it doesn't load (lib/artwork).
+  const titleLogoUrl = $derived.by(() => {
+    const path = item && showsLogo(item.type) ? logoArtworkPath(item.logo_path) : '';
+    return path ? api.assetUrl(path) : '';
+  });
+  let titleLogoFailedUrl = $state('');
 
   // The controls come up on any key or pointer move and fade 5 s after the
   // last one (Android's leanback timing), 8 s while the action row has
@@ -3434,7 +3448,7 @@
           class:current={row.current}
           onclick={(e) => clickPickerRow(pickerSpan.start + j, e)}
           onmouseenter={() => hoverPickerRow(pickerSpan.start + j)}
-        >{#if row.current}{'● '}{/if}{row.label}</button>
+        >{#if row.thumb}<img class="picker-thumb" src={api.assetUrl(row.thumb)} alt="" />{/if}{#if row.current}{'● '}{/if}{row.label}</button>
       {/each}
       {#if pickerSpan.end < pickerRows.length}<div class="picker-more">▼</div>{/if}
     </div>
@@ -3483,7 +3497,13 @@
     <div class="controls">
       <div class="top">
         {#if episodeContext}<div class="now-playing-context">{episodeContext}</div>{/if}
-        {#if item}<div class="now-playing">{item.title}</div>{/if}
+        {#if item}
+          {#if titleLogoUrl && titleLogoFailedUrl !== titleLogoUrl}
+            <img class="now-playing-logo" src={titleLogoUrl} alt={item.title} onerror={() => (titleLogoFailedUrl = titleLogoUrl)} />
+          {:else}
+            <div class="now-playing">{item.title}</div>
+          {/if}
+        {/if}
       </div>
 
       <div class="bottom">
@@ -3854,6 +3874,14 @@
     font-size: var(--font-xl);
     color: white;
   }
+  /* A movie's clear logo in place of its title. */
+  .now-playing-logo {
+    display: block;
+    max-width: 480px;
+    max-height: 140px;
+    object-fit: contain;
+    object-position: left center;
+  }
   /* An episode's "Show · S2 · E5", over its title. */
   .now-playing-context {
     font-size: var(--font-md);
@@ -4115,6 +4143,17 @@
     padding: 8px 12px;
     border-radius: 6px;
     white-space: pre-wrap;
+  }
+  /* A chapter's thumbnail, ahead of its label. */
+  .picker-thumb {
+    display: inline-block;
+    vertical-align: middle;
+    width: 112px;
+    height: 63px;
+    object-fit: cover;
+    border-radius: 4px;
+    margin-right: 16px;
+    background: rgba(255, 255, 255, 0.08);
   }
   .picker-row.active {
     background: var(--accent);

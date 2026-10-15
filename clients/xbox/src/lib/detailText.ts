@@ -43,6 +43,16 @@ export function genreLine(genres: readonly string[] | null | undefined, max = 3)
   return out.join(', ');
 }
 
+/** A movie's studios or a show's networks for the meta line: up to `max`
+ *  names, comma-separated, blanks and repeats dropped ('' for none). */
+export function studioLine(
+  studios: readonly { name?: string | null }[] | null | undefined,
+  max = 2
+): string {
+  if (!Array.isArray(studios)) return '';
+  return genreLine(studios.map((s) => (s && typeof s.name === 'string' ? s.name : '')), max);
+}
+
 /** An episode's (or any numbered child's) number: "4", or "1–2" for a
  *  multi-episode file (index_end). '' without a number. */
 export function episodeNumber(index?: number | null, indexEnd?: number | null): string {

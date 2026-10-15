@@ -3,7 +3,9 @@ import {
   FIND_ONLINE_LABEL,
   actionRowKey,
   barSeekMs,
+  PICKER_VISIBLE_THUMB_ROWS,
   chapterAt,
+  chapterPickerRows,
   chapterRowLabel,
   formatClock,
   pickerWindow,
@@ -193,6 +195,23 @@ describe('chapter picker rows', () => {
     expect(chapterAt(ch, 120_000)).toBe(2);
     expect(chapterAt([{ start_ms: 5_000 }, { start_ms: 9_000 }], 1_000)).toBe(0);
     expect(chapterAt([], 1_000)).toBe(-1);
+  });
+
+  it('carries each chapter thumbnail the server has, and marks the one playing', () => {
+    const rows = chapterPickerRows(
+      [
+        { title: 'Opening', start_ms: 0, thumb_url: '/trickplay/x/chapter_000.jpg' },
+        { title: 'Middle', start_ms: 60_000 },
+      ],
+      1
+    );
+    expect(rows).toEqual([
+      { label: '1. Opening · 0:00', current: false, thumb: '/trickplay/x/chapter_000.jpg' },
+      { label: '2. Middle · 1:00', current: true },
+    ]);
+    // A chapter without a thumbnail (an older server) has no thumb key at all.
+    expect('thumb' in rows[1]).toBe(false);
+    expect(PICKER_VISIBLE_THUMB_ROWS).toBeLessThan(9);
   });
 });
 
