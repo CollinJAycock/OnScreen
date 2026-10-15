@@ -30,6 +30,9 @@
     <string name="bookmark_limit">This book already has the most bookmarks allowed.</string>
     <string name="bookmark_unsupported">This server doesn\'t support bookmarks yet.</string>
     <string name="bookmark_add_failed">Couldn\'t add the bookmark. Try again.</string>
+    <string name="subtitles_burn_in_unsupported">These subtitles can\'t be shown on this video</string>
+    <string name="subtitles_burn_in_unavailable">That subtitle track isn\'t available</string>
+    <string name="subtitles_burn_in_failed">Couldn\'t change subtitles</string>
 
     <!-- Audiobooks: bookmarks (item page) -->
     <string name="bookmarks_title">Bookmarks</string>

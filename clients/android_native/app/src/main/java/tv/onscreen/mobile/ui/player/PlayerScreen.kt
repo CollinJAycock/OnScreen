@@ -359,7 +359,13 @@ private fun PlayerHost(
     // An optimized version's MP4 carries no subtitles either: it takes them
     // side-loaded, as a session does.
     val sideLoadAll = isHls || source.isOptimized
-    val subtitleRows = remember(ui.subtitleTracks, sideLoadAll) { SubtitleTracks.rows(ui.subtitleTracks, sideLoadAll) }
+    // A remux / transcode also lists the image-based streams: each plays its
+    // OCR'd text version, else is burned into the video (see
+    // PlayerViewModel.pickImageSubtitle). Direct play shows them from the
+    // container.
+    val subtitleRows = remember(ui.subtitleTracks, sideLoadAll, isHls) {
+        SubtitleTracks.rows(ui.subtitleTracks, sideLoadAll, session = isHls)
+    }
     val sideLoads = remember(ui.subtitleTracks, sideLoadAll) { SubtitleTracks.sideLoads(ui.subtitleTracks, sideLoadAll) }
     val videoPlayer: ExoPlayer? = remember(source, serviceAudio) {
         if (serviceAudio) {
@@ -409,7 +415,9 @@ private fun PlayerHost(
             // ExoPlayer has no clean "forced only" param, so for the
             // forced-only case we gate on whether a forced in-language
             // stream is actually present before setting the language at all.
-            ui.preferredSubtitleLang?.let { lang ->
+            // Not while a subtitle is burned into the picture: text on top of
+            // it would show every line twice.
+            ui.preferredSubtitleLang?.takeIf { ui.burnedSubtitleIndex == null }?.let { lang ->
                 // Normalized 639-2/B → 639-1 matching so a pref of "en"
                 // gates correctly against an ffprobe "eng" stream (see
                 // SubtitleTracks.languagesMatch). ExoPlayer normalizes
@@ -847,6 +855,18 @@ private fun PlayerHost(
         if (serviceAudio || !bookSpeed) return@LaunchedEffect
         ui.listeningRate?.let { player.setPlaybackSpeed(it) }
     }
+    // A subtitle burn-in the server refused (or a session that didn't start):
+    // the stream playing carries on.
+    LaunchedEffect(vm) {
+        vm.burnInFailures.collect { failure ->
+            val msg = when (failure) {
+                BurnInFailure.UNSUPPORTED -> R.string.subtitles_burn_in_unsupported
+                BurnInFailure.UNAVAILABLE -> R.string.subtitles_burn_in_unavailable
+                BurnInFailure.FAILED -> R.string.subtitles_burn_in_failed
+            }
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_LONG).show()
+        }
+    }
     LaunchedEffect(vm) {
         vm.bookmarkNotices.collect { notice ->
             val msg = when (notice) {
@@ -981,11 +1001,15 @@ private fun PlayerHost(
     // would a picked side-load that hadn't loaded when it was chosen.
     var subtitleChoice by remember { mutableStateOf<SubtitleChoice?>(null) }
     val currentSubtitleRows by rememberUpdatedState(subtitleRows)
+    // A subtitle burned into the picture keeps text tracks off, whatever the
+    // pick: a text track on top would show every line twice.
+    val burnedIn by rememberUpdatedState(ui.burnedSubtitleIndex != null)
+    fun effectiveChoice(): SubtitleChoice? = if (burnedIn) SubtitleChoice.Off else subtitleChoice
     DisposableEffect(player) {
-        subtitleChoice?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
+        effectiveChoice()?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
         val listener = object : Player.Listener {
             override fun onTracksChanged(tracks: Tracks) {
-                subtitleChoice?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
+                effectiveChoice()?.let { SubtitleSelection.apply(player, it, currentSubtitleRows) }
             }
         }
         player.addListener(listener)
@@ -1495,13 +1519,37 @@ private fun PlayerHost(
     if (showSubtitlePicker && !inPip) {
         SubtitlePickerDialog(
             rows = subtitleRows,
-            // Read off the player's actual selection each time the sheet opens.
-            selectedTrackId = remember(player) { SubtitleSelection.selectedTrackId(player, subtitleRows) },
-            onPick = { row ->
+            // Read off the player's actual selection each time the sheet opens
+            // (an image-based row stands for its text version, or the burn-in).
+            selectedTrackId = remember(player, ui.burnedSubtitleIndex) {
+                SubtitleTracks.pickerSelection(
+                    subtitleRows,
+                    SubtitleSelection.selectedTrackId(
+                        player,
+                        subtitleRows + SubtitleTracks.textVersions(subtitleRows, ui.subtitleTracks),
+                    ),
+                    ui.burnedSubtitleIndex,
+                )
+            },
+            burnedIndex = ui.burnedSubtitleIndex,
+            onPick = onPick@{ row ->
                 showSubtitlePicker = false
-                val choice = if (row == null) SubtitleChoice.Off else SubtitleChoice.Track(row.trackId)
+                val pos = player.currentPosition
+                val choice = when {
+                    row == null -> SubtitleChoice.Off
+                    row.imageBased && row.streamIndex != null ->
+                        // Its text version; or nothing to select here: the
+                        // session restarts with it burned in, and the pick
+                        // before holds until that lands (or is refused).
+                        SubtitleChoice.Track(vm.pickImageSubtitle(row.streamIndex, pos) ?: return@onPick)
+                    else -> SubtitleChoice.Track(row.trackId)
+                }
+                // A burned-in subtitle comes off: the session restarts without
+                // it, and this choice applies to the new player.
+                if (row == null || !row.imageBased) vm.clearBurnedSubtitle(pos)
                 subtitleChoice = choice
-                if (!SubtitleSelection.apply(player, choice, subtitleRows) && row != null) {
+                if (burnedIn) return@onPick
+                if (!SubtitleSelection.apply(player, choice, subtitleRows) && row != null && !row.imageBased) {
                     // Its track isn't among the player's yet (still preparing):
                     // steer by language meanwhile — the tracks listener above
                     // selects the exact track once it appears.
@@ -1818,6 +1866,7 @@ private fun AudioPickerDialog(
 private fun SubtitlePickerDialog(
     rows: List<SubtitleTrack>,
     selectedTrackId: String?,
+    burnedIndex: Int?,
     onPick: (SubtitleTrack?) -> Unit,
     onFindMore: () -> Unit,
     onDismiss: () -> Unit,
@@ -1856,7 +1905,7 @@ private fun SubtitlePickerDialog(
                     ) {
                         RadioButton(selected = row.trackId == selectedTrackId, onClick = null)
                         Spacer(Modifier.width(8.dp))
-                        Text(SubtitleTracks.label(row))
+                        Text(SubtitleTracks.label(row, burnedIn = row.imageBased && row.streamIndex == burnedIndex))
                     }
                 }
                 Row(

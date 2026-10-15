@@ -146,4 +146,59 @@ class SubtitleTracksTest {
         assertThat(SubtitleTracks.languagesMatch("eng", "es")).isFalse()
         assertThat(SubtitleTracks.languagesMatch("", "")).isFalse()
     }
+
+    // ── Image-based streams on a remux / transcode ──
+
+    private fun pgsFile() = ItemFile(
+        id = "file-b",
+        stream_url = "/media/files/file-b.mkv",
+        stream_token = "st",
+        subtitle_streams = listOf(
+            SubtitleStream(2, "subrip", "eng", "English", false),
+            SubtitleStream(3, "hdmv_pgs_subtitle", "eng", "Full", false, image_based = true, text_version_id = "ocr-3"),
+            SubtitleStream(4, "hdmv_pgs_subtitle", "eng", "Forced", true, image_based = true),
+            // An older server doesn't mark it: no burn-in row.
+            SubtitleStream(5, "dvd_subtitle", "fre", "", false),
+        ),
+        external_subtitles = listOf(
+            ExternalSubtitle(id = "ocr-3", language = "eng", url = "/media/external-subtitles/ocr-3"),
+            ExternalSubtitle(id = "e1", language = "spa", url = "/media/external-subtitles/e1"),
+        ),
+    )
+
+    @Test
+    fun `a session lists the marked image streams, each standing for its text version`() {
+        val tracks = SubtitleTracks.build("http://srv", pgsFile(), assetToken = "asset", sideLoadEmbedded = true)
+        val pgs = tracks.first { it.trackId == "sub:emb:3" }
+        assertThat(pgs.imageBased).isTrue()
+        assertThat(pgs.url).isNull()
+        assertThat(pgs.textTrackId).isEqualTo("sub:ext:ocr-3")
+        assertThat(tracks.first { it.trackId == "sub:emb:5" }.imageBased).isFalse()
+
+        val rows = SubtitleTracks.rows(tracks, hls = true, session = true)
+        // The OCR'd file is picked through its stream's row, not on its own.
+        assertThat(rows.map { it.trackId })
+            .containsExactly("sub:emb:2", "sub:emb:3", "sub:emb:4", "sub:ext:e1").inOrder()
+        assertThat(SubtitleTracks.textVersions(rows, tracks).map { it.trackId }).containsExactly("sub:ext:ocr-3")
+        // Still side-loaded, so selecting it needs no new session.
+        assertThat(SubtitleTracks.sideLoads(tracks, hls = true).map { it.trackId }).contains("sub:ext:ocr-3")
+        // An optimized version has no session to burn into: text only.
+        assertThat(SubtitleTracks.rows(tracks, hls = true).map { it.trackId })
+            .containsExactly("sub:emb:2", "sub:ext:ocr-3", "sub:ext:e1").inOrder()
+    }
+
+    @Test
+    fun `the picker marks the image row for its text version or its burn-in`() {
+        val tracks = SubtitleTracks.build("http://srv", pgsFile(), assetToken = "asset", sideLoadEmbedded = true)
+        val rows = SubtitleTracks.rows(tracks, hls = true, session = true)
+        assertThat(SubtitleTracks.pickerSelection(rows, "sub:ext:ocr-3", burnedIndex = null)).isEqualTo("sub:emb:3")
+        assertThat(SubtitleTracks.pickerSelection(rows, "sub:emb:2", burnedIndex = null)).isEqualTo("sub:emb:2")
+        assertThat(SubtitleTracks.pickerSelection(rows, null, burnedIndex = null)).isNull()
+        // Burned in: no text track shows, the row is it.
+        assertThat(SubtitleTracks.pickerSelection(rows, null, burnedIndex = 4)).isEqualTo("sub:emb:4")
+
+        val forced = rows.first { it.trackId == "sub:emb:4" }
+        assertThat(SubtitleTracks.label(forced, burnedIn = true)).isEqualTo("eng · Forced · forced (burned in)")
+        assertThat(SubtitleTracks.label(forced)).isEqualTo("eng · Forced · forced")
+    }
 }

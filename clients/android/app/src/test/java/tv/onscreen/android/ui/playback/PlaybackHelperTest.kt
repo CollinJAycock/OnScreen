@@ -468,6 +468,26 @@ class PlaybackHelperTest {
             .containsAtLeast("dts", "truehd")
     }
 
+    @Test
+    fun `audioPassthrough lists what the output takes as a bitstream`() {
+        // A Shield on an Atmos receiver: everything, in canonical names.
+        assertThat(PlaybackHelper.audioPassthroughKey(ac3 = true, eac3 = true, truehd = true, dts = true))
+            .isEqualTo("audioPassthrough=eac3:ac3:truehd:dts")
+        // A soundbar that takes Dolby only.
+        assertThat(PlaybackHelper.audioPassthroughKey(ac3 = true, eac3 = true, truehd = false, dts = false))
+            .isEqualTo("audioPassthrough=eac3:ac3")
+        assertThat(PlaybackHelper.audioPassthroughKey(ac3 = false, eac3 = false, truehd = false, dts = true))
+            .isEqualTo("audioPassthrough=dts")
+    }
+
+    @Test
+    fun `audioPassthrough is left out when the output takes no bitstream`() {
+        // TV speakers, or a stick on a TV that only takes PCM.
+        assertThat(PlaybackHelper.audioPassthroughKey(ac3 = false, eac3 = false, truehd = false, dts = false)).isNull()
+        // This JVM has no audio output: the header carries no such key.
+        assertThat(PlaybackHelper.clientCapabilitiesHeader()).doesNotContain("audioPassthrough")
+    }
+
     // ── decide: the local fallback reads the device as the header does ──────
 
     private val noPassthrough = PlaybackHelper.audioDecoders(dtsDecoder = false, dtsOutput = false, truehdOutput = false)
