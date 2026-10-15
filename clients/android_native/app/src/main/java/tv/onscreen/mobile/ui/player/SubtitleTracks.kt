@@ -26,6 +26,16 @@ data class SubtitleTrack(
     /** An attached file rather than one of the container's streams. */
     val external: Boolean,
     val url: String?,
+    /** An embedded stream's ABSOLUTE index; null for an attached file. */
+    val streamIndex: Int? = null,
+    /** A picture-based stream the server marks so (image_based, v2.6 — the
+     *  server that also burns one in). On a remux / transcode its row plays
+     *  [textTrackId], else burns it into the video
+     *  (PlayerViewModel.pickImageSubtitle). */
+    val imageBased: Boolean = false,
+    /** [imageBased]: the trackId of its OCR'd text version (an attached
+     *  file), when there is one the player can side-load. */
+    val textTrackId: String? = null,
 )
 
 /**
@@ -71,22 +81,6 @@ object SubtitleTracks {
         val base = serverUrl.trimEnd('/')
         val asset = assetToken?.takeIf { it.isNotEmpty() }
         val fileToken = file.stream_token?.takeIf { it.isNotEmpty() } ?: asset
-        val embedded = file.subtitle_streams.map { s ->
-            val url = if (!sideLoadEmbedded || base.isEmpty() || fileToken == null || isImageBased(s.codec)) {
-                null
-            } else {
-                StreamTokenVault.register("$base/media/subtitles/${file.id}/${s.index}", fileToken)
-            }
-            SubtitleTrack(
-                trackId = "sub:emb:${s.index}",
-                language = s.language,
-                title = s.title,
-                forced = s.forced,
-                sdh = s.sdh,
-                external = false,
-                url = url,
-            )
-        }
         val attached = file.external_subtitles.map { e ->
             val url = if (base.isEmpty() || asset == null || e.url.isEmpty()) {
                 null
@@ -103,15 +97,60 @@ object SubtitleTracks {
                 url = url,
             )
         }
+        val loadable = attached.filter { it.url != null }.mapTo(HashSet()) { it.trackId }
+        val embedded = file.subtitle_streams.map { s ->
+            val image = s.image_based ?: isImageBased(s.codec)
+            val url = if (!sideLoadEmbedded || base.isEmpty() || fileToken == null || image) {
+                null
+            } else {
+                StreamTokenVault.register("$base/media/subtitles/${file.id}/${s.index}", fileToken)
+            }
+            SubtitleTrack(
+                trackId = "sub:emb:${s.index}",
+                language = s.language,
+                title = s.title,
+                forced = s.forced,
+                sdh = s.sdh,
+                external = false,
+                url = url,
+                streamIndex = s.index,
+                imageBased = s.image_based == true,
+                textTrackId = s.text_version_id?.let { "sub:ext:$it" }?.takeIf { it in loadable },
+            )
+        }
         return embedded + attached
     }
 
-    /** What the picker lists. HLS: only what can be side-loaded — the session
-     *  has no text of its own, so an image-based stream would be a row that
-     *  never shows anything. Direct play: every embedded stream (read from the
-     *  container) plus the attached files that can be side-loaded. */
-    fun rows(tracks: List<SubtitleTrack>, hls: Boolean): List<SubtitleTrack> =
-        if (hls) tracks.filter { it.url != null } else tracks.filter { !it.external || it.url != null }
+    /** What the picker lists. HLS: what can be side-loaded — the stream has
+     *  no text of its own. On a remux / transcode ([session]) also the
+     *  image-based streams the server marks, each standing for its OCR'd text
+     *  version (which then gets no row of its own) or a burn-in. Direct play:
+     *  every embedded stream (read from the container, picture ones
+     *  included) plus the attached files that can be side-loaded. */
+    fun rows(tracks: List<SubtitleTrack>, hls: Boolean, session: Boolean = false): List<SubtitleTrack> {
+        if (!hls) return tracks.filter { !it.external || it.url != null }
+        if (!session) return tracks.filter { it.url != null }
+        val covered = textVersions(tracks, tracks).mapTo(HashSet()) { it.trackId }
+        return tracks.filter { (it.url != null || it.imageBased) && it.trackId !in covered }
+    }
+
+    /** The tracks in [tracks] that are the OCR'd text versions of the
+     *  image-based [rows]: side-loaded, but picked through those rows. */
+    fun textVersions(rows: List<SubtitleTrack>, tracks: List<SubtitleTrack>): List<SubtitleTrack> {
+        val ids = rows.mapNotNullTo(HashSet()) { r -> r.textTrackId?.takeIf { r.imageBased } }
+        return tracks.filter { it.trackId in ids }
+    }
+
+    /**
+     * The picker row to mark: the image-based row burned in ([burnedIndex],
+     * no text track shows then), the image-based row whose text version is
+     * the player's [activeTrackId], else that track's own row.
+     */
+    fun pickerSelection(rows: List<SubtitleTrack>, activeTrackId: String?, burnedIndex: Int?): String? {
+        if (burnedIndex != null) return rows.firstOrNull { it.imageBased && it.streamIndex == burnedIndex }?.trackId
+        val active = activeTrackId ?: return null
+        return rows.firstOrNull { it.imageBased && it.textTrackId == active }?.trackId ?: active
+    }
 
     /** What the player side-loads next to the media: see the class comment. */
     fun sideLoads(tracks: List<SubtitleTrack>, hls: Boolean): List<SubtitleTrack> =
@@ -161,8 +200,12 @@ object SubtitleTracks {
         }
     }
 
-    /** Picker / track label: "eng · English SDH · forced · SDH · downloaded". */
-    fun label(track: SubtitleTrack): String {
+    /** Picker / track label: "eng · English SDH · forced · SDH · downloaded",
+     *  "… (burned in)" for the image-based stream [burnedIn] the video. */
+    fun label(track: SubtitleTrack, burnedIn: Boolean = false): String =
+        baseLabel(track) + if (burnedIn) " (burned in)" else ""
+
+    private fun baseLabel(track: SubtitleTrack): String {
         val parts = mutableListOf<String>()
         if (track.language.isNotEmpty()) parts += track.language
         if (track.title.isNotEmpty()) parts += track.title

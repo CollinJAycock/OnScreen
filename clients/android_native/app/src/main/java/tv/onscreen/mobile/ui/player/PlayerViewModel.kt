@@ -120,6 +120,10 @@ data class PlayerUiState(
      *  files attached to it on the server — with the side-load urls a
      *  remux / transcode needs (see SubtitleTracks). */
     val subtitleTracks: List<SubtitleTrack> = emptyList(),
+    /** Remux / transcode: the ABSOLUTE index of the image-based subtitle
+     *  stream burned into the session's video, or null. Text tracks stay off
+     *  meanwhile. */
+    val burnedSubtitleIndex: Int? = null,
     val markers: List<Marker> = emptyList(),
     val nextSibling: ChildItem? = null,
     val preferredAudioLang: String? = null,
@@ -170,6 +174,33 @@ data class PlayerUiState(
     /** Remux / transcode: the audio row the viewer has, or is getting — what
      *  the picker marks, and what a pick is "already playing" against. */
     val targetAudioRow: Int? get() = pendingAudioRow ?: sessionAudioRow
+}
+
+/** Why a subtitle burn-in pick (or its undoing) didn't take: the screen says
+ *  so, and the stream playing carries on. */
+enum class BurnInFailure {
+    /** 400 BURN_IN_UNSUPPORTED: nothing can be burned into this video (a
+     *  stacked movie). */
+    UNSUPPORTED,
+
+    /** 400 INVALID_SUBTITLE_STREAM / SUBTITLE_NOT_IMAGE: not a picture track
+     *  of this file (any more). */
+    UNAVAILABLE,
+
+    /** Anything else: the new session didn't start. */
+    FAILED,
+    ;
+
+    companion object {
+        internal fun of(e: Exception): BurnInFailure {
+            if (e !is HttpException || e.code() != 400) return FAILED
+            return when (e.apiError()?.code) {
+                "BURN_IN_UNSUPPORTED" -> UNSUPPORTED
+                "INVALID_SUBTITLE_STREAM", "SUBTITLE_NOT_IMAGE" -> UNAVAILABLE
+                else -> FAILED
+            }
+        }
+    }
 }
 
 /** Outcome of "Add bookmark", for the screen's confirmation toast. */
@@ -707,6 +738,12 @@ class PlayerViewModel @Inject constructor(
         val height: Int,
         val videoCopy: Boolean,
         val serverUrl: String,
+        /** The image-based subtitle stream burned into the session (absolute
+         *  index), carried forward by an audio switch like the session
+         *  itself. [height] and [videoCopy] stay the unburned session's, so
+         *  taking the burn off goes back to it (a remux again);
+         *  [requestSession] re-encodes while this is set. */
+        val burnSubtitleIndex: Int? = null,
     )
 
     /** [fromStart]: ignore the item's resume point — album / artist Play
@@ -1533,16 +1570,27 @@ class PlayerViewModel @Inject constructor(
     /** Ask the server for a session of [req] opening at [posMs], with audio
      *  row [audioStreamIndex] (null: the server's default, the first). The
      *  screen plays none of it until [adoptSession]. */
-    private suspend fun requestSession(req: TranscodeRequest, posMs: Long, audioStreamIndex: Int?): TranscodeSession =
-        transcodeRepo.start(
+    private suspend fun requestSession(req: TranscodeRequest, posMs: Long, audioStreamIndex: Int?): TranscodeSession {
+        // Burning a subtitle in always re-encodes the video. A remux (height
+        // 0, "auto") then asks for the height a transcode of the file gets.
+        val burning = req.burnSubtitleIndex != null
+        val height = if (burning && req.videoCopy) {
+            _state.value.item?.files?.firstOrNull { it.id == req.fileId }
+                ?.let { PlaybackHelper.transcodeHeight(it) } ?: 1080
+        } else {
+            req.height
+        }
+        return transcodeRepo.start(
             itemId = req.itemId,
-            height = req.height,
+            height = height,
             positionMs = posMs,
             fileId = req.fileId,
-            videoCopy = req.videoCopy,
+            videoCopy = req.videoCopy && !burning,
             audioStreamIndex = audioStreamIndex,
             supportsHevc = PlaybackHelper.supportsHevc(),
+            burnSubtitleStreamIndex = req.burnSubtitleIndex,
         )
+    }
 
     /** Make [session] the one this screen plays, reports and retires, and
      *  return its source. */
@@ -1567,7 +1615,7 @@ class PlayerViewModel @Inject constructor(
         lastTranscodeRequest = req
         // videoCopy = remux session (original video bits, container rewrap) —
         // the server calls that verdict directStream.
-        activeDecision = if (req.videoCopy) "directStream" else "transcode"
+        activeDecision = if (req.videoCopy && req.burnSubtitleIndex == null) "directStream" else "transcode"
 
         // The player starts at posMs within it (see PlaybackSource.Hls.startMs),
         // on an audio-track switch's new session as on the first.
@@ -1604,7 +1652,9 @@ class PlayerViewModel @Inject constructor(
      *  position. Direct-play swaps tracks via the player's track selector
      *  and never comes through here. */
     fun switchAudioStream(audioRow: Int, currentPositionMs: Long) {
-        val req = lastTranscodeRequest ?: return
+        // The session asked for last — a subtitle burned in (or taken off)
+        // by a switch still starting stays so.
+        val req = switchingTo() ?: return
         val ui = _state.value
         // Not a row: it names no audio stream of this file, and a session
         // asked for one ends with no playlist at all — a playback error a
@@ -1627,22 +1677,82 @@ class PlayerViewModel @Inject constructor(
         // keeps one per viewer and item, so the start in flight has already
         // retired the live one, whose player only has its buffer left.
         if (audioRow == ui.targetAudioRow) return
+        _state.update { it.copy(pendingAudioRow = audioRow) }
+        startSwitch(req, audioRow, currentPositionMs + hlsOffsetMs, subtitles = false)
+    }
+
+    /** Start the switch to [req] with audio row [audioRow] at content
+     *  position [posMs], superseding any still starting. [subtitles]: a
+     *  burn-in change, whose failure the screen reports ([burnInFailures]). */
+    private fun startSwitch(req: TranscodeRequest, audioRow: Int?, posMs: Long, subtitles: Boolean) {
         // The newest pick wins: a switch still starting is superseded.
         audioSwitch = null
-        _state.update { it.copy(pendingAudioRow = audioRow) }
-        val posMs = currentPositionMs + hlsOffsetMs
         // Lazy, so [audioSwitch] names it before it runs (see runAudioSwitch).
         val switch = viewModelScope.launch(start = CoroutineStart.LAZY) {
-            runAudioSwitch(coroutineContext.job, req, audioRow, posMs)
+            runAudioSwitch(coroutineContext.job, req, audioRow, posMs, subtitles)
         }
         audioSwitch = switch
+        audioSwitchRequest = req
         switch.start()
     }
 
-    /** The audio switch still starting its session — the latest pick's — or
-     *  null. One superseded by a later pick (or by a new prepare(), or an
-     *  admin stop) is no longer it, and plays nothing. */
+    /** The session switch (an audio track, or a subtitle burned in or taken
+     *  off) still starting — the latest pick's — or null. One superseded by a
+     *  later pick (or by a new prepare(), or an admin stop) is no longer it,
+     *  and plays nothing. */
     private var audioSwitch: Job? = null
+
+    /** What [audioSwitch] asks for; stale once that is null. */
+    private var audioSwitchRequest: TranscodeRequest? = null
+
+    /** The session the viewer has or is getting: the switch still starting,
+     *  else the one playing. Null off a remux / transcode. */
+    private fun switchingTo(): TranscodeRequest? =
+        audioSwitchRequest?.takeIf { audioSwitch != null } ?: lastTranscodeRequest
+
+    private val _burnInFailures = Channel<BurnInFailure>(Channel.BUFFERED)
+
+    /** One per subtitle burn-in change the server refused (or that didn't
+     *  start), for a toast. */
+    val burnInFailures: Flow<BurnInFailure> = _burnInFailures.receiveAsFlow()
+
+    /**
+     * The viewer picked the image-based stream [streamIndex] (absolute) on a
+     * remux / transcode, [currentPositionMs] into the stream. Returns the
+     * trackId of its OCR'd text version for the screen to select, the
+     * session left as it is (a burned-in subtitle is taken off); null when
+     * there is none, and the session restarts here with the stream burned
+     * into the video instead, at the audio it has (the owner's choice: text
+     * if ready, else burn). Direct play draws picture tracks itself and
+     * never comes through here.
+     */
+    fun pickImageSubtitle(streamIndex: Int, currentPositionMs: Long): String? {
+        if (_state.value.source !is PlaybackSource.Hls) return null
+        val track = _state.value.subtitleTracks.firstOrNull { it.imageBased && it.streamIndex == streamIndex }
+            ?: return null
+        track.textTrackId?.let {
+            clearBurnedSubtitle(currentPositionMs)
+            return it
+        }
+        switchBurn(streamIndex, currentPositionMs)
+        return null
+    }
+
+    /** The viewer picked Off or a text subtitle: a burned-in one is taken off
+     *  by restarting the session without it at [currentPositionMs] (in the
+     *  stream). Nothing to do when none is burned in. */
+    fun clearBurnedSubtitle(currentPositionMs: Long) = switchBurn(null, currentPositionMs)
+
+    private fun switchBurn(streamIndex: Int?, currentPositionMs: Long) {
+        val req = switchingTo() ?: return
+        if (req.burnSubtitleIndex == streamIndex) return
+        startSwitch(
+            req.copy(burnSubtitleIndex = streamIndex),
+            _state.value.targetAudioRow,
+            currentPositionMs + hlsOffsetMs,
+            subtitles = true,
+        )
+    }
 
     /**
      * Start [audioRow]'s session at [posMs] and, if [self] is still the
@@ -1656,7 +1766,7 @@ class PlayerViewModel @Inject constructor(
      * retires it unplayed. Two quick picks used to leak the first one's
      * session, and the later pick to land played, whichever it was.
      */
-    private suspend fun runAudioSwitch(self: Job, req: TranscodeRequest, audioRow: Int, posMs: Long) {
+    private suspend fun runAudioSwitch(self: Job, req: TranscodeRequest, audioRow: Int?, posMs: Long, subtitles: Boolean) {
         val session = try {
             requestSession(req, posMs, audioStreamIndex = audioRow)
         } catch (e: CancellationException) {
@@ -1671,11 +1781,12 @@ class PlayerViewModel @Inject constructor(
                 stopForAdmin(PlaybackStop.textFromServer(stopped.message))
                 return
             }
-            android.util.Log.w("PlayerViewModel", "audio stream switch failed", e)
+            android.util.Log.w("PlayerViewModel", if (subtitles) "subtitle burn-in change failed" else "audio stream switch failed", e)
             // A superseded switch's failure leaves the later pick's row alone.
             if (audioSwitch === self) {
                 audioSwitch = null
                 _state.update { it.copy(pendingAudioRow = null) }
+                if (subtitles) _burnInFailures.trySend(BurnInFailure.of(e))
             }
             return
         }
@@ -1690,7 +1801,14 @@ class PlayerViewModel @Inject constructor(
         // Publishing the new source ends the old player; its terminal
         // report must not go out (see [swappedOut]).
         swappedOutSource = _state.value.source
-        _state.update { it.copy(source = source, sessionAudioRow = audioRow, pendingAudioRow = null) }
+        _state.update {
+            it.copy(
+                source = source,
+                sessionAudioRow = audioRow,
+                pendingAudioRow = null,
+                burnedSubtitleIndex = req.burnSubtitleIndex,
+            )
+        }
         if (prevSession != null && prevToken != null) {
             transcodeRepo.stopDetached(prevSession, prevToken)
         }

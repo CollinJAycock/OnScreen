@@ -29,6 +29,7 @@ class TranscodeRepository @Inject constructor(
         audioStreamIndex: Int? = null,
         supportsHevc: Boolean = true,
         supportsAv1: Boolean = false,
+        burnSubtitleStreamIndex: Int? = null,
     ): TranscodeSession {
         return try {
             api.startTranscode(
@@ -41,6 +42,7 @@ class TranscodeRepository @Inject constructor(
                     audio_stream_index = audioStreamIndex,
                     supports_hevc = supportsHevc,
                     supports_av1 = supportsAv1,
+                    burn_subtitle_stream_index = burnSubtitleStreamIndex,
                 )
             ).data
         } catch (e: HttpException) {

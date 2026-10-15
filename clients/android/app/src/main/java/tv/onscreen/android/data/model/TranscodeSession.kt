@@ -43,6 +43,12 @@ data class TranscodeRequest(
      *  decoder; the playback layer should set this true only when
      *  the device's MediaCodec list reports a working AV1 decoder. */
     val supports_av1: Boolean = false,
+    /** v2.6. The ABSOLUTE index (SubtitleStream.index) of an image-based
+     *  subtitle stream to burn into the picture: always a full re-encode, so
+     *  sent with video_copy false. Null (left out) burns nothing. Refused
+     *  with 400 INVALID_SUBTITLE_STREAM / SUBTITLE_NOT_IMAGE /
+     *  BURN_IN_UNSUPPORTED (a stacked movie). */
+    val burn_subtitle_stream_index: Int? = null,
 )
 
 /** Body for POST /items/{id}/playback-decision. The capability profile rides the
