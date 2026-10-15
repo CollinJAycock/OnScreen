@@ -88,7 +88,7 @@ npm run package
 ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
 ```
 
-**Local-only test coverage** (450 cases as of v2.6): `UrlEncodePath`,
+**Local-only test coverage** (523 cases as of v2.6): `UrlEncodePath`,
 `AssetStream`/`AssetArtwork` and API path contracts, `Json_Parse`/
 `UnwrapData`/`UnwrapList` envelope handling, string utils, the playback
 decision, trickplay VTT parsing, next-sibling order, and the v2.5 watch
@@ -96,7 +96,8 @@ logic — `ApiResult_From` (status + error envelope), admin-stop message
 parsing, up-next labels, card badges, home rows and "Report a problem" —
 plus the v2.6 additions: multi-episode ranges, version grouping, the
 server play decision plan, the too-many-streams mapping, the capability
-header, the detail meta line and the music queue.
+header, the detail meta line, the music queue, the transcode request
+body (relative audio index, subtitle burn-in) and the subtitle pick plan.
 Anything that depends on `roUrlTransfer`, `roRegistrySection`, or
 SceneGraph nodes can only be exercised on real Roku hardware, so keep
 logic in `source/` and scenes thin.
