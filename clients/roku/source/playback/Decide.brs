@@ -20,9 +20,12 @@
 '
 ' For video this is the fallback: the server's play decision
 ' (Playback_PlanFromServer below) is final when it answers. The
-' direct-play lists here are mirrored in the X-Client-Capabilities
-' header (Client_CapabilitiesHeaderFor) so the server never
-' direct-plays what this decision deliberately avoids — change both.
+' X-Client-Capabilities header (Client_CapabilitiesHeaderFor) mirrors
+' the container list here, so the server never direct-plays mkv or
+' ts — change both. Its audio list deliberately adds ac3 / eac3:
+' the server copies them into a remux (Dolby passthrough), and an
+' mp4 + ac3 the server direct-plays uses that same decoder. This
+' fallback stays conservative and leaves them out.
 
 ' Direct-play container set. mp4 / mov / m4v are the firmware-
 ' guaranteed wins on every Roku model since 2017. mkv direct play
@@ -47,7 +50,8 @@ end function
 ' ac3 / eac3 are widely supported on Roku TVs and Streaming Sticks
 ' but pre-2018 boxes need passthrough enabled at the OS level —
 ' keep them out of the direct list for the same reason mkv is
-' excluded above. Server-side remux re-encodes to aac.
+' excluded above. A server-side remux copies them (the capability
+' header declares them) and re-encodes anything else to aac.
 function Playback_DirectAudioCodecs() as Object
     return ["aac", "mp3"]
 end function

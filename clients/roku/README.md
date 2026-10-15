@@ -88,7 +88,7 @@ npm run package
 ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
 ```
 
-**Local-only test coverage** (451 cases as of v2.6): `UrlEncodePath`,
+**Local-only test coverage** (450 cases as of v2.6): `UrlEncodePath`,
 `AssetStream`/`AssetArtwork` and API path contracts, `Json_Parse`/
 `UnwrapData`/`UnwrapList` envelope handling, string utils, the playback
 decision, trickplay VTT parsing, next-sibling order, and the v2.5 watch
@@ -169,9 +169,10 @@ universal anyway.
   unsupported (Dolby Vision) or damaged files get a message instead of
   playing (too-many-streams dialog, optimized versions via `optimized=1`;
   the local decision only when the call fails or the verdict is unknown).
-  The capability header declares the local decision's direct-play limits
-  (mp4 / mov / m4v, aac / mp3 — no mkv, ts, ac3 or eac3), so ac3 / eac3
-  now re-encode to aac on a remux instead of copying. Clear logos and
+  The capability header declares only mp4 / mov / m4v (no mkv or ts) and
+  aac / mp3 / ac3 / eac3 audio — ac3 / eac3 on purpose, for passthrough
+  on a remux, so an mp4 + ac3 may direct-play though the local fallback
+  decision stays conservative. Clear logos and
   studios on the detail
   page; Similar artists / Appears on rows and Instant mix. Not here:
   chapter thumbnails (no chapter list on Roku) and the Playback quality
