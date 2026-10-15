@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/metadata"
 )
 
@@ -50,6 +51,9 @@ type Summary struct {
 type SearchScope struct {
 	LibraryIDs    []uuid.UUID
 	MaxRatingRank *int32
+	// Labels additionally requires that item to pass the caller's label
+	// restriction (see internal/itemlabel); zero = none.
+	Labels itemlabel.Filter
 }
 
 // Credit is one cast or crew entry on an item.

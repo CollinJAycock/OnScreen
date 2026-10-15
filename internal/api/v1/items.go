@@ -19,6 +19,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"golang.org/x/sync/singleflight"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
@@ -51,7 +52,8 @@ type ItemMediaService interface {
 	GetFiles(ctx context.Context, itemID uuid.UUID) ([]media.File, error)
 	ListChildren(ctx context.Context, parentID uuid.UUID) ([]media.Item, error)
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*media.PhotoMetadata, error)
-	UpdateItemMetadata(ctx context.Context, p media.UpdateItemMetadataParams) (*media.Item, error)
+	// EditItemMetadata applies an admin's metadata edit and its field locks.
+	EditItemMetadata(ctx context.Context, p media.EditItemMetadataParams) (*media.Item, error)
 	// RenameItemFile + TouchItemFileMtime are best-effort filesystem
 	// reflections of the metadata editor: rename the file when the
 	// title changes, set the mtime when taken_at changes. Single-file
@@ -212,6 +214,11 @@ type ItemHandler struct {
 	// optional; when set, movie and show details carry their IMDb / Rotten
 	// Tomatoes / Metacritic scores (items_external_ratings.go)
 	externalRatings ItemExternalRatingsDB
+	// optional; caches a metadata edit invalidates (items_metadata.go)
+	caches ItemCacheInvalidator
+	// optional; when set, PUT /items/{id}/episode-order is admin-served
+	// (items_episode_order.go)
+	episodeOrder ItemEpisodeOrderSetter
 	// subtitleCacheDir, when set, is where ServeSubtitle caches extracted
 	// embedded-subtitle VTTs (under <dir>/embedded/<fileID>/<idx>.vtt). Empty
 	// disables caching (extract on every request — the old behaviour).
@@ -226,6 +233,7 @@ type ItemHandler struct {
 	// in WithSubtitleCache; nil disables caching/extraction-throttling.
 	subtitleExtractSem chan struct{}
 	logger             *slog.Logger
+	labels             ItemLabelReader // admin-only labels on detail; nil = omitted
 }
 
 // DownloadGate decides whether the /media/download/{id} endpoint is open
@@ -252,6 +260,18 @@ func NewItemHandler(media ItemMediaService, watch ItemWatchService, sessions Ite
 // response omits markers and the Markers endpoints are not served.
 func (h *ItemHandler) WithMarkers(m ItemMarkerService) *ItemHandler {
 	h.markers = m
+	return h
+}
+
+// ItemLabelReader reads an item's own admin labels for the detail response.
+// Satisfied by *gen.Queries.
+type ItemLabelReader interface {
+	GetMediaItemLabels(ctx context.Context, id uuid.UUID) ([]string, error)
+}
+
+// WithLabels adds the admin-only labels field to item detail.
+func (h *ItemHandler) WithLabels(l ItemLabelReader) *ItemHandler {
+	h.labels = l
 	return h
 }
 
@@ -516,9 +536,19 @@ type ItemFileResponse struct {
 	// DVProfile is the file's Dolby Vision profile (5, 7, 8, ...). hdr_type
 	// still names what a player without Dolby Vision gets — the base layer,
 	// or "dolby_vision" for profile 5, which has none.
-	DVProfile           *int     `json:"dv_profile,omitempty"`
-	FrameRate           *float64 `json:"frame_rate,omitempty"` // as probed; TV clients match the display's refresh rate to it
-	DurationMS          *int64   `json:"duration_ms,omitempty"`
+	DVProfile  *int     `json:"dv_profile,omitempty"`
+	FrameRate  *float64 `json:"frame_rate,omitempty"` // as probed; TV clients match the display's refresh rate to it
+	DurationMS *int64   `json:"duration_ms,omitempty"`
+	// Edition is the label the file's name gives it ("Director's Cut",
+	// "Extended", "1080p"); absent when it gives none. Clients show it in
+	// the version picker in place of the resolution/codec description.
+	Edition *string `json:"edition,omitempty"`
+	// PartIndex is the file's 1-based part number when it is one part of a
+	// stacked movie ("cd1" + "cd2"); absent for every other file, including
+	// a lone "cd1". duration_ms stays the part's own length; the item's
+	// duration_ms is the whole movie's. A transcode started with any part's
+	// file_id streams all the parts as one continuous movie.
+	PartIndex           *int     `json:"part_index,omitempty"`
 	Faststart           bool     `json:"faststart"`
 	BitDepth            *int     `json:"bit_depth,omitempty"`
 	VideoBitDepth       *int     `json:"video_bit_depth,omitempty"`
@@ -597,7 +627,15 @@ type ItemDetailResponse struct {
 	// history (which would land on the previously-played episode).
 	GrandparentID *string `json:"grandparent_id,omitempty"`
 	Index         *int    `json:"index,omitempty"`
-	ViewOffsetMS  int64   `json:"view_offset_ms"`
+	// IndexEnd is the last episode a multi-episode file covers: an
+	// "S01E01-E02" episode has index 1, index_end 2. Omitted for a single
+	// episode and every other type (additive, v2.6).
+	IndexEnd *int `json:"index_end,omitempty"`
+	// EpisodeOrder is a show's own episode order — "aired", "dvd" or
+	// "absolute". Omitted when the show follows its library's
+	// (libraries.episode_order). Shows only (additive, v2.6).
+	EpisodeOrder *string `json:"episode_order,omitempty"`
+	ViewOffsetMS int64   `json:"view_offset_ms"`
 	// WatchState is the caller's state for a playable video — "watched",
 	// "in_progress" or "unwatched" (user_watch_state, manual marks
 	// included). Omitted for other types; shows and seasons roll up
@@ -655,6 +693,19 @@ type ItemDetailResponse struct {
 	// Collections are the manual (admin-curated) collections a movie or
 	// show belongs to (additive; omitted when none).
 	Collections []ItemManualCollectionRef `json:"collections,omitempty"`
+
+	// SortTitle and Tagline pre-fill the admin metadata editor (additive).
+	SortTitle string  `json:"sort_title,omitempty"`
+	Tagline   *string `json:"tagline,omitempty"`
+	// LockedFields names the metadata fields an admin edited by hand, which
+	// refreshes leave alone (additive; [] when none). Names are
+	// media.LockableFields; "originally_available_at" is taken_at here.
+	LockedFields []string `json:"locked_fields"`
+	// Labels are the item's own admin labels (not inherited ones), which
+	// per-user label restrictions match. Admin only, as on Plex: a label
+	// names a restriction policy, which is the admin's business. Omitted
+	// for everyone else and when the item has none.
+	Labels []string `json:"labels,omitempty"`
 }
 
 // ChildItemResponse is the JSON representation of a child item (season/episode).
@@ -669,6 +720,9 @@ type ChildItemResponse struct {
 	PosterPath *string  `json:"poster_path,omitempty"`
 	ThumbPath  *string  `json:"thumb_path,omitempty"`
 	Index      *int     `json:"index,omitempty"`
+	// IndexEnd is the last episode a multi-episode file covers (see
+	// ItemDetailResponse.IndexEnd). Omitted when null.
+	IndexEnd *int `json:"index_end,omitempty"`
 	// DiscNumber is a track's disc within its album (with Index, its
 	// position). Absent for non-tracks and for tracks with no disc tag,
 	// which read as disc 1; children already arrive in (disc, track) order.
@@ -716,7 +770,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -795,6 +849,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		ContentRating:   item.ContentRating,
 		Genres:          genres,
 		Index:           item.Index,
+		IndexEnd:        item.IndexEnd,
 		ViewOffsetMS:    viewOffsetMS,
 		WatchState:      watchState,
 		LastClientName:  lastClientName,
@@ -802,6 +857,12 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		UpdatedAt:       item.UpdatedAt.UnixMilli(),
 		TakenAt:         item.OriginallyAvailableAt,
 		Files:           make([]ItemFileResponse, 0, len(files)),
+		SortTitle:       item.SortTitle,
+		Tagline:         item.Tagline,
+		LockedFields:    item.LockedFields,
+	}
+	if out.LockedFields == nil {
+		out.LockedFields = []string{}
 	}
 	if item.ParentID != nil {
 		s := item.ParentID.String()
@@ -820,6 +881,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	out.MalID = item.MalID
 	out.Kind = item.Kind
 	out.ReadingDirection = item.ReadingDirection
+	if item.Type == "show" {
+		out.EpisodeOrder = item.EpisodeOrder
+	}
 	out.MusicBrainzID = uuidPtrToStringPtr(item.MusicBrainzID)
 	out.MusicBrainzReleaseID = uuidPtrToStringPtr(item.MusicBrainzReleaseID)
 	out.MusicBrainzReleaseGroupID = uuidPtrToStringPtr(item.MusicBrainzReleaseGroupID)
@@ -878,6 +942,7 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			DVProfile:           f.DVProfile,
 			FrameRate:           f.FrameRate,
 			DurationMS:          f.DurationMS,
+			Edition:             f.Edition,
 			Faststart:           h.faststart(r.Context(), f.FilePath),
 			BitDepth:            f.BitDepth,
 			VideoBitDepth:       f.VideoBitDepth,
@@ -896,6 +961,9 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 		if claims != nil && claims.IsAdmin {
 			fr.IntegrityDetail = f.IntegrityDetail
 		}
+		if media.IsStacked(files, f) {
+			fr.PartIndex = f.PartIndex
+		}
 		if h.subs != nil {
 			if rows, err := h.subs.List(r.Context(), f.ID); err == nil && len(rows) > 0 {
 				fr.ExternalSubtitles = make([]ExternalSubtitleJSON, 0, len(rows))
@@ -907,6 +975,17 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		out.Files = append(out.Files, fr)
+	}
+
+	// A stacked movie plays as one stream, so its running time is the sum of
+	// its parts (the primary version's). The metadata runtime would do too,
+	// but only the parts' lengths line up with the stream's timeline.
+	if len(files) > 0 {
+		if parts := media.Stack(files, files[0]); parts != nil {
+			if total := media.StackDurationMS(parts); total != nil {
+				out.DurationMS = total
+			}
+		}
 	}
 
 	// Audiobook resume: snap view_offset_ms to the start of the
@@ -947,6 +1026,13 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 	if item.Type == "movie" || item.Type == "show" {
 		out.Collections = h.manualCollectionRefs(r.Context(), id)
 	}
+	if h.labels != nil && claims != nil && claims.IsAdmin {
+		if labels, err := h.labels.GetMediaItemLabels(r.Context(), id); err == nil {
+			out.Labels = labels
+		} else {
+			h.logger.WarnContext(r.Context(), "get item labels", "item_id", id, "err", err)
+		}
+	}
 
 	// Episode-poster substitution. Single-item endpoint; only matters
 	// for type=='episode'. Honours the per-user pref via the helper.
@@ -965,30 +1051,40 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // updateMetadataRequest is the body for PATCH /api/v1/items/{id}.
-// Only the three fields users can usefully manage on items the
-// metadata agent doesn't enrich (home_video, photo): the displayed
-// title, a free-form summary, and the date used for the date-grouped
-// grid + photo timeline (originally_available_at on the row). Each
-// pointer field is "set when present"; omitting the field leaves the
-// stored value untouched. Sending an empty string for title clears
-// nothing — title is non-null in the schema, so the handler
-// short-circuits a blank-only payload as a 400.
+// Each field is "set when present"; omitting a field leaves the stored
+// value untouched. Strings: an empty string clears the column (title is
+// non-null, so a blank title is a 400; a blank sort_title resets it to the
+// title). Year and rating: null clears. Genres: the full list, [] clears.
+// taken_at is the item's date (originally_available_at): a photo's capture
+// date, a home video's recording date, a movie's or episode's release date.
+//
+// Every field the body sets is locked (media_items.locked_fields): scans,
+// enrichment, refresh and Fix Match no longer overwrite it. unlock_fields
+// releases locks by field name (media.LockableFields); the stored value
+// stays until the next refresh rewrites it.
 type updateMetadataRequest struct {
 	Title   *string `json:"title,omitempty"`
 	Summary *string `json:"summary,omitempty"`
 	TakenAt *string `json:"taken_at,omitempty"` // RFC3339 ("2024-04-15T00:00:00Z") or YYYY-MM-DD
+
+	SortTitle     *string           `json:"sort_title,omitempty"`
+	OriginalTitle *string           `json:"original_title,omitempty"`
+	Tagline       *string           `json:"tagline,omitempty"`
+	Year          nullable[int]     `json:"year"`
+	Rating        nullable[float64] `json:"rating"` // critic score, 0-10
+	ContentRating *string           `json:"content_rating,omitempty"`
+	Genres        *[]string         `json:"genres,omitempty"`
+	UnlockFields  []string          `json:"unlock_fields,omitempty"`
 }
 
 // UpdateMetadata handles PATCH /api/v1/items/{id}.
 //
-// Admin-gated editor for the three fields users actually need to
-// manage on home_video + photo items (the two media types with no
-// external metadata source). Title, summary, and taken_at all flow
-// through media.UpdateItemMetadata so the same validation and audit
-// surface that the scanner enricher uses applies here too. Any other
-// field on the item — genres, rating, fanart, etc. — is intentionally
-// not editable; those belong to the TMDB-enriched flow which has its
-// own Fix Match path.
+// Admin-only metadata editor. Home videos and photos (no external metadata
+// source) have always used it for title, summary and date; movies, shows,
+// seasons and episodes use the same body for the fields enrichment fills
+// (see updateMetadataRequest). Fields the body sets are locked so the next
+// refresh keeps them. Cast, artwork, tags and provider IDs are not editable
+// here: cast and IDs come from Fix Match, artwork from the poster picker.
 func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	claims := middleware.ClaimsFromContext(r.Context())
 	if claims == nil || !claims.IsAdmin {
@@ -1004,11 +1100,10 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 	var body updateMetadataRequest
 	if r.Body != nil {
 		// Reject unknown fields so callers (or tests) sending
-		// unsupported fields like `content_rating` get an explicit 400
-		// instead of a silent 200 that "succeeded" but updated nothing.
-		// The endpoint is admin-curated metadata for home_video / photo
-		// items; if a future field belongs here it should be added to
-		// updateMetadataRequest deliberately, not slipped in by accident.
+		// unsupported fields like `tags` get an explicit 400 instead of
+		// a silent 200 that "succeeded" but updated nothing. If a future
+		// field belongs here it should be added to updateMetadataRequest
+		// deliberately, not slipped in by accident.
 		decoder := json.NewDecoder(r.Body)
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&body); err != nil {
@@ -1028,65 +1123,29 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	p := media.UpdateItemMetadataParams{
-		ID:                    existing.ID,
-		Title:                 existing.Title,
-		SortTitle:             existing.SortTitle,
-		OriginalTitle:         existing.OriginalTitle,
-		Year:                  existing.Year,
-		Summary:               existing.Summary,
-		Tagline:               existing.Tagline,
-		Rating:                existing.Rating,
-		AudienceRating:        existing.AudienceRating,
-		ContentRating:         existing.ContentRating,
-		DurationMS:            existing.DurationMS,
-		Genres:                existing.Genres,
-		Tags:                  existing.Tags,
-		PosterPath:            existing.PosterPath,
-		FanartPath:            existing.FanartPath,
-		ThumbPath:             existing.ThumbPath,
-		OriginallyAvailableAt: existing.OriginallyAvailableAt,
-		TMDBID:                existing.TMDBID,
-		TVDBID:                existing.TVDBID,
-	}
-
-	if body.Title != nil {
-		t := strings.TrimSpace(*body.Title)
-		if t == "" {
-			respond.BadRequest(w, r, "title cannot be empty")
-			return
-		}
-		p.Title = t
-		p.SortTitle = t
-	}
-	if body.Summary != nil {
-		// Empty string clears the summary; the column is nullable but the
-		// service maps "" to nil for tidy semantics.
-		s := strings.TrimSpace(*body.Summary)
-		if s == "" {
-			p.Summary = nil
-		} else {
-			p.Summary = &s
-		}
-	}
-	if body.TakenAt != nil {
-		raw := strings.TrimSpace(*body.TakenAt)
-		if raw == "" {
-			p.OriginallyAvailableAt = nil
-		} else {
-			t, parseErr := parseTakenAt(raw)
-			if parseErr != nil {
-				respond.BadRequest(w, r, "taken_at: "+parseErr.Error())
-				return
-			}
-			p.OriginallyAvailableAt = &t
-		}
-	}
-
-	updated, err := h.media.UpdateItemMetadata(r.Context(), p)
+	p, err := body.editParams(existing)
 	if err != nil {
-		h.logger.ErrorContext(r.Context(), "update item metadata", "id", id, "err", err)
-		respond.InternalError(w, r)
+		respond.BadRequest(w, r, err.Error())
+		return
+	}
+
+	updated, err := h.media.EditItemMetadata(r.Context(), p)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		switch {
+		case errors.Is(err, media.ErrNotFound):
+			respond.NotFound(w, r)
+		case errors.Is(err, media.ErrNotLockable):
+			respond.BadRequest(w, r, err.Error())
+		case errors.As(err, &pgErr) && pgErr.Code == "23505":
+			// idx_media_items_library_type_title_year: top-level items of
+			// one type are unique by title + year within a library.
+			respond.Error(w, r, http.StatusConflict, "CONFLICT",
+				"another item in this library already has this title and year")
+		default:
+			h.logger.ErrorContext(r.Context(), "update item metadata", "id", id, "err", err)
+			respond.InternalError(w, r)
+		}
 		return
 	}
 
@@ -1112,22 +1171,41 @@ func (h *ItemHandler) UpdateMetadata(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if h.caches != nil {
+		h.caches.InvalidateItemCaches()
+	}
+
 	if h.audit != nil {
 		actor := claims.UserID
 		h.audit.Log(r.Context(), &actor, audit.ActionItemEnrich, id.String(),
 			map[string]any{
-				"action":      "manual_metadata_edit",
-				"title_set":   body.Title != nil,
-				"summary_set": body.Summary != nil,
-				"taken_set":   body.TakenAt != nil,
+				"action":          "manual_metadata_edit",
+				"title_set":       body.Title != nil,
+				"summary_set":     body.Summary != nil,
+				"taken_set":       body.TakenAt != nil,
+				"fields_set":      p.Set,
+				"fields_locked":   p.Lock,
+				"fields_unlocked": p.Unlock,
 			}, audit.ClientIP(r))
 	}
 
+	lockedFields := updated.LockedFields
+	if lockedFields == nil {
+		lockedFields = []string{}
+	}
 	respond.Success(w, r, map[string]any{
 		"id":                      updated.ID.String(),
 		"title":                   updated.Title,
 		"summary":                 updated.Summary,
 		"originally_available_at": updated.OriginallyAvailableAt,
+		"sort_title":              updated.SortTitle,
+		"original_title":          updated.OriginalTitle,
+		"tagline":                 updated.Tagline,
+		"year":                    updated.Year,
+		"rating":                  updated.Rating,
+		"content_rating":          updated.ContentRating,
+		"genres":                  updated.Genres,
+		"locked_fields":           lockedFields,
 	})
 }
 
@@ -1172,16 +1250,21 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 	// by the caller's ceiling — every other listing (libraries.Items, hub,
 	// search, collections) injects MaxRatingRank, so a restricted profile must
 	// not be able to enumerate an over-ceiling parent's children here.
+	// The label restriction is applied the same way: the parent through
+	// itemPermitted, the children through one batched query (a child carries
+	// its parent's labels by inheritance, but a label on one episode hides
+	// that episode alone).
+	claims := middleware.ClaimsFromContext(r.Context())
 	var maxRating string
 	var userID uuid.UUID
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil {
+	if claims != nil {
 		maxRating = claims.MaxContentRating
 		userID = claims.UserID
 		pcr := ""
 		if parent.ContentRating != nil {
 			pcr = *parent.ContentRating
 		}
-		if !contentrating.IsAllowed(pcr, maxRating) {
+		if !itemPermitted(r.Context(), claims, parent.ID, pcr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -1205,13 +1288,22 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 		states, _ = h.watch.GetStates(r.Context(), userID, ids)
 	}
 
+	var labelOK map[uuid.UUID]struct{}
+	if claims.LabelFilter().Active() {
+		ids := make([]uuid.UUID, len(children))
+		for i, c := range children {
+			ids[i] = c.ID
+		}
+		labelOK = labelPermittedSet(r.Context(), claims, ids)
+	}
+
 	out := make([]ChildItemResponse, 0, len(children))
 	for _, c := range children {
 		cr := ""
 		if c.ContentRating != nil {
 			cr = *c.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, maxRating) {
+		if !contentrating.IsAllowed(cr, maxRating) || !inLabelSet(labelOK, c.ID) {
 			continue
 		}
 		var viewOffsetMS int64
@@ -1233,6 +1325,7 @@ func (h *ItemHandler) Children(w http.ResponseWriter, r *http.Request) {
 			PosterPath:            c.PosterPath,
 			ThumbPath:             c.ThumbPath,
 			Index:                 c.Index,
+			IndexEnd:              c.IndexEnd,
 			DiscNumber:            c.DiscNumber,
 			Kind:                  c.Kind,
 			OriginallyAvailableAt: dateString(c.OriginallyAvailableAt),
@@ -1307,7 +1400,7 @@ func (h *ItemHandler) ratingItemVisible(w http.ResponseWriter, r *http.Request, 
 	if item.ContentRating != nil {
 		cr = *item.ContentRating
 	}
-	if claims != nil && !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+	if claims != nil && !itemPermitted(r.Context(), claims, item.ID, cr) {
 		respond.NotFound(w, r)
 		return false
 	}
@@ -1445,12 +1538,12 @@ func (h *ItemHandler) GetEXIF(w http.ResponseWriter, r *http.Request) {
 	// carries GPS coordinates, so a profile refused the image must not get the
 	// location it was taken at either. 404 keeps denial indistinguishable from
 	// absence.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}
@@ -1512,12 +1605,12 @@ func (h *ItemHandler) ListMarkers(w http.ResponseWriter, r *http.Request) {
 	// Content-rating ceiling, as on EXIF/lyrics: a profile that can't stream
 	// the item gets 404, not its intro/credits timings (unrated = most
 	// restrictive).
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}
@@ -1660,7 +1753,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 
 	// Kept for the duration fill below, which would otherwise fetch it again.
 	var item *media.Item
-	if h.access != nil || claims.MaxContentRating != "" {
+	if h.access != nil || viewerRestricted(claims) {
 		item, err = h.media.GetItem(r.Context(), id)
 		if err != nil {
 			if errors.Is(err, media.ErrNotFound) {
@@ -1681,7 +1774,7 @@ func (h *ItemHandler) Progress(w http.ResponseWriter, r *http.Request) {
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}
@@ -1959,7 +2052,7 @@ func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uui
 			playing = indexOf(h.activeSessionFileID(ctx, userID, itemID))
 		}
 		if playing >= 0 {
-			if d := known(files[playing].DurationMS); d != nil {
+			if d := known(playableDurationMS(files, files[playing])); d != nil {
 				return d
 			}
 			// GetFiles lists only active files: more than one means other
@@ -1967,7 +2060,7 @@ func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uui
 			if len(files) > 1 {
 				return nil
 			}
-		} else if d := known(files[0].DurationMS); d != nil {
+		} else if d := known(playableDurationMS(files, files[0])); d != nil {
 			return d
 		}
 	}
@@ -1981,6 +2074,16 @@ func (h *ItemHandler) progressDurationMS(ctx context.Context, userID, itemID uui
 		return known(item.DurationMS)
 	}
 	return nil
+}
+
+// playableDurationMS is the length of what playing f plays: the whole stack
+// when f is one part of a stacked movie (the stream runs through every part,
+// and clients report positions on that combined timeline), else f's own.
+func playableDurationMS(files []media.File, f media.File) *int64 {
+	if parts := media.Stack(files, f); parts != nil {
+		return media.StackDurationMS(parts)
+	}
+	return f.DurationMS
 }
 
 // activeSessionFileID is the file of the newest live transcode session userID
@@ -2414,12 +2517,12 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -2558,12 +2661,12 @@ func (h *ItemHandler) StreamFile(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -2816,12 +2919,12 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 	if !h.checkLibraryAccess(w, r, item.LibraryID) {
 		return
 	}
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}

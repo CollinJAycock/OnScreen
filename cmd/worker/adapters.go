@@ -17,6 +17,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/dbconv"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // ── Type conversion helpers ───────────────────────────────────────────────────
@@ -85,6 +86,12 @@ func createItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
 }
 func updateItemMetadataParamsToGen(p media.UpdateItemMetadataParams) gen.UpdateMediaItemMetadataParams {
 	return dbconv.UpdateItemMetadataParamsToGen(p)
+}
+func genEditItemRowToItem(r gen.EditMediaItemMetadataRow) media.Item {
+	return dbconv.GenEditItemRowToItem(r)
+}
+func editItemMetadataParamsToGen(p media.EditItemMetadataParams) gen.EditMediaItemMetadataParams {
+	return dbconv.EditItemMetadataParamsToGen(p)
 }
 func genMediaFileToFile(f gen.MediaFile) media.File { return dbconv.GenMediaFileToFile(f) }
 func createFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
@@ -203,6 +210,14 @@ func (a *mediaAdapter) UpdateMediaItemMetadata(ctx context.Context, p media.Upda
 	return genUpdateItemRowToItem(r), nil
 }
 
+func (a *mediaAdapter) EditMediaItemMetadata(ctx context.Context, p media.EditItemMetadataParams) (media.Item, error) {
+	r, err := a.q.EditMediaItemMetadata(ctx, editItemMetadataParamsToGen(p))
+	if err != nil {
+		return media.Item{}, err
+	}
+	return genEditItemRowToItem(r), nil
+}
+
 func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error {
 	return a.q.UpdateMediaItemLyrics(ctx, gen.UpdateMediaItemLyricsParams{
 		ID:           id,
@@ -258,6 +273,26 @@ func (a *mediaAdapter) SetMediaItemKind(ctx context.Context, id uuid.UUID, kind 
 		ID:   id,
 		Kind: kind,
 	})
+}
+
+func (a *mediaAdapter) SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error) {
+	n, err := a.q.SetEpisodeIndexEnd(ctx, gen.SetEpisodeIndexEndParams{
+		ID:       id,
+		IndexEnd: intPtrToInt32Ptr(indexEnd),
+	})
+	return n > 0, err
+}
+
+func (a *mediaAdapter) SetShowEpisodeOrder(ctx context.Context, id uuid.UUID, order *string) (bool, error) {
+	n, err := a.q.SetShowEpisodeOrder(ctx, gen.SetShowEpisodeOrderParams{
+		ID:           id,
+		EpisodeOrder: order,
+	})
+	return n > 0, err
+}
+
+func (a *mediaAdapter) ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListShowsFollowingLibraryEpisodeOrder(ctx, libraryID)
 }
 
 func (a *mediaAdapter) SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error {
@@ -560,6 +595,16 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		Chapters:        p.Chapters,
 		DurationMs:      p.DurationMS,
 		VideoBitDepth:   intPtrToInt32Ptr(p.VideoBitDepth),
+		Edition:         p.Edition,
+		PartIndex:       dbconv.IntPtrToInt16Ptr(p.PartIndex),
+	})
+}
+
+func (a *mediaAdapter) UpdateMediaFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error {
+	return a.q.UpdateMediaFileNaming(ctx, gen.UpdateMediaFileNamingParams{
+		ID:        id,
+		Edition:   edition,
+		PartIndex: dbconv.IntPtrToInt16Ptr(partIndex),
 	})
 }
 
@@ -787,11 +832,11 @@ func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UU
 	return nil, nil
 }
 
-func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int) ([]media.GenreCount, error) {
+func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int, _ itemlabel.Filter) ([]media.GenreCount, error) {
 	return nil, nil
 }
 
-func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int) ([]media.YearCount, error) {
+func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, _ *int, _ itemlabel.Filter) ([]media.YearCount, error) {
 	return nil, nil
 }
 
@@ -803,13 +848,13 @@ func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, _ media.ListPhot
 func (a *mediaAdapter) CountPhotosByLibrary(ctx context.Context, _ media.ListPhotosParams) (int64, error) {
 	return 0, nil
 }
-func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, _ uuid.UUID, _ *int) ([]media.PhotoTimelineBucket, error) {
+func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) ([]media.PhotoTimelineBucket, error) {
 	return nil, nil
 }
 func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, _ media.ListPhotoMapPointsParams) ([]media.PhotoMapPoint, error) {
 	return nil, nil
 }
-func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID, _ *int) (int64, error) {
+func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) (int64, error) {
 	return 0, nil
 }
 func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, _ media.SearchPhotosByExifParams) ([]media.PhotoSearchResult, error) {

@@ -84,6 +84,9 @@ type mockUserDB struct {
 	// revocation to. Empty in most fixtures.
 	profileIDs []uuid.UUID
 
+	// streamCaps records UpdateUserStreamCaps calls.
+	streamCaps []gen.UpdateUserStreamCapsParams
+
 	hubLayout     []byte
 	listUsersRows []gen.ListUsersRow
 	listUsersErr  error
@@ -104,6 +107,10 @@ type mockUserDB struct {
 	lastReqPerms *gen.SetUserRequestPermissionsParams
 	reqPermsRows int64
 	reqPermsErr  error
+
+	labelRestrictions     gen.GetUserLabelRestrictionsRow
+	labelRestrictionsErr  error
+	lastLabelRestrictions *gen.UpdateUserLabelRestrictionsParams
 }
 
 func (m *mockUserDB) ListUsers(_ context.Context) ([]gen.ListUsersRow, error) {
@@ -172,7 +179,20 @@ func (m *mockUserDB) ListManagedProfileIDs(_ context.Context, _ pgtype.UUID) ([]
 	return m.profileIDs, nil
 }
 
-func (m *mockUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStreamCapsParams) error {
+func (m *mockUserDB) GetUserLabelRestrictions(_ context.Context, _ uuid.UUID) (gen.GetUserLabelRestrictionsRow, error) {
+	if m.labelRestrictionsErr != nil {
+		return gen.GetUserLabelRestrictionsRow{}, m.labelRestrictionsErr
+	}
+	return m.labelRestrictions, nil
+}
+
+func (m *mockUserDB) UpdateUserLabelRestrictions(_ context.Context, arg gen.UpdateUserLabelRestrictionsParams) error {
+	m.lastLabelRestrictions = &arg
+	return nil
+}
+
+func (m *mockUserDB) UpdateUserStreamCaps(_ context.Context, arg gen.UpdateUserStreamCapsParams) error {
+	m.streamCaps = append(m.streamCaps, arg)
 	return nil
 }
 

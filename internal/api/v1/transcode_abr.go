@@ -709,6 +709,7 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		Incarnation:    incarnation,
 		FilePath:       parent.FilePath,
 		SourceURL:      parent.SourceURL, // shared across all rungs; minted once in startABR
+		Parts:          parent.Parts,     // a stacked movie's parts, likewise shared
 		SessionDir:     transcode.SessionDirFor(childID, incarnation),
 		StartOffsetSec: startOffset,
 		// Rebase this run's media timestamps to its true content time. The

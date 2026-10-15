@@ -1619,6 +1619,23 @@ func (h *SettingsHandler) UpdateTranscodeConfig(w http.ResponseWriter, r *http.R
 		respond.BadRequest(w, r, "invalid request body")
 		return
 	}
+	// Internet streaming limit: 0 = unlimited; the extra home networks must
+	// all parse, so a typo is refused rather than silently matching nothing.
+	if body.RemoteMaxBitrateKbps < 0 {
+		respond.BadRequest(w, r, "remote_max_bitrate_kbps must be 0 (unlimited) or positive")
+		return
+	}
+	if _, err := ParseLocalNetworks(body.LocalNetworks); err != nil {
+		respond.BadRequest(w, r, "local_networks: "+err.Error())
+		return
+	}
+	nets := body.LocalNetworks[:0:0]
+	for _, n := range body.LocalNetworks {
+		if n = strings.TrimSpace(n); n != "" {
+			nets = append(nets, n)
+		}
+	}
+	body.LocalNetworks = nets
 	ctx := r.Context()
 	if err := h.svc.SetTranscodeConfig(ctx, body); err != nil {
 		h.logger.ErrorContext(ctx, "update transcode config", "err", err)

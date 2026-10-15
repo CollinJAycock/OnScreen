@@ -1,8 +1,15 @@
 -- name: UpdateUserStreamCaps :exec
+-- The internet (remote) cap is written only when set_remote is true, so a
+-- caller that predates the column (an old web bundle PUTting just the two
+-- original fields) leaves an admin's remote cap alone instead of clearing it.
 UPDATE users
-SET max_concurrent_streams = $2,
-    max_stream_bitrate_kbps = $3
-WHERE id = $1;
+SET max_concurrent_streams = sqlc.narg('max_concurrent_streams'),
+    max_stream_bitrate_kbps = sqlc.narg('max_stream_bitrate_kbps'),
+    max_remote_stream_bitrate_kbps = CASE
+        WHEN sqlc.arg('set_remote')::boolean THEN sqlc.narg('max_remote_stream_bitrate_kbps')::integer
+        ELSE max_remote_stream_bitrate_kbps
+    END
+WHERE id = sqlc.arg('id');
 
 -- name: GetUserStreamCaps :one
 -- Resolves against the EFFECTIVE OWNER: a managed profile with no caps of its
@@ -19,7 +26,8 @@ WHERE id = $1;
 -- configured child (one cap set, one not) still inherits the other.
 SELECT
     COALESCE(u.max_concurrent_streams, p.max_concurrent_streams)   AS max_concurrent_streams,
-    COALESCE(u.max_stream_bitrate_kbps, p.max_stream_bitrate_kbps) AS max_stream_bitrate_kbps
+    COALESCE(u.max_stream_bitrate_kbps, p.max_stream_bitrate_kbps) AS max_stream_bitrate_kbps,
+    COALESCE(u.max_remote_stream_bitrate_kbps, p.max_remote_stream_bitrate_kbps) AS max_remote_stream_bitrate_kbps
 FROM users u
 LEFT JOIN users p ON p.id = u.parent_user_id
 WHERE u.id = $1;

@@ -100,6 +100,8 @@ func (h *WatchStateHandler) mark(w http.ResponseWriter, r *http.Request, state s
 		TargetType:    item.Type,
 		TargetID:      item.ID,
 		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "mark watch state",
@@ -150,14 +152,17 @@ func (h *WatchStateHandler) DismissContinueWatching(w http.ResponseWriter, r *ht
 
 // UpNextEpisode is the episode an UpNextResponse points at.
 type UpNextEpisode struct {
-	ID            string  `json:"id"`
-	Title         string  `json:"title"`
-	SeasonID      string  `json:"season_id"`
-	SeasonNumber  int     `json:"season_number"`
-	EpisodeNumber int     `json:"episode_number"`
-	ViewOffsetMS  *int64  `json:"view_offset_ms,omitempty"`
-	DurationMS    *int64  `json:"duration_ms,omitempty"`
-	ThumbPath     *string `json:"thumb_path,omitempty"`
+	ID            string `json:"id"`
+	Title         string `json:"title"`
+	SeasonID      string `json:"season_id"`
+	SeasonNumber  int    `json:"season_number"`
+	EpisodeNumber int    `json:"episode_number"`
+	// EpisodeNumberEnd is the last episode of a multi-episode file; omitted
+	// for a single episode (additive, v2.6).
+	EpisodeNumberEnd *int    `json:"episode_number_end,omitempty"`
+	ViewOffsetMS     *int64  `json:"view_offset_ms,omitempty"`
+	DurationMS       *int64  `json:"duration_ms,omitempty"`
+	ThumbPath        *string `json:"thumb_path,omitempty"`
 }
 
 // UpNextResponse is the body of GET /items/{id}/up-next. Mode is one of
@@ -194,6 +199,8 @@ func (h *WatchStateHandler) UpNext(w http.ResponseWriter, r *http.Request) {
 		UserID:        claims.UserID,
 		ContainerID:   item.ID,
 		MaxRatingRank: maxRatingRankFromClaims(claims.MaxContentRating),
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "up next episodes",
@@ -206,13 +213,14 @@ func (h *WatchStateHandler) UpNext(w http.ResponseWriter, r *http.Request) {
 	if idx >= 0 {
 		ep := rows[idx]
 		e := &UpNextEpisode{
-			ID:            ep.ID.String(),
-			Title:         ep.Title,
-			SeasonID:      ep.SeasonID.String(),
-			SeasonNumber:  int(derefInt32(ep.SeasonNumber)),
-			EpisodeNumber: int(derefInt32(ep.EpisodeNumber)),
-			DurationMS:    ep.DurationMs,
-			ThumbPath:     ep.ThumbPath,
+			ID:               ep.ID.String(),
+			Title:            ep.Title,
+			SeasonID:         ep.SeasonID.String(),
+			SeasonNumber:     int(derefInt32(ep.SeasonNumber)),
+			EpisodeNumber:    int(derefInt32(ep.EpisodeNumber)),
+			EpisodeNumberEnd: intPtrFrom32(ep.EpisodeNumberEnd),
+			DurationMS:       ep.DurationMs,
+			ThumbPath:        ep.ThumbPath,
 		}
 		if mode == upNextResume {
 			off := ep.PositionMs

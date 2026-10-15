@@ -6,8 +6,9 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
-       originally_available_at, created_at, updated_at, deleted_at
+       parent_id, index, index_end, episode_order, disc_number, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at,
+       locked_fields
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL;
 
@@ -424,7 +425,8 @@ WHERE type = $1
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int);
+       OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
 
 -- name: ListMediaItemsMissingArt :many
 -- Returns top-level items (movies + shows) that have no poster so the
@@ -501,7 +503,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        anilist_id, mal_id, kind,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
+       parent_id, index, index_end, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE parent_id = $1 AND deleted_at IS NULL
@@ -585,8 +587,11 @@ WHERE id = sqlc.arg(id);
 -- name: UpdateMediaItemTakenAt :exec
 -- Sets only an item's originally_available_at: a photo's EXIF capture date.
 -- Same reason as UpdateMediaItemDuration.
+-- An admin's edit locks the date (locked_fields), and a locked date stays.
 UPDATE media_items
-SET originally_available_at = sqlc.arg(taken_at),
+SET originally_available_at = CASE WHEN 'originally_available_at' = ANY(locked_fields)
+                                   THEN originally_available_at
+                                   ELSE sqlc.arg(taken_at) END,
     updated_at              = NOW()
 WHERE id = sqlc.arg(id);
 
@@ -600,26 +605,37 @@ SELECT disc_number FROM media_items WHERE id = $1;
 -- the title + sort_title without touching the metadata fields that
 -- UpdateMediaItemMetadata would overwrite. Lets the operator clean a
 -- bracket-prefixed title before the enricher runs, so even if TMDB still
--- can't match the show, the title is at least readable.
+-- can't match the show, the title is at least readable. Also the music
+-- scanner's write of a track's tag title. A field an admin locked
+-- (locked_fields) keeps its value, the same rule UpdateMediaItemMetadata
+-- applies; a locked title keeps the sort title too.
 UPDATE media_items
-SET title      = $2,
-    sort_title = $3,
+SET title      = CASE WHEN 'title' = ANY(locked_fields) THEN title ELSE $2 END,
+    sort_title = CASE WHEN locked_fields && ARRAY['title', 'sort_title'] THEN sort_title ELSE $3 END,
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
 
 -- name: UpdateMediaItemMetadata :one
+-- The automatic metadata write: enrichment (TMDB / TVDB / AniList /
+-- MusicBrainz / NFO), refresh, re-enrich, Fix Match and the scanner all
+-- come through here. Fields an admin locked by editing them
+-- (locked_fields, see EditMediaItemMetadata) keep their stored value; the
+-- CASE guards are here, not in the callers, so no write path can forget
+-- them. A locked title also keeps the sort title, which every automatic
+-- writer derives from the title. Provider IDs and art aren't lockable, so
+-- Fix Match still re-points the item while the admin's text stays.
 UPDATE media_items
-SET title                   = $2,
-    sort_title              = $3,
-    original_title          = $4,
-    year                    = $5,
-    summary                 = $6,
-    tagline                 = $7,
-    rating                  = $8,
+SET title                   = CASE WHEN 'title' = ANY(locked_fields) THEN title ELSE $2 END,
+    sort_title              = CASE WHEN locked_fields && ARRAY['title', 'sort_title'] THEN sort_title ELSE $3 END,
+    original_title          = CASE WHEN 'original_title' = ANY(locked_fields) THEN original_title ELSE $4 END,
+    year                    = CASE WHEN 'year' = ANY(locked_fields) THEN year ELSE $5 END,
+    summary                 = CASE WHEN 'summary' = ANY(locked_fields) THEN summary ELSE $6 END,
+    tagline                 = CASE WHEN 'tagline' = ANY(locked_fields) THEN tagline ELSE $7 END,
+    rating                  = CASE WHEN 'rating' = ANY(locked_fields) THEN rating ELSE $8 END,
     audience_rating         = $9,
-    content_rating          = $10,
+    content_rating          = CASE WHEN 'content_rating' = ANY(locked_fields) THEN content_rating ELSE $10 END,
     duration_ms             = $11,
-    genres                  = $12,
+    genres                  = CASE WHEN 'genres' = ANY(locked_fields) THEN genres ELSE $12 END,
     tags                    = $13,
     -- COALESCE on the art paths: the enricher only sets these when
     -- it has a new URL to download. Without this guard, a nil from
@@ -630,7 +646,8 @@ SET title                   = $2,
     poster_path             = COALESCE($14, poster_path),
     fanart_path             = COALESCE($15, fanart_path),
     thumb_path              = COALESCE($16, thumb_path),
-    originally_available_at = $17,
+    originally_available_at = CASE WHEN 'originally_available_at' = ANY(locked_fields)
+                                   THEN originally_available_at ELSE $17 END,
     tmdb_id                 = COALESCE($18, tmdb_id),
     tvdb_id                 = COALESCE($19, tvdb_id),
     -- COALESCE on the anime IDs matches the tmdb_id / tvdb_id shape:
@@ -659,6 +676,43 @@ RETURNING id, library_id, type, title, sort_title, original_title, year,
           parent_id, index, poster_path, fanart_path, thumb_path,
           originally_available_at, created_at, updated_at, deleted_at;
 
+-- name: EditMediaItemMetadata :one
+-- An admin's manual metadata edit (PATCH /api/v1/items/{id}). set_fields
+-- names the columns the edit sets; only those are written. lock_fields
+-- (normally the same names) join the item's locked_fields so later
+-- automatic writes (UpdateMediaItemMetadata, UpdateMediaItemTitle,
+-- UpdateMediaItemTakenAt) leave them alone. unlock_fields drops names from
+-- the lock set; the stored value stays until the next refresh rewrites it. This is the only
+-- metadata write that ignores the locks. Column-level CASEs rather than a
+-- read-merge-write in Go, so an enrichment landing between the editor's
+-- read and this write isn't rolled back for the fields the edit didn't set.
+UPDATE media_items
+SET title          = CASE WHEN 'title' = ANY(@set_fields::text[]) THEN @title::text ELSE title END,
+    sort_title     = CASE WHEN 'sort_title' = ANY(@set_fields::text[]) THEN @sort_title::text ELSE sort_title END,
+    original_title = CASE WHEN 'original_title' = ANY(@set_fields::text[]) THEN sqlc.narg(original_title)::text ELSE original_title END,
+    year           = CASE WHEN 'year' = ANY(@set_fields::text[]) THEN sqlc.narg(year)::int ELSE year END,
+    originally_available_at = CASE WHEN 'originally_available_at' = ANY(@set_fields::text[])
+                                   THEN sqlc.narg(originally_available_at)::date
+                                   ELSE originally_available_at END,
+    summary        = CASE WHEN 'summary' = ANY(@set_fields::text[]) THEN sqlc.narg(summary)::text ELSE summary END,
+    tagline        = CASE WHEN 'tagline' = ANY(@set_fields::text[]) THEN sqlc.narg(tagline)::text ELSE tagline END,
+    rating         = CASE WHEN 'rating' = ANY(@set_fields::text[]) THEN sqlc.narg(rating)::numeric ELSE rating END,
+    content_rating = CASE WHEN 'content_rating' = ANY(@set_fields::text[]) THEN sqlc.narg(content_rating)::text ELSE content_rating END,
+    genres         = CASE WHEN 'genres' = ANY(@set_fields::text[]) THEN @genres::text[] ELSE genres END,
+    locked_fields  = ARRAY(
+        SELECT DISTINCT f
+        FROM unnest(locked_fields || @lock_fields::text[]) AS f
+        WHERE f <> ALL(@unlock_fields::text[])
+        ORDER BY f),
+    updated_at     = NOW()
+WHERE id = @id AND deleted_at IS NULL
+RETURNING id, library_id, type, title, sort_title, original_title, year,
+          summary, tagline, rating, audience_rating, content_rating, duration_ms,
+          genres, tags, tmdb_id, tvdb_id, imdb_id,
+          parent_id, index, poster_path, fanart_path, thumb_path,
+          originally_available_at, created_at, updated_at, deleted_at,
+          locked_fields;
+
 -- name: SetMediaItemKind :exec
 -- Sets the subtype on a media item. The scanner calls this on episode
 -- rows after detecting OVA / ONA / special keywords in the filename
@@ -669,6 +723,41 @@ UPDATE media_items
 SET kind = NULLIF(@kind::text, ''),
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL;
+
+-- name: SetEpisodeIndexEnd :execrows
+-- Records the last episode a multi-episode file covers (index_end; NULL for
+-- a single episode). The scanner calls this when it files or re-reads an
+-- episode. Unchanged rows are left alone (0 rows), so a rescan of a library
+-- that is already right writes nothing.
+UPDATE media_items
+SET index_end = sqlc.narg('index_end')::int,
+    updated_at = NOW()
+WHERE id = sqlc.arg('id')::uuid
+  AND type = 'episode'
+  AND deleted_at IS NULL
+  AND index_end IS DISTINCT FROM sqlc.narg('index_end')::int;
+
+-- name: SetShowEpisodeOrder :execrows
+-- Sets (or, with NULL, clears) a show's own episode order. 0 rows means the
+-- item is not a live show.
+UPDATE media_items
+SET episode_order = sqlc.narg('episode_order')::text,
+    updated_at = NOW()
+WHERE id = sqlc.arg('id')::uuid
+  AND type = 'show'
+  AND deleted_at IS NULL;
+
+-- name: ListShowsFollowingLibraryEpisodeOrder :many
+-- The live shows of a library that follow its default episode order (no
+-- order of their own): the shows to re-enrich when that default changes.
+SELECT id
+FROM media_items
+WHERE library_id = $1
+  AND type = 'show'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+  AND episode_order IS NULL
+ORDER BY id;
 
 -- name: SoftDeleteMediaItem :exec
 UPDATE media_items SET deleted_at = NOW(), updated_at = NOW()
@@ -835,6 +924,7 @@ WHERE library_id = $1
      OR (original_title IS NOT NULL AND original_title % $2)
   )
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $2)),
     similarity(title, $2),
@@ -863,6 +953,7 @@ WHERE deleted_at IS NULL
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $1)),
     similarity(title, $1),
@@ -885,6 +976,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -904,6 +996,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY sort_title DESC, id
 LIMIT $3 OFFSET $4;
@@ -923,6 +1016,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY year ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -942,6 +1036,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY year DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -961,6 +1056,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY rating DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -980,6 +1076,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY rating ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4;
@@ -999,6 +1096,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY created_at DESC, id
 LIMIT $3 OFFSET $4;
@@ -1018,6 +1116,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY created_at ASC, id
 LIMIT $3 OFFSET $4;
@@ -1039,6 +1138,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY originally_available_at DESC NULLS LAST, created_at DESC, id
 LIMIT $3 OFFSET $4;
@@ -1058,6 +1158,7 @@ WHERE library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4;
@@ -1083,6 +1184,7 @@ WHERE m.library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR m.year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR m.rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, m.id, m.type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY p.sort_title ASC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4;
@@ -1104,6 +1206,7 @@ WHERE m.library_id = $1
   AND (sqlc.narg('year_max')::int IS NULL OR m.year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR m.rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, m.id, m.type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY p.sort_title DESC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4;
@@ -1117,7 +1220,8 @@ SELECT id, title
 FROM media_items
 WHERE id = ANY(@ids::uuid[])
   AND deleted_at IS NULL
-  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'));
+  AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
 
 -- name: CountMediaItemsFiltered :one
 SELECT COUNT(*) FROM media_items
@@ -1127,6 +1231,7 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text);
 
 -- name: ListDistinctGenres :many
@@ -1146,6 +1251,7 @@ SELECT g::text AS genre, COUNT(*)::bigint AS count
 FROM media_items, unnest(genres) AS g
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY g
 ORDER BY g;
 
@@ -1157,6 +1263,7 @@ SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY year
 ORDER BY year DESC;
 
@@ -1205,7 +1312,8 @@ WITH recent_episodes AS (
            e.rating, e.audience_rating, e.content_rating, e.duration_ms,
            e.genres, e.tags, e.tmdb_id, e.tvdb_id, e.imdb_id, e.musicbrainz_id,
            e.index, e.poster_path, e.fanart_path, e.thumb_path,
-           e.originally_available_at, e.updated_at, e.deleted_at, e.type
+           e.originally_available_at, e.updated_at, e.deleted_at, e.type,
+           e.labels
     FROM media_items e
     WHERE e.type = 'episode' AND e.deleted_at IS NULL
       AND (sqlc.narg('library_id')::uuid IS NULL OR e.library_id = sqlc.narg('library_id'))
@@ -1235,6 +1343,7 @@ WITH recent_episodes AS (
         AND grandparent.type = 'show'
         AND grandparent.poster_path IS NOT NULL
     WHERE (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(e.labels, e.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -1282,6 +1391,7 @@ FROM (
       AND (sqlc.narg('library_ids')::uuid[] IS NULL
            OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ) combined
 ORDER BY created_at DESC
 LIMIT sqlc.arg('limit');
@@ -1342,6 +1452,7 @@ WITH rows AS (
       AND m.deleted_at IS NULL
       AND m.type IN ('movie', 'episode')
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ),
 deduped AS (
     SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline,
@@ -1404,6 +1515,7 @@ WHERE library_id = ANY(sqlc.arg('library_ids')::uuid[])
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY sort_title
 LIMIT sqlc.arg('result_limit')::int;
 
@@ -1451,6 +1563,7 @@ WITH watched AS (
       AND we.event_type IN ('play', 'scrobble', 'stop')
       AND we.occurred_at >= NOW() - make_interval(days => sqlc.arg('window_days')::int)
       AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+      AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ),
 agg AS (
     SELECT bucket_id,
@@ -1479,7 +1592,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE id = $1;
 
@@ -1491,7 +1605,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE file_path = $1;
 
@@ -1503,7 +1618,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 -- Move detection only matches against status='missing' rows now —
 -- the 'deleted' arm went away when "delete = hard delete" landed
@@ -1520,7 +1636,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC;  -- best quality first (ADR-031)
@@ -1533,7 +1650,8 @@ INSERT INTO media_files (
     bit_depth, sample_rate, channel_layout, lossless,
     replaygain_track_gain, replaygain_track_peak,
     replaygain_album_gain, replaygain_album_peak,
-    video_bit_depth, dv_profile
+    video_bit_depth, dv_profile,
+    edition, part_index
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -1541,7 +1659,8 @@ INSERT INTO media_files (
     $17, $18, $19, $20,
     $21, $22,
     $23, $24,
-    $25, $26
+    $25, $26,
+    $27, $28
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -1550,7 +1669,8 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           bit_depth, sample_rate, channel_layout, lossless,
           replaygain_track_gain, replaygain_track_peak,
           replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-          integrity_status, integrity_checked_at, integrity_detail, dv_profile;
+          integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+          edition, part_index;
 
 -- name: UpdateMediaFilePath :exec
 UPDATE media_files
@@ -1616,6 +1736,8 @@ SET container            = $2,
     duration_ms          = $13,
     video_bit_depth      = $14,
     dv_profile           = $15,
+    edition              = $16,
+    part_index           = $17,
     integrity_status     = 'unchecked',
     integrity_checked_at = NULL,
     integrity_detail     = NULL,
@@ -1631,6 +1753,17 @@ WHERE id = $1;
 UPDATE media_files
 SET hdr_type   = $2,
     dv_profile = $3
+WHERE id = $1;
+
+-- name: UpdateMediaFileNaming :exec
+-- Sets what a file's NAME says about it — its edition label and its part
+-- number in a stacked rip (migration 00045) — and nothing else. Used for an
+-- unchanged file whose stored naming predates the columns or disagrees with
+-- its name, and for a file moved to a new name: the bytes are the same, so
+-- the integrity verdict and scanned_at stay.
+UPDATE media_files
+SET edition    = $2,
+    part_index = $3
 WHERE id = $1;
 
 -- name: UpdateMediaFileIntegrity :exec
@@ -1658,7 +1791,8 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
+       mf.edition, mf.part_index
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 JOIN libraries l ON l.id = mi.library_id
@@ -1690,7 +1824,8 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
+       mf.edition, mf.part_index
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active';
@@ -1840,7 +1975,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000;

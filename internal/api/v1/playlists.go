@@ -289,6 +289,8 @@ func (h *PlaylistHandler) Items(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.db.ListCollectionItems(r.Context(), gen.ListCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: maxRank,
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		Lim:           respond.ParseLimit(r, collectionItemsPageDefault, collectionItemsPageDefault),
 		Off:           parseInt32(r.URL.Query().Get("offset"), 0),
 	})
@@ -331,6 +333,8 @@ func (h *PlaylistHandler) Items(w http.ResponseWriter, r *http.Request) {
 	total, _ := h.db.CountCollectionItems(r.Context(), gen.CountCollectionItemsParams{
 		CollectionID:  id,
 		MaxRatingRank: maxRank,
+		BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+		AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		LibraryIds:    allowedLibIDs,
 	})
 	respond.List(w, r, out, total, "")
@@ -407,6 +411,8 @@ func (h *PlaylistHandler) resolveSmartPlaylist(r *http.Request, col gen.Collecti
 		if rk := maxRatingRankFromClaims(claims.MaxContentRating); rk != nil {
 			params.MaxRatingRank = rk
 		}
+		params.BlockedLabels = claims.LabelFilter().BlockedArg()
+		params.AllowedLabels = claims.LabelFilter().AllowedArg()
 	}
 
 	rows, err := h.db.ListMediaItemsForSmartPlaylist(r.Context(), params)

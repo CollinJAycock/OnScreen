@@ -14,12 +14,13 @@ import (
 const listOwnedEpisodeCountsByShowTMDB = `-- name: ListOwnedEpisodeCountsByShowTMDB :many
 SELECT sh.tmdb_id::int AS tmdb_id,
        se.index::int AS season_number,
-       COUNT(DISTINCT e.index)::int AS episode_count
+       COUNT(DISTINCT n.episode_number)::int AS episode_count
 FROM media_items sh
 JOIN media_items se
   ON se.parent_id = sh.id AND se.type = 'season' AND se.deleted_at IS NULL
 JOIN media_items e
   ON e.parent_id = se.id AND e.type = 'episode' AND e.deleted_at IS NULL
+CROSS JOIN LATERAL generate_series(e.index, GREATEST(e.index, COALESCE(e.index_end, e.index))) AS n(episode_number)
 WHERE sh.type = 'show'
   AND sh.parent_id IS NULL
   AND sh.deleted_at IS NULL
@@ -34,6 +35,7 @@ WHERE sh.type = 'show'
        OR sh.library_id = ANY($2::uuid[]))
   AND ($3::int IS NULL
        OR content_rating_rank(sh.content_rating) <= $3::int)
+  AND media_item_labels_permitted(sh.labels, sh.parent_id, $4::text[], $5::text[])
 GROUP BY sh.tmdb_id, se.index
 ORDER BY sh.tmdb_id, se.index
 `
@@ -42,6 +44,8 @@ type ListOwnedEpisodeCountsByShowTMDBParams struct {
 	TmdbIds       []int32     `json:"tmdb_ids"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 type ListOwnedEpisodeCountsByShowTMDBRow struct {
@@ -55,13 +59,21 @@ type ListOwnedEpisodeCountsByShowTMDBRow struct {
 // only episodes with a file on disk. A show present in several libraries (or
 // an episode with several versions) counts each season/episode number once.
 // Episodes hang off a season row (show → season → episode); flat-layout
-// episodes with no season row name no season and are not counted.
+// episodes with no season row name no season and are not counted. A
+// multi-episode file (index..index_end, migration 00044) holds every episode
+// in its range.
 //
 // Scoped like ListMediaItemsByTMDBIDs: library_ids / max_rating_rank are the
 // caller's grants and rating ceiling (checked on the show), NULL = admin /
 // unrestricted (the fulfilment reconciler passes NULL for both).
 func (q *Queries) ListOwnedEpisodeCountsByShowTMDB(ctx context.Context, arg ListOwnedEpisodeCountsByShowTMDBParams) ([]ListOwnedEpisodeCountsByShowTMDBRow, error) {
-	rows, err := q.db.Query(ctx, listOwnedEpisodeCountsByShowTMDB, arg.TmdbIds, arg.LibraryIds, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listOwnedEpisodeCountsByShowTMDB,
+		arg.TmdbIds,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}

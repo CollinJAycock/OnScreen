@@ -72,6 +72,7 @@ WHERE m.deleted_at IS NULL
   AND m.type IN ('movie', 'episode')
   AND COALESCE(ws.status, 'unwatched') = 'unwatched'  -- exclude watched / started
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY co.score DESC, m.updated_at DESC
 LIMIT sqlc.arg('result_limit')::int;
 

@@ -208,6 +208,72 @@ func (c *Client) GetEpisode(ctx context.Context, tvdbSeriesID, seasonNum, episod
 	return nil, fmt.Errorf("tvdb: episode s%02de%02d not found for series %d", seasonNum, episodeNum, tvdbSeriesID)
 }
 
+// maxOrderingPages bounds GetEpisodeOrdering's paging: TVDB pages hold 500
+// episodes, so 40 pages covers any real series and a misbehaving "next"
+// link can't loop forever.
+const maxOrderingPages = 40
+
+// GetEpisodeOrdering implements metadata.EpisodeOrderProvider through TVDB
+// season types: GET /series/{id}/episodes/{dvd|absolute}, every page. In
+// the "dvd" type an episode's seasonNumber / number are its DVD season and
+// episode; in "absolute" the number is its absolute number (season 0 still
+// holds specials). ErrEpisodeOrderUnavailable (wrapped) when the series
+// lists no episodes in that type.
+func (c *Client) GetEpisodeOrdering(ctx context.Context, tvdbSeriesID int, order string) (*metadata.EpisodeOrdering, error) {
+	if order != metadata.EpisodeOrderDVD && order != metadata.EpisodeOrderAbsolute {
+		return nil, fmt.Errorf("tvdb episode ordering %q: %w", order, metadata.ErrEpisodeOrderUnavailable)
+	}
+	token, err := c.ensureToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	out := &metadata.EpisodeOrdering{Order: order}
+	for page := 0; page < maxOrderingPages; page++ {
+		pageURL := fmt.Sprintf("%s/series/%d/episodes/%s?page=%d", baseURL, tvdbSeriesID, order, page)
+		var resp struct {
+			Data struct {
+				Episodes []tvdbEpisode `json:"episodes"`
+			} `json:"data"`
+			Links struct {
+				Next *string `json:"next"`
+			} `json:"links"`
+		}
+		if err := c.getJSON(ctx, token, pageURL, &resp); err != nil {
+			if page > 0 {
+				break // keep what the earlier pages gave
+			}
+			return nil, fmt.Errorf("tvdb %s episodes %d: %w", order, tvdbSeriesID, err)
+		}
+		for _, ep := range resp.Data.Episodes {
+			air, _ := time.Parse("2006-01-02", ep.Aired)
+			oe := metadata.OrderedEpisode{
+				Season: ep.SeasonNumber,
+				Number: ep.Number,
+				Episode: metadata.EpisodeResult{
+					SeasonNum:  ep.SeasonNumber,
+					EpisodeNum: ep.Number,
+					Title:      ep.Name,
+					Summary:    ep.Overview,
+					AirDate:    air,
+					ThumbURL:   ep.Image,
+				},
+			}
+			if order == metadata.EpisodeOrderAbsolute && ep.SeasonNumber != 0 {
+				oe.Absolute = ep.Number
+			}
+			out.Episodes = append(out.Episodes, oe)
+		}
+		if resp.Links.Next == nil || *resp.Links.Next == "" || len(resp.Data.Episodes) == 0 {
+			break
+		}
+	}
+	if len(out.Episodes) == 0 {
+		return nil, fmt.Errorf("tvdb series %d lists no %s episodes: %w", tvdbSeriesID, order, metadata.ErrEpisodeOrderUnavailable)
+	}
+	return out, nil
+}
+
 // ensureToken returns a valid JWT, refreshing it if expired or missing.
 func (c *Client) ensureToken(ctx context.Context) (string, error) {
 	c.mu.Lock()

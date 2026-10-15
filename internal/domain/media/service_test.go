@@ -4,12 +4,15 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // ── mock ──────────────────────────────────────────────────────────────────────
@@ -18,7 +21,8 @@ type mockQuerier struct {
 	restoredAuthors []string   // RestoreMergedAudiobooks' result
 	reimportAuthors [][]string // ForceReimportAudiobookFiles' calls
 	items           map[uuid.UUID]Item
-	files           map[uuid.UUID][]File // keyed by MediaItemID
+	lastEdit        *EditItemMetadataParams // EditMediaItemMetadata's last call
+	files           map[uuid.UUID][]File    // keyed by MediaItemID
 	fileByPath      map[string]File
 	fileByHash      map[string]File
 
@@ -185,6 +189,20 @@ func (m *mockQuerier) UpdateMediaItemMetadata(_ context.Context, p UpdateItemMet
 	return it, nil
 }
 
+func (m *mockQuerier) EditMediaItemMetadata(_ context.Context, p EditItemMetadataParams) (Item, error) {
+	m.lastEdit = &p
+	it, ok := m.items[p.ID]
+	if !ok {
+		return Item{}, pgx.ErrNoRows
+	}
+	if slices.Contains(p.Set, FieldTitle) {
+		it.Title = p.Title
+	}
+	it.LockedFields = append(slices.Clone(it.LockedFields), p.Lock...)
+	m.items[p.ID] = it
+	return it, nil
+}
+
 func (m *mockQuerier) UpdateMediaItemLyrics(_ context.Context, _ uuid.UUID, _, _ *string) error {
 	return nil
 }
@@ -260,6 +278,15 @@ func (m *mockQuerier) UpdateMediaItemTitle(_ context.Context, id uuid.UUID, titl
 }
 func (m *mockQuerier) SetMediaItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
+}
+func (m *mockQuerier) SetEpisodeIndexEnd(_ context.Context, _ uuid.UUID, _ *int) (bool, error) {
+	return false, nil
+}
+func (m *mockQuerier) SetShowEpisodeOrder(_ context.Context, _ uuid.UUID, _ *string) (bool, error) {
+	return false, nil
+}
+func (m *mockQuerier) ListShowsFollowingLibraryEpisodeOrder(_ context.Context, _ uuid.UUID) ([]uuid.UUID, error) {
+	return nil, nil
 }
 func (m *mockQuerier) SoftDeleteMediaItem(_ context.Context, id uuid.UUID) error {
 	delete(m.items, id)
@@ -422,6 +449,9 @@ func (m *mockQuerier) UpdateMediaFileIntegrity(_ context.Context, _ uuid.UUID, _
 func (m *mockQuerier) UpdateMediaFileDynamicRange(_ context.Context, _ uuid.UUID, _ *string, _ *int) error {
 	return nil
 }
+func (m *mockQuerier) UpdateMediaFileNaming(_ context.Context, _ uuid.UUID, _ *string, _ *int) error {
+	return nil
+}
 func (m *mockQuerier) ListFilesForIntegrityCheck(_ context.Context, _ *uuid.UUID, _ int32) ([]File, error) {
 	return nil, nil
 }
@@ -443,10 +473,10 @@ func (m *mockQuerier) CountMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ 
 func (m *mockQuerier) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
 }
-func (m *mockQuerier) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int) ([]GenreCount, error) {
+func (m *mockQuerier) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int, _ itemlabel.Filter) ([]GenreCount, error) {
 	return nil, nil
 }
-func (m *mockQuerier) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int) ([]YearCount, error) {
+func (m *mockQuerier) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int, _ itemlabel.Filter) ([]YearCount, error) {
 	return nil, nil
 }
 func (m *mockQuerier) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]File, error) {
@@ -534,7 +564,7 @@ func (m *mockQuerier) CountPhotosByLibrary(_ context.Context, _ ListPhotosParams
 	return int64(len(m.photoList)), m.photoCountErr
 }
 
-func (m *mockQuerier) ListPhotoTimelineBuckets(_ context.Context, _ uuid.UUID, _ *int) ([]PhotoTimelineBucket, error) {
+func (m *mockQuerier) ListPhotoTimelineBuckets(_ context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) ([]PhotoTimelineBucket, error) {
 	return m.photoTimeline, m.photoTimelineErr
 }
 
@@ -542,7 +572,7 @@ func (m *mockQuerier) ListPhotoMapPoints(_ context.Context, _ ListPhotoMapPoints
 	return m.photoMapPts, m.photoMapErr
 }
 
-func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID, _ *int) (int64, error) {
+func (m *mockQuerier) CountPhotoMapPoints(_ context.Context, _ uuid.UUID, _ *int, _ itemlabel.Filter) (int64, error) {
 	return m.photoMapCount, m.photoMapCountErr
 }
 
@@ -1706,7 +1736,7 @@ func TestCountPhotos_Error(t *testing.T) {
 func TestListPhotoTimeline_PassesThrough(t *testing.T) {
 	svc, q := newService(t)
 	q.photoTimeline = []PhotoTimelineBucket{{Year: 2024, Month: 12, Count: 47}}
-	got, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil)
+	got, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil, itemlabel.Filter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1718,7 +1748,7 @@ func TestListPhotoTimeline_PassesThrough(t *testing.T) {
 func TestListPhotoTimeline_Error(t *testing.T) {
 	svc, q := newService(t)
 	q.photoTimelineErr = errors.New("db down")
-	if _, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil); err == nil {
+	if _, err := svc.ListPhotoTimeline(context.Background(), uuid.New(), nil, itemlabel.Filter{}); err == nil {
 		t.Fatal("expected error")
 	}
 }
@@ -1746,7 +1776,7 @@ func TestListPhotoMapPoints_Error(t *testing.T) {
 func TestCountPhotoMapPoints_PassesThrough(t *testing.T) {
 	svc, q := newService(t)
 	q.photoMapCount = 23107
-	n, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil)
+	n, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil, itemlabel.Filter{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1758,7 +1788,7 @@ func TestCountPhotoMapPoints_PassesThrough(t *testing.T) {
 func TestCountPhotoMapPoints_Error(t *testing.T) {
 	svc, q := newService(t)
 	q.photoMapCountErr = errors.New("db down")
-	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil); err == nil {
+	if _, err := svc.CountPhotoMapPoints(context.Background(), uuid.New(), nil, itemlabel.Filter{}); err == nil {
 		t.Fatal("expected error")
 	}
 }

@@ -142,6 +142,7 @@ type EpisodeAncestry struct {
 	ContainerID   pgtype.UUID `json:"container_id"`
 	EpisodeID     uuid.UUID   `json:"episode_id"`
 	ContentRating *string     `json:"content_rating"`
+	EpisodeSpan   int32       `json:"episode_span"`
 }
 
 type ExternalRating struct {
@@ -246,6 +247,7 @@ type Library struct {
 	AutoGrantNewUsers       bool               `json:"auto_grant_new_users"`
 	TrickplayEnabled        bool               `json:"trickplay_enabled"`
 	NfoCollections          string             `json:"nfo_collections"`
+	EpisodeOrder            string             `json:"episode_order"`
 }
 
 type LibraryAccess struct {
@@ -298,6 +300,8 @@ type MediaFile struct {
 	IntegrityCheckedAt  pgtype.Timestamptz `json:"integrity_checked_at"`
 	IntegrityDetail     *string            `json:"integrity_detail"`
 	DvProfile           *int16             `json:"dv_profile"`
+	Edition             *string            `json:"edition"`
+	PartIndex           *int16             `json:"part_index"`
 }
 
 type MediaIssue struct {
@@ -362,6 +366,10 @@ type MediaItem struct {
 	ReadingDirection          *string            `json:"reading_direction"`
 	FranchiseID               *int32             `json:"franchise_id"`
 	DiscNumber                *int32             `json:"disc_number"`
+	LockedFields              []string           `json:"locked_fields"`
+	IndexEnd                  *int32             `json:"index_end"`
+	EpisodeOrder              *string            `json:"episode_order"`
+	Labels                    []string           `json:"labels"`
 }
 
 type MediaItemTmdbCollection struct {
@@ -669,46 +677,49 @@ type TunerDevice struct {
 }
 
 type User struct {
-	ID                    uuid.UUID          `json:"id"`
-	Username              string             `json:"username"`
-	Email                 *string            `json:"email"`
-	PasswordHash          *string            `json:"password_hash"`
-	IsAdmin               bool               `json:"is_admin"`
-	Pin                   *string            `json:"pin"`
-	CreatedAt             pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
-	GoogleID              *string            `json:"google_id"`
-	GoogleAvatarUrl       *string            `json:"google_avatar_url"`
-	GithubID              *string            `json:"github_id"`
-	DiscordID             *string            `json:"discord_id"`
-	ParentUserID          pgtype.UUID        `json:"parent_user_id"`
-	AvatarUrl             *string            `json:"avatar_url"`
-	PreferredAudioLang    *string            `json:"preferred_audio_lang"`
-	PreferredSubtitleLang *string            `json:"preferred_subtitle_lang"`
-	MaxContentRating      *string            `json:"max_content_rating"`
-	OidcIssuer            *string            `json:"oidc_issuer"`
-	OidcSubject           *string            `json:"oidc_subject"`
-	LdapDn                *string            `json:"ldap_dn"`
-	MaxVideoBitrateKbps   *int32             `json:"max_video_bitrate_kbps"`
-	MaxAudioBitrateKbps   *int32             `json:"max_audio_bitrate_kbps"`
-	MaxVideoHeight        *int32             `json:"max_video_height"`
-	PreferredVideoCodec   *string            `json:"preferred_video_codec"`
-	ForcedSubtitlesOnly   bool               `json:"forced_subtitles_only"`
-	SessionEpoch          int64              `json:"session_epoch"`
-	SamlIssuer            *string            `json:"saml_issuer"`
-	SamlSubject           *string            `json:"saml_subject"`
-	InheritLibraryAccess  bool               `json:"inherit_library_access"`
-	EpisodeUseShowPoster  bool               `json:"episode_use_show_poster"`
-	TotpSecret            *string            `json:"totp_secret"`
-	TotpEnabled           bool               `json:"totp_enabled"`
-	MaxConcurrentStreams  *int32             `json:"max_concurrent_streams"`
-	MaxStreamBitrateKbps  *int32             `json:"max_stream_bitrate_kbps"`
-	HubLayout             []byte             `json:"hub_layout"`
-	AutoApproveMovies     bool               `json:"auto_approve_movies"`
-	AutoApproveTv         bool               `json:"auto_approve_tv"`
-	CanRequest            bool               `json:"can_request"`
-	RequestQuotaMovies    *int32             `json:"request_quota_movies"`
-	RequestQuotaTv        *int32             `json:"request_quota_tv"`
+	ID                         uuid.UUID          `json:"id"`
+	Username                   string             `json:"username"`
+	Email                      *string            `json:"email"`
+	PasswordHash               *string            `json:"password_hash"`
+	IsAdmin                    bool               `json:"is_admin"`
+	Pin                        *string            `json:"pin"`
+	CreatedAt                  pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                  pgtype.Timestamptz `json:"updated_at"`
+	GoogleID                   *string            `json:"google_id"`
+	GoogleAvatarUrl            *string            `json:"google_avatar_url"`
+	GithubID                   *string            `json:"github_id"`
+	DiscordID                  *string            `json:"discord_id"`
+	ParentUserID               pgtype.UUID        `json:"parent_user_id"`
+	AvatarUrl                  *string            `json:"avatar_url"`
+	PreferredAudioLang         *string            `json:"preferred_audio_lang"`
+	PreferredSubtitleLang      *string            `json:"preferred_subtitle_lang"`
+	MaxContentRating           *string            `json:"max_content_rating"`
+	OidcIssuer                 *string            `json:"oidc_issuer"`
+	OidcSubject                *string            `json:"oidc_subject"`
+	LdapDn                     *string            `json:"ldap_dn"`
+	MaxVideoBitrateKbps        *int32             `json:"max_video_bitrate_kbps"`
+	MaxAudioBitrateKbps        *int32             `json:"max_audio_bitrate_kbps"`
+	MaxVideoHeight             *int32             `json:"max_video_height"`
+	PreferredVideoCodec        *string            `json:"preferred_video_codec"`
+	ForcedSubtitlesOnly        bool               `json:"forced_subtitles_only"`
+	SessionEpoch               int64              `json:"session_epoch"`
+	SamlIssuer                 *string            `json:"saml_issuer"`
+	SamlSubject                *string            `json:"saml_subject"`
+	InheritLibraryAccess       bool               `json:"inherit_library_access"`
+	EpisodeUseShowPoster       bool               `json:"episode_use_show_poster"`
+	TotpSecret                 *string            `json:"totp_secret"`
+	TotpEnabled                bool               `json:"totp_enabled"`
+	MaxConcurrentStreams       *int32             `json:"max_concurrent_streams"`
+	MaxStreamBitrateKbps       *int32             `json:"max_stream_bitrate_kbps"`
+	HubLayout                  []byte             `json:"hub_layout"`
+	AutoApproveMovies          bool               `json:"auto_approve_movies"`
+	AutoApproveTv              bool               `json:"auto_approve_tv"`
+	CanRequest                 bool               `json:"can_request"`
+	RequestQuotaMovies         *int32             `json:"request_quota_movies"`
+	RequestQuotaTv             *int32             `json:"request_quota_tv"`
+	MaxRemoteStreamBitrateKbps *int32             `json:"max_remote_stream_bitrate_kbps"`
+	BlockedLabels              []string           `json:"blocked_labels"`
+	AllowedLabels              []string           `json:"allowed_labels"`
 }
 
 type UserAudiobookRate struct {

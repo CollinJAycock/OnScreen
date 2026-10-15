@@ -6,17 +6,20 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // nextUpRow builds the hub's Next Up row. The query applies the rating
 // ceiling (show and episode) and dismissals; the library ACL is applied here
 // because the query doesn't know the caller's grant set. Errors are logged
 // and yield an empty row, like every other hub row.
-func (h *HubHandler) nextUpRow(ctx context.Context, userID uuid.UUID, maxRank *int32, libAllowed func(uuid.UUID) bool) []HubItem {
+func (h *HubHandler) nextUpRow(ctx context.Context, userID uuid.UUID, maxRank *int32, labels itemlabel.Filter, libAllowed func(uuid.UUID) bool) []HubItem {
 	out := []HubItem{}
 	rows, err := h.watchDB.ListNextUp(ctx, gen.ListNextUpParams{
 		UserID:        userID,
 		MaxRatingRank: maxRank,
+		BlockedLabels: labels.BlockedArg(),
+		AllowedLabels: labels.AllowedArg(),
 		ResultLimit:   hubWatchRowFetch,
 	})
 	if err != nil {
@@ -47,28 +50,31 @@ func nextUpHubItem(row gen.ListNextUpRow) HubItem {
 		thumb = row.ShowThumbPath
 	}
 	return HubItem{
-		ID:            row.ID.String(),
-		Title:         row.Title,
-		ShowTitle:     &showTitle,
-		ShowID:        &showID,
-		Type:          "episode",
-		Year:          intPtrFrom32(row.ShowYear),
-		PosterPath:    row.ShowPosterPath,
-		FanartPath:    row.ShowFanartPath,
-		ThumbPath:     thumb,
-		DurationMS:    row.DurationMs,
-		UpdatedAt:     timestamptzToMilli(row.UpdatedAt),
-		SeasonNumber:  intOrZero32(row.SeasonNumber),
-		EpisodeNumber: intOrZero32(row.EpisodeNumber),
+		ID:               row.ID.String(),
+		Title:            row.Title,
+		ShowTitle:        &showTitle,
+		ShowID:           &showID,
+		Type:             "episode",
+		Year:             intPtrFrom32(row.ShowYear),
+		PosterPath:       row.ShowPosterPath,
+		FanartPath:       row.ShowFanartPath,
+		ThumbPath:        thumb,
+		DurationMS:       row.DurationMs,
+		UpdatedAt:        timestamptzToMilli(row.UpdatedAt),
+		SeasonNumber:     intOrZero32(row.SeasonNumber),
+		EpisodeNumber:    intOrZero32(row.EpisodeNumber),
+		EpisodeNumberEnd: intPtrFrom32(row.EpisodeNumberEnd),
 	}
 }
 
 // planToWatchRow builds the hub's Plan to Watch row (see ListPlanToWatchHub).
-func (h *HubHandler) planToWatchRow(ctx context.Context, userID uuid.UUID, maxRank *int32, libAllowed func(uuid.UUID) bool) []HubItem {
+func (h *HubHandler) planToWatchRow(ctx context.Context, userID uuid.UUID, maxRank *int32, labels itemlabel.Filter, libAllowed func(uuid.UUID) bool) []HubItem {
 	out := []HubItem{}
 	rows, err := h.watchDB.ListPlanToWatchHub(ctx, gen.ListPlanToWatchHubParams{
 		UserID:        userID,
 		MaxRatingRank: maxRank,
+		BlockedLabels: labels.BlockedArg(),
+		AllowedLabels: labels.AllowedArg(),
 		ResultLimit:   hubWatchRowFetch,
 	})
 	if err != nil {

@@ -354,3 +354,32 @@ support).
 Why staged: the flip changes how playback *starts*. Driving the real endpoint
 per-client (local dev, then the phone on-device) caught both the `DirectStream`
 model gap and the response-envelope bug that a blind cut-over would have shipped.
+
+## 12. Internet streaming limit (2026-10, migration 00046)
+
+The play decision is also where the home-network / internet split is enforced.
+`POST /items/{id}/playback-decision` classifies the caller from the **trusted**
+client IP (`r.RemoteAddr` after `TrustedRealIP` — the audit-log address, never a
+raw forwarded header) with `RemoteStreamPolicy.IsLocal`: the setup gate's
+`isLocalAddr` set (loopback, RFC 1918 / ULA, link-local, 100.64.0.0/10 —
+Tailscale / CGNAT — and the host's own IPv6 prefixes) plus the admin's
+`local_networks`. For a remote client with an internet limit configured (the
+user's `max_remote_stream_bitrate_kbps` or the server's
+`remote_max_bitrate_kbps`), a `directPlay` / `directStream` verdict whose video
+source exceeds `min(user cap, user internet cap, server internet limit)` becomes
+`transcode` with `reason: remote_bitrate_limit` (or `user_bitrate_limit` when the
+user's own cap is the lower one) and `max_bitrate_kbps`. Transcode start runs the
+same computation, so the copy-to-transcode escalation, the output clamp, the ABR
+ladder ceiling and the Now Playing reason ("Over the internet streaming limit")
+all follow it; the pre-encoded static ladder is skipped when the source is over
+the cap, because its rungs aren't clamped. LAN verdicts are unchanged; audio is
+never limited.
+
+**Known gap — direct file serving.** `/media/stream/{id}` and `/media/files/*`
+do not enforce the limit. A client that ignores the decision (or predates it)
+and fetches the file directly gets the original bitrate. Enforcing there was
+considered and rejected: refusing the request turns a playing (if over-limit)
+stream into a hard failure on exactly the older first-party builds that don't
+ask for a decision, and throttling a range-served file stalls playback instead
+of lowering quality. Every current first-party client asks for the decision
+first. Downloads (`/media/download`) are deliberately not limited either.

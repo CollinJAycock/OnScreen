@@ -74,6 +74,24 @@ func (q *Queries) DeleteExpiredSessions(ctx context.Context) error {
 	return err
 }
 
+const deleteOtherSessionsForUser = `-- name: DeleteOtherSessionsForUser :execrows
+DELETE FROM sessions WHERE user_id = $1 AND id <> $2
+`
+
+type DeleteOtherSessionsForUserParams struct {
+	UserID uuid.UUID `json:"user_id"`
+	ID     uuid.UUID `json:"id"`
+}
+
+// "Sign out everywhere else": every session of the user except the caller's.
+func (q *Queries) DeleteOtherSessionsForUser(ctx context.Context, arg DeleteOtherSessionsForUserParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOtherSessionsForUser, arg.UserID, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deleteSession = `-- name: DeleteSession :exec
 DELETE FROM sessions WHERE id = $1
 `
@@ -90,6 +108,32 @@ DELETE FROM sessions WHERE user_id = $1
 func (q *Queries) DeleteSessionsForUser(ctx context.Context, userID uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deleteSessionsForUser, userID)
 	return err
+}
+
+const deleteUserSession = `-- name: DeleteUserSession :one
+DELETE FROM sessions WHERE id = $1 AND user_id = $2
+RETURNING id, client_name, platform
+`
+
+type DeleteUserSessionParams struct {
+	ID     uuid.UUID `json:"id"`
+	UserID uuid.UUID `json:"user_id"`
+}
+
+type DeleteUserSessionRow struct {
+	ID         uuid.UUID `json:"id"`
+	ClientName *string   `json:"client_name"`
+	Platform   *string   `json:"platform"`
+}
+
+// Revokes one sign-in. Scoped by user_id so a caller can only ever delete a
+// session of the user the route names; no row = no such session for them.
+// Returns the device label for the audit entry.
+func (q *Queries) DeleteUserSession(ctx context.Context, arg DeleteUserSessionParams) (DeleteUserSessionRow, error) {
+	row := q.db.QueryRow(ctx, deleteUserSession, arg.ID, arg.UserID)
+	var i DeleteUserSessionRow
+	err := row.Scan(&i.ID, &i.ClientName, &i.Platform)
+	return i, err
 }
 
 const getSessionByAnyTokenHash = `-- name: GetSessionByAnyTokenHash :one
@@ -177,6 +221,56 @@ func (q *Queries) GetSessionByTokenHash(ctx context.Context, tokenHash string) (
 		&i.AbsoluteExpiresAt,
 	)
 	return i, err
+}
+
+const listActiveSessionsForUser = `-- name: ListActiveSessionsForUser :many
+SELECT id, client_name, platform, ip_addr, created_at, last_seen
+FROM sessions
+WHERE user_id = $1
+  AND expires_at > NOW()
+  AND (absolute_expires_at IS NULL OR absolute_expires_at > NOW())
+ORDER BY last_seen DESC
+LIMIT 200
+`
+
+type ListActiveSessionsForUserRow struct {
+	ID         uuid.UUID          `json:"id"`
+	ClientName *string            `json:"client_name"`
+	Platform   *string            `json:"platform"`
+	IpAddr     *netip.Addr        `json:"ip_addr"`
+	CreatedAt  pgtype.Timestamptz `json:"created_at"`
+	LastSeen   pgtype.Timestamptz `json:"last_seen"`
+}
+
+// Signed-in devices for Settings ▸ Security and the admin user page: one row
+// per refresh session that can still refresh. Deliberately omits the token
+// hashes. last_seen moves on sign-in and on every refresh (roughly hourly
+// while a device is in use), never per request.
+func (q *Queries) ListActiveSessionsForUser(ctx context.Context, userID uuid.UUID) ([]ListActiveSessionsForUserRow, error) {
+	rows, err := q.db.Query(ctx, listActiveSessionsForUser, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListActiveSessionsForUserRow{}
+	for rows.Next() {
+		var i ListActiveSessionsForUserRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ClientName,
+			&i.Platform,
+			&i.IpAddr,
+			&i.CreatedAt,
+			&i.LastSeen,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const listUserSessions = `-- name: ListUserSessions :many
@@ -315,5 +409,34 @@ UPDATE sessions SET last_seen = NOW() WHERE id = $1
 
 func (q *Queries) TouchSession(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, touchSession, id)
+	return err
+}
+
+const updateSessionClient = `-- name: UpdateSessionClient :exec
+UPDATE sessions
+SET ip_addr     = COALESCE($1::inet, ip_addr),
+    client_name = COALESCE($2::text, client_name),
+    platform    = COALESCE($3::text, platform)
+WHERE id = $4
+`
+
+type UpdateSessionClientParams struct {
+	IpAddr     *netip.Addr `json:"ip_addr"`
+	ClientName *string     `json:"client_name"`
+	Platform   *string     `json:"platform"`
+	ID         uuid.UUID   `json:"id"`
+}
+
+// Records where a refresh came from (trusted client IP, device label). Runs
+// once per refresh, never per API request. NULL arguments keep the stored
+// value, so a refresh that can't name its client doesn't erase the label the
+// sign-in recorded.
+func (q *Queries) UpdateSessionClient(ctx context.Context, arg UpdateSessionClientParams) error {
+	_, err := q.db.Exec(ctx, updateSessionClient,
+		arg.IpAddr,
+		arg.ClientName,
+		arg.Platform,
+		arg.ID,
+	)
 	return err
 }

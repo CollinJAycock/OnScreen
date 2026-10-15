@@ -505,6 +505,29 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		w.logger.Info("source not local; pulling over HTTP",
 			"session_id", job.SessionID, "source", redactURLToken(job.SourceURL))
 	}
+	// A stacked movie: every part, in order, through a concat list this
+	// worker writes from the job's parts (see parts.go). probeInput stays a
+	// real media file — part 1 — for the rotation probe, which can't read a
+	// list.
+	probeInput := input
+	var concatParts []ffsafe.ConcatPart
+	if len(job.Parts) > 1 {
+		entries, remote, perr := resolvePartInputs(job.Parts, func(p string) bool {
+			_, err := os.Stat(p)
+			return err == nil
+		})
+		if perr != nil {
+			return perr
+		}
+		listPath, lerr := writeConcatList(SessionDirName(job.SessionID, job.Incarnation), entries)
+		if lerr != nil {
+			return fmt.Errorf("write concat list: %w", lerr)
+		}
+		defer func() { _ = os.Remove(listPath) }()
+		input, probeInput, concatParts = listPath, entries[0].Input, entries
+		w.logger.Info("stacked source: streaming parts as one movie",
+			"session_id", job.SessionID, "parts", len(entries), "over_http", remote)
+	}
 
 	var ffArgs []string
 	var actualEncoder Encoder
@@ -556,7 +579,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	// ffmpeg's autorotate (on by default on the software-decode path) bakes the
 	// rotation into the pixels. Encode at native (auto-rotated) resolution — no
 	// scale/pad, so no pillarbox. Probe failures return 0 (treated as upright).
-	probe := probeSource(ctx, input)
+	probe := probeSource(ctx, probeInput)
 	rotated := probe.rotationDeg != 0
 	decision := job.Decision
 	if rotated {
@@ -576,7 +599,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 	}
 	switch decision {
 	case "directStream":
-		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec)
+		ffArgs = BuildDirectStream(input, sessionDir, job.StartOffsetSec, concatParts...)
 	default:
 		enc = Encoder(job.Encoder)
 		if enc == "" {
@@ -644,6 +667,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		buildTranscodeArgs = func(useQSV bool, startOffset float64, startNumber int, playlistName string) []string {
 			return BuildHLS(BuildArgs{
 				InputPath:            input,
+				ConcatParts:          concatParts,
 				StartOffset:          startOffset,
 				StartNumber:          startNumber,
 				PlaylistName:         playlistName,

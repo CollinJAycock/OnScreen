@@ -294,6 +294,16 @@ type TranscodeConfig struct {
 	ABR              *bool `json:"abr,omitempty"`
 	ABRMaxHeight     *int  `json:"abr_max_height,omitempty"`
 	ABRAutoMaxHeight *int  `json:"abr_auto_max_height,omitempty"`
+	// Internet streaming limit: the bitrate ceiling (kbps) for streams to
+	// clients OUTSIDE the home network. 0 = unlimited. A remote client whose
+	// source exceeds it is transcoded down instead of direct-played. Read live
+	// at each play decision / transcode start — no restart needed.
+	RemoteMaxBitrateKbps int `json:"remote_max_bitrate_kbps,omitempty"`
+	// LocalNetworks lists extra CIDRs (or bare IPs) to treat as the home
+	// network on top of the built-in set — loopback, RFC 1918 / unique-local,
+	// link-local, 100.64.0.0/10 (Tailscale / CGNAT) and this host's own IPv6
+	// prefixes. For a VPN or office subnet with public addresses.
+	LocalNetworks []string `json:"local_networks,omitempty"`
 }
 
 // TranscodeConfigGet returns the transcode encoder tuning config.

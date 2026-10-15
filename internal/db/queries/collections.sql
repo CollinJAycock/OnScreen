@@ -43,6 +43,7 @@ LEFT JOIN media_items grandparent ON grandparent.id = parent.parent_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 -- ci.media_item_id is the unique tiebreaker: ci.position is NOT unique per
 -- collection (no UNIQUE(collection_id, position); concurrent MAX(position)+1
 -- inserts and partial reorders produce ties), and without a tiebreaker OFFSET
@@ -75,7 +76,8 @@ WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int);
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
 
 -- name: ListItemsByGenre :many
 -- v2.1 Track G item 4: optional max_rating_rank gate. Backs the
@@ -88,6 +90,7 @@ WHERE deleted_at IS NULL
   AND type IN ('movie', 'show')
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR library_id = ANY(sqlc.narg('library_ids')::uuid[]))
 -- , id tiebreaker: rating is highly non-unique (many ties + the NULLS-LAST
@@ -103,6 +106,7 @@ SELECT COUNT(*) FROM media_items
 WHERE deleted_at IS NULL AND sqlc.arg('genre')::text = ANY(genres) AND type IN ('movie', 'show')
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR library_id = ANY(sqlc.narg('library_ids')::uuid[]));
 
@@ -190,6 +194,7 @@ WHERE c.type = 'manual'
        OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY c.id, c.poster_item_id;
 
 -- name: ListLibraryManualCollections :many
@@ -210,6 +215,7 @@ WHERE c.type = 'manual'
   AND mi.deleted_at IS NULL
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY c.id, c.name, c.type, c.poster_item_id
 ORDER BY c.name, c.id;
 

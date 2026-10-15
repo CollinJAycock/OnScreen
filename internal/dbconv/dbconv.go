@@ -227,6 +227,9 @@ func GenGetItemRowToItem(r gen.GetMediaItemRow) media.Item {
 	item.ReadingDirection = r.ReadingDirection
 	item.FranchiseID = int32PtrToIntPtr(r.FranchiseID)
 	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
+	item.LockedFields = r.LockedFields
+	item.IndexEnd = int32PtrToIntPtr(r.IndexEnd)
+	item.EpisodeOrder = r.EpisodeOrder
 	return item
 }
 
@@ -284,6 +287,7 @@ func GenListChildrenRowToItem(r gen.ListMediaItemChildrenRow) media.Item {
 	item.MalID = int32PtrToIntPtr(r.MalID)
 	item.Kind = r.Kind
 	item.DiscNumber = int32PtrToIntPtr(r.DiscNumber)
+	item.IndexEnd = int32PtrToIntPtr(r.IndexEnd)
 	return item
 }
 
@@ -303,6 +307,36 @@ func GenUpdateItemRowToItem(r gen.UpdateMediaItemMetadataRow) media.Item {
 		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
 		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
 		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+}
+
+func GenEditItemRowToItem(r gen.EditMediaItemMetadataRow) media.Item {
+	item := ItemFromGenFields(r.ID, r.LibraryID, r.Type, r.Title, r.SortTitle,
+		r.OriginalTitle, r.Year, r.Summary, r.Tagline,
+		r.Rating, r.AudienceRating, r.ContentRating, r.DurationMs,
+		r.Genres, r.Tags, r.TmdbID, r.TvdbID, r.ImdbID,
+		r.ParentID, r.Index, r.PosterPath, r.FanartPath, r.ThumbPath,
+		r.OriginallyAvailableAt, r.CreatedAt, r.UpdatedAt, r.DeletedAt)
+	item.LockedFields = r.LockedFields
+	return item
+}
+
+func EditItemMetadataParamsToGen(p media.EditItemMetadataParams) gen.EditMediaItemMetadataParams {
+	return gen.EditMediaItemMetadataParams{
+		ID:                    p.ID,
+		SetFields:             p.Set,
+		LockFields:            p.Lock,
+		UnlockFields:          p.Unlock,
+		Title:                 p.Title,
+		SortTitle:             p.SortTitle,
+		OriginalTitle:         p.OriginalTitle,
+		Year:                  IntPtrToInt32Ptr(p.Year),
+		OriginallyAvailableAt: timePtrToPGDate(p.OriginallyAvailableAt),
+		Summary:               p.Summary,
+		Tagline:               p.Tagline,
+		Rating:                Float64PtrToNumeric(p.Rating),
+		ContentRating:         p.ContentRating,
+		Genres:                p.Genres,
+	}
 }
 
 func CreateItemParamsToGen(p media.CreateItemParams) gen.CreateMediaItemParams {
@@ -400,6 +434,8 @@ func GenMediaFileToFile(f gen.MediaFile) media.File {
 		HDRType:             f.HdrType,
 		DVProfile:           int16PtrToIntPtr(f.DvProfile),
 		FrameRate:           frameRate,
+		Edition:             f.Edition,
+		PartIndex:           int16PtrToIntPtr(f.PartIndex),
 		AudioStreams:        f.AudioStreams,
 		SubtitleStreams:     f.SubtitleStreams,
 		Chapters:            f.Chapters,
@@ -438,6 +474,8 @@ func CreateFileParamsToGen(p media.CreateFileParams) gen.CreateMediaFileParams {
 		HdrType:             p.HDRType,
 		DvProfile:           IntPtrToInt16Ptr(p.DVProfile),
 		FrameRate:           Float64PtrToNumeric(p.FrameRate),
+		Edition:             p.Edition,
+		PartIndex:           IntPtrToInt16Ptr(p.PartIndex),
 		AudioStreams:        p.AudioStreams,
 		SubtitleStreams:     p.SubtitleStreams,
 		Chapters:            p.Chapters,

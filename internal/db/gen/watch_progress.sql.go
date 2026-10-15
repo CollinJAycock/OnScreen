@@ -59,8 +59,8 @@ FROM media_items m
 LEFT JOIN user_watch_state ws
   ON ws.user_id = $1::uuid AND ws.media_id = m.id
 CROSS JOIN LATERAL (
-    SELECT count(*)::bigint AS leaf_count,
-           (count(*) FILTER (WHERE es.status = 'watched'))::bigint AS watched_count
+    SELECT COALESCE(sum(ea.episode_span), 0)::bigint AS leaf_count,
+           COALESCE(sum(ea.episode_span) FILTER (WHERE es.status = 'watched'), 0)::bigint AS watched_count
     FROM episode_ancestry ea
     LEFT JOIN user_watch_state es
       ON es.user_id = $1::uuid AND es.media_id = ea.episode_id
@@ -68,13 +68,16 @@ CROSS JOIN LATERAL (
       AND ea.container_id = m.id
       AND ($2::int IS NULL
            OR content_rating_rank(ea.content_rating) <= $2::int)
+      AND media_item_id_labels_permitted(ea.episode_id, $3::text[], $4::text[])
 ) c
-WHERE m.id = ANY($3::uuid[])
+WHERE m.id = ANY($5::uuid[])
 `
 
 type ListItemWatchSummariesParams struct {
 	UserID        uuid.UUID   `json:"user_id"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 	MediaIds      []uuid.UUID `json:"media_ids"`
 }
 
@@ -92,8 +95,16 @@ type ListItemWatchSummariesRow struct {
 // item (status + resume point), and for shows/seasons the number of live
 // episodes within the rating ceiling and how many of them are watched. Leaf
 // rows report leaf_count 0; container rows report status 'unwatched'.
+// Episodes are counted, not files: a multi-episode E01-E02 file counts as
+// two (episode_ancestry.episode_span), watched or not together.
 func (q *Queries) ListItemWatchSummaries(ctx context.Context, arg ListItemWatchSummariesParams) ([]ListItemWatchSummariesRow, error) {
-	rows, err := q.db.Query(ctx, listItemWatchSummaries, arg.UserID, arg.MaxRatingRank, arg.MediaIds)
+	rows, err := q.db.Query(ctx, listItemWatchSummaries,
+		arg.UserID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+		arg.MediaIds,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -127,7 +138,7 @@ WITH ep AS (
            ws.resumable,
            ws.last_activity_at,
            COALESCE(se.index, 999999) AS season_key,
-           COALESCE(e.index, 999999) AS episode_key,
+           COALESCE(GREATEST(e.index, e.index_end), 999999) AS episode_key,
            (COALESCE(se.index, -1) = 0) AS is_special
     FROM user_watch_state ws
     JOIN media_items e
@@ -151,7 +162,7 @@ anchor AS (
              ep.season_key DESC, ep.episode_key DESC
 )
 SELECT nx.id, nx.library_id, nx.title, nx.thumb_path, nx.duration_ms, nx.updated_at,
-       nx.season_number, nx.episode_number,
+       nx.season_number, nx.episode_number, nx.episode_number_end,
        sh.id          AS show_id,
        sh.title       AS show_title,
        sh.year        AS show_year,
@@ -164,7 +175,8 @@ JOIN anchor a ON a.show_id = s.show_id
 JOIN media_items sh ON sh.id = s.show_id AND sh.deleted_at IS NULL
 CROSS JOIN LATERAL (
     SELECT e.id, e.library_id, e.title, e.thumb_path, e.duration_ms, e.updated_at,
-           se.index AS season_number, e.index AS episode_number
+           se.index AS season_number, e.index AS episode_number,
+           e.index_end AS episode_number_end
     FROM media_items se
     JOIN media_items e
       ON e.parent_id = se.id AND e.type = 'episode' AND e.deleted_at IS NULL
@@ -182,11 +194,13 @@ CROSS JOIN LATERAL (
                  AND rs.deleted_at IS NULL AND COALESCE(rs.index, -1) <> 0))
       AND ($2::int IS NULL
            OR content_rating_rank(e.content_rating) <= $2::int)
+      AND media_item_labels_permitted(e.labels, e.parent_id, $3::text[], $4::text[])
     ORDER BY COALESCE(se.index, 999999), COALESCE(e.index, 999999), e.sort_title, e.id
     LIMIT 1
 ) nx
 WHERE ($2::int IS NULL
        OR content_rating_rank(sh.content_rating) <= $2::int)
+  AND media_item_labels_permitted(sh.labels, sh.parent_id, $3::text[], $4::text[])
   AND NOT EXISTS (
       SELECT 1 FROM continue_watching_dismissals cwd
       WHERE cwd.user_id = $1::uuid
@@ -194,31 +208,34 @@ WHERE ($2::int IS NULL
         AND cwd.dismissed_at >= s.last_activity
   )
 ORDER BY s.last_activity DESC
-LIMIT $3::int
+LIMIT $5::int
 `
 
 type ListNextUpParams struct {
 	UserID        uuid.UUID `json:"user_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 	ResultLimit   int32     `json:"result_limit"`
 }
 
 type ListNextUpRow struct {
-	ID             uuid.UUID          `json:"id"`
-	LibraryID      uuid.UUID          `json:"library_id"`
-	Title          string             `json:"title"`
-	ThumbPath      *string            `json:"thumb_path"`
-	DurationMs     *int64             `json:"duration_ms"`
-	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
-	SeasonNumber   *int32             `json:"season_number"`
-	EpisodeNumber  *int32             `json:"episode_number"`
-	ShowID         uuid.UUID          `json:"show_id"`
-	ShowTitle      string             `json:"show_title"`
-	ShowYear       *int32             `json:"show_year"`
-	ShowPosterPath *string            `json:"show_poster_path"`
-	ShowFanartPath *string            `json:"show_fanart_path"`
-	ShowThumbPath  *string            `json:"show_thumb_path"`
-	LastActivity   pgtype.Timestamptz `json:"last_activity"`
+	ID               uuid.UUID          `json:"id"`
+	LibraryID        uuid.UUID          `json:"library_id"`
+	Title            string             `json:"title"`
+	ThumbPath        *string            `json:"thumb_path"`
+	DurationMs       *int64             `json:"duration_ms"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+	SeasonNumber     *int32             `json:"season_number"`
+	EpisodeNumber    *int32             `json:"episode_number"`
+	EpisodeNumberEnd *int32             `json:"episode_number_end"`
+	ShowID           uuid.UUID          `json:"show_id"`
+	ShowTitle        string             `json:"show_title"`
+	ShowYear         *int32             `json:"show_year"`
+	ShowPosterPath   *string            `json:"show_poster_path"`
+	ShowFanartPath   *string            `json:"show_fanart_path"`
+	ShowThumbPath    *string            `json:"show_thumb_path"`
+	LastActivity     pgtype.Timestamptz `json:"last_activity"`
 }
 
 // Home "Next Up" row: for each show where the caller has finished at least
@@ -226,7 +243,9 @@ type ListNextUpRow struct {
 // Continue Watching TV — no duplicates), the first not-yet-watched episode
 // after the anchor, where the anchor is the most recently watched episode
 // (ties — e.g. a whole season marked played at once — go to the later
-// episode). Order is season then episode number; season 0 specials are
+// episode). A multi-episode file anchors at its LAST episode (index_end), so
+// Next Up after an E01-E02 file is E03. Order is season then episode
+// number; season 0 specials are
 // skipped unless the show has no regular season. A show whose next episode
 // was added after the user caught up reappears here. Ordered by the caller's
 // latest activity in the show; shows dismissed (continue_watching_dismissals)
@@ -238,7 +257,13 @@ type ListNextUpRow struct {
 // The rating ceiling applies to both the show and the episode offered.
 // Library access is filtered by the handler on library_id.
 func (q *Queries) ListNextUp(ctx context.Context, arg ListNextUpParams) ([]ListNextUpRow, error) {
-	rows, err := q.db.Query(ctx, listNextUp, arg.UserID, arg.MaxRatingRank, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listNextUp,
+		arg.UserID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -255,6 +280,7 @@ func (q *Queries) ListNextUp(ctx context.Context, arg ListNextUpParams) ([]ListN
 			&i.UpdatedAt,
 			&i.SeasonNumber,
 			&i.EpisodeNumber,
+			&i.EpisodeNumberEnd,
 			&i.ShowID,
 			&i.ShowTitle,
 			&i.ShowYear,
@@ -282,14 +308,17 @@ WHERE uws.user_id = $1::uuid
   AND uws.status = 'plan_to_watch'
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
   AND media_watch_bucket($1::uuid, mi.id, mi.type, $2::int) <> 'watched'
 ORDER BY uws.updated_at DESC, mi.id
-LIMIT $3::int
+LIMIT $5::int
 `
 
 type ListPlanToWatchHubParams struct {
 	UserID        uuid.UUID `json:"user_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 	ResultLimit   int32     `json:"result_limit"`
 }
 
@@ -311,7 +340,13 @@ type ListPlanToWatchHubRow struct {
 // anything now fully watched (a movie watched, a show with every episode
 // watched). Rating ceiling applied in SQL; library access by the handler.
 func (q *Queries) ListPlanToWatchHub(ctx context.Context, arg ListPlanToWatchHubParams) ([]ListPlanToWatchHubRow, error) {
-	rows, err := q.db.Query(ctx, listPlanToWatchHub, arg.UserID, arg.MaxRatingRank, arg.ResultLimit)
+	rows, err := q.db.Query(ctx, listPlanToWatchHub,
+		arg.UserID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+		arg.ResultLimit,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -344,6 +379,7 @@ func (q *Queries) ListPlanToWatchHub(ctx context.Context, arg ListPlanToWatchHub
 const listUpNextEpisodes = `-- name: ListUpNextEpisodes :many
 SELECT e.id, e.title, e.thumb_path, e.duration_ms,
        e.index AS episode_number,
+       e.index_end AS episode_number_end,
        se.id AS season_id,
        se.index AS season_number,
        COALESCE(ws.status, 'unwatched')::text AS status,
@@ -360,6 +396,7 @@ WHERE se.type = 'season'
   AND (se.id = $2::uuid OR se.parent_id = $2::uuid)
   AND ($3::int IS NULL
        OR content_rating_rank(e.content_rating) <= $3::int)
+  AND media_item_labels_permitted(e.labels, e.parent_id, $4::text[], $5::text[])
 ORDER BY COALESCE(se.index, 999999), COALESCE(e.index, 999999), e.sort_title, e.id
 `
 
@@ -367,20 +404,23 @@ type ListUpNextEpisodesParams struct {
 	UserID        uuid.UUID `json:"user_id"`
 	ContainerID   uuid.UUID `json:"container_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListUpNextEpisodesRow struct {
-	ID             uuid.UUID          `json:"id"`
-	Title          string             `json:"title"`
-	ThumbPath      *string            `json:"thumb_path"`
-	DurationMs     *int64             `json:"duration_ms"`
-	EpisodeNumber  *int32             `json:"episode_number"`
-	SeasonID       uuid.UUID          `json:"season_id"`
-	SeasonNumber   *int32             `json:"season_number"`
-	Status         string             `json:"status"`
-	PositionMs     int64              `json:"position_ms"`
-	Resumable      bool               `json:"resumable"`
-	LastActivityAt pgtype.Timestamptz `json:"last_activity_at"`
+	ID               uuid.UUID          `json:"id"`
+	Title            string             `json:"title"`
+	ThumbPath        *string            `json:"thumb_path"`
+	DurationMs       *int64             `json:"duration_ms"`
+	EpisodeNumber    *int32             `json:"episode_number"`
+	EpisodeNumberEnd *int32             `json:"episode_number_end"`
+	SeasonID         uuid.UUID          `json:"season_id"`
+	SeasonNumber     *int32             `json:"season_number"`
+	Status           string             `json:"status"`
+	PositionMs       int64              `json:"position_ms"`
+	Resumable        bool               `json:"resumable"`
+	LastActivityAt   pgtype.Timestamptz `json:"last_activity_at"`
 }
 
 // Every live episode of a show (container = the show) or of one season
@@ -389,7 +429,13 @@ type ListUpNextEpisodesRow struct {
 // be picked. Flat-layout episodes (no season row) are not included: the Up
 // Next contract always names a season.
 func (q *Queries) ListUpNextEpisodes(ctx context.Context, arg ListUpNextEpisodesParams) ([]ListUpNextEpisodesRow, error) {
-	rows, err := q.db.Query(ctx, listUpNextEpisodes, arg.UserID, arg.ContainerID, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listUpNextEpisodes,
+		arg.UserID,
+		arg.ContainerID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -403,6 +449,7 @@ func (q *Queries) ListUpNextEpisodes(ctx context.Context, arg ListUpNextEpisodes
 			&i.ThumbPath,
 			&i.DurationMs,
 			&i.EpisodeNumber,
+			&i.EpisodeNumberEnd,
 			&i.SeasonID,
 			&i.SeasonNumber,
 			&i.Status,
@@ -429,6 +476,7 @@ WITH targets AS (
       AND ea.container_id = $4::uuid
       AND ($5::int IS NULL
            OR content_rating_rank(ea.content_rating) <= $5::int)
+      AND media_item_id_labels_permitted(ea.episode_id, $6::text[], $7::text[])
     UNION ALL
     SELECT m.id AS media_id
     FROM media_items m
@@ -453,6 +501,8 @@ type MarkWatchStateForTargetParams struct {
 	TargetType    string    `json:"target_type"`
 	TargetID      uuid.UUID `json:"target_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 // Manual watch marks, Continue Watching dismissals, Next Up, and the
@@ -483,6 +533,8 @@ func (q *Queries) MarkWatchStateForTarget(ctx context.Context, arg MarkWatchStat
 		arg.TargetType,
 		arg.TargetID,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err
@@ -513,7 +565,8 @@ WHERE library_id = $1::uuid
   AND ($5::int IS NULL OR year <= $5)
   AND ($6::numeric IS NULL OR rating >= $6)
   AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
-  AND ($8::text IS NULL OR media_watch_bucket($9::uuid, id, type, $7::int) = $8::text)
+  AND media_item_labels_permitted(labels, parent_id, $8::text[], $9::text[])
+  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $7::int) = $10::text)
 ORDER BY random()
 LIMIT 1
 `
@@ -526,6 +579,8 @@ type PickRandomLibraryItemParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -548,6 +603,8 @@ func (q *Queries) PickRandomLibraryItem(ctx context.Context, arg PickRandomLibra
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)

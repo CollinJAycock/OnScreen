@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import LabelEditor from '$lib/components/LabelEditor.svelte';
   import {
-    api, userApi, inviteApi, profileApi, settingsApi,
+    api, userApi, inviteApi, profileApi, settingsApi, labelApi,
     type User, type UserMeta, type UserLibraryAccess, type WatchLimitInfo,
     type RequestPermissions, type RequestSettings
   } from '$lib/api';
   import { toast } from '$lib/stores/toast';
+  import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import {
     parseUserQuota, parseDefaultQuota, parseWindowDays, quotaDefaultsFrom,
     quotaPlaceholder, quotaInputValue, limitsSummary, windowHint,
@@ -57,6 +59,14 @@
   let startTime = '08:00';
   let endTime = '20:00';
 
+  // Label restriction (blocked / allowed labels). Applies to the user and
+  // every managed profile beneath it; saving signs them out.
+  let labelsTarget: User | null = null;
+  let labelsSaving = false;
+  let blockedLabels: string[] = [];
+  let allowedLabels: string[] = [];
+  let labelSuggestions: string[] = [];
+
   // Streaming caps (admin-enforced per-user)
   let capsTarget: User | null = null;
   let capsLoading = false;
@@ -65,6 +75,12 @@
   let concurrentVal = 2;
   let bitrateEnabled = false;
   let bitrateMbps = 8;
+  // Internet-only cap: held to streams from outside the home network.
+  let remoteBitrateEnabled = false;
+  let remoteBitrateMbps = 4;
+
+  // Signed-in devices dialog.
+  let devicesTarget: User | null = null;
 
   // Request auto-approval. Per-user toggles save on click like the admin
   // toggle; ids of rows mid-save block a second click racing the first PUT.
@@ -493,6 +509,38 @@
     }
   }
 
+  async function openLabels(user: User) {
+    labelsTarget = user;
+    blockedLabels = [...(user.blocked_labels ?? [])];
+    allowedLabels = [...(user.allowed_labels ?? [])];
+    try {
+      labelSuggestions = (await labelApi.list()).map((l) => l.label);
+    } catch {
+      labelSuggestions = [];
+    }
+  }
+
+  async function saveLabels() {
+    if (!labelsTarget) return;
+    const target = labelsTarget;
+    labelsSaving = true;
+    try {
+      const saved = await userApi.setLabelRestrictions(target.id, {
+        blocked_labels: blockedLabels,
+        allowed_labels: allowedLabels
+      });
+      users = users.map((u) => u.id === target.id
+        ? { ...u, blocked_labels: saved.blocked_labels, allowed_labels: saved.allowed_labels }
+        : u);
+      toast.success(`Label restrictions updated for "${target.username}"`);
+      labelsTarget = null;
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Failed to update label restrictions');
+    } finally {
+      labelsSaving = false;
+    }
+  }
+
   async function openCaps(user: User) {
     capsTarget = user;
     capsLoading = true;
@@ -504,6 +552,10 @@
       bitrateMbps = c.max_stream_bitrate_kbps != null
         ? Math.round((c.max_stream_bitrate_kbps / 1000) * 10) / 10
         : 8;
+      remoteBitrateEnabled = c.max_remote_stream_bitrate_kbps != null;
+      remoteBitrateMbps = c.max_remote_stream_bitrate_kbps != null
+        ? Math.round((c.max_remote_stream_bitrate_kbps / 1000) * 10) / 10
+        : 4;
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Failed to load streaming caps');
       capsTarget = null;
@@ -518,7 +570,8 @@
     try {
       await userApi.setStreamingLimits(capsTarget.id, {
         max_concurrent_streams: concurrentEnabled ? Math.max(1, Math.round(concurrentVal)) : null,
-        max_stream_bitrate_kbps: bitrateEnabled ? Math.max(1, Math.round(bitrateMbps * 1000)) : null
+        max_stream_bitrate_kbps: bitrateEnabled ? Math.max(1, Math.round(bitrateMbps * 1000)) : null,
+        max_remote_stream_bitrate_kbps: remoteBitrateEnabled ? Math.max(1, Math.round(remoteBitrateMbps * 1000)) : null
       });
       toast.success(`Streaming caps updated for "${capsTarget.username}"`);
       capsTarget = null;
@@ -797,11 +850,13 @@
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLibraries, mu)}>Library access…</button>
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLimits, mu)}>Watch limits…</button>
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(openCaps, mu)}>Streaming caps…</button>
+          <button class="menu-item" role="menuitem" on:click={() => runRowAction(openLabels, mu)}>Labels…</button>
           <div class="menu-sep"></div>
         {/if}
         {#if !isSelf(mu)}
           <button class="menu-item" role="menuitem" on:click={() => runRowAction(viewAsUser, mu)}>View as user</button>
         {/if}
+        <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { devicesTarget = u; }, mu)}>Signed-in devices…</button>
         <button class="menu-item" role="menuitem" on:click={() => runRowAction((u) => { resetTarget = u; resetPassword = ''; }, mu)}>Reset password…</button>
         {#if !isSelf(mu)}
           <div class="menu-sep"></div>
@@ -1020,6 +1075,47 @@
     </div>
   {/if}
 
+  <!-- Label restriction (admin) dialog -->
+  {#if labelsTarget}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="overlay" on:click={() => labelsTarget = null}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="dialog" role="dialog" aria-label="Label restrictions" tabindex="-1" on:click|stopPropagation>
+        <h2>Labels</h2>
+        <p>Limit what <strong>{labelsTarget.username}</strong> sees by the labels on titles (set on a title's page, or with "Add label…" in a library selection). A label on a show covers its episodes. Also applies to their managed profiles; saving signs them out so it takes effect at once.</p>
+        <div class="limit-section">
+          <span class="limit-label">Never show titles labelled</span>
+          <LabelEditor
+            labels={blockedLabels}
+            suggestions={labelSuggestions}
+            disabled={labelsSaving}
+            label="Blocked labels"
+            idSuffix="blocked"
+            on:change={(e) => blockedLabels = e.detail.labels}
+          />
+        </div>
+        <div class="limit-section">
+          <span class="limit-label">Only show titles labelled</span>
+          <LabelEditor
+            labels={allowedLabels}
+            suggestions={labelSuggestions}
+            disabled={labelsSaving}
+            label="Allowed labels"
+            idSuffix="allowed"
+            on:change={(e) => allowedLabels = e.detail.labels}
+          />
+          <p class="limit-hint">Leave empty to allow everything not blocked. When set, unlabelled titles are hidden too.</p>
+        </div>
+        <div class="dialog-actions">
+          <button class="btn-cancel" on:click={() => labelsTarget = null}>Cancel</button>
+          <button class="btn-save" disabled={labelsSaving} on:click={saveLabels}>
+            {labelsSaving ? 'Saving...' : 'Save'}
+          </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
   <!-- Streaming caps (admin) dialog -->
   {#if capsTarget}
     <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
@@ -1057,12 +1153,53 @@
               <p class="limit-hint">A direct play above this is re-encoded down; transcodes are capped to it.</p>
             {/if}
           </div>
+
+          <div class="limit-section">
+            <label class="limit-toggle">
+              <input type="checkbox" bind:checked={remoteBitrateEnabled} />
+              <span>Limit internet streaming bitrate</span>
+            </label>
+            {#if remoteBitrateEnabled}
+              <div class="limit-field">
+                <input type="number" min="0.5" max="120" step="0.5" bind:value={remoteBitrateMbps} />
+                <span class="unit">Mbps max away from home</span>
+              </div>
+            {/if}
+            <p class="limit-hint">Applies only when they stream from outside your home network, together with the server-wide internet limit (Settings ▸ Transcode) — the lowest wins. Music is never limited.</p>
+          </div>
         {/if}
         <div class="dialog-actions">
           <button class="btn-cancel" on:click={() => capsTarget = null}>Cancel</button>
           <button class="btn-save" disabled={capsLoading || capsSaving} on:click={saveCaps}>
             {capsSaving ? 'Saving...' : 'Save'}
           </button>
+        </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Signed-in devices (admin) dialog -->
+  {#if devicesTarget}
+    {@const target = devicesTarget}
+    <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+    <div class="overlay" on:click={() => devicesTarget = null}>
+      <!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions -->
+      <div class="dialog" on:click|stopPropagation>
+        <h2>Signed-in devices</h2>
+        <p>Devices signed in as <strong>{target.username}</strong>. Signing one out leaves the others alone.</p>
+        <SignedInDevices
+          load={() => userApi.listSessions(target.id)}
+          revoke={(sid) => userApi.revokeSession(target.id, sid)}
+          revokeAll={() => isSelf(target) ? userApi.revokeMyOtherSessions() : userApi.revokeAllSessions(target.id)}
+          revokeAllLabel={isSelf(target) ? 'Sign out everywhere else' : 'Sign out everywhere'}
+          revokeAllConfirm={isSelf(target)
+            ? 'Sign out every other device signed in to your account? This browser stays signed in.'
+            : `Sign ${target.username} out on every device? Streams in progress stop.`}
+          keepCurrent={isSelf(target)}
+          emptyText="Not signed in anywhere."
+        />
+        <div class="dialog-actions">
+          <button class="btn-cancel" on:click={() => devicesTarget = null}>Close</button>
         </div>
       </div>
     </div>
@@ -1329,6 +1466,7 @@
   .limit-field input[type="number"] { width: 80px; }
   .limit-field input[type="time"] { width: auto; }
   .limit-field .unit { font-size: 0.78rem; color: var(--text-muted); }
+  .limit-label { display: block; font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 0.4rem; }
   .dialog .limit-hint { font-size: 0.7rem; color: var(--text-muted); margin: 0.5rem 0 0 1.6rem; }
 
   .library-list {
@@ -1366,17 +1504,19 @@
     display: flex; align-items: center; justify-content: center;
   }
   .dialog {
-    background: #16161f; border: 1px solid var(--border-strong);
+    /* Theme surface: the text inside uses theme colours, so a fixed dark
+       background hid it in light mode. */
+    background: var(--bg-elevated); border: 1px solid var(--border-strong);
     border-radius: 12px; padding: 1.5rem; max-width: 400px; width: 90%;
   }
   .dialog h2 { font-size: 1rem; font-weight: 600; color: var(--text-primary); margin: 0 0 0.6rem 0; }
-  .dialog p { font-size: 0.85rem; color: #88889a; margin: 0 0 1.25rem 0; line-height: 1.5; }
+  .dialog p { font-size: 0.85rem; color: var(--text-muted); margin: 0 0 1.25rem 0; line-height: 1.5; }
   .dialog strong { color: var(--text-primary); }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 0.5rem; }
   .btn-cancel {
     padding: 0.4rem 0.8rem; background: var(--border);
     border: 1px solid var(--border-strong); border-radius: 7px;
-    color: #ccccd8; font-size: 0.8rem; cursor: pointer; transition: background 0.15s;
+    color: var(--text-secondary); font-size: 0.8rem; cursor: pointer; transition: background 0.15s;
   }
   .btn-cancel:hover { background: var(--border-strong); }
   .btn-confirm-delete {

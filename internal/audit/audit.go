@@ -28,6 +28,14 @@ const (
 	// role_change so an operator can audit parental-control edits —
 	// loosening a child's ceiling is exactly the action worth reviewing.
 	ActionUserRatingChange = "user.rating_change"
+	// ActionUserLabelRestrictionChange records a change to a user's (and its
+	// managed profiles') blocked / allowed labels — a parental-control edit
+	// like the rating ceiling, audited separately so it can be reviewed.
+	ActionUserLabelRestrictionChange = "user.label_restriction_change"
+	// ActionItemLabelsChange records admin label edits on items (one item or
+	// a bulk apply). Labels drive per-user restrictions, so adding or
+	// removing one changes who can see the item.
+	ActionItemLabelsChange = "item.labels_change"
 	ActionPasswordReset    = "user.password_reset"
 	ActionLibraryCreate    = "library.create"
 	ActionLibraryDelete    = "library.delete"
@@ -48,6 +56,9 @@ const (
 	// from a re-match. Distinct action so retention/alerting on
 	// destructive ops actually works.
 	ActionItemDelete = "item.delete"
+	// ActionItemEpisodeOrder is an admin setting (or clearing) a show's
+	// episode order — aired / DVD / absolute — on /items/{id}/episode-order.
+	ActionItemEpisodeOrder = "item.episode_order"
 
 	// Webhook CRUD audit actions. Webhooks carry an encrypted secret
 	// and an outbound URL — both privileged config — so create/update/
@@ -119,7 +130,25 @@ const (
 	// server-log line, so an operator asked "why was I logged out everywhere?"
 	// found nothing on the audit page to answer with. user_id and target are
 	// the affected user, not an actor: no admin did this.
+	//
+	// The same action also records the two REQUESTED bulk sign-outs, where
+	// someone did act: reason user_signed_out_others ("sign out everywhere
+	// else" from the signed-in devices list) and admin_signed_out_all (an
+	// admin signing a user out on every device). For those, user_id is the
+	// actor and target the affected user, as for every other admin action.
 	ActionSessionsRevoked = "auth.sessions_revoked"
+
+	// ActionSessionRevoked records one sign-in (refresh session) being
+	// revoked from a signed-in devices list — by its owner or by an admin.
+	// user_id is the actor, target the session owner; detail carries the
+	// session_id, its device label, whether an admin did it (by_admin) and
+	// whether it was the actor's own current session (current, i.e. a
+	// sign-out).
+	ActionSessionRevoked = "auth.session_revoked"
+
+	// ActionUserStreamLimitsChange records an admin changing a user's
+	// streaming caps (concurrent streams, bitrate, internet bitrate).
+	ActionUserStreamLimitsChange = "user.streaming_limits_change"
 )
 
 // AuditDB is the minimal database interface for writing audit log entries.

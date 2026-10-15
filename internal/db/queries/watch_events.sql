@@ -105,5 +105,6 @@ JOIN media_items m ON m.id = e.media_id
 WHERE (e.next_at IS NULL OR (e.next_at - e.occurred_at) > INTERVAL '30 minutes')
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(m.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(m.labels, m.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY e.occurred_at DESC
 LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;

@@ -40,6 +40,8 @@ type mockItemMedia struct {
 	filesErr error
 	children []media.Item
 	childErr error
+	edits    []media.EditItemMetadataParams // EditItemMetadata calls
+	editErr  error
 }
 
 func (m *mockItemMedia) GetItem(_ context.Context, _ uuid.UUID) (*media.Item, error) {
@@ -70,8 +72,17 @@ func (m *mockItemMedia) ListChildren(_ context.Context, _ uuid.UUID) ([]media.It
 func (m *mockItemMedia) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
 	return nil, media.ErrNotFound
 }
-func (m *mockItemMedia) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
-	return &media.Item{ID: p.ID, Title: p.Title, SortTitle: p.SortTitle, Summary: p.Summary, OriginallyAvailableAt: p.OriginallyAvailableAt}, nil
+func (m *mockItemMedia) EditItemMetadata(_ context.Context, p media.EditItemMetadataParams) (*media.Item, error) {
+	m.edits = append(m.edits, p)
+	if m.editErr != nil {
+		return nil, m.editErr
+	}
+	typ := ""
+	if m.item != nil {
+		typ = m.item.Type
+	}
+	return &media.Item{ID: p.ID, Type: typ, Title: p.Title, SortTitle: p.SortTitle, Summary: p.Summary,
+		OriginallyAvailableAt: p.OriginallyAvailableAt, LockedFields: p.Lock}, nil
 }
 func (m *mockItemMedia) RenameItemFile(_ context.Context, _ uuid.UUID, _ string) (string, bool, error) {
 	return "", false, nil

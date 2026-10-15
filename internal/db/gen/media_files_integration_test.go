@@ -273,3 +273,73 @@ func TestMediaFile_Integration_DynamicRange(t *testing.T) {
 		t.Fatalf("CreateMediaFile RETURNING dv_profile = %v (err %v), want 7", withProfile.DvProfile, err)
 	}
 }
+
+// TestMediaFile_Integration_Naming pins edition / part_index (migration
+// 00045): written on create and by the full technical update, read back by
+// every full-row read, and rewritten by the narrow naming update the scanner
+// uses for unchanged files — which, like the dynamic-range re-read, keeps the
+// integrity verdict and scanned_at.
+func TestMediaFile_Integration_Naming(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	q := gen.New(pool)
+
+	libID := seedLibrary(ctx, t, q, "naming")
+	itemID := seedMediaItem(ctx, t, q, libID, "Stacked Movie")
+
+	cd1, err := q.CreateMediaFile(ctx, gen.CreateMediaFileParams{
+		MediaItemID: itemID, FilePath: "/media/Movie (2001) - Director's Cut cd1.mkv", FileSize: 1,
+		Edition: integStrPtr("Director's Cut"), PartIndex: dvPtr(1),
+	})
+	if err != nil {
+		t.Fatalf("CreateMediaFile: %v", err)
+	}
+	if cd1.Edition == nil || *cd1.Edition != "Director's Cut" || cd1.PartIndex == nil || *cd1.PartIndex != 1 {
+		t.Fatalf("RETURNING edition=%v part=%v", cd1.Edition, cd1.PartIndex)
+	}
+
+	// A row scanned before the migration: both NULL, then healed by name.
+	old, err := q.CreateMediaFile(ctx, gen.CreateMediaFileParams{
+		MediaItemID: itemID, FilePath: "/media/Movie (2001) cd2.mkv", FileSize: 1,
+	})
+	if err != nil {
+		t.Fatalf("CreateMediaFile: %v", err)
+	}
+	if old.Edition != nil || old.PartIndex != nil {
+		t.Fatalf("unset naming = %v / %v, want NULL", old.Edition, old.PartIndex)
+	}
+	if err := q.UpdateMediaFileIntegrity(ctx, gen.UpdateMediaFileIntegrityParams{ID: old.ID, IntegrityStatus: "ok"}); err != nil {
+		t.Fatalf("UpdateMediaFileIntegrity: %v", err)
+	}
+	before, _ := q.GetMediaFile(ctx, old.ID)
+	if err := q.UpdateMediaFileNaming(ctx, gen.UpdateMediaFileNamingParams{ID: old.ID, PartIndex: dvPtr(2)}); err != nil {
+		t.Fatalf("UpdateMediaFileNaming: %v", err)
+	}
+	healed, err := q.GetMediaFile(ctx, old.ID)
+	if err != nil || healed.PartIndex == nil || *healed.PartIndex != 2 || healed.Edition != nil {
+		t.Fatalf("after naming update part=%v edition=%v (err %v)", healed.PartIndex, healed.Edition, err)
+	}
+	if healed.IntegrityStatus != "ok" || !healed.ScannedAt.Time.Equal(before.ScannedAt.Time) {
+		t.Fatalf("naming update must keep the verdict and scanned_at: %q, %v -> %v",
+			healed.IntegrityStatus, before.ScannedAt.Time, healed.ScannedAt.Time)
+	}
+
+	// The full technical update writes naming too (and may clear it).
+	if err := q.UpdateMediaFileTechnicalMetadata(ctx, gen.UpdateMediaFileTechnicalMetadataParams{
+		ID: cd1.ID, Edition: integStrPtr("Extended"),
+	}); err != nil {
+		t.Fatalf("UpdateMediaFileTechnicalMetadata: %v", err)
+	}
+	got, err := q.GetMediaFileByPath(ctx, cd1.FilePath)
+	if err != nil || got.Edition == nil || *got.Edition != "Extended" || got.PartIndex != nil {
+		t.Fatalf("after technical update edition=%v part=%v (err %v)", got.Edition, got.PartIndex, err)
+	}
+	forItem, err := q.ListMediaFilesForItem(ctx, itemID)
+	if err != nil || len(forItem) != 2 {
+		t.Fatalf("ListMediaFilesForItem: %d files (err %v)", len(forItem), err)
+	}
+	inLib, err := q.ListActiveFilesForLibrary(ctx, libID)
+	if err != nil || len(inLib) != 2 {
+		t.Fatalf("ListActiveFilesForLibrary: %d files (err %v)", len(inLib), err)
+	}
+}

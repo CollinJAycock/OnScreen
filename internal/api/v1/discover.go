@@ -317,6 +317,8 @@ func (h *DiscoverHandler) lookupLibrary(ctx context.Context, mediaType string, i
 		TmdbIds:       ids,
 		LibraryIds:    libIDs,
 		MaxRatingRank: maxRank,
+		BlockedLabels: ctxLabels(ctx).BlockedArg(),
+		AllowedLabels: ctxLabels(ctx).AllowedArg(),
 	})
 	if err != nil {
 		// Log and degrade — Discover still returns TMDB rows without the

@@ -1403,6 +1403,18 @@ export interface User {
   // unlimited.
   request_quota_movies?: number | null;
   request_quota_tv?: number | null;
+  // Label restriction: never shown items carrying a blocked label; when
+  // allowed_labels is non-empty, shown only items carrying one of them.
+  // Older servers omit both — treat absent as [].
+  blocked_labels?: string[];
+  allowed_labels?: string[];
+}
+
+/** Body and response of PUT /users/{id}/label-restrictions. An omitted list
+ *  keeps its stored value; [] clears it. */
+export interface LabelRestrictions {
+  blocked_labels?: string[];
+  allowed_labels?: string[];
 }
 
 /** Body of PUT /users/{id}/request-permissions. Every field is optional (at
@@ -1449,6 +1461,10 @@ export const userApi = {
     api.put<void>('/users/me/hub-layout', { rows }),
   setContentRating: (userId: string, maxContentRating: string | null) =>
     api.put<void>(`/users/${userId}/content-rating`, { max_content_rating: maxContentRating }),
+  /** Blocked / allowed labels for the user and its managed profiles; signs
+   *  them out so the change applies at once. Returns the stored lists. */
+  setLabelRestrictions: (userId: string, r: LabelRestrictions) =>
+    api.put<Required<LabelRestrictions>>(`/users/${userId}/label-restrictions`, r),
   getLibraries: (userId: string) =>
     api.get<UserLibraryAccess[]>(`/users/${userId}/libraries`),
   setLibraries: (userId: string, libraryIds: string[]) =>
@@ -1462,6 +1478,24 @@ export const userApi = {
     api.get<StreamingLimits>(`/users/${userId}/streaming-limits`),
   setStreamingLimits: (userId: string, limits: StreamingLimits) =>
     api.put<void>(`/users/${userId}/streaming-limits`, limits),
+  /** Signed-in devices: the caller's own sign-ins (current one flagged). */
+  listMySessions: () =>
+    api.get<SignedInSession[]>('/users/me/sessions'),
+  /** Sign one of the caller's other devices out. */
+  revokeMySession: (sessionId: string) =>
+    api.del(`/users/me/sessions/${sessionId}`),
+  /** Sign out everywhere except this device. */
+  revokeMyOtherSessions: () =>
+    api.del('/users/me/sessions'),
+  /** Admin: a user's signed-in devices. */
+  listSessions: (userId: string) =>
+    api.get<SignedInSession[]>(`/users/${userId}/sessions`),
+  /** Admin: sign one of a user's devices out. */
+  revokeSession: (userId: string, sessionId: string) =>
+    api.del(`/users/${userId}/sessions/${sessionId}`),
+  /** Admin: sign a user out on every device. */
+  revokeAllSessions: (userId: string) =>
+    api.del(`/users/${userId}/sessions`),
   /** Whether the target user's movie / TV requests skip the admin queue. */
   setRequestPermissions: (userId: string, perms: RequestPermissions) =>
     api.put<void>(`/users/${userId}/request-permissions`, perms),
@@ -1479,6 +1513,23 @@ export const userApi = {
 export interface StreamingLimits {
   max_concurrent_streams: number | null;
   max_stream_bitrate_kbps: number | null;
+  /** Internet-only bitrate cap; omitted on PUT = keep the stored value. */
+  max_remote_stream_bitrate_kbps?: number | null;
+}
+
+/** One sign-in (refresh session) on the signed-in devices list. */
+export interface SignedInSession {
+  id: string;
+  /** "Chrome on Windows", "Roku", … — empty for sign-ins made before devices
+   *  were named, until their next renewal. */
+  client_name: string;
+  platform?: string;
+  ip_address?: string;
+  created_at: string;
+  /** Approximate: sign-in or latest token renewal (about hourly in use). */
+  last_seen_at: string;
+  /** The sign-in this browser is using. */
+  current: boolean;
 }
 
 export interface WatchLimitInfo {
@@ -1618,12 +1669,18 @@ export interface Library {
   // Import movie.nfo <set> (and <tag>) groupings as manual collections.
   // Optional: servers before v2.6 don't send it.
   nfo_collections?: NFOCollectionsMode;
+  // The order the library's shows are numbered in unless a show sets its
+  // own. Optional: servers before v2.6 don't send it (aired).
+  episode_order?: EpisodeOrder;
   created_at: string;
   updated_at: string;
 }
 
 /** What a library imports from movie.nfo files as collections. */
 export type NFOCollectionsMode = 'off' | 'sets' | 'sets_and_tags';
+
+/** The order a show's episode files are numbered in. */
+export type EpisodeOrder = 'aired' | 'dvd' | 'absolute';
 
 // Per-library seek-bar thumbnail progress (admin). pending = not generated
 // yet, including the item generating right now; failed includes items with
@@ -2025,6 +2082,11 @@ export interface TranscodeConfig {
   abr: boolean;
   abr_max_height: number;        // 0 = no hard ceiling
   abr_auto_max_height: number;   // soft ceiling for AUTO playback
+  // Internet streaming limit (kbps) for clients outside the home network;
+  // 0 / absent = unlimited. Read live, no restart.
+  remote_max_bitrate_kbps?: number;
+  /** Extra CIDRs treated as the home network (besides private / Tailscale). */
+  local_networks?: string[];
 }
 
 export interface WorkerCredentials {
@@ -2291,7 +2353,16 @@ export interface ItemFile {
   resolution_h?: number;
   bitrate?: number;
   hdr_type?: string;
+  // This file's own length — for one part of a multi-part movie, that
+  // part's. The item's duration_ms is the whole movie's.
   duration_ms?: number;
+  // Edition label from the file name ("Director's Cut", "Extended",
+  // "1080p"). Undefined when the name gives none.
+  edition?: string;
+  // 1-based part number when this file is one part of a multi-part movie
+  // ("cd1" + "cd2"). The server streams all parts as one movie and never
+  // direct-plays a part. Undefined for every other file.
+  part_index?: number;
   faststart: boolean;
   // Video bit depth (8/10/12) of the primary video stream, from pix_fmt.
   // Distinct from bit_depth (audio). Undefined until the file is (re)probed.
@@ -2355,6 +2426,11 @@ export interface ItemDetail {
   parent_id?: string;
   grandparent_id?: string;
   index?: number;
+  // Episodes: the last episode a multi-episode file covers ("S01E01-E02"
+  // → index 1, index_end 2). Absent for a single episode.
+  index_end?: number;
+  // Shows: the show's own episode order. Absent = follows the library.
+  episode_order?: EpisodeOrder;
   view_offset_ms: number;
   // Playable videos only: the caller's watch state (manual marks included).
   watch_state?: 'watched' | 'in_progress' | 'unwatched';
@@ -2397,6 +2473,47 @@ export interface ItemDetail {
   collection?: ItemCollectionRef;
   // Movies and shows: the manual (admin-curated) collections the item is in.
   collections?: ItemManualCollectionRef[];
+  // Pre-fill the admin metadata editor. sort_title is omitted when empty.
+  sort_title?: string;
+  tagline?: string;
+  // Metadata fields an admin edited, which refreshes leave alone. Older
+  // servers omit it.
+  locked_fields?: string[];
+  // The item's own admin labels (admins only; absent otherwise and when
+  // none). Per-user label restrictions match them.
+  labels?: string[];
+}
+
+// Body of PATCH /items/{id} for the admin metadata editor. Each field is
+// "set when present" and locked once set; strings clear with '', year and
+// rating with null. taken_at is the release date (YYYY-MM-DD).
+export interface MetadataEdit {
+  title?: string;
+  sort_title?: string;
+  original_title?: string;
+  summary?: string;
+  tagline?: string;
+  taken_at?: string;
+  year?: number | null;
+  rating?: number | null;
+  content_rating?: string;
+  genres?: string[];
+  unlock_fields?: string[];
+}
+
+export interface MetadataEditResult {
+  id: string;
+  title: string;
+  summary: string | null;
+  originally_available_at: string | null;
+  sort_title: string;
+  original_title: string | null;
+  tagline: string | null;
+  year: number | null;
+  rating: number | null;
+  content_rating: string | null;
+  genres: string[];
+  locked_fields: string[];
 }
 
 export interface FavoriteItem {
@@ -2420,6 +2537,8 @@ export interface ChildItem {
   poster_path?: string;
   thumb_path?: string;
   index?: number;
+  // Episodes: last episode of a multi-episode file. Absent = single episode.
+  index_end?: number;
   // Tracks: disc within the album (index is the track on that disc).
   // Absent = no disc tag, i.e. disc 1. Children arrive in (disc, track) order.
   disc_number?: number;
@@ -2567,6 +2686,32 @@ export interface CollectionItem {
   poster_path?: string;
   duration_ms?: number;
   position?: number;
+}
+
+// ── Labels (admin) ───────────────────────────────────────────────────────────
+
+export interface LabelInUse {
+  label: string;
+  item_count: number;
+}
+
+/** Admin labels on items — what per-user label restrictions match. The
+ *  server lower-cases labels and collapses whitespace. */
+export const labelApi = {
+  /** Every label on a live item, with its item count (autocomplete). */
+  list: async () => (await api.requestList<LabelInUse>('/labels')).items,
+  /** Replace one item's labels; returns the stored (normalised) list. */
+  setItem: async (itemId: string, labels: string[]) =>
+    (await api.put<{ labels: string[] }>(`/items/${itemId}/labels`, { labels })).labels,
+  /** Add and/or remove labels on up to 500 items. */
+  apply: (itemIds: string[], change: { add?: string[]; remove?: string[] }) =>
+    api.post<{ added: number; removed: number }>('/labels/apply', { item_ids: itemIds, ...change })
+};
+
+/** Mirror of the server's itemlabel.Normalize, so chips show what will be
+ *  stored: lower-case, whitespace collapsed and trimmed. */
+export function normalizeLabel(s: string): string {
+  return s.trim().split(/\s+/).filter(Boolean).join(' ').toLowerCase();
 }
 
 export const collectionApi = {
@@ -2767,6 +2912,9 @@ export interface ManagedProfile {
   // — set explicit grants via userApi.setLibraries(profileId, [...])
   // to narrow what the profile can see.
   inherit_library_access: boolean;
+  // Label restriction, inherited from the owner at creation.
+  blocked_labels?: string[];
+  allowed_labels?: string[];
 }
 
 export const profileApi = {
@@ -2807,6 +2955,10 @@ export const itemApi = {
     api.get<PosterCandidate[]>(`/items/${id}/posters?tmdb_id=${tmdbId}`),
   applyPoster: (id: string, url: string) =>
     api.post<void>(`/items/${id}/poster`, { url }),
+  // Admin: a show's own episode order; null follows the library's again.
+  // The server re-enriches the show's episodes when it changes.
+  setEpisodeOrder: (id: string, order: EpisodeOrder | null) =>
+    api.put<{ id: string; episode_order: EpisodeOrder | null }>(`/items/${id}/episode-order`, { episode_order: order }),
   // updateMetadata edits the title / summary / taken-at on items the
   // metadata agent doesn't enrich (home_video + photo). Each field is
   // "set when present" — pass undefined to leave a field unchanged,
@@ -2816,6 +2968,11 @@ export const itemApi = {
   // (year, month).
   updateMetadata: (id: string, fields: { title?: string; summary?: string; taken_at?: string }) =>
     api.patch<{ id: string; title: string; summary: string | null; originally_available_at: string | null }>(`/items/${id}`, fields),
+  // editMetadata is the same endpoint for the movie / show / season /
+  // episode editor: the fields it sets are locked against refreshes, and
+  // unlock_fields releases locks.
+  editMetadata: (id: string, fields: MetadataEdit) =>
+    api.patch<MetadataEditResult>(`/items/${id}`, fields),
   remove: (id: string) => api.delete(`/items/${id}`),
   // Cross-device transfer — list distinct clients the user has
   // recently scrobbled from (drives the "Play on…" picker), and
@@ -3625,6 +3782,8 @@ export interface HubItem {
   /** Episode tiles in Next Up: position within the show. */
   season_number?: number;
   episode_number?: number;
+  /** Last episode of a multi-episode file; absent for a single episode. */
+  episode_number_end?: number;
   show_id?: string;
 }
 
@@ -3683,6 +3842,7 @@ export interface UpNext {
     season_id: string;
     season_number: number;
     episode_number: number;
+    episode_number_end?: number;
     view_offset_ms?: number;
     duration_ms?: number;
     thumb_path?: string;
@@ -3762,7 +3922,7 @@ export const transcodeApi = {
   // Currently consumed in shadow mode (compared against the local decision) —
   // see the watch page. docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
-    api.post<{ decision: string; file_id: string }>(
+    api.post<{ decision: string; file_id: string; reason?: string; max_bitrate_kbps?: number }>(
       `/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)

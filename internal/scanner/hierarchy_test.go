@@ -60,6 +60,20 @@ type mockMediaService struct {
 	// SetFileDynamicRange calls, in order; dynamicRangeErr fails them.
 	dynamicRangeCalls []dynamicRangeCall
 	dynamicRangeErr   error
+
+	// SetEpisodeIndexEnd calls, in order.
+	indexEndCalls []indexEndCall
+	// filesByItem, when set, is what GetFiles returns per item (nil
+	// otherwise, as before).
+	filesByItem map[uuid.UUID][]media.File
+	// SetFileNaming calls, in order.
+	namingCalls []namingCall
+}
+
+type namingCall struct {
+	id        uuid.UUID
+	edition   *string
+	partIndex *int
 }
 
 type dynamicRangeCall struct {
@@ -131,6 +145,8 @@ func (m *mockMediaService) CreateOrUpdateFile(_ context.Context, p media.CreateF
 		MediaItemID: p.MediaItemID,
 		FilePath:    p.FilePath,
 		FileSize:    p.FileSize,
+		Edition:     p.Edition,
+		PartIndex:   p.PartIndex,
 		Status:      "active",
 	}
 	m.files[f.ID] = f
@@ -237,6 +253,32 @@ func (m *mockMediaService) UpdateItemTitle(_ context.Context, id uuid.UUID, titl
 	}
 	return nil
 }
+
+// SetEpisodeIndexEnd records the call and applies it to episode rows only,
+// leaving an unchanged row alone, like the SQL.
+func (m *mockMediaService) SetEpisodeIndexEnd(_ context.Context, id uuid.UUID, indexEnd *int) (bool, error) {
+	m.indexEndCalls = append(m.indexEndCalls, indexEndCall{id: id, end: indexEnd})
+	it, ok := m.items[id]
+	if !ok || it.Type != "episode" {
+		return false, nil
+	}
+	if (it.IndexEnd == nil) == (indexEnd == nil) && (indexEnd == nil || *it.IndexEnd == *indexEnd) {
+		return false, nil
+	}
+	if indexEnd == nil {
+		it.IndexEnd = nil
+	} else {
+		v := *indexEnd
+		it.IndexEnd = &v
+	}
+	return true, nil
+}
+
+type indexEndCall struct {
+	id  uuid.UUID
+	end *int
+}
+
 func (m *mockMediaService) SetItemKind(_ context.Context, _ uuid.UUID, _ string) error {
 	return nil
 }
@@ -245,11 +287,21 @@ func (m *mockMediaService) SetFileDynamicRange(_ context.Context, id uuid.UUID, 
 	m.dynamicRangeCalls = append(m.dynamicRangeCalls, dynamicRangeCall{id: id, hdrType: hdrType, dvProfile: dvProfile})
 	return m.dynamicRangeErr
 }
+func (m *mockMediaService) SetFileNaming(_ context.Context, id uuid.UUID, edition *string, partIndex *int) error {
+	m.namingCalls = append(m.namingCalls, namingCall{id: id, edition: edition, partIndex: partIndex})
+	if f, ok := m.files[id]; ok {
+		f.Edition, f.PartIndex = edition, partIndex
+	}
+	return nil
+}
 func (m *mockMediaService) MarkMissing(_ context.Context, _ uuid.UUID) error           { return nil }
 func (m *mockMediaService) DeleteFile(_ context.Context, _ uuid.UUID) error            { return nil }
 func (m *mockMediaService) SoftDeleteItemIfEmpty(_ context.Context, _ uuid.UUID) error { return nil }
 func (m *mockMediaService) RestoreItemAncestry(_ context.Context, _ uuid.UUID) error   { return nil }
-func (m *mockMediaService) GetFiles(_ context.Context, _ uuid.UUID) ([]media.File, error) {
+func (m *mockMediaService) GetFiles(_ context.Context, itemID uuid.UUID) ([]media.File, error) {
+	if m.filesByItem != nil {
+		return m.filesByItem[itemID], nil
+	}
 	return nil, nil
 }
 func (m *mockMediaService) ListActiveFilesForLibrary(_ context.Context, _ uuid.UUID) ([]media.File, error) {

@@ -8,6 +8,7 @@ import (
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/dbconv"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // LibraryParentDB is the optional title lookup behind parent_title on the
@@ -26,10 +27,10 @@ func (h *LibraryHandler) WithParentTitles(db LibraryParentDB) *LibraryHandler {
 // attachParentTitles fills parent_title on the rows of one listing page that
 // have a parent (albums, music videos, seasons, … listed via ?type=). A
 // top-level listing has no parents and makes no query. maxRank is the
-// caller's rating ceiling, which hides a parent above it just as the listing
-// hides rows above it. Failures only drop the field — the listing itself
+// caller's rating ceiling (labels their label restriction), which hides a
+// parent above it just as the listing hides rows above it. Failures only drop the field — the listing itself
 // already succeeded.
-func (h *LibraryHandler) attachParentTitles(ctx context.Context, maxRank *int, items []media.Item, out []MediaItemResponse) {
+func (h *LibraryHandler) attachParentTitles(ctx context.Context, maxRank *int, labels itemlabel.Filter, items []media.Item, out []MediaItemResponse) {
 	if h.parentDB == nil {
 		return
 	}
@@ -50,6 +51,7 @@ func (h *LibraryHandler) attachParentTitles(ctx context.Context, maxRank *int, i
 	}
 	rows, err := h.parentDB.ListMediaItemTitles(ctx, gen.ListMediaItemTitlesParams{
 		Ids: ids, MaxRatingRank: dbconv.IntPtrToInt32Ptr(maxRank),
+		BlockedLabels: labels.BlockedArg(), AllowedLabels: labels.AllowedArg(),
 	})
 	if err != nil {
 		h.logger.WarnContext(ctx, "library items: parent titles", "err", err)

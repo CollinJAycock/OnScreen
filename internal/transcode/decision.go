@@ -188,6 +188,23 @@ func Decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 	return DecisionTranscode
 }
 
+// ForStack adjusts Decide's verdict for a file that plays as one part of a
+// stacked movie. Direct play hands the client one file, which would end the
+// movie at the end of that part, so the stream has to come from the server:
+// a remux when the video can be stream-copied, else a transcode. Every other
+// verdict already goes through the server (or refuses) and stands.
+func ForStack(d Decision, file media.File) Decision {
+	if d != DecisionDirectPlay {
+		return d
+	}
+	videoAlias := canonicalVideoCodec(deref(file.VideoCodec))
+	audioOnly := videoAlias == "" && deref(file.AudioCodec) != ""
+	if audioOnly || videoAlias == "h264" || videoAlias == "h265" || videoAlias == "av1" {
+		return DecisionDirectStream
+	}
+	return DecisionTranscode
+}
+
 // ServerCaps holds server-level transcode limits (from hot-reloadable config).
 type ServerCaps struct {
 	MaxBitrateKbps int

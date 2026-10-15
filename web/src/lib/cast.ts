@@ -41,6 +41,9 @@ export interface CastableFile {
   audio_codec?: string | null;
   duration_seconds?: number | null;
   stream_token?: string | null;
+  // Set on one part of a multi-part movie: casting the file would play
+  // only that part, so it isn't offered.
+  part_index?: number | null;
 }
 
 /** Cast media-metadata-type constants. Values are part of the Cast
@@ -131,6 +134,7 @@ export function castMetadataType(item: CastableItem): number {
 export function isCastable(file: CastableFile): boolean {
   if (file.status !== 'active') return false;
   if (!file.stream_token) return false;
+  if (file.part_index != null) return false;
   return castContentType(file) !== '';
 }
 

@@ -960,26 +960,34 @@ paths:
                   data: { $ref: '#/components/schemas/ItemDetail' }
         '404': { $ref: '#/components/responses/NotFound' }
     patch:
-      summary: Update item metadata (admin)
+      summary: Edit item metadata and field locks (admin)
       tags: [Items]
       description: |
-        Admin-curated metadata editor. Intentionally narrow: only the
-        three fields below are editable, because they're the only
-        ones that don't have an external metadata agent owning them
-        (home_video and photo libraries have no TMDB-equivalent, so
-        the user owns title / summary / taken_at outright). Any other
-        field — genres, rating, fanart, **content_rating**, etc. —
-        belongs to the TMDB-enriched flow and has its own Fix Match
-        path. Unknown fields are rejected with HTTP 400
-        (DisallowUnknownFields) so a misnamed key like
-        `content_rating` returns a clear error instead of silently
-        being dropped.
+        Admin metadata editor for any item type. Each field is "set when
+        present"; omitted fields keep their stored value. Unknown fields
+        are rejected with HTTP 400 (DisallowUnknownFields) so a misnamed
+        key returns a clear error instead of silently being dropped.
+        Cast, artwork, tags and provider IDs are not editable here (Fix
+        Match, the poster picker).
 
-        For home_video items, setting `title` also renames the file
-        on disk (sanitized + collision-suffixed) and stamps the
-        file's mtime to `taken_at`, so user edits travel with the
-        file across tools (Finder, Photos.app, Plex/Jellyfin
-        scanners) instead of being locked into OnScreen's DB.
+        **Field locks** *(v2.6)*: every field the body sets is added to
+        the item's `locked_fields`, and scans, enrichment, refresh,
+        re-enrich and Fix Match leave locked fields as they are (Fix
+        Match still changes the provider IDs). A locked title also keeps
+        the sort title. `unlock_fields` releases locks; the stored value
+        stays until the next refresh rewrites it. Lock names:
+        `title`, `sort_title`, `original_title`, `year`,
+        `originally_available_at` (sent as `taken_at`), `summary`,
+        `tagline`, `rating`, `content_rating`, `genres`.
+
+        Setting `title` also sets the sort title to it, unless the body
+        carries `sort_title` or the item has a locked sort title; that
+        derived sort title isn't locked itself.
+
+        For home_video and photo items, setting `title` also renames the
+        file on disk (sanitized + collision-suffixed) and `taken_at`
+        stamps the file's mtime, so user edits travel with the file
+        across tools instead of being locked into OnScreen's DB.
       requestBody:
         required: true
         content:
@@ -987,32 +995,74 @@ paths:
             schema:
               type: object
               properties:
-                title:    { type: string, description: 'Empty string is rejected with 400.' }
+                title:    { type: string, maxLength: 500, description: 'Empty string is rejected with 400.' }
                 summary:  { type: string, description: 'Empty string clears the summary.' }
                 taken_at:
                   type: string
                   description: |
-                    RFC3339 timestamp ("2024-04-15T00:00:00Z") or
-                    bare YYYY-MM-DD. Empty string clears the date.
-                    For home_video items, this also drives the file
-                    mtime stamp so external tools sort by recording
-                    date rather than scan date.
+                    The item's date (originally_available_at): a photo's
+                    capture date, a home video's recording date, a movie's
+                    or episode's release date. RFC3339 timestamp
+                    ("2024-04-15T00:00:00Z") or bare YYYY-MM-DD. Empty
+                    string clears the date. For home_video items, this
+                    also drives the file mtime stamp so external tools
+                    sort by recording date rather than scan date.
+                sort_title:     { type: string, maxLength: 500, description: '*(v2.6)* Empty string resets the sort title to the title and unlocks it.' }
+                original_title: { type: string, maxLength: 500, description: '*(v2.6)* Empty string clears.' }
+                tagline:        { type: string, maxLength: 500, description: '*(v2.6)* Empty string clears.' }
+                year:           { type: integer, nullable: true, minimum: 1000, maximum: 9999, description: '*(v2.6)* null clears.' }
+                rating:         { type: number, nullable: true, minimum: 0, maximum: 10, description: '*(v2.6)* Critic score; null clears.' }
+                content_rating:
+                  type: string
+                  maxLength: 32
+                  description: |
+                    *(v2.6)* Empty string clears. Free text; a rating the
+                    parental ceiling doesn't recognise ranks as most
+                    restrictive, like an unrated item.
+                genres:
+                  type: array
+                  maxItems: 50
+                  items: { type: string, maxLength: 100 }
+                  description: '*(v2.6)* The full list (trimmed, case-insensitive repeats dropped); [] clears.'
+                unlock_fields:
+                  type: array
+                  items: { type: string }
+                  description: '*(v2.6)* Lock names to release. A field can''t be edited and unlocked in one request (400).'
       responses:
         '200':
-          description: Updated.
+          description: Updated. The edited fields and the resulting lock set.
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  data: { $ref: '#/components/schemas/ItemDetail' }
+                  data:
+                    type: object
+                    properties:
+                      id:                      { type: string, format: uuid }
+                      title:                   { type: string }
+                      summary:                 { type: string, nullable: true }
+                      originally_available_at: { type: string, format: date-time, nullable: true }
+                      sort_title:              { type: string, description: '*(v2.6)*' }
+                      original_title:          { type: string, nullable: true, description: '*(v2.6)*' }
+                      tagline:                 { type: string, nullable: true, description: '*(v2.6)*' }
+                      year:                    { type: integer, nullable: true, description: '*(v2.6)*' }
+                      rating:                  { type: number, nullable: true, description: '*(v2.6)*' }
+                      content_rating:          { type: string, nullable: true, description: '*(v2.6)*' }
+                      genres:                  { type: array, items: { type: string }, description: '*(v2.6)*' }
+                      locked_fields:           { type: array, items: { type: string }, description: '*(v2.6)*' }
         '400':
-          description: 'Invalid body, empty title, or unknown field.'
+          description: 'Invalid body, empty title, out-of-range value, unknown field or lock name.'
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: 'Another top-level item of the same type in the library already has this title and year.'
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
 
   /api/v1/items/{id}/children:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -1073,6 +1123,50 @@ paths:
       tags: [Items]
       responses:
         '202': { description: Enqueued. }
+
+  /api/v1/items/{id}/episode-order:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Set a show's episode order (admin)
+      description: |
+        v2.6. Picks the order a show's episode files are numbered in, overriding
+        the library's `episode_order`: `aired` (the provider's broadcast order),
+        `dvd` or `absolute`. `null` (or an empty string) clears the show's own
+        order so it follows the library again. When the order changes the show
+        is re-enriched in the background (children forced), so its episodes take
+        their titles, summaries and stills from the new order: TMDB episode
+        groups for a show matched on TMDB, TVDB season types for one matched on
+        TVDB. A show whose providers have no such order stays on aired order (a
+        warning is logged). Admin only; audit-logged as `item.episode_order`.
+      tags: [Items]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                episode_order:
+                  type: string
+                  nullable: true
+                  enum: [aired, dvd, absolute, null]
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      id:            { type: string, format: uuid }
+                      episode_order: { type: string, nullable: true, enum: [aired, dvd, absolute, null] }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { description: The item is not a show. }
 
   /api/v1/items/{id}/match/search:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -1830,6 +1924,64 @@ paths:
         '404': { description: Unknown item, no access, over the rating ceiling, or no such file. }
 
   # ── Transcode ──────────────────────────────────────────────────────────────
+  /api/v1/items/{id}/playback-decision:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    post:
+      summary: Server-authoritative play decision
+      tags: [Transcode]
+      description: |
+        Resolves the client's capability profile (`X-Client-Capabilities`,
+        legacy `supports_*` body flags folded in) against the file and
+        returns how to play it: `directPlay` (the direct file URL),
+        `directStream` (a video-copy remux transcode), `transcode`, or
+        `unsupported` / `damaged` (no playback path). Read-only; the
+        transcode start that follows re-validates everything.
+
+        **Internet streaming limit (v2.6).** When the caller is outside
+        the home network — judged from the trusted client IP, see
+        Settings ▸ Transcode `local_networks` — and the source bitrate
+        exceeds its cap (the lowest of the user's bitrate cap, the
+        user's internet cap and the server's internet limit), a
+        `directPlay` / `directStream` verdict becomes `transcode`, with
+        `reason: remote_bitrate_limit` (an internet limit binds) or
+        `user_bitrate_limit` (the user's own cap is lower) and the cap in
+        `max_bitrate_kbps`. Transcode start then clamps the output (and
+        every ABR rung) to that cap. Video only; LAN clients and clients
+        with no internet limit configured get exactly the verdict they
+        got before. Both fields are additive — a client that ignores
+        them still sees `transcode`. A client that skips this endpoint
+        and fetches `/media/stream` directly is not held to the limit.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                file_id: { type: string, format: uuid, description: 'Decide for this file of the item (default: the best file).' }
+      responses:
+        '200':
+          description: The decision.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      decision: { type: string, enum: [directPlay, directStream, transcode, unsupported, damaged] }
+                      file_id: { type: string, format: uuid }
+                      reason:
+                        type: string
+                        enum: [remote_bitrate_limit, user_bitrate_limit]
+                        description: Set only when the server overrode a capability verdict (v2.6).
+                      max_bitrate_kbps:
+                        type: integer
+                        description: The bitrate cap the transcode will be held to, with `reason` (v2.6).
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/items/{id}/transcode:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     post:
@@ -1853,6 +2005,14 @@ paths:
 
         Subject to the per-session `TranscodeStartLimit` rate limit
         (default 10/min, override via `OS_TRANSCODE_START_RATE_LIMIT_PER_MIN`).
+
+        Multi-part movies (v2.6): when the chosen file is one part of a
+        stacked movie (its `part_index` is set), the session streams every
+        part in order as one continuous movie starting from part 1,
+        whichever part's `file_id` was sent. `position_ms` and the stream
+        timeline are on that combined timeline, and the item's
+        `duration_ms` is its length. A damaged, missing or swapped part
+        refuses the whole session with the same codes a single file gets.
       requestBody:
         required: true
         content:
@@ -2769,6 +2929,77 @@ paths:
       responses:
         '204': { description: Saved. }
 
+  /api/v1/users/me/sessions:
+    get:
+      summary: Caller's signed-in devices
+      tags: [Users]
+      description: |
+        One row per sign-in (refresh session) that can still refresh: the
+        device label recorded at sign-in (the optional `X-Device-Name`
+        request header, else derived from the User-Agent), the trusted
+        client IP of its latest sign-in or refresh, and `current: true`
+        on the caller's own. `last_seen_at` is approximate — it moves on
+        sign-in and on each token refresh (about hourly while a device is
+        in use), not per request. PIN-switched profile tokens have no
+        session of their own and don't appear. v2.6.
+      responses:
+        '200':
+          description: Sessions, most recently used first.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SignedInSession' }
+    delete:
+      summary: Sign out everywhere else
+      tags: [Users]
+      description: |
+        Revokes every sign-in of the caller except the one making the
+        request. Their refresh tokens stop working at once, and their
+        access / asset / stream tokens are rejected on their next request
+        (tokens carry their sign-in's ID; tokens minted before v2.6 lapse
+        at their own expiry). 409 `CURRENT_SESSION_UNKNOWN` when the
+        caller's token doesn't name its sign-in (minted before v2.6 or a
+        PIN-switch token) — refresh and retry. Audited as
+        `auth.sessions_revoked` (reason `user_signed_out_others`).
+      responses:
+        '200':
+          description: How many sign-ins were revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      revoked: { type: integer }
+        '409':
+          description: The caller's current sign-in can't be identified.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+  /api/v1/users/me/sessions/{id}:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    delete:
+      summary: Sign one device out
+      tags: [Users]
+      description: |
+        Revokes one of the caller's sign-ins. Other devices are not
+        affected (no session-epoch bump). Revoking the caller's own
+        current sign-in is a sign-out: the auth cookies are cleared in the
+        response. A session ID that isn't the caller's is a 404. HLS
+        segment tokens are per user, not per sign-in, so a transcode
+        already streaming to the revoked device runs until it goes idle.
+        Audited as `auth.session_revoked`.
+      responses:
+        '204': { description: Revoked. }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /api/v1/users/me/scrobble:
     get:
       summary: Caller's scrobble links
@@ -3087,6 +3318,88 @@ paths:
                             error: { type: string }
         '400': { description: Invalid or too wide a date range. }
 
+  /api/v1/users/{id}/sessions:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A user's signed-in devices (admin)
+      tags: [Users]
+      description: Same rows as `GET /users/me/sessions`; `current` marks the admin's own sign-in when they list themselves. v2.6.
+      responses:
+        '200':
+          description: Sessions.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/SignedInSession' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    delete:
+      summary: Sign a user out everywhere (admin)
+      tags: [Users]
+      description: |
+        The full wipe a password reset does: every sign-in deleted, the
+        session epoch bumped (all outstanding tokens die), HLS segment
+        tokens revoked. Audited as `auth.sessions_revoked` (reason
+        `admin_signed_out_all`). v2.6.
+      responses:
+        '204': { description: Signed out. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/users/{id}/sessions/{sid}:
+    parameters:
+      - { $ref: '#/components/parameters/UUID' }
+      - { name: sid, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      summary: Sign one of a user's devices out (admin)
+      tags: [Users]
+      description: As `DELETE /users/me/sessions/{id}`, for any user. Audited as `auth.session_revoked` with `by_admin`. v2.6.
+      responses:
+        '204': { description: Revoked. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /api/v1/users/{id}/streaming-limits:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: A user's streaming caps (admin)
+      tags: [Users]
+      responses:
+        '200':
+          description: The caps; null = no cap.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/StreamingLimits' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+    put:
+      summary: Set a user's streaming caps (admin)
+      tags: [Users]
+      description: |
+        Admin-enforced ceilings, read at each play decision / transcode
+        start (no re-login needed). `max_concurrent_streams` and
+        `max_stream_bitrate_kbps` are replaced as sent (null / absent =
+        no cap). `max_remote_stream_bitrate_kbps` (v2.6) is optional:
+        absent keeps the stored value, null clears it. Unknown fields
+        are a 400. Audited as `user.streaming_limits_change`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/StreamingLimits' }
+      responses:
+        '204': { description: Saved. }
+        '400':
+          description: Negative cap or unknown field.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
   /api/v1/users/{id}/password:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
     put:
@@ -3149,6 +3462,178 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
         '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/users/{id}/label-restrictions:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    put:
+      summary: Set a user's label restriction (admin)
+      tags: [Users]
+      description: |
+        *(v2.6)* Per-user label filters (Plex's label restrictions,
+        Jellyfin's blocked / allowed tags). `blocked_labels`: the user
+        never sees an item carrying one of these labels. `allowed_labels`:
+        when non-empty, the user sees ONLY items carrying at least one of
+        them. An item's labels are its own plus its ancestors' — labelling
+        a show covers its seasons and episodes, an artist or album its
+        tracks; a label on one episode affects that episode alone. Matched
+        against admin labels only (PUT /api/v1/items/{id}/labels), never
+        provider keywords, so a metadata refresh can't change who sees what.
+
+        Enforced everywhere the content-rating ceiling is, with the same
+        response: refused single items look exactly like over-ceiling ones,
+        and listings, counts and search filter in SQL.
+
+        An omitted list keeps its stored value; `[]` clears it. Labels are
+        lower-cased and whitespace-collapsed; at most 32 per list, 64
+        characters each. Applies to the user and every managed profile
+        beneath it, and signs them all out (session epoch bump, as for a
+        rating change) so the change takes effect immediately. Unknown
+        fields return 400. Audited as user.label_restriction_change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                blocked_labels: { type: array, items: { type: string } }
+                allowed_labels: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: The stored lists.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      blocked_labels: { type: array, items: { type: string } }
+                      allowed_labels: { type: array, items: { type: string } }
+        '400': { description: Malformed body or unknown field. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such user. }
+        '422': { description: A label too long, a control character, or too many labels. }
+
+  /api/v1/labels:
+    get:
+      summary: Labels in use (admin)
+      tags: [Items]
+      description: >
+        *(v2.6)* Every admin label on a live item with how many items carry
+        it, alphabetical — for autocomplete.
+      responses:
+        '200':
+          description: Labels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        label:      { type: string }
+                        item_count: { type: integer, format: int64 }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /api/v1/labels/apply:
+    post:
+      summary: Add / remove labels on many items (admin)
+      tags: [Items]
+      description: >
+        *(v2.6)* Bulk label edit for a library selection. Removes first, then
+        adds, so a label in both lists ends up present. At most 500 item ids
+        (no duplicates). Labels are normalised as for PUT
+        /api/v1/items/{id}/labels; an item the add would push past 50 labels
+        is left without the added ones. Responds with how many items each
+        step changed. Audited as item.labels_change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [item_ids]
+              additionalProperties: false
+              properties:
+                item_ids: { type: array, maxItems: 500, items: { type: string, format: uuid } }
+                add:      { type: array, items: { type: string } }
+                remove:   { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: Items changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      added:   { type: integer, format: int64 }
+                      removed: { type: integer, format: int64 }
+        '400': { description: 'No ids, too many, a malformed / duplicate id, unknown field, or nothing to add or remove.' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '422': { description: A label too long or containing a control character. }
+
+  /api/v1/items/{id}/labels:
+    parameters: [{ $ref: '#/components/parameters/UUID' }]
+    get:
+      summary: An item's own labels (admin)
+      tags: [Items]
+      description: '*(v2.6)* The item''s own labels, not those it inherits.'
+      responses:
+        '200':
+          description: Labels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      labels: { type: array, items: { type: string } }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such item. }
+    put:
+      summary: Replace an item's labels (admin)
+      tags: [Items]
+      description: >
+        *(v2.6)* Labels are admin-owned (never written by scans or metadata
+        refreshes) and are what per-user label restrictions match. Values are
+        lower-cased and whitespace-collapsed, de-duplicated and sorted; at
+        most 50, 64 characters each. Audited as item.labels_change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                labels: { type: array, items: { type: string } }
+      responses:
+        '200':
+          description: The stored labels.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      labels: { type: array, items: { type: string } }
+        '400': { description: Malformed body or unknown field. }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { description: No such item. }
+        '422': { description: A label too long, a control character, or too many labels. }
 
   /api/v1/users/{id}/libraries:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -5548,6 +6033,14 @@ components:
         id:       { type: string, format: uuid }
         username: { type: string }
         is_admin: { type: boolean }
+        blocked_labels:
+          type: array
+          items: { type: string }
+          description: 'GET /api/v1/users only *(v2.6)*: the user never sees an item carrying one of these labels (its own or inherited). Always present, [] when none.'
+        allowed_labels:
+          type: array
+          items: { type: string }
+          description: 'GET /api/v1/users only *(v2.6)*: when non-empty, the user sees only items carrying one of these labels. Always present, [] when none.'
 
     # ── Pairing ────────────────────────────────────────────────────────────
     PairCodeResponse:
@@ -5684,6 +6177,14 @@ components:
             ones in the background. Membership is only ever added. A `<set>`
             that is a TMDB collection the server already tracks as a film series
             (by its `tmdbSet` / `tmdbcolid` id or name) is skipped. Default off.
+        episode_order:
+          type: string
+          enum: [aired, dvd, absolute]
+          description: |
+            v2.6. The order the library's shows are numbered in unless a show
+            sets its own (`PUT /items/{id}/episode-order`): `aired` (default),
+            `dvd` or `absolute`. Only meaningful for show / anime / cartoons
+            libraries.
         created_at:   { type: string, format: date-time }
         updated_at:   { type: string, format: date-time }
     LibraryListEnvelope:
@@ -5710,6 +6211,7 @@ components:
           type: boolean
           description: Omit for the per-type default (on for video library types, off otherwise).
         nfo_collections: { type: string, enum: ['off', sets, sets_and_tags], default: 'off' }
+        episode_order:   { type: string, enum: [aired, dvd, absolute], default: aired }
     LibraryUpdate:
       type: object
       description: |
@@ -5743,6 +6245,10 @@ components:
           type: string
           enum: ['off', sets, sets_and_tags]
           description: Omit to preserve. Changing it to sets or sets_and_tags starts a background import of the library's movie.nfo files.
+        episode_order:
+          type: string
+          enum: [aired, dvd, absolute]
+          description: Omit to preserve. Changing it on a show / anime / cartoons library re-enriches, in the background, every show that follows the library's order.
     GenreCount:
       type: object
       properties:
@@ -5877,7 +6383,9 @@ components:
         hdr_type:          { type: string, nullable: true, description: 'What a player without Dolby Vision has to handle: hdr10, hlg, dolby_vision (profile 5 only, no compatible base layer), or absent for SDR. A Dolby Vision file with an HDR10 / HLG / SDR base layer reports that base layer.' }
         dv_profile:        { type: integer, nullable: true, description: 'v2.5.1. Dolby Vision profile from the file''s configuration record (5, 7, 8, ...); absent when the file has none.' }
         frame_rate:        { type: number, format: double, nullable: true, description: 'Video frames per second as probed (e.g. 23.976, 25, 59.94). TV clients match the display refresh rate to it.' }
-        duration_ms:       { type: integer, format: int64, nullable: true }
+        duration_ms:       { type: integer, format: int64, nullable: true, description: 'This file''s own length. For one part of a multi-part movie it is that part''s length; the item''s duration_ms is the whole movie''s.' }
+        edition:           { type: string, nullable: true, description: 'v2.6. Edition label from the file name ("Director''s Cut", "Extended", a Jellyfin "1080p" version suffix, Plex {edition-…}); absent when the name gives none. Show it in a version picker in place of the resolution/codec description.' }
+        part_index:        { type: integer, nullable: true, description: 'v2.6. 1-based part number when this file is one part of a multi-part (stacked) movie, e.g. "cd1" + "cd2"; absent for every other file, including a lone "cd1". The server streams all parts as one movie: a transcode or playback decision for any part''s file_id covers the whole movie from part 1, and such a file is never direct-played. Each part still downloads on its own.' }
         faststart:         { type: boolean }
         bit_depth:             { type: integer, nullable: true, description: 'Audio bit depth (e.g. 16, 24). Music files only.' }
         sample_rate:           { type: integer, nullable: true, description: 'Audio sample rate in Hz (e.g. 44100, 96000). Music files only.' }
@@ -5910,7 +6418,7 @@ components:
             imdb_votes:      { type: integer }
             rotten_tomatoes: { type: integer, minimum: 0, maximum: 100, description: "Critics' Tomatometer, percent." }
             metacritic:      { type: integer, minimum: 0, maximum: 100 }
-        duration_ms:    { type: integer, format: int64, nullable: true }
+        duration_ms:    { type: integer, format: int64, nullable: true, description: 'Running time. For a multi-part movie whose first version is stacked (files[].part_index), the parts'' combined length — the timeline its stream and progress use.' }
         poster_path:    { type: string, nullable: true }
         fanart_path:    { type: string, nullable: true }
         content_rating: { type: string, nullable: true }
@@ -5918,6 +6426,8 @@ components:
         parent_id:      { type: string, nullable: true, format: uuid }
         grandparent_id: { type: string, nullable: true, format: uuid, description: 'Parent of the parent: for an episode this is the show id (episode -> season -> show), so a client can open the show page directly instead of replaying history. Best-effort; may be unset when unresolved.' }
         index:          { type: integer, nullable: true }
+        index_end:      { type: integer, description: 'v2.6. Episodes only, omitted for a single episode: the last episode a multi-episode file covers ("S01E01-E02" is one episode with index 1, index_end 2).' }
+        episode_order:  { type: string, enum: [aired, dvd, absolute], description: 'v2.6. Shows only: the show''s own episode order. Omitted when the show follows its library''s episode_order.' }
         view_offset_ms: { type: integer, format: int64, description: 'Resume point, including a rewatch in progress of a watched title.' }
         watch_state:    { type: string, enum: [watched, in_progress, unwatched], description: 'Playable videos only (omitted otherwise). The caller''s watch state, manual marks included.' }
         is_favorite:    { type: boolean }
@@ -5950,6 +6460,16 @@ components:
             properties:
               id:   { type: string, format: uuid }
               name: { type: string }
+        sort_title: { type: string, description: '*(v2.6)* Omitted when empty.' }
+        tagline:    { type: string, nullable: true, description: '*(v2.6)*' }
+        locked_fields:
+          type: array
+          items: { type: string }
+          description: '*(v2.6)* Metadata fields an admin edited, which refreshes leave alone ([] when none). See PATCH /api/v1/items/{id} for the names; `originally_available_at` is `taken_at`.'
+        labels:
+          type: array
+          items: { type: string }
+          description: 'Admins only, omitted otherwise and when the item has none *(v2.6)*: the item''s own admin labels (not those inherited from its show / album), which per-user label restrictions match. See PUT /api/v1/items/{id}/labels.'
     ChildItem:
       type: object
       properties:
@@ -5963,6 +6483,7 @@ components:
         poster_path:    { type: string, nullable: true }
         thumb_path:     { type: string, nullable: true }
         index:          { type: integer, nullable: true }
+        index_end:      { type: integer, description: 'v2.6. Episodes only, omitted for a single episode: the last episode a multi-episode file covers.' }
         disc_number:
           type: integer
           nullable: true
@@ -6102,6 +6623,7 @@ components:
         show_title:     { type: string }
         season_number:  { type: integer, description: '0 when unknown.' }
         episode_number: { type: integer, description: '0 when unknown.' }
+        episode_number_end: { type: integer, description: 'v2.6. The last episode of a multi-episode file; omitted for a single episode.' }
         year:           { type: integer, nullable: true, description: Show year. }
         poster_path:    { type: string, nullable: true }
         fanart_path:    { type: string, nullable: true }
@@ -6121,6 +6643,7 @@ components:
             season_id:      { type: string, format: uuid }
             season_number:  { type: integer }
             episode_number: { type: integer }
+            episode_number_end: { type: integer, description: 'v2.6. The last episode of a multi-episode file; omitted for a single episode.' }
             view_offset_ms: { type: integer, format: int64, description: 'Set in resume mode.' }
             duration_ms:    { type: integer, format: int64 }
             thumb_path:     { type: string }
@@ -6423,6 +6946,14 @@ components:
             uses its own `library_access` rows so admins can narrow
             per-profile (kid sees Family Movies only even though parent
             has 4K Movies too).
+        blocked_labels:
+          type: array
+          items: { type: string }
+          description: '*(v2.6)* Label restriction, inherited from the owner at creation and cascaded on the owner''s changes. See PUT /api/v1/users/{id}/label-restrictions.'
+        allowed_labels:
+          type: array
+          items: { type: string }
+          description: '*(v2.6)* See blocked_labels.'
         created_at: { type: string, format: date-time }
 
     # ── Collections / Playlists ────────────────────────────────────────────
@@ -6781,6 +7312,39 @@ components:
         abr:                 { type: boolean, description: 'Enable multi-rendition HLS ladder (the player picks rungs on real-time bandwidth).' }
         abr_max_height:      { type: integer, description: 'Hard cap on rung height (0 = source).' }
         abr_auto_max_height: { type: integer, description: 'Soft cap on rung height for AUTO playback (0 = source). An explicit quality pick can still exceed this up to abr_max_height.' }
+        # Internet streaming limit (v2.6; read live, no restart)
+        remote_max_bitrate_kbps:
+          type: integer
+          description: >
+            Bitrate ceiling (kbps) for streams to clients outside the home
+            network; 0 / absent = unlimited. A remote client whose video
+            source exceeds it is transcoded down to it. Not restart-required.
+        local_networks:
+          type: array
+          items: { type: string }
+          description: >
+            Extra CIDRs (or bare IPs) treated as the home network, on top of
+            the built-in loopback, RFC 1918 / unique-local, link-local,
+            100.64.0.0/10 (Tailscale / CGNAT) and the server's own IPv6
+            prefixes. An entry that isn't an IP or CIDR is a 400.
+
+    SignedInSession:
+      type: object
+      description: One sign-in (refresh session). Never carries a token or its hash.
+      properties:
+        id:           { type: string, format: uuid }
+        client_name:  { type: string, description: 'Device label ("Chrome on Windows", "Roku", or the X-Device-Name the client sent). Empty for sign-ins made before v2.6 until their next refresh.' }
+        platform:     { type: string, enum: [web, android, ios, roku, tizen, webos, xbox], description: 'Omitted when unrecognised.' }
+        ip_address:   { type: string, description: 'Trusted client IP of the latest sign-in / refresh.' }
+        created_at:   { type: string, format: date-time }
+        last_seen_at: { type: string, format: date-time, description: 'Approximate: sign-in or latest refresh.' }
+        current:      { type: boolean, description: "True on the caller's own sign-in." }
+    StreamingLimits:
+      type: object
+      properties:
+        max_concurrent_streams:         { type: integer, nullable: true }
+        max_stream_bitrate_kbps:        { type: integer, nullable: true, description: 'Applies on the home network and over the internet.' }
+        max_remote_stream_bitrate_kbps: { type: integer, nullable: true, description: 'Internet-only cap (v2.6); combined with the server-wide internet limit, lowest wins.' }
 
     ScheduledTask:
       type: object

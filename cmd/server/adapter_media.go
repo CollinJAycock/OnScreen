@@ -12,6 +12,7 @@ import (
 
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/media"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 type mediaAdapter struct{ q *gen.Queries }
@@ -124,6 +125,14 @@ func (a *mediaAdapter) UpdateMediaItemMetadata(ctx context.Context, p media.Upda
 	return genUpdateItemRowToItem(r), nil
 }
 
+func (a *mediaAdapter) EditMediaItemMetadata(ctx context.Context, p media.EditItemMetadataParams) (media.Item, error) {
+	r, err := a.q.EditMediaItemMetadata(ctx, editItemMetadataParamsToGen(p))
+	if err != nil {
+		return media.Item{}, err
+	}
+	return genEditItemRowToItem(r), nil
+}
+
 func (a *mediaAdapter) UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error {
 	return a.q.UpdateMediaItemLyrics(ctx, gen.UpdateMediaItemLyricsParams{
 		ID:           id,
@@ -179,6 +188,26 @@ func (a *mediaAdapter) SetMediaItemKind(ctx context.Context, id uuid.UUID, kind 
 		ID:   id,
 		Kind: kind,
 	})
+}
+
+func (a *mediaAdapter) SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error) {
+	n, err := a.q.SetEpisodeIndexEnd(ctx, gen.SetEpisodeIndexEndParams{
+		ID:       id,
+		IndexEnd: intPtrToInt32Ptr(indexEnd),
+	})
+	return n > 0, err
+}
+
+func (a *mediaAdapter) SetShowEpisodeOrder(ctx context.Context, id uuid.UUID, order *string) (bool, error) {
+	n, err := a.q.SetShowEpisodeOrder(ctx, gen.SetShowEpisodeOrderParams{
+		ID:           id,
+		EpisodeOrder: order,
+	})
+	return n > 0, err
+}
+
+func (a *mediaAdapter) ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	return a.q.ListShowsFollowingLibraryEpisodeOrder(ctx, libraryID)
 }
 
 func (a *mediaAdapter) SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error {
@@ -492,6 +521,16 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		Chapters:        p.Chapters,
 		DurationMs:      p.DurationMS,
 		VideoBitDepth:   intPtrToInt32Ptr(p.VideoBitDepth),
+		Edition:         p.Edition,
+		PartIndex:       intPtrToInt16Ptr(p.PartIndex),
+	})
+}
+
+func (a *mediaAdapter) UpdateMediaFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error {
+	return a.q.UpdateMediaFileNaming(ctx, gen.UpdateMediaFileNamingParams{
+		ID:        id,
+		Edition:   edition,
+		PartIndex: intPtrToInt16Ptr(partIndex),
 	})
 }
 
@@ -686,6 +725,8 @@ func (a *mediaAdapter) ListPhotosByLibrary(ctx context.Context, p media.ListPhot
 		From:          tsOrNull(p.From),
 		To:            tsOrNull(p.To),
 		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
+		BlockedLabels: p.Labels.BlockedArg(),
+		AllowedLabels: p.Labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err
@@ -724,13 +765,17 @@ func (a *mediaAdapter) CountPhotosByLibrary(ctx context.Context, p media.ListPho
 		From:          tsOrNull(p.From),
 		To:            tsOrNull(p.To),
 		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
+		BlockedLabels: p.Labels.BlockedArg(),
+		AllowedLabels: p.Labels.AllowedArg(),
 	})
 }
 
-func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]media.PhotoTimelineBucket, error) {
+func (a *mediaAdapter) ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) ([]media.PhotoTimelineBucket, error) {
 	rows, err := a.q.ListPhotoTimelineBuckets(ctx, gen.ListPhotoTimelineBucketsParams{
 		LibraryID:     libraryID,
 		MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+		BlockedLabels: labels.BlockedArg(),
+		AllowedLabels: labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err
@@ -755,6 +800,8 @@ func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, p media.ListPhoto
 		MinLon:        p.MinLon,
 		MaxLon:        p.MaxLon,
 		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
+		BlockedLabels: p.Labels.BlockedArg(),
+		AllowedLabels: p.Labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err
@@ -787,10 +834,12 @@ func (a *mediaAdapter) ListPhotoMapPoints(ctx context.Context, p media.ListPhoto
 	return out, nil
 }
 
-func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error) {
+func (a *mediaAdapter) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) (int64, error) {
 	return a.q.CountPhotoMapPoints(ctx, gen.CountPhotoMapPointsParams{
 		LibraryID:     libraryID,
 		MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+		BlockedLabels: labels.BlockedArg(),
+		AllowedLabels: labels.AllowedArg(),
 	})
 }
 
@@ -812,6 +861,8 @@ func (a *mediaAdapter) SearchPhotosByExif(ctx context.Context, p media.SearchPho
 		To:            tsOrNull(p.To),
 		HasGps:        p.HasGPS,
 		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
+		BlockedLabels: p.Labels.BlockedArg(),
+		AllowedLabels: p.Labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err
@@ -866,6 +917,8 @@ func (a *mediaAdapter) CountPhotosByExif(ctx context.Context, p media.SearchPhot
 		To:            tsOrNull(p.To),
 		HasGps:        p.HasGPS,
 		MaxRatingRank: intPtrToInt32Ptr(p.MaxRatingRank),
+		BlockedLabels: p.Labels.BlockedArg(),
+		AllowedLabels: p.Labels.AllowedArg(),
 	})
 }
 
@@ -926,6 +979,8 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 		YearMax:       intPtrToInt32Ptr(f.YearMax),
 		RatingMin:     float64PtrToNumeric(f.RatingMin),
 		MaxRatingRank: intPtrToInt32Ptr(f.MaxRatingRank),
+		BlockedLabels: f.Labels.BlockedArg(),
+		AllowedLabels: f.Labels.AllowedArg(),
 		Watch:         watchFilterPtr(f.Watch),
 		WatchUserID:   f.WatchUserID,
 	}
@@ -1161,6 +1216,8 @@ func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uu
 		YearMax:       intPtrToInt32Ptr(f.YearMax),
 		RatingMin:     float64PtrToNumeric(f.RatingMin),
 		MaxRatingRank: intPtrToInt32Ptr(f.MaxRatingRank),
+		BlockedLabels: f.Labels.BlockedArg(),
+		AllowedLabels: f.Labels.AllowedArg(),
 		Watch:         watchFilterPtr(f.Watch),
 		WatchUserID:   f.WatchUserID,
 	})
@@ -1179,9 +1236,10 @@ func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UU
 	return a.q.ListDistinctGenres(ctx, libraryID)
 }
 
-func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.GenreCount, error) {
+func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.GenreCount, error) {
 	rows, err := a.q.ListGenresWithCounts(ctx, gen.ListGenresWithCountsParams{
 		LibraryID: libraryID, Type: itemType, MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+		BlockedLabels: labels.BlockedArg(), AllowedLabels: labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err
@@ -1193,9 +1251,10 @@ func (a *mediaAdapter) ListGenresWithCounts(ctx context.Context, libraryID uuid.
 	return out, nil
 }
 
-func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]media.YearCount, error) {
+func (a *mediaAdapter) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]media.YearCount, error) {
 	rows, err := a.q.ListYearsWithCounts(ctx, gen.ListYearsWithCountsParams{
 		LibraryID: libraryID, Type: itemType, MaxRatingRank: intPtrToInt32Ptr(maxRatingRank),
+		BlockedLabels: labels.BlockedArg(), AllowedLabels: labels.AllowedArg(),
 	})
 	if err != nil {
 		return nil, err

@@ -167,6 +167,182 @@ API change lands only when every first-party client moves with it — see
   - **Migrations:** 00041 adds the `external_ratings` table; 00042 moves an
     install that already seeded the task daily to hourly (a changed schedule
     is kept).
+- **Edit metadata, with field locks.** Admins can correct a movie's, show's,
+  season's or episode's details and keep them that way.
+  - **Editing:** "Edit Metadata" on a movie, show or season page, or the
+    pencil on an episode's row, opens an editor for the title, sort title,
+    original title, year, release date, content rating, critic rating,
+    genres, tagline and summary.
+  - **Locks:** every field you change is locked. Scans, metadata refreshes,
+    re-enrichment and Fix Match leave a locked field as it is (Fix Match still
+    re-points the item at the new match, and fills in the fields you haven't
+    locked). Each field shows a padlock; click a locked one, or "Unlock all",
+    to hand it back to the next refresh. A locked title keeps its sort title
+    too.
+  - **Content rating:** an edited rating takes effect at once for profiles
+    with a content-rating limit, home screen included. A rating OnScreen
+    doesn't recognise counts as the most restrictive.
+  - **Home videos and photos** keep their editor, and a title change still
+    renames the file. Their edited title, summary and date are now locked as
+    well, so a rescan no longer replaces a photo's corrected date with the
+    camera's.
+  - **API (additive):** `PATCH /items/{id}` also takes `sort_title`,
+    `original_title`, `tagline`, `year`, `rating`, `content_rating`, `genres`
+    and `unlock_fields`, and answers 409 when another item in the library
+    already has the title and year. Item details gain `sort_title`, `tagline`
+    and `locked_fields`.
+  - **Migration 00043** adds `locked_fields` to media items.
+- **Multi-episode files.** A file holding two or more episodes —
+  `S01E01E02`, `S01E01-E02`, `S01E01-02`, `S01E01.S01E02`, `1x01-1x02`,
+  `1x01-02` — is now one episode covering episodes 1–2, instead of episode 1
+  with episode 2 shown as missing.
+  - **Shown as** "E1–E2" / "Episodes 1–2" on the episode list, the player and
+    Next Up. Its title joins the episodes' titles ("Pilot / The Train Job",
+    or "The Best of Both Worlds (1–2)" for a two-parter); summary, still and
+    air date come from the first episode, the runtime from the file.
+  - **Counted as every episode it covers:** season and show episode counts,
+    unwatched badges, a season request's "episodes you have", Next Up and the
+    player's next episode (after E01–E02 comes E03).
+  - **Existing libraries:** the next scan converts an episode filed as E01
+    whose file is really E01–E02 and re-fetches its metadata; no second item
+    is created. The anime-style unspaced `Title-01-02` is still not read as
+    a range.
+  - **API (additive):** episodes gain `index_end` (detail and children),
+    Next Up items and `GET /items/{id}/up-next` gain `episode_number_end`;
+    omitted for a single episode.
+- **Episode order: aired, DVD or absolute.** A show whose files are numbered
+  by their DVD release, or by one running number ("Show - 123"), can use
+  that order to get the right titles and summaries.
+  - **Where:** Settings for a TV, anime or cartoons library sets the default
+    ("Aired" unless changed); an admin can override it on a show's page.
+    Changing either refreshes the affected shows' episode metadata in the
+    background.
+  - **Providers:** TMDB episode groups for shows matched on TMDB, TheTVDB's
+    DVD and absolute orders for shows matched on TheTVDB. A show whose
+    provider has no such order keeps aired order (noted in the server log).
+    Anime libraries keep their current behaviour unless you change the order.
+  - **API (additive):** `PUT /items/{id}/episode-order` (admins, audited);
+    `episode_order` on libraries (create, update, read) and on show details.
+- **Migration 00044** adds `media_items.index_end`,
+  `media_items.episode_order` and `libraries.episode_order`.
+- **Movie editions and multi-part movies.**
+  - **Editions:** a movie file's name can now say which edition it is, and
+    the version picker shows that name ("Director's Cut", "Extended") instead
+    of only its resolution and codec. Read from Plex's
+    `{edition-Director's Cut}` (in the file or folder name), Jellyfin's
+    `Movie (2010) - Director's Cut.mkv` suffix (also `- 1080p`), and common
+    tags after the year: `[Extended]`, Director's Cut, Extended Edition,
+    Theatrical, Unrated, Uncut, IMAX, Remastered and a few more. A label only:
+    which movie a file belongs to doesn't change.
+  - **Multi-part movies:** `Movie (2001) cd1.mkv` + `cd2.mkv` (also
+    `part`, `pt`, `disc`, `disk`, `dvd` with a number, or `-a`/`-b`) now play
+    as one movie, start to finish, on every client — the server joins the
+    parts into one stream, so apps that know nothing about parts play all of
+    it. Its length is the parts added up, and resume, seeking, thumbnails and
+    progress all use that combined timeline. A lone `cd1` plays like any
+    other file. Part words in a title ("Dune Part One (2021)", "Harry Potter
+    and the Deathly Hallows Part 1 (2010)") are left alone, and TV episodes
+    are never stacked. Each part still downloads on its own.
+  - **Playback:** a multi-part movie is never direct-played (one file is
+    one part); it is remuxed, or transcoded when the video needs it. Fleet
+    workers without shared storage pull each part over HTTP with its own
+    stream token. The server writes the list of parts itself; a file in a
+    library that is such a list is still refused.
+  - **Existing libraries:** the next scan fills in editions and parts from
+    the file names without re-reading the files. A yearless
+    `Kill Bill part1.mkv` in `Kill Bill (2003)/` needs its file touched (or
+    re-added) to move into the right movie.
+  - **API (all additive):** item `files[]` gain `edition` and `part_index`
+    (both omitted when empty; `part_index` only for a real multi-part
+    movie); a multi-part movie's `duration_ms` is the parts' total.
+    `POST /items/{id}/transcode` and `/playback-decision` with any part's
+    `file_id` start, or judge, the whole movie.
+  - **Migration 00045** adds `media_files.edition` and `part_index`.
+- **Separate limits for home and internet streams.** Streams to people
+  outside your home network can be held to a lower bitrate than streams at
+  home.
+  - **Server-wide:** Settings ▸ Transcode ▸ "Internet streaming limit" (off by
+    default). Takes effect on the next stream, no restart.
+  - **Per user:** an "Internet streaming cap" next to the existing bitrate cap
+    under Users ▸ Streaming caps. A remote stream gets the lowest of the
+    user's cap, their internet cap and the server's limit; a stream at home
+    gets only the user's cap, as before.
+  - **What happens:** a remote viewer whose video is over the limit is
+    transcoded down to it instead of playing the original file, at a
+    resolution that suits the rate (720p at 4 Mbps, 1080p from 8 Mbps), and
+    the adaptive quality ladder never goes above it. Now Playing shows "Over the
+    internet streaming limit". Music, audiobooks and podcasts are never
+    limited.
+  - **What counts as home:** loopback, private (192.168.x, 10.x, 172.16–31.x,
+    fd00::/8), link-local, this server's own IPv6 network, and
+    100.64.0.0/10, so Tailscale devices count as home. "Additional local
+    networks" adds more (a VPN or office subnet). The address is the one the
+    server trusts for the audit log, so behind a reverse proxy or Cloudflare
+    it is the viewer's real address only if the proxy forwards it (the bundled
+    nginx sample and cloudflared do) AND its address is in `TRUSTED_PROXIES`.
+    Otherwise every viewer looks like the proxy, which is usually on your
+    network, so the internet limit never applies.
+  - **Not covered:** a client that fetches the original file directly
+    without asking the server how to play it (older app builds) isn't held to
+    the limit. All current OnScreen apps ask first.
+  - **API (additive):** the play decision gains `reason`
+    (`remote_bitrate_limit` / `user_bitrate_limit`) and `max_bitrate_kbps`;
+    `/settings/transcode-config` gains `remote_max_bitrate_kbps` and
+    `local_networks`; `/users/{id}/streaming-limits` gains
+    `max_remote_stream_bitrate_kbps` (leaving it out keeps the stored value).
+    Changing a user's caps is now audited.
+  - **Migration 00046** adds the per-user internet cap.
+- **Signed-in devices.** Settings ▸ Security (admins) or the new Account page
+  (everyone else) lists every device signed in to your account (browser or app, its address, when it signed in and was last
+  used) with a "Sign out" button on each and "Sign out everywhere else". On
+  the Users page an admin can see and sign out any user's devices, or sign
+  them out everywhere.
+  - Signing out one device leaves the others alone: no other device has to
+    sign in again or loses its stream. The signed-out device's refresh stops
+    working at once and its other credentials on its next request.
+  - "Last used" is updated when a device renews its sign-in (about hourly
+    while it's in use), not on every request. Devices signed in before this
+    update show no name until their next renewal; their old credentials
+    expire on their own within a day.
+  - Each sign-out is audited (`auth.session_revoked`; the bulk ones as
+    `auth.sessions_revoked`).
+  - **API (additive):** `GET /users/me/sessions`, `DELETE /users/me/sessions`
+    (everywhere else), `DELETE /users/me/sessions/{id}`, and for admins
+    `GET`/`DELETE /users/{id}/sessions` and
+    `DELETE /users/{id}/sessions/{sid}`. Clients may send an `X-Device-Name`
+    header when signing in to name themselves.
+- **Labels, and restricting users by label.** Admins can label titles
+  ("kids", "horror", "dad's films") and limit what each user sees by them, like
+  Plex's label restrictions or Jellyfin's blocked and allowed tags.
+  - **Labelling:** a "Labels" box on every title's page (admins only — other
+    users never see labels), or select titles in a movie, show or photo
+    library and choose "Add label…" to add or remove labels on up to 500 at
+    once. Labels are lower-cased, and suggestions come from the labels already
+    in use. They are separate from the keywords metadata providers supply, so
+    a metadata refresh never adds or removes one.
+  - **Restricting:** Settings ▸ Users ▸ a user's menu ▸ "Labels…". "Never
+    show titles labelled" hides anything carrying one of those labels; "Only
+    show titles labelled" hides everything that carries none of them. A label
+    on a show covers its seasons and episodes, and one on an artist or album
+    covers its tracks; a label on a single episode hides just that episode.
+    A user's managed profiles get the same restriction (new profiles inherit
+    it), and saving signs them out so it applies straight away. "View as user"
+    shows the result.
+  - **Where it applies:** everywhere the content-rating limit does — title
+    pages, episode lists, library browsing and its counts, search, the home
+    screen (Continue Watching, Next Up, Plan to Watch, Recently Added,
+    Trending, collection rows), collections and playlists (counts and covers
+    included), favorites, history, people pages, photos and albums, posters,
+    seek-bar thumbnails, subtitles, playback, downloads, Up Next, the upcoming
+    calendar and the "already in your library" marks on requests. A hidden
+    title looks exactly like one above the user's rating limit. Phone and TV
+    apps need no update.
+  - **API (all additive):** `GET /labels`, `POST /labels/apply`,
+    `GET`/`PUT /items/{id}/labels`, `PUT /users/{id}/label-restrictions`;
+    `labels` on item detail for admins; `blocked_labels` and `allowed_labels`
+    on the admin user and profile lists.
+  - **Migration 00047** adds `media_items.labels` and the users'
+    `blocked_labels` / `allowed_labels`.
 
 ### Changed
 

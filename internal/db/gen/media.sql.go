@@ -105,7 +105,8 @@ WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND ($5::int IS NULL OR year <= $5)
   AND ($6::numeric IS NULL OR rating >= $6)
   AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
-  AND ($8::text IS NULL OR media_watch_bucket($9::uuid, id, type, $7::int) = $8::text)
+  AND media_item_labels_permitted(labels, parent_id, $8::text[], $9::text[])
+  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $7::int) = $10::text)
 `
 
 type CountMediaItemsFilteredParams struct {
@@ -116,6 +117,8 @@ type CountMediaItemsFilteredParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -129,6 +132,8 @@ func (q *Queries) CountMediaItemsFiltered(ctx context.Context, arg CountMediaIte
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -184,7 +189,8 @@ INSERT INTO media_files (
     bit_depth, sample_rate, channel_layout, lossless,
     replaygain_track_gain, replaygain_track_peak,
     replaygain_album_gain, replaygain_album_peak,
-    video_bit_depth, dv_profile
+    video_bit_depth, dv_profile,
+    edition, part_index
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -192,7 +198,8 @@ INSERT INTO media_files (
     $17, $18, $19, $20,
     $21, $22,
     $23, $24,
-    $25, $26
+    $25, $26,
+    $27, $28
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -201,7 +208,8 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           bit_depth, sample_rate, channel_layout, lossless,
           replaygain_track_gain, replaygain_track_peak,
           replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-          integrity_status, integrity_checked_at, integrity_detail, dv_profile
+          integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+          edition, part_index
 `
 
 type CreateMediaFileParams struct {
@@ -231,6 +239,8 @@ type CreateMediaFileParams struct {
 	ReplaygainAlbumPeak pgtype.Numeric `json:"replaygain_album_peak"`
 	VideoBitDepth       *int32         `json:"video_bit_depth"`
 	DvProfile           *int16         `json:"dv_profile"`
+	Edition             *string        `json:"edition"`
+	PartIndex           *int16         `json:"part_index"`
 }
 
 // best quality first (ADR-031)
@@ -262,6 +272,8 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		arg.ReplaygainAlbumPeak,
 		arg.VideoBitDepth,
 		arg.DvProfile,
+		arg.Edition,
+		arg.PartIndex,
 	)
 	var i MediaFile
 	err := row.Scan(
@@ -299,6 +311,8 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
 		&i.DvProfile,
+		&i.Edition,
+		&i.PartIndex,
 	)
 	return i, err
 }
@@ -515,6 +529,143 @@ func (q *Queries) DeleteMissingFilesByLibrary(ctx context.Context, libraryID uui
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const editMediaItemMetadata = `-- name: EditMediaItemMetadata :one
+UPDATE media_items
+SET title          = CASE WHEN 'title' = ANY($1::text[]) THEN $2::text ELSE title END,
+    sort_title     = CASE WHEN 'sort_title' = ANY($1::text[]) THEN $3::text ELSE sort_title END,
+    original_title = CASE WHEN 'original_title' = ANY($1::text[]) THEN $4::text ELSE original_title END,
+    year           = CASE WHEN 'year' = ANY($1::text[]) THEN $5::int ELSE year END,
+    originally_available_at = CASE WHEN 'originally_available_at' = ANY($1::text[])
+                                   THEN $6::date
+                                   ELSE originally_available_at END,
+    summary        = CASE WHEN 'summary' = ANY($1::text[]) THEN $7::text ELSE summary END,
+    tagline        = CASE WHEN 'tagline' = ANY($1::text[]) THEN $8::text ELSE tagline END,
+    rating         = CASE WHEN 'rating' = ANY($1::text[]) THEN $9::numeric ELSE rating END,
+    content_rating = CASE WHEN 'content_rating' = ANY($1::text[]) THEN $10::text ELSE content_rating END,
+    genres         = CASE WHEN 'genres' = ANY($1::text[]) THEN $11::text[] ELSE genres END,
+    locked_fields  = ARRAY(
+        SELECT DISTINCT f
+        FROM unnest(locked_fields || $12::text[]) AS f
+        WHERE f <> ALL($13::text[])
+        ORDER BY f),
+    updated_at     = NOW()
+WHERE id = $14 AND deleted_at IS NULL
+RETURNING id, library_id, type, title, sort_title, original_title, year,
+          summary, tagline, rating, audience_rating, content_rating, duration_ms,
+          genres, tags, tmdb_id, tvdb_id, imdb_id,
+          parent_id, index, poster_path, fanart_path, thumb_path,
+          originally_available_at, created_at, updated_at, deleted_at,
+          locked_fields
+`
+
+type EditMediaItemMetadataParams struct {
+	SetFields             []string       `json:"set_fields"`
+	Title                 string         `json:"title"`
+	SortTitle             string         `json:"sort_title"`
+	OriginalTitle         *string        `json:"original_title"`
+	Year                  *int32         `json:"year"`
+	OriginallyAvailableAt pgtype.Date    `json:"originally_available_at"`
+	Summary               *string        `json:"summary"`
+	Tagline               *string        `json:"tagline"`
+	Rating                pgtype.Numeric `json:"rating"`
+	ContentRating         *string        `json:"content_rating"`
+	Genres                []string       `json:"genres"`
+	LockFields            []string       `json:"lock_fields"`
+	UnlockFields          []string       `json:"unlock_fields"`
+	ID                    uuid.UUID      `json:"id"`
+}
+
+type EditMediaItemMetadataRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	SortTitle             string             `json:"sort_title"`
+	OriginalTitle         *string            `json:"original_title"`
+	Year                  *int32             `json:"year"`
+	Summary               *string            `json:"summary"`
+	Tagline               *string            `json:"tagline"`
+	Rating                pgtype.Numeric     `json:"rating"`
+	AudienceRating        pgtype.Numeric     `json:"audience_rating"`
+	ContentRating         *string            `json:"content_rating"`
+	DurationMs            *int64             `json:"duration_ms"`
+	Genres                []string           `json:"genres"`
+	Tags                  []string           `json:"tags"`
+	TmdbID                *int32             `json:"tmdb_id"`
+	TvdbID                *int32             `json:"tvdb_id"`
+	ImdbID                *string            `json:"imdb_id"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	Index                 *int32             `json:"index"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	OriginallyAvailableAt pgtype.Date        `json:"originally_available_at"`
+	CreatedAt             pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt             pgtype.Timestamptz `json:"updated_at"`
+	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
+	LockedFields          []string           `json:"locked_fields"`
+}
+
+// An admin's manual metadata edit (PATCH /api/v1/items/{id}). set_fields
+// names the columns the edit sets; only those are written. lock_fields
+// (normally the same names) join the item's locked_fields so later
+// automatic writes (UpdateMediaItemMetadata, UpdateMediaItemTitle,
+// UpdateMediaItemTakenAt) leave them alone. unlock_fields drops names from
+// the lock set; the stored value stays until the next refresh rewrites it. This is the only
+// metadata write that ignores the locks. Column-level CASEs rather than a
+// read-merge-write in Go, so an enrichment landing between the editor's
+// read and this write isn't rolled back for the fields the edit didn't set.
+func (q *Queries) EditMediaItemMetadata(ctx context.Context, arg EditMediaItemMetadataParams) (EditMediaItemMetadataRow, error) {
+	row := q.db.QueryRow(ctx, editMediaItemMetadata,
+		arg.SetFields,
+		arg.Title,
+		arg.SortTitle,
+		arg.OriginalTitle,
+		arg.Year,
+		arg.OriginallyAvailableAt,
+		arg.Summary,
+		arg.Tagline,
+		arg.Rating,
+		arg.ContentRating,
+		arg.Genres,
+		arg.LockFields,
+		arg.UnlockFields,
+		arg.ID,
+	)
+	var i EditMediaItemMetadataRow
+	err := row.Scan(
+		&i.ID,
+		&i.LibraryID,
+		&i.Type,
+		&i.Title,
+		&i.SortTitle,
+		&i.OriginalTitle,
+		&i.Year,
+		&i.Summary,
+		&i.Tagline,
+		&i.Rating,
+		&i.AudienceRating,
+		&i.ContentRating,
+		&i.DurationMs,
+		&i.Genres,
+		&i.Tags,
+		&i.TmdbID,
+		&i.TvdbID,
+		&i.ImdbID,
+		&i.ParentID,
+		&i.Index,
+		&i.PosterPath,
+		&i.FanartPath,
+		&i.ThumbPath,
+		&i.OriginallyAvailableAt,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.DeletedAt,
+		&i.LockedFields,
+	)
+	return i, err
 }
 
 const fillTrackPosition = `-- name: FillTrackPosition :execrows
@@ -938,7 +1089,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE id = $1
 `
@@ -982,6 +1134,8 @@ func (q *Queries) GetMediaFile(ctx context.Context, id uuid.UUID) (MediaFile, er
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
 		&i.DvProfile,
+		&i.Edition,
+		&i.PartIndex,
 	)
 	return i, err
 }
@@ -994,7 +1148,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE file_hash = $1 AND status = 'missing'
 ORDER BY created_at DESC
@@ -1042,6 +1197,8 @@ func (q *Queries) GetMediaFileByHash(ctx context.Context, fileHash *string) (Med
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
 		&i.DvProfile,
+		&i.Edition,
+		&i.PartIndex,
 	)
 	return i, err
 }
@@ -1054,7 +1211,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE file_path = $1
 `
@@ -1097,6 +1255,8 @@ func (q *Queries) GetMediaFileByPath(ctx context.Context, filePath string) (Medi
 		&i.IntegrityCheckedAt,
 		&i.IntegrityDetail,
 		&i.DvProfile,
+		&i.Edition,
+		&i.PartIndex,
 	)
 	return i, err
 }
@@ -1109,8 +1269,9 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        musicbrainz_artist_id, musicbrainz_album_artist_id,
        disc_total, track_total, original_year, compilation, release_type,
        anilist_id, mal_id, kind, reading_direction, franchise_id,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
-       originally_available_at, created_at, updated_at, deleted_at
+       parent_id, index, index_end, episode_order, disc_number, poster_path, fanart_path, thumb_path,
+       originally_available_at, created_at, updated_at, deleted_at,
+       locked_fields
 FROM media_items
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -1151,6 +1312,8 @@ type GetMediaItemRow struct {
 	FranchiseID               *int32             `json:"franchise_id"`
 	ParentID                  pgtype.UUID        `json:"parent_id"`
 	Index                     *int32             `json:"index"`
+	IndexEnd                  *int32             `json:"index_end"`
+	EpisodeOrder              *string            `json:"episode_order"`
 	DiscNumber                *int32             `json:"disc_number"`
 	PosterPath                *string            `json:"poster_path"`
 	FanartPath                *string            `json:"fanart_path"`
@@ -1159,6 +1322,7 @@ type GetMediaItemRow struct {
 	CreatedAt                 pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt                 pgtype.Timestamptz `json:"updated_at"`
 	DeletedAt                 pgtype.Timestamptz `json:"deleted_at"`
+	LockedFields              []string           `json:"locked_fields"`
 }
 
 func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemRow, error) {
@@ -1200,6 +1364,8 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.FranchiseID,
 		&i.ParentID,
 		&i.Index,
+		&i.IndexEnd,
+		&i.EpisodeOrder,
 		&i.DiscNumber,
 		&i.PosterPath,
 		&i.FanartPath,
@@ -1208,6 +1374,7 @@ func (q *Queries) GetMediaItem(ctx context.Context, id uuid.UUID) (GetMediaItemR
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.DeletedAt,
+		&i.LockedFields,
 	)
 	return i, err
 }
@@ -1475,7 +1642,8 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
+       mf.edition, mf.part_index
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active'
@@ -1525,6 +1693,8 @@ func (q *Queries) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
 			&i.DvProfile,
+			&i.Edition,
+			&i.PartIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -1656,6 +1826,7 @@ WITH rows AS (
       AND m.deleted_at IS NULL
       AND m.type IN ('movie', 'episode')
       AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
+      AND media_item_labels_permitted(m.labels, m.parent_id, $4::text[], $5::text[])
 ),
 deduped AS (
     SELECT id, library_id, type, title, sort_title, original_title, year, summary, tagline,
@@ -1698,6 +1869,8 @@ type ListContinueWatchingParams struct {
 	UserID        uuid.UUID `json:"user_id"`
 	Limit         int32     `json:"limit"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListContinueWatchingRow struct {
@@ -1768,7 +1941,13 @@ type ListContinueWatchingRow struct {
 // sqlc generates them as pointer / pgtype types, and a NULL show_id
 // in Go means "no rollup, render the row's own identity".
 func (q *Queries) ListContinueWatching(ctx context.Context, arg ListContinueWatchingParams) ([]ListContinueWatchingRow, error) {
-	rows, err := q.db.Query(ctx, listContinueWatching, arg.UserID, arg.Limit, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listContinueWatching,
+		arg.UserID,
+		arg.Limit,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2067,7 +2246,8 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.bit_depth, mf.sample_rate, mf.channel_layout, mf.lossless,
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
-       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile
+       mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
+       mf.edition, mf.part_index
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 JOIN libraries l ON l.id = mi.library_id
@@ -2137,6 +2317,8 @@ func (q *Queries) ListFilesForIntegrityCheck(ctx context.Context, arg ListFilesF
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
 			&i.DvProfile,
+			&i.Edition,
+			&i.PartIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -2191,6 +2373,7 @@ SELECT g::text AS genre, COUNT(*)::bigint AS count
 FROM media_items, unnest(genres) AS g
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL
   AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
+  AND media_item_labels_permitted(labels, parent_id, $4::text[], $5::text[])
 GROUP BY g
 ORDER BY g
 `
@@ -2199,6 +2382,8 @@ type ListGenresWithCountsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	Type          string    `json:"type"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListGenresWithCountsRow struct {
@@ -2213,7 +2398,13 @@ type ListGenresWithCountsRow struct {
 // the number) of over-ceiling titles to a restricted profile, which is exactly
 // what the ceiling is for.
 func (q *Queries) ListGenresWithCounts(ctx context.Context, arg ListGenresWithCountsParams) ([]ListGenresWithCountsRow, error) {
-	rows, err := q.db.Query(ctx, listGenresWithCounts, arg.LibraryID, arg.Type, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listGenresWithCounts,
+		arg.LibraryID,
+		arg.Type,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2365,7 +2556,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC
@@ -2415,6 +2607,8 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID uuid.UU
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
 			&i.DvProfile,
+			&i.Edition,
+			&i.PartIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -2431,7 +2625,7 @@ SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
        genres, tags, tmdb_id, tvdb_id, imdb_id, musicbrainz_id,
        anilist_id, mal_id, kind,
-       parent_id, index, disc_number, poster_path, fanart_path, thumb_path,
+       parent_id, index, index_end, disc_number, poster_path, fanart_path, thumb_path,
        originally_available_at, created_at, updated_at, deleted_at
 FROM media_items
 WHERE parent_id = $1 AND deleted_at IS NULL
@@ -2464,6 +2658,7 @@ type ListMediaItemChildrenRow struct {
 	Kind                  *string            `json:"kind"`
 	ParentID              pgtype.UUID        `json:"parent_id"`
 	Index                 *int32             `json:"index"`
+	IndexEnd              *int32             `json:"index_end"`
 	DiscNumber            *int32             `json:"disc_number"`
 	PosterPath            *string            `json:"poster_path"`
 	FanartPath            *string            `json:"fanart_path"`
@@ -2512,6 +2707,7 @@ func (q *Queries) ListMediaItemChildren(ctx context.Context, parentID pgtype.UUI
 			&i.Kind,
 			&i.ParentID,
 			&i.Index,
+			&i.IndexEnd,
 			&i.DiscNumber,
 			&i.PosterPath,
 			&i.FanartPath,
@@ -2537,11 +2733,14 @@ FROM media_items
 WHERE id = ANY($1::uuid[])
   AND deleted_at IS NULL
   AND ($2::int IS NULL OR content_rating_rank(content_rating) <= $2)
+  AND media_item_labels_permitted(labels, parent_id, $3::text[], $4::text[])
 `
 
 type ListMediaItemTitlesParams struct {
 	Ids           []uuid.UUID `json:"ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 type ListMediaItemTitlesRow struct {
@@ -2554,7 +2753,12 @@ type ListMediaItemTitlesRow struct {
 // The caller's rating ceiling applies to the parents too: a parent above it
 // (a show over a season the profile may list) stays unnamed.
 func (q *Queries) ListMediaItemTitles(ctx context.Context, arg ListMediaItemTitlesParams) ([]ListMediaItemTitlesRow, error) {
-	rows, err := q.db.Query(ctx, listMediaItemTitles, arg.Ids, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listMediaItemTitles,
+		arg.Ids,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -2694,7 +2898,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY created_at DESC, id
 LIMIT $3 OFFSET $4
 `
@@ -2709,6 +2914,8 @@ type ListMediaItemsByDateAddedParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -2755,6 +2962,8 @@ func (q *Queries) ListMediaItemsByDateAdded(ctx context.Context, arg ListMediaIt
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -2820,7 +3029,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY created_at ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -2835,6 +3045,8 @@ type ListMediaItemsByDateAddedAscParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -2881,6 +3093,8 @@ func (q *Queries) ListMediaItemsByDateAddedAsc(ctx context.Context, arg ListMedi
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -2947,7 +3161,8 @@ WHERE m.library_id = $1
   AND ($7::int IS NULL OR m.year <= $7)
   AND ($8::numeric IS NULL OR m.rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(m.content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, m.id, m.type, $9::int) = $10::text)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, m.id, m.type, $9::int) = $12::text)
 ORDER BY p.sort_title ASC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4
 `
@@ -2962,6 +3177,8 @@ type ListMediaItemsByParentTitleParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3013,6 +3230,8 @@ func (q *Queries) ListMediaItemsByParentTitle(ctx context.Context, arg ListMedia
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3079,7 +3298,8 @@ WHERE m.library_id = $1
   AND ($7::int IS NULL OR m.year <= $7)
   AND ($8::numeric IS NULL OR m.rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(m.content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, m.id, m.type, $9::int) = $10::text)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, m.id, m.type, $9::int) = $12::text)
 ORDER BY p.sort_title DESC NULLS LAST, p.id, m.year ASC NULLS LAST, m.sort_title ASC, m.id
 LIMIT $3 OFFSET $4
 `
@@ -3094,6 +3314,8 @@ type ListMediaItemsByParentTitleDescParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3141,6 +3363,8 @@ func (q *Queries) ListMediaItemsByParentTitleDesc(ctx context.Context, arg ListM
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3206,7 +3430,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY rating DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3221,6 +3446,8 @@ type ListMediaItemsByRatingParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3267,6 +3494,8 @@ func (q *Queries) ListMediaItemsByRating(ctx context.Context, arg ListMediaItems
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3332,7 +3561,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY rating ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3347,6 +3577,8 @@ type ListMediaItemsByRatingAscParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3393,6 +3625,8 @@ func (q *Queries) ListMediaItemsByRatingAsc(ctx context.Context, arg ListMediaIt
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3454,6 +3688,7 @@ WHERE type = $1
        OR library_id = ANY($3::uuid[]))
   AND ($4::int IS NULL
        OR content_rating_rank(content_rating) <= $4::int)
+  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
 `
 
 type ListMediaItemsByTMDBIDsParams struct {
@@ -3461,6 +3696,8 @@ type ListMediaItemsByTMDBIDsParams struct {
 	TmdbIds       []int32     `json:"tmdb_ids"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
 type ListMediaItemsByTMDBIDsRow struct {
@@ -3486,6 +3723,8 @@ func (q *Queries) ListMediaItemsByTMDBIDs(ctx context.Context, arg ListMediaItem
 		arg.TmdbIds,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err
@@ -3520,7 +3759,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY originally_available_at DESC NULLS LAST, created_at DESC, id
 LIMIT $3 OFFSET $4
 `
@@ -3535,6 +3775,8 @@ type ListMediaItemsByTakenAtParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3583,6 +3825,8 @@ func (q *Queries) ListMediaItemsByTakenAt(ctx context.Context, arg ListMediaItem
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3648,7 +3892,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY originally_available_at ASC NULLS LAST, created_at ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3663,6 +3908,8 @@ type ListMediaItemsByTakenAtAscParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3709,6 +3956,8 @@ func (q *Queries) ListMediaItemsByTakenAtAsc(ctx context.Context, arg ListMediaI
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3774,7 +4023,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -3789,6 +4039,8 @@ type ListMediaItemsByTitleParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3835,6 +4087,8 @@ func (q *Queries) ListMediaItemsByTitle(ctx context.Context, arg ListMediaItemsB
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -3900,7 +4154,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY sort_title DESC, id
 LIMIT $3 OFFSET $4
 `
@@ -3915,6 +4170,8 @@ type ListMediaItemsByTitleDescParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -3961,6 +4218,8 @@ func (q *Queries) ListMediaItemsByTitleDesc(ctx context.Context, arg ListMediaIt
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -4026,7 +4285,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY year ASC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -4041,6 +4301,8 @@ type ListMediaItemsByYearParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -4087,6 +4349,8 @@ func (q *Queries) ListMediaItemsByYear(ctx context.Context, arg ListMediaItemsBy
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -4152,7 +4416,8 @@ WHERE library_id = $1
   AND ($7::int IS NULL OR year <= $7)
   AND ($8::numeric IS NULL OR rating >= $8)
   AND ($9::int IS NULL OR content_rating_rank(content_rating) <= $9)
-  AND ($10::text IS NULL OR media_watch_bucket($11::uuid, id, type, $9::int) = $10::text)
+  AND media_item_labels_permitted(labels, parent_id, $10::text[], $11::text[])
+  AND ($12::text IS NULL OR media_watch_bucket($13::uuid, id, type, $9::int) = $12::text)
 ORDER BY year DESC NULLS LAST, sort_title ASC, id
 LIMIT $3 OFFSET $4
 `
@@ -4167,6 +4432,8 @@ type ListMediaItemsByYearDescParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	Watch         *string        `json:"watch"`
 	WatchUserID   uuid.UUID      `json:"watch_user_id"`
 }
@@ -4213,6 +4480,8 @@ func (q *Queries) ListMediaItemsByYearDesc(ctx context.Context, arg ListMediaIte
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Watch,
 		arg.WatchUserID,
 	)
@@ -4278,8 +4547,9 @@ WHERE library_id = ANY($1::uuid[])
   AND ($5::int IS NULL OR year <= $5)
   AND ($6::numeric IS NULL OR rating >= $6)
   AND ($7::int IS NULL OR content_rating_rank(content_rating) <= $7)
+  AND media_item_labels_permitted(labels, parent_id, $8::text[], $9::text[])
 ORDER BY sort_title
-LIMIT $8::int
+LIMIT $10::int
 `
 
 type ListMediaItemsForSmartPlaylistParams struct {
@@ -4290,6 +4560,8 @@ type ListMediaItemsForSmartPlaylistParams struct {
 	YearMax       *int32         `json:"year_max"`
 	RatingMin     pgtype.Numeric `json:"rating_min"`
 	MaxRatingRank *int32         `json:"max_rating_rank"`
+	BlockedLabels []string       `json:"blocked_labels"`
+	AllowedLabels []string       `json:"allowed_labels"`
 	ResultLimit   int32          `json:"result_limit"`
 }
 
@@ -4343,6 +4615,8 @@ func (q *Queries) ListMediaItemsForSmartPlaylist(ctx context.Context, arg ListMe
 		arg.YearMax,
 		arg.RatingMin,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.ResultLimit,
 	)
 	if err != nil {
@@ -4497,7 +4771,8 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        bit_depth, sample_rate, channel_layout, lossless,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
-       integrity_status, integrity_checked_at, integrity_detail, dv_profile
+       integrity_status, integrity_checked_at, integrity_detail, dv_profile,
+       edition, part_index
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000
@@ -4547,6 +4822,8 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 			&i.IntegrityCheckedAt,
 			&i.IntegrityDetail,
 			&i.DvProfile,
+			&i.Edition,
+			&i.PartIndex,
 		); err != nil {
 			return nil, err
 		}
@@ -4685,7 +4962,8 @@ WITH recent_episodes AS (
            e.rating, e.audience_rating, e.content_rating, e.duration_ms,
            e.genres, e.tags, e.tmdb_id, e.tvdb_id, e.imdb_id, e.musicbrainz_id,
            e.index, e.poster_path, e.fanart_path, e.thumb_path,
-           e.originally_available_at, e.updated_at, e.deleted_at, e.type
+           e.originally_available_at, e.updated_at, e.deleted_at, e.type,
+           e.labels
     FROM media_items e
     WHERE e.type = 'episode' AND e.deleted_at IS NULL
       AND ($1::uuid IS NULL OR e.library_id = $1)
@@ -4715,6 +4993,7 @@ WITH recent_episodes AS (
         AND grandparent.type = 'show'
         AND grandparent.poster_path IS NOT NULL
     WHERE ($3::int IS NULL OR content_rating_rank(COALESCE(e.content_rating, grandparent.content_rating)) <= $3)
+      AND media_item_labels_permitted(e.labels, e.parent_id, $4::text[], $5::text[])
 )
 SELECT id, library_id, type, title, sort_title, original_title, year,
        summary, tagline, rating, audience_rating, content_rating, duration_ms,
@@ -4762,15 +5041,18 @@ FROM (
       AND ($2::uuid[] IS NULL
            OR library_id = ANY($2::uuid[]))
       AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
+      AND media_item_labels_permitted(labels, parent_id, $4::text[], $5::text[])
 ) combined
 ORDER BY created_at DESC
-LIMIT $4
+LIMIT $6
 `
 
 type ListRecentlyAddedParams struct {
 	LibraryID     pgtype.UUID `json:"library_id"`
 	LibraryIds    []uuid.UUID `json:"library_ids"`
 	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 	Limit         int32       `json:"limit"`
 }
 
@@ -4840,6 +5122,8 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 		arg.LibraryID,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.Limit,
 	)
 	if err != nil {
@@ -4884,6 +5168,39 @@ func (q *Queries) ListRecentlyAdded(ctx context.Context, arg ListRecentlyAddedPa
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listShowsFollowingLibraryEpisodeOrder = `-- name: ListShowsFollowingLibraryEpisodeOrder :many
+SELECT id
+FROM media_items
+WHERE library_id = $1
+  AND type = 'show'
+  AND parent_id IS NULL
+  AND deleted_at IS NULL
+  AND episode_order IS NULL
+ORDER BY id
+`
+
+// The live shows of a library that follow its default episode order (no
+// order of their own): the shows to re-enrich when that default changes.
+func (q *Queries) ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, listShowsFollowingLibraryEpisodeOrder, libraryID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []uuid.UUID{}
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -4963,6 +5280,7 @@ WITH watched AS (
       AND we.event_type IN ('play', 'scrobble', 'stop')
       AND we.occurred_at >= NOW() - make_interval(days => $2::int)
       AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
+      AND media_item_labels_permitted(m.labels, m.parent_id, $4::text[], $5::text[])
 ),
 agg AS (
     SELECT bucket_id,
@@ -4983,9 +5301,11 @@ LIMIT $1::int
 `
 
 type ListTrendingParams struct {
-	ResultLimit   int32  `json:"result_limit"`
-	WindowDays    int32  `json:"window_days"`
-	MaxRatingRank *int32 `json:"max_rating_rank"`
+	ResultLimit   int32    `json:"result_limit"`
+	WindowDays    int32    `json:"window_days"`
+	MaxRatingRank *int32   `json:"max_rating_rank"`
+	BlockedLabels []string `json:"blocked_labels"`
+	AllowedLabels []string `json:"allowed_labels"`
 }
 
 type ListTrendingRow struct {
@@ -5030,7 +5350,13 @@ type ListTrendingRow struct {
 // callers can swap 7 / 30 / 365 without a query rewrite. make_interval
 // gives postgres the typed interval the comparison needs.
 func (q *Queries) ListTrending(ctx context.Context, arg ListTrendingParams) ([]ListTrendingRow, error) {
-	rows, err := q.db.Query(ctx, listTrending, arg.ResultLimit, arg.WindowDays, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listTrending,
+		arg.ResultLimit,
+		arg.WindowDays,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5177,6 +5503,7 @@ SELECT year::int AS year, COUNT(*)::bigint AS count
 FROM media_items
 WHERE library_id = $1 AND type = $2 AND deleted_at IS NULL AND year IS NOT NULL
   AND ($3::int IS NULL OR content_rating_rank(content_rating) <= $3)
+  AND media_item_labels_permitted(labels, parent_id, $4::text[], $5::text[])
 GROUP BY year
 ORDER BY year DESC
 `
@@ -5185,6 +5512,8 @@ type ListYearsWithCountsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	Type          string    `json:"type"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListYearsWithCountsRow struct {
@@ -5196,7 +5525,13 @@ type ListYearsWithCountsRow struct {
 // NULL years are excluded so the browse UI doesn't show an empty bucket.
 // Rating-filtered for the same reason as ListGenresWithCounts above.
 func (q *Queries) ListYearsWithCounts(ctx context.Context, arg ListYearsWithCountsParams) ([]ListYearsWithCountsRow, error) {
-	rows, err := q.db.Query(ctx, listYearsWithCounts, arg.LibraryID, arg.Type, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listYearsWithCounts,
+		arg.LibraryID,
+		arg.Type,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -5506,6 +5841,7 @@ WHERE library_id = $1
      OR (original_title IS NOT NULL AND original_title % $2)
   )
   AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
+  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $2)),
     similarity(title, $2),
@@ -5519,6 +5855,8 @@ type SearchMediaItemsParams struct {
 	WebsearchToTsquery string    `json:"websearch_to_tsquery"`
 	Limit              int32     `json:"limit"`
 	MaxRatingRank      *int32    `json:"max_rating_rank"`
+	BlockedLabels      []string  `json:"blocked_labels"`
+	AllowedLabels      []string  `json:"allowed_labels"`
 }
 
 type SearchMediaItemsRow struct {
@@ -5563,6 +5901,8 @@ func (q *Queries) SearchMediaItems(ctx context.Context, arg SearchMediaItemsPara
 		arg.WebsearchToTsquery,
 		arg.Limit,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err
@@ -5627,6 +5967,7 @@ WHERE deleted_at IS NULL
   AND ($3::uuid[] IS NULL
        OR library_id = ANY($3::uuid[]))
   AND ($4::int IS NULL OR content_rating_rank(content_rating) <= $4)
+  AND media_item_labels_permitted(labels, parent_id, $5::text[], $6::text[])
 ORDER BY GREATEST(
     ts_rank(search_vector, websearch_to_tsquery('english', $1)),
     similarity(title, $1),
@@ -5640,6 +5981,8 @@ type SearchMediaItemsGlobalParams struct {
 	Limit              int32       `json:"limit"`
 	LibraryIds         []uuid.UUID `json:"library_ids"`
 	MaxRatingRank      *int32      `json:"max_rating_rank"`
+	BlockedLabels      []string    `json:"blocked_labels"`
+	AllowedLabels      []string    `json:"allowed_labels"`
 }
 
 type SearchMediaItemsGlobalRow struct {
@@ -5684,6 +6027,8 @@ func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaIte
 		arg.Limit,
 		arg.LibraryIds,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 	)
 	if err != nil {
 		return nil, err
@@ -5732,6 +6077,33 @@ func (q *Queries) SearchMediaItemsGlobal(ctx context.Context, arg SearchMediaIte
 	return items, nil
 }
 
+const setEpisodeIndexEnd = `-- name: SetEpisodeIndexEnd :execrows
+UPDATE media_items
+SET index_end = $1::int,
+    updated_at = NOW()
+WHERE id = $2::uuid
+  AND type = 'episode'
+  AND deleted_at IS NULL
+  AND index_end IS DISTINCT FROM $1::int
+`
+
+type SetEpisodeIndexEndParams struct {
+	IndexEnd *int32    `json:"index_end"`
+	ID       uuid.UUID `json:"id"`
+}
+
+// Records the last episode a multi-episode file covers (index_end; NULL for
+// a single episode). The scanner calls this when it files or re-reads an
+// episode. Unchanged rows are left alone (0 rows), so a rescan of a library
+// that is already right writes nothing.
+func (q *Queries) SetEpisodeIndexEnd(ctx context.Context, arg SetEpisodeIndexEndParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setEpisodeIndexEnd, arg.IndexEnd, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setMediaItemKind = `-- name: SetMediaItemKind :exec
 UPDATE media_items
 SET kind = NULLIF($2::text, ''),
@@ -5752,6 +6124,30 @@ type SetMediaItemKindParams struct {
 func (q *Queries) SetMediaItemKind(ctx context.Context, arg SetMediaItemKindParams) error {
 	_, err := q.db.Exec(ctx, setMediaItemKind, arg.ID, arg.Kind)
 	return err
+}
+
+const setShowEpisodeOrder = `-- name: SetShowEpisodeOrder :execrows
+UPDATE media_items
+SET episode_order = $1::text,
+    updated_at = NOW()
+WHERE id = $2::uuid
+  AND type = 'show'
+  AND deleted_at IS NULL
+`
+
+type SetShowEpisodeOrderParams struct {
+	EpisodeOrder *string   `json:"episode_order"`
+	ID           uuid.UUID `json:"id"`
+}
+
+// Sets (or, with NULL, clears) a show's own episode order. 0 rows means the
+// item is not a live show.
+func (q *Queries) SetShowEpisodeOrder(ctx context.Context, arg SetShowEpisodeOrderParams) (int64, error) {
+	result, err := q.db.Exec(ctx, setShowEpisodeOrder, arg.EpisodeOrder, arg.ID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const softDeleteEmptyContainerItems = `-- name: SoftDeleteEmptyContainerItems :exec
@@ -5954,6 +6350,29 @@ func (q *Queries) UpdateMediaFileItemID(ctx context.Context, arg UpdateMediaFile
 	return err
 }
 
+const updateMediaFileNaming = `-- name: UpdateMediaFileNaming :exec
+UPDATE media_files
+SET edition    = $2,
+    part_index = $3
+WHERE id = $1
+`
+
+type UpdateMediaFileNamingParams struct {
+	ID        uuid.UUID `json:"id"`
+	Edition   *string   `json:"edition"`
+	PartIndex *int16    `json:"part_index"`
+}
+
+// Sets what a file's NAME says about it — its edition label and its part
+// number in a stacked rip (migration 00045) — and nothing else. Used for an
+// unchanged file whose stored naming predates the columns or disagrees with
+// its name, and for a file moved to a new name: the bytes are the same, so
+// the integrity verdict and scanned_at stay.
+func (q *Queries) UpdateMediaFileNaming(ctx context.Context, arg UpdateMediaFileNamingParams) error {
+	_, err := q.db.Exec(ctx, updateMediaFileNaming, arg.ID, arg.Edition, arg.PartIndex)
+	return err
+}
+
 const updateMediaFilePath = `-- name: UpdateMediaFilePath :exec
 UPDATE media_files
 SET file_path     = $2,
@@ -5989,6 +6408,8 @@ SET container            = $2,
     duration_ms          = $13,
     video_bit_depth      = $14,
     dv_profile           = $15,
+    edition              = $16,
+    part_index           = $17,
     integrity_status     = 'unchecked',
     integrity_checked_at = NULL,
     integrity_detail     = NULL,
@@ -6012,6 +6433,8 @@ type UpdateMediaFileTechnicalMetadataParams struct {
 	DurationMs      *int64         `json:"duration_ms"`
 	VideoBitDepth   *int32         `json:"video_bit_depth"`
 	DvProfile       *int16         `json:"dv_profile"`
+	Edition         *string        `json:"edition"`
+	PartIndex       *int16         `json:"part_index"`
 }
 
 // Also resets the integrity verdict: this update only runs when the scanner
@@ -6037,6 +6460,8 @@ func (q *Queries) UpdateMediaFileTechnicalMetadata(ctx context.Context, arg Upda
 		arg.DurationMs,
 		arg.VideoBitDepth,
 		arg.DvProfile,
+		arg.Edition,
+		arg.PartIndex,
 	)
 	return err
 }
@@ -6087,17 +6512,17 @@ func (q *Queries) UpdateMediaItemLyrics(ctx context.Context, arg UpdateMediaItem
 
 const updateMediaItemMetadata = `-- name: UpdateMediaItemMetadata :one
 UPDATE media_items
-SET title                   = $2,
-    sort_title              = $3,
-    original_title          = $4,
-    year                    = $5,
-    summary                 = $6,
-    tagline                 = $7,
-    rating                  = $8,
+SET title                   = CASE WHEN 'title' = ANY(locked_fields) THEN title ELSE $2 END,
+    sort_title              = CASE WHEN locked_fields && ARRAY['title', 'sort_title'] THEN sort_title ELSE $3 END,
+    original_title          = CASE WHEN 'original_title' = ANY(locked_fields) THEN original_title ELSE $4 END,
+    year                    = CASE WHEN 'year' = ANY(locked_fields) THEN year ELSE $5 END,
+    summary                 = CASE WHEN 'summary' = ANY(locked_fields) THEN summary ELSE $6 END,
+    tagline                 = CASE WHEN 'tagline' = ANY(locked_fields) THEN tagline ELSE $7 END,
+    rating                  = CASE WHEN 'rating' = ANY(locked_fields) THEN rating ELSE $8 END,
     audience_rating         = $9,
-    content_rating          = $10,
+    content_rating          = CASE WHEN 'content_rating' = ANY(locked_fields) THEN content_rating ELSE $10 END,
     duration_ms             = $11,
-    genres                  = $12,
+    genres                  = CASE WHEN 'genres' = ANY(locked_fields) THEN genres ELSE $12 END,
     tags                    = $13,
     -- COALESCE on the art paths: the enricher only sets these when
     -- it has a new URL to download. Without this guard, a nil from
@@ -6108,7 +6533,8 @@ SET title                   = $2,
     poster_path             = COALESCE($14, poster_path),
     fanart_path             = COALESCE($15, fanart_path),
     thumb_path              = COALESCE($16, thumb_path),
-    originally_available_at = $17,
+    originally_available_at = CASE WHEN 'originally_available_at' = ANY(locked_fields)
+                                   THEN originally_available_at ELSE $17 END,
     tmdb_id                 = COALESCE($18, tmdb_id),
     tvdb_id                 = COALESCE($19, tvdb_id),
     -- COALESCE on the anime IDs matches the tmdb_id / tvdb_id shape:
@@ -6195,6 +6621,14 @@ type UpdateMediaItemMetadataRow struct {
 	DeletedAt             pgtype.Timestamptz `json:"deleted_at"`
 }
 
+// The automatic metadata write: enrichment (TMDB / TVDB / AniList /
+// MusicBrainz / NFO), refresh, re-enrich, Fix Match and the scanner all
+// come through here. Fields an admin locked by editing them
+// (locked_fields, see EditMediaItemMetadata) keep their stored value; the
+// CASE guards are here, not in the callers, so no write path can forget
+// them. A locked title also keeps the sort title, which every automatic
+// writer derives from the title. Provider IDs and art aren't lockable, so
+// Fix Match still re-points the item while the admin's text stays.
 func (q *Queries) UpdateMediaItemMetadata(ctx context.Context, arg UpdateMediaItemMetadataParams) (UpdateMediaItemMetadataRow, error) {
 	row := q.db.QueryRow(ctx, updateMediaItemMetadata,
 		arg.ID,
@@ -6276,7 +6710,9 @@ func (q *Queries) UpdateMediaItemPosterPath(ctx context.Context, arg UpdateMedia
 
 const updateMediaItemTakenAt = `-- name: UpdateMediaItemTakenAt :exec
 UPDATE media_items
-SET originally_available_at = $1,
+SET originally_available_at = CASE WHEN 'originally_available_at' = ANY(locked_fields)
+                                   THEN originally_available_at
+                                   ELSE $1 END,
     updated_at              = NOW()
 WHERE id = $2
 `
@@ -6288,6 +6724,7 @@ type UpdateMediaItemTakenAtParams struct {
 
 // Sets only an item's originally_available_at: a photo's EXIF capture date.
 // Same reason as UpdateMediaItemDuration.
+// An admin's edit locks the date (locked_fields), and a locked date stays.
 func (q *Queries) UpdateMediaItemTakenAt(ctx context.Context, arg UpdateMediaItemTakenAtParams) error {
 	_, err := q.db.Exec(ctx, updateMediaItemTakenAt, arg.TakenAt, arg.ID)
 	return err
@@ -6295,8 +6732,8 @@ func (q *Queries) UpdateMediaItemTakenAt(ctx context.Context, arg UpdateMediaIte
 
 const updateMediaItemTitle = `-- name: UpdateMediaItemTitle :exec
 UPDATE media_items
-SET title      = $2,
-    sort_title = $3,
+SET title      = CASE WHEN 'title' = ANY(locked_fields) THEN title ELSE $2 END,
+    sort_title = CASE WHEN locked_fields && ARRAY['title', 'sort_title'] THEN sort_title ELSE $3 END,
     updated_at = NOW()
 WHERE id = $1 AND deleted_at IS NULL
 `
@@ -6311,7 +6748,10 @@ type UpdateMediaItemTitleParams struct {
 // the title + sort_title without touching the metadata fields that
 // UpdateMediaItemMetadata would overwrite. Lets the operator clean a
 // bracket-prefixed title before the enricher runs, so even if TMDB still
-// can't match the show, the title is at least readable.
+// can't match the show, the title is at least readable. Also the music
+// scanner's write of a track's tag title. A field an admin locked
+// (locked_fields) keeps its value, the same rule UpdateMediaItemMetadata
+// applies; a locked title keeps the sort title too.
 func (q *Queries) UpdateMediaItemTitle(ctx context.Context, arg UpdateMediaItemTitleParams) error {
 	_, err := q.db.Exec(ctx, updateMediaItemTitle, arg.ID, arg.Title, arg.SortTitle)
 	return err

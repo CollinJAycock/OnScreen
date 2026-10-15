@@ -28,14 +28,17 @@ WHERE m.deleted_at IS NULL
   AND m.type IN ('movie', 'episode')
   AND COALESCE(ws.status, 'unwatched') = 'unwatched'  -- exclude watched / started
   AND ($3::int IS NULL OR content_rating_rank(m.content_rating) <= $3)
+  AND media_item_labels_permitted(m.labels, m.parent_id, $4::text[], $5::text[])
 ORDER BY co.score DESC, m.updated_at DESC
-LIMIT $4::int
+LIMIT $6::int
 `
 
 type ListCooccurrentItemsParams struct {
 	Seed          uuid.UUID `json:"seed"`
 	UserID        uuid.UUID `json:"user_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 	ResultLimit   int32     `json:"result_limit"`
 }
 
@@ -69,6 +72,8 @@ func (q *Queries) ListCooccurrentItems(ctx context.Context, arg ListCooccurrentI
 		arg.Seed,
 		arg.UserID,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.ResultLimit,
 	)
 	if err != nil {

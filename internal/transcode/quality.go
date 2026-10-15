@@ -36,6 +36,19 @@ func ScaleBitrateForAV1(h264Bitrate int) int {
 	return int(float64(h264Bitrate) * AV1BitrateRatio)
 }
 
+// ProfileForBitrate returns the highest-resolution profile whose bitrate fits
+// within kbps, or the smallest profile when none does. A per-user or internet
+// cap bounds the output resolution with it: 4K squeezed into a few Mbps looks
+// worse than 720p at the same rate.
+func ProfileForBitrate(kbps int) QualityProfile {
+	for _, p := range Profiles {
+		if p.Bitrate <= kbps {
+			return p
+		}
+	}
+	return Profiles[len(Profiles)-1]
+}
+
 // SelectQuality picks the effective quality from client request params + server caps (ADR-017).
 // Effective = MIN(client_requested, server_cap). Source resolution/bitrate cap upscaling.
 func SelectQuality(

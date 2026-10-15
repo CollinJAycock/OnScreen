@@ -16,6 +16,7 @@ import (
 	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/db/gen"
 	"github.com/onscreen/onscreen/internal/domain/library"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // trendingCacheTTL controls how long a /api/v1/hub trending result
@@ -85,6 +86,12 @@ func NewHubHandler(db HubDB, logger *slog.Logger) *HubHandler {
 func (h *HubHandler) WithTrendingCacheTTL(d time.Duration) *HubHandler {
 	h.trending = newTrendingCache(d)
 	return h
+}
+
+// InvalidateItemCaches drops the cached trending row (ItemCacheInvalidator),
+// so an item's metadata edit shows on the next hub fetch.
+func (h *HubHandler) InvalidateItemCaches() {
+	h.trending.invalidate()
 }
 
 // WithLibraryAccess enables per-user library filtering on hub rows.
@@ -183,7 +190,7 @@ func (h *HubHandler) WithCollections(db HubCollectionsDB) *HubHandler {
 
 // collectionRows builds the promoted-collection rows for the caller. Errors
 // drop the affected row rather than the hub.
-func (h *HubHandler) collectionRows(ctx context.Context, maxRank *int32, libAllowed func(uuid.UUID) bool) []HubCollectionRow {
+func (h *HubHandler) collectionRows(ctx context.Context, maxRank *int32, labels itemlabel.Filter, libAllowed func(uuid.UUID) bool) []HubCollectionRow {
 	out := []HubCollectionRow{}
 	promoted, err := h.collections.ListPromotedCollections(ctx)
 	if err != nil {
@@ -194,6 +201,8 @@ func (h *HubHandler) collectionRows(ctx context.Context, maxRank *int32, libAllo
 		rows, err := h.collections.ListCollectionItems(ctx, gen.ListCollectionItemsParams{
 			CollectionID:  c.ID,
 			MaxRatingRank: maxRank,
+			BlockedLabels: labels.BlockedArg(),
+			AllowedLabels: labels.AllowedArg(),
 			ItemOrder:     c.ItemOrder,
 			Lim:           hubCollectionRowFetch,
 		})
@@ -257,6 +266,9 @@ type HubItem struct {
 	ShowID        *string `json:"show_id,omitempty"`
 	SeasonNumber  *int    `json:"season_number,omitempty"`
 	EpisodeNumber *int    `json:"episode_number,omitempty"`
+	// EpisodeNumberEnd is the last episode a multi-episode file covers
+	// ("S01E01-E02" → 2); omitted for a single episode (additive, v2.6).
+	EpisodeNumberEnd *int `json:"episode_number_end,omitempty"`
 }
 
 // Get handles GET /api/v1/hub.
@@ -280,8 +292,10 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		CollectionRows:         []HubCollectionRow{},
 	}
 
-	// Convert max content rating from claims to a rank for SQL filtering.
+	// Convert max content rating from claims to a rank for SQL filtering; the
+	// label restriction rides next to it into every row's query.
 	maxRank := maxRatingRankFromClaims(claims.MaxContentRating)
+	labels := claims.LabelFilter()
 
 	// Pre-compute allowed library set. Nil means admin → no filtering.
 	var allowed map[uuid.UUID]struct{}
@@ -307,6 +321,8 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 		UserID:        claims.UserID,
 		Limit:         20,
 		MaxRatingRank: maxRank,
+		BlockedLabels: labels.BlockedArg(),
+		AllowedLabels: labels.AllowedArg(),
 	})
 	if err != nil {
 		h.logger.ErrorContext(r.Context(), "hub: continue watching", "err", err)
@@ -393,6 +409,8 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 			LibraryIds:    libIDs,
 			Limit:         40,
 			MaxRatingRank: maxRank,
+			BlockedLabels: labels.BlockedArg(),
+			AllowedLabels: labels.AllowedArg(),
 		})
 	}
 	if raErr != nil {
@@ -443,7 +461,7 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Per-library recently added — one row per library the user can see.
 	// Queries run in parallel because they're independent PK-indexed reads.
 	if h.libs != nil {
-		out.ByLibrary = h.perLibraryRecentlyAdded(r.Context(), libAllowed, maxRank)
+		out.ByLibrary = h.perLibraryRecentlyAdded(r.Context(), libAllowed, maxRank, labels)
 	}
 
 	// Trending — global "what others are watching" row over the last 7
@@ -457,10 +475,12 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// double-walks media_items for grandparent rollup + title
 	// lookup). Per-user library filtering still happens below on
 	// the cached rows, so a stale cache entry can't leak access.
-	trRows, err := h.trending.get(r.Context(), maxRank, func(ctx context.Context) ([]gen.ListTrendingRow, error) {
+	trRows, err := h.trending.get(r.Context(), maxRank, labels, func(ctx context.Context) ([]gen.ListTrendingRow, error) {
 		return h.db.ListTrending(ctx, gen.ListTrendingParams{
 			WindowDays:    7,
 			MaxRatingRank: maxRank,
+			BlockedLabels: labels.BlockedArg(),
+			AllowedLabels: labels.AllowedArg(),
 			ResultLimit:   30,
 		})
 	})
@@ -493,12 +513,12 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// out of the episode-poster substitution below, which would overwrite
 	// the still with a poster.
 	if h.watchDB != nil {
-		out.NextUp = h.nextUpRow(r.Context(), claims.UserID, maxRank, libAllowed)
-		out.PlanToWatch = h.planToWatchRow(r.Context(), claims.UserID, maxRank, libAllowed)
+		out.NextUp = h.nextUpRow(r.Context(), claims.UserID, maxRank, labels, libAllowed)
+		out.PlanToWatch = h.planToWatchRow(r.Context(), claims.UserID, maxRank, labels, libAllowed)
 	}
 
 	if h.collections != nil {
-		out.CollectionRows = h.collectionRows(r.Context(), maxRank, libAllowed)
+		out.CollectionRows = h.collectionRows(r.Context(), maxRank, labels, libAllowed)
 	}
 
 	// Episode-poster substitution. Collect every episode ID across
@@ -558,7 +578,7 @@ func (h *HubHandler) Get(w http.ResponseWriter, r *http.Request) {
 // creation order so the home page has a stable layout across reloads.
 // Libraries with no items in the result are omitted — the section
 // wouldn't render anything useful and an empty row is just noise.
-func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed func(uuid.UUID) bool, maxRank *int32) []HubLibraryRow {
+func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed func(uuid.UUID) bool, maxRank *int32, labels itemlabel.Filter) []HubLibraryRow {
 	libs, err := h.libs.List(ctx)
 	if err != nil {
 		h.logger.ErrorContext(ctx, "hub: list libraries", "err", err)
@@ -611,6 +631,8 @@ func (h *HubHandler) perLibraryRecentlyAdded(ctx context.Context, libAllowed fun
 				LibraryID:     pgtype.UUID{Bytes: id, Valid: true},
 				Limit:         int32(perLib) * 2, // dedupe budget
 				MaxRatingRank: maxRank,
+				BlockedLabels: labels.BlockedArg(),
+				AllowedLabels: labels.AllowedArg(),
 			})
 			if err != nil {
 				// Logged; don't fail the whole hub response because one

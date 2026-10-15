@@ -80,3 +80,22 @@ func TestSelectQuality_MinOfAllConstraints(t *testing.T) {
 		t.Errorf("want bitrate 2000 (client), got %d", q.Bitrate)
 	}
 }
+
+func TestProfileForBitrate(t *testing.T) {
+	cases := []struct {
+		kbps, wantH int
+	}{
+		{40000, 2160},
+		{20000, 1080},
+		{8000, 1080},
+		{6000, 720},
+		{4000, 720},
+		{1500, 480},
+		{500, 480}, // below every profile: the smallest
+	}
+	for _, c := range cases {
+		if got := ProfileForBitrate(c.kbps).MaxHeight; got != c.wantH {
+			t.Errorf("ProfileForBitrate(%d).MaxHeight = %d, want %d", c.kbps, got, c.wantH)
+		}
+	}
+}

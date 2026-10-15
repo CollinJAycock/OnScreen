@@ -176,6 +176,11 @@
   let abrEnabled = false;
   let abrMaxHeight = 0;
   let abrAutoMaxHeight = 1080;
+  // Internet streaming limit (read live — no restart). 0 = unlimited.
+  let remoteLimitEnabled = false;
+  let remoteLimitMbps = 8;
+  // Extra home networks, one CIDR per line.
+  let localNetworksText = '';
   let tuningSaving = false;
   let tuningLoaded = false;
 
@@ -225,6 +230,11 @@
       abrEnabled = tc.abr;
       abrMaxHeight = tc.abr_max_height;
       abrAutoMaxHeight = tc.abr_auto_max_height || 1080;
+      remoteLimitEnabled = (tc.remote_max_bitrate_kbps ?? 0) > 0;
+      remoteLimitMbps = remoteLimitEnabled
+        ? Math.round(((tc.remote_max_bitrate_kbps ?? 0) / 1000) * 10) / 10
+        : 8;
+      localNetworksText = (tc.local_networks ?? []).join('\n');
       tuningLoaded = true;
     } catch { tuningLoaded = true; }
   });
@@ -297,6 +307,8 @@
         abr: abrEnabled,
         abr_max_height: abrMaxHeight,
         abr_auto_max_height: abrAutoMaxHeight,
+        remote_max_bitrate_kbps: remoteLimitEnabled ? Math.max(1, Math.round(remoteLimitMbps * 1000)) : 0,
+        local_networks: localNetworksText.split(/[\s,]+/).map((n) => n.trim()).filter(Boolean),
       });
       toast.success('Encoder tuning saved — output limit and ABR changes need a restart');
     } catch (e: unknown) {
@@ -394,6 +406,40 @@
         <label for="max-height">Max Height (px)</label>
         <input id="max-height" type="number" min="360" max="4320" step="2" bind:value={maxHeight} />
         <div class="hint">Default 2160 (4K).</div>
+      </div>
+    </div>
+
+    <div class="sec-label" style="margin-top: 1.25rem;">Internet Streaming</div>
+    <div class="hint" style="margin-top: -0.5rem;">
+      A lower ceiling for viewers outside your home network. A remote video stream above it is
+      transcoded down instead of played as the original file. Per-user internet caps (Users ▸
+      Streaming caps) apply on top — the lowest wins. Music is never limited.
+      <strong>Takes effect on the next stream, no restart.</strong>
+    </div>
+
+    <label class="toggle-label" style="margin-top: 0.5rem;">
+      <input type="checkbox" bind:checked={remoteLimitEnabled} />
+      Limit internet streams
+    </label>
+    {#if remoteLimitEnabled}
+    <div class="field-row">
+      <div class="field" style="flex:1;">
+        <label for="remote-limit">Internet streaming limit (Mbps)</label>
+        <input id="remote-limit" type="number" min="0.5" max="200" step="0.5" bind:value={remoteLimitMbps} />
+        <div class="hint">Match your upload speed, leaving headroom for more than one viewer.</div>
+      </div>
+    </div>
+    {/if}
+
+    <div class="field" style="margin-top: 0.75rem;">
+      <label for="local-networks">Additional local networks</label>
+      <textarea id="local-networks" class="nets" rows="3" bind:value={localNetworksText}
+        placeholder="One CIDR per line, e.g. 203.0.113.0/24"></textarea>
+      <div class="hint">
+        Already treated as home: private addresses (192.168.x, 10.x, 172.16–31.x, fd00::/8),
+        loopback, link-local, this server's own IPv6 network, and 100.64.0.0/10 — so devices on
+        your Tailscale network count as home. Add a VPN or office range here. Behind a reverse
+        proxy or Cloudflare, the viewer's real address is only known if the proxy forwards it.
       </div>
     </div>
 
@@ -757,6 +803,18 @@
     font-weight: 600;
     color: var(--text-primary);
     cursor: pointer;
+  }
+  .nets {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: ui-monospace, monospace;
+    font-size: 0.8rem;
+    padding: 0.48rem 0.7rem;
+    background: var(--input-bg);
+    border: 1px solid var(--border-strong);
+    border-radius: 7px;
+    color: var(--text-primary);
+    resize: vertical;
   }
   .toggle-label input[type="checkbox"] {
     width: 1rem;

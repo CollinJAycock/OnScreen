@@ -26,7 +26,6 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/auth"
 	"github.com/onscreen/onscreen/internal/config"
-	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchlimit"
 	"github.com/onscreen/onscreen/internal/mediastore"
@@ -63,6 +62,10 @@ type SessionKiller interface {
 type StreamCaps struct {
 	ConcurrentStreams int
 	BitrateKbps       int
+	// RemoteBitrateKbps is the user's internet-only bitrate cap (migration
+	// 00046): applied, with the server's internet limit, only when the client
+	// is outside the home network. See effectiveStreamCap.
+	RemoteBitrateKbps int
 }
 
 // UserStreamCapsReader reads a user's admin-set streaming caps. Optional on the
@@ -90,6 +93,9 @@ type NativeTranscodeHandler struct {
 	logger   *slog.Logger
 	killer   SessionKiller        // optional — set for embedded worker deployments
 	userCaps UserStreamCapsReader // optional — per-user admin concurrent/bitrate caps
+	// remotePolicy is the server-wide internet streaming limit + extra home
+	// networks (Settings ▸ Transcode). Optional — nil = no internet limit.
+	remotePolicy RemoteStreamPolicyReader
 	// decisions remembers each created session's decision so the item's
 	// progress reports are attributed after the session is gone. Optional.
 	decisions *PlayDecisionRecorder
@@ -159,6 +165,13 @@ func (h *NativeTranscodeHandler) LibraryAccessWired() bool { return h.access != 
 // only the server-wide concurrent + bitrate limits.
 func (h *NativeTranscodeHandler) WithUserCaps(c UserStreamCapsReader) *NativeTranscodeHandler {
 	h.userCaps = c
+	return h
+}
+
+// WithRemotePolicy attaches the internet streaming limit reader used by the
+// play decision and Start to hold remote clients to a lower bitrate.
+func (h *NativeTranscodeHandler) WithRemotePolicy(p RemoteStreamPolicyReader) *NativeTranscodeHandler {
+	h.remotePolicy = p
 	return h
 }
 
@@ -413,12 +426,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if claims.MaxContentRating != "" {
+	if viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.Forbidden(w, r)
 			return
 		}
@@ -449,6 +462,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	// Select the file to transcode.
 	var file *media.File
+	var itemFiles []media.File
 	if body.FileID != nil && *body.FileID != "" {
 		fid, err := uuid.Parse(*body.FileID)
 		if err != nil {
@@ -474,7 +488,18 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			respond.NotFound(w, r)
 			return
 		}
+		itemFiles = files
 		file = &files[0] // already sorted best quality first
+	}
+
+	// Stacked movie ("cd1" + "cd2"): whichever part was asked for, the
+	// session streams every part from the first, as one movie. parts is nil
+	// for every other file. The parts come from the item's own file rows, so
+	// the per-part gates below and the ACL above cover all of them.
+	parts := h.stackParts(ctx, itemID, file, itemFiles)
+	if parts != nil {
+		first := parts[0]
+		file = &first
 	}
 
 	// Audio track selection. audio_stream_index counts AUDIO streams
@@ -494,81 +519,87 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Integrity gate: the opt-in deep-decode probe (integrity_probe task)
-	// marked this file damaged — its bitstream fails software decode
-	// mid-stream even though the header parses, so a transcode would only
-	// produce the garbage/green output the worker's chroma check kills
-	// anyway. Refuse up-front with a structured code, mirroring the
-	// DecisionDamaged verdict the playback-decision endpoint returns, so a
-	// decision-following client and one that skips the decision end at the
-	// same clear message. Checked before VerifySource: this is a free DB
-	// field read, and the probe's verdict subsumes the header-level check.
-	if file.IntegrityStatus == media.IntegrityDamaged {
-		h.logger.InfoContext(ctx, "transcode: refusing damaged file",
-			"item_id", itemID, "file_id", file.ID)
-		respond.Error(w, r, http.StatusUnprocessableEntity, "FILE_DAMAGED",
-			"This file is damaged — parts of it can't be decoded. Replace the file and re-scan the library.")
-		return
-	}
-
-	// Playlist/reference-container gate — BEFORE anything runs ffprobe or
-	// ffmpeg on the source. VerifySource below is an ffprobe, and ffprobe on
-	// a file swapped in place for an #EXTM3U playlist opens it with the HLS
-	// demuxer and follows the references inside it (file: has to stay
-	// whitelisted for real media); the failed probe then also misreported
-	// the file as SOURCE_UNREADABLE (422) instead of the documented 415.
-	// Stored container name plus a 512-byte sniff: no ffprobe involved.
-	if err := h.refuseReferenceContainer(file); err != nil {
-		h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
-			"file_id", file.ID, "path", file.FilePath)
-		respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
-			"this file is not a playable media container")
-		return
-	}
-
-	// Pre-flight source verification — bounds the "spinner forever" case
-	// where ffmpeg would otherwise hang trying to demux a corrupt or
-	// missing file. Catches the bad input in ~1 s with a structured error
-	// code the player surfaces as "This file can't be played" instead of
-	// the playlist endpoint's 60 s deadline → infinite-retry spinner.
-	// Cheap on healthy files (~200-500 ms; see scanner.VerifySource).
+	// The gates below run on every file the session will read: the one
+	// file, or each part of a stacked movie. A damaged, swapped or missing
+	// part 2 must refuse up-front just like a lone file would, not fail
+	// mid-movie.
 	verify := h.verifySource
 	if verify == nil {
 		verify = scanner.VerifySource
 	}
-	if status, verr := verify(ctx, file.FilePath); status != scanner.SourceOK {
-		switch status {
-		case scanner.SourceMissing:
-			h.logger.WarnContext(ctx, "transcode: source file missing",
-				"file_id", file.ID, "path", file.FilePath, "err", verr)
-			respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_MISSING",
-				"The file for this title is missing on disk. Re-scan the library to refresh.")
+	for _, src := range sessionSources(file, parts) {
+		// Integrity gate: the opt-in deep-decode probe (integrity_probe task)
+		// marked this file damaged — its bitstream fails software decode
+		// mid-stream even though the header parses, so a transcode would only
+		// produce the garbage/green output the worker's chroma check kills
+		// anyway. Refuse up-front with a structured code, mirroring the
+		// DecisionDamaged verdict the playback-decision endpoint returns, so a
+		// decision-following client and one that skips the decision end at the
+		// same clear message. Checked before VerifySource: this is a free DB
+		// field read, and the probe's verdict subsumes the header-level check.
+		if src.IntegrityStatus == media.IntegrityDamaged {
+			h.logger.InfoContext(ctx, "transcode: refusing damaged file",
+				"item_id", itemID, "file_id", src.ID)
+			respond.Error(w, r, http.StatusUnprocessableEntity, "FILE_DAMAGED",
+				"This file is damaged — parts of it can't be decoded. Replace the file and re-scan the library.")
 			return
-		case scanner.SourceUnreadable:
-			if errors.Is(verr, scanner.ErrUnsafeContainer) {
-				// Swapped for a playlist after the gate above ran;
-				// VerifySource's own sniff refused it before ffprobe.
-				h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
-					"file_id", file.ID, "path", file.FilePath)
-				respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
-					"this file is not a playable media container")
+		}
+
+		// Playlist/reference-container gate — BEFORE anything runs ffprobe or
+		// ffmpeg on the source. VerifySource below is an ffprobe, and ffprobe on
+		// a file swapped in place for an #EXTM3U playlist opens it with the HLS
+		// demuxer and follows the references inside it (file: has to stay
+		// whitelisted for real media); the failed probe then also misreported
+		// the file as SOURCE_UNREADABLE (422) instead of the documented 415.
+		// Stored container name plus a 512-byte sniff: no ffprobe involved.
+		if err := h.refuseReferenceContainer(src); err != nil {
+			h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
+				"file_id", src.ID, "path", src.FilePath)
+			respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
+				"this file is not a playable media container")
+			return
+		}
+
+		// Pre-flight source verification — bounds the "spinner forever" case
+		// where ffmpeg would otherwise hang trying to demux a corrupt or
+		// missing file. Catches the bad input in ~1 s with a structured error
+		// code the player surfaces as "This file can't be played" instead of
+		// the playlist endpoint's 60 s deadline → infinite-retry spinner.
+		// Cheap on healthy files (~200-500 ms; see scanner.VerifySource).
+		if status, verr := verify(ctx, src.FilePath); status != scanner.SourceOK {
+			switch status {
+			case scanner.SourceMissing:
+				h.logger.WarnContext(ctx, "transcode: source file missing",
+					"file_id", src.ID, "path", src.FilePath, "err", verr)
+				respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_MISSING",
+					"The file for this title is missing on disk. Re-scan the library to refresh.")
 				return
+			case scanner.SourceUnreadable:
+				if errors.Is(verr, scanner.ErrUnsafeContainer) {
+					// Swapped for a playlist after the gate above ran;
+					// VerifySource's own sniff refused it before ffprobe.
+					h.logger.WarnContext(ctx, "transcode: refusing playlist/reference container",
+						"file_id", src.ID, "path", src.FilePath)
+					respond.Error(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_CONTAINER",
+						"this file is not a playable media container")
+					return
+				}
+				h.logger.WarnContext(ctx, "transcode: source file unreadable",
+					"file_id", src.ID, "path", src.FilePath, "err", verr)
+				respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_UNREADABLE",
+					"This file appears to be corrupt — the server couldn't read its container. Re-encode or replace the file.")
+				return
+			case scanner.SourceUnverified:
+				// ffprobe ran out of time: no verdict, so start anyway. ffmpeg
+				// opens the file itself, and a file that really is broken fails
+				// there (the player shows its error) instead of a healthy but
+				// slow-to-open one being called corrupt.
+				h.logger.WarnContext(ctx, "transcode: source pre-flight timed out; starting anyway",
+					"file_id", src.ID, "path", src.FilePath, "err", verr)
+			case scanner.SourceOK:
+				// Caught by the outer `!= SourceOK` guard already; the case
+				// label keeps exhaustive lint happy.
 			}
-			h.logger.WarnContext(ctx, "transcode: source file unreadable",
-				"file_id", file.ID, "path", file.FilePath, "err", verr)
-			respond.Error(w, r, http.StatusUnprocessableEntity, "SOURCE_UNREADABLE",
-				"This file appears to be corrupt — the server couldn't read its container. Re-encode or replace the file.")
-			return
-		case scanner.SourceUnverified:
-			// ffprobe ran out of time: no verdict, so start anyway. ffmpeg
-			// opens the file itself, and a file that really is broken fails
-			// there (the player shows its error) instead of a healthy but
-			// slow-to-open one being called corrupt.
-			h.logger.WarnContext(ctx, "transcode: source pre-flight timed out; starting anyway",
-				"file_id", file.ID, "path", file.FilePath, "err", verr)
-		case scanner.SourceOK:
-			// Caught by the outer `!= SourceOK` guard already; the case
-			// label keeps exhaustive lint happy.
 		}
 	}
 
@@ -641,11 +672,24 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Fold the internet streaming limit into the bitrate cap: a client outside
+	// the home network (judged from the trusted client IP) is held to the
+	// lowest of the user's cap, the user's internet cap and the server's
+	// internet limit; a LAN client keeps just the user's cap. Everything below
+	// — the copy-to-transcode escalation, the output clamp, the ABR ladder
+	// ceiling — reads streamCaps.BitrateKbps, so it all follows.
+	bitrateCap := resolveStreamCap(ctx, streamCaps, h.remotePolicy, audit.ClientIP(r), file)
+	streamCaps.BitrateKbps = bitrateCap.Kbps
+
 	// Serve a pre-encoded ("static") ABR ladder when one exists for this file —
 	// the player gets a master playlist whose segments come from object storage /
 	// CDN, so no live session or ffmpeg is spent (HA roadmap §5). Only when ABR is
 	// enabled (the static ladder is adaptive) and not a video-copy/remux request.
-	if h.staticEnabled && h.cfg.TranscodeABR && !body.VideoCopy &&
+	// Not for a stacked movie: a pre-encoded ladder covers one file, and
+	// serving part 1's would end the movie there. Not when the source is over
+	// this request's bitrate cap either: the pre-encoded rungs aren't clamped
+	// to it, so the live ladder below (which is) serves.
+	if h.staticEnabled && h.cfg.TranscodeABR && !body.VideoCopy && parts == nil && !bitrateCap.overCap(file) &&
 		file.FileHash != nil && h.staticAvailable(ctx, file.ID, *file.FileHash) {
 		token := ""
 		if h.tokens != nil {
@@ -664,6 +708,17 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			Token:       token,
 		})
 		return
+	}
+
+	// A stacked movie runs as long as all its parts together: that is the
+	// timeline the ABR ladder predicts and the client's positions refer to.
+	// Part 1's row describes the rest (codec, resolution, audio tracks); the
+	// parts of one rip share them. With any part's length unknown the
+	// duration stays unknown, which keeps the session off the ABR ladder.
+	if parts != nil {
+		first := *file
+		first.DurationMS = media.StackDurationMS(parts)
+		file = &first
 	}
 
 	// Video-copy mode: remux video (no re-encode), only transcode audio.
@@ -728,7 +783,19 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if caps.MaxHeight > 0 && (reqHeight == 0 || reqHeight > caps.MaxHeight) {
 			reqHeight = caps.MaxHeight
 		}
-		quality := transcode.SelectQuality(0, caps.MaxWidth, reqHeight, sourceW, sourceH, serverCaps)
+		reqWidth := caps.MaxWidth
+		// A per-user or internet cap also bounds the resolution, to the
+		// largest profile that fits it (720p at 4 Mbps, 1080p from 8 Mbps).
+		if streamCaps.BitrateKbps > 0 {
+			fit := transcode.ProfileForBitrate(streamCaps.BitrateKbps)
+			if reqHeight == 0 || reqHeight > fit.MaxHeight {
+				reqHeight = fit.MaxHeight
+			}
+			if reqWidth == 0 || reqWidth > fit.MaxWidth {
+				reqWidth = fit.MaxWidth
+			}
+		}
+		quality := transcode.SelectQuality(0, reqWidth, reqHeight, sourceW, sourceH, serverCaps)
 
 		// SelectQuality leaves MaxWidth at the server cap when the client only
 		// specified height. Recalculate it from the source aspect ratio so FFmpeg
@@ -771,6 +838,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// rung child) and the single-rendition job below — one stream token per
 	// playback session regardless of ladder size.
 	sourceURL := h.buildSourceURL(ctx, claims, file.ID, file.FilePath)
+	// A stacked movie gets one source URL per part, each with a stream token
+	// bound to that part's own file (part 1's is sourceURL itself).
+	srcParts := h.sourceParts(ctx, claims, parts, sourceURL)
 
 	decision := "transcode"
 	if body.VideoCopy {
@@ -882,7 +952,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// isn't a direct play, and the output shape. See playback_reasons.go.
 	playMeta := sessionPlaybackMeta{
 		clientIP:      canonicalIP(audit.ClientIP(r)),
-		reasons:       startReasons(file, caps, decision, body.Height, sourceH, streamCaps.BitrateKbps, capForced),
+		reasons:       startReasons(file, caps, decision, body.Height, sourceH, bitrateCap, capForced),
 		outW:          width,
 		outH:          height,
 		audioCodec:    "aac",
@@ -963,7 +1033,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		}
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap, abrMaxBitrate)
 		if len(ladder) > 1 {
-			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser, playMeta.apply)
+			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser, playMeta.apply,
+				func(s *transcode.Session) { s.Parts = srcParts })
 			// startABR answers the client itself; its parent session existing
 			// under sessionID is the success signal.
 			if h.decisions != nil {
@@ -994,6 +1065,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// Display only here (ABR children read it from their parent): Now
 		// Playing names the copied track's codec, not the first track's.
 		AudioStreamIndex: audioStreamIdx,
+		Parts:            srcParts,
 	}
 	playMeta.apply(&sess)
 	if h.audit != nil {
@@ -1037,7 +1109,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	requestedStartSec := float64(body.PositionMS) / 1000.0
 	startOffsetSec := requestedStartSec
 	if body.VideoCopy && startOffsetSec > 0 {
-		startOffsetSec = transcode.FindPreviousKeyframe(ctx, file.FilePath, requestedStartSec)
+		if srcParts != nil {
+			// On the combined timeline: the keyframe inside the part the
+			// position falls in, where the concat demuxer's seek lands.
+			startOffsetSec = transcode.FindPreviousKeyframeInParts(ctx, srcParts, requestedStartSec)
+		} else {
+			startOffsetSec = transcode.FindPreviousKeyframe(ctx, file.FilePath, requestedStartSec)
+		}
 	}
 
 	// Audio passthrough when the remux was container-driven (see audioCopy
@@ -1052,6 +1130,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		SessionID:        sessionID,
 		FilePath:         file.FilePath,
 		SourceURL:        sourceURL,
+		Parts:            srcParts,
 		SessionDir:       transcode.SessionDir(sessionID),
 		StartOffsetSec:   startOffsetSec,
 		Decision:         decision,
@@ -1258,6 +1337,60 @@ func (h *NativeTranscodeHandler) refuseReferenceContainer(file *media.File) erro
 		return scanner.ErrUnsafeContainer
 	}
 	return nil
+}
+
+// stackParts returns the parts of the stacked movie file belongs to, in part
+// order, or nil when file plays on its own (see media.Stack). files is the
+// item's file list when the caller already has it; otherwise it is read here.
+// A read failure plays file alone, as before stacking existed.
+func (h *NativeTranscodeHandler) stackParts(ctx context.Context, itemID uuid.UUID, file *media.File, files []media.File) []media.File {
+	if file.PartIndex == nil {
+		return nil // the common case: no part number, nothing to read
+	}
+	if files == nil {
+		var err error
+		if files, err = h.media.GetFiles(ctx, itemID); err != nil {
+			h.logger.WarnContext(ctx, "transcode: list files for stacked parts", "item_id", itemID, "err", err)
+			return nil
+		}
+	}
+	return media.Stack(files, *file)
+}
+
+// sessionSources is every file a session reads: the parts of a stacked
+// movie, else the one file.
+func sessionSources(file *media.File, parts []media.File) []*media.File {
+	if parts == nil {
+		return []*media.File{file}
+	}
+	out := make([]*media.File, len(parts))
+	for i := range parts {
+		out[i] = &parts[i]
+	}
+	return out
+}
+
+// sourceParts describes a stacked movie's parts for the worker, each with
+// its own HTTP source URL (a stream token is bound to one file, so every part
+// needs its own). part1URL is the URL already minted for part 1. nil when
+// parts is.
+func (h *NativeTranscodeHandler) sourceParts(ctx context.Context, claims *auth.Claims, parts []media.File, part1URL string) []transcode.SourcePart {
+	if parts == nil {
+		return nil
+	}
+	out := make([]transcode.SourcePart, len(parts))
+	for i, p := range parts {
+		u := part1URL
+		if i > 0 {
+			u = h.buildSourceURL(ctx, claims, p.ID, p.FilePath)
+		}
+		var dur int64
+		if p.DurationMS != nil {
+			dur = *p.DurationMS
+		}
+		out[i] = transcode.SourcePart{FileID: p.ID.String(), FilePath: p.FilePath, SourceURL: u, DurationMS: dur}
+	}
+	return out
 }
 
 // probeFile indirects scanner.ProbeFile so tests can stub the ffprobe exec.

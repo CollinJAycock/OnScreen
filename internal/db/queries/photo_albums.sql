@@ -20,6 +20,7 @@ SELECT
           AND mi.type = 'photo'
           AND (sqlc.narg('max_rating_rank')::int IS NULL
                OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+          AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
           AND (sqlc.narg('library_ids')::uuid[] IS NULL
                OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
     )::bigint AS item_count,
@@ -33,6 +34,7 @@ SELECT
           AND mi.type = 'photo'
           AND (sqlc.narg('max_rating_rank')::int IS NULL
                OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+          AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
           AND (sqlc.narg('library_ids')::uuid[] IS NULL
                OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
         ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC
@@ -64,6 +66,7 @@ WHERE ci.collection_id = $1
   -- ceiling was lowered after it filled the album.
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   -- Libraries the caller can open (NULL = all), filtered here rather than
   -- after the page is cut, so a page isn't short and total agrees with it.
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
@@ -80,5 +83,6 @@ JOIN media_items mi ON mi.id = ci.media_item_id
 WHERE ci.collection_id = $1 AND mi.deleted_at IS NULL AND mi.type = 'photo'
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]));

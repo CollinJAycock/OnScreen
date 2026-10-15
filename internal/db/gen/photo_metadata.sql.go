@@ -21,6 +21,7 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
   AND pm.gps_lat IS NOT NULL
   AND pm.gps_lon IS NOT NULL
 `
@@ -28,13 +29,20 @@ WHERE mi.library_id = $1
 type CountPhotoMapPointsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 // Total geotagged photos in the library (ignoring bbox) so the client can
 // show "showing 5000 of 23107 — zoom in to see more" and decide whether
 // to bail on rendering.
 func (q *Queries) CountPhotoMapPoints(ctx context.Context, arg CountPhotoMapPointsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countPhotoMapPoints, arg.LibraryID, arg.MaxRatingRank)
+	row := q.db.QueryRow(ctx, countPhotoMapPoints,
+		arg.LibraryID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -49,25 +57,28 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
-  AND ($3::text   IS NULL OR pm.camera_make  ILIKE '%' || $3::text  || '%')
-  AND ($4::text  IS NULL OR pm.camera_model ILIKE '%' || $4::text || '%')
-  AND ($5::text    IS NULL OR pm.lens_model   ILIKE '%' || $5::text   || '%')
-  AND ($6::double precision IS NULL OR pm.aperture        >= $6)
-  AND ($7::double precision IS NULL OR pm.aperture        <= $7)
-  AND ($8::int                   IS NULL OR pm.iso             >= $8)
-  AND ($9::int                   IS NULL OR pm.iso             <= $9)
-  AND ($10::double precision    IS NULL OR pm.focal_length_mm >= $10)
-  AND ($11::double precision    IS NULL OR pm.focal_length_mm <= $11)
-  AND ($12::timestamptz IS NULL OR pm.taken_at >= $12)
-  AND ($13::timestamptz   IS NULL OR pm.taken_at <= $13)
-  AND ($14::boolean IS NULL
-       OR ($14::boolean = true  AND pm.gps_lat IS NOT NULL AND pm.gps_lon IS NOT NULL)
-       OR ($14::boolean = false AND (pm.gps_lat IS NULL OR pm.gps_lon IS NULL)))
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
+  AND ($5::text   IS NULL OR pm.camera_make  ILIKE '%' || $5::text  || '%')
+  AND ($6::text  IS NULL OR pm.camera_model ILIKE '%' || $6::text || '%')
+  AND ($7::text    IS NULL OR pm.lens_model   ILIKE '%' || $7::text   || '%')
+  AND ($8::double precision IS NULL OR pm.aperture        >= $8)
+  AND ($9::double precision IS NULL OR pm.aperture        <= $9)
+  AND ($10::int                   IS NULL OR pm.iso             >= $10)
+  AND ($11::int                   IS NULL OR pm.iso             <= $11)
+  AND ($12::double precision    IS NULL OR pm.focal_length_mm >= $12)
+  AND ($13::double precision    IS NULL OR pm.focal_length_mm <= $13)
+  AND ($14::timestamptz IS NULL OR pm.taken_at >= $14)
+  AND ($15::timestamptz   IS NULL OR pm.taken_at <= $15)
+  AND ($16::boolean IS NULL
+       OR ($16::boolean = true  AND pm.gps_lat IS NOT NULL AND pm.gps_lon IS NOT NULL)
+       OR ($16::boolean = false AND (pm.gps_lat IS NULL OR pm.gps_lon IS NULL)))
 `
 
 type CountPhotosByExifParams struct {
 	LibraryID     uuid.UUID          `json:"library_id"`
 	MaxRatingRank *int32             `json:"max_rating_rank"`
+	BlockedLabels []string           `json:"blocked_labels"`
+	AllowedLabels []string           `json:"allowed_labels"`
 	CameraMake    *string            `json:"camera_make"`
 	CameraModel   *string            `json:"camera_model"`
 	LensModel     *string            `json:"lens_model"`
@@ -88,6 +99,8 @@ func (q *Queries) CountPhotosByExif(ctx context.Context, arg CountPhotosByExifPa
 	row := q.db.QueryRow(ctx, countPhotosByExif,
 		arg.LibraryID,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.CameraMake,
 		arg.CameraModel,
 		arg.LensModel,
@@ -115,13 +128,16 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND ($2::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $2::int)
-  AND ($3::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $3)
-  AND ($4::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $4)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
+  AND ($5::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $5)
+  AND ($6::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $6)
 `
 
 type CountPhotosByLibraryParams struct {
 	LibraryID     uuid.UUID          `json:"library_id"`
 	MaxRatingRank *int32             `json:"max_rating_rank"`
+	BlockedLabels []string           `json:"blocked_labels"`
+	AllowedLabels []string           `json:"allowed_labels"`
 	From          pgtype.Timestamptz `json:"from"`
 	To            pgtype.Timestamptz `json:"to"`
 }
@@ -132,6 +148,8 @@ func (q *Queries) CountPhotosByLibrary(ctx context.Context, arg CountPhotosByLib
 	row := q.db.QueryRow(ctx, countPhotosByLibrary,
 		arg.LibraryID,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.From,
 		arg.To,
 	)
@@ -196,12 +214,13 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND ($3::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $3::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $4::text[], $5::text[])
   AND pm.gps_lat IS NOT NULL
   AND pm.gps_lon IS NOT NULL
-  AND ($4::double precision IS NULL OR pm.gps_lat >= $4)
-  AND ($5::double precision IS NULL OR pm.gps_lat <= $5)
-  AND ($6::double precision IS NULL OR pm.gps_lon >= $6)
-  AND ($7::double precision IS NULL OR pm.gps_lon <= $7)
+  AND ($6::double precision IS NULL OR pm.gps_lat >= $6)
+  AND ($7::double precision IS NULL OR pm.gps_lat <= $7)
+  AND ($8::double precision IS NULL OR pm.gps_lon >= $8)
+  AND ($9::double precision IS NULL OR pm.gps_lon <= $9)
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id
 LIMIT $2
 `
@@ -210,6 +229,8 @@ type ListPhotoMapPointsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	Limit         int32     `json:"limit"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 	MinLat        *float64  `json:"min_lat"`
 	MaxLat        *float64  `json:"max_lat"`
 	MinLon        *float64  `json:"min_lon"`
@@ -239,6 +260,8 @@ func (q *Queries) ListPhotoMapPoints(ctx context.Context, arg ListPhotoMapPoints
 		arg.LibraryID,
 		arg.Limit,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.MinLat,
 		arg.MaxLat,
 		arg.MinLon,
@@ -284,6 +307,7 @@ FROM (
       AND mi.deleted_at IS NULL
       AND ($2::int IS NULL
            OR content_rating_rank(mi.content_rating) <= $2::int)
+      AND media_item_labels_permitted(mi.labels, mi.parent_id, $3::text[], $4::text[])
 ) sub
 GROUP BY sub.year, sub.month
 ORDER BY sub.year DESC, sub.month DESC
@@ -292,6 +316,8 @@ ORDER BY sub.year DESC, sub.month DESC
 type ListPhotoTimelineBucketsParams struct {
 	LibraryID     uuid.UUID `json:"library_id"`
 	MaxRatingRank *int32    `json:"max_rating_rank"`
+	BlockedLabels []string  `json:"blocked_labels"`
+	AllowedLabels []string  `json:"allowed_labels"`
 }
 
 type ListPhotoTimelineBucketsRow struct {
@@ -309,7 +335,12 @@ type ListPhotoTimelineBucketsRow struct {
 // columns. Grouping directly by the SELECT-list aliases fails on Postgres with
 // "column pm.taken_at must appear in the GROUP BY clause" (SQLSTATE 42803).
 func (q *Queries) ListPhotoTimelineBuckets(ctx context.Context, arg ListPhotoTimelineBucketsParams) ([]ListPhotoTimelineBucketsRow, error) {
-	rows, err := q.db.Query(ctx, listPhotoTimelineBuckets, arg.LibraryID, arg.MaxRatingRank)
+	rows, err := q.db.Query(ctx, listPhotoTimelineBuckets,
+		arg.LibraryID,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -341,8 +372,9 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND ($4::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $4::int)
-  AND ($5::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $5)
-  AND ($6::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $6)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $5::text[], $6::text[])
+  AND ($7::timestamptz IS NULL OR COALESCE(pm.taken_at, mi.created_at) >= $7)
+  AND ($8::timestamptz   IS NULL OR COALESCE(pm.taken_at, mi.created_at) <= $8)
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id DESC
 LIMIT $2 OFFSET $3
 `
@@ -352,6 +384,8 @@ type ListPhotosByLibraryParams struct {
 	Limit         int32              `json:"limit"`
 	Offset        int32              `json:"offset"`
 	MaxRatingRank *int32             `json:"max_rating_rank"`
+	BlockedLabels []string           `json:"blocked_labels"`
+	AllowedLabels []string           `json:"allowed_labels"`
 	From          pgtype.Timestamptz `json:"from"`
 	To            pgtype.Timestamptz `json:"to"`
 }
@@ -382,6 +416,8 @@ func (q *Queries) ListPhotosByLibrary(ctx context.Context, arg ListPhotosByLibra
 		arg.Limit,
 		arg.Offset,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.From,
 		arg.To,
 	)
@@ -431,20 +467,21 @@ WHERE mi.library_id = $1
   AND mi.deleted_at IS NULL
   AND ($4::int IS NULL
        OR content_rating_rank(mi.content_rating) <= $4::int)
-  AND ($5::text   IS NULL OR pm.camera_make  ILIKE '%' || $5::text  || '%')
-  AND ($6::text  IS NULL OR pm.camera_model ILIKE '%' || $6::text || '%')
-  AND ($7::text    IS NULL OR pm.lens_model   ILIKE '%' || $7::text   || '%')
-  AND ($8::double precision IS NULL OR pm.aperture        >= $8)
-  AND ($9::double precision IS NULL OR pm.aperture        <= $9)
-  AND ($10::int                   IS NULL OR pm.iso             >= $10)
-  AND ($11::int                   IS NULL OR pm.iso             <= $11)
-  AND ($12::double precision    IS NULL OR pm.focal_length_mm >= $12)
-  AND ($13::double precision    IS NULL OR pm.focal_length_mm <= $13)
-  AND ($14::timestamptz IS NULL OR pm.taken_at >= $14)
-  AND ($15::timestamptz   IS NULL OR pm.taken_at <= $15)
-  AND ($16::boolean IS NULL
-       OR ($16::boolean = true  AND pm.gps_lat IS NOT NULL AND pm.gps_lon IS NOT NULL)
-       OR ($16::boolean = false AND (pm.gps_lat IS NULL OR pm.gps_lon IS NULL)))
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $5::text[], $6::text[])
+  AND ($7::text   IS NULL OR pm.camera_make  ILIKE '%' || $7::text  || '%')
+  AND ($8::text  IS NULL OR pm.camera_model ILIKE '%' || $8::text || '%')
+  AND ($9::text    IS NULL OR pm.lens_model   ILIKE '%' || $9::text   || '%')
+  AND ($10::double precision IS NULL OR pm.aperture        >= $10)
+  AND ($11::double precision IS NULL OR pm.aperture        <= $11)
+  AND ($12::int                   IS NULL OR pm.iso             >= $12)
+  AND ($13::int                   IS NULL OR pm.iso             <= $13)
+  AND ($14::double precision    IS NULL OR pm.focal_length_mm >= $14)
+  AND ($15::double precision    IS NULL OR pm.focal_length_mm <= $15)
+  AND ($16::timestamptz IS NULL OR pm.taken_at >= $16)
+  AND ($17::timestamptz   IS NULL OR pm.taken_at <= $17)
+  AND ($18::boolean IS NULL
+       OR ($18::boolean = true  AND pm.gps_lat IS NOT NULL AND pm.gps_lon IS NOT NULL)
+       OR ($18::boolean = false AND (pm.gps_lat IS NULL OR pm.gps_lon IS NULL)))
 ORDER BY COALESCE(pm.taken_at, mi.created_at) DESC, mi.id DESC
 LIMIT $2 OFFSET $3
 `
@@ -454,6 +491,8 @@ type SearchPhotosByExifParams struct {
 	Limit         int32              `json:"limit"`
 	Offset        int32              `json:"offset"`
 	MaxRatingRank *int32             `json:"max_rating_rank"`
+	BlockedLabels []string           `json:"blocked_labels"`
+	AllowedLabels []string           `json:"allowed_labels"`
 	CameraMake    *string            `json:"camera_make"`
 	CameraModel   *string            `json:"camera_model"`
 	LensModel     *string            `json:"lens_model"`
@@ -503,6 +542,8 @@ func (q *Queries) SearchPhotosByExif(ctx context.Context, arg SearchPhotosByExif
 		arg.Limit,
 		arg.Offset,
 		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
 		arg.CameraMake,
 		arg.CameraModel,
 		arg.LensModel,

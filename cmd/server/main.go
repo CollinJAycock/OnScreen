@@ -46,6 +46,7 @@ import (
 	"github.com/onscreen/onscreen/internal/externalratings"
 	"github.com/onscreen/onscreen/internal/franchise"
 	"github.com/onscreen/onscreen/internal/intromarker"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/livetv"
 	"github.com/onscreen/onscreen/internal/lyrics"
 	"github.com/onscreen/onscreen/internal/mediastore"
@@ -564,6 +565,9 @@ func run() error {
 	// libraryAdapter satisfies scanner.LibraryAnimeChecker via its
 	// IsLibraryAnime method.
 	metaAgent.SetLibraryAnimeCheckerFn(func() scanner.LibraryAnimeChecker { return roQ })
+	// Library default episode order (aired / DVD / absolute) for shows
+	// without one of their own. Same read-replica reasoning as above.
+	metaAgent.SetLibraryEpisodeOrderFn(func() scanner.LibraryEpisodeOrderer { return roQ })
 
 	// Wire TheAudioDB for music enrichment — no API key required.
 	audiodbClient := audiodb.New()
@@ -700,7 +704,8 @@ func run() error {
 		WithAudit(auditLogger).
 		WithWatchState(gen.New(roPool)).
 		WithParentTitles(gen.New(roPool)).
-		WithNFOSweeper(nfoCollections)
+		WithNFOSweeper(nfoCollections).
+		WithEpisodeOrderReenrich(mediaSvc, metaAgent)
 	webhookSvc := newWebhookService(gen.New(rwPool), encryptor, logger)
 	webhookHandler := v1.NewWebhookHandler(webhookSvc, logger).WithAudit(auditLogger)
 
@@ -726,6 +731,11 @@ func run() error {
 		WithSegmentTokenRevoker(segTokenMgr).
 		WithPINThrottle(rateLimiter).
 		WithPinSwitchPolicy(settingsSvc)
+	// Signed-in devices. Primary pool: a revoke must be visible to the auth
+	// middleware's very next session check (sessionEpochAdapter reads rwPool).
+	userSessionsHandler := v1.NewUserSessionsHandler(gen.New(rwPool), logger).
+		WithAudit(auditLogger).
+		WithSegmentTokenRevoker(segTokenMgr)
 	fsHandler := v1.NewFSHandler()
 	settingsHandler := v1.NewSettingsHandler(settingsSvc, logger).WithAudit(auditLogger)
 	settingsHandler.SetWorkerLister(sessionStore)
@@ -752,7 +762,12 @@ func run() error {
 		WithCollections(gen.New(roPool))
 	searchHandler := v1.NewSearchHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
 	historyHandler := v1.NewHistoryHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc).WithEpisodePoster(gen.New(roPool))
-	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger)
+	// Internet streaming limit + extra home networks (Settings ▸ Transcode),
+	// read live. Shared by the play decision / transcode start and the Now
+	// Playing LAN / remote label so the two can't disagree.
+	remotePolicy := remoteStreamPolicyAdapter{svc: settingsSvc}
+	nativeSessionsHandler := v1.NewNativeSessionsHandler(sessionStore, streamTracker, gen.New(roPool), logger).
+		WithRemotePolicy(remotePolicy)
 	// Stable per-server identifier surfaced on the public capabilities endpoint,
 	// UDP discovery, and webhook payloads. Persisted in settings rather than
 	// derived from the master SECRET_KEY (the old approach published a bare hash
@@ -832,8 +847,11 @@ func run() error {
 		WithStreamTokenMaker(tokenMaker).
 		// Prefer an object-storage / CDN signed source URL when configured.
 		WithMediaStore(mediaStoreProvider).
-		// Per-user admin caps (concurrent streams + bitrate), read at start.
-		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)})
+		// Per-user admin caps (concurrent streams + bitrate + internet bitrate),
+		// read at start.
+		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)}).
+		// Server-wide internet streaming limit for remote clients.
+		WithRemotePolicy(remotePolicy)
 
 	// Attach the SECRET_KEY-derived bearer to every API→worker segment/seghead
 	// proxy request, matching what each worker's segment server now requires.
@@ -948,7 +966,12 @@ func run() error {
 		WithMediaStore(mediaStoreProvider).
 		WithFranchise(gen.New(roPool)).
 		WithManualCollections(gen.New(roPool)).
-		WithExternalRatings(gen.New(roPool))
+		WithExternalRatings(gen.New(roPool)).
+		WithEpisodeOrder(mediaSvc).
+		WithLabels(gen.New(roPool)).
+		// A metadata edit drops the hub's cached trending row, which carries
+		// titles and was rating-filtered when fetched.
+		WithCacheInvalidator(hubHandler)
 
 	photosHandler := v1.NewPhotosHandler(mediaSvc, photoImageSrv, logger).
 		WithLibraryAccess(libSvc)
@@ -1498,6 +1521,7 @@ func run() error {
 		Auth:            authHandler,
 		TOTP:            totpHandler,
 		User:            userHandler,
+		UserSessions:    userSessionsHandler,
 		FS:              fsHandler,
 		Settings:        settingsHandler,
 		Analytics:       analyticsHandler,
@@ -1507,6 +1531,7 @@ func run() error {
 		History:         historyHandler,
 		Items:           itemHandler,
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
+		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
 		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
 		Audiobook:       v1.NewAudiobookHandler(gen.New(rwPool), libSvc, logger),
 		WatchState:      watchStateHandler,
@@ -1573,6 +1598,18 @@ func run() error {
 			// '' means "known but unrated", which ranks most-restrictive.
 			return rating, true
 		},
+		// Label half of the artwork gate. A query error refuses, like the
+		// rating hook above, so a database blip can't lift a restriction.
+		ArtworkLabelsPermitted: func(ctx context.Context, libraryID uuid.UUID, relPath string, labels itemlabel.Filter) bool {
+			ok, err := gen.New(roPool).ArtworkLabelsPermitted(ctx, gen.ArtworkLabelsPermittedParams{
+				LibraryID:     libraryID,
+				ArtPath:       relPath,
+				BlockedLabels: labels.BlockedArg(),
+				AllowedLabels: labels.AllowedArg(),
+			})
+			return err == nil && ok
+		},
+		LabelGate: gen.New(roPool),
 		// Closure (not a static bool copy) so the artwork handler picks
 		// up admin-UI toggles of public_asset_cache without a restart —
 		// system_settings.applyToConfig mutates cfg.PublicAssetCache on

@@ -18,6 +18,28 @@ var tvEpisodeRE = regexp.MustCompile(`(?i)[.\s_-]*S(\d{1,2})E(\d{1,3})`)
 // tvCrossRE matches the 1x03 pattern: "1x03", "01x03".
 var tvCrossRE = regexp.MustCompile(`(?i)[.\s_-]+(\d{1,2})x(\d{1,3})`)
 
+// tvEpisodeMoreRE matches one further episode of a multi-episode file,
+// right after an S##E## match (or after the previous further episode):
+//
+//   - "E02"        repeat style      "S01E01E02"
+//   - "-E02"       scene style       "S01E01-E02", "S01E01-E02-E03"
+//   - "-02"        range style       "S01E01-02", "S01E09-10"
+//   - ".S01E02"    duplicate style   "S01E01.S01E02", "S01E01-S01E02"
+//
+// Captures: 1 the season of the duplicate style (must equal the file's),
+// 2 the episode. These are Sonarr's multi-episode styles, which Plex,
+// Emby and Jellyfin all read. episodeRangeEnd applies the guards the
+// regex can't express.
+var tvEpisodeMoreRE = regexp.MustCompile(`(?i)^(?:-?E|-|[.\s_-]?S(\d{1,2})E)(\d{1,3})`)
+
+// tvCrossMoreRE is tvEpisodeMoreRE for the 1x03 form: "1x01-1x02"
+// (capture 1 the repeated season) and "1x01-02".
+var tvCrossMoreRE = regexp.MustCompile(`(?i)^-(?:(\d{1,2})x)?(\d{1,3})`)
+
+// rangeBitDepthRE matches a "bit" word right after a bare range number:
+// "S01E01-10 bit" is a 10-bit encode, not episodes 1-10.
+var rangeBitDepthRE = regexp.MustCompile(`(?i)^[\s._-]*bit`)
+
 // tvAnimeAbsoluteRE matches "title - NN" anime conventions where the
 // number is an absolute episode index rather than a season/episode
 // pair. Captures:
@@ -350,7 +372,20 @@ var tvDailyRE = regexp.MustCompile(`^(?:\[[^\]]+\]\s*)?(.+?)[\s._-]+((?:19|20)\d
 //   - "Show Name 1x03.mkv"
 //
 // Returns (showTitle, season, episode, ok). If parsing fails, ok is false.
+// A multi-episode file reports its first episode; ParseTVFilenameRange
+// also reports the last.
 func ParseTVFilename(path string) (showTitle string, season int, episode int, ok bool) {
+	showTitle, season, episode, _, ok = ParseTVFilenameRange(path)
+	return showTitle, season, episode, ok
+}
+
+// ParseTVFilenameRange is ParseTVFilename that also reads a multi-episode
+// file's last episode: "S01E01E02", "S01E01-E02", "S01E01-02",
+// "S01E01.S01E02", "1x01-1x02" and "1x01-02" all cover episodes 1-2 and
+// return episodeEnd 2. episodeEnd is 0 for a single episode. Only these
+// explicit season/episode forms carry a range: the anime rules' unspaced
+// "Title-01-02" stays an orphan on purpose (see tightDashEpisodeOK).
+func ParseTVFilenameRange(path string) (showTitle string, season, episode, episodeEnd int, ok bool) {
 	// Normalise path separators so we can split on "/" uniformly, including
 	// backslashes in Windows-style paths received on non-Windows hosts.
 	path = strings.ReplaceAll(filepath.ToSlash(path), `\`, `/`)
@@ -365,7 +400,7 @@ func ParseTVFilename(path string) (showTitle string, season int, episode int, ok
 		e, _ := strconv.Atoi(stem[m[4]:m[5]])
 		title := extractShowTitle(stem[:m[0]], path)
 		if title != "" {
-			return title, s, e, true
+			return title, s, e, episodeRangeEnd(stem[m[1]:], tvEpisodeMoreRE, s, e), true
 		}
 	}
 
@@ -383,11 +418,59 @@ func ParseTVFilename(path string) (showTitle string, season int, episode int, ok
 		e, _ := strconv.Atoi(stem[m[4]:m[5]])
 		title := extractShowTitle(stem[:m[0]], path)
 		if title != "" {
-			return title, s, e, true
+			return title, s, e, episodeRangeEnd(stem[m[1]:], tvCrossMoreRE, s, e), true
 		}
 	}
 
-	return "", 0, 0, false
+	return "", 0, 0, 0, false
+}
+
+// episodeRangeEnd reads the further episodes of a multi-episode file from
+// rest — the stem right after the first episode's match — with more
+// (tvEpisodeMoreRE or tvCrossMoreRE) and returns the last one, or 0 when
+// the file holds a single episode. Rules:
+//
+//   - each further number is glued on (no spaces: "1x03 - 05" is an
+//     episode title, not a range) and followed by a non-digit, so a year
+//     or a resolution never reads as one ("S01E01-2024", "S01E01-1080p");
+//   - a bare number ("-02", no E) must also not run into a letter or a
+//     "bit" word ("S01E01-10bit", "S01E01-10 bit", "S01E01-2HD");
+//   - a repeated season ("S01E01.S01E02", "1x01-1x02") must be the
+//     file's own season;
+//   - the numbers must ascend: the walk stops at the first one that
+//     doesn't, so "S01E05-03" is episode 5 alone. Gaps are ignored —
+//     "S01E01E03" covers 1-3, the way Jellyfin reads it.
+func episodeRangeEnd(rest string, more *regexp.Regexp, season, first int) int {
+	last := first
+	for {
+		m := more.FindStringSubmatchIndex(rest)
+		if m == nil {
+			break
+		}
+		tail := rest[m[1]:]
+		if tail != "" && isASCIIDigit(tail[0]) {
+			break
+		}
+		bare := m[2] < 0 && !strings.ContainsAny(rest[:m[4]], "Ee")
+		if bare && ((tail != "" && isASCIILetter(tail[0])) || rangeBitDepthRE.MatchString(tail)) {
+			break
+		}
+		if m[2] >= 0 {
+			if s, _ := strconv.Atoi(rest[m[2]:m[3]]); s != season {
+				break
+			}
+		}
+		n, _ := strconv.Atoi(rest[m[4]:m[5]])
+		if n <= last {
+			break
+		}
+		last = n
+		rest = tail
+	}
+	if last == first {
+		return 0
+	}
+	return last
 }
 
 // ParseDailyFilename extracts a show title and air date from date-based
@@ -799,9 +882,12 @@ func inYearWindow(n int) bool {
 // caller applies the "Episode N" default); date-based episodes carry
 // the air date, which is their identity.
 type episodeIdentity struct {
-	showTitle    string
-	season       int
-	episode      int
+	showTitle string
+	season    int
+	episode   int
+	// episodeEnd is the last episode a multi-episode file covers
+	// ("S01E01-E02" → 2), 0 for a single episode.
+	episodeEnd   int
 	episodeTitle string
 }
 
@@ -815,7 +901,8 @@ type episodeIdentity struct {
 // Precedence, which must not change:
 //
 //  1. ParseTVFilename — S##E##, then 1x03. An explicit season/episode
-//     always wins over anything else in the name.
+//     always wins over anything else in the name. These are the only
+//     forms that carry a multi-episode range (episodeEnd).
 //  2. ParseDailyFilename — date-based (daily / talk-show) naming such
 //     as "The Daily Show - 2013-10-30 - Guest.mkv". Mapped Plex-style:
 //     season = year, episode index = month*100+day (unique within the
@@ -836,8 +923,8 @@ type episodeIdentity struct {
 //     rule keeps its long-standing behaviour. Honouring the marker as
 //     the season is the fix, and belongs to both rules at once.
 func parseEpisodeIdentity(path string) (episodeIdentity, bool) {
-	if showTitle, season, episode, ok := ParseTVFilename(path); ok {
-		return episodeIdentity{showTitle: showTitle, season: season, episode: episode}, true
+	if showTitle, season, episode, end, ok := ParseTVFilenameRange(path); ok {
+		return episodeIdentity{showTitle: showTitle, season: season, episode: episode, episodeEnd: end}, true
 	}
 	if showTitle, y, mo, d, ok := ParseDailyFilename(path); ok {
 		return episodeIdentity{

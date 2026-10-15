@@ -50,6 +50,21 @@ type SessionEpochReader interface {
 	GetSessionEpoch(ctx context.Context, userID uuid.UUID) (int64, error)
 }
 
+// SessionStateReader is the optional per-sign-in extension of
+// SessionEpochReader. When the configured reader implements it and a token
+// carries a session ID (the sid claim), the middleware asks for the epoch AND
+// whether that refresh session still exists, in one query — so revoking a
+// single device (deleting its sessions row) rejects that device's access,
+// asset and stream tokens on their next request, while the user's other
+// devices are untouched. A token with no sid keeps the epoch-only check.
+//
+// sessionLive=false is an authoritative answer (fail closed), not an error;
+// an error keeps epochValid's fail-open posture. ErrUserNotFound as for
+// GetSessionEpoch.
+type SessionStateReader interface {
+	GetSessionState(ctx context.Context, userID, sessionID uuid.UUID) (epoch int64, sessionLive bool, err error)
+}
+
 // Authenticator validates Paseto access tokens.
 type Authenticator struct {
 	tokens *auth.TokenMaker
@@ -234,7 +249,19 @@ func (a *Authenticator) epochValid(ctx context.Context, claims *auth.Claims) boo
 	if a.epochs == nil {
 		return true
 	}
-	current, err := a.epochs.GetSessionEpoch(ctx, claims.UserID)
+	var current int64
+	var err error
+	if sr, ok := a.epochs.(SessionStateReader); ok && claims.SessionID != uuid.Nil {
+		var live bool
+		current, live, err = sr.GetSessionState(ctx, claims.UserID, claims.SessionID)
+		if err == nil && !live {
+			// The sign-in this token belongs to was revoked (signed out from
+			// Settings ▸ Security, by an admin, or swept by a family burn).
+			return false
+		}
+	} else {
+		current, err = a.epochs.GetSessionEpoch(ctx, claims.UserID)
+	}
 	if err != nil {
 		// Fail closed when the user row is gone — a deleted user's PASETO
 		// token must stop working immediately, not ride out the 1h TTL.
@@ -310,6 +337,10 @@ type ImpersonatedUser struct {
 	Username         string
 	IsAdmin          bool
 	MaxContentRating string
+	// BlockedLabels / AllowedLabels: the target's label restriction, so
+	// "view as" shows exactly what the label filter leaves them.
+	BlockedLabels []string
+	AllowedLabels []string
 }
 
 // ViewAs returns a middleware that, when an admin appends
@@ -385,6 +416,11 @@ func (a *Authenticator) ViewAs(lookup ImpersonationLookup, auditor ViewAsAuditor
 			synth.Username = target.Username
 			synth.IsAdmin = target.IsAdmin
 			synth.MaxContentRating = target.MaxContentRating
+			// The admin's sign-in is not one of the target's: a sid paired
+			// with the target's user ID would name no session of theirs.
+			synth.SessionID = uuid.Nil
+			synth.BlockedLabels = target.BlockedLabels
+			synth.AllowedLabels = target.AllowedLabels
 			next.ServeHTTP(w, r.WithContext(WithClaims(r.Context(), &synth)))
 		})
 	}

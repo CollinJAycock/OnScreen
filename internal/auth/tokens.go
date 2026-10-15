@@ -10,6 +10,8 @@ import (
 
 	"aidanwoods.dev/go-paseto"
 	"github.com/google/uuid"
+
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 const (
@@ -61,9 +63,15 @@ type Claims struct {
 	Username         string    `json:"username"`
 	IsAdmin          bool      `json:"is_admin"`
 	MaxContentRating string    `json:"max_content_rating,omitempty"` // parental filter ceiling; empty = unrestricted
-	SessionEpoch     int64     `json:"session_epoch"`
-	IssuedAt         time.Time `json:"iat"`
-	ExpiresAt        time.Time `json:"exp"`
+	// BlockedLabels / AllowedLabels are the user's label restriction
+	// (itemlabel.Filter), carried in the token exactly like the rating
+	// ceiling so every surface can apply it without a user lookup. Changing
+	// them bumps the session epoch, as a ceiling change does. Empty = none.
+	BlockedLabels []string  `json:"blocked_labels,omitempty"`
+	AllowedLabels []string  `json:"allowed_labels,omitempty"`
+	SessionEpoch  int64     `json:"session_epoch"`
+	IssuedAt      time.Time `json:"iat"`
+	ExpiresAt     time.Time `json:"exp"`
 	// Purpose narrows what a token is allowed to do. Empty for the
 	// classic 1 h access token (Bearer + asset query both work).
 	// "stream" for the 24 h streaming token: rejected on Bearer
@@ -88,6 +96,22 @@ type Claims struct {
 	// verify step burns so one challenge can mint at most one session.
 	// Empty on every other token.
 	TokenID string `json:"jti,omitempty"`
+	// SessionID names the refresh session (sessions.id) a token was minted
+	// under — the sign-in a "Signed-in devices" row revokes. Carried by the
+	// access, asset and stream tokens of a session-backed sign-in, so the
+	// auth middleware can reject them the moment that one session is deleted
+	// (see middleware.SessionStateReader) without bumping the user's epoch.
+	// uuid.Nil on tokens with no refresh session behind them (PIN-switch,
+	// devtoken) and on tokens minted before the claim existed; those keep the
+	// epoch-only check.
+	SessionID uuid.UUID `json:"sid,omitempty"`
+}
+
+// setSessionID writes the sid claim when the token belongs to a session.
+func setSessionID(token *paseto.Token, sid uuid.UUID) {
+	if sid != uuid.Nil {
+		token.SetString("sid", sid.String())
+	}
 }
 
 // TokenMaker issues and validates Paseto v4 local tokens.
@@ -121,12 +145,35 @@ func (m *TokenMaker) IssueAccessToken(claims Claims) (string, error) {
 	if claims.MaxContentRating != "" {
 		token.SetString("max_content_rating", claims.MaxContentRating)
 	}
+	setLabelClaims(&token, claims)
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 	if claims.Switched {
 		token.SetString("switched", "true")
 	}
+	setSessionID(&token, claims.SessionID)
 
 	return token.V4Encrypt(m.key, nil), nil
+}
+
+// setLabelClaims writes the label restriction into a token being minted.
+// Omitted when empty so unrestricted users' tokens (and the stream / asset
+// URLs that carry them) don't grow.
+func setLabelClaims(token *paseto.Token, claims Claims) {
+	if len(claims.BlockedLabels) > 0 {
+		_ = token.Set("blocked_labels", claims.BlockedLabels)
+	}
+	if len(claims.AllowedLabels) > 0 {
+		_ = token.Set("allowed_labels", claims.AllowedLabels)
+	}
+}
+
+// LabelFilter returns the claims' label restriction. Safe on nil claims
+// (no restriction).
+func (c *Claims) LabelFilter() itemlabel.Filter {
+	if c == nil {
+		return itemlabel.Filter{}
+	}
+	return itemlabel.Filter{Blocked: c.BlockedLabels, Allowed: c.AllowedLabels}
 }
 
 // IssueStreamToken creates a Paseto v4 local token with the longer
@@ -150,9 +197,11 @@ func (m *TokenMaker) IssueStreamToken(claims Claims, fileID uuid.UUID) (string, 
 	if claims.MaxContentRating != "" {
 		token.SetString("max_content_rating", claims.MaxContentRating)
 	}
+	setLabelClaims(&token, claims)
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 	token.SetString("purpose", "stream")
 	token.SetString("file_id", fileID.String())
+	setSessionID(&token, claims.SessionID)
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -180,11 +229,13 @@ func (m *TokenMaker) IssueAssetToken(claims Claims) (string, error) {
 	if claims.MaxContentRating != "" {
 		token.SetString("max_content_rating", claims.MaxContentRating)
 	}
+	setLabelClaims(&token, claims)
 	token.SetString("session_epoch", fmt.Sprintf("%d", claims.SessionEpoch))
 	token.SetString("purpose", "asset")
 	if claims.Switched {
 		token.SetString("switched", "true")
 	}
+	setSessionID(&token, claims.SessionID)
 	return token.V4Encrypt(m.key, nil), nil
 }
 
@@ -269,12 +320,25 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	}
 	switchedStr, _ := token.GetString("switched")
 	tokenID, _ := token.GetJti()
+	// A malformed sid is ignored rather than fatal: the token decrypted under
+	// our key, so we minted it, and the epoch check still applies.
+	var sessionID uuid.UUID
+	if s, _ := token.GetString("sid"); s != "" {
+		if id, err := uuid.Parse(s); err == nil {
+			sessionID = id
+		}
+	}
+	var blockedLabels, allowedLabels []string
+	_ = token.Get("blocked_labels", &blockedLabels)
+	_ = token.Get("allowed_labels", &allowedLabels)
 
 	return &Claims{
 		UserID:           userID,
 		Username:         username,
 		IsAdmin:          isAdmin,
 		MaxContentRating: maxContentRating,
+		BlockedLabels:    blockedLabels,
+		AllowedLabels:    allowedLabels,
 		SessionEpoch:     sessionEpoch,
 		IssuedAt:         issuedAt,
 		ExpiresAt:        exp,
@@ -282,6 +346,7 @@ func (m *TokenMaker) ValidateAccessToken(tokenStr string) (*Claims, error) {
 		FileID:           fileID,
 		Switched:         switchedStr == "true",
 		TokenID:          tokenID,
+		SessionID:        sessionID,
 	}, nil
 }
 

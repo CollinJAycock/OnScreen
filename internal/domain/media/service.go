@@ -16,9 +16,12 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // newDiacriticStripper returns a transformer that folds characters to their
@@ -76,6 +79,14 @@ type Item struct {
 	ParentID   *uuid.UUID
 	Index      *int
 	DiscNumber *int
+	// IndexEnd is set on an episode whose file holds several episodes:
+	// "S01E01-E02" is one item with Index 1, IndexEnd 2. nil for a single
+	// episode and every other type.
+	IndexEnd *int
+	// EpisodeOrder is a show's own episode order (EpisodeOrderAired /
+	// EpisodeOrderDVD / EpisodeOrderAbsolute); nil follows the library.
+	// Read by GetMediaItem only.
+	EpisodeOrder *string
 
 	// Artwork (paths relative to the media file)
 	PosterPath *string
@@ -123,6 +134,12 @@ type Item struct {
 	// library-type default (manga → rtl, everything else → ltr).
 	ReadingDirection *string
 
+	// LockedFields names the metadata fields an admin set by hand
+	// (media_items.locked_fields, see LockableFields): automatic metadata
+	// writes leave them as they are. Filled by GetItem and EditItemMetadata;
+	// nil from the narrower list queries.
+	LockedFields []string
+
 	OriginallyAvailableAt *time.Time
 	CreatedAt             time.Time
 	UpdatedAt             time.Time
@@ -160,8 +177,17 @@ type File struct {
 	// DVProfile is the profile from the file's Dolby Vision configuration
 	// record (5, 7, 8, ...), nil when it has none. It comes from the
 	// container and can claim Dolby Vision the video doesn't carry.
-	DVProfile       *int
-	FrameRate       *float64
+	DVProfile *int
+	FrameRate *float64
+	// Edition is the label the file's name gives it ("Director's Cut",
+	// "Extended", Jellyfin's "1080p" version suffix), nil when it gives none.
+	// A label only — files still group into items by title and year.
+	Edition *string
+	// PartIndex is the 1-based part number of a stacked rip ("cd1",
+	// "part2", "-b"), nil for an ordinary file. Whether a file actually plays
+	// as part of a multi-part sequence is decided by Stack, which needs at
+	// least two parts; a lone "cd1" plays like any other file.
+	PartIndex       *int
 	AudioStreams    []byte // JSONB
 	SubtitleStreams []byte // JSONB
 	Chapters        []byte // JSONB
@@ -208,8 +234,9 @@ type FilterParams struct {
 	YearMin       *int
 	YearMax       *int
 	RatingMin     *float64
-	MaxRatingRank *int   // content_rating_rank() ceiling for parental filtering
-	Sort          string // title, year, rating, created_at, taken_at, artist (the parent's title)
+	MaxRatingRank *int             // content_rating_rank() ceiling for parental filtering
+	Labels        itemlabel.Filter // viewer's label restriction; zero = none
+	Sort          string           // title, year, rating, created_at, taken_at, artist (the parent's title)
 	SortAsc       bool
 	// Watch narrows to the caller's watch bucket — "unwatched",
 	// "in_progress" or "watched" (see media_watch_bucket, migration 00023);
@@ -264,6 +291,9 @@ type Querier interface {
 	ListMediaItemChildren(ctx context.Context, parentID uuid.UUID) ([]Item, error)
 	CreateMediaItem(ctx context.Context, p CreateItemParams) (Item, error)
 	UpdateMediaItemMetadata(ctx context.Context, p UpdateItemMetadataParams) (Item, error)
+	// EditMediaItemMetadata is an admin's manual edit: it writes the named
+	// fields, locks them, and drops the unlocked names from the lock set.
+	EditMediaItemMetadata(ctx context.Context, p EditItemMetadataParams) (Item, error)
 	UpdateMediaItemLyrics(ctx context.Context, id uuid.UUID, plain, synced *string) error
 	// FillTrackPosition sets a track's index / disc_number, or a multi-file
 	// audiobook chapter's index, where they are NULL, leaving stored values
@@ -283,6 +313,15 @@ type Querier interface {
 	// GetTrackDiscNumber reads a track's stored disc (nil: none stored).
 	GetTrackDiscNumber(ctx context.Context, id uuid.UUID) (*int, error)
 	SetMediaItemKind(ctx context.Context, id uuid.UUID, kind string) error
+	// SetEpisodeIndexEnd records the last episode of a multi-episode file
+	// (nil: a single episode). Reports whether the row changed.
+	SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error)
+	// SetShowEpisodeOrder sets or (nil) clears a show's own episode order.
+	// Reports whether a live show was updated.
+	SetShowEpisodeOrder(ctx context.Context, id uuid.UUID, order *string) (bool, error)
+	// ListShowsFollowingLibraryEpisodeOrder lists a library's shows with no
+	// episode order of their own.
+	ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error)
 	SoftDeleteMediaItem(ctx context.Context, id uuid.UUID) error
 	SoftDeleteMediaItemIfAllFilesDeleted(ctx context.Context, id uuid.UUID) error
 	// PurgeExpiredMissingFiles atomically hard-deletes fileIDs and soft-deletes
@@ -293,8 +332,8 @@ type Querier interface {
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
-	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]GenreCount, error)
-	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]YearCount, error)
+	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]GenreCount, error)
+	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]YearCount, error)
 	SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]Item, error)
 	FindTopLevelItemByTitleYear(ctx context.Context, libraryID uuid.UUID, itemType, title string, year *int) (*Item, error)
 	FindTopLevelItemsByTitleFlexible(ctx context.Context, libraryID uuid.UUID, itemType, title string) ([]Item, error)
@@ -328,6 +367,7 @@ type Querier interface {
 	UpdateMediaFileItemID(ctx context.Context, id uuid.UUID, itemID uuid.UUID) error
 	UpdateMediaFileTechnicalMetadata(ctx context.Context, id uuid.UUID, p CreateFileParams) error
 	UpdateMediaFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error
+	UpdateMediaFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error
 	UpdateMediaFileIntegrity(ctx context.Context, id uuid.UUID, status string, detail *string) error
 	ListFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID, limit int32) ([]File, error)
 	CountFilesForIntegrityCheck(ctx context.Context, libraryID *uuid.UUID) (int64, error)
@@ -352,9 +392,9 @@ type Querier interface {
 	GetPhotoMetadata(ctx context.Context, itemID uuid.UUID) (*PhotoMetadata, error)
 	ListPhotosByLibrary(ctx context.Context, p ListPhotosParams) ([]PhotoListItem, error)
 	CountPhotosByLibrary(ctx context.Context, p ListPhotosParams) (int64, error)
-	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]PhotoTimelineBucket, error)
+	ListPhotoTimelineBuckets(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) ([]PhotoTimelineBucket, error)
 	ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsParams) ([]PhotoMapPoint, error)
-	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error)
+	CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) (int64, error)
 	SearchPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) ([]PhotoSearchResult, error)
 	CountPhotosByExif(ctx context.Context, p SearchPhotosByExifParams) (int64, error)
 }
@@ -380,6 +420,8 @@ type ListPhotosParams struct {
 	Limit         int32
 	Offset        int32
 	MaxRatingRank *int // content_rating_rank() ceiling; nil = unrestricted
+	// Labels is the viewer's label restriction; zero = none.
+	Labels itemlabel.Filter
 }
 
 // PhotoListItem is the join of media_items + photo_metadata returned to
@@ -421,6 +463,8 @@ type ListPhotoMapPointsParams struct {
 	MaxLon        *float64
 	Limit         int32
 	MaxRatingRank *int // content_rating_rank() ceiling; nil = unrestricted
+	// Labels is the viewer's label restriction; zero = none.
+	Labels itemlabel.Filter
 }
 
 // PhotoMapPoint is one geotagged photo as plotted on a map. PosterPath is
@@ -460,6 +504,8 @@ type SearchPhotosByExifParams struct {
 	Offset      int32
 	// MaxRatingRank is the content_rating_rank() ceiling; nil = unrestricted.
 	MaxRatingRank *int
+	// Labels is the viewer's label restriction; zero = none.
+	Labels itemlabel.Filter
 }
 
 // PhotoSearchResult is one row returned by SearchPhotosByExif. Carries the
@@ -617,6 +663,8 @@ type CreateFileParams struct {
 	HDRType         *string
 	DVProfile       *int
 	FrameRate       *float64
+	Edition         *string // see File.Edition
+	PartIndex       *int    // see File.PartIndex
 	AudioStreams    []byte
 	SubtitleStreams []byte
 	Chapters        []byte
@@ -782,8 +830,8 @@ func (s *Service) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) (
 
 // ListGenresWithCounts returns each genre and the number of root-type items
 // carrying it, suitable for a browse page.
-func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]GenreCount, error) {
-	rows, err := s.ro.ListGenresWithCounts(ctx, libraryID, itemType, maxRatingRank)
+func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]GenreCount, error) {
+	rows, err := s.ro.ListGenresWithCounts(ctx, libraryID, itemType, maxRatingRank, labels)
 	if err != nil {
 		return nil, fmt.Errorf("list genres with counts: %w", err)
 	}
@@ -791,8 +839,8 @@ func (s *Service) ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID,
 }
 
 // ListYearsWithCounts returns each release year and item count for a library.
-func (s *Service) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int) ([]YearCount, error) {
-	rows, err := s.ro.ListYearsWithCounts(ctx, libraryID, itemType, maxRatingRank)
+func (s *Service) ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]YearCount, error) {
+	rows, err := s.ro.ListYearsWithCounts(ctx, libraryID, itemType, maxRatingRank, labels)
 	if err != nil {
 		return nil, fmt.Errorf("list years with counts: %w", err)
 	}
@@ -809,12 +857,17 @@ func (s *Service) SearchItems(ctx context.Context, libraryID uuid.UUID, query st
 }
 
 // GetFiles returns all files for a media item, sorted by quality descending.
+//
+// Best quality first (ADR-031), except that the parts of a stacked rip are
+// kept together in part order at their best part's place (see OrderFiles): a
+// client that plays files[0] then starts at part 1, and the stack reads as
+// one version.
 func (s *Service) GetFiles(ctx context.Context, itemID uuid.UUID) ([]File, error) {
 	files, err := s.ro.ListMediaFilesForItem(ctx, itemID)
 	if err != nil {
 		return nil, fmt.Errorf("list files for item %s: %w", itemID, err)
 	}
-	return files, nil
+	return OrderFiles(files), nil
 }
 
 // GetFileByPath returns the media file record for a given filesystem path.
@@ -836,6 +889,15 @@ func (s *Service) MarkFileActive(ctx context.Context, id uuid.UUID) error {
 func (s *Service) SetFileDynamicRange(ctx context.Context, id uuid.UUID, hdrType *string, dvProfile *int) error {
 	if err := s.rw.UpdateMediaFileDynamicRange(ctx, id, hdrType, dvProfile); err != nil {
 		return fmt.Errorf("set file dynamic range %s: %w", id, err)
+	}
+	return nil
+}
+
+// SetFileNaming records what a file's name says about it (edition label,
+// stacked-part number) and nothing else; see migration 00045.
+func (s *Service) SetFileNaming(ctx context.Context, id uuid.UUID, edition *string, partIndex *int) error {
+	if err := s.rw.UpdateMediaFileNaming(ctx, id, edition, partIndex); err != nil {
+		return fmt.Errorf("set file naming %s: %w", id, err)
 	}
 	return nil
 }
@@ -930,6 +992,15 @@ func (s *Service) CreateOrUpdateFile(ctx context.Context, p CreateFileParams) (*
 			}
 			if err := s.rw.RestoreMediaItemAncestry(ctx, moved.MediaItemID); err != nil {
 				return nil, false, fmt.Errorf("restore ancestry for %s: %w", moved.MediaItemID, err)
+			}
+			// The new name may say something else about the file ("cd1"
+			// added, an edition tag dropped); the move keeps every other
+			// stored field, so carry the naming across explicitly.
+			if !samePtr(moved.Edition, p.Edition) || !samePtr(moved.PartIndex, p.PartIndex) {
+				if err := s.rw.UpdateMediaFileNaming(ctx, moved.ID, p.Edition, p.PartIndex); err != nil {
+					return nil, false, fmt.Errorf("update file naming (move): %w", err)
+				}
+				moved.Edition, moved.PartIndex = p.Edition, p.PartIndex
 			}
 			s.logger.InfoContext(ctx, "file move detected",
 				"old_path", moved.FilePath, "new_path", p.FilePath)
@@ -1181,6 +1252,59 @@ func (s *Service) SetItemKind(ctx context.Context, id uuid.UUID, kind string) er
 	return nil
 }
 
+// SetEpisodeIndexEnd records the last episode a multi-episode file covers
+// on its episode row ("S01E01-E02" → 2), or clears it (nil) for a single
+// episode. Reports whether the row changed: an unchanged row is not
+// rewritten. Used by the scanner when it files or re-reads an episode.
+func (s *Service) SetEpisodeIndexEnd(ctx context.Context, id uuid.UUID, indexEnd *int) (bool, error) {
+	changed, err := s.rw.SetEpisodeIndexEnd(ctx, id, indexEnd)
+	if err != nil {
+		return false, fmt.Errorf("set episode index end %s: %w", id, err)
+	}
+	return changed, nil
+}
+
+// EpisodeOrder values: the order a show's episodes are numbered in. A show
+// with none of its own follows its library's (libraries.episode_order).
+const (
+	EpisodeOrderAired    = "aired"
+	EpisodeOrderDVD      = "dvd"
+	EpisodeOrderAbsolute = "absolute"
+)
+
+// ValidEpisodeOrder reports whether s is an episode order.
+func ValidEpisodeOrder(s string) bool {
+	return s == EpisodeOrderAired || s == EpisodeOrderDVD || s == EpisodeOrderAbsolute
+}
+
+// SetShowEpisodeOrder sets a show's own episode order, or clears it (nil)
+// so the show follows its library's default. ErrNotFound when id is not a
+// live show.
+func (s *Service) SetShowEpisodeOrder(ctx context.Context, id uuid.UUID, order *string) error {
+	if order != nil && !ValidEpisodeOrder(*order) {
+		return fmt.Errorf("invalid episode order %q", *order)
+	}
+	ok, err := s.rw.SetShowEpisodeOrder(ctx, id, order)
+	if err != nil {
+		return fmt.Errorf("set show episode order %s: %w", id, err)
+	}
+	if !ok {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// ListShowsFollowingLibraryEpisodeOrder lists the shows of a library that
+// have no episode order of their own — the ones a change to the library's
+// default re-numbers.
+func (s *Service) ListShowsFollowingLibraryEpisodeOrder(ctx context.Context, libraryID uuid.UUID) ([]uuid.UUID, error) {
+	ids, err := s.rw.ListShowsFollowingLibraryEpisodeOrder(ctx, libraryID)
+	if err != nil {
+		return nil, fmt.Errorf("list shows following library episode order %s: %w", libraryID, err)
+	}
+	return ids, nil
+}
+
 // UpsertPhotoMetadata writes the per-photo EXIF row, replacing any prior data
 // for this item. Called by the scanner after extracting EXIF from an image.
 func (s *Service) UpsertPhotoMetadata(ctx context.Context, p PhotoMetadataParams) error {
@@ -1245,8 +1369,8 @@ func (s *Service) CountPhotos(ctx context.Context, p ListPhotosParams) (int64, e
 // ListPhotoTimeline returns (year, month, count) buckets for the timeline
 // sidebar. Always returns the full library — pagination would defeat the
 // purpose of a sticky-section index.
-func (s *Service) ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) ([]PhotoTimelineBucket, error) {
-	rows, err := s.ro.ListPhotoTimelineBuckets(ctx, libraryID, maxRatingRank)
+func (s *Service) ListPhotoTimeline(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) ([]PhotoTimelineBucket, error) {
+	rows, err := s.ro.ListPhotoTimelineBuckets(ctx, libraryID, maxRatingRank, labels)
 	if err != nil {
 		return nil, fmt.Errorf("list photo timeline: %w", err)
 	}
@@ -1268,8 +1392,8 @@ func (s *Service) ListPhotoMapPoints(ctx context.Context, p ListPhotoMapPointsPa
 // CountPhotoMapPoints returns the total number of geotagged photos in the
 // library (ignoring any bbox). Used to surface "you have X mappable photos"
 // even when the current view is empty.
-func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int) (int64, error) {
-	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID, maxRatingRank)
+func (s *Service) CountPhotoMapPoints(ctx context.Context, libraryID uuid.UUID, maxRatingRank *int, labels itemlabel.Filter) (int64, error) {
+	n, err := s.ro.CountPhotoMapPoints(ctx, libraryID, maxRatingRank, labels)
 	if err != nil {
 		return 0, fmt.Errorf("count photo map points: %w", err)
 	}

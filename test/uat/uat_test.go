@@ -33,6 +33,7 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/domain/watchevent"
 	"github.com/onscreen/onscreen/internal/email"
+	"github.com/onscreen/onscreen/internal/itemlabel"
 	"github.com/onscreen/onscreen/internal/observability"
 	"github.com/onscreen/onscreen/internal/testvalkey"
 	"github.com/onscreen/onscreen/internal/transcode"
@@ -219,10 +220,10 @@ func (s *stubMediaItemLister) CountItemsFiltered(_ context.Context, _ uuid.UUID,
 func (s *stubMediaItemLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return []string{"Action", "Drama"}, nil
 }
-func (s *stubMediaItemLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int) ([]media.GenreCount, error) {
+func (s *stubMediaItemLister) ListGenresWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int, _ itemlabel.Filter) ([]media.GenreCount, error) {
 	return []media.GenreCount{{Genre: "Action", Count: 1}, {Genre: "Drama", Count: 1}}, nil
 }
-func (s *stubMediaItemLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int) ([]media.YearCount, error) {
+func (s *stubMediaItemLister) ListYearsWithCounts(_ context.Context, _ uuid.UUID, _ string, _ *int, _ itemlabel.Filter) ([]media.YearCount, error) {
 	return nil, nil
 }
 func (s *stubMediaItemLister) ListEventCollectionsForLibrary(_ context.Context, _ uuid.UUID) ([]media.EventCollection, error) {
@@ -258,7 +259,7 @@ func (s *stubItemMediaService) ListChildren(_ context.Context, _ uuid.UUID) ([]m
 func (s *stubItemMediaService) GetPhotoMetadata(_ context.Context, _ uuid.UUID) (*media.PhotoMetadata, error) {
 	return nil, media.ErrNotFound
 }
-func (s *stubItemMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateItemMetadataParams) (*media.Item, error) {
+func (s *stubItemMediaService) EditItemMetadata(_ context.Context, p media.EditItemMetadataParams) (*media.Item, error) {
 	return &media.Item{ID: p.ID, Title: p.Title}, nil
 }
 func (s *stubItemMediaService) RenameItemFile(_ context.Context, _ uuid.UUID, _ string) (string, bool, error) {
@@ -476,6 +477,12 @@ func (s *stubUserDB) UpdateUserStreamCaps(_ context.Context, _ gen.UpdateUserStr
 }
 func (s *stubUserDB) GetUserStreamCaps(_ context.Context, _ uuid.UUID) (gen.GetUserStreamCapsRow, error) {
 	return gen.GetUserStreamCapsRow{}, nil
+}
+func (s *stubUserDB) GetUserLabelRestrictions(_ context.Context, _ uuid.UUID) (gen.GetUserLabelRestrictionsRow, error) {
+	return gen.GetUserLabelRestrictionsRow{}, nil
+}
+func (s *stubUserDB) UpdateUserLabelRestrictions(_ context.Context, _ gen.UpdateUserLabelRestrictionsParams) error {
+	return nil
 }
 func (s *stubUserDB) UpdateUserHubLayout(_ context.Context, _ gen.UpdateUserHubLayoutParams) error {
 	return nil

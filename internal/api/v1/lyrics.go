@@ -10,7 +10,6 @@ import (
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
-	"github.com/onscreen/onscreen/internal/contentrating"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/lyrics"
 )
@@ -104,12 +103,12 @@ func (h *LyricsHandler) Get(w http.ResponseWriter, r *http.Request) {
 	// Content-rating ceiling, as on the track's stream and download: a
 	// restricted profile refused the audio must not get the (possibly
 	// explicit) words either. 404, matching the ACL denial above.
-	if claims := middleware.ClaimsFromContext(r.Context()); claims != nil && claims.MaxContentRating != "" {
+	if claims := middleware.ClaimsFromContext(r.Context()); viewerRestricted(claims) {
 		cr := ""
 		if item.ContentRating != nil {
 			cr = *item.ContentRating
 		}
-		if !contentrating.IsAllowed(cr, claims.MaxContentRating) {
+		if !itemPermitted(r.Context(), claims, item.ID, cr) {
 			respond.NotFound(w, r)
 			return
 		}

@@ -28,6 +28,7 @@ WITH targets AS (
       AND ea.container_id = sqlc.arg('target_id')::uuid
       AND (sqlc.narg('max_rating_rank')::int IS NULL
            OR content_rating_rank(ea.content_rating) <= sqlc.narg('max_rating_rank')::int)
+      AND media_item_id_labels_permitted(ea.episode_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
     UNION ALL
     SELECT m.id AS media_id
     FROM media_items m
@@ -74,6 +75,7 @@ ON CONFLICT (user_id, media_id) DO UPDATE
 -- Next contract always names a season.
 SELECT e.id, e.title, e.thumb_path, e.duration_ms,
        e.index AS episode_number,
+       e.index_end AS episode_number_end,
        se.id AS season_id,
        se.index AS season_number,
        COALESCE(ws.status, 'unwatched')::text AS status,
@@ -90,6 +92,7 @@ WHERE se.type = 'season'
   AND (se.id = sqlc.arg('container_id')::uuid OR se.parent_id = sqlc.arg('container_id')::uuid)
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(e.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(e.labels, e.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY COALESCE(se.index, 999999), COALESCE(e.index, 999999), e.sort_title, e.id;
 
 -- name: ListNextUp :many
@@ -98,7 +101,9 @@ ORDER BY COALESCE(se.index, 999999), COALESCE(e.index, 999999), e.sort_title, e.
 -- Continue Watching TV — no duplicates), the first not-yet-watched episode
 -- after the anchor, where the anchor is the most recently watched episode
 -- (ties — e.g. a whole season marked played at once — go to the later
--- episode). Order is season then episode number; season 0 specials are
+-- episode). A multi-episode file anchors at its LAST episode (index_end), so
+-- Next Up after an E01-E02 file is E03. Order is season then episode
+-- number; season 0 specials are
 -- skipped unless the show has no regular season. A show whose next episode
 -- was added after the user caught up reappears here. Ordered by the caller's
 -- latest activity in the show; shows dismissed (continue_watching_dismissals)
@@ -115,7 +120,7 @@ WITH ep AS (
            ws.resumable,
            ws.last_activity_at,
            COALESCE(se.index, 999999) AS season_key,
-           COALESCE(e.index, 999999) AS episode_key,
+           COALESCE(GREATEST(e.index, e.index_end), 999999) AS episode_key,
            (COALESCE(se.index, -1) = 0) AS is_special
     FROM user_watch_state ws
     JOIN media_items e
@@ -139,7 +144,7 @@ anchor AS (
              ep.season_key DESC, ep.episode_key DESC
 )
 SELECT nx.id, nx.library_id, nx.title, nx.thumb_path, nx.duration_ms, nx.updated_at,
-       nx.season_number, nx.episode_number,
+       nx.season_number, nx.episode_number, nx.episode_number_end,
        sh.id          AS show_id,
        sh.title       AS show_title,
        sh.year        AS show_year,
@@ -152,7 +157,8 @@ JOIN anchor a ON a.show_id = s.show_id
 JOIN media_items sh ON sh.id = s.show_id AND sh.deleted_at IS NULL
 CROSS JOIN LATERAL (
     SELECT e.id, e.library_id, e.title, e.thumb_path, e.duration_ms, e.updated_at,
-           se.index AS season_number, e.index AS episode_number
+           se.index AS season_number, e.index AS episode_number,
+           e.index_end AS episode_number_end
     FROM media_items se
     JOIN media_items e
       ON e.parent_id = se.id AND e.type = 'episode' AND e.deleted_at IS NULL
@@ -170,11 +176,13 @@ CROSS JOIN LATERAL (
                  AND rs.deleted_at IS NULL AND COALESCE(rs.index, -1) <> 0))
       AND (sqlc.narg('max_rating_rank')::int IS NULL
            OR content_rating_rank(e.content_rating) <= sqlc.narg('max_rating_rank')::int)
+      AND media_item_labels_permitted(e.labels, e.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
     ORDER BY COALESCE(se.index, 999999), COALESCE(e.index, 999999), e.sort_title, e.id
     LIMIT 1
 ) nx
 WHERE (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(sh.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(sh.labels, sh.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND NOT EXISTS (
       SELECT 1 FROM continue_watching_dismissals cwd
       WHERE cwd.user_id = sqlc.arg('user_id')::uuid
@@ -197,6 +205,7 @@ WHERE uws.user_id = sqlc.arg('user_id')::uuid
   AND uws.status = 'plan_to_watch'
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND media_watch_bucket(sqlc.arg('user_id')::uuid, mi.id, mi.type, sqlc.narg('max_rating_rank')::int) <> 'watched'
 ORDER BY uws.updated_at DESC, mi.id
 LIMIT sqlc.arg('result_limit')::int;
@@ -206,6 +215,8 @@ LIMIT sqlc.arg('result_limit')::int;
 -- item (status + resume point), and for shows/seasons the number of live
 -- episodes within the rating ceiling and how many of them are watched. Leaf
 -- rows report leaf_count 0; container rows report status 'unwatched'.
+-- Episodes are counted, not files: a multi-episode E01-E02 file counts as
+-- two (episode_ancestry.episode_span), watched or not together.
 SELECT m.id,
        m.type,
        COALESCE(ws.status, 'unwatched')::text AS status,
@@ -217,8 +228,8 @@ FROM media_items m
 LEFT JOIN user_watch_state ws
   ON ws.user_id = sqlc.arg('user_id')::uuid AND ws.media_id = m.id
 CROSS JOIN LATERAL (
-    SELECT count(*)::bigint AS leaf_count,
-           (count(*) FILTER (WHERE es.status = 'watched'))::bigint AS watched_count
+    SELECT COALESCE(sum(ea.episode_span), 0)::bigint AS leaf_count,
+           COALESCE(sum(ea.episode_span) FILTER (WHERE es.status = 'watched'), 0)::bigint AS watched_count
     FROM episode_ancestry ea
     LEFT JOIN user_watch_state es
       ON es.user_id = sqlc.arg('user_id')::uuid AND es.media_id = ea.episode_id
@@ -226,6 +237,7 @@ CROSS JOIN LATERAL (
       AND ea.container_id = m.id
       AND (sqlc.narg('max_rating_rank')::int IS NULL
            OR content_rating_rank(ea.content_rating) <= sqlc.narg('max_rating_rank')::int)
+      AND media_item_id_labels_permitted(ea.episode_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ) c
 WHERE m.id = ANY(sqlc.arg('media_ids')::uuid[]);
 
@@ -244,6 +256,7 @@ WHERE library_id = sqlc.arg('library_id')::uuid
   AND (sqlc.narg('year_max')::int IS NULL OR year <= sqlc.narg('year_max'))
   AND (sqlc.narg('rating_min')::numeric IS NULL OR rating >= sqlc.narg('rating_min'))
   AND (sqlc.narg('max_rating_rank')::int IS NULL OR content_rating_rank(content_rating) <= sqlc.narg('max_rating_rank'))
+  AND media_item_labels_permitted(labels, parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
   AND (sqlc.narg('watch')::text IS NULL OR media_watch_bucket(sqlc.arg('watch_user_id')::uuid, id, type, sqlc.narg('max_rating_rank')::int) = sqlc.narg('watch')::text)
 ORDER BY random()
 LIMIT 1;

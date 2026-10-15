@@ -87,6 +87,9 @@ export function canDirectPlay(file: ItemFile | undefined, caps: ClientCaps): boo
   // Damaged bitstream (integrity probe verdict) — nothing can play it; the
   // page pre-empts with a message, this guard just keeps the heuristic honest.
   if (file.integrity_status === 'damaged') return false;
+  // One part of a multi-part movie: playing the file alone would stop at
+  // the end of the part. The server joins the parts (remux/transcode).
+  if (file.part_index != null) return false;
   // HDR content on an SDR display needs tonemapping — can't direct play.
   if (file.hdr_type && !caps.hdr) return false;
   // 10-bit video the browser can't decode (Hi10P H.264, HEVC Main10 on a
