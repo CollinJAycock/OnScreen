@@ -345,6 +345,29 @@ interface OnScreenApi {
     @DELETE("api/v1/downloads/{job}")
     suspend fun deleteDownloadJob(@Path("job") jobId: String)
 
+    // ── Music discovery (v2.6) ──────────────────────────────────────────────
+    // internal/api/v1/music.go. 404 on an older server (and for an item that
+    // isn't a visible artist / album / track).
+
+    @GET("api/v1/music/artists/{id}/similar")
+    suspend fun similarArtists(
+        @Path("id") artistId: String,
+        @Query("limit") limit: Int = 20,
+    ): ApiListResponse<SimilarArtist>
+
+    /** Tracks on other artists' albums this artist is credited on, newest
+     *  album first. */
+    @GET("api/v1/music/artists/{id}/appears-on")
+    suspend fun artistAppearsOn(@Path("id") artistId: String): ApiListResponse<ArtistAppearance>
+
+    /** An instant mix seeded by a track, album or artist: the seed's own
+     *  tracks first, then similar artists', freshly shuffled each call. */
+    @GET("api/v1/music/mix")
+    suspend fun instantMix(
+        @Query("seed") seedId: String,
+        @Query("limit") limit: Int? = null,
+    ): ApiListResponse<MixTrack>
+
     // ── Search ──────────────────────────────────────────────────────────────
 
     @GET("api/v1/search")

@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.FavoriteBorder
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -651,9 +652,17 @@ fun ItemDetailScreen(
     vm: ItemDetailViewModel = hiltViewModel(),
     watchVm: ItemWatchViewModel = hiltViewModel(),
     bookmarksVm: AudiobookBookmarksViewModel = hiltViewModel(),
+    musicVm: MusicExtrasViewModel = hiltViewModel(),
 ) {
     LaunchedEffect(itemId) { vm.load(itemId) }
     val ui by vm.state.collectAsStateWithLifecycle()
+
+    // Music discovery (v2.6): an artist's similar artists and appearances,
+    // and Instant mix on an artist / album / track — played from 0:00 as a
+    // queue (the mix waits in InstantMixQueue for the player).
+    val musicUi by musicVm.state.collectAsStateWithLifecycle()
+    LaunchedEffect(ui.detail?.id) { ui.detail?.let(musicVm::bind) }
+    LaunchedEffect(musicVm) { musicVm.playMix.collect { first -> onPlayFromStart(first) } }
 
     // Audiobook bookmarks bind to each loaded detail — incl. the refresh on
     // return from the player, which is how one just added there shows up.
@@ -693,6 +702,11 @@ fun ItemDetailScreen(
     LaunchedEffect(bookmarksVm) {
         bookmarksVm.messages.collect { res ->
             android.widget.Toast.makeText(context, res, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+    LaunchedEffect(musicVm) {
+        musicVm.messages.collect { msg ->
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -941,6 +955,23 @@ fun ItemDetailScreen(
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
                                 }
+                                // Instant mix (v2.6): the seed's own tracks,
+                                // then similar artists', as a queue.
+                                if (canSeedInstantMix(d.type)) {
+                                    Spacer(Modifier.height(8.dp))
+                                    OutlinedButton(
+                                        onClick = { musicVm.instantMix(d.id) },
+                                        enabled = !musicUi.mixLoading,
+                                    ) {
+                                        if (musicUi.mixLoading) {
+                                            CircularProgressIndicator(modifier = Modifier.size(18.dp), strokeWidth = 2.dp)
+                                        } else {
+                                            Icon(Icons.Default.Shuffle, contentDescription = null)
+                                        }
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Instant mix")
+                                    }
+                                }
                                 // Movie / episode: watched toggle.
                                 if (isWatchLeafType(d.type)) {
                                     Spacer(Modifier.height(8.dp))
@@ -1096,6 +1127,18 @@ fun ItemDetailScreen(
                                 Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
                                     CircularProgressIndicator()
                                 }
+                            }
+                        }
+                        // An artist's similar artists and the albums by
+                        // others it appears on (v2.6; none on older servers).
+                        if (musicUi.artistId == d.id && musicUi.similar.isNotEmpty()) {
+                            item(key = "similar-artists") {
+                                SimilarArtistsRow(musicUi.similar, ui.serverUrl, onOpen = onOpenItem)
+                            }
+                        }
+                        if (musicUi.artistId == d.id && musicUi.appearsOn.isNotEmpty()) {
+                            item(key = "appears-on") {
+                                AppearsOnRow(musicUi.appearsOn, ui.serverUrl, onOpen = onOpenItem)
                             }
                         }
                         item(key = "bottom-spacer") { Spacer(Modifier.height(16.dp)) }

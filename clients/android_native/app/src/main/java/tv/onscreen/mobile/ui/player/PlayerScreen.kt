@@ -2151,7 +2151,49 @@ private fun rememberAudioController(
         // Don't restart the track that's already playing in the service
         // when the user re-opens the now-playing screen.
         val current = controller.currentMediaItem?.mediaId == itemId
-        if (!current && !following && !bindOnly) {
+        // An instant mix opened on this track (v2.6): the rest of the mix,
+        // queued behind it as the whole playlist (see InstantMixQueue).
+        val mixRest = if (following) null else {
+            tv.onscreen.mobile.playback.InstantMixQueue.take(itemId, android.os.SystemClock.elapsedRealtime())
+        }
+        val mixItems = mixRest?.map { tv.onscreen.mobile.playback.QueueItems.placeholder(it.asChild(), it.albumId, mix = true) }
+        if (mixItems != null && current) {
+            // The mix starts with the track already playing: keep it going
+            // and make the rest of the queue the mix.
+            val at = controller.currentMediaItemIndex
+            if (at + 1 < controller.mediaItemCount) controller.removeMediaItems(at + 1, controller.mediaItemCount)
+            if (at > 0) controller.removeMediaItems(0, at)
+            controller.addMediaItems(mixItems)
+            if (controller.playbackState == Player.STATE_IDLE) controller.prepare()
+            controller.playWhenReady = true
+        } else if (mixItems != null && source is PlaybackSource.DirectPlay) {
+            val extras = Bundle().apply {
+                item?.type?.let { putString(PlaybackService.EXTRA_TYPE, it) }
+                item?.parent_id?.let { putString(PlaybackService.EXTRA_PARENT_ID, it) }
+                item?.index?.let { putInt(PlaybackService.EXTRA_INDEX, it) }
+                putBoolean(PlaybackService.EXTRA_MIX, true)
+                tv.onscreen.mobile.playback.ReplayGainExtras.write(
+                    this,
+                    tv.onscreen.mobile.playback.ReplayGain.fromFile(item?.files?.firstOrNull()),
+                )
+            }
+            val first = MediaItem.Builder()
+                .setUri(Uri.parse(source.url))
+                .setMediaId(itemId)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(item?.title)
+                        .apply { item?.index?.let { setTrackNumber(it) } }
+                        .setExtras(extras)
+                        .build(),
+                )
+                .build()
+            // One call, so the service never sees the first track alone
+            // (and wraps its album around it).
+            controller.setMediaItems(listOf(first) + mixItems, 0, source.startMs)
+            controller.prepare()
+            controller.playWhenReady = true
+        } else if (!current && !following && !bindOnly) {
             val startMs = (source as? PlaybackSource.DirectPlay)?.startMs ?: 0L
             val queuedAt = (0 until controller.mediaItemCount)
                 .firstOrNull { controller.getMediaItemAt(it).mediaId == itemId }

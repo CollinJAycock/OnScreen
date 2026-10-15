@@ -158,6 +158,8 @@ class PlaybackService : MediaSessionService() {
         const val EXTRA_TYPE = "onscreen.type"
         const val EXTRA_PARENT_ID = "onscreen.parentId"
         const val EXTRA_INDEX = "onscreen.index"
+        /** An instant-mix entry (InstantMixQueue): the queue is the mix. */
+        const val EXTRA_MIX = "onscreen.mix"
 
         /** User-Agent product token for this player's stream requests. The
          *  server names a direct-play stream after the UA prefix (items.go
@@ -565,6 +567,8 @@ class PlaybackService : MediaSessionService() {
         val extras = anchor.mediaMetadata.extras ?: return
         val type = extras.getString(EXTRA_TYPE)
         if (!MusicQueue.expandsQueue(type)) return
+        // An instant mix (even one track long) is its own queue.
+        if (extras.getBoolean(EXTRA_MIX, false)) return
         val parentId = extras.getString(EXTRA_PARENT_ID) ?: return
         lastExpandedAnchor = anchor
         expandJob?.cancel()
@@ -606,6 +610,8 @@ class PlaybackService : MediaSessionService() {
         val extras = item.mediaMetadata.extras ?: return
         val type = extras.getString(EXTRA_TYPE)
         if (!MusicQueue.expandsQueue(type)) return
+        // The end of an instant mix is the end: no album after it.
+        if (extras.getBoolean(EXTRA_MIX, false)) return
         val parentId = extras.getString(EXTRA_PARENT_ID) ?: return
         if (extendJob?.isActive == true) return
         val queued = (0 until player.mediaItemCount).map { player.getMediaItemAt(it).mediaId }.toSet()
