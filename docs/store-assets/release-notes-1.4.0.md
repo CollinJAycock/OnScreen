@@ -19,8 +19,8 @@ Under Play's 500-character limit; works for Amazon too.
 • New: your TV switches to the video's frame rate (Settings > Playback).
 • Surround: DTS and Dolby TrueHD/Atmos go to your receiver untouched.
 • HDR, 4K and AV1 are used only when your screen and device support them.
-• Music and audiobooks keep playing in the background; book speed,
-  bookmarks and a sleep timer that stops at the chapter's end.
+• Music and audiobooks keep playing in the background; each book
+  remembers its listening speed.
 • Next Up, Plan to Watch, mark watched, and Report a problem.
 • Better NVIDIA SHIELD support; resume and subtitle fixes.
 ```
@@ -98,7 +98,7 @@ Relative to 1.1.0 (14):
   capabilities mean forced SDR (3fbff487, 0faa04c2).
 - Background audio: transcoded audio keeps playing; the Fire TV run's
   defects fixed (ec2c37d2, 2e922ef3, 1c08e147).
-- Audiobooks: per-book speed, bookmarks, sleep at chapter end; multi-file
+- Audiobooks: per-book speed (bookmarks and the sleep timer are phone-only); multi-file
   books play chapters as audio and chain (808c97a1, 902aa03f).
 - Multi-disc albums play in disc order (a9fd1710).
 

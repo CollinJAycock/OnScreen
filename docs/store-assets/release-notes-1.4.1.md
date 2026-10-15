@@ -50,28 +50,28 @@ in step); if 23 never went up, upload 24 instead of 23.
 ## What's New — Amazon Appstore (Fire TV)
 
 Amazon users never received 1.4.0, so this covers 1.4.0's changes too.
-464 characters (limit 500).
+449 characters (limit 500).
 
 ```
 • Your TV can switch to each video's frame rate (Settings > Playback).
 • DTS and Dolby TrueHD/Atmos go to your AV receiver unchanged.
 • HDR, 4K and AV1 are used only when your TV and Fire TV support them.
-• Music and audiobooks keep playing in the background; book speed, bookmarks and a sleep timer.
+• Music and audiobooks keep playing in the background; per-book listening speed.
 • Next Up and Plan to Watch rows, mark watched, Report a problem.
 • The Live TV and Recordings screens and online subtitle search are no longer in the Fire TV app.
 ```
 
 ## What's New — Google Play (Android TV / Google TV)
 
-The 1.4.0 text; nothing was removed from this build. 467 characters (limit
+The 1.4.0 text; nothing was removed from this build. 435 characters (limit
 500).
 
 ```
 • New: your TV switches to the video's frame rate (Settings > Playback).
 • Surround: DTS and Dolby TrueHD/Atmos go to your receiver untouched.
 • HDR, 4K and AV1 are used only when your screen and device support them.
-• Music and audiobooks keep playing in the background; book speed,
-  bookmarks and a sleep timer that stops at the chapter's end.
+• Music and audiobooks keep playing in the background; each book
+  remembers its listening speed.
 • Next Up, Plan to Watch, mark watched, and Report a problem.
 • Better NVIDIA SHIELD support; resume and subtitle fixes.
 ```
@@ -80,7 +80,7 @@ The 1.4.0 text; nothing was removed from this build. 467 characters (limit
 
 ## Testing instructions (Amazon "Testing instructions")
 
-3,978 characters; check the console field's limit before pasting. If it
+3,969 characters; check the console field's limit before pasting. If it
 is lower, drop the NEW IN 1.4.x paragraph (3,671), then if needed replace
 the Movies line with "- Movies: 11 Blender Foundation open movies, among
 them Big Buck Bunny, Sintel and Tears of Steel (© Blender Foundation, CC BY
@@ -119,7 +119,7 @@ https://onscreen-beta.wolverscreen.com is an OnScreen Media Server we run for te
 - Photos: 12 NASA images (public domain).
 
 NEW IN 1.4.x
-Frame-rate matching (Settings > Playback); DTS and Dolby TrueHD passed to an AV receiver; HDR, 4K and AV1 used only when the TV supports them; background playback for music and audiobooks with speed, bookmarks and a sleep timer; Next Up and Plan to Watch rows; mark watched; Report a problem.
+Frame-rate matching (Settings > Playback); DTS and Dolby TrueHD passed to an AV receiver; HDR, 4K and AV1 used only when the TV supports them; background playback for music and audiobooks, with per-book listening speed; Next Up and Plan to Watch rows; mark watched; Report a problem.
 ```
 
 ### How each claim was checked (keep in step if the app or the server changes)

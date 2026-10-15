@@ -527,6 +527,13 @@
           </svg>
           Favorites
         </a>
+        <a href="/playlists" class="nav-link" class:active={path.startsWith('/playlists')}>
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path d="M3 5.75A.75.75 0 013.75 5h9.5a.75.75 0 010 1.5h-9.5A.75.75 0 013 5.75zm0 4A.75.75 0 013.75 9h9.5a.75.75 0 010 1.5h-9.5A.75.75 0 013 9.75zm0 4a.75.75 0 01.75-.75h5.5a.75.75 0 010 1.5h-5.5a.75.75 0 01-.75-.75z"/>
+            <path d="M12.5 12.53v4.94a.5.5 0 00.77.42l3.7-2.47a.5.5 0 000-.84l-3.7-2.47a.5.5 0 00-.77.42z"/>
+          </svg>
+          Playlists
+        </a>
         {#if showLiveTVNav}
           <a href="/tv/guide" class="nav-link" class:active={path.startsWith('/tv')}>
             <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
