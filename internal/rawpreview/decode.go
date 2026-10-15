@@ -103,7 +103,7 @@ func decodeExternal(ctx context.Context, path string) (image.Image, bool, error)
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return nil, false, errors.New("rawpreview: external decode needs an absolute path")
 	}
-	var lastErr error = ErrNoPreview
+	lastErr := ErrNoPreview
 	for _, tool := range externalTools {
 		bin, err := lookPath(tool.name)
 		if err != nil {

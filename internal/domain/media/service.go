@@ -17,10 +17,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
-	"github.com/onscreen/onscreen/internal/itemlabel"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/onscreen/onscreen/internal/itemlabel"
 )
 
 // newDiacriticStripper returns a transformer that folds characters to their

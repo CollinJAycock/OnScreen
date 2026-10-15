@@ -42,7 +42,7 @@ const maxBody = 2 << 20
 // fanart.tv changes slowly; the TTL bounds staleness on a long-running server.
 const cacheTTL = 6 * time.Hour
 
-// ErrInvalidKey: fanart.tv refused the API key.
+// ErrInvalidKey means fanart.tv refused the API key.
 var ErrInvalidKey = errors.New("fanarttv: invalid API key")
 
 // Client reads fanart.tv.

@@ -263,6 +263,9 @@ func (t *tiffFile) visitEntries(entries []ifdEntry, kind ifdKind, meta *Meta, ca
 			t.exifTag(e, meta)
 		case kindIFD0:
 			t.ifd0Tag(e, meta)
+		case kindOther, kindGPS:
+			// No metadata of their own: other IFDs only hold previews, and
+			// the GPS IFD was read above.
 		}
 		switch e.tag {
 		case tagJPEGOffset:
