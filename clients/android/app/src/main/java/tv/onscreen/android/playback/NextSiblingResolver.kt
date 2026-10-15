@@ -32,6 +32,10 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
         parentId: String?,
         currentIndex: Int?,
     ): ChildItem? {
+        // An instant mix (PlayQueue) decides for its own tracks, its last
+        // included: the mix ends there rather than running on into the
+        // album the last track came from.
+        if (PlayQueue.contains(currentItemId)) return PlayQueue.nextAfter(currentItemId)
         if (parentId == null) return null
         // A chapter needs no index: an unnumbered one still has a place in
         // its book's listing.

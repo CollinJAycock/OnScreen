@@ -28,6 +28,7 @@ import tv.onscreen.android.data.repository.WatchLimitRepository
 import tv.onscreen.android.playback.AudiobookSpeed
 import tv.onscreen.android.playback.BookSpeed
 import tv.onscreen.android.playback.MediaVersions
+import tv.onscreen.android.playback.PlayQueue
 import tv.onscreen.android.playback.NowPlaying
 import tv.onscreen.android.playback.StreamSession
 import tv.onscreen.android.playback.StreamTokenVault
@@ -393,7 +394,11 @@ class PlaybackViewModel @Inject constructor(
                 // PlaybackFragment uses the type to decide whether to
                 // surface an Up Next overlay (episodes) or just chain
                 // silently (tracks, chapters — see AudioItemTypes).
-                if (item.parent_id != null) {
+                if (PlayQueue.contains(item.id)) {
+                    // A track of an instant mix: the mix's next one, numbered
+                    // or not (NextSiblingResolver asks PlayQueue first).
+                    loadNextSibling(item.parent_id, item.index, item.type)
+                } else if (item.parent_id != null) {
                     when (item.type) {
                         // From the end of a multi-episode file's range: the
                         // episodes it covers are already playing here.
@@ -480,7 +485,7 @@ class PlaybackViewModel @Inject constructor(
         audiobooks.saveRate(item.id, bookId, clamped)
     }
 
-    private suspend fun loadNextSibling(parentId: String, currentIndex: Int?, type: String) {
+    private suspend fun loadNextSibling(parentId: String?, currentIndex: Int?, type: String) {
         // Same resolver the MediaSessionService uses on its own
         // STATE_ENDED — keeps the in-fragment Up Next overlay and
         // the service-side autoplay aligned on what comes next, no

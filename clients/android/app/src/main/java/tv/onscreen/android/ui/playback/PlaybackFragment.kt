@@ -407,6 +407,8 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
 
         val itemId = arguments?.getString(ARG_ITEM_ID) ?: return
         val startMs = arguments?.getLong(ARG_START_MS, 0) ?: 0
+        // An instant mix plays on only through its own tracks (PlayQueue).
+        tv.onscreen.android.playback.PlayQueue.retainFor(itemId)
         val bookSpeed = arguments?.let { args ->
             args.getString(ARG_SPEED_BOOK_ID)?.let { BookSpeed(it, args.getFloat(ARG_SPEED_RATE, AudiobookSpeed.NORMAL)) }
         }

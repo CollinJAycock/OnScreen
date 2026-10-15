@@ -28,6 +28,7 @@ import tv.onscreen.android.data.model.ChildItem
 import tv.onscreen.android.data.model.ItemDetail
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.playback.MediaVersions
+import tv.onscreen.android.playback.PlayQueue
 import tv.onscreen.android.ui.common.ErrorOverlay
 import tv.onscreen.android.ui.common.Navigator
 import tv.onscreen.android.ui.common.WatchStateUi
@@ -262,7 +263,42 @@ class DetailFragment : Fragment() {
         configureEpisodes(root, item, seasons)
         bindVersionPicker(root, item)
         configurePlayButtons(item, btnPlay, btnFromStart)
+        bindInstantMix(root, item)
         bindReportProblem(root, item)
+    }
+
+    /** "Instant Mix" on an artist or album (v2.6). */
+    private fun bindInstantMix(root: View, item: ItemDetail) {
+        val btn = root.findViewById<Button>(R.id.btn_instant_mix) ?: return
+        btn.visibility = if (item.type == "artist" || item.type == "album") View.VISIBLE else View.GONE
+        btn.setOnClickListener { startInstantMix(item.id) }
+    }
+
+    /** Play an instant mix seeded from [seedId] (an artist, album or track)
+     *  as a queue: DetailViewModel.instantMix makes it the PlayQueue. */
+    private fun startInstantMix(seedId: String) {
+        viewModel.instantMix(seedId) { firstTrackId ->
+            if (!isAdded) return@instantMix
+            if (firstTrackId == null) {
+                toast(R.string.instant_mix_failed)
+            } else {
+                playItem(firstTrackId, 0L, keepQueue = true)
+            }
+        }
+    }
+
+    /** Long-press menu on an album's track row: an instant mix from it. */
+    private fun showTrackMenu(track: ChildItem) {
+        if (!isAdded) return
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(track.title)
+            .setItems(arrayOf(getString(R.string.instant_mix))) { d, _ ->
+                d.dismiss()
+                if (isAdded) startInstantMix(track.id)
+            }
+            .create()
+            .dismissOnViewDestroyed(this)
+            .show()
     }
 
     /**
@@ -531,11 +567,12 @@ class DetailFragment : Fragment() {
             // instead of being mis-played as media. Tracks / episodes
             // / podcast episodes still hit PlaybackFragment via
             // Navigator's else branch.
-            // Show / season episode rows get a long-press watched toggle.
-            val onLongClick: ((ChildItem) -> Unit)? = if (WatchStateUi.isWatchContainer(item.type)) {
-                { child -> if (child.type == "episode") showEpisodeMenu(child) }
-            } else {
-                null
+            // Show / season episode rows get a long-press watched toggle;
+            // an album's tracks an instant mix (v2.6).
+            val onLongClick: ((ChildItem) -> Unit)? = when {
+                WatchStateUi.isWatchContainer(item.type) -> { child -> if (child.type == "episode") showEpisodeMenu(child) }
+                item.type == "album" -> { child -> if (child.type == "track") showTrackMenu(child) }
+                else -> null
             }
             episodeAdapter = EpisodeAdapter(serverUrl, item.poster_path, onLongClick) { child ->
                 Navigator.open(parentFragmentManager, child.id, child.type, child.view_offset_ms)
@@ -725,8 +762,11 @@ class DetailFragment : Fragment() {
         if (isAdded) Toast.makeText(requireContext(), res, Toast.LENGTH_SHORT).show()
     }
 
-    /** [fileId]: the version to play (bindVersionPicker); null = the first. */
-    private fun playItem(itemId: String, startMs: Long, fileId: String? = null) {
+    /** [fileId]: the version to play (bindVersionPicker); null = the first.
+     *  [keepQueue]: the start of an instant mix, whose PlayQueue was just
+     *  set; anything else the user starts here ends a mix that was playing. */
+    private fun playItem(itemId: String, startMs: Long, fileId: String? = null, keepQueue: Boolean = false) {
+        if (!keepQueue) PlayQueue.clear()
         parentFragmentManager.beginTransaction()
             .replace(R.id.main_container, PlaybackFragment.newInstance(itemId, startMs, fileId = fileId))
             .addToBackStack(null)

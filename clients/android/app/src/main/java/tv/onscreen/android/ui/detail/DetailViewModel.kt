@@ -18,6 +18,8 @@ import tv.onscreen.android.data.model.UpNext
 import tv.onscreen.android.data.model.WatchStateValue
 import tv.onscreen.android.data.repository.FavoritesRepository
 import tv.onscreen.android.data.repository.ItemRepository
+import tv.onscreen.android.data.repository.MusicRepository
+import tv.onscreen.android.playback.PlayQueue
 import javax.inject.Inject
 
 data class DetailUiState(
@@ -51,6 +53,7 @@ sealed interface DetailEvent {
 class DetailViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val favoritesRepo: FavoritesRepository,
+    private val musicRepo: MusicRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DetailUiState())
@@ -162,6 +165,15 @@ class DetailViewModel @Inject constructor(
                         // every entry in the map automatically — the
                         // tabs were originally show-only but the UI
                         // works for any type with multiple groups.
+                        // v2.6 discovery rows alongside the children load,
+                        // best effort: an older server (404) or a failure
+                        // just leaves the tab out.
+                        val appearsOnDeferred = async {
+                            runCatching { musicRepo.appearsOn(itemId) }.getOrDefault(emptyList())
+                        }
+                        val similarDeferred = async {
+                            runCatching { musicRepo.similarArtists(itemId) }.getOrDefault(emptyList())
+                        }
                         val children = itemRepo.getChildren(itemId)
                         val albums = children.filter { it.type == "album" }
                         val musicVideos = children.filter { it.type == "music_video" }
@@ -192,10 +204,22 @@ class DetailViewModel @Inject constructor(
                             index = 1,
                         )
 
+                        val appearsOn = appearsOnDeferred.await()
+                        val similar = similarDeferred.await()
                         buildMap {
                             put(albumsParent, albums + other)
                             if (musicVideos.isNotEmpty()) {
                                 put(mvParent, musicVideos)
+                            }
+                            // "Appears On": albums by other artists that
+                            // feature this one. "Similar Artists": open their
+                            // own page. Both route through Navigator like the
+                            // albums do.
+                            if (appearsOn.isNotEmpty()) {
+                                put(ChildItem(id = item.id + APPEARS_ON_SUFFIX, title = "Appears On", type = "artist", index = 2), appearsOn)
+                            }
+                            if (similar.isNotEmpty()) {
+                                put(ChildItem(id = item.id + SIMILAR_SUFFIX, title = "Similar Artists", type = "artist", index = 3), similar)
                             }
                         }
                     }
@@ -402,6 +426,21 @@ class DetailViewModel @Inject constructor(
         }
     }
 
+    /**
+     * Instant mix (v2.6) seeded from an artist, album or track: fetch the
+     * mix, make it the play queue (PlayQueue — what follows each of its
+     * tracks), and hand back its first track to start. Null when the mix
+     * came back empty or failed (an older server answers 404); the queue is
+     * left alone then.
+     */
+    fun instantMix(seedId: String, onResolved: (String?) -> Unit) {
+        viewModelScope.launch {
+            val tracks = runCatching { musicRepo.instantMix(seedId) }.getOrDefault(emptyList())
+            if (tracks.isNotEmpty()) PlayQueue.set(tracks)
+            onResolved(tracks.firstOrNull()?.id)
+        }
+    }
+
     /** Pick a random track from any of the artist's albums. Used by
      *  the Shuffle button on the artist detail page. The player's
      *  auto-advance chains through every subsequent album in order —
@@ -421,6 +460,13 @@ class DetailViewModel @Inject constructor(
             }.getOrNull()
             onResolved(randomTrack?.id)
         }
+    }
+
+    companion object {
+        /** Ids of the artist page's discovery tabs: the artist's id plus
+         *  these, like the Music Videos tab's "#music_videos". */
+        const val APPEARS_ON_SUFFIX = "#appears_on"
+        const val SIMILAR_SUFFIX = "#similar"
     }
 
     /** Load all seasons, then load episodes for each season in parallel. */

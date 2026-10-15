@@ -34,6 +34,9 @@
     <string name="resume">Resume from %s</string>
     <string name="play_from_beginning">Play from Beginning</string>
     <string name="play_all">Play All</string>
+    <!-- Instant mix (v2.6): artist / album button, track long-press. -->
+    <string name="instant_mix">Instant Mix</string>
+    <string name="instant_mix_failed">Couldn\'t make a mix from this</string>
     <string name="shuffle">Shuffle</string>
     <string name="error_connection">Could not connect to server</string>
     <!-- Distinct from error_connection: the request never ran, so telling the
