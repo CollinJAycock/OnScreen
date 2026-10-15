@@ -12,9 +12,16 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedInject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import retrofit2.HttpException
 import tv.onscreen.mobile.R
+import tv.onscreen.mobile.data.api.OnScreenApi
+import tv.onscreen.mobile.data.api.apiError
+import tv.onscreen.mobile.data.model.CreateDownloadJobRequest
+import tv.onscreen.mobile.data.model.DownloadJobStatus
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 
@@ -37,11 +44,13 @@ class DownloadWorker @AssistedInject constructor(
     private val items: ItemRepository,
     private val prefs: ServerPrefs,
     private val httpClient: OkHttpClient,
+    private val api: OnScreenApi,
 ) : CoroutineWorker(appContext, params) {
 
     companion object {
         const val KEY_FILE_ID = "file_id"
         const val KEY_ITEM_ID = "item_id"
+        const val KEY_QUALITY = "quality"
         const val PROGRESS_DOWNLOADED = "downloaded_bytes"
         const val PROGRESS_TOTAL = "total_bytes"
 
@@ -51,12 +60,95 @@ class DownloadWorker @AssistedInject constructor(
         /** Cap on WorkManager retry attempts before a download is abandoned,
          *  so a permanently-failing transfer can't reschedule forever. */
         private const val MAX_RETRY_ATTEMPTS = 5
+
+        /** How often a conversion's progress is asked for. */
+        private const val CONVERSION_POLL_MS = 5_000L
+
+        /** Consecutive failed status polls (offline, a server restart)
+         *  before the conversion wait gives up to WorkManager's retry. */
+        private const val MAX_POLL_FAILURES = 12
+    }
+
+    private sealed interface Conversion {
+        /** The copy is ready at [fileUrl] (server-relative). */
+        data class Ready(val fileUrl: String) : Conversion
+        data class Failed(val message: String, val retry: Boolean) : Conversion
+        data object Stopped : Conversion
+    }
+
+    /**
+     * Ask the server for the [quality] copy of [fileId] and wait for it: the
+     * job is created (or the user's existing one for this file and quality
+     * comes back), then polled, its progress shown on the row ("converting")
+     * and the notification, until it is ready. A re-run after a stop asks
+     * again and gets the same job, so nothing is encoded twice.
+     */
+    private suspend fun awaitConversion(fileId: String, itemId: String, quality: String, title: String): Conversion {
+        var job = try {
+            api.createDownloadJob(itemId, CreateDownloadJobRequest(quality = quality, file_id = fileId)).data
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return conversionFailure(e)
+        }
+        var pollFailures = 0
+        while (true) {
+            when (job.status) {
+                DownloadJobStatus.READY ->
+                    return Conversion.Ready(job.file_url?.takeIf { it.isNotBlank() } ?: "/api/v1/downloads/${job.id}/file")
+                DownloadJobStatus.FAILED, DownloadJobStatus.EXPIRED ->
+                    return Conversion.Failed(
+                        job.error?.takeIf { it.isNotBlank() } ?: "The server couldn’t prepare this download.",
+                        retry = false,
+                    )
+            }
+            val progress = job.progress.coerceIn(0.0, 1.0)
+            // Null: deleted meanwhile — keep it deleted and stop.
+            var present = false
+            store.update(fileId) {
+                present = it != null
+                it?.copy(status = DownloadStatus.CONVERTING, job_id = job.id, convert_progress = progress, error = null)
+            }
+            if (!present || isStopped) return Conversion.Stopped
+            runCatching { setForeground(makeForegroundInfo(title, (progress * 100).toInt(), converting = true)) }
+            delay(CONVERSION_POLL_MS)
+            if (isStopped) return Conversion.Stopped
+            job = try {
+                api.getDownloadJob(job.id).data.also { pollFailures = 0 }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                val code = (e as? HttpException)?.code()
+                // Gone (expired, or removed from the web): ask afresh.
+                if (code == 404) return Conversion.Failed("This download expired on the server. Try again.", retry = false)
+                if (++pollFailures >= MAX_POLL_FAILURES) return conversionFailure(e)
+                job
+            }
+        }
+    }
+
+    /** A refused or failed job request, with the server's reason. A 4xx
+     *  refusal (downloads off, above the limit, not convertible) is final;
+     *  three downloads already being prepared (429) and transport / 5xx
+     *  failures are retried. */
+    private fun conversionFailure(e: Exception): Conversion.Failed {
+        val http = e as? HttpException ?: return Conversion.Failed(e.message ?: "Download failed", retry = true)
+        val err = http.apiError()
+        val message = when (err?.code) {
+            "DOWNLOADS_DISABLED" -> DownloadChoices.DISABLED_MESSAGE
+            else -> err?.message?.takeIf { it.isNotBlank() } ?: "HTTP ${http.code()}"
+        }
+        val code = http.code()
+        val retry = code !in 400..499 || code == 408 || code == 429
+        return Conversion.Failed(message, retry)
     }
 
     override suspend fun doWork(): Result {
         store.load()
         val fileId = inputData.getString(KEY_FILE_ID) ?: return Result.failure()
         val itemId = inputData.getString(KEY_ITEM_ID) ?: return Result.failure()
+        // A converted copy's quality (v2.6); null = the original file.
+        val quality = inputData.getString(KEY_QUALITY)
 
         // Resolve the canonical file metadata + stream URL fresh each
         // run rather than trusting the manifest — the user could have
@@ -70,48 +162,21 @@ class DownloadWorker @AssistedInject constructor(
             return Result.failure()
         }
         val server = prefs.getServerUrl()?.trimEnd('/').orEmpty()
-        // Per-file 24h stream token survives the duration of any
-        // realistic download; fall back to the 24h purpose=asset token
-        // (NOT the access token, which the server rejects in a `?token=`
-        // URL).
-        val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
-        if (server.isEmpty() || token.isEmpty()) {
-            markFailed(fileId, "Not signed in")
-            return Result.failure()
-        }
-        // Match the player's URL builder: use `&token=` when the
-        // stream path already carries a query string. The earlier
-        // unconditional `?token=` produced malformed URLs on any
-        // stream_url with existing params.
-        val sep = if (file.stream_url.contains("?")) "&" else "?"
-        val url = "$server${file.stream_url}${sep}token=$token"
+        // A converted copy (v2.6) is always an MP4 of the whole item.
+        val container = if (quality != null) OnScreenDownloadManager.CONVERTED_CONTAINER else file.container
 
         val entry = store.get(fileId) ?: DownloadEntry(
             file_id = fileId,
             item_id = itemId,
             item_title = item.title,
             item_type = item.type,
-            container = file.container,
+            container = container,
             size_bytes = 0L,
             downloaded_bytes = 0L,
-            status = "downloading",
+            status = DownloadStatus.DOWNLOADING,
             poster_path = item.poster_path,
+            quality = quality,
         )
-        // Atomically (re)establish the row as downloading, refreshing the
-        // metadata we just resolved — without clobbering the current row from
-        // a stale snapshot.
-        store.update(fileId) {
-            (it ?: entry).copy(
-                status = "downloading",
-                item_title = item.title,
-                item_type = item.type,
-                container = file.container,
-                poster_path = item.poster_path,
-            )
-        }
-
-        val outFile = store.fileFor(entry)
-        val resumeFrom = if (outFile.exists()) outFile.length() else 0L
 
         // setForeground throws on devices that haven't granted
         // POST_NOTIFICATIONS (Android 13+) or that reject the
@@ -123,6 +188,65 @@ class DownloadWorker @AssistedInject constructor(
         } catch (e: Exception) {
             android.util.Log.w("DownloadWorker", "setForeground failed", e)
         }
+
+        val url = if (quality == null) {
+            // Per-file 24h stream token survives the duration of any
+            // realistic download; fall back to the 24h purpose=asset token
+            // (NOT the access token, which the server rejects in a `?token=`
+            // URL).
+            val token = file.stream_token ?: prefs.getAssetToken().orEmpty()
+            if (server.isEmpty() || token.isEmpty()) {
+                markFailed(fileId, "Not signed in")
+                return Result.failure()
+            }
+            // Match the player's URL builder: use `&token=` when the
+            // stream path already carries a query string. The earlier
+            // unconditional `?token=` produced malformed URLs on any
+            // stream_url with existing params.
+            val sep = if (file.stream_url.contains("?")) "&" else "?"
+            "$server${file.stream_url}${sep}token=$token"
+        } else {
+            if (server.isEmpty()) {
+                markFailed(fileId, "Not signed in")
+                return Result.failure()
+            }
+            // Have the server make the copy, wait for it, then fetch it like
+            // the original: same Range resume below.
+            when (val c = awaitConversion(fileId, itemId, quality, entry.item_title)) {
+                is Conversion.Ready -> {
+                    // The file route takes the Bearer the shared client adds,
+                    // or the 24 h asset token, which outlives a long transfer.
+                    val asset = prefs.getAssetToken()
+                    val sep = if (c.fileUrl.contains("?")) "&" else "?"
+                    "$server${c.fileUrl}" + if (asset.isNullOrEmpty()) "" else "${sep}token=$asset"
+                }
+                is Conversion.Failed -> {
+                    markFailed(fileId, c.message)
+                    return if (c.retry && runAttemptCount < MAX_RETRY_ATTEMPTS) Result.retry() else Result.failure()
+                }
+                // Stopped (cancelled, or the constraints lapsed): leave the
+                // row; a re-run asks again and gets the same job back.
+                Conversion.Stopped -> return Result.failure()
+            }
+        }
+
+        // Atomically (re)establish the row as downloading, refreshing the
+        // metadata we just resolved — without clobbering the current row from
+        // a stale snapshot. `it` null: deleted while converting — stay deleted.
+        val deleted = store.get(fileId) == null && quality != null
+        if (deleted) return Result.failure()
+        store.update(fileId) {
+            (it ?: entry).copy(
+                status = DownloadStatus.DOWNLOADING,
+                item_title = item.title,
+                item_type = item.type,
+                container = container,
+                poster_path = item.poster_path,
+            )
+        }
+
+        val outFile = store.fileFor(entry.copy(container = container))
+        val resumeFrom = if (outFile.exists()) outFile.length() else 0L
 
         val req = Request.Builder()
             .url(url)
@@ -267,7 +391,8 @@ class DownloadWorker @AssistedInject constructor(
      *  apart from a transient 5xx/IO error. */
     private class DownloadHttpException(val code: Int) : Exception("HTTP $code")
 
-    private fun makeForegroundInfo(title: String, percent: Int): ForegroundInfo {
+    /** [converting]: the server is still making the copy ("Preparing …"). */
+    private fun makeForegroundInfo(title: String, percent: Int, converting: Boolean = false): ForegroundInfo {
         val ctx = applicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
@@ -280,7 +405,9 @@ class DownloadWorker @AssistedInject constructor(
         }
         val notif = NotificationCompat.Builder(ctx, CHANNEL_ID)
             .setSmallIcon(android.R.drawable.stat_sys_download)
-            .setContentTitle(ctx.getString(R.string.downloading_title, title))
+            .setContentTitle(
+                ctx.getString(if (converting) R.string.preparing_download_title else R.string.downloading_title, title),
+            )
             .setProgress(100, percent, percent <= 0)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

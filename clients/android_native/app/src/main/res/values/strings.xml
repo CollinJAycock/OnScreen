@@ -3,6 +3,8 @@
     <string name="app_name">OnScreen</string>
     <string name="downloads_channel_name">Downloads</string>
     <string name="downloading_title">Downloading %s</string>
+    <!-- The server is still making a converted (smaller) copy to download. -->
+    <string name="preparing_download_title">Preparing %s for download</string>
 
     <!-- Shared actions -->
     <string name="cancel">Cancel</string>

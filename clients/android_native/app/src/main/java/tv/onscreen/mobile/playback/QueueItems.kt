@@ -52,11 +52,14 @@ object ReplayGainExtras {
 
 /** Builds the service's lazily-resolved queue entries (see [MusicQueue]). */
 object QueueItems {
-    fun placeholder(child: ChildItem, parentId: String): MediaItem {
+    /** [mix]: an instant-mix entry (see [InstantMixQueue]) — the service
+     *  neither wraps its album around it nor appends albums after the mix. */
+    fun placeholder(child: ChildItem, parentId: String, mix: Boolean = false): MediaItem {
         val extras = Bundle().apply {
             putString(PlaybackService.EXTRA_TYPE, child.type)
             putString(PlaybackService.EXTRA_PARENT_ID, parentId)
             child.index?.let { putInt(PlaybackService.EXTRA_INDEX, it) }
+            if (mix) putBoolean(PlaybackService.EXTRA_MIX, true)
         }
         return MediaItem.Builder()
             .setUri(Uri.parse(MusicQueue.placeholderUri(child.id)))

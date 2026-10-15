@@ -52,4 +52,15 @@ object ChapterNav {
      *  the title is empty (some encoders ship blank chapter names). */
     fun displayTitle(chapter: Chapter, fallbackIndex: Int): String =
         if (chapter.title.isNotBlank()) chapter.title else "Chapter ${fallbackIndex + 1}"
+
+    /** The chapter's thumbnail as a full URL, or null when it has none (no
+     *  sprites yet, an older server) or the server origin isn't known. The
+     *  server sends it server-relative; an absolute one is used as is. The
+     *  shared image loader authenticates it like the trickplay sprites. */
+    fun thumbUrl(serverUrl: String, chapter: Chapter): String? {
+        val thumb = chapter.thumb_url?.takeIf { it.isNotBlank() } ?: return null
+        if (thumb.startsWith("http://") || thumb.startsWith("https://")) return thumb
+        val base = serverUrl.trimEnd('/').takeIf { it.isNotEmpty() } ?: return null
+        return base + (if (thumb.startsWith("/")) thumb else "/$thumb")
+    }
 }

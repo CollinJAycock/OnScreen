@@ -45,6 +45,7 @@ import tv.onscreen.mobile.ui.player.PlayerScreen
 import tv.onscreen.mobile.ui.search.SearchScreen
 import tv.onscreen.mobile.ui.series.SeriesScreen
 import tv.onscreen.mobile.ui.settings.AboutScreen
+import tv.onscreen.mobile.ui.settings.PlaybackQualityScreen
 import tv.onscreen.mobile.ui.settings.ScrobbleScreen
 import tv.onscreen.mobile.ui.settings.SecurityScreen
 import tv.onscreen.mobile.ui.settings.SettingsScreen
@@ -147,7 +148,11 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 onOpenAbout = { nav.navigateDebounced(Routes.ABOUT) },
                 onOpenSecurity = { nav.navigateDebounced(Routes.SECURITY) },
                 onOpenScrobble = { nav.navigateDebounced(Routes.SCROBBLE) },
+                onOpenPlaybackQuality = { nav.navigateDebounced(Routes.PLAYBACK_QUALITY) },
             )
+        }
+        composable(Routes.PLAYBACK_QUALITY) {
+            PlaybackQualityScreen(onBack = { nav.popBackStack() })
         }
         composable(Routes.ABOUT) {
             AboutScreen(onBack = { nav.popBackStack() })
@@ -245,6 +250,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 onPlay = { id -> nav.navigateDebounced(Routes.player(id)) },
                 onPlayFromStart = { id -> nav.navigateDebounced(Routes.player(id, fromStart = true)) },
                 onPlayAt = { id, ms -> nav.navigateDebounced(Routes.player(id, startMs = ms)) },
+                onPlayVersion = { id, fileId -> nav.navigateDebounced(Routes.player(id, fileId = fileId)) },
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onOpenBook = { id -> nav.navigateDebounced(Routes.book(id)) },
                 // Redirect destinations for photo / book_author /
@@ -327,12 +333,18 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                     type = NavType.LongType
                     defaultValue = -1L
                 },
+                navArgument("fileId") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
             ),
         ) { entry ->
             PlayerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
                 fromStart = entry.arguments!!.getBoolean("fromStart"),
                 startMs = entry.arguments!!.getLong("startMs").takeIf { it >= 0 },
+                fileId = entry.arguments!!.getString("fileId"),
                 onClose = { nav.popBackStack() },
                 onNext = { nextId ->
                     // Replace current player route with the next

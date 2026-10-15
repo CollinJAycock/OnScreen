@@ -317,6 +317,71 @@ interface OnScreenApi {
         @Query("token") token: String,
     )
 
+    // ── Converted downloads (v2.6) ──────────────────────────────────────────
+    // internal/api/v1/downloads.go. Every route answers 403 DOWNLOADS_DISABLED
+    // while the server's download toggle is off, and 404 on an older server.
+
+    /** The qualities a smaller copy of the item can be made in, and which of
+     *  them this user may take. */
+    @GET("api/v1/items/{id}/downloads")
+    suspend fun getDownloadOptions(
+        @Path("id") itemId: String,
+        @Query("file_id") fileId: String? = null,
+    ): ApiResponse<DownloadOptions>
+
+    /** 201 with a new job, 200 with the user's existing one for this file and
+     *  quality. 403 QUALITY_ABOVE_LIMIT, 422 NOT_CONVERTIBLE, 429
+     *  TOO_MANY_DOWNLOADS (three already being prepared). */
+    @POST("api/v1/items/{id}/downloads")
+    suspend fun createDownloadJob(
+        @Path("id") itemId: String,
+        @Body body: CreateDownloadJobRequest,
+    ): ApiResponse<DownloadJob>
+
+    @GET("api/v1/downloads/{job}")
+    suspend fun getDownloadJob(@Path("job") jobId: String): ApiResponse<DownloadJob>
+
+    /** 204. Cancels the encode when nobody else is waiting for it. */
+    @DELETE("api/v1/downloads/{job}")
+    suspend fun deleteDownloadJob(@Path("job") jobId: String)
+
+    // ── Reading position sync (v2.6) ────────────────────────────────────────
+    // internal/api/v1/reading_progress.go. Books only; 404 otherwise and on an
+    // older server.
+
+    @GET("api/v1/items/{id}/reading-progress")
+    suspend fun getReadingProgress(@Path("id") itemId: String): ReadingProgressEnvelope
+
+    /** Newest by client time wins; the answer is what the server now holds. */
+    @PUT("api/v1/items/{id}/reading-progress")
+    suspend fun putReadingProgress(
+        @Path("id") itemId: String,
+        @Body body: ReadingProgressRequest,
+    ): ApiResponse<ReadingProgress>
+
+    // ── Music discovery (v2.6) ──────────────────────────────────────────────
+    // internal/api/v1/music.go. 404 on an older server (and for an item that
+    // isn't a visible artist / album / track).
+
+    @GET("api/v1/music/artists/{id}/similar")
+    suspend fun similarArtists(
+        @Path("id") artistId: String,
+        @Query("limit") limit: Int = 20,
+    ): ApiListResponse<SimilarArtist>
+
+    /** Tracks on other artists' albums this artist is credited on, newest
+     *  album first. */
+    @GET("api/v1/music/artists/{id}/appears-on")
+    suspend fun artistAppearsOn(@Path("id") artistId: String): ApiListResponse<ArtistAppearance>
+
+    /** An instant mix seeded by a track, album or artist: the seed's own
+     *  tracks first, then similar artists', freshly shuffled each call. */
+    @GET("api/v1/music/mix")
+    suspend fun instantMix(
+        @Query("seed") seedId: String,
+        @Query("limit") limit: Int? = null,
+    ): ApiListResponse<MixTrack>
+
     // ── Search ──────────────────────────────────────────────────────────────
 
     @GET("api/v1/search")
@@ -370,6 +435,12 @@ interface OnScreenApi {
 
     @PUT("api/v1/users/me/preferences")
     suspend fun setPreferences(@Body body: UserPreferences): ApiResponse<UserPreferences>
+
+    /** The user's own playback-quality profile (v2.6). REPLACES all five
+     *  fields — see QualityProfile.request. 204; 400 for an invalid value;
+     *  404 on an older server. */
+    @PUT("api/v1/users/me/quality-profile")
+    suspend fun setQualityProfile(@Body body: QualityProfileRequest)
 
     // ── Scrobbling (per-user ListenBrainz link, authenticated) ────────────────
 

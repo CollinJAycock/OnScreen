@@ -62,6 +62,44 @@ class WatchStateUiTest {
         assertThat(upNextLabel(UpNext("resume", ep(null, null)))).isEqualTo("Resume")
     }
 
+    // Multi-episode files (v2.6 episode_number_end).
+
+    @Test
+    fun `episodeCode reads a multi-episode file as a range`() {
+        assertThat(episodeCode(1, 1, 2)).isEqualTo("S1 · E1–2")
+        assertThat(episodeCode(null, 3, 4)).isEqualTo("E3–4")
+        // No range (absent, or not running forward): the single number.
+        assertThat(episodeCode(1, 1, null)).isEqualTo("S1 · E1")
+        assertThat(episodeCode(1, 2, 2)).isEqualTo("S1 · E2")
+        // An unknown episode stays dropped whatever the end says.
+        assertThat(episodeCode(1, 0, 2)).isEqualTo("S1")
+    }
+
+    @Test
+    fun `a Next Up tile and the show's button show the range`() {
+        val item = HubItem(
+            id = "e", title = "Pilot", type = "episode",
+            show_title = "Show", season_number = 1, episode_number = 1, episode_number_end = 2,
+        )
+        assertThat(nextUpSubtitle(item)).isEqualTo("S1 · E1–2 — Pilot")
+        val two = UpNextEpisode(id = "e", season_number = 1, episode_number = 1, episode_number_end = 2)
+        assertThat(upNextLabel(UpNext("resume", two))).isEqualTo("Resume S1 · E1–2")
+        assertThat(upNextLabel(UpNext("next", two))).isEqualTo("Play S1 · E1–2")
+    }
+
+    @Test
+    fun `the range fields decode, and are absent on an older server`() {
+        val moshi = com.squareup.moshi.Moshi.Builder().build()
+        val hub = moshi.adapter(HubItem::class.java)
+            .fromJson("""{"id":"e","title":"P","type":"episode","season_number":1,"episode_number":1,"episode_number_end":2}""")!!
+        assertThat(hub.episode_number_end).isEqualTo(2)
+        val up = moshi.adapter(UpNextEpisode::class.java)
+            .fromJson("""{"id":"e","season_number":1,"episode_number":1,"episode_number_end":2}""")!!
+        assertThat(up.episode_number_end).isEqualTo(2)
+        assertThat(moshi.adapter(UpNextEpisode::class.java).fromJson("""{"id":"e","episode_number":1}""")!!.episode_number_end)
+            .isNull()
+    }
+
     @Test
     fun `markAllOptions follows the up-next mode`() {
         assertThat(markAllOptions(UpNext("none"))).isEqualTo(MarkAllOptions(watched = false, unwatched = false))

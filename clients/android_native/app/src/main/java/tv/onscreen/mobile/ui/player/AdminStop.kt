@@ -3,6 +3,7 @@ package tv.onscreen.mobile.ui.player
 import androidx.media3.datasource.HttpDataSource
 import com.squareup.moshi.Moshi
 import tv.onscreen.mobile.data.api.ApiError
+import tv.onscreen.mobile.data.api.StreamLimit
 import tv.onscreen.mobile.data.model.PlaybackStop
 
 // Error-path only; the generated ApiError adapter is found by reflection.
@@ -45,6 +46,38 @@ internal fun playbackStoppedMessageFromBody(body: ByteArray?): String? {
     } ?: return null
     if (err.code != PlaybackStop.ERROR_CODE) return null
     return PlaybackStop.textFromServer(err.message)
+}
+
+/**
+ * The sentence to show when a player error is the server refusing a new
+ * stream with `429 TOO_MANY_SESSIONS` — the user's concurrent-stream limit
+ * (v2.6), which /media/stream and /media/optimized enforce on a direct play
+ * too, not only the play decision. Null for any other failure. Found the same
+ * way as [playbackStoppedMessage].
+ */
+fun streamLimitMessage(error: Throwable?): String? {
+    var t: Throwable? = error
+    var depth = 0
+    while (t != null && depth < MAX_CAUSE_DEPTH) {
+        if (t is HttpDataSource.InvalidResponseCodeException) {
+            if (t.responseCode != 429) return null
+            return streamLimitMessageFromBody(t.responseBody)
+        }
+        t = t.cause
+        depth++
+    }
+    return null
+}
+
+/** [streamLimitMessage] for a raw 429 body. */
+internal fun streamLimitMessageFromBody(body: ByteArray?): String? {
+    if (body == null || body.isEmpty()) return null
+    val err = try {
+        stopMoshi.adapter(ApiError::class.java).fromJson(String(body, Charsets.UTF_8))?.error
+    } catch (_: Exception) {
+        null
+    }
+    return StreamLimit.message(429, err)
 }
 
 private const val MAX_CAUSE_DEPTH = 8

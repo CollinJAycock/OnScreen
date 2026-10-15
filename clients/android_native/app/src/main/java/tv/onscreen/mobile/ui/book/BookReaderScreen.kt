@@ -48,6 +48,8 @@ import coil.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -55,8 +57,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import tv.onscreen.mobile.data.model.ReadingPosition
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
+import tv.onscreen.mobile.data.repository.ReadingProgressRepository
 import java.io.File
 import javax.inject.Inject
 
@@ -84,10 +88,23 @@ class BookReaderViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val serverPrefs: ServerPrefs,
     private val okHttpClient: OkHttpClient,
+    private val readingProgress: ReadingProgressRepository,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(BookReaderUi(loading = true))
     val state: StateFlow<BookReaderUi> = _state.asStateFlow()
+
+    /** Names this device on a saved position ("Continue from page 40 on …"
+     *  elsewhere). A seam for tests. */
+    internal var deviceName: () -> String? = { android.os.Build.MODEL?.takeIf { it.isNotBlank() } }
+
+    /** Wall clock for a position's time (the server compares them). A seam
+     *  for tests. */
+    internal var now: () -> Long = { System.currentTimeMillis() }
+
+    /** The page position not yet sent to the server, and its debounce. */
+    private var unsaved: ReadingPosition? = null
+    private var saveJob: Job? = null
 
     fun load(itemId: String) {
         viewModelScope.launch {
@@ -128,13 +145,22 @@ class BookReaderViewModel @Inject constructor(
                 } else {
                     null
                 }
+                // Page books open where the user was: the newer of the
+                // server's position (another device's, v2.6) and this
+                // device's. EPUB renders in a sandboxed WebView with no
+                // channel back to the app (deliberately — see EpubReader),
+                // so its position isn't synced here.
+                val startPage = if (format == BookFormat.EPUB) 1 else {
+                    val server = readingProgress.server(itemId)
+                    ReadingSync.startPage(ReadingSync.newer(readingProgress.local(itemId), server), pageCount)
+                }
                 _state.value = BookReaderUi(
                     loading = false,
                     format = format,
                     serverUrl = serverUrl,
                     itemId = itemId,
                     pageCount = pageCount,
-                    currentPage = 1,
+                    currentPage = startPage,
                     readingDirection = direction,
                     epubFile = epubFile,
                     title = detail.title,
@@ -148,7 +174,46 @@ class BookReaderViewModel @Inject constructor(
     fun setPage(n: Int) {
         val s = _state.value
         if (s.pageCount <= 0) return
-        _state.value = s.copy(currentPage = n.coerceIn(1, s.pageCount))
+        val page = n.coerceIn(1, s.pageCount)
+        // The pager reports the page it opened on too: opening a book isn't
+        // reading it, and saving that would stamp the opening spot as the
+        // newest position over a further one from another device.
+        if (page == s.currentPage) return
+        _state.value = s.copy(currentPage = page)
+        if (s.loading || s.error != null || s.format == BookFormat.EPUB || s.itemId.isEmpty()) return
+        recordPosition(s.itemId, page, s.pageCount)
+    }
+
+    /** Keep the page here at once, and on the server once the reader settles
+     *  ([ReadingSync.SAVE_DEBOUNCE_MS]). */
+    private fun recordPosition(itemId: String, page: Int, pageCount: Int) {
+        val position = ReadingPosition(
+            locator = ReadingSync.pageLocator(page),
+            progression = ReadingSync.pageProgression(page, pageCount),
+            updatedAtMs = now(),
+        )
+        readingProgress.recordLocal(itemId, position)
+        unsaved = position
+        saveJob?.cancel()
+        saveJob = viewModelScope.launch {
+            delay(ReadingSync.SAVE_DEBOUNCE_MS)
+            flushPosition()
+        }
+    }
+
+    /** Send the position not yet saved, if any. Detached: the last one goes
+     *  out as the reader closes. */
+    private fun flushPosition() {
+        val p = unsaved ?: return
+        unsaved = null
+        val itemId = _state.value.itemId.takeIf { it.isNotEmpty() } ?: return
+        readingProgress.saveDetached(itemId, p, deviceName())
+    }
+
+    override fun onCleared() {
+        saveJob?.cancel()
+        flushPosition()
+        super.onCleared()
     }
 
     /** Pulls the .epub bytes through the shared OkHttp client so the

@@ -22,6 +22,7 @@ import tv.onscreen.mobile.data.model.TotpCodeRequest
 import tv.onscreen.mobile.data.model.TotpSetupResponse
 import tv.onscreen.mobile.data.model.TotpStatusResponse
 import tv.onscreen.mobile.data.model.TotpVerifyRequest
+import tv.onscreen.mobile.data.prefs.ReadingPositionStore
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.playback.StreamTokenVault
 import javax.inject.Inject
@@ -42,6 +43,9 @@ open class AuthRepository @Inject constructor(
     // drop it immediately or the requests right after sign-in carry the
     // PREVIOUS user's token (and right after sign-out, a revoked one).
     private val authInterceptor: AuthInterceptor,
+    // This device's reading positions (v2.6 reading sync) are the signed-in
+    // user's: the next one on this phone must not open books where they were.
+    private val readingPositions: ReadingPositionStore,
 ) {
     /** App-lifetime scope for teardown writes that must outlive the caller —
      *  see [logoutDetached]. Never cancelled. */
@@ -52,6 +56,7 @@ open class AuthRepository @Inject constructor(
     private fun invalidateIdentityCaches() {
         preferences.invalidate()
         authInterceptor.invalidateCache()
+        readingPositions.clear()
     }
 
     open suspend fun login(username: String, password: String): TokenPair {

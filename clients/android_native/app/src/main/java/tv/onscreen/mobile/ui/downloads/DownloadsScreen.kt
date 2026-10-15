@@ -244,13 +244,17 @@ private fun DownloadRow(
                 color = if (playable) MaterialTheme.colorScheme.onSurface
                     else MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            val subtitle = when (entry.status) {
+            val status = when (entry.status) {
                 "completed" -> "${humanBytes(entry.size_bytes)} · downloaded"
                 "downloading" -> "${(progressRatio(entry) * 100).toInt()}% · ${humanBytes(entry.downloaded_bytes)} of ${humanBytes(entry.size_bytes)}"
                 "failed" -> entry.error ?: "Failed"
                 "queued" -> "Queued — waiting for network"
+                // The server is still making the smaller copy (v2.6).
+                "converting" -> "Preparing on the server · ${(progressRatio(entry) * 100).toInt()}%"
                 else -> entry.status
             }
+            // A converted copy says which size it is.
+            val subtitle = entry.quality_label?.let { "$it · $status" } ?: status
             Text(
                 subtitle,
                 style = MaterialTheme.typography.bodySmall,
@@ -271,8 +275,12 @@ private fun DownloadRow(
     }
 }
 
-private fun progressRatio(e: DownloadEntry): Float =
-    if (e.size_bytes <= 0) 0f else (e.downloaded_bytes.toFloat() / e.size_bytes.toFloat()).coerceIn(0f, 1f)
+private fun progressRatio(e: DownloadEntry): Float = when {
+    // While the server converts, the bar shows its encode.
+    e.status == "converting" -> e.convert_progress.toFloat().coerceIn(0f, 1f)
+    e.size_bytes <= 0 -> 0f
+    else -> (e.downloaded_bytes.toFloat() / e.size_bytes.toFloat()).coerceIn(0f, 1f)
+}
 
 private fun humanBytes(n: Long): String {
     if (n < 1024) return "${n}B"
