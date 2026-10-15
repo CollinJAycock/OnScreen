@@ -5,6 +5,7 @@ sub Main()
     testText()
     testFromStoppedResponse()
     testFromOtherResponses()
+    testTooManyStreams()
 
     print "DONE: PlaybackStop_test"
 end sub
@@ -40,6 +41,22 @@ sub testFromOtherResponses()
     runStr("other: probe got bytes", PlaybackStop_FromResult(ApiResult_From(206, "x")), "")
     runStr("other: network failure", PlaybackStop_FromResult(ApiResult_From(-6, "")), "")
     runStr("other: invalid", PlaybackStop_FromResult(invalid), "")
+end sub
+
+sub testTooManyStreams()
+    ' The server's own sentence (streamLimitMessage) is shown as-is.
+    raw = "{""error"":{""code"":""TOO_MANY_SESSIONS"",""message"":""Your account can play one stream at a time, and another device is already playing. Stop it to watch here."",""request_id"":""r""}}"
+    runStr("limit: server sentence", PlaybackLimit_FromResult(ApiResult_From(429, raw)), "Your account can play one stream at a time, and another device is already playing. Stop it to watch here.")
+    raw = "{""error"":{""code"":""TOO_MANY_SESSIONS"",""message"":""  ""}}"
+    runStr("limit: blank message falls back", PlaybackLimit_FromResult(ApiResult_From(429, raw)), "Your account is already playing as many streams as it can. Stop one to watch here.")
+    raw = "{""error"":{""code"":""RATE_LIMITED"",""message"":""rate limit exceeded""}}"
+    runStr("limit: other 429 is not the stream limit", PlaybackLimit_FromResult(ApiResult_From(429, raw)), "")
+    raw = "{""error"":{""code"":""TOO_MANY_SESSIONS"",""message"":""x""}}"
+    runStr("limit: code on a non-429", PlaybackLimit_FromResult(ApiResult_From(403, raw)), "")
+    runStr("limit: success", PlaybackLimit_FromResult(ApiResult_From(200, "{""data"":{}}")), "")
+    runStr("limit: invalid", PlaybackLimit_FromResult(invalid), "")
+    runStr("limit: an admin stop is not the stream limit", PlaybackLimit_FromResult(ApiResult_From(403, "{""error"":{""code"":""PLAYBACK_STOPPED"",""message"":""x""}}")), "")
+    runStr("limit: dialog title", PlaybackLimit_Title(), "Too many streams")
 end sub
 
 sub runStr(name as String, actual as String, expected as String)

@@ -34,6 +34,11 @@
 ' shows the admin's message (onAdminStop). A full transcode stopped by an
 ' admin is only torn down server-side (no 403 window), so it ends like
 ' any other playback error.
+'
+' Too many streams (v2.6): an account over its admin-set stream limit is
+' refused with 429 TOO_MANY_SESSIONS by transcode start and the stream
+' routes (seen by the same probe). The server's sentence goes up in a
+' "Too many streams" dialog (onStreamLimit) — no retry, no fallback.
 
 sub init()
     m.video = m.top.findNode("video")
@@ -86,6 +91,14 @@ sub init()
     m.adminStopped = false
     m.probing = false
     m.exitDialog = invalid
+    ' Whether dismissing m.exitDialog leaves the player (every dialog but a
+    ' refused audio switch, which keeps the current stream playing).
+    m.exitDialogLeaves = true
+    ' Latched once the too-many-streams message is up.
+    m.limitShown = false
+    ' The audio row that was active before a re-issue, restored when the
+    ' re-issue is refused.
+    m.audioIndexBeforeReissue = 0
     ' In-flight ApiCallTasks (progress beacons, the probe), held so they
     ' aren't collected mid-request.
     m.playerCalls = []
@@ -280,6 +293,19 @@ sub onTranscodeTaskState()
         onAdminStop(stopMsg)
         return
     end if
+    ' Refused over the account's stream limit. A first start can't play at
+    ' all; a refused audio switch leaves the current session playing.
+    limitMsg = m.transcodeTask.limitMessage
+    if limitMsg <> invalid and limitMsg <> ""
+        if m.reissuing
+            m.reissuing = false
+            m.activeAudioIndex = m.audioIndexBeforeReissue
+            showPlayerDialog(PlaybackLimit_Title(), limitMsg, false)
+        else
+            onStreamLimit(limitMsg)
+        end if
+        return
+    end if
     sess = m.transcodeTask.result
     if sess = invalid or sess.session_id = invalid
         ' Session start failed — bail rather than silently fall
@@ -328,8 +354,9 @@ end sub
 sub onVideoState()
     state = m.video.state
     ' Stopped by an admin: the message is up and the player is on its
-    ' way out — the stop's own state changes mean nothing more.
-    if m.adminStopped then return
+    ' way out — the stop's own state changes mean nothing more. Same once
+    ' the too-many-streams message is up.
+    if m.adminStopped or m.limitShown then return
     if state = "paused"
         ' Discrete pause report — pushes the resume offset to the
         ' server immediately (a paused player is exactly when another
@@ -597,9 +624,14 @@ sub onPlayerCallDone(evt as Object)
         if stopMsg <> "" then onAdminStop(stopMsg)
     else if ctx.action = "probe"
         m.probing = false
-        if m.adminStopped then return
+        if m.adminStopped or m.limitShown then return
+        limitMsg = PlaybackLimit_FromResult(t.result)
         if stopMsg <> ""
             onAdminStop(stopMsg)
+        else if limitMsg <> ""
+            ' The stream route refused a direct play over the account's
+            ' stream limit.
+            onStreamLimit(limitMsg)
         else
             ' A real playback error — the pre-probe behaviour.
             stopTranscodeSession()
@@ -627,6 +659,20 @@ sub onAdminStop(message as String)
     m.video.control = "stop"
     stopTranscodeSession()
     showExitDialog("Playback stopped", message)
+end sub
+
+' The account is already playing as many streams as it may: show the
+' server's sentence in a "Too many streams" dialog; OK / Back leaves the
+' player. Never retried and never played some other way. Latched.
+sub onStreamLimit(message as String)
+    if m.adminStopped or m.limitShown then return
+    m.limitShown = true
+    m.syncTimer.control = "stop"
+    m.nextSibling = invalid
+    m.upNext.visible = false
+    m.video.control = "stop"
+    stopTranscodeSession()
+    showExitDialog(PlaybackLimit_Title(), message)
 end sub
 
 ' ── Cross-device sync ──────────────────────────────────────────────
@@ -870,6 +916,7 @@ sub onTrackPickerSelect()
         if m.file <> invalid and m.file.audio_streams <> invalid
             picked = m.file.audio_streams[idx]
             if picked <> invalid and idx <> m.activeAudioIndex
+                m.audioIndexBeforeReissue = m.activeAudioIndex
                 m.activeAudioIndex = idx
                 ' Server-side audio_stream_index is the stream's
                 ' "index" field (the ffprobe stream index), not its
@@ -1107,13 +1154,21 @@ sub showUnsupportedDialog(msg as String)
 end sub
 
 ' One-button dialog that leaves the player when dismissed — the Dolby
-' Vision refusal and an admin stop. Every other failure bails silently.
+' Vision refusal, an admin stop and too many streams. Every other failure
+' bails silently.
 sub showExitDialog(title as String, msg as String)
+    showPlayerDialog(title, msg, true)
+end sub
+
+' One-button dialog; leaves the player when dismissed if leave is true,
+' else hands the keys back to the video.
+sub showPlayerDialog(title as String, msg as String, leave as Boolean)
     dlg = createObject("roSGNode", "Dialog")
     dlg.title = title
     dlg.message = msg
     dlg.buttons = ["OK"]
     m.exitDialog = dlg
+    m.exitDialogLeaves = leave
     ' OK press fires buttonSelected; Back press fires wasClosed. Either way we
     ' tear down + go Home (the handler guards against a double bail).
     dlg.observeField("buttonSelected", "onExitDialogClosed")
@@ -1126,7 +1181,11 @@ sub onExitDialogClosed()
     if m.exitDialog = invalid then return
     m.exitDialog.close = true
     m.exitDialog = invalid
-    bailToHome()
+    if m.exitDialogLeaves
+        bailToHome()
+    else
+        m.video.setFocus(true)
+    end if
 end sub
 
 function getMainScene() as Object

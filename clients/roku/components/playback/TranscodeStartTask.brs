@@ -14,11 +14,13 @@ sub runTranscodeStart()
         supports_hevc: m.top.supportsHevc
     }
     ' RequestSync rather than PostSync: a refused start carries its reason
-    ' in the error envelope, and an admin stop (403 PLAYBACK_STOPPED) has
-    ' to reach the player as its message rather than a silent bail.
+    ' in the error envelope, and an admin stop (403 PLAYBACK_STOPPED) or
+    ' the account's stream limit (429 TOO_MANY_SESSIONS) has to reach the
+    ' player as its message rather than a silent bail.
     res = Client_RequestSync("POST", ApiItemTranscode(m.top.itemId), body, invalid, true)
     r = ApiResult_From(res.code, res.raw)
     m.top.stopMessage = PlaybackStop_FromResult(r)
+    m.top.limitMessage = PlaybackLimit_FromResult(r)
     if r.ok and r.data <> invalid and type(r.data) = "roAssociativeArray"
         m.top.result = r.data
     else

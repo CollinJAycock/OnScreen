@@ -33,6 +33,11 @@
              stopped this stream (403 PLAYBACK_STOPPED): the sentence to
              show. "" otherwise. Written before `result`. -->
         <field id="stopMessage" type="string" />
+        <!-- Set when the server refused the start because the account is
+             already playing as many streams as it may (429
+             TOO_MANY_SESSIONS): the server's sentence. "" otherwise.
+             Written before `result`. -->
+        <field id="limitMessage" type="string" />
     </interface>
 
     <script type="text/brightscript" uri="TranscodeStartTask.brs" />
