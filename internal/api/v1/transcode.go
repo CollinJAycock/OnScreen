@@ -66,6 +66,9 @@ type StreamCaps struct {
 	// 00046): applied, with the server's internet limit, only when the client
 	// is outside the home network. See effectiveStreamCap.
 	RemoteBitrateKbps int
+	// Quality is the user's own playback-quality choice. Read with the caps
+	// (one query) but applied differently: see QualityProfile.
+	Quality QualityProfile
 }
 
 // UserStreamCapsReader reads a user's admin-set streaming caps. Optional on the
@@ -706,6 +709,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// — the copy-to-transcode escalation, the output clamp, the ABR ladder
 	// ceiling — reads streamCaps.BitrateKbps, so it all follows.
 	bitrateCap := resolveStreamCap(ctx, streamCaps, h.remotePolicy, audit.ClientIP(r), file)
+	// The viewer's own quality profile lowers it further, on any network.
+	bitrateCap = bitrateCap.withQuality(streamCaps.Quality, file)
 	streamCaps.BitrateKbps = bitrateCap.Kbps
 
 	// Serve a pre-encoded ("static") ABR ladder when one exists for this file —
@@ -777,6 +782,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// maxheight=1080 forced the transcode verdict (Decide checks the caps) and
 	// then received the same 4K output it declared it couldn't display.
 	caps, hasProfile := clientCaps(r, body)
+	caps = streamCaps.Quality.applyTo(caps)
 	h.logger.DebugContext(ctx, "resolved client capabilities",
 		"profile_header", hasProfile,
 		"supports_hevc", caps.SupportsHEVC, "supports_av1", caps.SupportsAV1,
@@ -904,6 +910,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// the AV1 source," and re-encoding AV1 → HEVC throws away the format
 	// efficiency the source already paid for.
 	preferAV1 := caps.SupportsAV1 && isSourceAV1 && !body.VideoCopy
+	preferHEVC, preferAV1 = streamCaps.Quality.outputCodec(caps, body.VideoCopy, preferHEVC, preferAV1)
 
 	// Stream-shape facts the arg builder needs. A hard -map of a missing
 	// stream kills ffmpeg instantly, so both absences must be declared:
@@ -950,6 +957,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		case "aac", "ac3", "eac3", "mp3": // valid in both MPEG-TS and fMP4
 			audioCopy = caps.SupportsAudioCodec(alias) && chFit
 		}
+	}
+	// An audio-only source over the viewer's audio bitrate is re-encoded to
+	// it, not copied (a video's audio track has no reliable bitrate of its
+	// own here; its re-encode is capped by AudioBitrateKbps below).
+	if audioCopy && sourceAudioOnly && streamCaps.Quality.audioOver(file) {
+		audioCopy = false
 	}
 
 	// The session's HEVCOutput/AV1Output record the OUTPUT codec, which is what
@@ -1031,10 +1044,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		// A client that asked for MPEG-TS segments keeps the H.264 ladder:
 		// HEVC and AV1 ladders are fMP4 only.
 		case tsSegments:
-		case caps.SupportsAV1 && isSourceAV1 && depthOK && h.sessions.FleetCanEncode(ctx, "av1"):
+		case streamCaps.Quality.PreferredVideoCodec == "h264":
+		case caps.SupportsAV1 && isSourceAV1 && depthOK && streamCaps.Quality.PreferredVideoCodec != "hevc" &&
+			h.sessions.FleetCanEncode(ctx, "av1"):
 			abrCodec = transcode.LadderAV1
-		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160) && depthOK &&
-			h.sessions.FleetCanEncode(ctx, "hevc"):
+		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160 || streamCaps.Quality.PreferredVideoCodec == "hevc") &&
+			depthOK && h.sessions.FleetCanEncode(ctx, "hevc"):
 			abrCodec = transcode.LadderHEVC
 		}
 		// Resolve the ladder height ceiling. An explicit quality pick wins;
@@ -1061,7 +1076,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap, abrMaxBitrate)
 		if len(ladder) > 1 {
 			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser, playMeta.apply,
-				func(s *transcode.Session) { s.Parts = srcParts })
+				func(s *transcode.Session) {
+					s.Parts = srcParts
+					s.AudioBitrateKbps = streamCaps.Quality.MaxAudioBitrateKbps
+				})
 			// startABR answers the client itself; its parent session existing
 			// under sessionID is the success signal.
 			if h.decisions != nil {
@@ -1167,6 +1185,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		BitrateKbps:      jobBitrate,
 		AudioCodec:       jobAudioCodec,
 		AudioChannels:    audioChannels,
+		AudioBitrateKbps: streamCaps.Quality.MaxAudioBitrateKbps,
 		AudioStreamIndex: audioStreamIdx,
 		IsHEVC:           isSourceHEVC,
 		IsAV1:            isSourceAV1,

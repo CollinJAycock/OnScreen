@@ -834,6 +834,32 @@ API change lands only when every first-party client moves with it — see
 - `PATCH /collections/{id}` keeps fields the request leaves out. An omitted
   description used to be cleared, and an empty name was saved.
 
+### Fixed
+
+- **Settings that were saved but did nothing now work.**
+  - **Library metadata language.** A library's language was stored and never
+    used: every library got English from TMDB. Movie and TV titles, summaries,
+    genres, seasons and episodes now come in the library's language where TMDB
+    has a translation. A missing summary falls back to English. Searches stay
+    in English, so automatic matching is unchanged. Items already matched
+    change on their next metadata refresh.
+  - **Concurrent-stream limit.** An admin's per-user stream limit counted only
+    transcodes, so any number of direct plays got past it. Direct plays on
+    other devices now count too: the play decision, transcode start and the
+    direct stream routes refuse a stream over the limit with 429
+    `TOO_MANY_SESSIONS`, and the web player says "Too many streams". A device
+    moving to its next track or episode, or a stream taken over from another
+    device, is never refused. With no limit set nothing changes.
+  - **Quality profile.** `PUT /users/me/quality-profile` (maximum resolution,
+    video and audio bitrate, preferred codec) was stored and never applied,
+    and no app could set it. The server now applies it on every device and
+    network: a video over the limits transcodes (`reason: quality_profile`),
+    as does an audio-only file over the audio bitrate in apps that ask for a
+    play decision; every transcode's audio is held to the audio bitrate; and
+    the codec choice picks H.264 or HEVC output. The web Account page has a
+    new **Playback quality** section to set it. Values too small to play are
+    refused with 400.
+
 ## [v2.5.1] — 2026-10-06
 
 Server patch release: Dolby Vision files with a base layer every player can

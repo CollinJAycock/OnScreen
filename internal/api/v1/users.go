@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -1216,10 +1217,11 @@ func (h *UserHandler) SetPreferences(w http.ResponseWriter, r *http.Request) {
 	respond.NoContent(w)
 }
 
-// SetQualityProfile handles PUT /api/v1/users/me/quality-profile.
-// Each field is a pointer so clients can leave any subset alone (send
-// {"max_video_height": 1080} to cap resolution without touching bitrate
-// caps). forced_subtitles_only is a plain bool — it's either on or off.
+// SetQualityProfile handles PUT /api/v1/users/me/quality-profile. It
+// replaces the whole profile: a null or omitted field clears that limit, so
+// a client changing one field echoes the others from GET preferences.
+// forced_subtitles_only is a plain bool — it's either on or off. The play
+// decision and transcode start apply the profile (see QualityProfile).
 func (h *UserHandler) SetQualityProfile(w http.ResponseWriter, r *http.Request) {
 	if h.db == nil {
 		respond.InternalError(w, r)
@@ -1249,6 +1251,23 @@ func (h *UserHandler) SetQualityProfile(w http.ResponseWriter, r *http.Request) 
 		case "h264", "hevc":
 		default:
 			respond.BadRequest(w, r, "preferred_video_codec must be 'h264' or 'hevc'")
+			return
+		}
+	}
+	// The limits are enforced by the play decision and transcode start, so a
+	// value too small to play anything is refused rather than stored. null
+	// (or 0) means no limit.
+	for _, f := range []struct {
+		v    *int32
+		min  int32
+		name string
+	}{
+		{body.MaxVideoBitrateKbps, 200, "max_video_bitrate_kbps"},
+		{body.MaxAudioBitrateKbps, 32, "max_audio_bitrate_kbps"},
+		{body.MaxVideoHeight, 144, "max_video_height"},
+	} {
+		if f.v != nil && *f.v != 0 && *f.v < f.min {
+			respond.BadRequest(w, r, fmt.Sprintf("%s must be at least %d, or null for no limit", f.name, f.min))
 			return
 		}
 	}

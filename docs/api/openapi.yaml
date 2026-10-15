@@ -2336,6 +2336,18 @@ paths:
         them still sees `transcode`. A client that skips this endpoint
         and fetches `/media/stream` directly is not held to the limit.
 
+        **Quality profile (v2.6).** The caller's own quality profile
+        (`PUT /users/me/quality-profile`) applies on every network: its
+        resolution ceiling bounds the verdict like a display limit, and
+        a video above its video bitrate — or an audio-only file above
+        its audio bitrate — becomes `transcode` with `reason:
+        quality_profile` and the cap in `max_bitrate_kbps`.
+
+        **Concurrent streams (v2.6).** With an admin-set
+        `max_concurrent_streams`, the decision answers 429
+        `TOO_MANY_SESSIONS` when the caller already has that many streams
+        on other devices — transcode sessions and direct plays alike.
+
         **Optimized versions (v2.6).** A client that declares
         `optimized=1` in `X-Client-Capabilities` may get `decision:
         directPlay` with `reason: optimized_version` and an
@@ -2370,7 +2382,7 @@ paths:
                       file_id: { type: string, format: uuid }
                       reason:
                         type: string
-                        enum: [remote_bitrate_limit, user_bitrate_limit, optimized_version]
+                        enum: [remote_bitrate_limit, user_bitrate_limit, quality_profile, optimized_version]
                         description: Set only when the server overrode a capability verdict (v2.6). `optimized_version` only for `optimized=1` clients.
                       max_bitrate_kbps:
                         type: integer
@@ -2386,6 +2398,8 @@ paths:
                         description: The source file's own reason (e.g. `remote_bitrate_limit`), when an optimized version replaced it (v2.6).
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: The caller is at its admin-set concurrent-stream limit (`code TOO_MANY_SESSIONS`, v2.6).
 
   /api/v1/items/{id}/transcode:
     parameters: [{ $ref: '#/components/parameters/UUID' }]
@@ -2466,7 +2480,9 @@ paths:
           description: |
             Either the per-session `TranscodeStartLimit` (default 10/min) or
             the per-user concurrent-session cap (default 5) was hit. Body
-            carries `code: TOO_MANY_SESSIONS` for the latter.
+            carries `code: TOO_MANY_SESSIONS` for the latter. An admin-set
+            `max_concurrent_streams` replaces the default and, since v2.6,
+            counts the user's direct plays on other devices too.
         '503':
           description: |
             Returned by the playlist sub-endpoint
@@ -4005,6 +4021,36 @@ paths:
             schema: { $ref: '#/components/schemas/Preferences' }
       responses:
         '204': { description: Saved. }
+
+  /api/v1/users/me/quality-profile:
+    put:
+      summary: Replace the caller's quality profile
+      tags: [Users]
+      description: |
+        The viewer's own playback limits, read back through `GET
+        /users/me/preferences`. Replaces the whole profile: a null or
+        omitted field clears that limit. Since v2.6 the server applies it
+        on every device and network — the play decision and transcode
+        start treat the resolution as a display limit (a 16:9 box) and
+        transcode a video over `max_video_bitrate_kbps` or an audio-only
+        file over `max_audio_bitrate_kbps`; every transcode's AAC bitrate
+        is held to `max_audio_bitrate_kbps`, and `preferred_video_codec`
+        picks a transcode's output codec where the client decodes it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                max_video_bitrate_kbps: { type: integer, nullable: true, minimum: 200 }
+                max_audio_bitrate_kbps: { type: integer, nullable: true, minimum: 32 }
+                max_video_height: { type: integer, nullable: true, minimum: 144 }
+                preferred_video_codec: { type: string, nullable: true, enum: [h264, hevc] }
+                forced_subtitles_only: { type: boolean }
+      responses:
+        '204': { description: Saved. }
+        '400': { $ref: '#/components/responses/BadRequest' }
 
   /api/v1/users/me/sessions:
     get:

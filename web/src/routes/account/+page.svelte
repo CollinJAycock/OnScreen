@@ -7,6 +7,7 @@
   import SignedInDevices from '$lib/components/SignedInDevices.svelte';
   import MyDownloads from '$lib/components/MyDownloads.svelte';
   import ApiKeys from '$lib/components/ApiKeys.svelte';
+  import PlaybackQuality from '$lib/components/PlaybackQuality.svelte';
   import { capabilities, ensureCapabilities } from '$lib/stores/capabilities';
   import { opdsCatalogUrl, saveBlob } from '$lib/fileDownload';
   import { toast } from '$lib/stores/toast';
@@ -66,6 +67,16 @@
       you're in the middle of and your numbers for the period.
     </p>
     <DigestOptIn />
+  </section>
+
+  <section class="card">
+    <h2>Playback quality</h2>
+    <p class="sub">
+      Limits for your account on every device, at home and away; the server converts anything
+      above them. The audio limit applies whenever audio is converted, and to music in apps that
+      check with the server before playing. The web music player plays the original files.
+    </p>
+    <PlaybackQuality />
   </section>
 
   <section class="card">

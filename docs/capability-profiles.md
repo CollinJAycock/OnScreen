@@ -376,6 +376,15 @@ all follow it; the pre-encoded static ladder is skipped when the source is over
 the cap, because its rungs aren't clamped. LAN verdicts are unchanged; audio is
 never limited.
 
+The viewer's own **quality profile** (`PUT /users/me/quality-profile`, set on
+the web Account page) is applied on every network, since it is their choice
+rather than a limit on them: its `max_video_height` joins the client's
+`maxWidth` / `maxHeight` as a 16:9 box, a video above `max_video_bitrate_kbps`
+or an audio-only file above `max_audio_bitrate_kbps` becomes `transcode` with
+`reason: quality_profile`, every AAC encode is held to the audio bitrate, and
+`preferred_video_codec` picks the transcode's output codec (`h264` turns HEVC /
+AV1 output off; `hevc` asks for it wherever the client decodes it).
+
 **Known gap — direct file serving.** `/media/stream/{id}` and `/media/files/*`
 do not enforce the limit. A client that ignores the decision (or predates it)
 and fetches the file directly gets the original bitrate. Enforcing there was

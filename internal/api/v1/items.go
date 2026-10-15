@@ -204,6 +204,7 @@ type ItemHandler struct {
 	// streamLimit enforces an admin-set concurrent-stream limit on direct
 	// plays (StreamFile, StreamOptimized). Optional.
 	streamLimit *StreamLimit
+
 	sync      *notification.Broker
 	audit     *audit.Logger
 	tokens    *auth.TokenMaker     // optional; when set, Get embeds a 24h stream token per file

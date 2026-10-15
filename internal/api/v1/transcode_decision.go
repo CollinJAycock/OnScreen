@@ -167,7 +167,14 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	var userCaps StreamCaps
+	if h.userCaps != nil {
+		userCaps, _ = h.userCaps.GetStreamCaps(ctx, claims.UserID)
+	}
 	caps, hasProfile := clientCaps(r, body)
+	// The viewer's resolution ceiling (quality profile) bounds the verdict
+	// like a display that can't show more.
+	caps = userCaps.Quality.applyTo(caps)
 	serverCaps := transcode.ServerCaps{MaxHeight: h.cfg.TranscodeMaxHeight}
 	decision := transcode.Decide(*file, caps, serverCaps)
 	if parts != nil {
@@ -188,15 +195,17 @@ func (h *NativeTranscodeHandler) Decision(w http.ResponseWriter, r *http.Request
 	var bc streamCap
 	if decision == transcode.DecisionDirectPlay || decision == transcode.DecisionDirectStream ||
 		(caps.AcceptsOptimized && wantsOptimized(decision)) {
-		var userCaps StreamCaps
-		if h.userCaps != nil {
-			userCaps, _ = h.userCaps.GetStreamCaps(ctx, claims.UserID)
-		}
 		bc = resolveStreamCap(ctx, userCaps, h.remotePolicy, audit.ClientIP(r), file)
 		if decision != transcode.DecisionTranscode {
 			if why, ok := remoteDecisionOverride(bc, file); ok {
 				decision, reason, capKbps = transcode.DecisionTranscode, why, bc.Kbps
 			}
+		}
+		// The viewer's own quality profile, on any network: a direct play
+		// over their video (or, for music, audio) bitrate transcodes.
+		bc = bc.withQuality(userCaps.Quality, file)
+		if decision != transcode.DecisionTranscode && userCaps.Quality.overQuality(file) {
+			decision, reason, capKbps = transcode.DecisionTranscode, ReasonQualityProfile, bc.Kbps
 		}
 	}
 

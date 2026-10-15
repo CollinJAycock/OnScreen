@@ -10,8 +10,9 @@ import (
 	"github.com/onscreen/onscreen/internal/domain/settings"
 )
 
-// streamCapsAdapter reads a user's admin-set streaming caps for transcode-start
-// enforcement (v1.UserStreamCapsReader). NULL columns map to 0 ("no cap").
+// streamCapsAdapter reads a user's admin-set streaming caps, and their own
+// quality profile, for the play decision and transcode start
+// (v1.UserStreamCapsReader). NULL columns map to 0 ("no cap").
 type streamCapsAdapter struct{ q *gen.Queries }
 
 func (a streamCapsAdapter) GetStreamCaps(ctx context.Context, userID uuid.UUID) (v1.StreamCaps, error) {
@@ -28,6 +29,18 @@ func (a streamCapsAdapter) GetStreamCaps(ctx context.Context, userID uuid.UUID) 
 	}
 	if row.MaxRemoteStreamBitrateKbps != nil {
 		caps.RemoteBitrateKbps = int(*row.MaxRemoteStreamBitrateKbps)
+	}
+	if row.MaxVideoBitrateKbps != nil {
+		caps.Quality.MaxVideoBitrateKbps = int(*row.MaxVideoBitrateKbps)
+	}
+	if row.MaxAudioBitrateKbps != nil {
+		caps.Quality.MaxAudioBitrateKbps = int(*row.MaxAudioBitrateKbps)
+	}
+	if row.MaxVideoHeight != nil {
+		caps.Quality.MaxVideoHeight = int(*row.MaxVideoHeight)
+	}
+	if row.PreferredVideoCodec != nil {
+		caps.Quality.PreferredVideoCodec = *row.PreferredVideoCodec
 	}
 	return caps, nil
 }
