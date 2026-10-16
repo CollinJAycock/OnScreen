@@ -1032,6 +1032,18 @@ becomes final on every app. Release note:
 - **`docker/deploy-gpu.sh` stamped the build as `dev` when run with `sudo`:**
   git refused the repository owned by another user, so the server reported
   version `dev`. The script now tells git the repository is safe.
+- **One device's hiccup no longer signs the user out everywhere.** When a
+  refresh token that was already used comes back, the server takes it for a
+  stolen copy and signs the user out on every device. Most of the time it is
+  the user's own app: two requests refreshing at once, or an app re-sending a
+  refresh whose answer it never got. On the QA server 4 of 5 such sign-outs
+  came within 80 seconds of the token's use. Now a used token that comes back
+  within 2 minutes is only refused: that request gets the usual 401 and no new
+  tokens, but the user's other devices stay signed in. It is recorded as
+  `auth.refresh_reuse_tolerated` in the audit log, not
+  `auth.sessions_revoked`. After 2 minutes nothing changes. The trade-off: a
+  thief who uses a stolen token within 2 minutes of the real app no longer
+  triggers the sign-out everywhere, though they still get no tokens.
 
 ## [v2.5.1] — 2026-10-06
 

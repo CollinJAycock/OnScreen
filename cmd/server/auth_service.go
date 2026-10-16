@@ -463,9 +463,15 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		return nil, fmt.Errorf("refresh: look up session: %w", err)
 	}
 	if !found.IsCurrent {
-		// A retired token was presented. The legitimate client always holds
-		// the newest one, so this is reuse: burn the family exactly as the
-		// CAS-miss branch below does.
+		// A retired token was presented. Moments after its rotation that is
+		// almost always one of the owner's own clients (see refreshReuseGrace):
+		// refuse it without burning anything.
+		if tolerated := s.toleratedRefreshReuse(ctx, found, v1.RefreshReuseSuperseded); tolerated != nil {
+			return nil, tolerated
+		}
+		// Otherwise the legitimate client should long since hold the newest
+		// token, so this is reuse: burn the family exactly as the CAS-miss
+		// branch below does.
 		s.logger.WarnContext(ctx, "refresh token reuse detected (superseded hash presented); invalidating session family",
 			"user_id", found.UserID, "session_id", found.ID)
 		derr := s.db.DeleteSessionsForUser(ctx, found.UserID)
@@ -545,7 +551,8 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 	// where attacker + victim share refresh access. Both reuse branches
 	// return a *v1.RefreshReuseError, which AuthHandler.Refresh records as
 	// auth.sessions_revoked so ops can see why every device suddenly logged
-	// out.
+	// out — except inside refreshReuseGrace, where they refuse the token
+	// without the wipe.
 	rows, err := s.db.RotateSessionConditional(ctx, gen.RotateSessionConditionalParams{
 		ID:        session.ID,
 		TokenHash: newHash,
@@ -573,10 +580,23 @@ func (s *authService) Refresh(ctx context.Context, refreshToken string) (*v1.Tok
 		return nil, fmt.Errorf("refresh: rotate session: %w", err)
 	}
 	if rows == 0 {
-		// Theft path: the token we just verified got rotated by someone
-		// between our lookup and our rotate. Burn the whole session
-		// family so the thief and the legitimate owner BOTH get logged
-		// out — neither side can keep refreshing from this point.
+		// The token we just verified stopped being current between our lookup
+		// and our rotate. Usually another request rotated it — and it did so
+		// during this one, i.e. inside the grace window, so that is tolerated
+		// like a superseded token presented moments after its rotation: two
+		// of the owner's own requests racing. Look the token up again to tell
+		// that from the row having gone (deleted by a sign-out or another
+		// request's wipe) or having moved on twice; those, and a lookup that
+		// fails, keep the wipe below. The row read here carries the competing
+		// rotation's last_seen, so the window check is the same one.
+		if raced, rerr := s.db.GetSessionByAnyTokenHash(ctx, hash); rerr == nil && !raced.IsCurrent && raced.ID == session.ID {
+			if tolerated := s.toleratedRefreshReuse(ctx, raced, v1.RefreshReuseRotationRace); tolerated != nil {
+				return nil, tolerated
+			}
+		}
+		// Theft path: burn the whole session family so the thief and the
+		// legitimate owner BOTH get logged out — neither side can keep
+		// refreshing from this point.
 		s.logger.WarnContext(ctx, "refresh token reuse detected; invalidating session family",
 			"user_id", session.UserID, "session_id", session.ID)
 		// These two steps ARE the theft response: DeleteSessionsForUser kills
@@ -678,6 +698,64 @@ func (s *authService) revokeSegmentTokens(ctx context.Context, userID uuid.UUID)
 		s.logger.ErrorContext(ctx, "revoke segment tokens after session family burn",
 			"user_id", userID, "err", err)
 	}
+}
+
+// refreshReuseGrace is how soon after a refresh token was rotated away that
+// presenting it again is refused WITHOUT the reuse response (wiping the
+// user's whole session family, i.e. signing them out on every device).
+//
+// Why: almost every reuse seen in practice is one of the user's own clients
+// moments after the rotation — two requests or tabs refreshing at once, or a
+// client re-sending a refresh whose response it lost (okhttp's retry on a
+// dropped connection does exactly that). On the QA server 4 of 5 wipes in 9
+// days came 0–80 s after the rotation, each signing the user out everywhere
+// for one device's hiccup. Inside the window the request still gets a 401 and
+// no tokens; only the wipe is skipped.
+//
+// The trade-off: a thief who presents a stolen token within 2 minutes of the
+// real client's refresh is no longer punished by the wipe — but still gets
+// nothing. And when the thief refreshes FIRST and the real client follows
+// within the window, the real client is refused on that device while the
+// thief's chain lives on, where the wipe would have ended both. Outside the
+// window reuse is answered as before. Auth0 and Okta offer the same knob as a
+// refresh-token "reuse interval".
+//
+// Measured from sessions.last_seen, which the rotation that retired the token
+// sets (nothing else moves it after sign-in). A session with no last_seen is
+// never tolerated: unknown is treated as outside the window.
+const refreshReuseGrace = 120 * time.Second
+
+// toleratedRefreshReuse returns the error that refuses a spent token without
+// the reuse wipe when row — the session the token resolved to, read AFTER the
+// rotation that retired it — was rotated less than refreshReuseGrace ago, and
+// nil when the full reuse response applies. Logged here because the handler
+// only sees the error; the token and its hash are never logged.
+func (s *authService) toleratedRefreshReuse(ctx context.Context, row gen.GetSessionByAnyTokenHashRow, trigger string) *v1.RefreshReuseToleratedError {
+	if !row.LastSeen.Valid {
+		return nil
+	}
+	since := s.clock().Sub(row.LastSeen.Time)
+	// A database clock slightly ahead of ours reads as a rotation slightly in
+	// the future: "just now". A stamp further ahead than the window itself is
+	// not a clock difference to trust, so it gets the full response.
+	if since >= refreshReuseGrace || since <= -refreshReuseGrace {
+		return nil
+	}
+	secs := max(int64(since/time.Second), 0)
+	s.logger.WarnContext(ctx, "refresh token reuse within the grace window; refused without revoking the session family",
+		"user_id", row.UserID, "session_id", row.ID, "trigger", trigger,
+		"seconds_since_rotation", secs)
+	e := &v1.RefreshReuseToleratedError{
+		UserID: row.UserID, SessionID: row.ID, Trigger: trigger,
+		SecondsSinceLastSeen: secs,
+	}
+	if row.ClientName != nil {
+		e.ClientName = *row.ClientName
+	}
+	if row.Platform != nil {
+		e.Platform = *row.Platform
+	}
+	return e
 }
 
 // refreshReuseError describes a reuse-triggered session-family burn for

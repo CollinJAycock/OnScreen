@@ -113,7 +113,8 @@ var ErrNotFirstUser = errors.New("users already exist")
 
 // ErrRefreshInvalid is returned (possibly wrapped) by AuthService.Refresh when
 // the presented refresh token is not valid: no live session matches it (unknown
-// or expired) or its user is gone. AuthHandler.Refresh answers it — like
+// or expired), its user is gone, or it was spent moments ago
+// (RefreshReuseToleratedError wraps it). AuthHandler.Refresh answers it — like
 // RefreshReuseError — with 401 and cleared cookies, which native clients take
 // as definitive and wipe their stored sign-in. Any OTHER Refresh error means
 // the server could not answer (database outage, connection reset, a failed
@@ -162,6 +163,43 @@ type RefreshReuseError struct {
 func (e *RefreshReuseError) Error() string {
 	return "refresh: token already used; session invalidated"
 }
+
+// RefreshReuseToleratedError is returned by AuthService.Refresh when a spent
+// refresh token comes back so soon after the rotation that retired it (within
+// the service's grace window) that it is taken for one of the owner's own
+// clients — two requests racing, or a client re-sending a refresh whose
+// response it lost — rather than for theft. The token is refused and no tokens
+// are issued, but the session family is NOT wiped and the epoch is not bumped:
+// nobody is signed out on their other devices.
+//
+// It unwraps to ErrRefreshInvalid, so to the client it is the same 401 (with
+// cleared cookies) as an unknown or expired token. It is typed so the handler
+// can record it as auth.refresh_reuse_tolerated instead of
+// auth.sessions_revoked.
+type RefreshReuseToleratedError struct {
+	UserID    uuid.UUID
+	SessionID uuid.UUID
+	// Trigger is which reuse check fired: RefreshReuseSuperseded or
+	// RefreshReuseRotationRace.
+	Trigger string
+	// Forensics, as on RefreshReuseError. Never the token or its hash.
+	ClientName string
+	Platform   string
+	// SecondsSinceLastSeen is how long before detection the token was rotated
+	// away (sessions.last_seen, which rotation sets). Always known here: a
+	// session with no last_seen is never tolerated. For RefreshReuseRotationRace
+	// it is read after the competing rotation, so it is the time since THAT
+	// rotation (about zero), not the chain's idle time RefreshReuseError gives.
+	SecondsSinceLastSeen int64
+}
+
+func (e *RefreshReuseToleratedError) Error() string {
+	return "refresh: token already used moments ago; refused without revoking sessions"
+}
+
+// Unwrap makes errors.Is(err, ErrRefreshInvalid) hold: the token is refused
+// like any dead one.
+func (e *RefreshReuseToleratedError) Unwrap() error { return ErrRefreshInvalid }
 
 // Refresh-reuse triggers, recorded as the audit entry's detail.trigger.
 const (
@@ -324,9 +362,26 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		}
 		// Only reuse is audited: it just signed the user out everywhere. A
 		// plain expired / unknown token is routine and stays out of the log.
+		// Reuse inside the grace window wiped nothing, so it gets its own,
+		// non-alarming action instead of auth.sessions_revoked.
+		var tolerated *RefreshReuseToleratedError
 		if reuse != nil && h.audit != nil {
 			h.auditRefreshReuse(r, reuse)
+		} else if errors.As(err, &tolerated) && h.audit != nil {
+			h.auditRefreshReuseTolerated(r, tolerated)
 		}
+		// Tolerated reuse clears the cookies too. For a browser it means the
+		// request carried a refresh cookie that is already spent. The likely
+		// way a browser gets there (its tabs take turns refreshing, see
+		// web/src/lib/api.ts) is a refresh the server finished but whose
+		// response was lost: the jar still holds the spent cookie and nothing
+		// holds the new one. Leaving it in place would only defer the damage —
+		// the next refresh from any tab after the window would present it
+		// again and wipe every device. Clearing it signs out just this browser.
+		// The cost lands on the rarer case of two requests from one jar
+		// racing, where this clear can also remove the winner's fresh cookie;
+		// that too signs out only this browser. Native clients send the token
+		// in the body and have no cookies to lose.
 		clearAuthCookies(w, r)
 		respond.Unauthorized(w, r)
 		return
@@ -365,6 +420,28 @@ func (h *AuthHandler) auditRefreshReuse(r *http.Request, e *RefreshReuseError) {
 		detail["seconds_since_last_seen"] = *e.SecondsSinceLastSeen
 	}
 	h.audit.Log(r.Context(), &uid, audit.ActionSessionsRevoked, uid.String(), detail, audit.ClientIP(r))
+}
+
+// auditRefreshReuseTolerated records spent-token reuse inside the grace window:
+// the token was refused but no session was revoked. Same forensic fields as
+// auditRefreshReuse, so a pattern of these (or one far from any of the user's
+// own clients) can still be weighed as theft. The token and its hash are
+// deliberately not recorded.
+func (h *AuthHandler) auditRefreshReuseTolerated(r *http.Request, e *RefreshReuseToleratedError) {
+	uid := e.UserID
+	detail := map[string]any{
+		"trigger":                 e.Trigger,
+		"session_id":              e.SessionID.String(),
+		"seconds_since_last_seen": e.SecondsSinceLastSeen,
+		"user_agent":              truncate(r.UserAgent(), 200),
+	}
+	if e.ClientName != "" {
+		detail["client_name"] = truncate(e.ClientName, 200)
+	}
+	if e.Platform != "" {
+		detail["platform"] = truncate(e.Platform, 200)
+	}
+	h.audit.Log(r.Context(), &uid, audit.ActionRefreshReuseTolerated, uid.String(), detail, audit.ClientIP(r))
 }
 
 // Logout handles POST /api/v1/auth/logout.
