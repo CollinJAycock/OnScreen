@@ -574,6 +574,19 @@ ntfy / Gotify server must use `https`.
   token can survive until the DB recovers or the token's ~1 h TTL elapses. This
   is deliberate — a transient DB blip must not log every user out. Deleted
   users still fail closed.
+- **Refresh-token reuse has a 2-minute grace window.** A refresh token that
+  comes back after it was already used normally ends every sign-in of the user
+  (`auth.sessions_revoked`, reason `refresh_token_reuse`). Within 2 minutes of
+  the use (`refreshReuseGrace`, measured from the session's `last_seen`, which
+  the rotation stamps) it is only refused — 401, no tokens — and recorded as
+  `auth.refresh_reuse_tolerated`, because there it is nearly always the user's
+  own client racing itself or re-sending a refresh whose answer it lost. The
+  cost: a thief presenting a stolen token within 2 minutes of the real
+  client's refresh isn't punished with the wipe (but gets nothing), and if the
+  thief refreshes first and the real client follows within 2 minutes, the
+  real client is refused on that device while the thief's chain lives on
+  until it expires or is revoked from the signed-in devices list. Auth0 and
+  Okta offer the same refresh-token "reuse interval".
 - **Live TV streaming is not gated by the content-rating ceiling** (channels
   carry no rating in the schema). Parental controls cover on-demand media only;
   a per-profile "no Live TV" switch is the planned follow-up.

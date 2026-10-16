@@ -53,6 +53,12 @@ type stepUpFakeDB struct {
 	// rotateErr, which is what a lookup by rotatedHash then reports.
 	rotatedHash  string
 	rotateLanded bool
+	// racedRow / racedErr are what a lookup by the PRESENTED hash returns once
+	// the compare-and-swap has been attempted: the row as a competing
+	// rotation left it (IsCurrent false), or an error (pgx.ErrNoRows = the
+	// row went). Unset, the lookup keeps returning sessionRow.
+	racedRow *gen.GetSessionByAnyTokenHashRow
+	racedErr error
 }
 
 func (f *stepUpFakeDB) GetUser(_ context.Context, id uuid.UUID) (gen.User, error) {
@@ -85,6 +91,14 @@ func (f *stepUpFakeDB) GetSessionByAnyTokenHash(_ context.Context, hash string) 
 		row := f.sessionRow
 		row.IsCurrent = true
 		return row, nil
+	}
+	if f.rotatedHash != "" {
+		if f.racedErr != nil {
+			return gen.GetSessionByAnyTokenHashRow{}, f.racedErr
+		}
+		if f.racedRow != nil {
+			return *f.racedRow, nil
+		}
 	}
 	if f.sessionErr != nil {
 		return gen.GetSessionByAnyTokenHashRow{}, f.sessionErr
@@ -376,7 +390,9 @@ func TestRefreshReuse_ReturnsTypedError(t *testing.T) {
 			f.db.sessionRow = gen.GetSessionByAnyTokenHashRow{
 				ID: sid, UserID: f.userID, IsCurrent: c.isCurrent,
 				TokenHash: "current-hash", ClientName: &client, Platform: &platform,
-				LastSeen: pgtype.Timestamptz{Time: f.clock.Add(-95 * time.Second), Valid: true},
+				// Rotated well outside refreshReuseGrace: the full reuse
+				// response, not the tolerated refusal.
+				LastSeen: pgtype.Timestamptz{Time: f.clock.Add(-300 * time.Second), Valid: true},
 			}
 
 			_, err := f.svc.Refresh(context.Background(), "spent-token")
@@ -396,8 +412,8 @@ func TestRefreshReuse_ReturnsTypedError(t *testing.T) {
 			if reuse.ClientName != client || reuse.Platform != platform {
 				t.Errorf("client/platform = %q/%q, want %q/%q", reuse.ClientName, reuse.Platform, client, platform)
 			}
-			if reuse.SecondsSinceLastSeen == nil || *reuse.SecondsSinceLastSeen != 95 {
-				t.Errorf("SecondsSinceLastSeen = %v, want 95", reuse.SecondsSinceLastSeen)
+			if reuse.SecondsSinceLastSeen == nil || *reuse.SecondsSinceLastSeen != 300 {
+				t.Errorf("SecondsSinceLastSeen = %v, want 300", reuse.SecondsSinceLastSeen)
 			}
 			if strings.Contains(fmt.Sprintf("%+v", *reuse), "current-hash") {
 				t.Error("the session's token hash was copied into the reuse error")
@@ -455,6 +471,184 @@ func TestRefreshReuse_ReportsFailedWipe(t *testing.T) {
 					f.db.familyBurns, f.db.epochBumps)
 			}
 		})
+	}
+}
+
+// A spent token presented moments after the rotation that retired it is one
+// of the owner's own clients far more often than a thief (two requests racing,
+// or a refresh re-sent after its response was lost). Inside refreshReuseGrace
+// it is refused — a 401-type error, no tokens — without wiping the session
+// family or bumping the epoch. Outside it, or when the rotation time is
+// unknown, reuse is answered exactly as before.
+func TestRefreshReuse_GraceWindow(t *testing.T) {
+	type outcome int
+	const (
+		tolerated outcome = iota
+		wiped
+	)
+	at := func(f *stepUpFixture, ago time.Duration) pgtype.Timestamptz {
+		return pgtype.Timestamptz{Time: f.clock.Add(-ago), Valid: true}
+	}
+	cases := []struct {
+		name        string
+		setup       func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow)
+		want        outcome
+		wantTrigger string
+		wantSecs    int64
+	}{
+		{"superseded, rotated 5s ago", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.LastSeen = at(f, 5*time.Second)
+		}, tolerated, v1.RefreshReuseSuperseded, 5},
+		{"superseded, rotated 80s ago", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.LastSeen = at(f, 80*time.Second)
+		}, tolerated, v1.RefreshReuseSuperseded, 80},
+		{"superseded, rotated just inside the window", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.LastSeen = at(f, refreshReuseGrace-time.Second)
+		}, tolerated, v1.RefreshReuseSuperseded, 119},
+		// A database clock a little ahead of ours: "just now".
+		{"superseded, rotation stamped slightly in the future", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.LastSeen = at(f, -3*time.Second)
+		}, tolerated, v1.RefreshReuseSuperseded, 0},
+		{"superseded, rotated exactly at the window", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.LastSeen = at(f, refreshReuseGrace)
+		}, wiped, v1.RefreshReuseSuperseded, 0},
+		{"superseded, rotated an hour ago", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.LastSeen = at(f, time.Hour)
+		}, wiped, v1.RefreshReuseSuperseded, 0},
+		// Unknown rotation time: not within the window.
+		{"superseded, no last_seen", func(*stepUpFixture, *gen.GetSessionByAnyTokenHashRow) {}, wiped, v1.RefreshReuseSuperseded, 0},
+		// Further in the future than the window itself is no clock skew to trust.
+		{"superseded, rotation stamped far in the future", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.LastSeen = at(f, -10*time.Minute)
+		}, wiped, v1.RefreshReuseSuperseded, 0},
+		// The compare-and-swap lost to a rotation that happened during this
+		// request: the re-read shows the row moved on, stamped just now.
+		{"rotation race, competing rotation just landed", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.IsCurrent = true
+			row.LastSeen = at(f, 2*time.Hour) // the chain sat idle before the race
+			raced := *row
+			raced.IsCurrent, raced.LastSeen = false, at(f, 0)
+			f.db.racedRow = &raced
+		}, tolerated, v1.RefreshReuseRotationRace, 0},
+		// The row went between lookup and swap (a sign-out, another request's
+		// wipe): not a competing rotation, so the full response.
+		{"rotation race, row gone", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.IsCurrent = true
+			f.db.racedErr = pgx.ErrNoRows
+		}, wiped, v1.RefreshReuseRotationRace, 0},
+		{"rotation race, re-read fails", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.IsCurrent = true
+			f.db.racedErr = errors.New("db down")
+		}, wiped, v1.RefreshReuseRotationRace, 0},
+		{"rotation race, competing rotation without last_seen", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.IsCurrent = true
+			raced := *row
+			raced.IsCurrent = false
+			f.db.racedRow = &raced
+		}, wiped, v1.RefreshReuseRotationRace, 0},
+		// The token resolved to a different session on the re-read: not this
+		// row's rotation.
+		{"rotation race, re-read names another session", func(f *stepUpFixture, row *gen.GetSessionByAnyTokenHashRow) {
+			row.IsCurrent = true
+			raced := *row
+			raced.ID, raced.IsCurrent, raced.LastSeen = uuid.New(), false, at(f, 0)
+			f.db.racedRow = &raced
+		}, wiped, v1.RefreshReuseRotationRace, 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			f := newStepUpFixture(t)
+			rev := &fakeSegRevoker{}
+			f.svc.segTokens = rev
+			sid := uuid.New()
+			client, platform := "OnScreen", "android"
+			row := gen.GetSessionByAnyTokenHashRow{
+				ID: sid, UserID: f.userID, TokenHash: "current-hash",
+				ClientName: &client, Platform: &platform,
+			}
+			c.setup(f, &row)
+			f.db.sessionRow = row
+
+			pair, err := f.svc.Refresh(context.Background(), "spent-token")
+			if pair != nil {
+				t.Fatalf("a spent token got tokens: %+v", pair)
+			}
+			var tol *v1.RefreshReuseToleratedError
+			var reuse *v1.RefreshReuseError
+			switch c.want {
+			case tolerated:
+				if !errors.As(err, &tol) {
+					t.Fatalf("err = %v (%T), want *v1.RefreshReuseToleratedError", err, err)
+				}
+				// The handler answers it like any dead token: 401.
+				if !errors.Is(err, v1.ErrRefreshInvalid) {
+					t.Error("tolerated reuse does not unwrap to ErrRefreshInvalid")
+				}
+				if errors.As(err, &reuse) {
+					t.Errorf("tolerated reuse also reported as a wipe: %+v", *reuse)
+				}
+				if tol.UserID != f.userID || tol.SessionID != sid || tol.Trigger != c.wantTrigger {
+					t.Errorf("tolerated = %+v, want user %s session %s trigger %q", *tol, f.userID, sid, c.wantTrigger)
+				}
+				if tol.SecondsSinceLastSeen != c.wantSecs {
+					t.Errorf("SecondsSinceLastSeen = %d, want %d", tol.SecondsSinceLastSeen, c.wantSecs)
+				}
+				if tol.ClientName != client || tol.Platform != platform {
+					t.Errorf("client/platform = %q/%q, want %q/%q", tol.ClientName, tol.Platform, client, platform)
+				}
+				if strings.Contains(fmt.Sprintf("%+v", *tol), "current-hash") {
+					t.Error("the session's token hash was copied into the error")
+				}
+				if len(f.db.familyBurns) != 0 || len(f.db.epochBumps) != 0 || len(rev.revoked) != 0 {
+					t.Errorf("tolerated reuse burned: sessions=%v epochs=%v segment tokens=%v",
+						f.db.familyBurns, f.db.epochBumps, rev.revoked)
+				}
+			case wiped:
+				if !errors.As(err, &reuse) {
+					t.Fatalf("err = %v (%T), want *v1.RefreshReuseError", err, err)
+				}
+				if errors.As(err, &tol) {
+					t.Errorf("wipe also reported as tolerated: %+v", *tol)
+				}
+				if reuse.Trigger != c.wantTrigger || reuse.SessionID != sid {
+					t.Errorf("reuse = %+v, want trigger %q session %s", *reuse, c.wantTrigger, sid)
+				}
+				if len(f.db.familyBurns) != 1 || len(f.db.epochBumps) != 1 || len(rev.revoked) != 1 {
+					t.Errorf("want one wipe: sessions=%v epochs=%v segment tokens=%v",
+						f.db.familyBurns, f.db.epochBumps, rev.revoked)
+				}
+			}
+		})
+	}
+}
+
+// The tolerated refusal is repeatable inside the window — a client retrying
+// the same lost refresh several times wipes nothing — and the same token
+// presented after the window has passed gets the full reuse response.
+func TestRefreshReuse_GraceWindowExpires(t *testing.T) {
+	f := newStepUpFixture(t)
+	rotatedAt := *f.clock
+	f.db.sessionRow = gen.GetSessionByAnyTokenHashRow{
+		ID: uuid.New(), UserID: f.userID,
+		LastSeen: pgtype.Timestamptz{Time: rotatedAt, Valid: true},
+	}
+	for i := 0; i < 3; i++ {
+		var tol *v1.RefreshReuseToleratedError
+		if _, err := f.svc.Refresh(context.Background(), "spent-token"); !errors.As(err, &tol) {
+			t.Fatalf("retry %d at +%ds: err = %v, want tolerated", i, i*30, err)
+		}
+		*f.clock = f.clock.Add(30 * time.Second)
+	}
+	if len(f.db.familyBurns) != 0 || len(f.db.epochBumps) != 0 {
+		t.Fatalf("retries inside the window burned: sessions=%v epochs=%v", f.db.familyBurns, f.db.epochBumps)
+	}
+	*f.clock = rotatedAt.Add(refreshReuseGrace)
+	var reuse *v1.RefreshReuseError
+	if _, err := f.svc.Refresh(context.Background(), "spent-token"); !errors.As(err, &reuse) {
+		t.Fatalf("after the window: err = %v, want *v1.RefreshReuseError", err)
+	}
+	if len(f.db.familyBurns) != 1 || len(f.db.epochBumps) != 1 {
+		t.Errorf("after the window: sessions=%v epochs=%v, want one wipe", f.db.familyBurns, f.db.epochBumps)
 	}
 }
 

@@ -230,6 +230,97 @@ func TestRefresh_ReuseWithoutAuditLogger(t *testing.T) {
 	}
 }
 
+// Reuse inside the service's grace window wiped nothing: the client gets the
+// same 401 as for a dead token (cookies cleared — see the comment in
+// AuthHandler.Refresh), and the audit log gets one auth.refresh_reuse_tolerated
+// entry with the forensic fields, never an auth.sessions_revoked one.
+func TestRefresh_ToleratedReuseIsNotARevocation(t *testing.T) {
+	uid, sid := uuid.New(), uuid.New()
+	for _, wrapped := range []bool{false, true} {
+		t.Run(map[bool]string{false: "bare", true: "wrapped"}[wrapped], func(t *testing.T) {
+			var err error = &RefreshReuseToleratedError{
+				UserID: uid, SessionID: sid, Trigger: RefreshReuseSuperseded,
+				ClientName: "OnScreen", Platform: "android", SecondsSinceLastSeen: 12,
+			}
+			if wrapped {
+				err = errors.Join(errors.New("refresh"), err)
+			}
+			svc := &mockAuthService{refreshErr: err}
+			capture := &auditCapture{ch: make(chan gen.InsertAuditLogParams, 4)}
+			h := newAuthHandler(svc).WithAudit(audit.New(capture, slog.Default()))
+
+			const spent = "spent-refresh-token"
+			req := httptest.NewRequest("POST", "/api/v1/auth/refresh",
+				strings.NewReader(`{"refresh_token":"`+spent+`"}`))
+			req.RemoteAddr = "203.0.113.7:51234"
+			req.Header.Set("User-Agent", "okhttp/4.12.0")
+			rec := httptest.NewRecorder()
+			h.Refresh(rec, req)
+
+			if rec.Code != http.StatusUnauthorized {
+				t.Fatalf("status: got %d, want 401", rec.Code)
+			}
+			if strings.Contains(rec.Body.String(), "access_token") {
+				t.Errorf("tolerated reuse handed out tokens: %s", rec.Body.String())
+			}
+			cleared := false
+			for _, c := range rec.Result().Cookies() {
+				if c.Name == cookieRefreshToken && c.MaxAge < 0 {
+					cleared = true
+				}
+				if c.MaxAge >= 0 && c.Value != "" {
+					t.Errorf("tolerated reuse set cookie %s", c.Name)
+				}
+			}
+			if !cleared {
+				t.Error("refresh cookie not cleared: a browser would keep the spent cookie and wipe every device on its next refresh after the window")
+			}
+
+			p, detail := awaitAudit(t, capture.ch)
+			if p.Action != audit.ActionRefreshReuseTolerated {
+				t.Fatalf("action: got %q, want %q", p.Action, audit.ActionRefreshReuseTolerated)
+			}
+			if !p.UserID.Valid || uuid.UUID(p.UserID.Bytes) != uid || p.Target == nil || *p.Target != uid.String() {
+				t.Errorf("user_id / target: got %v / %v, want %s", p.UserID, p.Target, uid)
+			}
+			if p.IpAddr == nil || p.IpAddr.String() != "203.0.113.7" {
+				t.Errorf("ip: got %v", p.IpAddr)
+			}
+			if detail["trigger"] != RefreshReuseSuperseded || detail["session_id"] != sid.String() {
+				t.Errorf("detail.trigger / session_id: got %v / %v", detail["trigger"], detail["session_id"])
+			}
+			if detail["seconds_since_last_seen"] != float64(12) {
+				t.Errorf("detail.seconds_since_last_seen: got %v, want 12", detail["seconds_since_last_seen"])
+			}
+			if detail["client_name"] != "OnScreen" || detail["platform"] != "android" || detail["user_agent"] != "okhttp/4.12.0" {
+				t.Errorf("detail.client_name / platform / user_agent: got %v / %v / %v",
+					detail["client_name"], detail["platform"], detail["user_agent"])
+			}
+			// Nothing was revoked, so nothing may claim it was.
+			for _, k := range []string{"reason", "sessions_deleted", "epoch_bumped"} {
+				if v, ok := detail[k]; ok {
+					t.Errorf("detail.%s = %v on a tolerated reuse", k, v)
+				}
+			}
+			if bytes.Contains(p.Detail, []byte(spent)) {
+				t.Error("the refresh token itself leaked into the audit detail")
+			}
+			assertNoAudit(t, capture.ch)
+		})
+	}
+}
+
+// Without an audit logger a tolerated reuse is still a plain 401.
+func TestRefresh_ToleratedReuseWithoutAuditLogger(t *testing.T) {
+	svc := &mockAuthService{refreshErr: &RefreshReuseToleratedError{UserID: uuid.New(), Trigger: RefreshReuseRotationRace}}
+	rec := httptest.NewRecorder()
+	newAuthHandler(svc).Refresh(rec, httptest.NewRequest("POST", "/api/v1/auth/refresh",
+		strings.NewReader(`{"refresh_token":"tok"}`)))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401", rec.Code)
+	}
+}
+
 // ── IdP admin sync ───────────────────────────────────────────────────────────
 
 func ssoAuditCtx(capture *auditCapture) context.Context {

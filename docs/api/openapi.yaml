@@ -348,8 +348,9 @@ paths:
         '401':
           description: |
             The refresh token is invalid — unknown, expired, or already spent
-            (reuse, which also signs the user out on every device). Auth
-            cookies are cleared; the client should discard its tokens.
+            (reuse, which also signs the user out on every device unless the
+            token was spent less than 2 minutes earlier). Auth cookies are
+            cleared; the client should discard its tokens.
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ErrorEnvelope' }
@@ -9720,7 +9721,8 @@ components:
           type: string
           description: |
             Stable action code. Known values:
-              - `auth.login_success`, `auth.login_failed`, `auth.sessions_revoked`
+              - `auth.login_success`, `auth.login_failed`, `auth.sessions_revoked`,
+                `auth.refresh_reuse_tolerated`
               - `user.create`, `user.delete`, `user.role_change`, `user.password_reset`
               - `invite.create`
               - `library.create`, `library.delete`, `library.scan`

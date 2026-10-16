@@ -148,6 +148,17 @@ const (
 	// actor and target the affected user, as for every other admin action.
 	ActionSessionsRevoked = "auth.sessions_revoked"
 
+	// ActionRefreshReuseTolerated records a spent refresh token coming back
+	// within the grace window after the rotation that retired it — almost
+	// always one of the user's own clients racing itself or re-sending a
+	// refresh whose response it lost. The token was refused (no new tokens),
+	// but unlike the reuse in auth.sessions_revoked nothing was revoked: the
+	// user stays signed in on their other devices. user_id and target are the
+	// affected user. detail carries trigger, session_id,
+	// seconds_since_last_seen (time since that rotation), user_agent and, when
+	// the session has them, client_name / platform — never the token.
+	ActionRefreshReuseTolerated = "auth.refresh_reuse_tolerated"
+
 	// ActionSessionRevoked records one sign-in (refresh session) being
 	// revoked from a signed-in devices list — by its owner or by an admin.
 	// user_id is the actor, target the session owner; detail carries the
