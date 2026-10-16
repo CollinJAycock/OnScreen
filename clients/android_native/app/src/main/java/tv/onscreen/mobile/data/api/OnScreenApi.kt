@@ -311,6 +311,25 @@ interface OnScreenApi {
         @Body body: PlaybackDecisionRequest,
     ): ApiResponse<PlaybackDecision>
 
+    /** [playbackDecision] asked for another device — a Chromecast the phone
+     *  casts to: [capabilities] is that device's profile (ChromecastCaps),
+     *  sent instead of the phone's own (AuthInterceptor leaves it alone). */
+    @POST("api/v1/items/{id}/playback-decision")
+    suspend fun playbackDecisionFor(
+        @Path("id") itemId: String,
+        @Body body: PlaybackDecisionRequest,
+        @Header("X-Client-Capabilities") capabilities: String,
+    ): ApiResponse<PlaybackDecision>
+
+    /** [startTranscode] for another device's [capabilities] (see
+     *  [playbackDecisionFor]). */
+    @POST("api/v1/items/{id}/transcode")
+    suspend fun startTranscodeFor(
+        @Path("id") itemId: String,
+        @Body body: TranscodeRequest,
+        @Header("X-Client-Capabilities") capabilities: String,
+    ): ApiResponse<TranscodeSession>
+
     @DELETE("api/v1/transcode/sessions/{sid}")
     suspend fun stopTranscode(
         @Path("sid") sessionId: String,

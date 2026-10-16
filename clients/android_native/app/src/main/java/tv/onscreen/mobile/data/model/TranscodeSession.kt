@@ -13,6 +13,11 @@ data class TranscodeSession(
      *  keyframe is the file's first. Null (absent) only from a server that
      *  predates the field. See PlayerViewModel.adoptSession. */
     val start_offset_sec: Double? = null,
+    /** The session's HLS segment container, "ts" | "fmp4" — what a Cast
+     *  receiver must be told before it loads the playlist. Null (absent) from
+     *  a server that predates the field: CastPlaybackController then reads the
+     *  playlist itself (CastHls.inferSegmentFormat). */
+    val segment_format: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

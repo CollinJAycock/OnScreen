@@ -2,9 +2,12 @@ package tv.onscreen.mobile.cast
 
 import android.content.Context
 import android.net.Uri
+import com.google.android.gms.cast.HlsSegmentFormat
+import com.google.android.gms.cast.HlsVideoSegmentFormat
 import com.google.android.gms.cast.MediaInfo
 import com.google.android.gms.cast.MediaLoadRequestData
 import com.google.android.gms.cast.MediaMetadata
+import com.google.android.gms.cast.MediaTrack
 import com.google.android.gms.cast.framework.CastContext
 import com.google.android.gms.common.images.WebImage
 import org.json.JSONObject
@@ -49,7 +52,14 @@ object CastSender {
      * The caller is responsible for pausing the local player — we
      * don't reach into the ExoPlayer instance from here.
      */
-    fun load(context: Context, payload: CastMediaInfo.Payload): Boolean {
+    fun load(
+        context: Context,
+        payload: CastMediaInfo.Payload,
+        /** The receiver's answer to the LOAD: true once it is playing it,
+         *  false when it failed (a media error, an unsupported stream).
+         *  Called on the main thread; not called when this returns false. */
+        onResult: ((Boolean) -> Unit)? = null,
+    ): Boolean {
         val session = try {
             CastContext.getSharedInstance(context.applicationContext)
                 .sessionManager
@@ -77,6 +87,36 @@ object CastSender {
                 if (payload.customData.isNotEmpty()) {
                     setCustomData(JSONObject(payload.customData as Map<*, *>))
                 }
+                // An OnScreen HLS session: the DMR must be told the segment
+                // container up front — it assumes MPEG-TS with AAC, and an
+                // fMP4 (HEVC / AV1) session then fails to demux.
+                payload.hlsSegmentFormat?.let { fmt ->
+                    when (fmt) {
+                        CastHls.SegmentFormat.TS -> {
+                            setHlsSegmentFormat(HlsSegmentFormat.TS)
+                            if (payload.hasVideo) setHlsVideoSegmentFormat(HlsVideoSegmentFormat.MPEG2_TS)
+                        }
+                        CastHls.SegmentFormat.FMP4 -> {
+                            setHlsSegmentFormat(HlsSegmentFormat.FMP4)
+                            if (payload.hasVideo) setHlsVideoSegmentFormat(HlsVideoSegmentFormat.FMP4)
+                        }
+                    }
+                }
+                if (payload.textTracks.isNotEmpty()) {
+                    setMediaTracks(
+                        payload.textTracks.map { t ->
+                            MediaTrack.Builder(t.id, MediaTrack.TYPE_TEXT)
+                                .setSubtype(MediaTrack.SUBTYPE_SUBTITLES)
+                                .setContentId(t.url)
+                                .setContentType("text/vtt")
+                                .apply {
+                                    if (t.language.isNotBlank()) setLanguage(t.language)
+                                    if (t.name.isNotBlank()) setName(t.name)
+                                }
+                                .build()
+                        },
+                    )
+                }
             }
             .build()
 
@@ -89,10 +129,17 @@ object CastSender {
             // setStreamDuration above, and unlike the web chrome.cast SDK
             // whose currentTime is seconds), so convert here.
             .setCurrentTime((payload.positionSeconds * 1000).toLong())
+            .setAutoplay(true)
+            .apply {
+                payload.textTracks.firstOrNull()?.let { setActiveTrackIds(longArrayOf(it.id)) }
+            }
             .build()
 
         return try {
-            client.load(request)
+            val pending = client.load(request)
+            if (onResult != null) {
+                pending.setResultCallback { result -> onResult(result.status.isSuccess) }
+            }
             true
         } catch (_: Throwable) {
             false
