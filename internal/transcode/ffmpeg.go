@@ -222,6 +222,12 @@ type BuildArgs struct {
 	// Ignored unless the video is copied.
 	DolbyVision  DVMode
 	DVProfileKey string
+	// HEVCParamSetsInBand marks an HEVC source whose decoder configuration
+	// record carries no parameter sets: they travel only in-band (an hev1
+	// MP4 with an empty hvcC). A copy of it rebuilds the record from the
+	// stream (hevcConfigBSF), because an hvc1 init without them is
+	// undecodable. Ignored unless the video is copied.
+	HEVCParamSetsInBand bool
 
 	// BurnSubtitle paints an image subtitle stream into the picture on a
 	// re-encode (TranscodeJob.BurnSubtitle); nil for none. Ignored on a
@@ -884,7 +890,8 @@ func BuildHLS(a BuildArgs) []string {
 	// Codec tag: HEVC → hvc1, AV1 → av01. Browser MSE requires the
 	// modern fourCC tag rather than the codec's native one to
 	// recognize the stream.
-	if tag := vout.TagV(); tag != "" {
+	tag := vout.TagV()
+	if tag != "" {
 		// Profile 5 has no HEVC base a plain hvc1 decoder could show, so its
 		// sample entry is dvh1; profiles 7 and 8 stay hvc1 with the record
 		// alongside, which a non-Dolby-Vision player simply ignores.
@@ -893,8 +900,20 @@ func BuildHLS(a BuildArgs) []string {
 		}
 		args = append(args, "-tag:v", tag)
 	}
+	var bsfs []string
 	if videoCopy && !a.AudioOnly && a.DolbyVision == DVToP81 {
-		args = append(args, "-bsf:v", dvConvertBSF)
+		bsfs = append(bsfs, dvConvertBSF)
+	}
+	// hvc1 and dvh1 promise every parameter set in the init's hvcC, and the
+	// mp4 muxer writes no hvcC at all when the source's has none — players
+	// then read the length-prefixed frames as Annex B and decode nothing.
+	// Rebuild the record from the in-band parameter sets instead (Safari
+	// won't take hev1, which would keep them in-band).
+	if videoCopy && !a.AudioOnly && a.HEVCParamSetsInBand && (tag == "hvc1" || tag == "dvh1") {
+		bsfs = append(bsfs, hevcConfigBSF)
+	}
+	if len(bsfs) > 0 {
+		args = append(args, "-bsf:v", strings.Join(bsfs, ","))
 	}
 
 	// temp_file: write each segment as name.tmp and RENAME on completion.
@@ -1450,6 +1469,18 @@ func AtempoFilter(rate float64) string {
 	parts = append(parts, fmt.Sprintf("atempo=%.4g", rate))
 	return strings.Join(parts, ",")
 }
+
+// hevcConfigBSF rebuilds an HEVC copy's decoder configuration record from
+// the in-band parameter sets (BuildArgs.HEVCParamSetsInBand): the frames go
+// to Annex B, extract_extradata hands the parameter sets to the mp4 muxer,
+// which writes them into the hvcC and drops them from the frames. A parameter
+// set that changes mid-stream is lost that way, so it runs only for a source
+// whose record is empty — one that won't decode as hvc1 at all otherwise.
+const hevcConfigBSF = "hevc_mp4toannexb,extract_extradata"
+
+// hevcConfigEmptySize is the size of an hvcC with no parameter-set arrays:
+// the 22-byte header plus a zero numOfArrays byte.
+const hevcConfigEmptySize = 23
 
 // dvCopy reports whether the session copies Dolby Vision video through (kept
 // or converted): a video copy with a Dolby Vision mode.

@@ -31,7 +31,10 @@ echo "==> Building $IMAGE"
 # report exactly what's deployed (GET /health/version, startup log). Without
 # these build-args the Dockerfile defaults to version=dev / empty build time,
 # which makes "is the new code actually live?" a guessing game.
-BUILD_VERSION="$(git describe --tags --always --dirty 2>/dev/null || git rev-parse --short HEAD 2>/dev/null || echo dev)"
+# safe.directory: run as root (sudo ./docker/deploy-gpu.sh), git refuses a repo
+# another user owns ("dubious ownership") and the version silently became dev.
+GIT=(git -c safe.directory="$PWD")
+BUILD_VERSION="$("${GIT[@]}" describe --tags --always --dirty 2>/dev/null || "${GIT[@]}" rev-parse --short HEAD 2>/dev/null || echo dev)"
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 echo "    version=$BUILD_VERSION build_time=$BUILD_TIME"
 # To bake in default TMDB/OpenSubtitles keys, export DEFAULT_TMDB_KEY /

@@ -62,7 +62,10 @@ included; base layer bit-identical; no new decode errors.
   a `dvh1.08.LL` supplemental codec and uses it only when MSE accepts it. The
   app declares `5` / `8.1:8.4` when Luna reports
   `tv.config.supportDolbyHDRContents` and MSE accepts `dvh1.05.06` /
-  `dvh1.08.06`; never `7`.
+  `dvh1.08.06`; never `7`. Checked 2026-10-16 on an LG C1 (webOS 6) against
+  the GPU image: the TV shows its Dolby Vision badge for a profile 8.1 file
+  kept as-is and for a profile 7 file converted to 8.1. Profile 5 hasn't been
+  tried on a screen (there's no sample).
 - Everyone else (web, Samsung, Roku, Xbox, phone) gets the base layer.
 
 **Profile 5 is never re-encoded.** A client that lists it but would need a

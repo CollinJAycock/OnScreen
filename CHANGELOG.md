@@ -1022,6 +1022,16 @@ becomes final on every app. Release note:
   series. In anime libraries AniList still matches first, and the TMDB and
   TVDB lookups that fetch episode data also try AniList's English and romaji
   names. Items already matched keep their match; use Fix Match on a wrong one.
+- **Some HEVC MP4s played as a black or broken picture when remuxed.** An HEVC
+  file that keeps its parameter sets only inside the video stream (an `hev1`
+  MP4 with an empty `hvcC`) lost them in the remux: the stream is tagged
+  `hvc1`, and ffmpeg then writes no `hvcC` at all, so players had nothing to
+  decode with. The worker now spots such a source when it starts the job and
+  rebuilds the `hvcC` from the stream, so the remux plays everywhere,
+  Safari included. Other HEVC files are remuxed as before.
+- **`docker/deploy-gpu.sh` stamped the build as `dev` when run with `sudo`:**
+  git refused the repository owned by another user, so the server reported
+  version `dev`. The script now tells git the repository is safe.
 
 ## [v2.5.1] — 2026-10-06
 
