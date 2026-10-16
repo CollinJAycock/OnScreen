@@ -60,6 +60,16 @@ becomes final on every app. Release note:
 
 ### Added
 
+- **Watchlist page.** A new **Watchlist** link in the web sidebar lists
+  everything you've given a status — Plan to Watch first, then Watching, On
+  Hold, Completed and Dropped, one tab each with a count — with a type filter,
+  a title sort and endless scrolling. Each card's ⋯ menu moves it to another
+  list or removes it. Behind it, `GET /api/v1/watchlist` (`status`, `type`,
+  `sort`, `limit` / `offset`) and `GET /api/v1/watchlist/counts` list your own
+  statuses, scoped like every other list: only libraries you can open, nothing
+  above your rating ceiling or hidden by your label restriction, never a
+  deleted item, and a profile sees only its own. The native apps pick it up
+  in a later release.
 - **Dolby Vision for apps that decode it.** The capability profile's `dovi`
   key takes a profile list (`dovi=5:8.1:8.4`, plus `7`; `dovi=1` means
   `5:8.1:8.4`). A file whose profile the app lists plays as Dolby Vision:
@@ -984,6 +994,13 @@ becomes final on every app. Release note:
 
 ### Fixed
 
+- **The Status menu on a movie or show page shows the saved status.** On the
+  web it always came up blank, and changing it reported an error even though
+  the change had been saved; the Android TV / Fire TV app never showed a
+  status either. `GET` / `PUT /api/v1/items/{id}/watch-status` answered with
+  the bare object while those clients read the `{"data": …}` envelope; the
+  body now carries the fields both at the top level (as the phone app reads
+  them) and under `data`.
 - **Settings that were saved but did nothing now work.**
   - **Library metadata language.** A library's language was stored and never
     used: every library got English from TMDB. Movie and TV titles, summaries,

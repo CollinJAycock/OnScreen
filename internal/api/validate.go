@@ -60,6 +60,7 @@ func (h Handlers) ValidateLibraryAccess() error {
 	check("reading_progress", h.ReadingProgress != nil, h.ReadingProgress)
 	check("opds", h.OPDS != nil, h.OPDS)
 	check("user_export", h.UserExport != nil, h.UserExport)
+	check("watch_status", h.WatchStatus != nil, h.WatchStatus)
 
 	if len(missing) > 0 {
 		sort.Strings(missing)

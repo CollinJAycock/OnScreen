@@ -2,6 +2,7 @@ package v1
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -83,5 +84,33 @@ func TestWatchStatus_ItemGate(t *testing.T) {
 	}
 	if svc2.setCalls != 1 {
 		t.Errorf("expected one Set call; got %d", svc2.setCalls)
+	}
+}
+
+// TestWatchStatus_BothShapes pins the response body every shipped client
+// parses: the phone app reads the bare fields, the Android TV app the
+// {"data": …} envelope.
+func TestWatchStatus_BothShapes(t *testing.T) {
+	lib := uuid.New()
+	item := gen.GetMediaItemRow{ID: uuid.New(), LibraryID: lib}
+	h := NewWatchStatusHandler(&wsFakeSvc{}, slog.Default()).
+		WithItemGate(wsFakeItems{item: item}, wsFakeAccess{allowed: lib})
+	req := httptest.NewRequest(http.MethodPut, "/api/v1/items/"+item.ID.String()+"/watch-status",
+		strings.NewReader(`{"status":"watching"}`))
+	req = withChiParam(req, "id", item.ID.String())
+	req = req.WithContext(middleware.WithClaims(req.Context(), &auth.Claims{UserID: uuid.New()}))
+	rec := httptest.NewRecorder()
+	h.Put(rec, req)
+	var body struct {
+		Status string `json:"status"`
+		Data   struct {
+			Status string `json:"status"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v (%s)", err, rec.Body.String())
+	}
+	if rec.Code != http.StatusOK || body.Status != "watching" || body.Data.Status != "watching" {
+		t.Errorf("got %d %s, want status at the top level and under data", rec.Code, rec.Body.String())
 	}
 }

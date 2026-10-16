@@ -138,6 +138,11 @@ describe('layout sidebar', () => {
     expect(screen.getByRole('link', { name: /Playlists/ }).getAttribute('href')).toBe('/playlists');
   });
 
+  it('links the Watchlist for every user', async () => {
+    await renderShell();
+    expect(screen.getByRole('link', { name: /Watchlist/ }).getAttribute('href')).toBe('/watchlist');
+  });
+
   // The store-review server: no TMDB key, no tuners, a reviewer that can't
   // request. Neither link may show, nor flash up while things load.
   it('hides Requests and Live TV from a non-admin until the server says they apply', async () => {
