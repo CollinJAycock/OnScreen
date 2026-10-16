@@ -128,15 +128,44 @@ func TestBuildHLS_BurnIn_AV1NVDECOff(t *testing.T) {
 	}
 }
 
-// HDR: the overlay goes after the tonemap, on SDR frames. All-VRAM tonemaps
-// are off; the software zscale path scales first, then tonemaps, then paints.
-func TestBuildHLS_BurnIn_AfterTonemap(t *testing.T) {
+// HDR: the overlay goes after the tonemap, on SDR frames. The CUDA tonemap
+// stays on the GPU and downloads its finished frame, padded to the output box
+// like the subtitle canvas; decode then lands in CUDA memory.
+func TestBuildHLS_BurnIn_CudaTonemap(t *testing.T) {
 	a := burnArgs(EncoderHEVCNVENC)
 	a.NeedsToneMap, a.HasZscale = true, true
 	a.CudaTonemap, a.CudaHDRTonemap = true, true
+	args := BuildHLS(a)
+	graph := argAfter(args, "-filter_complex")
+	want := "[0:v:0]scale_cuda=w=1920:h=1080:force_original_aspect_ratio=decrease," +
+		"tonemap_cuda=tonemap=bt2390:t=bt709:m=bt709:p=bt709:r=tv:format=nv12," +
+		"hwdownload,format=nv12,pad=1920:1080:(ow-iw)/2:(oh-ih)/2[v];" +
+		"[1:5]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black@0[s];" +
+		"[v][s]overlay=eof_action=pass:repeatlast=0,format=yuv420p[vout]"
+	if graph != want {
+		t.Errorf("graph\n got %s\nwant %s", graph, want)
+	}
+	if argAfter(args, "-hwaccel_output_format") != "cuda" {
+		t.Errorf("CUDA tonemap needs the decode in CUDA memory: %s", strings.Join(args, " "))
+	}
+	// libplacebo present too: tonemap_cuda still wins, so the subtitle canvas
+	// is fitted and padded like the picture, not stretched.
+	a.HasLibplacebo = true
+	if got := argAfter(BuildHLS(a), "-filter_complex"); got != want {
+		t.Errorf("with libplacebo available\n got %s\nwant %s", got, want)
+	}
+}
+
+// HDR without the CUDA tonemap: the software zscale path scales first, then
+// tonemaps, then paints; the GPU-assisted fallback (CPU tonemap after a
+// download) is off.
+func TestBuildHLS_BurnIn_AfterTonemap(t *testing.T) {
+	a := burnArgs(EncoderHEVCNVENC)
+	a.NeedsToneMap, a.HasZscale = true, true
+	a.CudaHDRTonemap = true
 	graph := argAfter(BuildHLS(a), "-filter_complex")
 	if strings.Contains(graph, "tonemap_cuda") || strings.Contains(graph, "scale_cuda") {
-		t.Fatalf("all-VRAM tonemap left in: %s", graph)
+		t.Fatalf("GPU path left in: %s", graph)
 	}
 	tm := strings.Index(graph, "tonemap=tonemap=hable")
 	ov := strings.Index(graph, "overlay=")

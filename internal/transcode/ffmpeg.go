@@ -1095,18 +1095,23 @@ func buildVideoFilter(a BuildArgs) string {
 	return strings.Join(append(filters, tail...), ",")
 }
 
-// burnInArgs turns off every path that keeps frames in GPU memory when a
+// burnInArgs turns off the paths that keep frames in GPU memory when a
 // subtitle burn-in is asked for, and drops a burn-in that can't apply (a
 // remux or an audio-only session has no picture to paint on). The overlay is a
 // CPU filter, so the picture has to reach it in system memory: the full-VRAM
-// decode+scale chains (CudaVRAM, QSVVRAM, VAAPIVRAM), the all-VRAM tonemaps
-// (CudaTonemap, VAAPITonemap) and the GPU-assisted HDR fallback
-// (CudaHDRTonemap, whose scale_cuda doesn't pad and so would leave the frame a
-// different size from the subtitle canvas). Decode-only offloads that hand
-// frames back to system memory (QSVDecode, CudaHevcDecode) stay, and every
-// encoder takes system-memory frames: NVENC/AMF/QSV directly, VAAPI after the
-// hwupload that follows the overlay. The AV1 NVDEC carve-out is gated on the
-// burn-in where it's decided (useCUDADecode).
+// decode+scale chains (CudaVRAM, QSVVRAM, VAAPIVRAM), the VAAPI tonemap and the
+// GPU-assisted HDR fallback (CudaHDRTonemap, which would tonemap on the CPU
+// after its download anyway) go. Decode-only offloads that hand frames back to
+// system memory (QSVDecode, CudaHevcDecode) stay, and every encoder takes
+// system-memory frames: NVENC/AMF/QSV directly, VAAPI after the hwupload that
+// follows the overlay. The AV1 NVDEC carve-out is gated on the burn-in where
+// it's decided (useCUDADecode).
+//
+// The CUDA tonemap stays: scale_cuda and tonemap_cuda run in VRAM as usual and
+// only the finished 8-bit frame is downloaded and padded for the overlay
+// (videoFilterChain). Tonemapping on the CPU instead held an HDR burn-in at
+// about real time on QA (10 Cloverfield Lane, Ryzen 9 5900X); keeping it on
+// the GPU measured 1.9x with the audio and the overlay.
 func burnInArgs(a BuildArgs) BuildArgs {
 	if a.BurnSubtitle == nil {
 		return a
@@ -1116,7 +1121,7 @@ func burnInArgs(a BuildArgs) BuildArgs {
 		return a
 	}
 	a.CudaVRAM, a.QSVVRAM, a.VAAPIVRAM = false, false, false
-	a.CudaTonemap, a.VAAPITonemap, a.CudaHDRTonemap = false, false, false
+	a.VAAPITonemap, a.CudaHDRTonemap = false, false
 	return a
 }
 
@@ -1160,7 +1165,7 @@ func buildBurnInGraph(a BuildArgs) string {
 	// stretched to the box by libplacebo, fitted and padded (transparent)
 	// by the software scaler.
 	if a.Width > 0 && a.Height > 0 {
-		if a.NeedsToneMap && a.HasLibplacebo && !a.IsVAAPI {
+		if a.NeedsToneMap && a.HasLibplacebo && !a.IsVAAPI && !usesCudaTonemap(a) {
 			sub = append(sub, fmt.Sprintf("scale=%d:%d", a.Width, a.Height))
 		} else {
 			sub = append(sub, fmt.Sprintf(
@@ -1180,6 +1185,12 @@ func buildBurnInGraph(a BuildArgs) string {
 	overlay := "overlay=eof_action=pass:repeatlast=0," + strings.Join(tail, ",")
 	return fmt.Sprintf("[0:v:0]%s[v];[1:%d]%s[s];[v][s]%s[vout]",
 		strings.Join(pre, ","), a.BurnSubtitle.StreamIndex, strings.Join(sub, ","), overlay)
+}
+
+// usesCudaTonemap reports whether the video chain tonemaps with tonemap_cuda
+// (the all-VRAM NVIDIA HDR path), which takes precedence over libplacebo.
+func usesCudaTonemap(a BuildArgs) bool {
+	return a.CudaTonemap && a.NeedsToneMap && !a.IsVAAPI && (a.IsHEVC || a.IsH264)
 }
 
 // burnInSubtitleInput is the second `-i` of a burn-in: the same source again,
@@ -1307,7 +1318,7 @@ func videoFilterChain(a BuildArgs) (filters, tail []string) {
 	// HDR→SDR, both in CUDA memory, straight to NVENC — no CPU, no hwdownload, no
 	// Vulkan. The preferred HDR path on NVIDIA (works on TrueNAS where libplacebo
 	// can't init); decode is in CUDA memory (CudaTonemap → full-VRAM decode).
-	cudaTonemap := a.CudaTonemap && a.NeedsToneMap && !a.IsVAAPI && (a.IsHEVC || a.IsH264)
+	cudaTonemap := usesCudaTonemap(a)
 
 	// GPU-assisted HDR fallback (no tonemap_cuda, no libplacebo): scale_cuda does
 	// the expensive downscale in VRAM keeping 10-bit (p010 — nv12 would clip the
@@ -1326,6 +1337,16 @@ func videoFilterChain(a BuildArgs) (filters, tail []string) {
 				fmt.Sprintf("scale_cuda=w=%d:h=%d:force_original_aspect_ratio=decrease", a.Width, a.Height), tm)
 		} else {
 			filters = append(filters, tm)
+		}
+		// Under a burn-in the finished 8-bit frame comes down to system memory
+		// for the overlay, padded to the output box the way the software scale
+		// pads (scale_cuda has no pad), so the subtitle canvas — scaled and
+		// padded the same way in buildBurnInGraph — lines up with the picture.
+		if burn {
+			filters = append(filters, "hwdownload", "format=nv12")
+			if a.Width > 0 && a.Height > 0 {
+				filters = append(filters, fmt.Sprintf("pad=%d:%d:(ow-iw)/2:(oh-ih)/2", a.Width, a.Height))
+			}
 		}
 	case lpTonemap:
 		// libplacebo (Vulkan): tonemap + scale + 8-bit downconvert in one GPU
