@@ -97,7 +97,15 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
 
         val authed = request.newBuilder()
             .header("Authorization", "Bearer $token")
-            .header("X-Client-Capabilities", PlaybackHelper.clientCapabilitiesHeader())
+            .apply {
+                // A call made ON BEHALF of another device (the Chromecast the
+                // phone casts to — OnScreenApi.playbackDecisionFor /
+                // startTranscodeFor) already carries that device's profile:
+                // the server must decide for it, not for this phone.
+                if (request.header(CAPABILITIES_HEADER) == null) {
+                    header(CAPABILITIES_HEADER, PlaybackHelper.clientCapabilitiesHeader())
+                }
+            }
             .build()
         return chain.proceed(authed)
     }
@@ -156,6 +164,8 @@ class AuthInterceptor(private val prefs: ServerPrefs) : Interceptor {
     }
 
     companion object {
+        const val CAPABILITIES_HEADER = "X-Client-Capabilities"
+
         // 5 s is short enough that token rotation lands on the next
         // request after refresh, long enough that bursts of image
         // fetches (4 100 photos in the viewer, library grids on

@@ -99,8 +99,8 @@ import kotlinx.coroutines.launch
 import tv.onscreen.mobile.data.model.AudioStream
 import tv.onscreen.mobile.data.model.Marker
 import tv.onscreen.mobile.data.model.OnlineSubtitle
+import tv.onscreen.mobile.cast.CastEntryPoint
 import tv.onscreen.mobile.cast.CastMediaInfo
-import tv.onscreen.mobile.cast.CastSender
 import tv.onscreen.mobile.data.prefs.SubtitleStyle
 import android.content.ComponentName
 import android.os.Bundle
@@ -525,6 +525,47 @@ private fun PlayerHost(
     // clutter the floating frame.
     val inPip = LocalInPipMode.current
 
+    // Chromecast. The controller is app-lifetime (casting carries on after
+    // this screen closes); this screen starts casts, shows the remote
+    // controls for the item it plays, and steps aside for the receiver.
+    val castController = remember {
+        dagger.hilt.android.EntryPointAccessors
+            .fromApplication(context.applicationContext, CastEntryPoint::class.java)
+            .castPlaybackController()
+    }
+    val castState by castController.state.collectAsStateWithLifecycle()
+    val castingThis = castState.itemId == playingId
+    // This screen handed the item to (or found it on) the receiver: when that
+    // ends, the phone picks it up where the receiver left it.
+    var castFromHere by remember(playingId) { mutableStateOf(false) }
+    LaunchedEffect(castingThis) {
+        if (castingThis) {
+            castFromHere = true
+            // Never both at once.
+            player.pause()
+        }
+    }
+    LaunchedEffect(castingThis, castState.loaded) {
+        // The cast's session superseded this player's remux / transcode on
+        // the server (one session per user and item): stop loading from it
+        // rather than fail on its next segment.
+        if (castingThis && castState.loaded && source is PlaybackSource.Hls) player.stop()
+    }
+    LaunchedEffect(castState.ended) {
+        val ended = castState.ended ?: return@LaunchedEffect
+        if (ended.itemId != playingId || !castFromHere) return@LaunchedEffect
+        castController.consumeEnded()
+        castFromHere = false
+        // Played to the end on the receiver: nothing to pick up here.
+        if (ended.finished) return@LaunchedEffect
+        if (source is PlaybackSource.Hls) {
+            // Its session is gone: a fresh one, from where the cast stopped.
+            vm.prepare(playingId, startAtMs = ended.positionMs, fileId = ui.item?.files?.firstOrNull()?.id)
+        } else {
+            player.seekTo((ended.positionMs - vm.hlsOffsetMs).coerceAtLeast(0))
+        }
+    }
+
     // Pause screen-owned VIDEO when the app stops (screen off, or the user
     // switches apps without PiP). The screen-owned player has no
     // notification (its media session only takes the keys, and starts
@@ -812,6 +853,10 @@ private fun PlayerHost(
                 // on in the new session, and this player reports nothing on
                 // its way out (see PlayerViewModel.swappedOut).
                 if (vm.swappedOut(source)) return@onDispose
+                // The item plays on a Chromecast now, which reports for it: a
+                // 'stopped' from here would make the server drop the cast's
+                // session (it drops every stream session of the item).
+                if (castController.isCasting(playingId)) return@onDispose
                 if (player.duration > 0) {
                     val pos = player.currentPosition + offsetAtStart
                     vm.reportProgressFinal(
@@ -1246,6 +1291,25 @@ private fun PlayerHost(
         SkipMarkerOverlay(player = player, markers = ui.markers, hlsOffsetMs = vm.hlsOffsetMs)
     }
 
+    // Remote controls while this item plays on a Chromecast, and the
+    // controller's refusals (too many streams, Dolby Vision, ...).
+    if (castingThis && !inPip) {
+        Box(
+            modifier = Modifier.fillMaxSize().safeDrawingPadding().padding(16.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            CastControlsPanel(
+                state = castState,
+                onTogglePause = { castController.togglePause() },
+                onSeek = { castController.seekTo(it) },
+                onStop = { castController.stop() },
+            )
+        }
+    }
+    castState.notice?.let { notice ->
+        if (!inPip) CastNoticeDialog(notice, onDismiss = { castController.consumeNotice() })
+    }
+
     // Pin to top-right. Without the wrapping Box + align(TopEnd) the
     // outer PlayerScreen Box's contentAlignment = Center vertically
     // centers the Row, which sits right on top of Media3's centered
@@ -1295,29 +1359,14 @@ private fun PlayerHost(
         // Cast / Chromecast. The MediaRouteButton is owned by the Cast
         // SDK — it handles device discovery, picker UI, and connection
         // state itself. We layer a separate "Cast this item" tap on
-        // top: when the user is connected and presses it, build a LOAD
-        // payload from the active item + file and send it to the
-        // receiver. Only surfaces when the file is direct-play castable
-        // (matches the web isCastable predicate). Never one part of a stacked
-        // movie: the receiver would play that part alone and stop.
-        val castFile = ui.item?.files?.firstOrNull()?.takeIf { it.part_index == null }?.let { f ->
-            CastMediaInfo.File(
-                id = f.id,
-                // ItemFile carries no status field — files surfaced
-                // through the player are by definition active (the
-                // scanner filters missing rows out before the API
-                // serialises). Hardcode "active" so isCastable's
-                // status gate doesn't reject it.
-                status = "active",
-                container = f.container,
-                videoCodec = f.video_codec,
-                audioCodec = f.audio_codec,
-                // ItemFile uses ms; CastMediaInfo wants seconds.
-                durationSeconds = f.duration_ms?.let { ms -> ms / 1000L },
-                streamToken = f.stream_token,
-            )
-        }
-        if (castFile != null && CastMediaInfo.isCastable(castFile)) {
+        // top: when the user is connected and presses it,
+        // CastPlaybackController asks the server what the Chromecast can
+        // play (its own capability profile, not the phone's) and casts the
+        // file as it is or an HLS session made for the receiver — so any
+        // item casts, not only the files Google's Default Media Receiver
+        // plays as they are.
+        val castItemFile = ui.item?.files?.firstOrNull()
+        if (castItemFile != null) {
             // The route button itself — Cast SDK draws it. MediaRouteButton's
             // theme helper reads colorBackground from the inflating context
             // and crashes with `background can not be translucent: #0` when
@@ -1348,37 +1397,57 @@ private fun PlayerHost(
             // "Send this item" — only useful once the user has picked
             // a device via the route button. We don't try to gate on
             // session state here because connect/disconnect is async;
-            // the load() call no-ops when there's no session.
+            // the controller says so when there's no session.
             IconButton(
-                onClick = {
-                    val item = ui.item ?: return@IconButton
-                    val origin = vm.serverOrigin() ?: return@IconButton
-                    val payload = CastMediaInfo.build(
-                        CastMediaInfo.Item(
-                            id = item.id,
-                            type = item.type,
-                            title = item.title,
-                            posterPath = item.poster_path,
-                            // ItemDetail doesn't yet carry parent_title;
-                            // future enhancement: thread show.title for
-                            // episodes through the API model so the Cast
-                            // metadata gets a "Show · Episode" subtitle.
-                            parentTitle = null,
-                        ),
-                        castFile,
-                        origin,
-                        // WHY: hand the receiver the current playhead so it
-                        // resumes where we are instead of at 0:00. Adding
-                        // hlsOffsetMs makes the position content-absolute on
-                        // transcoded sessions (it's 0 on direct play) — the
-                        // same reason the web client adds hlsOffsetSec to
-                        // videoEl.currentTime. Cast wants seconds.
-                        positionSeconds = (player.currentPosition + vm.hlsOffsetMs) / 1000.0,
-                    ) ?: return@IconButton
-                    if (CastSender.load(context, payload)) {
-                        // Stop local audio/video so we don't double-play.
-                        player.pause()
+                onClick = sendToCast@{
+                    val item = ui.item ?: return@sendToCast
+                    // What the phone shows is what the receiver gets: the
+                    // audio track and subtitle picked here. An image-based
+                    // subtitle (burned in on this session, or picked from the
+                    // container on direct play) is burned into the cast's.
+                    val selectedSub = if (ui.burnedSubtitleIndex != null) {
+                        null
+                    } else {
+                        SubtitleSelection.selectedTrackId(
+                            player,
+                            subtitleRows + SubtitleTracks.textVersions(subtitleRows, ui.subtitleTracks),
+                        )
                     }
+                    val imageSub = selectedSub?.let { id ->
+                        ui.subtitleTracks.firstOrNull { it.trackId == id }
+                    }?.takeIf { t ->
+                        t.streamIndex != null && (t.imageBased ||
+                            ui.subtitles.firstOrNull { it.index == t.streamIndex }
+                                ?.let { SubtitleTracks.isImageBased(it.codec) } == true)
+                    }
+                    val audioRow = AudioSelection.selectedRow(player, ui.audioStreams, ui.targetAudioRow, isHls)
+                    castController.cast(
+                        tv.onscreen.mobile.cast.CastPlaybackController.Request(
+                            item = CastMediaInfo.Item(
+                                id = item.id,
+                                type = item.type,
+                                title = item.title,
+                                posterPath = item.poster_path,
+                                // ItemDetail doesn't yet carry parent_title;
+                                // future enhancement: thread show.title for
+                                // episodes through the API model so the Cast
+                                // metadata gets a "Show · Episode" subtitle.
+                                parentTitle = null,
+                            ),
+                            file = castItemFile,
+                            // WHY: hand the receiver the current playhead so
+                            // it resumes where we are instead of at 0:00.
+                            // Adding hlsOffsetMs makes the position
+                            // content-absolute on transcoded sessions (it's 0
+                            // on direct play).
+                            positionMs = player.currentPosition + vm.hlsOffsetMs,
+                            contentDurationMs = contentDurationOf(player, source, vm).takeIf { it > 0 },
+                            hasVideo = !isAudioOnly,
+                            audioStreamIndex = audioRow.takeIf { it >= 0 },
+                            subtitleTrackId = selectedSub?.takeIf { imageSub == null },
+                            burnSubtitleStreamIndex = ui.burnedSubtitleIndex ?: imageSub?.streamIndex,
+                        ),
+                    )
                 },
             ) {
                 Icon(

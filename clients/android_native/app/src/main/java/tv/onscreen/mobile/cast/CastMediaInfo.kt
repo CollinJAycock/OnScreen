@@ -68,6 +68,14 @@ object CastMediaInfo {
         // mirrors the web client's LoadRequest.currentTime (also seconds).
         val positionSeconds: Double,
         val customData: Map<String, String>,
+        /** HLS only: the segment container to tell the receiver
+         *  (MediaInfo hlsSegmentFormat / hlsVideoSegmentFormat). Null for a
+         *  direct cast of the file. */
+        val hlsSegmentFormat: CastHls.SegmentFormat? = null,
+        /** The media has a picture: the HLS video segment format is set too. */
+        val hasVideo: Boolean = true,
+        /** Sidecar WebVTT tracks; the first is made active. */
+        val textTracks: List<CastHls.TextTrack> = emptyList(),
     )
 
     // ── pure helpers ──────────────────────────────────────────────────────
@@ -145,12 +153,7 @@ object CastMediaInfo {
         // segment while preserving '/'. We can't call artworkUrl() itself:
         // it uses android.net.Uri, and this module is deliberately
         // Android-free so its unit tests run on the plain JVM.
-        val images = if (item.posterPath != null) {
-            val encodedPath = item.posterPath.split("/").joinToString("/") { urlEncode(it) }
-            listOf("$origin/artwork/$encodedPath?w=500")
-        } else {
-            emptyList()
-        }
+        val images = posterUrls(item, origin)
         return Payload(
             contentId = url,
             contentType = contentType(file),
@@ -164,6 +167,58 @@ object CastMediaInfo {
             customData = mapOf("itemId" to item.id, "fileId" to file.id),
         )
     }
+
+    /**
+     * The LOAD payload for an OnScreen HLS session. [playlistUrl] is the
+     * start response's playlist_url made absolute (it carries its own
+     * `?token=`); [offsetMs] is the content time the session opens at, and
+     * [receiverStartMs] where in the SESSION the receiver starts. The
+     * stream's duration is what remains of the content after [offsetMs].
+     */
+    fun buildHls(
+        item: Item,
+        fileId: String,
+        playlistUrl: String,
+        segmentFormat: CastHls.SegmentFormat,
+        hasVideo: Boolean,
+        contentDurationMs: Long?,
+        offsetMs: Long,
+        receiverStartMs: Long,
+        sessionId: String?,
+        baseUrl: String,
+        textTrack: CastHls.TextTrack? = null,
+    ): Payload {
+        val remaining = contentDurationMs?.takeIf { it > 0 }?.let { (it - offsetMs).coerceAtLeast(0) }
+        val custom = buildMap {
+            put("itemId", item.id)
+            put("fileId", fileId)
+            put("offsetMs", offsetMs.toString())
+            sessionId?.takeIf { it.isNotEmpty() }?.let { put("sessionId", it) }
+        }
+        return Payload(
+            contentId = playlistUrl,
+            contentType = CastHls.CONTENT_TYPE_HLS,
+            streamType = STREAM_TYPE_BUFFERED,
+            metadataType = metadataType(item),
+            title = item.title,
+            subtitle = item.parentTitle,
+            imageUrls = posterUrls(item, baseUrl.trimEnd('/')),
+            durationSeconds = remaining?.let { it / 1000L },
+            positionSeconds = receiverStartMs.coerceAtLeast(0) / 1000.0,
+            customData = custom,
+            hlsSegmentFormat = segmentFormat,
+            hasVideo = hasVideo,
+            textTracks = listOfNotNull(textTrack),
+        )
+    }
+
+    private fun posterUrls(item: Item, origin: String): List<String> =
+        if (item.posterPath != null) {
+            val encodedPath = item.posterPath.split("/").joinToString("/") { urlEncode(it) }
+            listOf("$origin/artwork/$encodedPath?w=500")
+        } else {
+            emptyList()
+        }
 
     private fun urlEncode(s: String): String =
         URLEncoder.encode(s, "UTF-8").replace("+", "%20")

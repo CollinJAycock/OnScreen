@@ -13,6 +13,14 @@ data class TranscodeSession(
      *  keyframe is the file's first. Null (absent) only from a server that
      *  predates the field. See PlayerViewModel.adoptSession. */
     val start_offset_sec: Double? = null,
+    /** The session's HLS segment container, "ts" | "fmp4" — what a Cast
+     *  receiver must be told before it loads the playlist. Null (absent) from
+     *  a server that predates the field: CastPlaybackController then reads the
+     *  playlist itself (CastHls.inferSegmentFormat). */
+    val segment_format: String? = null,
+    /** Seconds of segment 0 with no audio yet (an AC3 -> AAC re-encode after a
+     *  mid-stream seek): a Cast receiver is LOADed past it. Null / 0 = none. */
+    val seg0_audio_gap_sec: Double? = null,
 )
 
 @JsonClass(generateAdapter = true)
@@ -71,6 +79,10 @@ data class ProgressRequest(
     /** Playback decision for the analytics direct-vs-transcode split.
      *  Null (omitted on the wire) when unknown. */
     val decision: String? = null,
+    /** The device the report is for, when not this phone's default — a
+     *  Chromecast it casts to ("Chromecast — Living Room"). Null (omitted) for
+     *  the phone's own playback. */
+    val client_name: String? = null,
 )
 
 @JsonClass(generateAdapter = true)

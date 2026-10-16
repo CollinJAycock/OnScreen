@@ -66,6 +66,28 @@ class TranscodeRepository @Inject constructor(
         }
     }
 
+    /** [decide] for another device — the Chromecast the phone casts to —
+     *  whose profile [capabilities] rides in place of the phone's. Same
+     *  never-throws contract. */
+    suspend fun decideFor(itemId: String, fileId: String?, capabilities: String): PlayDecisionResult {
+        return try {
+            PlayDecisionResult.Decided(
+                api.playbackDecisionFor(itemId, PlaybackDecisionRequest(file_id = fileId), capabilities).data,
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            StreamLimit.messageOf(e)?.let { PlayDecisionResult.TooManyStreams(it) }
+                ?: PlayDecisionResult.Unavailable
+        }
+    }
+
+    /** A session for another device's [capabilities] (see [decideFor]).
+     *  Throws like [start]: 429 TOO_MANY_SESSIONS is the caller's to read
+     *  (StreamLimit.messageOf). */
+    suspend fun startFor(itemId: String, request: TranscodeRequest, capabilities: String): TranscodeSession =
+        api.startTranscodeFor(itemId, request, capabilities).data
+
     suspend fun stop(sessionId: String, token: String) {
         try {
             api.stopTranscode(sessionId, token)

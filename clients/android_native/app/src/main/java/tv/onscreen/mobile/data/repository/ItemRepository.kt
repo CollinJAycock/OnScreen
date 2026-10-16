@@ -73,6 +73,35 @@ open class ItemRepository @Inject constructor(
         api.updateProgress(itemId, ProgressRequest(offsetMs, durationMs, state, decision))
     }
 
+    /** [updateProgress] for another device the phone drives — the
+     *  Chromecast it casts to — reported under [clientName]. */
+    open suspend fun updateProgressFor(
+        clientName: String,
+        itemId: String,
+        offsetMs: Long,
+        durationMs: Long?,
+        state: String,
+        decision: String?,
+    ) {
+        api.updateProgress(itemId, ProgressRequest(offsetMs, durationMs, state, decision, clientName))
+    }
+
+    /** [reportProgressDetached] for another device (see [updateProgressFor]). */
+    open fun reportProgressDetachedFor(
+        clientName: String,
+        itemId: String,
+        offsetMs: Long,
+        durationMs: Long?,
+        state: String,
+        decision: String?,
+    ) {
+        detachedScope.launch {
+            try {
+                updateProgressFor(clientName, itemId, offsetMs, durationMs, state, decision)
+            } catch (_: Exception) { }
+        }
+    }
+
     /** Fire-and-forget progress publish on the app-lifetime
      *  [detachedScope]. Use for the terminal 'stopped' event, which
      *  must reach the server even as the player screen + ViewModel are

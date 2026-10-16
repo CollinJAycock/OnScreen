@@ -60,9 +60,10 @@ becomes final on every app. Release note:
 
 ### Added
 
-- **Cast any video to a Chromecast from the web player.** The Cast button
-  now shows for every playable video (and audio file), not only MP4s the
-  Chromecast plays as-is. A file it can't play itself is remuxed or
+- **Cast any video to a Chromecast from the web player and the Android phone
+  app.** The Cast button now shows for every playable video (and audio
+  file), not only MP4s the Chromecast plays as-is. A file it can't play
+  itself is remuxed or
   transcoded into an HLS stream sized for the device (1080p H.264 for a
   Chromecast or Chromecast HD; 4K HEVC / HDR for an Ultra, Google TV or
   SHIELD, falling back to 1080p if the TV refuses it). It still uses
@@ -78,6 +79,9 @@ becomes final on every app. Release note:
   `/media/subtitles/{fileId}/external/{subId}` serves an external subtitle
   with the file's stream token; every session's playlist is now `EVENT`
   (re-encodes were a live playlist, which some players start at its edge).
+  The phone app does the same through its Cast button, with a cast panel
+  (position, seek, play/pause, stop) in place of the local controls; casting
+  carries on after the player screen closes.
   Not yet tried on Chromecast hardware.
 - **Watchlist page.** A new **Watchlist** link in the web sidebar lists
   everything you've given a status — Plan to Watch first, then Watching, On

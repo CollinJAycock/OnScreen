@@ -106,6 +106,35 @@ class AuthScopingTest {
         assertThat(seen.getHeader("Authorization")).isNull()
     }
 
+    // ── interceptor: capability profile ─────────────────────────────────────
+
+    @Test
+    fun `the phone's capability profile rides an API call`() {
+        server.enqueue(MockResponse().setResponseCode(200))
+        val c = client(prefs(server.url("/").toString().trimEnd('/')))
+        get(c, server.url("/api/v1/items/x/playback-decision").toString())
+        assertThat(server.takeRequest().getHeader("X-Client-Capabilities"))
+            .isEqualTo(tv.onscreen.mobile.ui.player.PlaybackHelper.clientCapabilitiesHeader())
+    }
+
+    @Test
+    fun `a profile the call carries for another device is kept`() {
+        // OnScreenApi.playbackDecisionFor / startTranscodeFor: the Chromecast's
+        // profile, which the phone's must not overwrite.
+        server.enqueue(MockResponse().setResponseCode(200))
+        val c = client(prefs(server.url("/").toString().trimEnd('/')))
+        c.newCall(
+            Request.Builder()
+                .url(server.url("/api/v1/items/x/transcode"))
+                .header("X-Client-Capabilities", tv.onscreen.mobile.cast.ChromecastCaps.HD)
+                .build(),
+        ).execute().close()
+        val seen = server.takeRequest()
+        assertThat(seen.headers.values("X-Client-Capabilities"))
+            .containsExactly(tv.onscreen.mobile.cast.ChromecastCaps.HD)
+        assertThat(seen.getHeader("Authorization")).isEqualTo("Bearer $TOKEN")
+    }
+
     // ── authenticator: the 401 follow-up ────────────────────────────────────
 
     @Test
