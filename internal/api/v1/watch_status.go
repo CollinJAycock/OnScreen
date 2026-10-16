@@ -83,6 +83,21 @@ type WatchStatusResponse struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+// watchStatusBody is what GET and PUT write: the status fields at the top
+// level AND again under "data". The handler has always answered with the
+// bare object, which the phone app parses, while the Android TV app (and the
+// web client until v2.6) read the house {"data": …} envelope and so never
+// saw a status. Both shapes in one body keep every shipped client working —
+// the Fire TV build in the Amazon store included.
+type watchStatusBody struct {
+	WatchStatusResponse
+	Data WatchStatusResponse `json:"data"`
+}
+
+func writeWatchStatus(w http.ResponseWriter, r *http.Request, st WatchStatusResponse) {
+	respond.JSON(w, r, http.StatusOK, watchStatusBody{WatchStatusResponse: st, Data: st})
+}
+
 // Get returns the per-user status for an item. The "no row yet" case
 // returns 200 with status="" rather than 404: the resource here is the
 // user's relationship to the item, which has a meaningful default state
@@ -110,14 +125,14 @@ func (h *WatchStatusHandler) Get(w http.ResponseWriter, r *http.Request) {
 	st, err := h.svc.Get(r.Context(), claims.UserID, itemID)
 	if err != nil {
 		if errors.Is(err, watchstatus.ErrNotFound) {
-			respond.JSON(w, r, http.StatusOK, WatchStatusResponse{})
+			writeWatchStatus(w, r, WatchStatusResponse{})
 			return
 		}
 		h.logger.ErrorContext(r.Context(), "get watch status", "user_id", claims.UserID, "item_id", itemID, "err", err)
 		respond.InternalError(w, r)
 		return
 	}
-	respond.JSON(w, r, http.StatusOK, WatchStatusResponse{
+	writeWatchStatus(w, r, WatchStatusResponse{
 		Status:    st.Status,
 		CreatedAt: st.CreatedAt,
 		UpdatedAt: st.UpdatedAt,
@@ -161,7 +176,7 @@ func (h *WatchStatusHandler) Put(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	respond.JSON(w, r, http.StatusOK, WatchStatusResponse{
+	writeWatchStatus(w, r, WatchStatusResponse{
 		Status:    st.Status,
 		CreatedAt: st.CreatedAt,
 		UpdatedAt: st.UpdatedAt,

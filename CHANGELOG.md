@@ -994,9 +994,13 @@ becomes final on every app. Release note:
 
 ### Fixed
 
-- **The web Status menu on a movie or show page shows the saved status.** It
-  always came up blank, and changing it reported an error even though the
-  change had been saved.
+- **The Status menu on a movie or show page shows the saved status.** On the
+  web it always came up blank, and changing it reported an error even though
+  the change had been saved; the Android TV / Fire TV app never showed a
+  status either. `GET` / `PUT /api/v1/items/{id}/watch-status` answered with
+  the bare object while those clients read the `{"data": …}` envelope; the
+  body now carries the fields both at the top level (as the phone app reads
+  them) and under `data`.
 - **Settings that were saved but did nothing now work.**
   - **Library metadata language.** A library's language was stored and never
     used: every library got English from TMDB. Movie and TV titles, summaries,

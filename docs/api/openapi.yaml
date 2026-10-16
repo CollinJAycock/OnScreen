@@ -1604,6 +1604,10 @@ paths:
         error on every /watch page visit — no client-side `.catch()`
         could suppress it; an empty string keeps the same "blank
         dropdown" UX without the noise.)
+
+        GET and PUT also repeat `status`, `created_at` and `updated_at` at
+        the top level of the body, outside `data`: the handler answered with
+        only that bare object until v2.6, and the Android phone app reads it.
       tags: [Items]
       responses:
         '200':
