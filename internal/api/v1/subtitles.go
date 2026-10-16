@@ -630,14 +630,47 @@ func (h *SubtitleHandler) Delete(w http.ResponseWriter, r *http.Request) {
 
 // Serve handles GET /media/external-subtitles/{subId}. Returns the on-disk VTT.
 // Requires auth — browsers send same-origin cookies on <track> requests.
+// ?start_ms= rebases the cues (see subtitleRebaseMS).
 func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 	subID, err := uuid.Parse(chi.URLParam(r, "subId"))
 	if err != nil {
 		respond.BadRequest(w, r, "invalid subtitle id")
 		return
 	}
+	h.serveExternal(w, r, subID, uuid.Nil)
+}
+
+// ServeForFile handles GET /media/subtitles/{fileId}/external/{subId}: the
+// same VTT as Serve, addressed through the file it belongs to. The route
+// exists so a file-bound stream token (?token=, purpose=stream, bound to
+// {fileId} by RequiredAllowQueryToken) authenticates an external subtitle:
+// a cast hands the Chromecast receiver URLs it fetches without cookies, and
+// the stream token it already holds for the video is its credential. A
+// subtitle of any other file is a 404, so the token reaches no further than
+// that file's own subtitles.
+func (h *SubtitleHandler) ServeForFile(w http.ResponseWriter, r *http.Request) {
+	fileID, err := uuid.Parse(chi.URLParam(r, "fileId"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid file id")
+		return
+	}
+	subID, err := uuid.Parse(chi.URLParam(r, "subId"))
+	if err != nil {
+		respond.BadRequest(w, r, "invalid subtitle id")
+		return
+	}
+	h.serveExternal(w, r, subID, fileID)
+}
+
+// serveExternal writes external subtitle subID after the item gates. When
+// wantFile isn't uuid.Nil the subtitle must belong to that file.
+func (h *SubtitleHandler) serveExternal(w http.ResponseWriter, r *http.Request, subID, wantFile uuid.UUID) {
 	row, err := h.svc.Get(r.Context(), subID)
 	if err != nil {
+		respond.NotFound(w, r)
+		return
+	}
+	if wantFile != uuid.Nil && row.FileID != wantFile {
 		respond.NotFound(w, r)
 		return
 	}
@@ -675,7 +708,30 @@ func (h *SubtitleHandler) Serve(w http.ResponseWriter, r *http.Request) {
 		respond.NotFound(w, r)
 		return
 	}
-	serveVTT(w, r, data, int(row.OffsetMs))
+	serveVTT(w, r, data, int(row.OffsetMs)-subtitleRebaseMS(r))
+}
+
+// maxSubtitleRebaseMS bounds ?start_ms: two days, far past any real title.
+const maxSubtitleRebaseMS = 48 * 60 * 60 * 1000
+
+// subtitleRebaseMS reads the optional ?start_ms= query parameter of the
+// subtitle VTT routes: the content position a player's own timeline starts
+// at. The served cues are moved that much earlier (cues that end before it
+// are dropped), on top of the track's saved offset, so time 0 of the VTT is
+// that position. A Chromecast plays a cast HLS session started mid-title on
+// a timeline that begins at 0, and a side-loaded text track is timed on that
+// timeline — without the rebase every cue would show start_ms late. Missing,
+// malformed, negative or absurd values mean 0 (no rebase).
+func subtitleRebaseMS(r *http.Request) int {
+	raw := r.URL.Query().Get("start_ms")
+	if raw == "" {
+		return 0
+	}
+	ms, err := strconv.Atoi(raw)
+	if err != nil || ms < 0 || ms > maxSubtitleRebaseMS {
+		return 0
+	}
+	return ms
 }
 
 // serveVTT writes a WebVTT body shifted by the track's server offset

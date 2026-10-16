@@ -723,13 +723,17 @@ export class ApiClient {
     body?: unknown,
     retry = true,
     signal?: AbortSignal,
+    // Per-call header overrides, laid over authHeaders(): a cast asks the
+    // server on a Chromecast's behalf with that device's
+    // X-Client-Capabilities instead of this browser's.
+    headers?: Record<string, string>,
   ): Promise<T> {
     const finalPath = this.withViewAs(method, path);
     return this.requestWithRetry(
       finalPath,
       () => fetch(apiBase + finalPath, {
         method,
-        headers: authHeaders(),
+        headers: headers ? { ...authHeaders(), ...headers } : authHeaders(),
         credentials: credentialsMode(),
         body: body ? JSON.stringify(body) : undefined,
         signal,
@@ -928,6 +932,10 @@ export class ApiClient {
 
   get = <T>(path: string) => this.request<T>('GET', path);
   post = <T>(path: string, body?: unknown) => this.request<T>('POST', path, body);
+  /** POST with headers that override the defaults for this call only (the
+   *  global X-Client-Capabilities stays the browser's). */
+  postWithHeaders = <T>(path: string, body: unknown, headers: Record<string, string>) =>
+    this.request<T>('POST', path, body, true, undefined, headers);
 
   /** POST a file as the raw request body, typed by the blob (an image
    *  upload). Same auth, retry and error handling as the JSON calls. */
@@ -3616,7 +3624,7 @@ export const itemApi = {
   children: (id: string) =>
     api.requestList<ChildItem>(`/items/${id}/children`),
   progress: (id: string, viewOffsetMs: number, durationMs: number, state: 'playing' | 'paused' | 'stopped',
-             decision?: 'directPlay' | 'directStream' | 'remux' | 'transcode') =>
+             decision?: 'directPlay' | 'directStream' | 'remux' | 'transcode', clientName?: string) =>
     api.put<void>(`/items/${id}/progress`, {
       view_offset_ms: viewOffsetMs,
       duration_ms: durationMs,
@@ -3624,8 +3632,9 @@ export const itemApi = {
       // client_name drives the device picker in the cross-device
       // "Play on…" remote control. Browser builds derive a label
       // from userAgent + a "Web —" prefix so the user can tell the
-      // browser apart from native clients in the picker.
-      client_name: getClientName(),
+      // browser apart from native clients in the picker. A cast reports
+      // as the Chromecast it plays on (clientName).
+      client_name: clientName ?? getClientName(),
       // decision feeds the analytics direct-vs-transcode split.
       ...(decision ? { decision } : {}),
     }),
@@ -4665,6 +4674,23 @@ export interface TranscodeSession {
   // warmup. Scrubber offset stays at start_offset_sec; the player
   // just starts playback at (start_offset_sec + seg0_audio_gap_sec).
   seg0_audio_gap_sec: number;
+  // Segment container: 'ts' (MPEG-TS) or 'fmp4' (.m4s + init). Absent on a
+  // pre-encoded ladder and on older servers — read the playlist then. A
+  // Chromecast needs it up front (hlsSegmentFormat in the LOAD).
+  segment_format?: 'ts' | 'fmp4';
+}
+
+/** The transcode-start body (POST /items/{id}/transcode), for callers that
+ *  build it themselves (the Chromecast sender) rather than through start(). */
+export interface TranscodeStartBody {
+  file_id?: string;
+  height: number;
+  position_ms: number;
+  video_copy: boolean;
+  audio_stream_index?: number | null;
+  // Explicit codec answers beat the X-Client-Capabilities header (both ways).
+  supports_hevc?: boolean;
+  burn_subtitle_stream_index?: number;
 }
 
 export interface PlaybackDecision {
@@ -4701,6 +4727,15 @@ export const transcodeApi = {
   // source's own verdict in source_decision. docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
     api.post<PlaybackDecision>(`/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
+  // The same two calls made on another device's behalf: `caps` is that
+  // device's X-Client-Capabilities profile (a Chromecast's, see
+  // $lib/cast), sent instead of this browser's for these calls only.
+  decideFor: (itemId: string, caps: string, fileId?: string) =>
+    api.postWithHeaders<PlaybackDecision>(`/items/${itemId}/playback-decision`,
+      fileId ? { file_id: fileId } : {}, { 'X-Client-Capabilities': caps }),
+  startFor: (itemId: string, caps: string, body: TranscodeStartBody) =>
+    api.postWithHeaders<TranscodeSession>(`/items/${itemId}/transcode`, body,
+      { 'X-Client-Capabilities': caps }),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)
 };
