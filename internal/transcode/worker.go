@@ -39,17 +39,21 @@ var segmentWaitTimeout = 10 * time.Second
 
 // sourceProbe carries what the worker needs to decide how to re-encode a
 // rotated source: the display rotation (degrees) and the source's overall
-// bitrate (kbps, 0 if unknown).
+// bitrate (kbps, 0 if unknown). paramSetsInBand marks a video stream whose
+// decoder configuration record is no bigger than an empty hvcC (see
+// BuildArgs.HEVCParamSetsInBand); it matters only for an HEVC copy.
 type sourceProbe struct {
-	rotationDeg int
-	bitrateKbps int
+	rotationDeg     int
+	bitrateKbps     int
+	paramSetsInBand bool
 }
 
 // parseSourceProbe pulls rotation and bitrate out of ffprobe default-format
 // ("key=value") lines. Rotation comes from the display-matrix side data
 // ("rotation=") or the legacy stream tag ("rotate="), normalized to [0,360);
-// bitrate from the container's "bit_rate=" (bits/s → kbps). Split out so the
-// parsing is unit-testable without invoking ffprobe.
+// bitrate from the container's "bit_rate=" (bits/s → kbps); the record's size
+// from the stream's "extradata_size=". Split out so the parsing is
+// unit-testable without invoking ffprobe.
 func parseSourceProbe(out string) sourceProbe {
 	var p sourceProbe
 	for _, line := range strings.Split(out, "\n") {
@@ -70,6 +74,10 @@ func parseSourceProbe(out string) sourceProbe {
 			if bps, err := strconv.ParseInt(val, 10, 64); err == nil && bps > 0 {
 				p.bitrateKbps = int(bps / 1000)
 			}
+		case "extradata_size":
+			if n, err := strconv.Atoi(val); err == nil {
+				p.paramSetsInBand = n > 0 && n <= hevcConfigEmptySize
+			}
 		}
 	}
 	return p
@@ -87,7 +95,7 @@ func probeSource(ctx context.Context, input string) sourceProbe {
 	out, err := exec.CommandContext(pctx, "ffprobe",
 		"-v", "error",
 		"-select_streams", "v:0",
-		"-show_entries", "stream_side_data=rotation:stream_tags=rotate:format=bit_rate",
+		"-show_entries", "stream=extradata_size:stream_side_data=rotation:stream_tags=rotate:format=bit_rate",
 		"-of", "default=nw=1",
 		// Confine the demuxer to protocols this input needs, so a crafted
 		// source can't turn a probe into an SSRF. Must precede the input.
@@ -693,6 +701,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 			"tonemap", job.NeedsToneMap,
 			"prefer_hevc", job.PreferHEVC,
 			"prefer_av1", job.PreferAV1,
+			"param_sets_in_band", probe.paramSetsInBand,
 			"tonemap_cuda", w.cudaTonemap.Load(),
 			"tonemap_opencl", w.hasTonemapOpenCL,
 			"zscale", w.hasZscale,
@@ -725,6 +734,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				AudioPassthrough:     job.AudioPassthrough,
 				DolbyVision:          job.DolbyVision,
 				DVProfileKey:         job.DVProfileKey,
+				HEVCParamSetsInBand:  probe.paramSetsInBand,
 				BurnSubtitle:         job.BurnSubtitle,
 				TSSegments:           job.TSSegments,
 				AudioRate:            job.AudioRate,
