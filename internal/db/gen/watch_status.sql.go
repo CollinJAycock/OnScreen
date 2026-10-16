@@ -16,13 +16,15 @@ const countWatchlist = `-- name: CountWatchlist :one
 SELECT COUNT(*)::bigint
 FROM user_watch_status uws
 JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+LEFT JOIN media_items p ON p.id = mi.parent_id AND p.deleted_at IS NULL
+LEFT JOIN media_items gp ON gp.id = p.parent_id AND gp.deleted_at IS NULL
 WHERE uws.user_id = $1::uuid
   AND ($2::text IS NULL OR uws.status = $2::text)
   AND ($3::text IS NULL OR mi.type = $3::text)
   AND ($4::uuid[] IS NULL
        OR mi.library_id = ANY($4::uuid[]))
   AND ($5::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= $5::int)
+       OR content_rating_rank(COALESCE(NULLIF(mi.content_rating, ''), NULLIF(p.content_rating, ''), gp.content_rating)) <= $5::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, $6::text[], $7::text[])
 `
 
@@ -56,11 +58,13 @@ const countWatchlistByStatusType = `-- name: CountWatchlistByStatusType :many
 SELECT uws.status, mi.type, COUNT(*)::bigint AS count
 FROM user_watch_status uws
 JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+LEFT JOIN media_items p ON p.id = mi.parent_id AND p.deleted_at IS NULL
+LEFT JOIN media_items gp ON gp.id = p.parent_id AND gp.deleted_at IS NULL
 WHERE uws.user_id = $1::uuid
   AND ($2::uuid[] IS NULL
        OR mi.library_id = ANY($2::uuid[]))
   AND ($3::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= $3::int)
+       OR content_rating_rank(COALESCE(NULLIF(mi.content_rating, ''), NULLIF(p.content_rating, ''), gp.content_rating)) <= $3::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, $4::text[], $5::text[])
 GROUP BY uws.status, mi.type
 ORDER BY uws.status, mi.type
@@ -178,7 +182,7 @@ WHERE uws.user_id = $1::uuid
   AND ($5::uuid[] IS NULL
        OR mi.library_id = ANY($5::uuid[]))
   AND ($2::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= $2::int)
+       OR content_rating_rank(COALESCE(NULLIF(mi.content_rating, ''), NULLIF(p.content_rating, ''), gp.content_rating)) <= $2::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, $6::text[], $7::text[])
 ORDER BY CASE WHEN $8::text = 'title'
               THEN lower(COALESCE(NULLIF(mi.sort_title, ''), mi.title)) END ASC,
@@ -229,8 +233,10 @@ type ListWatchlistRow struct {
 //   - only the caller's own rows (a managed profile's claims carry its own id)
 //   - live items only (deleted_at IS NULL)
 //   - library_ids: the caller's grant set (NULL = admin, no filter)
-//   - the content-rating ceiling and the per-user label restriction, the
-//     same predicates every other item list applies.
+//   - the content-rating ceiling and the per-user label restriction. The
+//     rating falls back to the parent's, then the grandparent's (as the digest
+//     does): an episode or season usually carries no rating of its own, and
+//     without the fallback an episode of a show above the ceiling would list.
 //
 // The /watchlist page: the caller's watching-status rows joined to the item
 // and its parent / grandparent (season + show for an episode, album + artist

@@ -87,6 +87,14 @@ func TestWatchlist_Integration(t *testing.T) {
 	season := item(libTV, "season", "Season 2", "G", show, 2, "")
 	episode := item(libTV, "episode", "Golf Episode", "G", season, 5, "")
 	othersMovie := item(libMovies, "movie", "Hotel Other User", "G", uuid.Nil, 0, "")
+	// An R show whose season and episode carry no rating of their own (one
+	// NULL, one empty string): the episode inherits the show's rating.
+	rShow := item(libTV, "show", "India R Show", "R", uuid.Nil, 0, "")
+	rSeason := item(libTV, "season", "Season 1", "", rShow, 1, "")
+	rEpisode := item(libTV, "episode", "Juliet Unrated Episode", "", rSeason, 1, "")
+	if _, err := pool.Exec(ctx, `UPDATE media_items SET content_rating = NULL WHERE id = $1`, rEpisode); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := q.SetMediaItemLabels(ctx, gen.SetMediaItemLabelsParams{ID: labelled, Labels: []string{"horror"}}); err != nil {
 		t.Fatal(err)
@@ -105,6 +113,7 @@ func TestWatchlist_Integration(t *testing.T) {
 		set(kid, id, "plan_to_watch")
 	}
 	set(kid, show, "watching")
+	set(kid, rEpisode, "on_hold")
 	set(other, othersMovie, "plan_to_watch")
 	set(other, visibleMovie, "dropped")
 
@@ -212,6 +221,21 @@ func TestWatchlist_Integration(t *testing.T) {
 		if len(resp.Data) != 0 {
 			t.Errorf("another user's row leaked: %v", titles(resp.Data))
 		}
+	})
+
+	t.Run("an unrated episode inherits its show's rating", func(t *testing.T) {
+		var resp listResp
+		get(t, restricted, "/watchlist?status=on_hold", &resp)
+		if len(resp.Data) != 0 || resp.Meta.Total != 0 {
+			t.Errorf("episode of an R show listed under PG-13: %v (total %d)", titles(resp.Data), resp.Meta.Total)
+		}
+		var counts struct{ Data WatchlistCounts }
+		get(t, restricted, "/watchlist/counts", &counts)
+		if n := counts.Data.Statuses["on_hold"].Total; n != 0 {
+			t.Errorf("on_hold count = %d, want 0", n)
+		}
+		get(t, admin, "/watchlist?status=on_hold", &resp)
+		eq(t, titles(resp.Data), []string{"Juliet Unrated Episode"})
 	})
 
 	t.Run("paging is stable", func(t *testing.T) {

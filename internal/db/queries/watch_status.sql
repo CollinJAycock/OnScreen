@@ -32,8 +32,10 @@ WHERE user_id = $1 AND media_item_id = $2;
 --   * only the caller's own rows (a managed profile's claims carry its own id)
 --   * live items only (deleted_at IS NULL)
 --   * library_ids: the caller's grant set (NULL = admin, no filter)
---   * the content-rating ceiling and the per-user label restriction, the
---     same predicates every other item list applies.
+--   * the content-rating ceiling and the per-user label restriction. The
+--     rating falls back to the parent's, then the grandparent's (as the digest
+--     does): an episode or season usually carries no rating of its own, and
+--     without the fallback an episode of a show above the ceiling would list.
 
 -- name: ListWatchlist :many
 -- The /watchlist page: the caller's watching-status rows joined to the item
@@ -65,7 +67,7 @@ WHERE uws.user_id = sqlc.arg('user_id')::uuid
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+       OR content_rating_rank(COALESCE(NULLIF(mi.content_rating, ''), NULLIF(p.content_rating, ''), gp.content_rating)) <= sqlc.narg('max_rating_rank')::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 ORDER BY CASE WHEN sqlc.arg('sort')::text = 'title'
               THEN lower(COALESCE(NULLIF(mi.sort_title, ''), mi.title)) END ASC,
@@ -77,13 +79,15 @@ LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
 SELECT COUNT(*)::bigint
 FROM user_watch_status uws
 JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+LEFT JOIN media_items p ON p.id = mi.parent_id AND p.deleted_at IS NULL
+LEFT JOIN media_items gp ON gp.id = p.parent_id AND gp.deleted_at IS NULL
 WHERE uws.user_id = sqlc.arg('user_id')::uuid
   AND (sqlc.narg('status')::text IS NULL OR uws.status = sqlc.narg('status')::text)
   AND (sqlc.narg('item_type')::text IS NULL OR mi.type = sqlc.narg('item_type')::text)
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+       OR content_rating_rank(COALESCE(NULLIF(mi.content_rating, ''), NULLIF(p.content_rating, ''), gp.content_rating)) <= sqlc.narg('max_rating_rank')::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
 
 -- name: CountWatchlistByStatusType :many
@@ -92,11 +96,13 @@ WHERE uws.user_id = sqlc.arg('user_id')::uuid
 SELECT uws.status, mi.type, COUNT(*)::bigint AS count
 FROM user_watch_status uws
 JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+LEFT JOIN media_items p ON p.id = mi.parent_id AND p.deleted_at IS NULL
+LEFT JOIN media_items gp ON gp.id = p.parent_id AND gp.deleted_at IS NULL
 WHERE uws.user_id = sqlc.arg('user_id')::uuid
   AND (sqlc.narg('library_ids')::uuid[] IS NULL
        OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
   AND (sqlc.narg('max_rating_rank')::int IS NULL
-       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+       OR content_rating_rank(COALESCE(NULLIF(mi.content_rating, ''), NULLIF(p.content_rating, ''), gp.content_rating)) <= sqlc.narg('max_rating_rank')::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
 GROUP BY uws.status, mi.type
 ORDER BY uws.status, mi.type;
