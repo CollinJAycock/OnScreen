@@ -35,6 +35,8 @@ type WatchStatusHandler struct {
 	// behaviour of accepting any item id.
 	items  watchStatusItemGetter
 	access LibraryAccessChecker
+	// Optional listing store (see WithWatchlist); nil 404s the list routes.
+	list WatchlistDB
 }
 
 // watchStatusItemGetter loads an item for the visibility gate.

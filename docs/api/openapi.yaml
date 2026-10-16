@@ -75,6 +75,8 @@ tags:
     description: Per-user watch history.
   - name: Favorites
     description: Per-user favorited items.
+  - name: Watchlist
+    description: The caller's watching statuses (Plan to Watch, Watching, …) as a list.
   - name: Collections
     description: Curated, server-wide collections.
   - name: Playlists
@@ -1084,6 +1086,93 @@ paths:
       tags: [Favorites]
       responses:
         '204': { description: Removed. }
+
+  /api/v1/watchlist:
+    get:
+      summary: List the caller's watching statuses
+      description: |
+        The caller's own Plan to Watch / Watching / On Hold / Completed /
+        Dropped rows (set with `PUT /api/v1/items/{id}/watch-status`), as
+        cards. Scoped like every item list: only libraries the caller can
+        access, at or under their content-rating ceiling, permitted by their
+        label restriction, and never a deleted item. A managed profile sees
+        only its own rows. `meta.total` counts the same filtered set. v2.6.
+      tags: [Watchlist]
+      parameters:
+        - name: status
+          in: query
+          description: One status, or `all` for every status.
+          schema:
+            type: string
+            enum: [plan_to_watch, watching, on_hold, completed, dropped, all]
+            default: plan_to_watch
+        - name: type
+          in: query
+          description: Only items of this media type.
+          schema:
+            type: string
+            enum: [movie, show, season, episode, track, album, artist, photo, music_video, audiobook, audiobook_chapter, book_author, book_series, podcast, podcast_episode, home_video, book]
+        - name: sort
+          in: query
+          description: |
+            `recent` — newest status change first (when the item entered its
+            current status); `title` — by sort title.
+          schema: { type: string, enum: [recent, title], default: recent }
+        - { $ref: '#/components/parameters/Limit' }
+        - { $ref: '#/components/parameters/Offset' }
+      responses:
+        '200':
+          description: One page of the list.
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/ListEnvelope'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: '#/components/schemas/WatchlistItem' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+
+  /api/v1/watchlist/counts:
+    get:
+      summary: Watchlist counts per status and type
+      description: |
+        Per-status totals with a per-type breakdown, under the same filters as
+        `GET /api/v1/watchlist` — tab badges and the type filter's options.
+        `statuses` always has all five keys. v2.6.
+      tags: [Watchlist]
+      responses:
+        '200':
+          description: Counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      total: { type: integer, format: int64 }
+                      statuses:
+                        type: object
+                        additionalProperties:
+                          type: object
+                          properties:
+                            total: { type: integer, format: int64 }
+                            types:
+                              type: object
+                              additionalProperties: { type: integer, format: int64 }
+              example:
+                data:
+                  total: 4
+                  statuses:
+                    plan_to_watch: { total: 3, types: { movie: 2, show: 1 } }
+                    watching: { total: 1, types: { show: 1 } }
+                    on_hold: { total: 0, types: {} }
+                    completed: { total: 0, types: {} }
+                    dropped: { total: 0, types: {} }
 
   # ── Items ──────────────────────────────────────────────────────────────────
   /api/v1/items/{id}:
@@ -8716,6 +8805,45 @@ components:
         thumb_path:   { type: string, nullable: true }
         duration_ms:  { type: integer, format: int64, nullable: true }
         favorited_at: { type: integer, format: int64, description: 'Unix milliseconds.' }
+
+    WatchlistItem:
+      type: object
+      properties:
+        id:                { type: string, format: uuid }
+        library_id:        { type: string, format: uuid }
+        type:              { type: string }
+        title:             { type: string }
+        year:              { type: integer, nullable: true }
+        index:             { type: integer, nullable: true, description: 'Episode / season / track number.' }
+        parent_id:         { type: string, format: uuid, nullable: true }
+        parent_title:      { type: string, nullable: true, description: 'Season for an episode, album for a track, show for a season.' }
+        parent_index:      { type: integer, nullable: true, description: 'Season number for an episode.' }
+        grandparent_id:    { type: string, format: uuid, nullable: true }
+        grandparent_title: { type: string, nullable: true, description: 'Show for an episode, artist for a track.' }
+        poster_path:       { type: string, nullable: true, description: "The item's poster, else its parent's, else its grandparent's." }
+        fanart_path:       { type: string, nullable: true }
+        thumb_path:        { type: string, nullable: true }
+        duration_ms:       { type: integer, format: int64, nullable: true }
+        watch_state:       { type: string, enum: [watched, in_progress, unwatched], description: 'A show / season rolls up its episodes.' }
+        status:            { type: string, enum: [plan_to_watch, watching, on_hold, completed, dropped] }
+        status_created_at: { type: string, format: date-time, description: 'When the item first got a status.' }
+        status_updated_at: { type: string, format: date-time, description: 'When it entered the current status.' }
+      example:
+        id: 7d0c1f9e-3a51-4c43-9d55-0a2b9f6c1e10
+        library_id: 2b1f5d8a-6c2e-4b7a-8f0e-91c4d3e2a7b5
+        type: episode
+        title: The Rains of Castamere
+        index: 9
+        parent_id: 5c3e7a1b-9d2f-4e8a-b6c1-0f4d2e9a8b73
+        parent_title: Season 3
+        parent_index: 3
+        grandparent_id: 9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d
+        grandparent_title: Game of Thrones
+        poster_path: shows/got/poster.jpg
+        watch_state: unwatched
+        status: plan_to_watch
+        status_created_at: '2026-10-01T18:22:04Z'
+        status_updated_at: '2026-10-01T18:22:04Z'
 
     # ── People ─────────────────────────────────────────────────────────────
     PersonSummary:

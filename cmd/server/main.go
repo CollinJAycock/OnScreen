@@ -1833,7 +1833,7 @@ func run() error {
 		ItemsAdmin:      v1.NewItemBulkAdminHandler(gen.New(rwPool), metaAgent, logger).WithAudit(auditLogger),
 		Labels:          v1.NewLabelHandler(gen.New(rwPool), logger).WithAudit(auditLogger),
 		Music:           v1.NewMusicHandler(gen.New(roPool), logger).WithLibraryAccess(libSvc),
-		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc),
+		WatchStatus:     v1.NewWatchStatusHandler(watchStatusSvc, logger).WithItemGate(gen.New(rwPool), libSvc).WithWatchlist(gen.New(rwPool)),
 		Audiobook:       v1.NewAudiobookHandler(gen.New(rwPool), libSvc, logger),
 		WatchState:      watchStateHandler,
 		Photos:          photosHandler,

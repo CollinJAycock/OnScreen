@@ -12,27 +12,100 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const countUserWatchStatusByStatus = `-- name: CountUserWatchStatusByStatus :one
+const countWatchlist = `-- name: CountWatchlist :one
 SELECT COUNT(*)::bigint
 FROM user_watch_status uws
-JOIN media_items mi ON mi.id = uws.media_item_id
-WHERE uws.user_id = $1
-  AND uws.status = $2
-  AND mi.deleted_at IS NULL
+JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+WHERE uws.user_id = $1::uuid
+  AND ($2::text IS NULL OR uws.status = $2::text)
+  AND ($3::text IS NULL OR mi.type = $3::text)
+  AND ($4::uuid[] IS NULL
+       OR mi.library_id = ANY($4::uuid[]))
+  AND ($5::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $5::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $6::text[], $7::text[])
 `
 
-type CountUserWatchStatusByStatusParams struct {
-	UserID uuid.UUID `json:"user_id"`
-	Status string    `json:"status"`
+type CountWatchlistParams struct {
+	UserID        uuid.UUID   `json:"user_id"`
+	Status        *string     `json:"status"`
+	ItemType      *string     `json:"item_type"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
 }
 
-// Total count for paginated UI — Plan to Watch list shows "1 of 47"
-// under the page heading.
-func (q *Queries) CountUserWatchStatusByStatus(ctx context.Context, arg CountUserWatchStatusByStatusParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countUserWatchStatusByStatus, arg.UserID, arg.Status)
+// Total for ListWatchlist's filters (the page's "N items" + paging).
+func (q *Queries) CountWatchlist(ctx context.Context, arg CountWatchlistParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countWatchlist,
+		arg.UserID,
+		arg.Status,
+		arg.ItemType,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const countWatchlistByStatusType = `-- name: CountWatchlistByStatusType :many
+SELECT uws.status, mi.type, COUNT(*)::bigint AS count
+FROM user_watch_status uws
+JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+WHERE uws.user_id = $1::uuid
+  AND ($2::uuid[] IS NULL
+       OR mi.library_id = ANY($2::uuid[]))
+  AND ($3::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $3::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $4::text[], $5::text[])
+GROUP BY uws.status, mi.type
+ORDER BY uws.status, mi.type
+`
+
+type CountWatchlistByStatusTypeParams struct {
+	UserID        uuid.UUID   `json:"user_id"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
+}
+
+type CountWatchlistByStatusTypeRow struct {
+	Status string `json:"status"`
+	Type   string `json:"type"`
+	Count  int64  `json:"count"`
+}
+
+// Per-(status, type) counts under the same filters: the page's tab badges
+// and the type filter's options (only types the caller actually has).
+func (q *Queries) CountWatchlistByStatusType(ctx context.Context, arg CountWatchlistByStatusTypeParams) ([]CountWatchlistByStatusTypeRow, error) {
+	rows, err := q.db.Query(ctx, countWatchlistByStatusType,
+		arg.UserID,
+		arg.LibraryIds,
+		arg.MaxRatingRank,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []CountWatchlistByStatusTypeRow{}
+	for rows.Next() {
+		var i CountWatchlistByStatusTypeRow
+		if err := rows.Scan(&i.Status, &i.Type, &i.Count); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const deleteUserWatchStatus = `-- name: DeleteUserWatchStatus :exec
@@ -80,96 +153,133 @@ func (q *Queries) GetUserWatchStatus(ctx context.Context, arg GetUserWatchStatus
 	return i, err
 }
 
-const listUserWatchStatusByStatus = `-- name: ListUserWatchStatusByStatus :many
-SELECT mi.id, mi.library_id, mi.type, mi.title, mi.sort_title,
-       mi.year, mi.summary, mi.rating, mi.duration_ms,
-       mi.poster_path, mi.fanart_path, mi.thumb_path,
-       mi.tmdb_id, mi.tvdb_id, mi.anilist_id, mi.mal_id, mi.kind,
-       mi.parent_id, mi.index,
-       uws.status, uws.created_at AS status_created_at,
-       uws.updated_at AS status_updated_at
+const listWatchlist = `-- name: ListWatchlist :many
+
+SELECT mi.id, mi.library_id, mi.type, mi.title, mi.year, mi.index,
+       mi.parent_id, mi.poster_path, mi.fanart_path, mi.thumb_path,
+       mi.duration_ms,
+       p.title       AS parent_title,
+       p.index       AS parent_index,
+       p.poster_path AS parent_poster_path,
+       gp.id          AS grandparent_id,
+       gp.title       AS grandparent_title,
+       gp.poster_path AS grandparent_poster_path,
+       uws.status,
+       uws.created_at AS status_created_at,
+       uws.updated_at AS status_updated_at,
+       media_watch_bucket($1::uuid, mi.id, mi.type, $2::int)::text AS watch_state
 FROM user_watch_status uws
-JOIN media_items mi ON mi.id = uws.media_item_id
-WHERE uws.user_id = $1
-  AND uws.status = $2
-  AND mi.deleted_at IS NULL
-ORDER BY uws.updated_at DESC
-LIMIT $3 OFFSET $4
+JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+LEFT JOIN media_items p ON p.id = mi.parent_id AND p.deleted_at IS NULL
+LEFT JOIN media_items gp ON gp.id = p.parent_id AND gp.deleted_at IS NULL
+WHERE uws.user_id = $1::uuid
+  AND ($3::text IS NULL OR uws.status = $3::text)
+  AND ($4::text IS NULL OR mi.type = $4::text)
+  AND ($5::uuid[] IS NULL
+       OR mi.library_id = ANY($5::uuid[]))
+  AND ($2::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= $2::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, $6::text[], $7::text[])
+ORDER BY CASE WHEN $8::text = 'title'
+              THEN lower(COALESCE(NULLIF(mi.sort_title, ''), mi.title)) END ASC,
+         uws.updated_at DESC, mi.id
+LIMIT $10::int OFFSET $9::int
 `
 
-type ListUserWatchStatusByStatusParams struct {
-	UserID uuid.UUID `json:"user_id"`
-	Status string    `json:"status"`
-	Limit  int32     `json:"limit"`
-	Offset int32     `json:"offset"`
+type ListWatchlistParams struct {
+	UserID        uuid.UUID   `json:"user_id"`
+	MaxRatingRank *int32      `json:"max_rating_rank"`
+	Status        *string     `json:"status"`
+	ItemType      *string     `json:"item_type"`
+	LibraryIds    []uuid.UUID `json:"library_ids"`
+	BlockedLabels []string    `json:"blocked_labels"`
+	AllowedLabels []string    `json:"allowed_labels"`
+	Sort          string      `json:"sort"`
+	Off           int32       `json:"off"`
+	Lim           int32       `json:"lim"`
 }
 
-type ListUserWatchStatusByStatusRow struct {
-	ID              uuid.UUID          `json:"id"`
-	LibraryID       uuid.UUID          `json:"library_id"`
-	Type            string             `json:"type"`
-	Title           string             `json:"title"`
-	SortTitle       string             `json:"sort_title"`
-	Year            *int32             `json:"year"`
-	Summary         *string            `json:"summary"`
-	Rating          pgtype.Numeric     `json:"rating"`
-	DurationMs      *int64             `json:"duration_ms"`
-	PosterPath      *string            `json:"poster_path"`
-	FanartPath      *string            `json:"fanart_path"`
-	ThumbPath       *string            `json:"thumb_path"`
-	TmdbID          *int32             `json:"tmdb_id"`
-	TvdbID          *int32             `json:"tvdb_id"`
-	AnilistID       *int32             `json:"anilist_id"`
-	MalID           *int32             `json:"mal_id"`
-	Kind            *string            `json:"kind"`
-	ParentID        pgtype.UUID        `json:"parent_id"`
-	Index           *int32             `json:"index"`
-	Status          string             `json:"status"`
-	StatusCreatedAt pgtype.Timestamptz `json:"status_created_at"`
-	StatusUpdatedAt pgtype.Timestamptz `json:"status_updated_at"`
+type ListWatchlistRow struct {
+	ID                    uuid.UUID          `json:"id"`
+	LibraryID             uuid.UUID          `json:"library_id"`
+	Type                  string             `json:"type"`
+	Title                 string             `json:"title"`
+	Year                  *int32             `json:"year"`
+	Index                 *int32             `json:"index"`
+	ParentID              pgtype.UUID        `json:"parent_id"`
+	PosterPath            *string            `json:"poster_path"`
+	FanartPath            *string            `json:"fanart_path"`
+	ThumbPath             *string            `json:"thumb_path"`
+	DurationMs            *int64             `json:"duration_ms"`
+	ParentTitle           *string            `json:"parent_title"`
+	ParentIndex           *int32             `json:"parent_index"`
+	ParentPosterPath      *string            `json:"parent_poster_path"`
+	GrandparentID         pgtype.UUID        `json:"grandparent_id"`
+	GrandparentTitle      *string            `json:"grandparent_title"`
+	GrandparentPosterPath *string            `json:"grandparent_poster_path"`
+	Status                string             `json:"status"`
+	StatusCreatedAt       pgtype.Timestamptz `json:"status_created_at"`
+	StatusUpdatedAt       pgtype.Timestamptz `json:"status_updated_at"`
+	WatchState            string             `json:"watch_state"`
 }
 
-// Lists items the user has marked with `status`, joined to
-// media_items so the caller renders without a second round trip.
-// Drives the "Plan to Watch" / "Currently Watching" / etc. list
-// views — anime-tracker UX, generic across types.
-func (q *Queries) ListUserWatchStatusByStatus(ctx context.Context, arg ListUserWatchStatusByStatusParams) ([]ListUserWatchStatusByStatusRow, error) {
-	rows, err := q.db.Query(ctx, listUserWatchStatusByStatus,
+// The watchlist queries (ListWatchlist, CountWatchlist,
+// CountWatchlistByStatusType) share one filter set, kept identical so the
+// paged rows, the total and the tab counts agree for a restricted user:
+//   - only the caller's own rows (a managed profile's claims carry its own id)
+//   - live items only (deleted_at IS NULL)
+//   - library_ids: the caller's grant set (NULL = admin, no filter)
+//   - the content-rating ceiling and the per-user label restriction, the
+//     same predicates every other item list applies.
+//
+// The /watchlist page: the caller's watching-status rows joined to the item
+// and its parent / grandparent (season + show for an episode, album + artist
+// for a track) so a card renders without a second round trip. status NULL =
+// every status; item_type NULL = every type. sort 'title' orders by sort
+// title, anything else by when the item entered its current status, newest
+// first. The id tiebreaker keeps OFFSET paging stable.
+func (q *Queries) ListWatchlist(ctx context.Context, arg ListWatchlistParams) ([]ListWatchlistRow, error) {
+	rows, err := q.db.Query(ctx, listWatchlist,
 		arg.UserID,
+		arg.MaxRatingRank,
 		arg.Status,
-		arg.Limit,
-		arg.Offset,
+		arg.ItemType,
+		arg.LibraryIds,
+		arg.BlockedLabels,
+		arg.AllowedLabels,
+		arg.Sort,
+		arg.Off,
+		arg.Lim,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []ListUserWatchStatusByStatusRow{}
+	items := []ListWatchlistRow{}
 	for rows.Next() {
-		var i ListUserWatchStatusByStatusRow
+		var i ListWatchlistRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.LibraryID,
 			&i.Type,
 			&i.Title,
-			&i.SortTitle,
 			&i.Year,
-			&i.Summary,
-			&i.Rating,
-			&i.DurationMs,
+			&i.Index,
+			&i.ParentID,
 			&i.PosterPath,
 			&i.FanartPath,
 			&i.ThumbPath,
-			&i.TmdbID,
-			&i.TvdbID,
-			&i.AnilistID,
-			&i.MalID,
-			&i.Kind,
-			&i.ParentID,
-			&i.Index,
+			&i.DurationMs,
+			&i.ParentTitle,
+			&i.ParentIndex,
+			&i.ParentPosterPath,
+			&i.GrandparentID,
+			&i.GrandparentTitle,
+			&i.GrandparentPosterPath,
 			&i.Status,
 			&i.StatusCreatedAt,
 			&i.StatusUpdatedAt,
+			&i.WatchState,
 		); err != nil {
 			return nil, err
 		}

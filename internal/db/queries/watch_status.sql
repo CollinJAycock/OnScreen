@@ -26,32 +26,77 @@ RETURNING user_id, media_item_id, status, created_at, updated_at;
 DELETE FROM user_watch_status
 WHERE user_id = $1 AND media_item_id = $2;
 
--- name: ListUserWatchStatusByStatus :many
--- Lists items the user has marked with `status`, joined to
--- media_items so the caller renders without a second round trip.
--- Drives the "Plan to Watch" / "Currently Watching" / etc. list
--- views — anime-tracker UX, generic across types.
-SELECT mi.id, mi.library_id, mi.type, mi.title, mi.sort_title,
-       mi.year, mi.summary, mi.rating, mi.duration_ms,
-       mi.poster_path, mi.fanart_path, mi.thumb_path,
-       mi.tmdb_id, mi.tvdb_id, mi.anilist_id, mi.mal_id, mi.kind,
-       mi.parent_id, mi.index,
-       uws.status, uws.created_at AS status_created_at,
-       uws.updated_at AS status_updated_at
-FROM user_watch_status uws
-JOIN media_items mi ON mi.id = uws.media_item_id
-WHERE uws.user_id = $1
-  AND uws.status = $2
-  AND mi.deleted_at IS NULL
-ORDER BY uws.updated_at DESC
-LIMIT $3 OFFSET $4;
+-- The watchlist queries (ListWatchlist, CountWatchlist,
+-- CountWatchlistByStatusType) share one filter set, kept identical so the
+-- paged rows, the total and the tab counts agree for a restricted user:
+--   * only the caller's own rows (a managed profile's claims carry its own id)
+--   * live items only (deleted_at IS NULL)
+--   * library_ids: the caller's grant set (NULL = admin, no filter)
+--   * the content-rating ceiling and the per-user label restriction, the
+--     same predicates every other item list applies.
 
--- name: CountUserWatchStatusByStatus :one
--- Total count for paginated UI — Plan to Watch list shows "1 of 47"
--- under the page heading.
+-- name: ListWatchlist :many
+-- The /watchlist page: the caller's watching-status rows joined to the item
+-- and its parent / grandparent (season + show for an episode, album + artist
+-- for a track) so a card renders without a second round trip. status NULL =
+-- every status; item_type NULL = every type. sort 'title' orders by sort
+-- title, anything else by when the item entered its current status, newest
+-- first. The id tiebreaker keeps OFFSET paging stable.
+SELECT mi.id, mi.library_id, mi.type, mi.title, mi.year, mi.index,
+       mi.parent_id, mi.poster_path, mi.fanart_path, mi.thumb_path,
+       mi.duration_ms,
+       p.title       AS parent_title,
+       p.index       AS parent_index,
+       p.poster_path AS parent_poster_path,
+       gp.id          AS grandparent_id,
+       gp.title       AS grandparent_title,
+       gp.poster_path AS grandparent_poster_path,
+       uws.status,
+       uws.created_at AS status_created_at,
+       uws.updated_at AS status_updated_at,
+       media_watch_bucket(sqlc.arg('user_id')::uuid, mi.id, mi.type, sqlc.narg('max_rating_rank')::int)::text AS watch_state
+FROM user_watch_status uws
+JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+LEFT JOIN media_items p ON p.id = mi.parent_id AND p.deleted_at IS NULL
+LEFT JOIN media_items gp ON gp.id = p.parent_id AND gp.deleted_at IS NULL
+WHERE uws.user_id = sqlc.arg('user_id')::uuid
+  AND (sqlc.narg('status')::text IS NULL OR uws.status = sqlc.narg('status')::text)
+  AND (sqlc.narg('item_type')::text IS NULL OR mi.type = sqlc.narg('item_type')::text)
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
+ORDER BY CASE WHEN sqlc.arg('sort')::text = 'title'
+              THEN lower(COALESCE(NULLIF(mi.sort_title, ''), mi.title)) END ASC,
+         uws.updated_at DESC, mi.id
+LIMIT sqlc.arg('lim')::int OFFSET sqlc.arg('off')::int;
+
+-- name: CountWatchlist :one
+-- Total for ListWatchlist's filters (the page's "N items" + paging).
 SELECT COUNT(*)::bigint
 FROM user_watch_status uws
-JOIN media_items mi ON mi.id = uws.media_item_id
-WHERE uws.user_id = $1
-  AND uws.status = $2
-  AND mi.deleted_at IS NULL;
+JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+WHERE uws.user_id = sqlc.arg('user_id')::uuid
+  AND (sqlc.narg('status')::text IS NULL OR uws.status = sqlc.narg('status')::text)
+  AND (sqlc.narg('item_type')::text IS NULL OR mi.type = sqlc.narg('item_type')::text)
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[]);
+
+-- name: CountWatchlistByStatusType :many
+-- Per-(status, type) counts under the same filters: the page's tab badges
+-- and the type filter's options (only types the caller actually has).
+SELECT uws.status, mi.type, COUNT(*)::bigint AS count
+FROM user_watch_status uws
+JOIN media_items mi ON mi.id = uws.media_item_id AND mi.deleted_at IS NULL
+WHERE uws.user_id = sqlc.arg('user_id')::uuid
+  AND (sqlc.narg('library_ids')::uuid[] IS NULL
+       OR mi.library_id = ANY(sqlc.narg('library_ids')::uuid[]))
+  AND (sqlc.narg('max_rating_rank')::int IS NULL
+       OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
+  AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
+GROUP BY uws.status, mi.type
+ORDER BY uws.status, mi.type;
