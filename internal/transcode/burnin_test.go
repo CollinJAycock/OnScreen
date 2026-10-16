@@ -72,7 +72,7 @@ func TestBuildHLS_BurnIn_GraphPerEncoder(t *testing.T) {
 				t.Fatalf("burn-in must not use -vf: %s", argStr)
 			}
 			want := "[0:v:0]" + swScale + "[v];" +
-				"[0:5]" + swScale + ":color=black@0[s];" +
+				"[1:5]" + swScale + ":color=black@0[s];" +
 				"[v][s]overlay=eof_action=pass:repeatlast=0," + tc.tail + "[vout]"
 			if got := argAfter(args, "-filter_complex"); got != want {
 				t.Errorf("-filter_complex\n got %s\nwant %s", got, want)
@@ -149,7 +149,7 @@ func TestBuildHLS_BurnIn_AfterTonemap(t *testing.T) {
 	// the same way rather than fitted and padded.
 	a.HasLibplacebo = true
 	graph = argAfter(BuildHLS(a), "-filter_complex")
-	if !strings.Contains(graph, "[0:5]scale=1920:1080[s]") || !strings.Contains(graph, "libplacebo=w=1920:h=1080") {
+	if !strings.Contains(graph, "[1:5]scale=1920:1080[s]") || !strings.Contains(graph, "libplacebo=w=1920:h=1080") {
 		t.Errorf("libplacebo burn-in: %s", graph)
 	}
 }
@@ -160,14 +160,64 @@ func TestBuildHLS_BurnIn_Offset(t *testing.T) {
 		off  int64
 		want string
 	}{
-		{1500, "[0:5]setpts=PTS+1.500/TB,scale="},
-		{-250, "[0:5]setpts=PTS-0.250/TB,scale="},
+		{1500, "[1:5]setpts=PTS+1.500/TB,scale="},
+		{-250, "[1:5]setpts=PTS-0.250/TB,scale="},
 	} {
 		a := burnArgs(EncoderSoftware)
 		a.BurnSubtitle.OffsetMS = tc.off
 		if graph := argAfter(BuildHLS(a), "-filter_complex"); !strings.Contains(graph, tc.want) {
 			t.Errorf("offset %d: want %q in %s", tc.off, tc.want, graph)
 		}
+	}
+}
+
+// The subtitle stream is read through a second input of the same source: same
+// seek and guards as the first, but not paced, so it can run ahead to the next
+// cue (see burnInSubtitleInput). Without a burn-in there is one input.
+func TestBuildHLS_BurnIn_SubtitleInput(t *testing.T) {
+	inputs := func(args []string) (idx []int) {
+		for i, s := range args {
+			if s == "-i" {
+				idx = append(idx, i)
+			}
+		}
+		return idx
+	}
+	a := burnArgs(EncoderHEVCNVENC)
+	a.StartOffset = 1500
+	a.ReadRate, a.ReadRateInitialBurst = 1, 60
+	args := BuildHLS(a)
+	in := inputs(args)
+	if len(in) != 2 || args[in[0]+1] != a.InputPath || args[in[1]+1] != a.InputPath {
+		t.Fatalf("want the source twice as -i: %s", strings.Join(args, " "))
+	}
+	second := args[in[0]+2 : in[1]]
+	if got := argAfter(second, "-ss"); got != "1500.000" {
+		t.Errorf("second input -ss %q, want 1500.000: %v", got, second)
+	}
+	for _, flag := range []string{"-protocol_whitelist", "-analyzeduration", "-probesize"} {
+		if argAfter(second, flag) == "" {
+			t.Errorf("second input lacks %s: %v", flag, second)
+		}
+	}
+	if argAfter(second, "-readrate") != "" {
+		t.Errorf("second input must not be paced: %v", second)
+	}
+	if argAfter(args[:in[0]], "-readrate") != "1.00" {
+		t.Errorf("first input lost its pacing: %s", strings.Join(args, " "))
+	}
+
+	a.InputPath = "http://primary:7070/api/v1/worker/source/x"
+	args = BuildHLS(a)
+	in = inputs(args)
+	if argAfter(args[in[0]+2:in[1]], "-reconnect") != "1" {
+		t.Errorf("HTTP source: second input lacks -reconnect: %s", strings.Join(args, " "))
+	}
+
+	a = burnArgs(EncoderHEVCNVENC)
+	a.BurnSubtitle = nil
+	if n := len(inputs(BuildHLS(a))); n != 1 {
+		t.Errorf("no burn-in: %d inputs, want 1", n)
 	}
 }
 
