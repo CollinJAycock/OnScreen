@@ -594,6 +594,12 @@ func BuildHLS(a BuildArgs) []string {
 
 	args = append(args, "-i", a.InputPath)
 
+	// A burn-in reads its subtitle stream through a second input of the same
+	// source (burnInSubtitleInput, `1:N` in buildBurnInGraph).
+	if burn {
+		args = append(args, burnInSubtitleInput(a)...)
+	}
+
 	// ── Video ────────────────────────────────────────────────────────────────
 	if a.AudioOnly {
 		// No video output at all — no codec, no filters, no tags. The maps
@@ -1131,9 +1137,10 @@ func burnInArgs(a BuildArgs) BuildArgs {
 // and a burn-in is a fallback path; HDR sources are tonemapped to 8-bit
 // before the overlay anyway.
 //
-// The subtitle stream comes from the same input as the video, so an input -ss
-// seeks both: a cue already on screen at the seek point is skipped (its packet
-// is before the seek), and subtitles show from the next cue on.
+// The subtitle stream comes from a second input of the same source
+// (burnInSubtitleInput) seeked to the same point, so a cue already on screen
+// at the seek point is skipped (its packet is before the seek), and subtitles
+// show from the next cue on.
 func buildBurnInGraph(a BuildArgs) string {
 	pre, tail := videoFilterChain(a)
 	if len(pre) == 0 {
@@ -1171,8 +1178,44 @@ func buildBurnInGraph(a BuildArgs) string {
 		tail = []string{"format=yuv420p"}
 	}
 	overlay := "overlay=eof_action=pass:repeatlast=0," + strings.Join(tail, ",")
-	return fmt.Sprintf("[0:v:0]%s[v];[0:%d]%s[s];[v][s]%s[vout]",
+	return fmt.Sprintf("[0:v:0]%s[v];[1:%d]%s[s];[v][s]%s[vout]",
 		strings.Join(pre, ","), a.BurnSubtitle.StreamIndex, strings.Join(sub, ","), overlay)
+}
+
+// burnInSubtitleInput is the second `-i` of a burn-in: the same source again,
+// read only for the subtitle stream the overlay paints.
+//
+// Why a second input: overlay can't emit a frame until it holds the subtitle
+// frame that covers it, and an image subtitle's next packet can sit seconds
+// ahead in the file. Read through the video's own input, getting there means
+// demuxing everything in between, and with an audio track also being encoded
+// the demuxer stalls on the audio queue before it reaches that packet — the
+// whole session then crawls at about real time with no lead at all. Measured
+// on QA (10 Cloverfield Lane, HEVC 10-bit + E-AC-3 + 48 PGS tracks, NVENC):
+// 11 segments in 40 s through one input, 19 with this second one, against 23
+// with no audio at all. A live session at 0.34x stalled the Fire TV's
+// playlist.
+//
+// It takes the first input's seek, probe limits and protocol guards, but not
+// its -readrate: it has to run ahead of the picture to find the next cue, and
+// only the subtitle packets it reads are decoded. Video and audio still come
+// from input 0, so the session's pacing is unchanged.
+func burnInSubtitleInput(a BuildArgs) []string {
+	var args []string
+	if a.StartOffset > 0 {
+		args = append(args, "-ss", fmt.Sprintf("%.3f", a.StartOffset))
+	}
+	if isHTTPURL(a.InputPath) {
+		args = append(args,
+			"-reconnect", "1",
+			"-reconnect_streamed", "1",
+			"-reconnect_delay_max", "2",
+			"-multiple_requests", "1",
+		)
+	}
+	args = append(args, "-analyzeduration", "3000000", "-probesize", "5000000")
+	args = append(args, inputArgs(a.InputPath, a.ConcatParts)...)
+	return append(args, "-i", a.InputPath)
 }
 
 // videoFilterChain builds the video filters in two parts: the chain proper and

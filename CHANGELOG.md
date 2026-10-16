@@ -121,6 +121,10 @@ becomes final on every app. Release note:
     decode/scale/tonemap paths for that session and counts as a heavier job.
     Output is 8-bit. Workers advertise the `burn_in_subtitles` feature, and
     only those get burn-in jobs.
+  - ffmpeg reads the subtitle stream through a second input of the same
+    file. Read through the video's own input, a film with an audio track ran
+    at about real time with no lead and stalled on the Fire TV (0.34× in a
+    live session); with the second input the same film runs at about 1.9×.
 - **Manual collections.** Admins can now make their own movie and TV
   collections ("Halloween night", "Best Picture winners") and share them with
   everyone, alongside the automatic TMDB film series.
