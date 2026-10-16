@@ -417,6 +417,26 @@ type transcodeStartResponse struct {
 	// session paints that stream into the picture; absent otherwise, which
 	// is also what a server without burn-in answers.
 	BurnedSubtitleStreamIndex *int `json:"burned_subtitle_stream_index,omitempty"`
+	// SegmentFormat is the container of the session's HLS segments: "ts"
+	// (MPEG-TS .ts) or "fmp4" (.m4s with an EXT-X-MAP init segment). A player
+	// that must be told up front rather than reading the playlist — a
+	// Chromecast's Default Media Receiver needs hlsSegmentFormat /
+	// hlsVideoSegmentFormat in the LOAD — reads it here. Exact for a remux
+	// and for an ABR ladder. For a single-rendition re-encode that preferred
+	// HEVC or AV1 it is the prediction: a worker without that encoder falls
+	// back to H.264 in .ts, which the media playlist then shows (it is
+	// authoritative once served). Absent on a pre-encoded (static) ladder,
+	// whose master playlist names its codecs; read the playlist there.
+	SegmentFormat string `json:"segment_format,omitempty"`
+}
+
+// segmentFormatOf names a VideoOutput's segment container the way the
+// transcode-start response reports it (SegmentFormat).
+func segmentFormatOf(v transcode.VideoOutput) string {
+	if v.NeedsFMP4() {
+		return "fmp4"
+	}
+	return "ts"
 }
 
 // Burn-in refusals. The first three are the caller's to fix (400); the last
@@ -1500,6 +1520,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		StartOffsetSec:  startOffsetSec,
 		Seg0AudioGapSec: seg0AudioGap,
 		AudioRate:       audioRate,
+		SegmentFormat:   segmentFormatOf(sess.VideoOutput()),
 	}
 	if burn != nil {
 		idx := burn.StreamIndex

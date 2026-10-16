@@ -3152,7 +3152,9 @@ func (h *ItemHandler) ServeSubtitle(w http.ResponseWriter, r *http.Request) {
 	// the served cues only: the cache below holds the stream as extracted,
 	// so an offset change takes effect on the next request without a
 	// re-extraction, and serveVTT's ETag covers the shifted bytes.
-	offset := h.subtitleStreamOffset(r.Context(), fileID, streamIdx)
+	// ?start_ms= rebases the cues onto a player timeline that starts there
+	// (a cast's mid-title HLS session; see subtitleRebaseMS).
+	offset := h.subtitleStreamOffset(r.Context(), fileID, streamIdx) - subtitleRebaseMS(r)
 
 	// Uncached fallback (no cache dir wired — tests / minimal deployments):
 	// stream ffmpeg straight to the client, the original behaviour. With an

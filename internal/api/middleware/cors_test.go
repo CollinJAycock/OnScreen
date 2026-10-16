@@ -413,3 +413,78 @@ func TestCORS_exposesBackupHeadersAndAllowsRange(t *testing.T) {
 		t.Errorf("Allow-Headers = %q, missing Range", allow)
 	}
 }
+
+// TokenURLCORS: a Chromecast receiver (Google's origin) reads token-in-URL
+// media with XHR, so any origin gets `*` — and never credentials.
+func TestTokenURLCORS_anyOriginGetsWildcardWithoutCredentials(t *testing.T) {
+	h := TokenURLCORS(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/transcode/sessions/s/seg/seg00000.ts?token=t", nil)
+	req.Header.Set("Origin", "https://www.gstatic.com")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want the handler's 200", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Allow-Origin = %q, want *", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("Allow-Credentials = %q, want none", got)
+	}
+	if got := rec.Header().Get("Access-Control-Expose-Headers"); !strings.Contains(got, "Content-Range") {
+		t.Errorf("Expose-Headers = %q, want Content-Range exposed for range reads", got)
+	}
+}
+
+// Behind the global CORS middleware with an allowlisted origin, which echoes
+// the origin; the token route still answers `*` and drops any credentials.
+func TestTokenURLCORS_overridesGlobalAnswer(t *testing.T) {
+	h := CORS([]string{"https://app.example"})(TokenURLCORS(okHandler()))
+	req := httptest.NewRequest(http.MethodGet, "/media/subtitles/f/2?token=t", nil)
+	req.Header.Set("Origin", "https://app.example")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Allow-Origin = %q, want *", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Credentials"); got != "" {
+		t.Errorf("Allow-Credentials = %q, want none", got)
+	}
+}
+
+func TestTokenURLCORS_preflight(t *testing.T) {
+	called := false
+	h := TokenURLCORS(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { called = true }))
+	req := httptest.NewRequest(http.MethodOptions, "/api/v1/transcode/sessions/s/playlist.m3u8", nil)
+	req.Header.Set("Origin", "https://www.gstatic.com")
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	req.Header.Set("Access-Control-Request-Headers", "range")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if called {
+		t.Error("preflight reached the handler (it would hit auth with no credentials)")
+	}
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("preflight status = %d, want 204", rec.Code)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "*" {
+		t.Errorf("Allow-Origin = %q, want *", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Headers"); got != "range" {
+		t.Errorf("Allow-Headers = %q, want the requested headers echoed", got)
+	}
+	if got := rec.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, "GET") || strings.Contains(got, "POST") {
+		t.Errorf("Allow-Methods = %q, want GET and no write methods", got)
+	}
+}
+
+// No Origin (a same-origin or native player): nothing added.
+func TestTokenURLCORS_noOrigin(t *testing.T) {
+	h := TokenURLCORS(okHandler())
+	req := httptest.NewRequest(http.MethodGet, "/media/subtitles/f/2", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
+		t.Errorf("Allow-Origin = %q, want none without an Origin", got)
+	}
+}

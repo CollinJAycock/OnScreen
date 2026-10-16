@@ -497,3 +497,104 @@ The web watch page sends `optimized=1`, keeps judging the source with
 a full transcode ("Auto" quality included). `/media/optimized/{id}` applies
 `/media/stream`'s gates; Now Playing shows the stream as a direct play with
 `optimized_version` set and the version as its output.
+
+## 14. Chromecast (Default Media Receiver) (2026-10)
+
+A cast plays on Google's built-in Default Media Receiver: no custom receiver
+app, nothing registered with Google. The sender (web: `web/src/lib/cast.ts` +
+`castSession.ts`; phone: `clients/android_native`) makes the play-decision and
+transcode-start calls **on the Chromecast's behalf**, sending the Chromecast's
+profile as `X-Client-Capabilities` instead of its own. Both senders keep these
+strings exactly; `web/src/lib/cast.ts` `CHROMECAST_CAPS` is the web's one copy
+and `internal/transcode/decision_cast_test.go` pins what they decide.
+
+| Profile | When | `X-Client-Capabilities` |
+|---|---|---|
+| HD (default) | Chromecast gen 1–3, Chromecast HD, anything unrecognised | `videoDecoder=h264,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=1920,maxHeight=1080,maxAudioChannels=2,maxbitdepth=8,hdr=0` |
+| 4K | model name matches `/ultra\|google tv\|streamer\|shield\|android tv\|bravia/i` | `videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=10,hdr=1` |
+
+- `protocols` must list `mp4`: with `hls` alone no file container matches,
+  so even an MP4 the receiver plays as-is comes back `directStream`. `hls`
+  only says the device takes HLS.
+- The Web Sender SDK exposes no model name (Android's `CastDevice` does), so
+  the web matches the regex against the device's friendly name; a renamed
+  device gets HD.
+- A 4K-profile load the receiver fails (the LOAD rejected, or the media goes
+  IDLE with reason ERROR before it ever played) is retried once with HD.
+
+**Flow.**
+
+1. `POST /items/{id}/playback-decision` with the profile.
+   `unsupported` (Dolby Vision profile 5) and `damaged` refuse the cast with a
+   message. A file the receiver plays itself (MP4/M4V/MOV or WebM with
+   H.264/HEVC, file stream token present, not one part of a stacked movie)
+   **and** `directPlay` is cast directly: `/media/stream/{fileId}?token=<stream
+   token>`. So is an audio file the receiver plays (mp3 / AAC / FLAC / Ogg),
+   whatever the verdict, since no audio container is in `protocols`. A
+   non-default audio track or a burn-in never goes direct.
+2. Otherwise `POST /items/{id}/transcode` with the profile and:
+   `video_copy` = verdict is `directPlay` or `directStream`; `position_ms` =
+   where to start; `audio_stream_index`; `burn_subtitle_stream_index` for a
+   selected picture subtitle (always a re-encode); `supports_hevc` explicitly
+   (`false` HD, `true` 4K: the body's value beats the header in both
+   directions); and an explicit `height` = the source's tier (by width or
+   height) capped at 1080 (HD) / 2160 (4K), **never 0**. Height 0 ("Auto")
+   can start an ABR ladder, whose master playlist can't state one segment
+   format and whose rung switches restart encodes under the receiver. (The
+   web retries at 1080 if a server's `TRANSCODE_MAX_HEIGHT` refuses 2160.)
+3. LOAD the response's `playlist_url` made absolute (it carries its segment
+   token) with `contentType: 'application/x-mpegurl'`, `streamType:
+   'BUFFERED'`, and the segment formats the receiver must be told:
+
+   | Segments | `hlsSegmentFormat` | `hlsVideoSegmentFormat` |
+   |---|---|---|
+   | MPEG-TS (H.264 + AAC) — `segment_format: "ts"` | `ts` | `mpeg2_ts` |
+   | fMP4 (HEVC / AV1) — `segment_format: "fmp4"` | `fmp4` | `fmp4` |
+   | audio-only (AAC in MPEG-TS) | `ts_aac` | — |
+
+   `segment_format` in the start response is exact for a remux and an ABR
+   ladder, and a prediction for a re-encode that preferred HEVC/AV1 (a worker
+   without that encoder falls back to H.264 `.ts`). The media playlist is
+   authoritative: the web sender GETs the playlist once before the LOAD (it
+   blocks until segment 0 exists, so the receiver never waits on it) and
+   reads the container off it (`#EXT-X-MAP` / `.m4s` → fmp4, `.ts` → ts).
+   A pre-encoded (static) ladder can still answer a re-encode: its master
+   playlist has no `segment_format`, so read its first variant.
+
+**Timeline.** A single-rendition session started at `position_ms` has its own
+timeline from 0; `start_offset_sec` (else `position_ms`/1000) is where in the
+title that 0 is (earlier than `position_ms` on a video copy, which starts at
+the keyframe before it). The sender keeps `offset = start_offset_sec`, LOADs
+at `currentTime = max(position − offset, seg0_audio_gap_sec)`, and shows /
+reports `offset + receiver currentTime`. A seek inside what the receiver
+reports seekable is a receiver seek; anything else starts a new session at the
+target `position_ms`, LOADs it, and `DELETE /transcode/sessions/{sid}` stops
+the old one (owner-authenticated; transcode-start has already superseded it,
+one session per user and title). Every session's playlist is `EVENT`
+(`-hls_playlist_type event`), so the receiver starts at segment 0, not at a
+live edge.
+
+**Subtitles.** A selected text subtitle is side-loaded as a WebVTT text track
+(`trackContentType: 'text/vtt'`, `activeTrackIds: [1]`) the receiver fetches
+itself, authenticated by the file's stream token:
+`/media/subtitles/{fileId}/{streamIndex}?token=<stream token>` for an embedded
+stream, `/media/subtitles/{fileId}/external/{subId}?token=<stream token>` for an
+external one (the `/media/external-subtitles/{id}` route needs an asset token
+or the cookie). The receiver can't shift cues, so `start_ms=<offset in ms>`
+(the session's `start_offset_sec` × 1000) makes the server move every cue
+that much earlier and drop the ones that already ended. A direct cast plays
+the whole title from 0 and sends no `start_ms`.
+
+**Keep-alive, progress, CORS.** The receiver's segment fetches refresh the
+session's activity; the segment token is an idle timeout refreshed by every
+fetch (4 h idle, never rotated), so a long film doesn't outlive it. The
+sender reports `PUT /items/{id}/progress` as the receiver plays (every 10 s
+and on pause/play/seek) with `client_name` "Chromecast — <device name>" and
+the decision (`directPlay` / `remux` / `transcode`), so resume and Now Playing
+work, and on the cast's end reports `stopped` and DELETEs the session. The
+receiver reads playlists, segments and VTT with XHR from Google's origin:
+those routes (session playlist / segments / ABR rungs, the static ladder, the
+subtitle routes) answer `Access-Control-Allow-Origin: *` and CORS preflights
+(`middleware.TokenURLCORS`) — never with credentials, since the token in the
+URL is their credential. Segments a static ladder serves from object
+storage / a CDN need that bucket's own CORS rule.

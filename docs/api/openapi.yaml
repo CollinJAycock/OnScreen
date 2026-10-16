@@ -2603,7 +2603,12 @@ paths:
       - { in: query, name: token, required: true, schema: { type: string }, description: 'Segment token from `transcodeStart`.' }
     get:
       summary: Serve the rewritten HLS playlist
-      description: Returns `application/x-mpegURL`. Errors are plain text, not the JSON envelope.
+      description: |
+        Returns `application/x-mpegURL`. Errors are plain text, not the JSON
+        envelope. This route, the segment route and the ABR rung routes
+        answer `Access-Control-Allow-Origin: *` (never with credentials; the
+        token in the URL is the only credential) and answer CORS preflights,
+        so a Chromecast receiver on Google's origin can play the session.
       tags: [Transcode]
       security: []
       responses:
@@ -3035,6 +3040,7 @@ paths:
     parameters:
       - { in: path, name: fileId,      required: true, schema: { type: string, format: uuid } }
       - { in: path, name: streamIndex, required: true, schema: { type: integer } }
+      - $ref: '#/components/parameters/SubtitleStartMS'
     get:
       summary: Serve an embedded subtitle as VTT
       tags: [Subtitles]
@@ -3042,7 +3048,8 @@ paths:
         Cues are shifted by the stream's admin offset (v2.6). Sent with an
         ETag and `Cache-Control: private, no-cache`, so an offset change
         reaches clients on their next load; an unchanged track revalidates
-        with 304.
+        with 304. Answers `Access-Control-Allow-Origin: *` (no credentials)
+        so a Chromecast receiver can read it with the `?token=` in the URL.
       responses:
         '200':
           description: Subtitle.
@@ -3050,9 +3057,32 @@ paths:
             text/vtt: {}
         '304': { description: 'If-None-Match matched the current ETag.' }
 
+  /media/subtitles/{fileId}/external/{subId}:
+    parameters:
+      - { in: path, name: fileId, required: true, schema: { type: string, format: uuid } }
+      - { in: path, name: subId,  required: true, schema: { type: string, format: uuid } }
+      - $ref: '#/components/parameters/SubtitleStartMS'
+    get:
+      summary: Serve an external subtitle through its file
+      tags: [Subtitles]
+      description: |
+        v2.6. The same VTT as `/media/external-subtitles/{subId}`, addressed
+        through the file it belongs to, so the file's stream token
+        (`ItemFile.stream_token` as `?token=`) authenticates it — what a
+        cast hands the Chromecast receiver, which has no cookie. 404 when
+        the subtitle belongs to another file. CORS as above.
+      responses:
+        '200':
+          description: Subtitle.
+          content:
+            text/vtt: {}
+        '304': { description: 'If-None-Match matched the current ETag.' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /media/external-subtitles/{subId}:
     parameters:
       - { in: path, name: subId, required: true, schema: { type: string, format: uuid } }
+      - $ref: '#/components/parameters/SubtitleStartMS'
     get:
       summary: Serve a downloaded external subtitle
       tags: [Subtitles]
@@ -7816,6 +7846,17 @@ components:
       name: id
       required: true
       schema: { type: string, format: uuid }
+    SubtitleStartMS:
+      in: query
+      name: start_ms
+      schema: { type: integer, minimum: 0, maximum: 172800000 }
+      description: |
+        v2.6. Rebase the cues onto a player timeline that starts at this
+        content position (ms): every cue moves this much earlier, on top of
+        the track's saved offset, and cues that end before it are dropped.
+        For a player whose stream starts mid-title on a timeline of its own,
+        such as a Chromecast playing a cast HLS session. Missing, malformed
+        or out-of-range values mean no rebase.
     Limit:
       in: query
       name: limit
@@ -9177,6 +9218,22 @@ components:
             that subtitle stream into the picture. Absent otherwise, which is
             also what a server without burn-in answers: a client that asked
             and gets no echo should show the track another way.
+        segment_format:
+          type: string
+          enum: [ts, fmp4]
+          description: |
+            v2.6. The container of the session's HLS segments: `ts`
+            (MPEG-TS `.ts`) or `fmp4` (`.m4s` with an `EXT-X-MAP` init
+            segment). For a player that must be told up front instead of
+            reading the playlist: a Chromecast's Default Media Receiver needs
+            it as `hlsSegmentFormat` / `hlsVideoSegmentFormat` in the LOAD
+            (see docs/capability-profiles.md, "Chromecast (Default Media
+            Receiver)"). Exact for a remux and for an ABR ladder. For a
+            single-rendition re-encode that preferred HEVC or AV1 it is the
+            prediction: a worker without that encoder falls back to H.264 in
+            `.ts`, which the media playlist then shows (the playlist is
+            authoritative once served). Absent on a pre-encoded (static)
+            ladder, whose master playlist lists its CODECS.
 
     # ── Notifications / Sessions ───────────────────────────────────────────
     Notification:
