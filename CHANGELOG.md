@@ -118,7 +118,10 @@ becomes final on every app. Release note:
     `text_version_id` (the stream's OCR'd text version, when there is one).
   - The subtitle timing offset applies (the stream's, else its OCR version's).
     The overlay runs on the CPU, so a burn-in turns off the all-GPU-memory
-    decode/scale/tonemap paths for that session and counts as a heavier job.
+    decode/scale paths for that session and counts as a heavier job. An HDR
+    source still tonemaps on the GPU where `tonemap_cuda` works (NVIDIA): only
+    the finished SDR frame comes down for the overlay, which keeps an HDR
+    burn-in well ahead of real time (CPU tonemapping held it at about 1×).
     Output is 8-bit. Workers advertise the `burn_in_subtitles` feature, and
     only those get burn-in jobs.
   - ffmpeg reads the subtitle stream through a second input of the same

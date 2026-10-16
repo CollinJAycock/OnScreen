@@ -771,11 +771,12 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// the system-memory QSVDecode's place when set (BuildArgs gates QSVDecode
 		// behind !QSVVRAM).
 		//
-		// A subtitle burn-in turns every all-GPU-memory path off (the four
-		// *VRAM / *Tonemap flags below): the overlay is a CPU filter, so the
+		// A subtitle burn-in turns the all-GPU-memory paths off (the *VRAM flags
+		// and the VAAPI tonemap below): the overlay is a CPU filter, so the
 		// frames it paints on have to be in system memory. The system-memory
-		// decode paths (QSVDecode, CudaHevcDecode) and the GPU-assisted HDR
-		// fallback (which ends in hwdownload) stay.
+		// decode paths (QSVDecode, CudaHevcDecode) stay, and so does the CUDA
+		// tonemap, which downloads its finished 8-bit frame for the overlay
+		// (see burnInArgs).
 		burnIn := job.BurnSubtitle != nil
 		qsvVRAMUsable = w.qsvVRAM && !job.NeedsToneMap && !burnIn && IsQSVEncoder(enc) &&
 			(job.IsHEVC || job.IsH264 || job.IsAV1) && enc != "copy"
@@ -794,8 +795,10 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 		// HEVC-validated probe — h264_cuvid is at least as reliable.
 		cudaVRAMUsable = w.cudaScale.Load() && (job.IsHEVC || job.IsH264) && !job.NeedsToneMap && !burnIn && enc != "copy"
 		// All-VRAM CUDA HDR (preferred on NVIDIA): cuvid→scale_cuda→tonemap_cuda
-		// →NVENC, no Vulkan. The HDR analogue of cudaVRAMUsable.
-		cudaTonemapUsable = w.cudaTonemap.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap && !burnIn &&
+		// →NVENC, no Vulkan. The HDR analogue of cudaVRAMUsable. A burn-in keeps
+		// it: the tonemapped 8-bit frame is downloaded for the overlay (see
+		// burnInArgs), which is far cheaper than tonemapping on the CPU.
+		cudaTonemapUsable = w.cudaTonemap.Load() && (job.IsHEVC || job.IsH264) && job.NeedsToneMap &&
 			IsNVENCEncoder(enc) && enc != "copy"
 		// GPU-assisted HDR fallback (scale_cuda + CPU zscale tonemap): used when
 		// tonemap_cuda is unavailable AND libplacebo is unavailable. Requires the
