@@ -1027,6 +1027,42 @@ export class ApiClient {
   del = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
   delete = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
 
+  /** For the few handlers that write a bare JSON body rather than the
+   *  `{data}` envelope (GET/PUT /items/{id}/watch-status — the phone app
+   *  parses that bare shape, so the server keeps it). Accepts either shape,
+   *  so it keeps working if the server ever adds the envelope. Plain
+   *  request() read `.data` off the bare body and returned undefined, so the
+   *  detail page's Status menu never showed the saved value and every change
+   *  toasted an error even though it had been saved. */
+  async requestBare<T>(method: 'GET' | 'PUT', path: string, body?: unknown): Promise<T> {
+    const finalPath = this.withViewAs(method, path);
+    return this.requestWithRetry(
+      finalPath,
+      () => fetch(apiBase + finalPath, {
+        method,
+        headers: authHeaders(),
+        credentials: credentialsMode(),
+        body: body ? JSON.stringify(body) : undefined,
+      }),
+      async (resp) => {
+        if (resp.status === 204) return undefined as T;
+        const json = await resp.json();
+        if (!resp.ok) {
+          const err = json as ApiError;
+          throw new ApiRequestError(
+            err.error?.message ?? `HTTP ${resp.status}`,
+            resp.status,
+            err.error?.code ?? '',
+          );
+        }
+        if (json && typeof json === 'object' && 'data' in json) {
+          return (json as ApiResponse<T>).data;
+        }
+        return json as T;
+      },
+    );
+  }
+
   /**
    * Start or stop the per-tab impersonation override. Pass a UserMeta
    * to begin viewing as that user (banner appears, every GET request
@@ -3704,11 +3740,12 @@ export const itemApi = {
     }>(`/items/${id}/trickplay`),
 
   // Watching-status: per-user Plan to Watch / Watching / etc.
-  // Returns 404 when no row exists; UI treats that as "no status".
+  // GET answers 200 with status "" when no row exists. Both answer with a
+  // bare body, not the {data} envelope (see requestBare).
   getWatchStatus: (id: string) =>
-    api.get<WatchStatus>(`/items/${id}/watch-status`),
+    api.requestBare<WatchStatus>('GET', `/items/${id}/watch-status`),
   setWatchStatus: (id: string, status: WatchStatusValue) =>
-    api.put<WatchStatus>(`/items/${id}/watch-status`, { status }),
+    api.requestBare<WatchStatus>('PUT', `/items/${id}/watch-status`, { status }),
   clearWatchStatus: (id: string) =>
     api.delete(`/items/${id}/watch-status`),
 
@@ -3857,6 +3894,73 @@ export const musicApi = {
 export const favoritesApi = {
   list: (limit = 100, offset = 0) =>
     api.requestList<FavoriteItem>(`/favorites?limit=${limit}&offset=${offset}`)
+};
+
+// ── Watchlist ─────────────────────────────────────────────────────────────────
+// The caller's watching statuses as a list (GET /watchlist). Statuses are set
+// and cleared through itemApi.setWatchStatus / clearWatchStatus.
+
+export interface WatchlistItem {
+  id: string;
+  library_id: string;
+  type: string;
+  title: string;
+  year?: number;
+  /** Episode / season / track number. */
+  index?: number;
+  parent_id?: string;
+  /** Season for an episode, album for a track, show for a season. */
+  parent_title?: string;
+  /** Season number for an episode. */
+  parent_index?: number;
+  grandparent_id?: string;
+  /** Show for an episode, artist for a track. */
+  grandparent_title?: string;
+  /** The item's poster, else its parent's, else its grandparent's. */
+  poster_path?: string;
+  fanart_path?: string;
+  thumb_path?: string;
+  duration_ms?: number;
+  watch_state: 'watched' | 'in_progress' | 'unwatched';
+  status: WatchStatusValue;
+  status_created_at: string;
+  status_updated_at: string;
+}
+
+export type WatchlistSort = 'recent' | 'title';
+
+export interface WatchlistQuery {
+  status?: WatchStatusValue | 'all';
+  type?: string;
+  sort?: WatchlistSort;
+  limit?: number;
+  offset?: number;
+}
+
+export interface WatchlistStatusCount {
+  total: number;
+  types: Record<string, number>;
+}
+
+export interface WatchlistCounts {
+  total: number;
+  statuses: Record<WatchStatusValue, WatchlistStatusCount>;
+}
+
+export function watchlistQueryString(q: WatchlistQuery = {}): string {
+  const p = new URLSearchParams();
+  p.set('status', q.status ?? 'plan_to_watch');
+  if (q.type) p.set('type', q.type);
+  if (q.sort && q.sort !== 'recent') p.set('sort', q.sort);
+  p.set('limit', String(q.limit ?? 50));
+  p.set('offset', String(q.offset ?? 0));
+  return p.toString();
+}
+
+export const watchlistApi = {
+  list: (q: WatchlistQuery = {}) =>
+    api.requestList<WatchlistItem>(`/watchlist?${watchlistQueryString(q)}`),
+  counts: () => api.get<WatchlistCounts>('/watchlist/counts'),
 };
 
 // ── Live TV ───────────────────────────────────────────────────────────────────

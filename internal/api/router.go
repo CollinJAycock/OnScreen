@@ -1556,6 +1556,12 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/watch-status", h.WatchStatus.Get)
 				r.Put("/items/{id}/watch-status", h.WatchStatus.Put)
 				r.Delete("/items/{id}/watch-status", h.WatchStatus.Delete)
+				// The caller's statuses as a list (the web /watchlist page).
+				// A top-level per-user collection like /favorites; the
+				// handler scopes it to the caller's libraries, rating
+				// ceiling and label restriction.
+				r.Get("/watchlist", h.WatchStatus.List)
+				r.Get("/watchlist/counts", h.WatchStatus.Counts)
 			}
 			// Audiobook listening speed (per book) and bookmarks.
 			if h.Audiobook != nil {
