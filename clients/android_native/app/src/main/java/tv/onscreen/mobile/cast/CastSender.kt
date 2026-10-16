@@ -92,9 +92,12 @@ object CastSender {
                 // fMP4 (HEVC / AV1) session then fails to demux.
                 payload.hlsSegmentFormat?.let { fmt ->
                     when (fmt) {
-                        CastHls.SegmentFormat.TS -> {
+                        CastHls.SegmentFormat.TS -> if (payload.hasVideo) {
                             setHlsSegmentFormat(HlsSegmentFormat.TS)
-                            if (payload.hasVideo) setHlsVideoSegmentFormat(HlsVideoSegmentFormat.MPEG2_TS)
+                            setHlsVideoSegmentFormat(HlsVideoSegmentFormat.MPEG2_TS)
+                        } else {
+                            // Audio-only session: AAC in MPEG-TS, no video format.
+                            setHlsSegmentFormat(HlsSegmentFormat.TS_AAC)
                         }
                         CastHls.SegmentFormat.FMP4 -> {
                             setHlsSegmentFormat(HlsSegmentFormat.FMP4)

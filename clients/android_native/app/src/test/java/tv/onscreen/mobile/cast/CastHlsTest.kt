@@ -61,9 +61,32 @@ class CastHlsTest {
     }
 
     @Test
+    fun `a non-default audio track never casts directly`() {
+        assertThat(CastHls.route("directPlay", directCastable = true, audioOnly = false, audioTrackSelected = true))
+            .isEqualTo(Route.Hls(videoCopy = true))
+        assertThat(CastHls.route("directStream", directCastable = true, audioOnly = true, audioTrackSelected = true))
+            .isEqualTo(Route.Hls(videoCopy = true))
+    }
+
+    @Test
+    fun `a burn-in always re-encodes, but refusals still win`() {
+        assertThat(CastHls.route("directPlay", directCastable = true, audioOnly = false, burnIn = true))
+            .isEqualTo(Route.Hls(videoCopy = false))
+        assertThat(CastHls.route("unsupported", directCastable = true, audioOnly = false, burnIn = true))
+            .isEqualTo(Route.Refuse(CastHls.Refusal.DOLBY_VISION))
+    }
+
+    @Test
+    fun `progress goes under the Chromecast's name`() {
+        assertThat(CastHls.clientName("Living Room")).isEqualTo("Chromecast — Living Room")
+        assertThat(CastHls.clientName("  ")).isEqualTo("Chromecast")
+        assertThat(CastHls.clientName(null)).isEqualTo("Chromecast")
+    }
+
+    @Test
     fun `decision reported with progress follows the route`() {
         assertThat(CastHls.decisionOf(Route.Direct, burning = false)).isEqualTo("directPlay")
-        assertThat(CastHls.decisionOf(Route.Hls(true), burning = false)).isEqualTo("directStream")
+        assertThat(CastHls.decisionOf(Route.Hls(true), burning = false)).isEqualTo("remux")
         assertThat(CastHls.decisionOf(Route.Hls(true), burning = true)).isEqualTo("transcode")
         assertThat(CastHls.decisionOf(Route.Hls(false), burning = false)).isEqualTo("transcode")
     }
@@ -71,16 +94,20 @@ class CastHlsTest {
     // ── transcode height ─────────────────────────────────────────────────────
 
     @Test
-    fun `a remux asks for the source height`() {
-        assertThat(CastHls.transcodeHeight(true, 2160, ChromecastCaps.Profile.HD)).isEqualTo(0)
-    }
-
-    @Test
-    fun `a re-encode is capped at the profile, never auto`() {
-        assertThat(CastHls.transcodeHeight(false, 2160, ChromecastCaps.Profile.HD)).isEqualTo(1080)
-        assertThat(CastHls.transcodeHeight(false, 2160, ChromecastCaps.Profile.UHD)).isEqualTo(2160)
-        assertThat(CastHls.transcodeHeight(false, 720, ChromecastCaps.Profile.UHD)).isEqualTo(1080)
-        assertThat(CastHls.transcodeHeight(false, null, ChromecastCaps.Profile.HD)).isEqualTo(1080)
+    fun `the height is the source's tier capped at the profile, never auto`() {
+        val hd = ChromecastCaps.Profile.HD
+        val uhd = ChromecastCaps.Profile.UHD
+        assertThat(CastHls.transcodeHeight(3840, 2160, hd)).isEqualTo(1080)
+        assertThat(CastHls.transcodeHeight(3840, 2160, uhd)).isEqualTo(2160)
+        // A scope 4K picture counts by its width.
+        assertThat(CastHls.transcodeHeight(3840, 1600, uhd)).isEqualTo(2160)
+        assertThat(CastHls.transcodeHeight(1920, 800, uhd)).isEqualTo(1080)
+        assertThat(CastHls.transcodeHeight(1280, 720, uhd)).isEqualTo(720)
+        assertThat(CastHls.transcodeHeight(640, 480, uhd)).isEqualTo(480)
+        // Unknown: the profile's ceiling.
+        assertThat(CastHls.transcodeHeight(null, null, hd)).isEqualTo(1080)
+        assertThat(CastHls.transcodeHeight(null, null, uhd)).isEqualTo(2160)
+        assertThat(CastHls.FALLBACK_HEIGHT).isEqualTo(1080)
     }
 
     // ── segment format ───────────────────────────────────────────────────────
@@ -184,6 +211,14 @@ class CastHlsTest {
     }
 
     @Test
+    fun `the receiver starts past segment 0's audio gap`() {
+        assertThat(CastHls.receiverStartMs(600_000, 600_000, 1.5)).isEqualTo(1_500)
+        assertThat(CastHls.receiverStartMs(605_000, 600_000, 1.5)).isEqualTo(5_000)
+        assertThat(CastHls.receiverStartMs(600_000, 600_000, null)).isEqualTo(0)
+        assertThat(CastHls.receiverStartMs(600_000, 600_000, 0.0)).isEqualTo(0)
+    }
+
+    @Test
     fun `content time is offset plus receiver time`() {
         assertThat(CastHls.contentMs(600_000, 12_345)).isEqualTo(612_345)
         assertThat(CastHls.contentMs(600_000, -1)).isEqualTo(600_000)
@@ -212,29 +247,30 @@ class CastHlsTest {
 
     @Test
     fun `an embedded text subtitle takes the file's stream token`() {
-        assertThat(CastHls.subtitleUrl("https://o.example/", "f 1", "sub:emb:3", null, "stream tok", "asset"))
+        assertThat(CastHls.subtitleUrl("https://o.example/", "f 1", "sub:emb:3", "stream tok", 0))
             .isEqualTo("https://o.example/media/subtitles/f%201/3?token=stream%20tok")
-        // No stream token: the asset token.
-        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:emb:3", null, null, "asset"))
-            .isEqualTo("https://o.example/media/subtitles/f/3?token=asset")
-        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:emb:3", null, null, null)).isNull()
     }
 
     @Test
-    fun `an attached subtitle takes the asset token only`() {
-        assertThat(
-            CastHls.subtitleUrl("https://o.example", "f", "sub:ext:9", "/media/external-subtitles/9", "stream", "asset"),
-        ).isEqualTo("https://o.example/media/external-subtitles/9?token=asset")
-        assertThat(
-            CastHls.subtitleUrl("https://o.example", "f", "sub:ext:9", "/media/external-subtitles/9", "stream", null),
-        ).isNull()
-        assertThat(CastHls.subtitleUrl("https://o.example", "f", "nope", null, "s", "a")).isNull()
+    fun `an attached subtitle goes through its file's route`() {
+        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:ext:9a", "tok", 0))
+            .isEqualTo("https://o.example/media/subtitles/f/external/9a?token=tok")
     }
 
     @Test
-    fun `a text track only rides a session that opens at zero`() {
-        assertThat(CastHls.textTrackAligned(0)).isTrue()
-        assertThat(CastHls.textTrackAligned(2_712_500)).isFalse()
+    fun `a resumed session's cues are rebased with start_ms`() {
+        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:emb:3", "tok", 2_712_500))
+            .isEqualTo("https://o.example/media/subtitles/f/3?token=tok&start_ms=2712500")
+        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:ext:9", "tok", 60_000))
+            .isEqualTo("https://o.example/media/subtitles/f/external/9?token=tok&start_ms=60000")
+    }
+
+    @Test
+    fun `no stream token or an unknown id gives no subtitle`() {
+        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:emb:3", null, 0)).isNull()
+        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:emb:3", "", 0)).isNull()
+        assertThat(CastHls.subtitleUrl("https://o.example", "f", "nope", "tok", 0)).isNull()
+        assertThat(CastHls.subtitleUrl("https://o.example", "f", "sub:emb:x", "tok", 0)).isNull()
     }
 
     // ── LOAD payload ─────────────────────────────────────────────────────────

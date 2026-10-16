@@ -145,35 +145,66 @@ object CastHls {
      * DMR plays the file as it is ([directCastable], today's rule).
      *
      * An audio-only file the DMR plays (mp3 / aac / flac / ogg) keeps the
-     * direct cast whatever the verdict: the profile's `protocols=hls` makes
-     * the server answer directStream for every non-HLS container, and an
-     * audio remux would only cost the receiver gapless, bit-exact playback.
+     * direct cast whatever the verdict: the profile's `protocols` name no
+     * audio container, so the server answers directStream for every one.
+     * A non-default audio track ([audioTrackSelected]) can't go direct — the
+     * receiver plays the file's default one — and a subtitle burn-in
+     * ([burnIn]) is always a re-encode. Same rules as the web's planCast.
      */
-    fun route(verdict: String?, directCastable: Boolean, audioOnly: Boolean): Route = when {
-        verdict == "unsupported" -> Route.Refuse(Refusal.DOLBY_VISION)
-        verdict == "damaged" -> Route.Refuse(Refusal.DAMAGED)
-        directCastable && (verdict == null || verdict == "directPlay" || audioOnly) -> Route.Direct
-        else -> Route.Hls(videoCopy = verdict == "directPlay" || verdict == "directStream")
+    fun route(
+        verdict: String?,
+        directCastable: Boolean,
+        audioOnly: Boolean,
+        audioTrackSelected: Boolean = false,
+        burnIn: Boolean = false,
+    ): Route {
+        if (verdict == "unsupported") return Route.Refuse(Refusal.DOLBY_VISION)
+        if (verdict == "damaged") return Route.Refuse(Refusal.DAMAGED)
+        if (burnIn) return Route.Hls(videoCopy = false)
+        val direct = directCastable && !audioTrackSelected
+        if (direct && (audioOnly || verdict == null || verdict == "directPlay")) return Route.Direct
+        return Route.Hls(videoCopy = verdict == "directPlay" || verdict == "directStream")
     }
 
-    /** The playback mode reported with progress beats for a route. */
+    /** The playback mode reported with progress beats for a route (the
+     *  web's castProgressDecision). */
     fun decisionOf(route: Route, burning: Boolean): String = when (route) {
         Route.Direct -> "directPlay"
-        is Route.Hls -> if (route.videoCopy && !burning) "directStream" else "transcode"
+        is Route.Hls -> if (route.videoCopy && !burning) "remux" else "transcode"
         is Route.Refuse -> "transcode"
     }
 
+    /** The client_name a cast's progress reports go under (Now Playing,
+     *  "Play on…"): "Chromecast — <device name>". */
+    fun clientName(friendlyName: String?): String {
+        val n = friendlyName?.trim().orEmpty()
+        return if (n.isEmpty()) "Chromecast" else "Chromecast — $n"
+    }
+
+    /** The height a transcode start falls back to when the server refuses
+     *  the profile's (400: its TRANSCODE_MAX_HEIGHT is lower). */
+    const val FALLBACK_HEIGHT: Int = 1080
+
     /**
-     * The `height` of the transcode start: 0 ("auto", the source's) for a
-     * remux; for a re-encode the rung the phone itself would ask for, capped
-     * at what [profile] decodes. Never 0 for a re-encode — an auto height
-     * may start an ABR ladder, whose master playlist the DMR can't be given a
-     * single segment format for.
+     * The explicit `height` of the transcode start, remux included: the
+     * source's tier — by width or height, so a 3840×1600 scope counts as
+     * 2160 — capped at what [profile] decodes. Never 0 ("auto"): that may
+     * start an ABR ladder, whose master playlist can't state one segment
+     * format and whose rung switches restart encodes under the receiver.
+     * Same as the web's castTranscodeHeight.
      */
-    fun transcodeHeight(videoCopy: Boolean, sourceHeight: Int?, profile: ChromecastCaps.Profile): Int {
-        if (videoCopy) return 0
-        val rung = if ((sourceHeight ?: 1080) >= 2160) 2160 else 1080
-        return minOf(rung, profile.maxHeight)
+    fun transcodeHeight(sourceWidth: Int?, sourceHeight: Int?, profile: ChromecastCaps.Profile): Int {
+        val cap = profile.maxHeight
+        val w = sourceWidth ?: 0
+        val h = sourceHeight ?: 0
+        val tier = when {
+            w >= 3840 || h >= 2160 -> 2160
+            w >= 1920 || h >= 1080 -> 1080
+            w >= 1280 || h >= 720 -> 720
+            h > 0 -> h
+            else -> cap
+        }
+        return minOf(tier, cap)
     }
 
     // ── timeline ─────────────────────────────────────────────────────────────
@@ -187,8 +218,13 @@ object CastHls {
     fun sessionOffsetMs(startOffsetSec: Double?, requestedMs: Long): Long =
         startOffsetSec?.takeIf { it >= 0.0 && !it.isNaN() }?.let { (it * 1000.0).toLong() } ?: requestedMs.coerceAtLeast(0)
 
-    /** Where the receiver starts within the session (its own time). */
-    fun receiverStartMs(requestedMs: Long, offsetMs: Long): Long = (requestedMs - offsetMs).coerceAtLeast(0)
+    /** Where the receiver starts within the session (its own time): the
+     *  request, but never inside the audio-less head of a remux's segment 0
+     *  ([seg0AudioGapSec], the start response's seg0_audio_gap_sec). */
+    fun receiverStartMs(requestedMs: Long, offsetMs: Long, seg0AudioGapSec: Double? = null): Long {
+        val gap = seg0AudioGapSec?.takeIf { it > 0.0 && !it.isNaN() }?.let { (it * 1000.0).toLong() } ?: 0L
+        return maxOf(0L, requestedMs - offsetMs, gap)
+    }
 
     /** Content time for a receiver (session) position. */
     fun contentMs(offsetMs: Long, receiverMs: Long): Long = offsetMs + receiverMs.coerceAtLeast(0)
@@ -231,51 +267,38 @@ object CastHls {
 
     /**
      * The receiver-fetchable WebVTT URL for the phone's subtitle [trackId]
-     * (`sub:emb:{absoluteIndex}` / `sub:ext:{id}`, see SubtitleTracks), with
-     * its credential in `?token=` — the Chromecast can't be given headers.
+     * (`sub:emb:{absoluteIndex}` / `sub:ext:{id}`, see SubtitleTracks),
+     * authenticated by the file's stream token in `?token=` — the Chromecast
+     * can't be given headers or cookies:
+     *  - embedded: `/media/subtitles/{fileId}/{index}`
+     *  - attached: `/media/subtitles/{fileId}/external/{subId}` (the
+     *    `/media/external-subtitles/{id}` route takes an asset token only).
      *
-     * Embedded: `/media/subtitles/{fileId}/{index}`, the file's stream token
-     * else the asset token. Attached: its server-relative [externalPath]
-     * (`/media/external-subtitles/{id}`), asset token only (a stream token is
-     * bound to a file id, which that route carries none of). Null when there
-     * is no credential to give it, or the id isn't ours.
+     * [startMs] > 0 adds `start_ms`: the server moves every cue that much
+     * earlier and drops the ones already over, rebasing the content-timed VTT
+     * onto a session whose timeline starts there (its start_offset_sec; 0 for
+     * a direct cast or a whole-title ladder). Same as the web's
+     * castSubtitleTrack. Null without a stream token, or for an id not ours.
      */
-    fun subtitleUrl(
-        origin: String,
-        fileId: String,
-        trackId: String,
-        externalPath: String?,
-        fileToken: String?,
-        assetToken: String?,
-    ): String? {
+    fun subtitleUrl(origin: String, fileId: String, trackId: String, streamToken: String?, startMs: Long): String? {
         val base = origin.trimEnd('/')
+        val token = streamToken?.takeIf { it.isNotEmpty() } ?: return null
         if (base.isEmpty()) return null
-        val asset = assetToken?.takeIf { it.isNotEmpty() }
-        return when {
+        val file = encode(fileId)
+        val path = when {
             trackId.startsWith("sub:emb:") -> {
                 val index = trackId.removePrefix("sub:emb:").toIntOrNull() ?: return null
-                val token = fileToken?.takeIf { it.isNotEmpty() } ?: asset ?: return null
-                "$base/media/subtitles/${encode(fileId)}/$index?token=${encode(token)}"
+                "/media/subtitles/$file/$index"
             }
             trackId.startsWith("sub:ext:") -> {
-                val path = externalPath?.takeIf { it.isNotBlank() } ?: return null
-                val token = asset ?: return null
-                val sep = if (path.contains('?')) "&" else "?"
-                "${absolute(base, path)}${sep}token=${encode(token)}"
+                val subId = trackId.removePrefix("sub:ext:").takeIf { it.isNotEmpty() } ?: return null
+                "/media/subtitles/$file/external/${encode(subId)}"
             }
-            else -> null
+            else -> return null
         }
+        val start = if (startMs > 0) "&start_ms=$startMs" else ""
+        return "$base$path?token=${encode(token)}$start"
     }
-
-    /**
-     * Whether a sidecar WebVTT track lines up with a session opening at
-     * [offsetMs]. The server's VTT is CONTENT-timed (one cached extraction
-     * per stream) while the receiver plays session time, and the DMR can't
-     * shift cues (the phone's own player rewrites them — SubtitleShift). So a
-     * text track rides only a session that starts at 0:00 or a direct cast;
-     * elsewhere it would show lines from [offsetMs] earlier in the film.
-     */
-    fun textTrackAligned(offsetMs: Long): Boolean = offsetMs == 0L
 
     private fun encode(s: String): String = URLEncoder.encode(s, "UTF-8").replace("+", "%20")
 }

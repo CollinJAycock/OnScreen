@@ -13,7 +13,7 @@ class ChromecastCapsTest {
     @Test
     fun `HD profile string is the contract's`() {
         assertThat(ChromecastCaps.HD).isEqualTo(
-            "videoDecoder=h264,audioDecoder=aac:mp3,protocols=hls," +
+            "videoDecoder=h264,audioDecoder=aac:mp3,protocols=mp4:hls," +
                 "maxWidth=1920,maxHeight=1080,maxAudioChannels=2,maxbitdepth=8,hdr=0",
         )
     }
@@ -21,7 +21,7 @@ class ChromecastCapsTest {
     @Test
     fun `4K profile string is the contract's`() {
         assertThat(ChromecastCaps.UHD).isEqualTo(
-            "videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=hls," +
+            "videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=mp4:hls," +
                 "maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=10,hdr=1",
         )
     }

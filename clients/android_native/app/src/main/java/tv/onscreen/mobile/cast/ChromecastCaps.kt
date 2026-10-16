@@ -10,6 +10,9 @@ package tv.onscreen.mobile.cast
  * The strings are a shared contract with the web sender and are documented
  * in docs/capability-profiles.md, section "Chromecast (Default Media
  * Receiver)". Change them there and in web/ together, never here alone.
+ * `protocols` lists mp4 as well as hls: with hls alone no file container
+ * matches, and even an MP4 the receiver plays as it is comes back
+ * directStream.
  *
  * Pure Kotlin (no Android imports) so it runs in the JVM unit tests.
  */
@@ -17,13 +20,13 @@ object ChromecastCaps {
 
     /** Chromecast gen 1–3, Chromecast HD, and any device we can't place. */
     const val HD: String =
-        "videoDecoder=h264,audioDecoder=aac:mp3,protocols=hls," +
+        "videoDecoder=h264,audioDecoder=aac:mp3,protocols=mp4:hls," +
             "maxWidth=1920,maxHeight=1080,maxAudioChannels=2,maxbitdepth=8,hdr=0"
 
     /** Chromecast Ultra, Chromecast with Google TV, Google TV Streamer,
      *  Shield and other Android TV / Bravia cast targets. */
     const val UHD: String =
-        "videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=hls," +
+        "videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=mp4:hls," +
             "maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=10,hdr=1"
 
     /** CastDevice model names that get [UHD]. Case-insensitive. */
@@ -31,8 +34,8 @@ object ChromecastCaps {
 
     enum class Profile(
         val header: String,
-        /** The tallest picture the profile decodes — the transcode height
-         *  asked for, so the session never starts an ABR ladder. */
+        /** The tallest picture the profile decodes: the cap on the
+         *  transcode height (CastHls.transcodeHeight). */
         val maxHeight: Int,
         /** The explicit `supports_hevc` of the transcode start. The body's
          *  boolean outranks the header on the server (it is tri-state there),

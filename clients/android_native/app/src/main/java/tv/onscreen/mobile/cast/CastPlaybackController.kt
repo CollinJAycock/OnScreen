@@ -116,9 +116,6 @@ class CastPlaybackController @Inject constructor(
         val starting: Boolean = false,
         /** The receiver has the media (playing, paused or buffering it). */
         val loaded: Boolean = false,
-        /** A text subtitle was picked but can't ride this session (see
-         *  CastHls.textTrackAligned). */
-        val subtitlesDropped: Boolean = false,
         val notice: Notice? = null,
         val ended: Ended? = null,
     ) {
@@ -137,6 +134,8 @@ class CastPlaybackController @Inject constructor(
         val profile: ChromecastCaps.Profile,
         val route: CastHls.Route,
         val decision: String,
+        /** The client_name its progress goes under ("Chromecast — <name>"). */
+        val clientName: String,
         val sessionId: String?,
         val sessionToken: String?,
         val offsetMs: Long,
@@ -258,11 +257,14 @@ class CastPlaybackController @Inject constructor(
             fail(StreamLimit.TITLE, decided.message)
             return
         }
-        var route = CastHls.route(decided.verdict, directCastable(req.file), audioOnly = !req.hasVideo)
-        // Nothing can be burned into a file cast as it is.
-        if (route == CastHls.Route.Direct && req.burnSubtitleStreamIndex != null && req.hasVideo) {
-            route = CastHls.Route.Hls(videoCopy = false)
-        }
+        val route = CastHls.route(
+            decided.verdict,
+            directCastable(req.file),
+            audioOnly = !req.hasVideo,
+            // The receiver plays a file's default audio track only.
+            audioTrackSelected = (req.audioStreamIndex ?: 0) > 0,
+            burnIn = req.burnSubtitleStreamIndex != null && req.hasVideo,
+        )
         Log.i(TAG, "cast decision: server=${decided.verdict} profile=$profile -> $route")
         when (route) {
             is CastHls.Route.Refuse -> when (route.reason) {
@@ -288,7 +290,7 @@ class CastPlaybackController @Inject constructor(
     ) {
         val gen = ++generation
         val burning = req.burnSubtitleStreamIndex != null && route is CastHls.Route.Hls
-        val subtitle = textTrackFor(req, origin)
+        val clientName = CastHls.clientName(castSession()?.castDevice?.friendlyName)
         val payload: CastMediaInfo.Payload
         val next: Active
         when (route) {
@@ -298,30 +300,37 @@ class CastPlaybackController @Inject constructor(
                     fail(null, "This can't be cast.")
                     return
                 }
-                payload = built.copy(textTracks = listOfNotNull(subtitle))
+                // The whole title from 0: the cues need no shift.
+                payload = built.copy(textTracks = listOfNotNull(textTrackFor(req, origin, startMs = 0L)))
                 next = Active(
-                    req, origin, profile, route, CastHls.decisionOf(route, false),
+                    req, origin, profile, route, CastHls.decisionOf(route, false), clientName,
                     sessionId = null, sessionToken = null, offsetMs = 0L,
                     contentId = payload.contentId, retried = retried, generation = gen,
                 )
             }
             is CastHls.Route.Hls -> {
                 val videoCopy = route.videoCopy && !burning
-                val height = CastHls.transcodeHeight(videoCopy, req.file.resolution_h, profile)
+                var height = CastHls.transcodeHeight(req.file.resolution_w, req.file.resolution_h, profile)
+                val body = TranscodeRequest(
+                    file_id = req.file.id,
+                    height = height,
+                    position_ms = req.positionMs.coerceAtLeast(0),
+                    video_copy = videoCopy,
+                    audio_stream_index = req.audioStreamIndex,
+                    supports_hevc = profile.hevc,
+                    burn_subtitle_stream_index = if (burning) req.burnSubtitleStreamIndex else null,
+                )
                 val session = try {
-                    transcodeRepo.startFor(
-                        req.item.id,
-                        TranscodeRequest(
-                            file_id = req.file.id,
-                            height = height,
-                            position_ms = req.positionMs.coerceAtLeast(0),
-                            video_copy = videoCopy,
-                            audio_stream_index = req.audioStreamIndex,
-                            supports_hevc = profile.hevc,
-                            burn_subtitle_stream_index = if (burning) req.burnSubtitleStreamIndex else null,
-                        ),
-                        profile.header,
-                    )
+                    try {
+                        transcodeRepo.startFor(req.item.id, body, profile.header)
+                    } catch (e: HttpException) {
+                        // A server whose TRANSCODE_MAX_HEIGHT is under the 4K
+                        // profile's 2160 refuses that height (400): ask again
+                        // at 1080, as the web sender does.
+                        if (e.code() != 400 || height <= CastHls.FALLBACK_HEIGHT) throw e
+                        height = CastHls.FALLBACK_HEIGHT
+                        transcodeRepo.startFor(req.item.id, body.copy(height = height), profile.header)
+                    }
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -342,11 +351,19 @@ class CastPlaybackController @Inject constructor(
                 }
                 val offset = CastHls.sessionOffsetMs(session.start_offset_sec, req.positionMs)
                 val playlist = CastHls.absolute(origin, session.playlist_url)
-                val format = CastHls.segmentFormatOf(session.segment_format)
-                    ?: probeSegmentFormat(playlist)
+                // The media playlist is authoritative (segment_format is a
+                // prediction for a re-encode a worker may fall back on); it
+                // also holds the LOAD until segment 0 exists.
+                val format = probeSegmentFormat(playlist)
+                    ?: CastHls.segmentFormatOf(session.segment_format)
                     ?: CastHls.guessSegmentFormat(videoCopy, req.file.video_codec, height, profile)
-                val aligned = CastHls.textTrackAligned(offset)
-                val text = subtitle?.takeIf { aligned && !burning }
+                if (gen != generation) {
+                    session.session_id.takeIf { it.isNotEmpty() }?.let { transcodeRepo.stopDetached(it, session.token) }
+                    return
+                }
+                // start_ms rebases the content-timed cues onto the session's
+                // timeline; a burn-in carries the subtitle in the picture.
+                val text = if (burning) null else textTrackFor(req, origin, startMs = offset)
                 payload = CastMediaInfo.buildHls(
                     item = req.item,
                     fileId = req.file.id,
@@ -355,18 +372,17 @@ class CastPlaybackController @Inject constructor(
                     hasVideo = req.hasVideo,
                     contentDurationMs = req.contentDurationMs,
                     offsetMs = offset,
-                    receiverStartMs = CastHls.receiverStartMs(req.positionMs, offset),
+                    receiverStartMs = CastHls.receiverStartMs(req.positionMs, offset, session.seg0_audio_gap_sec),
                     sessionId = session.session_id,
                     baseUrl = origin,
                     textTrack = text,
                 )
                 next = Active(
-                    req, origin, profile, route, CastHls.decisionOf(route, burning),
+                    req, origin, profile, route, CastHls.decisionOf(route, burning), clientName,
                     sessionId = session.session_id.takeIf { it.isNotEmpty() },
                     sessionToken = session.token,
                     offsetMs = offset, contentId = payload.contentId, retried = retried, generation = gen,
                 )
-                _state.update { it.copy(subtitlesDropped = subtitle != null && !burning && !aligned) }
                 Log.i(TAG, "cast HLS: session=${session.session_id} offset=$offset format=$format height=$height copy=$videoCopy")
             }
             is CastHls.Route.Refuse -> return
@@ -519,7 +535,7 @@ class CastPlaybackController @Inject constructor(
             val duration = a.req.contentDurationMs?.takeIf { it > 0 }
             if (duration == null && !progressWithoutDuration()) return@launch
             try {
-                itemRepo.updateProgress(itemId, positionMs, duration, state, a.decision)
+                itemRepo.updateProgressFor(a.clientName, itemId, positionMs, duration, state, a.decision)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -562,7 +578,7 @@ class CastPlaybackController @Inject constructor(
             scope.launch {
                 val duration = a.req.contentDurationMs?.takeIf { it > 0 }
                 if (duration == null && !progressWithoutDuration()) return@launch
-                itemRepo.reportProgressDetached(itemId, positionMs, duration, "stopped", a.decision)
+                itemRepo.reportProgressDetachedFor(a.clientName, itemId, positionMs, duration, "stopped", a.decision)
             }
         }
         a.sessionId?.let { transcodeRepo.stopDetached(it, a.sessionToken.orEmpty()) }
@@ -638,31 +654,21 @@ class CastPlaybackController @Inject constructor(
         streamToken = file.stream_token,
     )
 
-    /** The picked text subtitle as a Cast track, or null (none picked, an
-     *  image-based one, or no credential for it). */
-    private suspend fun textTrackFor(req: Request, origin: String): CastHls.TextTrack? {
+    /** The picked text subtitle as a Cast track, its cues rebased onto a
+     *  timeline starting at content [startMs]; null when none is picked, it
+     *  is image-based, or the file has no stream token to fetch it with. */
+    private fun textTrackFor(req: Request, origin: String, startMs: Long): CastHls.TextTrack? {
         val trackId = req.subtitleTrackId ?: return null
         val file = req.file
         val ext = file.external_subtitles.firstOrNull { "sub:ext:${it.id}" == trackId }
         val emb = file.subtitle_streams.firstOrNull { "sub:emb:${it.index}" == trackId }
         if (ext == null && emb == null) return null
         if (emb != null && (emb.image_based ?: SubtitleTracks.isImageBased(emb.codec))) return null
-        val asset = if (ext != null || file.stream_token.isNullOrEmpty()) {
-            try {
-                serverPrefs.getAssetToken()
-            } catch (e: CancellationException) {
-                throw e
-            } catch (_: Exception) {
-                null
-            }
-        } else {
-            null
-        }
-        val url = CastHls.subtitleUrl(origin, file.id, trackId, ext?.url, file.stream_token, asset) ?: return null
+        val url = CastHls.subtitleUrl(origin, file.id, trackId, file.stream_token, startMs) ?: return null
         return CastHls.TextTrack(
             id = CastHls.TEXT_TRACK_ID,
             url = url,
-            language = ext?.language ?: emb?.language.orEmpty(),
+            language = (ext?.language ?: emb?.language).orEmpty().ifBlank { "und" },
             name = ext?.title ?: emb?.title.orEmpty(),
         )
     }

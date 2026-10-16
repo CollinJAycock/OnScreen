@@ -108,13 +108,6 @@ internal fun CastControlsPanel(
                 Icon(Icons.Default.Stop, contentDescription = "Stop casting", tint = Color.White)
             }
         }
-        if (state.subtitlesDropped) {
-            Text(
-                text = "Subtitles cast only when starting from the beginning.",
-                color = Color(0xCCFFFFFF),
-                style = MaterialTheme.typography.bodySmall,
-            )
-        }
     }
 }
 
