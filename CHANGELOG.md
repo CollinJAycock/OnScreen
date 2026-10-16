@@ -60,6 +60,35 @@ becomes final on every app. Release note:
 
 ### Added
 
+- **Cast any video to a Chromecast from the web player.** The Cast button
+  now shows for every playable video (and audio file), not only MP4s the
+  Chromecast plays as-is. A file it can't play itself is remuxed or
+  transcoded into an HLS stream sized for the device (1080p H.264 for a
+  Chromecast or Chromecast HD; 4K HEVC / HDR for an Ultra, Google TV or
+  SHIELD, falling back to 1080p if the TV refuses it). It still uses
+  Google's built-in receiver: there is nothing to register or install.
+  Resume and seeking work, progress is saved under the Chromecast's name in
+  Now Playing, the selected subtitle goes along (text tracks side-loaded,
+  picture subtitles burned in), and stopping the cast picks up locally where
+  the TV left off. Server side: the HLS playlist, segment, static-ladder and
+  subtitle routes answer CORS for the receiver (`Access-Control-Allow-Origin:
+  *`, token-in-URL only, never credentials); transcode-start returns
+  `segment_format` (`ts` / `fmp4`); subtitle routes take `?start_ms=` to
+  rebase cues onto a stream that starts mid-title, and
+  `/media/subtitles/{fileId}/external/{subId}` serves an external subtitle
+  with the file's stream token; every session's playlist is now `EVENT`
+  (re-encodes were a live playlist, which some players start at its edge).
+  Not yet tried on Chromecast hardware.
+- **Watchlist page.** A new **Watchlist** link in the web sidebar lists
+  everything you've given a status — Plan to Watch first, then Watching, On
+  Hold, Completed and Dropped, one tab each with a count — with a type filter,
+  a title sort and endless scrolling. Each card's ⋯ menu moves it to another
+  list or removes it. Behind it, `GET /api/v1/watchlist` (`status`, `type`,
+  `sort`, `limit` / `offset`) and `GET /api/v1/watchlist/counts` list your own
+  statuses, scoped like every other list: only libraries you can open, nothing
+  above your rating ceiling or hidden by your label restriction, never a
+  deleted item, and a profile sees only its own. The native apps pick it up
+  in a later release.
 - **Dolby Vision for apps that decode it.** The capability profile's `dovi`
   key takes a profile list (`dovi=5:8.1:8.4`, plus `7`; `dovi=1` means
   `5:8.1:8.4`). A file whose profile the app lists plays as Dolby Vision:
@@ -984,6 +1013,13 @@ becomes final on every app. Release note:
 
 ### Fixed
 
+- **The Status menu on a movie or show page shows the saved status.** On the
+  web it always came up blank, and changing it reported an error even though
+  the change had been saved; the Android TV / Fire TV app never showed a
+  status either. `GET` / `PUT /api/v1/items/{id}/watch-status` answered with
+  the bare object while those clients read the `{"data": …}` envelope; the
+  body now carries the fields both at the top level (as the phone app reads
+  them) and under `data`.
 - **Settings that were saved but did nothing now work.**
   - **Library metadata language.** A library's language was stored and never
     used: every library got English from TMDB. Movie and TV titles, summaries,

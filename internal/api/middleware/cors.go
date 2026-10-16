@@ -173,3 +173,70 @@ func isNativeAppOrigin(origin string) bool {
 	_, ok := tauriWebviewOrigins[origin]
 	return ok
 }
+
+// TokenURLCORS answers `Access-Control-Allow-Origin: *` on routes whose
+// credential travels in the URL (`?token=`), so a player running on a
+// third-party origin can read them with XHR/fetch. The case it exists for is
+// Google's Default Media Receiver: a Chromecast plays an OnScreen HLS session
+// from a page served by Google (www.gstatic.com), and its player (Shaka / MPL)
+// fetches the playlist, the segments and side-loaded WebVTT subtitles with
+// XHR — without these headers the receiver can't read a single byte and the
+// cast fails with a load error.
+//
+// Apply it ONLY to token-in-URL media routes: the transcode session playlist
+// and segments (incl. ABR rungs), the static ABR ladder and the subtitle VTT
+// routes. Never to the API at large.
+//
+// Why `*` is safe there:
+//   - `*` can never be combined with credentials. The browser refuses to hand
+//     a cookie-authenticated response to a cross-origin page under `*`
+//     (fetch/XHR with credentials fail outright), and fetch's default
+//     credentials mode doesn't send cookies cross-origin at all. So a
+//     hostile page can read only a response its request authenticated by
+//     itself: with a `?token=` it already holds. Such a page can already
+//     replay the URL from anywhere that isn't a browser (curl), so CORS adds
+//     no reach the token didn't already grant.
+//   - The tokens accepted on these routes are purpose-scoped: a segment
+//     token bound to one transcode session (the HLS routes take nothing
+//     else), or a stream token bound to one file / a user-scoped read-only
+//     asset token on the subtitle and static routes
+//     (RequiredAllowQueryToken). None of them works on the general API.
+//   - Access-Control-Allow-Credentials is never set (that would turn `*`
+//     into an error anyway, and an echoed origin plus credentials would let
+//     any site read cookie-authenticated media).
+//
+// It also answers the CORS preflight (OPTIONS) itself with 204: a receiver
+// request carrying a non-safelisted header (a Range the browser doesn't
+// consider simple, say) is preflighted, and the preflight carries no
+// credentials, so it must not reach the auth middleware. The requested
+// headers are echoed back — safe for the same reason: whatever a page adds,
+// it still can't attach credentials it doesn't already hold.
+func TokenURLCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Origin") == "" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		h := w.Header()
+		h.Set("Access-Control-Allow-Origin", "*")
+		// Range requests: the player reads the byte range it got and the
+		// full length. Content-Type is safelisted already but harmless.
+		h.Set("Access-Control-Expose-Headers", "Content-Length, Content-Range, Accept-Ranges, Content-Type, ETag")
+		if r.Method == http.MethodOptions {
+			h.Set("Access-Control-Allow-Methods", "GET, HEAD, OPTIONS")
+			allow := "Range, Content-Type, Accept, X-Requested-With"
+			if req := strings.TrimSpace(r.Header.Get("Access-Control-Request-Headers")); req != "" {
+				allow = req
+			}
+			h.Set("Access-Control-Allow-Headers", allow)
+			h.Set("Access-Control-Max-Age", "86400")
+			// The global CORS middleware may have set this for an allowlisted
+			// origin; the token-URL answer never carries credentials.
+			h.Del("Access-Control-Allow-Credentials")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		h.Del("Access-Control-Allow-Credentials")
+		next.ServeHTTP(w, r)
+	})
+}

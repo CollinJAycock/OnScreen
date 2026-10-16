@@ -527,6 +527,13 @@
           </svg>
           Favorites
         </a>
+        <!-- The caller's watching statuses (Plan to Watch, Watching, …). -->
+        <a href="/watchlist" class="nav-link" class:active={path.startsWith('/watchlist')}>
+          <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
+            <path fill-rule="evenodd" d="M10 2c-1.716 0-3.408.106-5.07.31C3.806 2.45 3 3.414 3 4.517V17.25a.75.75 0 001.075.676L10 15.082l5.925 2.844A.75.75 0 0017 17.25V4.517c0-1.103-.806-2.068-1.93-2.207A41.403 41.403 0 0010 2z" clip-rule="evenodd"/>
+          </svg>
+          Watchlist
+        </a>
         <a href="/playlists" class="nav-link" class:active={path.startsWith('/playlists')}>
           <svg viewBox="0 0 20 20" fill="currentColor" width="16" height="16">
             <path d="M3 5.75A.75.75 0 013.75 5h9.5a.75.75 0 010 1.5h-9.5A.75.75 0 013 5.75zm0 4A.75.75 0 013.75 9h9.5a.75.75 0 010 1.5h-9.5A.75.75 0 013 9.75zm0 4a.75.75 0 01.75-.75h5.5a.75.75 0 010 1.5h-5.5a.75.75 0 01-.75-.75z"/>

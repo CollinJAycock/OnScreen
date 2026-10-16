@@ -723,13 +723,17 @@ export class ApiClient {
     body?: unknown,
     retry = true,
     signal?: AbortSignal,
+    // Per-call header overrides, laid over authHeaders(): a cast asks the
+    // server on a Chromecast's behalf with that device's
+    // X-Client-Capabilities instead of this browser's.
+    headers?: Record<string, string>,
   ): Promise<T> {
     const finalPath = this.withViewAs(method, path);
     return this.requestWithRetry(
       finalPath,
       () => fetch(apiBase + finalPath, {
         method,
-        headers: authHeaders(),
+        headers: headers ? { ...authHeaders(), ...headers } : authHeaders(),
         credentials: credentialsMode(),
         body: body ? JSON.stringify(body) : undefined,
         signal,
@@ -928,6 +932,10 @@ export class ApiClient {
 
   get = <T>(path: string) => this.request<T>('GET', path);
   post = <T>(path: string, body?: unknown) => this.request<T>('POST', path, body);
+  /** POST with headers that override the defaults for this call only (the
+   *  global X-Client-Capabilities stays the browser's). */
+  postWithHeaders = <T>(path: string, body: unknown, headers: Record<string, string>) =>
+    this.request<T>('POST', path, body, true, undefined, headers);
 
   /** POST a file as the raw request body, typed by the blob (an image
    *  upload). Same auth, retry and error handling as the JSON calls. */
@@ -1018,6 +1026,42 @@ export class ApiClient {
   patch = <T>(path: string, body?: unknown) => this.request<T>('PATCH', path, body);
   del = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
   delete = (path: string, body?: unknown) => this.request<void>('DELETE', path, body);
+
+  /** For the few handlers that write a bare JSON body rather than the
+   *  `{data}` envelope (GET/PUT /items/{id}/watch-status — the phone app
+   *  parses that bare shape, so the server keeps it). Accepts either shape,
+   *  so it keeps working if the server ever adds the envelope. Plain
+   *  request() read `.data` off the bare body and returned undefined, so the
+   *  detail page's Status menu never showed the saved value and every change
+   *  toasted an error even though it had been saved. */
+  async requestBare<T>(method: 'GET' | 'PUT', path: string, body?: unknown): Promise<T> {
+    const finalPath = this.withViewAs(method, path);
+    return this.requestWithRetry(
+      finalPath,
+      () => fetch(apiBase + finalPath, {
+        method,
+        headers: authHeaders(),
+        credentials: credentialsMode(),
+        body: body ? JSON.stringify(body) : undefined,
+      }),
+      async (resp) => {
+        if (resp.status === 204) return undefined as T;
+        const json = await resp.json();
+        if (!resp.ok) {
+          const err = json as ApiError;
+          throw new ApiRequestError(
+            err.error?.message ?? `HTTP ${resp.status}`,
+            resp.status,
+            err.error?.code ?? '',
+          );
+        }
+        if (json && typeof json === 'object' && 'data' in json) {
+          return (json as ApiResponse<T>).data;
+        }
+        return json as T;
+      },
+    );
+  }
 
   /**
    * Start or stop the per-tab impersonation override. Pass a UserMeta
@@ -3616,7 +3660,7 @@ export const itemApi = {
   children: (id: string) =>
     api.requestList<ChildItem>(`/items/${id}/children`),
   progress: (id: string, viewOffsetMs: number, durationMs: number, state: 'playing' | 'paused' | 'stopped',
-             decision?: 'directPlay' | 'directStream' | 'remux' | 'transcode') =>
+             decision?: 'directPlay' | 'directStream' | 'remux' | 'transcode', clientName?: string) =>
     api.put<void>(`/items/${id}/progress`, {
       view_offset_ms: viewOffsetMs,
       duration_ms: durationMs,
@@ -3624,8 +3668,9 @@ export const itemApi = {
       // client_name drives the device picker in the cross-device
       // "Play on…" remote control. Browser builds derive a label
       // from userAgent + a "Web —" prefix so the user can tell the
-      // browser apart from native clients in the picker.
-      client_name: getClientName(),
+      // browser apart from native clients in the picker. A cast reports
+      // as the Chromecast it plays on (clientName).
+      client_name: clientName ?? getClientName(),
       // decision feeds the analytics direct-vs-transcode split.
       ...(decision ? { decision } : {}),
     }),
@@ -3695,11 +3740,12 @@ export const itemApi = {
     }>(`/items/${id}/trickplay`),
 
   // Watching-status: per-user Plan to Watch / Watching / etc.
-  // Returns 404 when no row exists; UI treats that as "no status".
+  // GET answers 200 with status "" when no row exists. Both answer with a
+  // bare body, not the {data} envelope (see requestBare).
   getWatchStatus: (id: string) =>
-    api.get<WatchStatus>(`/items/${id}/watch-status`),
+    api.requestBare<WatchStatus>('GET', `/items/${id}/watch-status`),
   setWatchStatus: (id: string, status: WatchStatusValue) =>
-    api.put<WatchStatus>(`/items/${id}/watch-status`, { status }),
+    api.requestBare<WatchStatus>('PUT', `/items/${id}/watch-status`, { status }),
   clearWatchStatus: (id: string) =>
     api.delete(`/items/${id}/watch-status`),
 
@@ -3848,6 +3894,73 @@ export const musicApi = {
 export const favoritesApi = {
   list: (limit = 100, offset = 0) =>
     api.requestList<FavoriteItem>(`/favorites?limit=${limit}&offset=${offset}`)
+};
+
+// ── Watchlist ─────────────────────────────────────────────────────────────────
+// The caller's watching statuses as a list (GET /watchlist). Statuses are set
+// and cleared through itemApi.setWatchStatus / clearWatchStatus.
+
+export interface WatchlistItem {
+  id: string;
+  library_id: string;
+  type: string;
+  title: string;
+  year?: number;
+  /** Episode / season / track number. */
+  index?: number;
+  parent_id?: string;
+  /** Season for an episode, album for a track, show for a season. */
+  parent_title?: string;
+  /** Season number for an episode. */
+  parent_index?: number;
+  grandparent_id?: string;
+  /** Show for an episode, artist for a track. */
+  grandparent_title?: string;
+  /** The item's poster, else its parent's, else its grandparent's. */
+  poster_path?: string;
+  fanart_path?: string;
+  thumb_path?: string;
+  duration_ms?: number;
+  watch_state: 'watched' | 'in_progress' | 'unwatched';
+  status: WatchStatusValue;
+  status_created_at: string;
+  status_updated_at: string;
+}
+
+export type WatchlistSort = 'recent' | 'title';
+
+export interface WatchlistQuery {
+  status?: WatchStatusValue | 'all';
+  type?: string;
+  sort?: WatchlistSort;
+  limit?: number;
+  offset?: number;
+}
+
+export interface WatchlistStatusCount {
+  total: number;
+  types: Record<string, number>;
+}
+
+export interface WatchlistCounts {
+  total: number;
+  statuses: Record<WatchStatusValue, WatchlistStatusCount>;
+}
+
+export function watchlistQueryString(q: WatchlistQuery = {}): string {
+  const p = new URLSearchParams();
+  p.set('status', q.status ?? 'plan_to_watch');
+  if (q.type) p.set('type', q.type);
+  if (q.sort && q.sort !== 'recent') p.set('sort', q.sort);
+  p.set('limit', String(q.limit ?? 50));
+  p.set('offset', String(q.offset ?? 0));
+  return p.toString();
+}
+
+export const watchlistApi = {
+  list: (q: WatchlistQuery = {}) =>
+    api.requestList<WatchlistItem>(`/watchlist?${watchlistQueryString(q)}`),
+  counts: () => api.get<WatchlistCounts>('/watchlist/counts'),
 };
 
 // ── Live TV ───────────────────────────────────────────────────────────────────
@@ -4665,6 +4778,23 @@ export interface TranscodeSession {
   // warmup. Scrubber offset stays at start_offset_sec; the player
   // just starts playback at (start_offset_sec + seg0_audio_gap_sec).
   seg0_audio_gap_sec: number;
+  // Segment container: 'ts' (MPEG-TS) or 'fmp4' (.m4s + init). Absent on a
+  // pre-encoded ladder and on older servers — read the playlist then. A
+  // Chromecast needs it up front (hlsSegmentFormat in the LOAD).
+  segment_format?: 'ts' | 'fmp4';
+}
+
+/** The transcode-start body (POST /items/{id}/transcode), for callers that
+ *  build it themselves (the Chromecast sender) rather than through start(). */
+export interface TranscodeStartBody {
+  file_id?: string;
+  height: number;
+  position_ms: number;
+  video_copy: boolean;
+  audio_stream_index?: number | null;
+  // Explicit codec answers beat the X-Client-Capabilities header (both ways).
+  supports_hevc?: boolean;
+  burn_subtitle_stream_index?: number;
 }
 
 export interface PlaybackDecision {
@@ -4701,6 +4831,15 @@ export const transcodeApi = {
   // source's own verdict in source_decision. docs/capability-profiles.md.
   decide: (itemId: string, fileId?: string) =>
     api.post<PlaybackDecision>(`/items/${itemId}/playback-decision`, fileId ? { file_id: fileId } : {}),
+  // The same two calls made on another device's behalf: `caps` is that
+  // device's X-Client-Capabilities profile (a Chromecast's, see
+  // $lib/cast), sent instead of this browser's for these calls only.
+  decideFor: (itemId: string, caps: string, fileId?: string) =>
+    api.postWithHeaders<PlaybackDecision>(`/items/${itemId}/playback-decision`,
+      fileId ? { file_id: fileId } : {}, { 'X-Client-Capabilities': caps }),
+  startFor: (itemId: string, caps: string, body: TranscodeStartBody) =>
+    api.postWithHeaders<TranscodeSession>(`/items/${itemId}/transcode`, body,
+      { 'X-Client-Capabilities': caps }),
   stop: (sessionId: string, token: string) =>
     api.del(`/transcode/sessions/${sessionId}?token=${encodeURIComponent(token)}`)
 };

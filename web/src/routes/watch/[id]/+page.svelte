@@ -77,10 +77,12 @@
     episodeHeading,
     episodeNumberLabel
   } from '$lib/episodeRange';
-  // Chromecast / Google Cast sender. Pure helpers (URL build, MIME
-  // map, isCastable predicate) live in $lib/cast and are unit-tested
-  // there; the SDK glue is local to this page.
-  import { buildCastMediaInfo, isCastable } from '$lib/cast';
+  // Chromecast / Google Cast sender. Pure helpers (profiles, plan, LOAD
+  // payloads, timeline math) live in $lib/cast and the per-cast SDK glue in
+  // $lib/castSession, both unit-tested; this page connects the device and
+  // routes its controls to the cast while one runs.
+  import { canCastFile, type CastSubtitleChoice } from '$lib/cast';
+  import { CastController, type CastState } from '$lib/castSession';
   import { AUTO_SKIP_ADS_KEY, commercialAt, commercialId, fileCommercials } from '$lib/commercials';
 
   let showPlaylistPicker = false;
@@ -346,6 +348,10 @@
           } else {
             castReceiverName = '';
           }
+          // The receiver went away (stopped from here, the TV, the Home
+          // app, or the connection dropped): stop the server side and hand
+          // playback back to this page.
+          if (state === 'SESSION_ENDED' && castCtl) void onCastEnded();
         };
         ctx.addEventListener(
           w.cast.framework.CastContextEventType.SESSION_STATE_CHANGED,
@@ -368,63 +374,124 @@
     document.head.appendChild(s);
   }
 
-  // castStart opens the receiver picker and sends a LOAD request
-  // with the current item + selected file. The build of the LOAD
-  // payload itself comes from buildCastMediaInfo (in $lib/cast,
-  // unit-tested) so this glue stays minimal.
+  // The running cast (null when this page isn't casting). While it's set the
+  // player's controls (play/pause, seek bar, keys) drive the receiver, the
+  // scrubber shows the receiver's position, and the controller — not this
+  // page — reports progress, as the Chromecast.
+  let castCtl: CastController | null = null;
+  // The local player was on an HLS session when the cast took over: it was
+  // torn down (the cast's own session supersedes it server-side anyway, and
+  // a paused hls.js polling a dead session would restart it), so the way
+  // back starts a fresh one.
+  let castTookLocalHls = false;
+  // Set when the page moved to another title mid-cast: that title's start
+  // goes to the still-connected device instead of this page's player.
+  let castFollowNext = false;
+
+  // castStart casts the current item: opens the device picker when no
+  // receiver is connected yet, hands the local playhead over, and lets the
+  // CastController ($lib/castSession) pick direct cast or an HLS session
+  // from the server's decision for the Chromecast's profile.
   async function castStart() {
-    if (!castAvailable || !item || !item.files?.length) return;
+    if (!castAvailable || !item || !item.files?.length || castCtl) return;
     const file = item.files[0];
-    if (!isCastable(file as any)) return;
+    if (!canCastFile(file)) return;
     castSessionLoading = true;
     try {
       const w = window as any;
       const ctx = w.cast.framework.CastContext.getInstance();
-      // requestSession opens the device picker. Resolves once the
-      // user picks a device (or rejects on cancel).
-      await ctx.requestSession();
-      const session = ctx.getCurrentSession();
-      if (!session) return;
-
-      const baseUrl = window.location.origin;
-      const info = buildCastMediaInfo(item as any, file as any, baseUrl);
-      if (!info) return;
-
-      const mediaInfo = new w.chrome.cast.media.MediaInfo(info.contentId, info.contentType);
-      mediaInfo.streamType = w.chrome.cast.media.StreamType.BUFFERED;
-      const meta = new w.chrome.cast.media.GenericMediaMetadata();
-      meta.title = info.metadata.title;
-      if (info.metadata.subtitle) meta.subtitle = info.metadata.subtitle;
-      if (info.metadata.images && info.metadata.images.length > 0) {
-        meta.images = info.metadata.images.map((i) => new w.chrome.cast.Image(i.url));
+      if (!ctx.getCurrentSession()) {
+        // Opens the device picker; resolves once the user picks a device
+        // and rejects on cancel.
+        try {
+          await ctx.requestSession();
+        } catch {
+          return;
+        }
       }
-      mediaInfo.metadata = meta;
-      if (info.duration) mediaInfo.duration = info.duration;
-      mediaInfo.customData = info.customData;
+      if (!ctx.getCurrentSession() || !item) return;
 
-      const req = new w.chrome.cast.media.LoadRequest(mediaInfo);
-      // Hand off the local playhead so the receiver picks up where the user
-      // was watching, not from zero. CONTENT time, not stream time: during an
-      // offset HLS session videoEl.currentTime is stream-relative, and the
-      // receiver plays the source from its own start — handing it the raw
-      // element time rewound the cast by the session's start offset.
-      if (videoEl && Number.isFinite(videoEl.currentTime)) {
-        req.currentTime = videoEl.currentTime + hlsOffsetSec;
+      // Hand off the local playhead in CONTENT time (an offset HLS session's
+      // element time is stream-relative).
+      const positionSec = videoEl && Number.isFinite(videoEl.currentTime) && (videoEl.currentTime > 0 || hlsActive)
+        ? videoEl.currentTime + hlsOffsetSec
+        : (item.view_offset_ms ?? 0) / 1000;
+      if (videoEl && !videoEl.paused) videoEl.pause();
+      stopProgressTimer();
+      if (hlsActive) {
+        castTookLocalHls = true;
+        destroyHls();
+        await stopTranscodeSession();
       }
-      await session.loadMedia(req);
-      if (videoEl) videoEl.pause();
-    } catch {
-      // User cancelled the picker, or the receiver rejected the
-      // load (DRM, codec, etc.). Surface nothing — the user already
-      // sees the picker close, and the local video is unaffected.
+      const sel = selectedSubtitle;
+      const subtitle: CastSubtitleChoice | null = sel
+        ? { origin: sel.origin, fileId: sel.fileId, streamIndex: sel.streamIndex, subId: sel.subId, label: sel.label, language: sel.language }
+        : null;
+      const ctl = new CastController(window, window.location.origin, {
+        decide: (itemId, caps, fileId) => transcodeApi.decideFor(itemId, caps, fileId),
+        start: (itemId, caps, body) => transcodeApi.startFor(itemId, caps, body),
+        stop: (sid, token) => transcodeApi.stop(sid, token),
+        progress: (itemId, posMs, durMs, state, decision, clientName) =>
+          itemApi.progress(itemId, posMs, durMs, state, decision, clientName),
+        fetchText: async (url, signal) => {
+          const r = await fetch(url, { signal, cache: 'no-store' });
+          if (!r.ok) throw new Error(`playlist: HTTP ${r.status}`);
+          return r.text();
+        },
+      }, onCastState, (msg) => toast.error(msg));
+      castCtl = ctl;
+      const ok = await ctl.start({
+        item,
+        file,
+        positionSec,
+        durationSec: duration > 0 ? duration : (item.duration_ms ?? file.duration_ms ?? 0) / 1000,
+        audioStreamIndex: selectedAudioIndex >= 0 ? selectedAudioIndex : undefined,
+        subtitle,
+        burnStreamIndex: burnedStreamIndex,
+      });
+      // Refused or failed (the controller has said why): nothing plays on
+      // the receiver, so control comes back here. The device stays
+      // connected; the Cast button tries again.
+      if (!ok && castCtl === ctl) await onCastEnded();
+    } catch (e) {
+      toast.error(e instanceof Error && e.message ? e.message : "Couldn't start casting.");
     } finally {
       castSessionLoading = false;
     }
   }
 
-  // castStop ends the active session; the receiver returns to its
-  // idle state and local playback is unaffected (already paused
-  // when cast started, the user can press play again).
+  function onCastState(s: CastState) {
+    if (!castCtl) return;
+    if (!seeking) currentTime = s.positionSec;
+    paused = s.paused || s.ended;
+    buffering = s.buffering;
+  }
+
+  // The receiver session ended: stop the cast's server session and report
+  // where it got to, then leave the local player paused at that point.
+  async function onCastEnded() {
+    const ctl = castCtl;
+    castCtl = null;
+    if (!ctl) return;
+    const pos = await ctl.end();
+    buffering = false;
+    paused = true;
+    if (!item) return;
+    currentTime = pos;
+    item.view_offset_ms = Math.round(pos * 1000);
+    if (castTookLocalHls) {
+      castTookLocalHls = false;
+      skipAutoSeek = true;
+      await playAtQuality(selectedQuality, Math.round(pos * 1000));
+      if (videoEl && !videoEl.paused) videoEl.pause();
+    } else if (videoEl && Number.isFinite(videoEl.duration)) {
+      videoEl.currentTime = Math.max(0, pos - hlsOffsetSec);
+    }
+  }
+
+  // castStop ends the active session; onCastEnded (via the session-state
+  // listener) stops the server side and leaves local playback paused where
+  // the cast was.
   function castStop() {
     try {
       const w = window as any;
@@ -1455,6 +1522,15 @@
 
   $: if (mounted && id && id !== prevId) {
     prevId = id;
+    // A new title while casting (next episode, a pick from the page): the
+    // old cast's server side stops here, and startPlayback casts the new
+    // one to the still-connected device instead of playing it locally.
+    if (castCtl) {
+      void castCtl.end();
+      castCtl = null;
+      castTookLocalHls = false;
+      castFollowNext = true;
+    }
     clearTimers();
     if (videoEl && !videoEl.paused) saveProgress('stopped');
     stopTranscodeSession();
@@ -1494,6 +1570,13 @@
     cancelSleepTimer();
     unsubProgress();
     unsubPlaybackStop();
+    // Leaving the page doesn't stop the TV: the receiver keeps playing (its
+    // segment fetches keep the session alive); this page just stops
+    // reporting for it.
+    if (castCtl) {
+      castCtl.detach();
+      castCtl = null;
+    }
     document.removeEventListener('webkitfullscreenchange', onFullscreenChange);
     window.removeEventListener('mousemove', onSeekMouseMove);
     window.removeEventListener('mouseup', onSeekMouseUp);
@@ -2255,6 +2338,15 @@
     if (isDamaged(file)) {
       paused = true;
       return;
+    }
+    // Moved here from another title mid-cast: this one plays on the TV too.
+    if (castFollowNext) {
+      castFollowNext = false;
+      if (castConnected && castAvailable && canCastFile(file)) {
+        paused = true;
+        await castStart();
+        return;
+      }
     }
     // Signal intent to auto-play so controls don't flash a paused state.
     paused = false;
@@ -3098,6 +3190,8 @@
   }
 
   async function saveProgress(state: 'playing' | 'paused' | 'stopped') {
+    // While casting, the cast controller reports (as the Chromecast).
+    if (castCtl) return;
     if (!item || !videoEl || duration === 0) return;
     const positionMs = Math.floor(currentTime * 1000);
     lastSelfReportedMs = positionMs;
@@ -3121,6 +3215,10 @@
   }
 
   function togglePlay() {
+    if (castCtl) {
+      castCtl.togglePlay();
+      return;
+    }
     if (!videoEl) return;
     if (videoEl.paused) videoEl.play().catch(() => {});
     else videoEl.pause();
@@ -3361,6 +3459,11 @@
   // actually encoded.
   function seekToContentTime(targetSec: number) {
     targetSec = Math.max(0, Math.min(targetSec, duration));
+    if (castCtl) {
+      // The receiver seeks, or a new cast session starts there.
+      void castCtl.seek(targetSec);
+      return;
+    }
     if (!hlsActive) {
       videoEl.currentTime = targetSec;
       return;
@@ -3806,6 +3909,10 @@
       <div class="buffer-overlay">
         <div class="spinner"></div>
       </div>
+    {/if}
+
+    {#if castCtl}
+      <div class="cast-overlay">Playing on {castReceiverName || 'your TV'}</div>
     {/if}
 
     <!-- Fanart background (blurred, behind controls) -->
@@ -4320,17 +4427,19 @@
               </div>
             {/if}
 
-            <!-- Cast / Chromecast. Only renders once the SDK reports
-                 a receiver reachable; greyed out when the file isn't
-                 castable (AV1 source, MKV, etc — see isCastable). -->
-            {#if castAvailable && item?.files?.[0] && isCastable(item.files[0] as any)}
+            <!-- Cast / Chromecast. Only renders once the SDK reports a
+                 receiver reachable. Any playable file: one the receiver
+                 can't play itself goes over as an HLS session (see
+                 $lib/cast planCast). With a device connected but nothing
+                 of ours playing on it, a click casts this title there. -->
+            {#if castAvailable && item?.files?.[0] && canCastFile(item.files[0])}
               <button
                 class="icon-btn small cast-btn"
                 class:active={castConnected}
-                on:click|stopPropagation={castConnected ? castStop : castStart}
+                on:click|stopPropagation={castCtl ? castStop : castStart}
                 disabled={castSessionLoading}
-                title={castConnected ? `Casting to ${castReceiverName}` : 'Cast to TV'}
-                aria-label={castConnected ? 'Stop casting' : 'Cast to TV'}
+                title={castCtl ? `Casting to ${castReceiverName}` : castConnected ? `Cast to ${castReceiverName}` : 'Cast to TV'}
+                aria-label={castCtl ? 'Stop casting' : 'Cast to TV'}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16">
                   <path d="M2 16.1A5 5 0 0 1 5.9 20M2 12.05A9 9 0 0 1 9.95 20M2 8V6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-6"/>
@@ -6133,6 +6242,19 @@
   }
   @keyframes fadeout { to { opacity: 0; } }
 
+  .cast-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, calc(-50% + 3rem));
+    padding: 0.4rem 0.9rem;
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    font-size: 0.9rem;
+    pointer-events: none;
+    z-index: 5;
+  }
   .buffer-overlay {
     position: absolute;
     inset: 0;

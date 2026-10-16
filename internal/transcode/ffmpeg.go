@@ -987,16 +987,23 @@ func BuildHLS(a BuildArgs) []string {
 		// there.
 		args = append(args, "-hls_fmp4_init_filename", "init.mp4")
 	}
-	// Mark remux sessions as EVENT so HLS.js starts from segment 0 rather than
-	// jumping to the live edge. For video-copy, FFmpeg runs 10-100x real-time,
-	// so by the time HLS.js loads the playlist it sees many segments and would
-	// otherwise skip ahead (liveSyncDurationCount=3 × targetDuration behind
-	// the last segment), causing a stall waiting for segments past the live edge.
-	// Audio-only encodes run at a similar multiple of real-time, so they get
-	// the same treatment.
-	if videoCopy || a.AudioOnly {
-		args = append(args, "-hls_playlist_type", "event")
-	}
+	// Every session's playlist is EVENT, so players start from segment 0
+	// rather than jumping to the live edge: a session's stream time 0 IS the
+	// position the client asked for, never something to skip past.
+	//
+	// Remux and audio-only sessions have always been EVENT: FFmpeg runs them
+	// 10-100x real-time, so by the time HLS.js loads the playlist it sees many
+	// segments and would otherwise skip ahead (liveSyncDurationCount=3 ×
+	// targetDuration behind the last segment) and stall waiting past the edge.
+	// Re-encodes were left without a playlist type, i.e. a live playlist,
+	// which only started at 0 because a real-time encode has few segments when
+	// the playlist is first read — not true of a GPU encode running several
+	// times real-time, and not true of every player's live-start rule: a
+	// Chromecast's Default Media Receiver starts a live playlist near its
+	// edge. EVENT is the shape every first-party player (web, Android TV and
+	// phone, Tizen, webOS, Roku) already plays on every remux, so making it
+	// universal changes no player's handling, only where a re-encode starts.
+	args = append(args, "-hls_playlist_type", "event")
 	// A client that asked for MPEG-TS (Samsung AVPlay) gets segments whose
 	// timestamps start at the stream's start. By default the mpegts muxer
 	// offsets every timestamp by twice -max_delay (10 s here), and AVPlay

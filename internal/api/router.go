@@ -255,15 +255,38 @@ func NewRouter(h *Handlers) http.Handler {
 			// stream-purpose token (24 h, file_id-bound) authenticates a
 			// download from a mobile webview that can't carry cookies.
 			r.Get("/media/download/{id}", h.Items.DownloadFile)
-			r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
 			// An optimized version (Optimize…) for direct play. Same gates
 			// as /media/stream; a stream token bound to the version's id
 			// (optimized_versions[].stream_token) authenticates it.
 			r.Get("/media/optimized/{id}", h.Items.StreamOptimized)
 		}
-		if h.Subtitles != nil {
-			r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
-		}
+	})
+	// Subtitle VTT routes: the same auth as the group above, behind
+	// TokenURLCORS (Access-Control-Allow-Origin: *), because a Chromecast's
+	// Default Media Receiver fetches a cast's text track with XHR from
+	// Google's origin, authenticated by the ?token= in the URL. See
+	// TokenURLCORS for why `*` is safe on token-in-URL routes. The OPTIONS
+	// routes answer a preflight ahead of auth (a preflight carries no
+	// credentials).
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.TokenURLCORS)
+		r.Options("/media/subtitles/{fileId}/{streamIndex}", http.NotFound)
+		r.Options("/media/subtitles/{fileId}/external/{subId}", http.NotFound)
+		r.Options("/media/external-subtitles/{subId}", http.NotFound)
+		r.Group(func(r chi.Router) {
+			r.Use(h.Auth_mw.RequiredAllowQueryToken)
+			if h.Items != nil {
+				r.Get("/media/subtitles/{fileId}/{streamIndex}", h.Items.ServeSubtitle)
+			}
+			if h.Subtitles != nil {
+				r.Get("/media/external-subtitles/{subId}", h.Subtitles.Serve)
+				// An external subtitle addressed through its file, so the
+				// file-bound stream token (the one a cast already holds for
+				// the video) authenticates it; the handler checks that the
+				// subtitle belongs to that file.
+				r.Get("/media/subtitles/{fileId}/external/{subId}", h.Subtitles.ServeForFile)
+			}
+		})
 	})
 	// Catch any /media/stream/* path that doesn't match {id} (e.g. encoded-slash
 	// traversal probes producing a single path segment). Return 400 so these
@@ -284,8 +307,17 @@ func NewRouter(h *Handlers) http.Handler {
 		// the caller's identity here is a segment token rather than a session
 		// (SessionKey falls back to IPKey anyway when no session is present).
 		r.Group(func(r chi.Router) {
+			// Ahead of the limiter: a cast's receiver (Google's Default Media
+			// Receiver, on Google's origin) reads these with XHR, and the
+			// segment token in the URL is their only credential — see
+			// TokenURLCORS. It answers the OPTIONS preflights below itself.
+			r.Use(middleware.TokenURLCORS)
 			r.Use(middleware.RateLimit(h.RateLimiter, middleware.SessionLimit,
 				middleware.IPKey("ratelimit:hls")))
+			r.Options("/api/v1/transcode/sessions/{sid}/playlist.m3u8", http.NotFound)
+			r.Options("/api/v1/transcode/sessions/{sid}/seg/{name}", http.NotFound)
+			r.Options("/api/v1/transcode/sessions/{sid}/abr/{rung}/index.m3u8", http.NotFound)
+			r.Options("/api/v1/transcode/sessions/{sid}/abr/{rung}/seg/{name}", http.NotFound)
 			r.Get("/api/v1/transcode/sessions/{sid}/playlist.m3u8", h.NativeTranscode.Playlist)
 			r.Get("/api/v1/transcode/sessions/{sid}/seg/{name}", h.NativeTranscode.Segment)
 			// Adaptive-bitrate: per-rung media playlist (server-predicted) +
@@ -706,6 +738,27 @@ func NewRouter(h *Handlers) http.Handler {
 		// content-rating ceiling carried in the token claims). Kept out of
 		// the Required group below so the query-token carrier is accepted —
 		// without this, cross-origin players got a silent 401 on segments.
+		//
+		// Static (pre-encoded) ABR ladder. Authorizes per-request via
+		// staticFileAccess (library ACL + content-rating ceiling), so it
+		// rides the same query-token middleware as the other asset GETs —
+		// behind TokenURLCORS, since a cast's receiver reads the ladder with
+		// XHR from Google's origin (see TokenURLCORS). Segments a signed
+		// object-storage/CDN URL serves need that bucket's own CORS rule.
+		if h.NativeTranscode != nil {
+			r.Group(func(r chi.Router) {
+				r.Use(middleware.TokenURLCORS)
+				r.Options("/transcode/static/{fileID}/master.m3u8", http.NotFound)
+				r.Options("/transcode/static/{fileID}/{rung}/index.m3u8", http.NotFound)
+				r.Options("/transcode/static/{fileID}/{rung}/seg/{name}", http.NotFound)
+				r.Group(func(r chi.Router) {
+					r.Use(h.Auth_mw.RequiredAllowQueryToken)
+					r.Get("/transcode/static/{fileID}/master.m3u8", h.NativeTranscode.StaticMaster)
+					r.Get("/transcode/static/{fileID}/{rung}/index.m3u8", h.NativeTranscode.StaticRung)
+					r.Get("/transcode/static/{fileID}/{rung}/seg/{name}", h.NativeTranscode.StaticSegment)
+				})
+			})
+		}
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth_mw.RequiredAllowQueryToken)
 			if h.LiveTV != nil {
@@ -728,14 +781,6 @@ func NewRouter(h *Handlers) http.Handler {
 			// VTT's relative sprite names resolve under this path too.
 			if h.Trickplay != nil {
 				r.Get("/items/{id}/trickplay/{file}", h.Trickplay.ServeFile)
-			}
-			// Static (pre-encoded) ABR ladder. Authorizes per-request via
-			// staticFileAccess (library ACL + content-rating ceiling), so it
-			// rides the same query-token middleware as the other asset GETs.
-			if h.NativeTranscode != nil {
-				r.Get("/transcode/static/{fileID}/master.m3u8", h.NativeTranscode.StaticMaster)
-				r.Get("/transcode/static/{fileID}/{rung}/index.m3u8", h.NativeTranscode.StaticRung)
-				r.Get("/transcode/static/{fileID}/{rung}/seg/{name}", h.NativeTranscode.StaticSegment)
 			}
 			// A ready converted download. The browser fetches it through a
 			// plain link (save-as), so the cookie or an asset ?token= has to
@@ -1511,6 +1556,12 @@ func NewRouter(h *Handlers) http.Handler {
 				r.Get("/items/{id}/watch-status", h.WatchStatus.Get)
 				r.Put("/items/{id}/watch-status", h.WatchStatus.Put)
 				r.Delete("/items/{id}/watch-status", h.WatchStatus.Delete)
+				// The caller's statuses as a list (the web /watchlist page).
+				// A top-level per-user collection like /favorites; the
+				// handler scopes it to the caller's libraries, rating
+				// ceiling and label restriction.
+				r.Get("/watchlist", h.WatchStatus.List)
+				r.Get("/watchlist/counts", h.WatchStatus.Counts)
 			}
 			// Audiobook listening speed (per book) and bookmarks.
 			if h.Audiobook != nil {

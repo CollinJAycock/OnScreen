@@ -165,6 +165,10 @@ func (h *NativeTranscodeHandler) startABR(
 		PlaylistURL:    fmt.Sprintf("/api/v1/transcode/sessions/%s/playlist.m3u8?token=%s", sessionID, segTok),
 		Token:          segTok,
 		StartOffsetSec: 0,
+		// Fixed for the ladder's life: rung children keep the parent's
+		// container even when a worker falls back to another encoder
+		// (abrIsFMP4 → ForceFMP4).
+		SegmentFormat: segmentFormatOf(sess.VideoOutput()),
 	})
 }
 
