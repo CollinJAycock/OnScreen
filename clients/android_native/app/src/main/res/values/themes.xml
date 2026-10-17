@@ -1,14 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Compose owns the rendered theme; the AndroidManifest theme
-         only needs to be a Material component theme so the activity
-         splash/window background match the dark Compose surface
-         before the first frame. -->
-    <style name="Theme.OnScreenMobile" parent="android:Theme.Material.NoActionBar">
+         sets the splash/window background to match the dark Compose
+         surface before the first frame. It is an AppCompat theme because
+         the Cast device picker is an AppCompatDialog in a DialogFragment
+         themed from this activity (not from the route button's wrapper
+         below): it throws without Theme.AppCompat, and mediarouter throws
+         on a translucent (undefined) colorPrimary. -->
+    <style name="Theme.OnScreenMobile" parent="Theme.AppCompat.NoActionBar">
         <item name="android:windowBackground">@color/window_bg</item>
         <item name="android:statusBarColor">@color/window_bg</item>
         <item name="android:navigationBarColor">@color/window_bg</item>
         <item name="android:windowLightStatusBar">false</item>
+        <item name="colorPrimary">#FF7C6AF7</item>
+        <item name="colorPrimaryDark">#FF5A4ED4</item>
+        <item name="colorAccent">#FF7C6AF7</item>
     </style>
 
     <!-- mediarouter's MediaRouterThemeHelper.getControllerColor reads
