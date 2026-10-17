@@ -265,7 +265,7 @@ class CastPlaybackController @Inject constructor(
             audioTrackSelected = (req.audioStreamIndex ?: 0) > 0,
             burnIn = req.burnSubtitleStreamIndex != null && req.hasVideo,
         )
-        Log.i(TAG, "cast decision: server=${decided.verdict} profile=$profile -> $route")
+        Log.i(TAG, "cast decision: model=${session.castDevice?.modelName} server=${decided.verdict} profile=$profile -> $route")
         when (route) {
             is CastHls.Route.Refuse -> when (route.reason) {
                 CastHls.Refusal.DOLBY_VISION -> fail(null, "Dolby Vision is not supported")
