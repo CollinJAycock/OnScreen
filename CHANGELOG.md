@@ -81,8 +81,10 @@ becomes final on every app. Release note:
   (re-encodes were a live playlist, which some players start at its edge).
   The phone app does the same through its Cast button, with a cast panel
   (position, seek, play/pause, stop) in place of the local controls; casting
-  carries on after the player screen closes.
-  Not yet tried on Chromecast hardware.
+  carries on after the player screen closes. Picking a device in the phone's
+  Cast button sends what's playing straight away (it only connected before),
+  and the button no longer crashes the app. Phone casting tested on a Google
+  TV (resume, seek, subtitles); the web sender not yet tried on hardware.
 - **Watchlist page.** A new **Watchlist** link in the web sidebar lists
   everything you've given a status — Plan to Watch first, then Watching, On
   Hold, Completed and Dropped, one tab each with a count — with a type filter,
