@@ -1,7 +1,7 @@
 openapi: 3.0.3
 info:
   title: OnScreen API
-  version: "2.5.1"
+  version: "2.6.0"
   description: |
     HTTP API for the OnScreen media server.
 
@@ -1614,18 +1614,15 @@ paths:
           description: Current status (or empty string when never set).
           content:
             application/json:
-              schema:
-                type: object
-                properties:
-                  data:
-                    type: object
-                    properties:
-                      status:
-                        type: string
-                        enum: ['', plan_to_watch, watching, completed, on_hold, dropped]
-                        description: Empty string = no status set yet.
-                      created_at: { type: string, format: date-time }
-                      updated_at: { type: string, format: date-time }
+              schema: { $ref: '#/components/schemas/WatchStatusBody' }
+              example:
+                status: watching
+                created_at: '2026-10-01T19:04:11Z'
+                updated_at: '2026-10-12T21:30:02Z'
+                data:
+                  status: watching
+                  created_at: '2026-10-01T19:04:11Z'
+                  updated_at: '2026-10-12T21:30:02Z'
     put:
       summary: Set watch status
       tags: [Items]
@@ -1639,7 +1636,12 @@ paths:
               properties:
                 status: { type: string, enum: [plan_to_watch, watching, completed, on_hold, dropped] }
       responses:
-        '204': { description: Saved. }
+        '200':
+          description: Saved; the stored status, in the same shape as GET.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WatchStatusBody' }
+        '400': { $ref: '#/components/responses/BadRequest' }
     delete:
       summary: Clear watch status
       tags: [Items]
@@ -2428,7 +2430,21 @@ paths:
         with no internet limit configured get exactly the verdict they
         got before. Both fields are additive — a client that ignores
         them still sees `transcode`. A client that skips this endpoint
-        and fetches `/media/stream` directly is not held to the limit.
+        and fetches `/media/stream` directly gets 409 `TRANSCODE_REQUIRED`
+        there instead (v2.6), so it is held to the limit too.
+
+        **Dolby Vision (v2.6).** The capability profile's `dovi` key lists
+        the Dolby Vision profiles the client decodes (`dovi=5:8.1:8.4`, plus
+        `7`; `dovi=1` means `5:8.1:8.4`). A file whose profile is listed
+        plays as Dolby Vision: profile 5 is no longer `unsupported`, the HDR
+        tone-map check is skipped, and a remux keeps the Dolby Vision
+        configuration record and per-frame metadata (fMP4 segments). A
+        profile 7 file for a client that lists only 8.1 is converted to 8.1
+        on workers with the `dolby_vision_p7_to_p81` feature, else plays
+        from its HDR10 base layer. Profile 5 is never re-encoded: a client
+        that lists it but needs a re-encode gets `unsupported`. Clients that
+        don't send `dovi` get the verdicts they got before (profile 5
+        `unsupported`, other profiles judged by their base layer).
 
         **Quality profile (v2.6).** The caller's own quality profile
         (`PUT /users/me/quality-profile`) applies on every network: its
@@ -2555,8 +2571,10 @@ paths:
             * `SOURCE_UNREADABLE` — ffprobe couldn't demux the file within
               the 5 s pre-flight budget (corrupt container, zero-byte file,
               unsupported codec at the header level).
+            * `FILE_DAMAGED` — the integrity probe marked the file damaged
+              (the play decision answers `damaged` for it).
 
-            Both replace the historical "spinner forever" failure mode where
+            The first two replace the historical "spinner forever" failure mode where
             ffmpeg hung on the bad input and the client polled the playlist
             endpoint until the 60 s deadline. See ERROR_CODES.md ▸ Transcode.
           content:
@@ -2567,9 +2585,16 @@ paths:
                   error:
                     type: object
                     properties:
-                      code: { type: string, enum: [SOURCE_MISSING, SOURCE_UNREADABLE] }
+                      code: { type: string, enum: [SOURCE_MISSING, SOURCE_UNREADABLE, FILE_DAMAGED] }
                       message: { type: string }
                       request_id: { type: string }
+        '415':
+          description: |
+            `DOLBY_VISION_UNSUPPORTED`: a Dolby Vision profile 5 file (no
+            compatible base layer) for a client whose `dovi` capability
+            doesn't list profile 5, or any re-encode of a profile 5 file
+            (it can only be copied). `UNSUPPORTED_CONTAINER`: the source is a
+            playlist / reference container.
         '429':
           description: |
             Either the per-session `TranscodeStartLimit` (default 10/min) or
@@ -8850,6 +8875,30 @@ components:
         thumb_path:   { type: string, nullable: true }
         duration_ms:  { type: integer, format: int64, nullable: true }
         favorited_at: { type: integer, format: int64, description: 'Unix milliseconds.' }
+
+    WatchStatusBody:
+      type: object
+      description: |
+        `GET` / `PUT /api/v1/items/{id}/watch-status`. The status fields
+        appear twice: at the top level (the shape the handler answered with
+        until v2.6, which the Android phone app reads) and under `data` (the
+        house envelope the web and Android TV apps read). Both carry the
+        same values.
+      properties:
+        status:
+          type: string
+          enum: ['', plan_to_watch, watching, completed, on_hold, dropped]
+          description: Empty string = no status set yet.
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        data:
+          type: object
+          properties:
+            status:
+              type: string
+              enum: ['', plan_to_watch, watching, completed, on_hold, dropped]
+            created_at: { type: string, format: date-time }
+            updated_at: { type: string, format: date-time }
 
     WatchlistItem:
       type: object

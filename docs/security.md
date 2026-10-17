@@ -3,8 +3,9 @@
 This document records OnScreen's server-side security posture: the network
 surfaces an operator must control, the behaviors that differ from a naive
 default, and the residual risks that are accepted by design. It reflects the
-hardening pass tracked in the codebase as of v2.4, plus the v2.5.0
-additions listed under [v2.5.0 additions](#v250-additions).
+hardening pass tracked in the codebase as of v2.4, plus the additions listed
+under [v2.5.0 additions](#v250-additions) and
+[v2.6.0 additions](#v260-additions).
 
 ## Ports & network exposure
 
@@ -215,7 +216,168 @@ re-read the real admin's session.
 - The page signs in through the same API as every other client and gets the
   same nonce-based Content-Security-Policy as the main web app.
 
-**Personal API keys** (v2.6; `/api/v1/users/me/api-keys`, `/api/v1/admin/api-keys`; [usage](api/api-keys.md))
+## v2.6.0 additions
+
+**Refresh-token reuse grace** (`refreshReuseGrace` in
+`cmd/server/auth_service.go`)
+
+- A refresh token that comes back within 120 s of the rotation that retired
+  it (measured from the session's `last_seen`, which the rotation stamps) is
+  refused with 401 and no new tokens, but the token family is **not**
+  revoked: the user's other devices stay signed in. It is audit-logged as
+  `auth.refresh_reuse_tolerated` (`internal/api/v1/auth.go`). After 120 s a
+  reused token ends every sign-in as before (`auth.sessions_revoked`, reason
+  `refresh_token_reuse`).
+- Rationale: on the QA server 4 of 5 reuse sign-outs came within 80 s of the
+  token's use — the user's own client refreshing twice at once, or resending
+  a refresh whose answer it lost — and each one signed the user out on every
+  device. The trade-off is listed under
+  [Accepted residual risks](#accepted-residual-risks-by-design).
+
+**Signed-in devices** (`/api/v1/users/me/sessions`, admin
+`/api/v1/users/{id}/sessions`; `internal/api/v1/user_sessions.go`)
+
+- Access, asset and stream tokens now carry the id of the sign-in that minted
+  them (`sid`). The auth middleware's per-request epoch read also checks that
+  the sign-in still exists (same query, primary pool), so signing one device
+  out deletes its `sessions` row and kills that device's refresh at once and
+  its other tokens on their next request, without an epoch bump that would
+  sign out — or stop the streams of — the user's other devices.
+- "Sign out everywhere else" deletes every other sign-in; an admin's "sign out
+  everywhere" also bumps the epoch and wipes the user's HLS segment tokens.
+  Each sign-out is audit-logged (`auth.session_revoked`, bulk
+  `auth.sessions_revoked`). The routes refuse personal API keys.
+- The device list shows each sign-in's client address and the name a client
+  sends in the optional `X-Device-Name` header (control characters stripped,
+  length capped; `internal/api/v1/session_client.go`). Segment tokens and
+  pre-`sid` tokens are the exceptions noted under residual risks.
+
+**Self-service password change** (`PUT /api/v1/users/me/password`,
+`ChangePassword` in `internal/api/v1/users.go`)
+
+- Needs the current password. Five wrong ones in 15 minutes lock the change
+  out for that user (429), separately from sign-in's limits. Refused for
+  PIN-switched sessions and for accounts with no local password (SSO / LDAP
+  accounts, managed profiles: 409 `NO_LOCAL_PASSWORD`), and to API keys.
+- On success every **other** sign-in ends: their sessions are deleted, the
+  epoch is bumped and segment tokens are wiped, so a session an attacker
+  holds dies with the old password. A token too old to carry `sid` can't be
+  told apart from the others, so then every sign-in ends, this one included
+  (`signed_out: true`). Audit-logged as `user.password_change`.
+- The account's own PIN (`PUT` / `DELETE /users/me/pin`) is removed: PIN
+  switching only ever reached managed profiles, so a PIN on the account itself
+  was never checked. Managed profiles keep theirs.
+
+**Label restrictions** (`PUT /api/v1/users/{id}/label-restrictions`,
+`internal/api/v1/label_gate.go`)
+
+- Admin labels live in `media_items.labels`, apart from the provider keywords
+  in `tags`, so a metadata refresh can never lift or impose a restriction.
+  Only the admin label API writes them, and only admins see them.
+- A user's blocked / allowed labels travel in their token claims and cascade
+  to their managed profiles. Saving a restriction revokes the tokens of the
+  user and their profiles (`revokeAfterPolicyChange`), so it applies at once;
+  API keys read it from the database on every request. Audit-logged as
+  `user.label_restriction_change`; label edits as `item.labels_change`.
+- Lists apply the restriction in SQL, before paging and counts. The
+  single-item check (`labelsPermit`) sits next to the rating ceiling in every
+  handler that has one and answers with the same status, so a hidden title is
+  indistinguishable from one above the rating limit. It fails closed: a
+  restricted caller is refused when the lookup errors.
+
+**Rating ceiling, labels and library access on the new surfaces**
+
+- Applied, in SQL where the surface is a list, on: the Watchlist
+  (`GET /api/v1/watchlist`, `/watchlist/counts`; `internal/api/v1/watchlist.go`
+  — the caller's own statuses only, a profile sees its own), studio and network
+  pages and counts (`internal/api/v1/studios.go`), instant mix and similar
+  artists (the seed and every suggestion), manual and smart collections (a
+  collection is listed only to someone who can see a member; its count and
+  cover come from those members), featured-artist "appears on", chapter
+  thumbnails, converted downloads and optimized versions, the OPDS catalog,
+  M3U import and export, My stats / Year in review / the digest email, and
+  photo faces, people and memories.
+- **Faces:** detection is a task that is off by default and runs on the
+  server (nothing is sent anywhere). A person whose photos are all hidden
+  from the caller is a 404, so a name can't leak through a restricted
+  profile. Only admins and library users with no ceiling or label
+  restriction can name faces (`internal/api/v1/photo_people.go`). "Delete
+  all face data" is audit-logged (`photo.face_data_delete`).
+
+**`/media/stream` follows the play decision** (`DirectPlayGate` in
+`internal/api/v1/decision_enforce.go`)
+
+- A direct stream of a video the server would convert for this viewer on any
+  device — over the internet streaming limit from outside the home network,
+  or over the viewer's quality profile — is refused with 409
+  `TRANSCODE_REQUIRED`; a file the integrity probe marked damaged with 422
+  `FILE_DAMAGED`. Every request is checked, Range continuations included
+  (limits are memoised for 10 s). Transcode start likewise re-encodes video a
+  client asked to copy when the decision for that client is a transcode.
+- Rationale: a client that skipped the decision (an old build, a failed
+  call) used to get the original file past every one of these limits. Audio,
+  books and `/media/download` are not gated.
+- The concurrent-stream limit now counts direct plays: the play decision,
+  transcode start and the direct stream routes answer 429
+  `TOO_MANY_SESSIONS` over the limit.
+
+**Casting: CORS on token-in-URL media routes** (`TokenURLCORS` in
+`internal/api/middleware/cors.go`, wired in `internal/api/router.go`)
+
+- Google's Default Media Receiver plays a cast from a page on Google's origin
+  and fetches the HLS playlist, segments and side-loaded WebVTT with XHR. Those
+  routes now answer `Access-Control-Allow-Origin: *` — and never
+  `Access-Control-Allow-Credentials` (removed if the global CORS middleware
+  set it) — on exactly: the transcode session playlist and segments
+  (including ABR rungs), the static ABR ladder (`/transcode/static/…`) and
+  the subtitle routes (`/media/subtitles/{fileId}/{streamIndex}`,
+  `/media/subtitles/{fileId}/external/{subId}`,
+  `/media/external-subtitles/{subId}`). Never the API at large.
+- Why `*` is safe there: `*` can't be combined with credentials, so a page on
+  any origin can read only a response its own `?token=` authenticated — a
+  token it could already replay with curl. The tokens those routes accept are
+  purpose-scoped: a segment token bound to one transcode session (the HLS
+  routes take nothing else), or a file-bound stream token / user-scoped asset
+  token (`RequiredAllowQueryToken`). None works on the general API.
+- The preflight (OPTIONS) is answered with 204 ahead of auth, because a
+  preflight carries no credentials. The requested headers are echoed back,
+  safe for the same reason.
+- `/media/subtitles/{fileId}/external/{subId}` exists so the file-bound
+  stream token a cast already holds for the video authenticates an external
+  subtitle: the token's `file_id` must match `{fileId}`, and a subtitle that
+  belongs to another file is a 404 (`ServeForFile` in
+  `internal/api/v1/subtitles.go`), so the token reaches only that file's own
+  subtitles. Library access, the rating ceiling and labels apply as on the
+  other subtitle routes.
+- The web sender hands the receiver only a segment token (HLS session) or the
+  file's stream token (direct file, subtitles).
+
+**DVR post-processing programs are environment-only**
+(`internal/config/config.go`)
+
+- `ONSCREEN_DVR_POSTPROCESS_SCRIPT` and `ONSCREEN_COMSKIP_PATH` /
+  `ONSCREEN_COMSKIP_INI` can only be set in the server's environment; the
+  settings page shows them read-only. An executable path settable from the UI
+  would be code execution for anyone holding an admin session. The script is
+  run directly (no shell) with the recording's path as its only argument and
+  a 30-minute timeout (`internal/livetv/dvr_postprocess.go`).
+
+**New outbound fetches** (see [SSRF posture](#ssrf-posture))
+
+- **Podcast feeds** (`internal/podcast`) use the default `safehttp` policy:
+  feeds and episodes on private, loopback or link-local addresses are
+  refused, at every redirect hop. Feeds are capped at 32 MiB, episodes at
+  4 GiB. Admin-only, and subscribing, changing and unsubscribing are
+  audit-logged.
+- **Plex / Jellyfin / Emby import** (`internal/serverimport`) connects to an
+  admin-entered URL with the Radarr / Sonarr policy (LAN and loopback
+  allowed, link-local and cloud metadata not). The source's token is held
+  in memory for the run only and never stored. Admin-only; start and cancel
+  are audit-logged (`import.start`, `import.cancel`).
+- **OMDb and fanart.tv** keys are encrypted at rest and returned masked, like
+  the other provider keys.
+
+**Personal API keys** (`/api/v1/users/me/api-keys`, `/api/v1/admin/api-keys`; [usage](api/api-keys.md))
 
 - `osk_` + 256 random bits. Only the SHA-256 is stored (`api_keys.key_hash`,
   unique); the key is returned once, at creation. Lists carry an 8-character
@@ -246,7 +408,7 @@ re-read the real admin's session.
 - Cookie / CSRF handling is unchanged: a key is a header credential and is
   never set as a cookie.
 
-**OPDS catalog** (v2.6; `/opds/`; [usage](opds.md))
+**OPDS catalog** (`/opds/`; [usage](opds.md))
 
 - The only place HTTP Basic is read (`middleware.OPDSRequired`). The Basic
   password must be a personal API key; the username is ignored. The account
@@ -278,7 +440,7 @@ re-read the real admin's session.
 - Covers are served only for `book` items, from the poster path the scanner
   recorded, restricted to image extensions and to the item's library roots.
 
-**M3U playlist import / export** (v2.6; `/api/v1/playlists/import`,
+**M3U playlist import / export** (`/api/v1/playlists/import`,
 `/api/v1/playlists/{id}/export.m3u8`)
 
 - An imported playlist's entries are strings matched against the paths the
@@ -293,7 +455,7 @@ re-read the real admin's session.
 - Export leaves out items the caller can't see. Its absolute-path option
   reveals server file paths, but only for the caller's own visible items.
 
-**Personal data export** (v2.6; `POST /api/v1/users/me/export`,
+**Personal data export** (`POST /api/v1/users/me/export`,
 `POST /api/v1/users/{id}/export`)
 
 - Account data, so API keys are refused (`RefuseAPIKey`, and again in the
@@ -310,7 +472,7 @@ re-read the real admin's session.
   (`http.ErrAbortHandler`, which `middleware.Recover` now re-panics) rather
   than ending a truncated ZIP as if it were complete.
 
-**My stats and the digest email** (v2.6; `/api/v1/users/me/stats`,
+**My stats and the digest email** (`/api/v1/users/me/stats`,
 `/api/v1/users/me/year-in-review`, `/api/v1/users/me/digest`,
 `/api/v1/settings/digest`, `/api/v1/digest/unsubscribe`)
 
@@ -334,7 +496,7 @@ re-read the real admin's session.
 - Admin digest settings sit in the settings group (admin only, no API keys)
   and are audit-logged as `settings.update`.
 
-**Automatic router port mapping** (v2.6; Settings ▸ General ▸ Remote access,
+**Automatic router port mapping** (Settings ▸ General ▸ Remote access,
 `/api/v1/settings/remote-access`)
 
 - Off by default. Turned on, the server asks the home router — UPnP IGD
@@ -368,7 +530,7 @@ re-read the real admin's session.
   from outside the network, and flags a private "public" address (carrier-
   grade NAT or a second router), where the mapping can't help.
 
-**Optimized versions** (v2.6; admin "Optimize…", `/api/v1/optimize`,
+**Optimized versions** (admin "Optimize…", `/api/v1/optimize`,
 `/media/optimized/{id}`)
 
 - Admin-only to create, list and delete; each request and delete is
@@ -627,8 +789,9 @@ ntfy / Gotify server must use `https`.
   log.** Behind a trusted proxy that forwards no `X-Forwarded-For` /
   `X-Real-IP`, every client resolves to the proxy's private address and counts
   as local, so the limit doesn't apply. It is a bandwidth policy, not an access
-  control; the direct file routes don't enforce it (see
-  docs/capability-profiles.md §12).
+  control: since v2.6 `/media/stream` refuses a video over it (409
+  `TRANSCODE_REQUIRED`), but `/media/download` still serves the original file
+  (see docs/capability-profiles.md §12).
 - **The first-run setup gate trusts the peer address.** Behind Docker
   Desktop, rootless Podman, or docker-proxy on the IPv6 path, every client
   appears to come from the (private) bridge gateway, so an internet client can

@@ -113,6 +113,16 @@ An empty, zero or unparseable value falls back to the default.
 | `RTMP_LISTEN_ADDR` | `:1935` | RTMP listen address. Must be reachable by broadcasters. |
 | `RTMP_PUBLIC_HOST` | (none) | Host name shown in the ingest URL in the broadcast admin UI. Empty uses the request's host. |
 
+### DVR post-processing
+
+The rest of DVR post-processing (remux, transcode, delete original, commercials) is set under **Settings ▸ Live TV**. The programs it runs can only be set here, never in the web UI: a program path an admin session could change would be code execution for anyone holding one. The settings page shows them read-only.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ONSCREEN_DVR_POSTPROCESS_SCRIPT` | (none) | Program run after each recording is post-processed, with the recording's path as its only argument (run directly, no shell). 30-minute timeout; its output goes to the server log. |
+| `ONSCREEN_COMSKIP_PATH` | (none) | comskip executable for commercial detection. Unset uses the built-in black-frame + silence detector. |
+| `ONSCREEN_COMSKIP_INI` | (none) | comskip `.ini` file, passed as `--ini=<file>` when set. |
+
 ### Worker
 
 | Variable | Default | Description |
@@ -127,7 +137,7 @@ An empty, zero or unparseable value falls back to the default.
 
 ### Converted downloads
 
-Lower-quality download copies are encoded on the server into `CACHE_PATH/downloads`, with the server's configured H.264 encoder. Each conversion also holds one of the embedded worker's transcode slots while it runs.
+Lower-quality download copies are encoded on the server into `CACHE_PATH/downloads`, with the server's configured H.264 encoder. Optimized versions (`CACHE_PATH/optimized`, never evicted) go through the same runner and share `DOWNLOAD_MAX_CONVERSIONS`, with downloads first. Each conversion also holds one of the embedded worker's transcode slots while it runs.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -693,6 +703,29 @@ at the v2.2.0 cut — the table below matches `internal/db/migrations/`):
 | `00033_audiobook_merge_repair.sql` | Cutoff for repairing audiobooks the old dedupe merged (the next full audiobook scan re-imports the affected authors' files) |
 | `00034_renumber_zero_led_chapters.sql` | Clears the chapter numbers of audiobooks with a zero-led chapter file ("00 - Prologue"), so the next scan renumbers them with the prologue first |
 | `00035_watch_progress_keep_duration.sql` | A watch event without a duration keeps the stored duration in `watch_progress` instead of clearing it (completion is still judged only against the event's own duration) |
+| `00036_media_file_dv_profile.sql` | A file's Dolby Vision profile (`media_files.dv_profile`); `hdr_type` now follows the base layer |
+| `00037_manual_collections.sql` | Admin-made `manual` collections: member order (`item_order`) and a chosen cover member (`poster_item_id`) |
+| `00038_collections_phase2.sql` | Collections on the home screen (`promoted`), smart collection rules, uploaded covers, collections imported from NFO files |
+| `00039_podcast_feeds.sql` | Podcast RSS subscriptions and their episodes |
+| `00040_import_jobs.sql` | Plex / Jellyfin / Emby import runs (the source token is never stored) |
+| `00041_external_ratings.sql` | IMDb, Rotten Tomatoes and Metacritic scores from OMDb, one row per IMDb ID |
+| `00042_external_ratings_hourly.sql` | Moves the external-ratings task from daily to hourly (a changed schedule is kept) |
+| `00043_metadata_locks.sql` | Per-item metadata field locks (`media_items.locked_fields`) |
+| `00044_episode_numbering.sql` | Multi-episode files (`index_end`) and a show's or library's episode order (aired / DVD / absolute) |
+| `00045_media_file_edition_parts.sql` | A file's edition label and multi-part movie part number |
+| `00046_remote_stream_limit.sql` | Per-user internet streaming cap |
+| `00047_label_restrictions.sql` | Admin labels on items and per-user blocked / allowed labels |
+| `00048_music_loudness_credits.sql` | Where a file's ReplayGain came from (tags / analyzed), loudness measurements, featured-artist credits |
+| `00049_artwork_studios_nfo.sql` | Clear logo, banner and disc art paths; studios and networks; the library "save NFO files" setting |
+| `00050_api_keys_reading_progress_subtitle_auto.sql` | Personal API keys (hashed), synced book reading positions, automatic subtitle download overrides and attempt log |
+| `00051_download_conversions.sql` | Converted (lower-quality) downloads and their jobs; chapter thumbnail count on trickplay status |
+| `00052_dvr_postprocess.sql` | DVR post-processing jobs and commercial markers |
+| `00054_user_stats_digest.sql` | Index for per-user stats on `watch_plays`; per-user digest email setting |
+| `00055_subtitle_offsets.sql` | Server-side subtitle timing offsets (downloaded and embedded subtitles) |
+| `00056_optimized_versions.sql` | Optimized versions as `download_conversions` rows (`purpose`, source hash, output size and bitrate) |
+| `00057_photo_raw_faces.sql` | Per-library photo settings (RAW + JPEG pairing), faces and people; photos leave the title-uniqueness index |
+
+There is no `00053`.
 
 `00023` backfills `watch_progress` from the `watch_events` history still
 inside the retention window; on a large install it takes longer than the
@@ -705,6 +738,61 @@ unready until they're applied.
 ## Upgrading
 
 Back up the database first (see [Database backups](#database-backups)).
+
+### v2.5.x → v2.6.0
+
+1. **Pull the new image** (`ghcr.io/collinjaycock/onscreen:2.6`, or `:2.6.0`)
+   or build the new binaries.
+2. **Apply migrations 00037–00057** (there is no 00053; 00036 came with
+   v2.5.1), either with the compose `migrate` service / `make migrate` before
+   starting the new server, or with `AUTO_MIGRATE=true`. `/health/ready` stays
+   unready until they're applied.
+3. **Upgrade remote transcode workers too.** Burned-in picture subtitles and
+   TrueHD / DTS passthrough only go to workers that advertise them (v2.6
+   workers do; the embedded worker always does). With only older remote
+   workers, a burn-in request is refused with 503 `BURN_IN_UNAVAILABLE` and
+   TrueHD / DTS keep being converted to AAC.
+4. **Behind a reverse proxy or Cloudflare, set `TRUSTED_PROXIES`** if you use
+   the new internet streaming limit. The limit judges the viewer's address; if
+   the proxy isn't trusted, every viewer looks local and the limit never
+   applies.
+5. **Check four settings that used to be ignored** and now apply, if they
+   were ever set:
+   - a library's metadata language (applies on the next metadata refresh);
+   - a user's concurrent-stream limit (now counts direct plays);
+   - a user's quality profile (now converts anything above it, at home too);
+   - Settings ▸ Transcode's encoder tuning (NVENC preset, tune, rate control
+     and peak-bitrate ratio), which now overrides `TRANSCODE_NVENC_*` /
+     `TRANSCODE_MAXRATE_RATIO` on the server itself after a restart. Remote
+     workers keep their own environment settings.
+
+Behaviour that changes without any action from you:
+
+- The next library scan does one-off work without re-probing files: an
+  episode filed as `E01` whose file is `E01-E02` becomes one multi-episode
+  item, movie editions and multi-part movies are read from file names,
+  featured-artist credits are read, and photos are regrouped (they are now
+  told apart by file, not by name; RAW + JPEG pairs become one photo).
+- `GET /media/stream` follows the play decision. A video the server would
+  convert for the viewer (over the internet limit from outside the home
+  network, or over their quality profile) is refused with 409
+  `TRANSCODE_REQUIRED`, and a damaged one with 422 `FILE_DAMAGED`. Current
+  apps never hit this; older app builds that decide on their own lose the
+  original file for those viewers. Music, audiobooks, books and downloads are
+  not affected.
+- New tasks stay off until you enable them in Settings ▸ Tasks: music
+  loudness analysis, photo face detection, chapter-thumbnail backfill and
+  automatic subtitle download.
+
+New optional settings: the environment variables
+`ONSCREEN_DVR_POSTPROCESS_SCRIPT`, `ONSCREEN_COMSKIP_PATH`,
+`ONSCREEN_COMSKIP_INI` (see [DVR post-processing](#dvr-post-processing)) and
+`DOWNLOAD_MAX_CONVERSIONS`, `DOWNLOAD_CACHE_TTL_HOURS`,
+`DOWNLOAD_CACHE_MAX_GB` (see [Converted downloads](#converted-downloads));
+OMDb and fanart.tv API keys in Settings ▸ General.
+
+The full list, including client changes, is under "Upgrade notes (from
+v2.5.x)" in [CHANGELOG.md](../CHANGELOG.md).
 
 ### v2.5.0 → v2.5.1
 

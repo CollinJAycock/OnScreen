@@ -44,9 +44,11 @@ import (
 	"github.com/onscreen/onscreen/internal/safehttp"
 )
 
-// ManamiURL is the upstream JSON the cache fetches from. Tests
-// override via NewWithSource so they can point at a fixture path.
-const ManamiURL = "https://raw.githubusercontent.com/manami-project/anime-offline-database/master/anime-offline-database.json"
+// ManamiURL is the upstream JSON the cache fetches from: the minified
+// dataset attached to the project's latest GitHub release (same schema as
+// the full one). The file the master branch used to carry is gone (404).
+// Tests override via NewWithSource so they can point at a fixture path.
+const ManamiURL = "https://github.com/manami-project/anime-offline-database/releases/latest/download/anime-offline-database-minified.json"
 
 // CacheTTL is how long the on-disk JSON stays "fresh" before the
 // next Open() refetches. Manami releases weekly, so 7 days lines up
@@ -54,7 +56,7 @@ const ManamiURL = "https://raw.githubusercontent.com/manami-project/anime-offlin
 const CacheTTL = 7 * 24 * time.Hour
 
 // maxAnimeDBBytes caps the downloaded dataset. The real manami database is
-// ~30 MB; 256 MB leaves room for years of growth while still bounding a
+// ~60 MB; 256 MB leaves room for years of growth while still bounding a
 // hostile or compromised upstream, which would otherwise be free to fill the
 // disk (and, because the atomic rename would still succeed, leave a poisoned
 // cache that loads on every boot).
