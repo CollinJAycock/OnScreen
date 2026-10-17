@@ -9,13 +9,15 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [Unreleased]
+## [v2.6.0] — unreleased
 
 The catch-up release: metadata editing with locks, multi-episode files,
 editions and multi-part movies, label restrictions, smaller downloads and
 optimized versions, studio pages, instant mix, OPDS, import from Plex /
-Jellyfin / Emby, and every app updated for them. The server's play decision
-becomes final on every app. Release note:
+Jellyfin / Emby, and every app updated for them. Burned-in picture
+subtitles, audio passthrough on remux, Dolby Vision for apps that decode
+it, casting any video to a Chromecast, and a Watchlist page. The server's
+play decision becomes final on every app. Release note:
 [docs/releases/v2.6.0.md](docs/releases/v2.6.0.md).
 
 ### Upgrade notes (from v2.5.x)
@@ -1078,6 +1080,11 @@ becomes final on every app. Release note:
   decode with. The worker now spots such a source when it starts the job and
   rebuilds the `hvcC` from the stream, so the remux plays everywhere,
   Safari included. Other HEVC files are remuxed as before.
+- **The offline anime database stopped loading.** The manami-project
+  anime-offline-database no longer keeps its JSON on the master branch, so
+  the download at startup failed with 404 and the anime title fallback was
+  off. The server now fetches the minified file from the project's latest
+  GitHub release (same format, about 60 MB, refreshed weekly).
 - **`docker/deploy-gpu.sh` stamped the build as `dev` when run with `sudo`:**
   git refused the repository owned by another user, so the server reported
   version `dev`. The script now tells git the repository is safe.
@@ -1093,6 +1100,39 @@ becomes final on every app. Release note:
   `auth.sessions_revoked`. After 2 minutes nothing changes. The trade-off: a
   thief who uses a stolen token within 2 minutes of the real app no longer
   triggers the sign-out everywhere, though they still get no tokens.
+
+### Security
+
+The reasoning behind each is in [docs/security.md](docs/security.md). The
+ones operators and client authors notice:
+
+- **Refresh-token reuse within 2 minutes is refused, not punished.** A used
+  refresh token that comes back within 2 minutes of the session's last use
+  gets a 401 and no tokens, and the user's other devices stay signed in
+  (`auth.refresh_reuse_tolerated`); after that, reuse still signs the user
+  out everywhere (`auth.sessions_revoked`). A thief racing the real app
+  inside that window no longer causes the sign-out, but still gets nothing.
+- **Personal API keys** (`osk_…`) are stored as hashes, sent only in a header
+  (`Authorization: Bearer` or `X-Api-Key`, never a URL), take their owner's
+  library access, rating limit and labels at each request, and can't sign in,
+  refresh, change credentials, manage devices, keys or users, or touch server
+  settings. Creating and revoking them is audited. The OPDS catalog accepts a
+  key as its Basic-auth password, never the account password.
+- **Label restrictions and the rating ceiling cover every new list:**
+  studios, instant mix, OPDS, M3U export, your stats, the weekly digest and
+  the Watchlist.
+- **Per-device sign-out.** Signing out one device revokes only its session;
+  changing your password ends your other sign-ins.
+- **`GET /media/stream` follows the play decision**, so an app can no longer
+  fetch the original file past a viewer's internet limit or quality profile
+  by skipping the decision.
+- **CORS for the Chromecast receiver** is limited to the HLS playlist,
+  segment, static-ladder and subtitle routes, which are authorized by the
+  token in their URL: `Access-Control-Allow-Origin: *`, never with
+  credentials. Every other route keeps the existing CORS rules.
+- **Data export** leaves out password hashes, PINs, two-factor secrets, keys
+  and sign-in tokens, and every export is audited (`user.data_export`).
+- **Built with Go 1.26.9 and x/net 0.60.0** (GO-2026-6612, -6613, -6617).
 
 ## [v2.5.1] — 2026-10-06
 

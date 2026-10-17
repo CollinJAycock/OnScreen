@@ -2,7 +2,7 @@
 
 A modern, open-source media server. PostgreSQL-native. Single binary. Native clients across web, desktop, TV, and phone.
 
-> **Status:** v2.5.1 is the current release (v2.5.0 plus a Dolby Vision fix); [CHANGELOG.md](CHANGELOG.md) has the full list and the upgrade notes from v2.4.x. Since v2.4, a breaking API change lands only when every first-party client moves with it (see [docs/server-lock.md](docs/server-lock.md)). A private beta is running. Headline v2.5: **request depth** (per-user quotas and auto-approve, season-level TV requests, live Radarr/Sonarr download status, an Upcoming calendar); **watch marks**, Continue Watching controls and **Next Up**; **Trakt and Last.fm scrobbling**; **report a problem** plus an admin **Library health** page; **TMDB franchise collections**; **notification agents** (Discord, Telegram, ntfy, Gotify, email); **music browse**; audiobook **speed and bookmarks**; a **photo map and albums** in the web app; the **TV web app at `/tvapp/`**, the front end of the Xbox app (phase 0); and an opt-in **file integrity probe**. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md); the v2.5 plan in [docs/v2.5-roadmap.md](docs/v2.5-roadmap.md).
+> **Status:** v2.6.0 is the current release; the release note is [docs/releases/v2.6.0.md](docs/releases/v2.6.0.md), and [CHANGELOG.md](CHANGELOG.md) has the full list and the upgrade notes from v2.5.x. Since v2.4, a breaking API change lands only when every first-party client moves with it (see [docs/server-lock.md](docs/server-lock.md)). A private beta is running. Headline v2.6: **metadata editing with field locks**; **multi-episode files**, **movie editions** and multi-part movies; per-user **label restrictions**; **smaller converted downloads** and **optimized versions**; **studio and network pages**; **instant mix** and similar artists; an **OPDS** catalog for e-reader apps; **import from Plex, Jellyfin or Emby**; **IMDb, Rotten Tomatoes and Metacritic** scores; **podcast RSS subscriptions**; **burned-in picture subtitles** and audio passthrough on remux; **Dolby Vision** for apps that decode it; **Chromecast casting of any video**; a **Watchlist** page; and the server's **play decision is final** on every app. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md).
 
 ## Why another media server?
 
@@ -36,7 +36,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - Movies, TV shows, **anime** (typed library with AniList primary metadata), music, photos, **audiobooks**, **books / comics** (CBZ + CBR + EPUB), **music videos**, **home videos**, **podcasts** (RSS feed subscriptions with auto-download and retention, or local files); all scanned with ffprobe / EXIF / tag readers
 - TMDB + TVDB + AniList + MusicBrainz metadata enrichment with Cover Art Archive fallback
 - IMDb, Rotten Tomatoes and Metacritic scores on movies and shows (optional OMDb key; an hourly task keeps them fresh without going over the key's daily limit)
-- Watching status (Plan to Watch / Watching / On Hold / Completed / Dropped) — generic, not anime-only — synced across every client
+- Watching status (Plan to Watch / Watching / On Hold / Completed / Dropped) — generic, not anime-only — synced across every client, with a Watchlist page in the web app that lists each status
 - TMDB franchise collections, created automatically once two films of a collection are in the library; the collection page lists the missing films with a Request button
 - Audiophile-grade music: ID3/Vorbis/MP4 tag reading, MusicBrainz IDs, ReplayGain (track + album, applied by the web player and the desktop engine), bit depth, sample rate, channel layout, lossless detection
 - Audiobook hierarchy: `book_author → book_series → audiobook → audiobook_chapter` with multi-file resume snapping to chapter boundary
@@ -58,6 +58,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - Intro / credits markers (auto + manual) with per-episode skip prompts
 - Chapter navigation (jump-to-chapter, next/prev buttons)
 - "Play on…" — send what you're watching in the web player to another of your devices
+- Chromecast casting from the web player and the Android phone app, with Google's built-in receiver: any video, remuxed or transcoded to HLS when the Chromecast can't play the file as-is
 - Home rows: Continue Watching split into TV / Movies / Other (titles can be removed), Next Up, Plan to Watch, Recently Added per library, Trending; smart playlists (rule-based, query-time eval)
 - Mark watched / unwatched on items, seasons and shows; watched badges, unwatched counts, a watch filter and "Surprise me" in library grids
 - Event-sourced watch state (immutable `watch_events` partitioned by month, rolled up per user and item by a trigger)
@@ -67,10 +68,10 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - **Desktop** (Tauri 2; Windows and Linux installers attached to each GitHub Release, not yet code-signed; macOS isn't built, since cpal fails to compile there with E0277 — see [clients/desktop/README.md](clients/desktop/README.md)) — reuses the SvelteKit bundle in a system webview; native Rust audio engine outside the webview decodes through symphonia 0.5 and writes raw `IAudioClient` in `AUDCLNT_SHAREMODE_EXCLUSIVE` (bit-perfect, OS mixer bypassed); DSD-via-DoP; ReplayGain enforcement; OS now-playing widget; OS media keys; system tray
 - **Android TV / Google TV** (Leanback + Media3) — 1.4.x in Google Play testing tracks (closed testing since 2026-05-13; not yet in production).
 - **Fire TV** (a `firetv` flavor of the Android TV app) — live on the Amazon Appstore since 2026-06-18; 1.4.2 is the live build since 2026-10-06.
-- **Android phone** (Compose + Material 3) — book/comic reader (CBZ/CBR/EPUB), Chromecast support, picture-in-picture, WorkManager-backed offline downloads, pair-PIN SSO bridge. 0.3.0 in a Google Play testing track (not yet in production).
+- **Android phone** (Compose + Material 3) — book/comic reader (CBZ/CBR/EPUB), Chromecast casting of any video, picture-in-picture, WorkManager-backed offline downloads, pair-PIN SSO bridge. 0.3.0 in a Google Play testing track (not yet in production).
 - **Samsung Tizen** (SvelteKit + tizen-package) — hardware-verified on a Samsung QN75Q80B 2022 panel; AVPlay HEVC + HDR10 + audio passthrough confirmed. 1.1.0 submitted to Samsung 2026-10-06, its first store submission.
 - **LG webOS** (SvelteKit + ares-package) — first run on LG hardware 2026-10-01; 0.2.1 submitted to the LG Content Store 2026-10-02.
-- **Roku** (BrightScript + SceneGraph) — has the v2.5 viewer features in code, but has never run on a device.
+- **Roku** (BrightScript + SceneGraph) — updated for v2.6 in code (it now plays the server's play decision), but has never run on a device.
 - **Xbox** — phase 0: a UWP WebView2 shell over the TV web app the server serves at `/tvapp/`; not yet run on a console.
 - **`onscreen-cli`** — a terminal client that browses a server and plays through mpv.
 - See [docs/comparison-matrix.md](docs/comparison-matrix.md) for current per-platform store-submission state, and [docs/store-assets/](docs/store-assets/) for all the screenshots / icons / banners uploaded to each console.
@@ -115,7 +116,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 
 ### Docker (recommended)
 
-Release images are published to `ghcr.io/collinjaycock/onscreen` (tags `2.5.0`, `2.5`, `2`). To build your own instead: `docker build -f docker/Dockerfile -t onscreen .`
+Release images are published to `ghcr.io/collinjaycock/onscreen` (tags `2.6.0`, `2.6`, `2`). To build your own instead: `docker build -f docker/Dockerfile -t onscreen .`
 
 ```bash
 docker run -p 7070:7070 \
@@ -123,7 +124,7 @@ docker run -p 7070:7070 \
   -e VALKEY_URL="redis://valkey:6379" \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
   -v /your/media:/media:ro \
-  ghcr.io/collinjaycock/onscreen:2.5.0
+  ghcr.io/collinjaycock/onscreen:2.6.0
 
 # Prometheus metrics (and /debug/pprof) bind to 127.0.0.1:7071 inside the
 # container by default. To scrape them, add
