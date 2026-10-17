@@ -7,12 +7,12 @@ import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.util.Rational
-import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.fragment.app.FragmentActivity
 import javax.inject.Inject
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.Surface
@@ -32,8 +32,11 @@ import tv.onscreen.mobile.ui.LocalInPipMode
 import tv.onscreen.mobile.ui.nav.AppNav
 import tv.onscreen.mobile.ui.theme.OnScreenTheme
 
+// FragmentActivity (still a ComponentActivity, so setContent works): the
+// Cast MediaRouteButton shows its device picker as a DialogFragment and
+// throws "The activity must be a subclass of FragmentActivity" otherwise.
 @AndroidEntryPoint
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
 
     /** Self-heals a stale cleartext origin once per launch — see
      *  [AuthRepository.healStaleOrigin]. Only the sign-in paths probed

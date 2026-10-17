@@ -1306,6 +1306,86 @@ private fun PlayerHost(
             )
         }
     }
+    // Hand the item to the Chromecast. What the phone shows is what the
+    // receiver gets: the audio track and subtitle picked here. An image-based
+    // subtitle (burned in on this session, or picked from the container on
+    // direct play) is burned into the cast's.
+    val sendToCast: () -> Unit = sendToCast@{
+        val item = ui.item ?: return@sendToCast
+        val castItemFile = item.files.firstOrNull() ?: return@sendToCast
+        val selectedSub = if (ui.burnedSubtitleIndex != null) {
+            null
+        } else {
+            SubtitleSelection.selectedTrackId(
+                player,
+                subtitleRows + SubtitleTracks.textVersions(subtitleRows, ui.subtitleTracks),
+            )
+        }
+        val imageSub = selectedSub?.let { id ->
+            ui.subtitleTracks.firstOrNull { it.trackId == id }
+        }?.takeIf { t ->
+            t.streamIndex != null && (t.imageBased ||
+                ui.subtitles.firstOrNull { it.index == t.streamIndex }
+                    ?.let { SubtitleTracks.isImageBased(it.codec) } == true)
+        }
+        val audioRow = AudioSelection.selectedRow(player, ui.audioStreams, ui.targetAudioRow, isHls)
+        castController.cast(
+            tv.onscreen.mobile.cast.CastPlaybackController.Request(
+                item = CastMediaInfo.Item(
+                    id = item.id,
+                    type = item.type,
+                    title = item.title,
+                    posterPath = item.poster_path,
+                    // ItemDetail doesn't yet carry parent_title;
+                    // future enhancement: thread show.title for
+                    // episodes through the API model so the Cast
+                    // metadata gets a "Show · Episode" subtitle.
+                    parentTitle = null,
+                ),
+                file = castItemFile,
+                // WHY: hand the receiver the current playhead so
+                // it resumes where we are instead of at 0:00.
+                // Adding hlsOffsetMs makes the position
+                // content-absolute on transcoded sessions (it's 0
+                // on direct play).
+                positionMs = player.currentPosition + vm.hlsOffsetMs,
+                contentDurationMs = contentDurationOf(player, source, vm).takeIf { it > 0 },
+                hasVideo = !isAudioOnly,
+                audioStreamIndex = audioRow.takeIf { it >= 0 },
+                subtitleTrackId = selectedSub?.takeIf { imageSub == null },
+                burnSubtitleStreamIndex = ui.burnedSubtitleIndex ?: imageSub?.streamIndex,
+            ),
+        )
+    }
+    // Picking a device in the Cast button's picker sends what's playing right
+    // away, as other cast apps do — it only connected before, and the TV sat
+    // on the receiver's idle screen until the Send button was found. A
+    // resumed session (app restart, rejoin) is not a new pick: no auto-send.
+    val latestSendToCast by rememberUpdatedState(sendToCast)
+    DisposableEffect(Unit) {
+        val sessions = runCatching {
+            com.google.android.gms.cast.framework.CastContext.getSharedInstance(context).sessionManager
+        }.getOrNull()
+        val listener = object : com.google.android.gms.cast.framework.SessionManagerListener<
+            com.google.android.gms.cast.framework.CastSession> {
+            override fun onSessionStarted(
+                session: com.google.android.gms.cast.framework.CastSession,
+                sessionId: String,
+            ) = latestSendToCast()
+            override fun onSessionStarting(session: com.google.android.gms.cast.framework.CastSession) = Unit
+            override fun onSessionStartFailed(session: com.google.android.gms.cast.framework.CastSession, error: Int) = Unit
+            override fun onSessionEnding(session: com.google.android.gms.cast.framework.CastSession) = Unit
+            override fun onSessionEnded(session: com.google.android.gms.cast.framework.CastSession, error: Int) = Unit
+            override fun onSessionResuming(session: com.google.android.gms.cast.framework.CastSession, sessionId: String) = Unit
+            override fun onSessionResumed(session: com.google.android.gms.cast.framework.CastSession, wasSuspended: Boolean) = Unit
+            override fun onSessionResumeFailed(session: com.google.android.gms.cast.framework.CastSession, error: Int) = Unit
+            override fun onSessionSuspended(session: com.google.android.gms.cast.framework.CastSession, reason: Int) = Unit
+        }
+        sessions?.addSessionManagerListener(listener, com.google.android.gms.cast.framework.CastSession::class.java)
+        onDispose {
+            sessions?.removeSessionManagerListener(listener, com.google.android.gms.cast.framework.CastSession::class.java)
+        }
+    }
     castState.notice?.let { notice ->
         if (!inPip) CastNoticeDialog(notice, onDismiss = { castController.consumeNotice() })
     }
@@ -1394,62 +1474,11 @@ private fun PlayerHost(
                 },
                 modifier = Modifier.padding(horizontal = 4.dp),
             )
-            // "Send this item" — only useful once the user has picked
-            // a device via the route button. We don't try to gate on
-            // session state here because connect/disconnect is async;
-            // the controller says so when there's no session.
-            IconButton(
-                onClick = sendToCast@{
-                    val item = ui.item ?: return@sendToCast
-                    // What the phone shows is what the receiver gets: the
-                    // audio track and subtitle picked here. An image-based
-                    // subtitle (burned in on this session, or picked from the
-                    // container on direct play) is burned into the cast's.
-                    val selectedSub = if (ui.burnedSubtitleIndex != null) {
-                        null
-                    } else {
-                        SubtitleSelection.selectedTrackId(
-                            player,
-                            subtitleRows + SubtitleTracks.textVersions(subtitleRows, ui.subtitleTracks),
-                        )
-                    }
-                    val imageSub = selectedSub?.let { id ->
-                        ui.subtitleTracks.firstOrNull { it.trackId == id }
-                    }?.takeIf { t ->
-                        t.streamIndex != null && (t.imageBased ||
-                            ui.subtitles.firstOrNull { it.index == t.streamIndex }
-                                ?.let { SubtitleTracks.isImageBased(it.codec) } == true)
-                    }
-                    val audioRow = AudioSelection.selectedRow(player, ui.audioStreams, ui.targetAudioRow, isHls)
-                    castController.cast(
-                        tv.onscreen.mobile.cast.CastPlaybackController.Request(
-                            item = CastMediaInfo.Item(
-                                id = item.id,
-                                type = item.type,
-                                title = item.title,
-                                posterPath = item.poster_path,
-                                // ItemDetail doesn't yet carry parent_title;
-                                // future enhancement: thread show.title for
-                                // episodes through the API model so the Cast
-                                // metadata gets a "Show · Episode" subtitle.
-                                parentTitle = null,
-                            ),
-                            file = castItemFile,
-                            // WHY: hand the receiver the current playhead so
-                            // it resumes where we are instead of at 0:00.
-                            // Adding hlsOffsetMs makes the position
-                            // content-absolute on transcoded sessions (it's 0
-                            // on direct play).
-                            positionMs = player.currentPosition + vm.hlsOffsetMs,
-                            contentDurationMs = contentDurationOf(player, source, vm).takeIf { it > 0 },
-                            hasVideo = !isAudioOnly,
-                            audioStreamIndex = audioRow.takeIf { it >= 0 },
-                            subtitleTrackId = selectedSub?.takeIf { imageSub == null },
-                            burnSubtitleStreamIndex = ui.burnedSubtitleIndex ?: imageSub?.streamIndex,
-                        ),
-                    )
-                },
-            ) {
+            // "Send this item" — picking a device already sends it; this
+            // re-sends (after a stop, or another track or subtitle picked).
+            // Not gated on session state because connect/disconnect is
+            // async; the controller says so when there's no session.
+            IconButton(onClick = sendToCast) {
                 Icon(
                     Icons.Default.Send,
                     contentDescription = "Send to Cast",
