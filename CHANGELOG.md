@@ -9,7 +9,7 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [v2.6.0] — unreleased
+## [v2.6.0] — 2026-10-17
 
 The catch-up release: metadata editing with locks, multi-episode files,
 editions and multi-part movies, label restrictions, smaller downloads and
