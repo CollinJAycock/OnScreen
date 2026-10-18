@@ -52,7 +52,7 @@ class DetailViewModelTest {
         val favRepo = mockk<FavoritesRepository>()
         coEvery { itemRepo.getItem("m1") } returns movie(isFavorite = true)
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -66,7 +66,7 @@ class DetailViewModelTest {
         coEvery { itemRepo.getItem("m1") } returns movie(isFavorite = false)
         coEvery { favRepo.add("m1") } just Runs
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -84,7 +84,7 @@ class DetailViewModelTest {
         coEvery { itemRepo.getItem("m1") } returns movie(isFavorite = true)
         coEvery { favRepo.remove("m1") } just Runs
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -102,7 +102,7 @@ class DetailViewModelTest {
         coEvery { itemRepo.getItem("m1") } returns movie(isFavorite = false)
         coEvery { favRepo.add("m1") } throws RuntimeException("offline")
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.load("m1")
         advanceUntilIdle()
 
@@ -117,7 +117,7 @@ class DetailViewModelTest {
         val itemRepo = mockk<ItemRepository>()
         val favRepo = mockk<FavoritesRepository>()
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.toggleFavorite()
         advanceUntilIdle()
 
@@ -141,7 +141,7 @@ class DetailViewModelTest {
             ChildItem(id = "ep2", title = "E2", type = "episode", index = 2),
         )
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.load("s1")
         advanceUntilIdle()
 
@@ -173,7 +173,7 @@ class DetailViewModelTest {
             ChildItem(id = "noise", title = "Ch1", type = "audiobook_chapter"),
         )
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.load("auth-1")
         advanceUntilIdle()
 
@@ -203,7 +203,7 @@ class DetailViewModelTest {
             ChildItem(id = "b2", title = "The Well of Ascension", type = "audiobook", year = 2007),
         )
 
-        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true))
+        val vm = DetailViewModel(itemRepo, favRepo, mockk(relaxed = true), mockk(relaxed = true))
         vm.load("ser-1")
         advanceUntilIdle()
 
@@ -229,7 +229,7 @@ class DetailViewModelTest {
         )
 
         var started: String? = null
-        DetailViewModel(itemRepo, mockk(), mockk(relaxed = true)).resolvePlayAllStart("artist-1") { started = it }
+        DetailViewModel(itemRepo, mockk(), mockk(relaxed = true), mockk(relaxed = true)).resolvePlayAllStart("artist-1") { started = it }
         advanceUntilIdle()
 
         assertThat(started).isEqualTo("d1t1")
@@ -251,7 +251,7 @@ class DetailViewModelTest {
         coEvery { music.similarArtists("artist-1") } returns
             listOf(ChildItem(id = "artist-2", title = "Like Artist", type = "artist"))
 
-        val vm = DetailViewModel(itemRepo, mockk(), music)
+        val vm = DetailViewModel(itemRepo, mockk(), music, mockk(relaxed = true))
         vm.load("artist-1")
         advanceUntilIdle()
 
@@ -272,7 +272,7 @@ class DetailViewModelTest {
         coEvery { music.appearsOn(any()) } throws RuntimeException("HTTP 404")
         coEvery { music.similarArtists(any()) } throws RuntimeException("HTTP 404")
 
-        val vm = DetailViewModel(itemRepo, mockk(), music)
+        val vm = DetailViewModel(itemRepo, mockk(), music, mockk(relaxed = true))
         vm.load("artist-1")
         advanceUntilIdle()
 
@@ -289,7 +289,7 @@ class DetailViewModelTest {
         )
         try {
             var started: String? = "unset"
-            DetailViewModel(mockk(), mockk(), music).instantMix("alb-1") { started = it }
+            DetailViewModel(mockk(), mockk(), music, mockk(relaxed = true)).instantMix("alb-1") { started = it }
             advanceUntilIdle()
 
             assertThat(started).isEqualTo("t1")
@@ -306,7 +306,7 @@ class DetailViewModelTest {
         PlayQueue.set(listOf(ChildItem(id = "q1", title = "Q", type = "track"), ChildItem(id = "q2", title = "Q2", type = "track")))
         try {
             var started: String? = "unset"
-            DetailViewModel(mockk(), mockk(), music).instantMix("artist-1") { started = it }
+            DetailViewModel(mockk(), mockk(), music, mockk(relaxed = true)).instantMix("artist-1") { started = it }
             advanceUntilIdle()
 
             assertThat(started).isNull()

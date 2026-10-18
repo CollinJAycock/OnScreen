@@ -9,8 +9,9 @@ import tv.onscreen.android.data.model.WatchlistItem
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** The caller's watch-status list (Watchlist screen) and the status writes
- *  its card menu makes. */
+/** The caller's watch-status list (Watchlist screen), and the per-item
+ *  status the Watchlist card menu and the details page's Status action read
+ *  and write. */
 @Singleton
 open class WatchlistRepository @Inject constructor(
     private val api: OnScreenApi,
@@ -22,6 +23,18 @@ open class WatchlistRepository @Inject constructor(
     }
 
     open suspend fun counts(): WatchlistCounts = api.getWatchlistCounts().data
+
+    /**
+     * [itemId]'s status (GET /items/{id}/watch-status), or null when none is
+     * set: the server answers 200 with `status: ""` then, an older one 404.
+     * Any other failure throws.
+     */
+    open suspend fun status(itemId: String): String? =
+        try {
+            api.getWatchStatus(itemId).data.status.takeIf { it.isNotEmpty() }
+        } catch (e: HttpException) {
+            if (e.code() == 404) null else throw e
+        }
 
     /** Move [itemId] to [status] (PUT /items/{id}/watch-status). */
     open suspend fun setStatus(itemId: String, status: String) {

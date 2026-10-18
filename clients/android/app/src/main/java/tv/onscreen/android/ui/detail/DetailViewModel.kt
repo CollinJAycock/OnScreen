@@ -19,6 +19,7 @@ import tv.onscreen.android.data.model.WatchStateValue
 import tv.onscreen.android.data.repository.FavoritesRepository
 import tv.onscreen.android.data.repository.ItemRepository
 import tv.onscreen.android.data.repository.MusicRepository
+import tv.onscreen.android.data.repository.WatchlistRepository
 import tv.onscreen.android.playback.PlayQueue
 import javax.inject.Inject
 
@@ -40,13 +41,29 @@ data class DetailUiState(
     val markBusy: Boolean = false,
 )
 
-/** One-shot results of the watched-mark actions (toasts). */
+/**
+ * The details page's Status action: the caller's watch-status for the item.
+ * Its own flow, apart from [DetailUiState], so a reload of the item (which
+ * rebuilds that state) never blanks it, and its late arrival never re-binds
+ * the page.
+ */
+data class DetailStatusState(
+    /** One of WatchStatusValues; null = none set (or not loaded, or the
+     *  load failed — all read as "Add to Watchlist"). */
+    val status: String? = null,
+    /** A change is in flight; a second pick is ignored until it settles. */
+    val busy: Boolean = false,
+)
+
+/** One-shot results of the watched-mark and Status actions (toasts). */
 sealed interface DetailEvent {
     /** Leaf toggle ([all] = false) or show / season "Mark all" ([all] = true)
      *  succeeded. */
     data class Marked(val watched: Boolean, val all: Boolean) : DetailEvent
     /** A mark failed and was rolled back; [rateLimited] = HTTP 429. */
     data class MarkFailed(val rateLimited: Boolean) : DetailEvent
+    /** A Status change failed and was rolled back; [rateLimited] = HTTP 429. */
+    data class StatusFailed(val rateLimited: Boolean) : DetailEvent
 }
 
 @HiltViewModel
@@ -54,6 +71,7 @@ class DetailViewModel @Inject constructor(
     private val itemRepo: ItemRepository,
     private val favoritesRepo: FavoritesRepository,
     private val musicRepo: MusicRepository,
+    private val watchlistRepo: WatchlistRepository,
 ) : ViewModel() {
 
     private val _uiState = MutableStateFlow(DetailUiState())
@@ -61,6 +79,13 @@ class DetailViewModel @Inject constructor(
 
     private val _events = MutableSharedFlow<DetailEvent>(extraBufferCapacity = 4)
     val events: SharedFlow<DetailEvent> = _events
+
+    private val _status = MutableStateFlow(DetailStatusState())
+    val status: StateFlow<DetailStatusState> = _status
+
+    /** Bumped by every Status pick. A status read that started before the
+     *  bump is stale: the pick owns the value. */
+    private var statusWrites = 0
 
     /** Episode ids with a row toggle in flight (a second long-press on the
      *  same row is ignored until the first settles). */
@@ -75,6 +100,10 @@ class DetailViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val item = itemRepo.getItem(itemId)
+
+                // The Status action's value, alongside everything else and
+                // never holding up the page.
+                if (DetailStatus.isStatusable(item.type)) launch { fetchStatus(item.id) }
 
                 // Up Next runs alongside the children load for shows and
                 // seasons. Best-effort: an older server (no endpoint) or a
@@ -263,6 +292,45 @@ class DetailViewModel @Inject constructor(
                 else favoritesRepo.add(item.id)
             } catch (_: Exception) {
                 _uiState.value = _uiState.value.copy(isFavorite = wasFavorite)
+            }
+        }
+    }
+
+    // ── Status (watch-status) ────────────────────────────────────────────────
+
+    /** Read the item's status. A failure leaves the value as it was (none on
+     *  a first load: "Add to Watchlist"). */
+    private suspend fun fetchStatus(itemId: String) {
+        val writesAtStart = statusWrites
+        val status = try {
+            watchlistRepo.status(itemId)
+        } catch (_: Exception) {
+            return
+        }
+        if (statusWrites != writesAtStart) return
+        _status.value = _status.value.copy(status = status)
+    }
+
+    /**
+     * Set the item's status to [status], or clear it (null). Optimistic: the
+     * label changes at once and goes back, with a [DetailEvent.StatusFailed],
+     * if the write fails. Ignored while a change is in flight, or when it
+     * would change nothing.
+     */
+    fun setStatus(status: String?) {
+        val cur = _status.value
+        val item = _uiState.value.item ?: return
+        if (cur.busy || status == cur.status) return
+        statusWrites++
+        _status.value = DetailStatusState(status = status, busy = true)
+        viewModelScope.launch {
+            try {
+                if (status == null) watchlistRepo.clearStatus(item.id)
+                else watchlistRepo.setStatus(item.id, status)
+                _status.value = DetailStatusState(status = status)
+            } catch (e: Exception) {
+                _status.value = DetailStatusState(status = cur.status)
+                _events.tryEmit(DetailEvent.StatusFailed(e.isRateLimited()))
             }
         }
     }

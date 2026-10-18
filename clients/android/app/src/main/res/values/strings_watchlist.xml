@@ -14,12 +14,18 @@
     <string name="watchlist_row_header">%1$s (%2$d)</string>
 
     <string name="empty_watchlist_title">Nothing on your watchlist yet</string>
-    <!-- The TV details page has no Status control: statuses are set in the
-         web or phone app, and moved / removed here with a long-press. -->
-    <string name="empty_watchlist_message">Add titles with Status on a title\'s page in the OnScreen web or phone app. Long-press a card here to move or remove it.</string>
+    <!-- Statuses are set with the Status action on a title's details page,
+         and moved / removed here with a long-press. -->
+    <string name="empty_watchlist_message">Add a title with Status on its page. Long-press a card here to move or remove it.</string>
 
-    <!-- Card long-press menu -->
+    <!-- Card long-press menu (also the details page's Status picker) -->
     <string name="watchlist_move_to">Move to %1$s</string>
     <string name="watchlist_remove">Remove from Watchlist</string>
     <string name="watchlist_change_failed">Couldn\'t update the status</string>
+
+    <!-- Details page Status action: the button, and its picker's title -->
+    <string name="status_add">Add to Watchlist</string>
+    <!-- e.g. "Status: Plan to Watch" -->
+    <string name="status_label">Status: %1$s</string>
+    <string name="status_title">Status</string>
 </resources>

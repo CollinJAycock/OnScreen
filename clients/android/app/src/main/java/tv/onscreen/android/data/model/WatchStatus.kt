@@ -15,8 +15,9 @@ import com.squareup.moshi.JsonClass
  */
 @JsonClass(generateAdapter = true)
 data class WatchStatus(
-    val status: String,
-    val updated_at: String,
+    /** One of [WatchStatusValues], or "" when the caller has none set. */
+    val status: String = "",
+    val updated_at: String? = null,
 )
 
 /** Body for PUT /api/v1/items/{id}/watch-status. */
