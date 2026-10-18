@@ -7,6 +7,7 @@ import tv.onscreen.android.data.model.UpNext
 import tv.onscreen.android.data.model.UpNextMode
 import tv.onscreen.android.data.model.WatchFilter
 import tv.onscreen.android.data.model.WatchStateValue
+import tv.onscreen.android.data.model.WatchlistItem
 
 /**
  * Pure helpers behind the TV client's watch-state UI: Next Up tiles, the
@@ -134,6 +135,11 @@ object WatchStateUi {
             else -> null
         }
     }
+
+    /** Watchlist cards carry the rolled-up watch state but no resume point,
+     *  so only a fully-watched item gets an overlay (the check). */
+    fun cardBadge(item: WatchlistItem): CardBadge? =
+        if (item.watch_state == WatchStateValue.Watched) CardBadge.Watched else null
 
     /** Continue Watching hub tiles carry the (next) episode's resume point:
      *  a progress bar under the poster, like the web's continue rows. */

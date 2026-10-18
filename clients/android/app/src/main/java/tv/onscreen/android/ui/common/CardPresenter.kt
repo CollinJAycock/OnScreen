@@ -22,6 +22,7 @@ import tv.onscreen.android.data.artworkUrl
 import tv.onscreen.android.data.normaliseScheme
 import tv.onscreen.android.data.model.*
 import tv.onscreen.android.data.model.MediaCollection
+import tv.onscreen.android.ui.watchlist.WatchlistUi
 
 /**
  * Modernised TV card.
@@ -249,7 +250,14 @@ class CardPresenter(
         val subtitleView = container.findViewWithTag<TextView>("subtitle")
         val data = extractCardData(item) ?: return
 
-        val episodeTitles = (item as? HubItem)?.let { WatchStateUi.episodeTileTitles(it) }
+        // (title, second line) for cards that carry one: episode hub tiles
+        // (show on top, "S2 · E5 — Episode" under it) and watchlist cards
+        // ("Show · S2 · E5", "Artist · Album", …).
+        val episodeTitles = when (item) {
+            is HubItem -> WatchStateUi.episodeTileTitles(item)
+            is WatchlistItem -> WatchlistUi.cardTitles(item)
+            else -> null
+        }
         if (episodeTitles != null) {
             titleView.text = episodeTitles.first
             titleView.minLines = 1
@@ -322,6 +330,7 @@ class CardPresenter(
         val badge = when (item) {
             is MediaItem -> WatchStateUi.cardBadge(item)
             is HubItem -> WatchStateUi.cardBadge(item)
+            is WatchlistItem -> WatchStateUi.cardBadge(item)
             else -> null
         }
         watched.visibility = if (badge is WatchStateUi.CardBadge.Watched) View.VISIBLE else View.GONE
@@ -370,6 +379,7 @@ class CardPresenter(
         is CollectionItem -> CardData(item.title, item.poster_path, item.id)
         is FavoriteItem -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
         is HistoryItem -> CardData(item.title, item.thumb_path, item.id)
+        is WatchlistItem -> CardData(item.title, item.poster_path ?: item.thumb_path, item.id)
         else -> null
     }
 }

@@ -9,6 +9,19 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Added
+
+- **Watchlist on Android TV / Fire TV.** A new **Watchlist** card in the
+  home screen's Browse row opens one row per status — Plan to Watch,
+  Watching, On Hold, Completed, Dropped — each headed with its count, with
+  empty statuses left out. Rows page in 50 cards at a time as you scroll;
+  episodes and seasons read "Show · S1 · E2". OK opens the title's page and
+  the list refreshes when you come back; a long-press of OK moves the card
+  to another status or removes it. Uses the v2.6.0
+  `GET /api/v1/watchlist` and `/watchlist/counts`.
+
 ## [v2.6.0] — 2026-10-17
 
 The catch-up release: metadata editing with locks, multi-episode files,

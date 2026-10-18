@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Watchlist screen (v2.6): one row per watch-status, from GET
+     /api/v1/watchlist. Kept in its own file like strings_watch_state.xml. -->
+<resources>
+    <string name="watchlist">Watchlist</string>
+
+    <!-- Row labels, in row order -->
+    <string name="watchlist_plan_to_watch">Plan to Watch</string>
+    <string name="watchlist_watching">Watching</string>
+    <string name="watchlist_on_hold">On Hold</string>
+    <string name="watchlist_completed">Completed</string>
+    <string name="watchlist_dropped">Dropped</string>
+    <!-- Row header: label + that status's count, e.g. "Plan to Watch (12)" -->
+    <string name="watchlist_row_header">%1$s (%2$d)</string>
+
+    <string name="empty_watchlist_title">Nothing on your watchlist yet</string>
+    <!-- The TV details page has no Status control: statuses are set in the
+         web or phone app, and moved / removed here with a long-press. -->
+    <string name="empty_watchlist_message">Add titles with Status on a title\'s page in the OnScreen web or phone app. Long-press a card here to move or remove it.</string>
+
+    <!-- Card long-press menu -->
+    <string name="watchlist_move_to">Move to %1$s</string>
+    <string name="watchlist_remove">Remove from Watchlist</string>
+    <string name="watchlist_change_failed">Couldn\'t update the status</string>
+</resources>
