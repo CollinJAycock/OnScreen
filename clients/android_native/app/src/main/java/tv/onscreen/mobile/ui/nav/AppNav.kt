@@ -49,6 +49,7 @@ import tv.onscreen.mobile.ui.settings.PlaybackQualityScreen
 import tv.onscreen.mobile.ui.settings.ScrobbleScreen
 import tv.onscreen.mobile.ui.settings.SecurityScreen
 import tv.onscreen.mobile.ui.settings.SettingsScreen
+import tv.onscreen.mobile.ui.watchlist.WatchlistScreen
 import javax.inject.Inject
 
 /**
@@ -131,6 +132,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 onOpenLibrary = { id -> nav.navigateDebounced(Routes.library(id)) },
                 onOpenSearch = { nav.navigateDebounced(Routes.SEARCH) },
                 onOpenFavorites = { nav.navigateDebounced(Routes.FAVORITES) },
+                onOpenWatchlist = { nav.navigateDebounced(Routes.WATCHLIST) },
                 onOpenHistory = { nav.navigateDebounced(Routes.HISTORY) },
                 onOpenCollections = { nav.navigateDebounced(Routes.COLLECTIONS) },
                 onOpenDownloads = { nav.navigateDebounced(Routes.DOWNLOADS) },
@@ -203,6 +205,12 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
         }
         composable(Routes.FAVORITES) {
             FavoritesScreen(
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
+                onBack = { nav.popBackStack() },
+            )
+        }
+        composable(Routes.WATCHLIST) {
+            WatchlistScreen(
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackStack() },
             )

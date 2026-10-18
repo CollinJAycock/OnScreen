@@ -119,6 +119,11 @@ const suites = [
     test: 'tests/HubRows_test.brs',
   },
   {
+    name: 'Watchlist',
+    sources: ['source/util/WatchState.brs', 'source/util/Watchlist.brs'],
+    test: 'tests/Watchlist_test.brs',
+  },
+  {
     name: 'DetailMeta',
     sources: ['source/util/DetailMeta.brs'],
     test: 'tests/DetailMeta_test.brs',

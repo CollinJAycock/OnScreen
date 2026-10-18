@@ -9,6 +9,41 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Added
+
+- **Watchlist on Android TV / Fire TV.** A new **Watchlist** card in the
+  home screen's Browse row opens one row per status — Plan to Watch,
+  Watching, On Hold, Completed, Dropped — each headed with its count, with
+  empty statuses left out. Rows page in 50 cards at a time as you scroll;
+  episodes and seasons read "Show · S1 · E2". OK opens the title's page and
+  the list refreshes when you come back; a long-press of OK moves the card
+  to another status or removes it. Uses the v2.6.0
+  `GET /api/v1/watchlist` and `/watchlist/counts`.
+- **Watchlist on the Android phone app.** A new **Watchlist** entry in the
+  home screen's ⋮ menu opens the same lists as the web page: one tab per
+  status (Plan to Watch, Watching, On Hold, Completed, Dropped) with its
+  count, type chips for the selected tab, a Recently changed / Title sort and
+  a poster grid that pages in 50 at a time (episodes read "Show · S1 E2").
+  Tap opens the title; long-press or a card's ⋮ moves it to another status
+  or removes it. Uses the v2.6 `GET /api/v1/watchlist` and
+  `/watchlist/counts`; no server change.
+- **Watchlist on the TV web apps (LG webOS, Samsung Tizen and the Xbox /
+  `/tvapp/` app).** A **Watchlist** pill in the top bar, next to Favorites,
+  opens one row per status — Plan to Watch, Watching, On Hold, Completed,
+  Dropped — each headed with its count, empty ones left out. Rows load 50
+  posters at a time and fetch more as focus nears the end; an episode reads
+  "Show · S1 E2". OK opens the title's page (Back returns to the same card,
+  refreshed); holding OK moves a card to another status or off the list.
+  The top bar's pills sit a little closer together so all ten fit.
+- **Watchlist on Roku.** A **Watchlist** button in the Roku home header
+  (between Favorites and History) opens one row per status — Plan to Watch,
+  Watching, On Hold, Completed, Dropped — each titled with its count from
+  `GET /api/v1/watchlist/counts`; empty statuses are left out. Up to 200
+  titles per row, episodes labelled "Show · S1 · E2", and OK opens the
+  title's detail page. Not yet tried on a Roku.
+
 ## [v2.6.0] — 2026-10-17
 
 The catch-up release: metadata editing with locks, multi-episode files,
