@@ -14,7 +14,9 @@
     <string name="watchlist_row_header">%1$s (%2$d)</string>
 
     <string name="empty_watchlist_title">Nothing on your watchlist yet</string>
-    <string name="empty_watchlist_message">Use Status on a title\'s page to add it.</string>
+    <!-- The TV details page has no Status control: statuses are set in the
+         web or phone app, and moved / removed here with a long-press. -->
+    <string name="empty_watchlist_message">Add titles with Status on a title\'s page in the OnScreen web or phone app. Long-press a card here to move or remove it.</string>
 
     <!-- Card long-press menu -->
     <string name="watchlist_move_to">Move to %1$s</string>
