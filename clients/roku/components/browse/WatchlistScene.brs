@@ -107,7 +107,7 @@ sub finishLoading()
 end sub
 
 sub showEmpty()
-    showMessage("Nothing on your watchlist yet. Add titles with Status on a title's page in the OnScreen web or phone app.")
+    showMessage("Nothing on your watchlist yet. Add titles with the Status button on a title's page.")
 end sub
 
 sub showMessage(text as String)

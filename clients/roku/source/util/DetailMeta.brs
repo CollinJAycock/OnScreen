@@ -1,5 +1,6 @@
 ' The detail page's meta line: "2019  ·  PG-13  ·  2h 12m  ·  ★ 7.5  ·
-' Drama  ·  A24, Plan B". Pure — tests/DetailMeta_test.brs.
+' Drama  ·  A24, Plan B", and the action-button widths. Pure —
+' tests/DetailMeta_test.brs.
 
 function DetailMeta_Line(item as Object) as String
     parts = []
@@ -45,6 +46,32 @@ function DetailMeta_Studios(studios as Dynamic, max as Integer) as String
             out = out + s.name
             n = n + 1
         end if
+    end for
+    return out
+end function
+
+' Widths for the action buttons laid out left to right with gap between
+' them: the given (XML) widths when the row fits in available, else each
+' scaled down by the same factor so the whole row does — a movie with
+' versions shows five buttons, more than 1760 px at their full widths.
+function DetailMeta_FitWidths(widths as Object, gap as Integer, available as Integer) as Object
+    out = []
+    total = 0
+    for each w in widths
+        total = total + w
+    end for
+    n = widths.Count()
+    gaps = 0
+    if n > 1 then gaps = gap * (n - 1)
+    if total + gaps <= available or total <= 0
+        for each w in widths
+            out.push(w)
+        end for
+        return out
+    end if
+    scale = (available - gaps) / total
+    for each w in widths
+        out.push(Int(w * scale))
     end for
     return out
 end function

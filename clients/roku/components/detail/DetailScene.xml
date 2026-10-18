@@ -24,6 +24,11 @@
                      (confirmation before unwatching a whole show)
           Instant mix  artists and albums: GET /music/mix?seed= played
                      as a queue
+          Status     watchlist status, from GET /items/{id}/watch-status
+                     once the page opens: "Add to Watchlist" / "Status:
+                     Watching"; OK lists the five statuses (+ "Remove from
+                     Watchlist" when one is set). Movies, shows, seasons,
+                     episodes, albums, artists, audiobooks, books
           Report     "Report a problem" (movies, episodes, shows)
       - children rows, down from the buttons: seasons / episodes /
         tracks / chapters / albums, with watched checks and resume
@@ -51,6 +56,7 @@
     <script type="text/brightscript" uri="pkg:/source/playback/Versions.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Music.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/ReportProblem.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Watchlist.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
 
@@ -103,7 +109,8 @@
 
             <!-- Action buttons. Fixed widths so DetailScene.brs can lay
                  the visible ones out left to right (hidden ones leave
-                 no gap). -->
+                 no gap), scaled down together when a full row would run
+                 past the 1760 px content width (DetailMeta_FitWidths). -->
             <Group id="actions" translation="[80, 580]">
                 <Button id="playBtn"
                         text="Play"
@@ -130,6 +137,13 @@
                         showFocusFootprint="true"
                         minWidth="360"
                         maxWidth="360"
+                        focusBitmapBlendColor="0x7c6af7ff"
+                        visible="false" />
+                <Button id="statusBtn"
+                        text=""
+                        showFocusFootprint="true"
+                        minWidth="440"
+                        maxWidth="440"
                         focusBitmapBlendColor="0x7c6af7ff"
                         visible="false" />
                 <Button id="reportBtn"
