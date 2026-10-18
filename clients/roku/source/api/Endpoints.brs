@@ -178,6 +178,23 @@ function ApiItemWatchStatus(itemId as String) as String
     return "/api/v1/items/" + itemId + "/watch-status"
 end function
 
+' ── Watchlist (v2.6) ────────────────────────────────────────────────────
+' The caller's statuses as a list: { data: [item…], meta: { total } }, one
+' status per call (plan_to_watch | watching | on_hold | completed | dropped),
+' newest status change first. Items carry id, type, title, year?, index?,
+' parent_* / grandparent_* (an episode's season + show), poster_path?,
+' thumb_path?, watch_state and status. No paging on the Roku yet: 200 (the
+' server's max) per status in one request, like ApiLibraryItems.
+function ApiWatchlist(status as String) as String
+    return "/api/v1/watchlist?status=" + status + "&sort=recent&limit=200"
+end function
+
+' { total, statuses: { <status>: { total, types: { <type>: n } } } } — a
+' status with nothing in it may be missing.
+function ApiWatchlistCounts() as String
+    return "/api/v1/watchlist/counts"
+end function
+
 ' ── Watch state (v2.5) ──────────────────────────────────────────────────
 ' POST marks played, DELETE marks unplayed (204 either way). A season or
 ' show marks every episode underneath within the caller's rating ceiling;

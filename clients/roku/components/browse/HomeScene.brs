@@ -16,6 +16,7 @@ sub init()
     m.hubTask = m.top.findNode("hubTask")
     m.searchBtn = m.top.findNode("searchBtn")
     m.favoritesBtn = m.top.findNode("favoritesBtn")
+    m.watchlistBtn = m.top.findNode("watchlistBtn")
     m.historyBtn = m.top.findNode("historyBtn")
     m.librariesBtn = m.top.findNode("librariesBtn")
 
@@ -31,7 +32,7 @@ sub init()
     m.pendingCalls = []
     ' Header buttons, left to right. Up from the top row reaches them;
     ' down comes back to the rows.
-    m.headerButtons = [m.librariesBtn, m.favoritesBtn, m.historyBtn, m.searchBtn]
+    m.headerButtons = [m.librariesBtn, m.favoritesBtn, m.watchlistBtn, m.historyBtn, m.searchBtn]
     m.headerIdx = 0
     m.inHeader = false
 
@@ -40,6 +41,7 @@ sub init()
     m.rows.observeField("rowItemFocused", "onRowItemFocused")
     m.searchBtn.observeField("buttonSelected", "onSearchPressed")
     m.favoritesBtn.observeField("buttonSelected", "onFavoritesPressed")
+    m.watchlistBtn.observeField("buttonSelected", "onWatchlistPressed")
     m.historyBtn.observeField("buttonSelected", "onHistoryPressed")
     m.librariesBtn.observeField("buttonSelected", "onLibrariesPressed")
 
@@ -53,6 +55,10 @@ end sub
 
 sub onFavoritesPressed()
     getMainScene().callFunc("navigateTo", "FavoritesScene")
+end sub
+
+sub onWatchlistPressed()
+    getMainScene().callFunc("navigateTo", "WatchlistScene")
 end sub
 
 sub onHistoryPressed()

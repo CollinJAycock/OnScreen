@@ -9,6 +9,17 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Added
+
+- **Watchlist on Roku.** A **Watchlist** button in the Roku home header
+  (between Favorites and History) opens one row per status — Plan to Watch,
+  Watching, On Hold, Completed, Dropped — each titled with its count from
+  `GET /api/v1/watchlist/counts`; empty statuses are left out. Up to 200
+  titles per row, episodes labelled "Show · S1 · E2", and OK opens the
+  title's detail page. Not yet tried on a Roku.
+
 ## [v2.6.0] — 2026-10-17
 
 The catch-up release: metadata editing with locks, multi-episode files,

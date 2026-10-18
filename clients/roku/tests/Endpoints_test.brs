@@ -13,6 +13,8 @@ sub Main()
     runCase("playback decision", ApiItemPlaybackDecision(id), "/api/v1/items/" + id + "/playback-decision")
     runCase("optimized stream path", AssetOptimizedPath("/media/optimized/v-1", "tok"), "/media/optimized/v-1?token=tok")
     runCase("optimized stream path with a query", AssetOptimizedPath("/media/optimized/v-1?x=1", "tok"), "/media/optimized/v-1?x=1&token=tok")
+    runCase("watchlist", ApiWatchlist("on_hold"), "/api/v1/watchlist?status=on_hold&sort=recent&limit=200")
+    runCase("watchlist counts", ApiWatchlistCounts(), "/api/v1/watchlist/counts")
 
     print "DONE: Endpoints_test"
 end sub
