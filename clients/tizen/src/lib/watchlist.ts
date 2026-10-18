@@ -37,7 +37,7 @@ export const STATUS_LABELS: Record<WatchStatusValue, string> = {
 };
 
 /** What the screen says with nothing on any list. */
-export const WATCHLIST_EMPTY = "Nothing on your watchlist yet — use Status on a title's page to add it.";
+export const WATCHLIST_EMPTY = "Nothing on your watchlist yet. Add titles with Status on a title's page in the OnScreen web or phone app; hold OK on a card here to move or remove it.";
 
 /** What it says on a server from before the watchlist (v2.5 and older). */
 export const WATCHLIST_MISSING = "This server doesn't have a watchlist yet. Update OnScreen to use it.";
