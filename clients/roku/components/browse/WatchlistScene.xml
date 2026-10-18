@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Watchlist — everything the user has given a watch status, one row per
+    status (Plan to Watch, Watching, On Hold, Completed, Dropped) titled
+    with its count. Same RowList + PosterCard shape as HomeScene; empty
+    statuses are left out. OK on a card opens the item's detail page.
+
+    Reached from the Watchlist button in HomeScene's header. Back re-mounts
+    the scene (MainScene builds a fresh instance on every pop), so coming
+    back from a detail page reloads the lists.
+-->
+<component name="WatchlistScene" extends="Group">
+
+    <script type="text/brightscript" uri="WatchlistScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Watchlist.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
+
+    <children>
+        <Group translation="[0,0]" width="1920" height="1080">
+            <Rectangle width="1920" height="1080" color="0x121212ff" />
+
+            <Label id="title"
+                   text="Watchlist"
+                   translation="[80, 50]"
+                   font="font:LargeBoldSystemFont"
+                   color="0xffffffff" />
+
+            <RowList id="rows"
+                     translation="[80, 160]"
+                     itemComponentName="PosterCard"
+                     itemSize="[1760, 380]"
+                     rowItemSize="[[240, 360]]"
+                     rowItemSpacing="[[20, 0]]"
+                     showRowLabel="[true]"
+                     rowHeights="[380]"
+                     focusBitmapBlendColor="0xffffffff"
+                     drawFocusFeedback="true" />
+
+            <Label id="empty"
+                   text="Loading..."
+                   translation="[80, 540]"
+                   color="0xa0a0a0ff" />
+        </Group>
+    </children>
+
+</component>

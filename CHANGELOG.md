@@ -37,6 +37,12 @@ API change lands only when every first-party client moves with it — see
   "Show · S1 E2". OK opens the title's page (Back returns to the same card,
   refreshed); holding OK moves a card to another status or off the list.
   The top bar's pills sit a little closer together so all ten fit.
+- **Watchlist on Roku.** A **Watchlist** button in the Roku home header
+  (between Favorites and History) opens one row per status — Plan to Watch,
+  Watching, On Hold, Completed, Dropped — each titled with its count from
+  `GET /api/v1/watchlist/counts`; empty statuses are left out. Up to 200
+  titles per row, episodes labelled "Show · S1 · E2", and OK opens the
+  title's detail page. Not yet tried on a Roku.
 
 ## [v2.6.0] — 2026-10-17
 
