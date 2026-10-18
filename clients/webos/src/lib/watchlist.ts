@@ -37,7 +37,7 @@ export const STATUS_LABELS: Record<WatchStatusValue, string> = {
 };
 
 /** What the screen says with nothing on any list. */
-export const WATCHLIST_EMPTY = "Nothing on your watchlist yet. Add titles with Status on a title's page in the OnScreen web or phone app; hold OK on a card here to move or remove it.";
+export const WATCHLIST_EMPTY = "Nothing on your watchlist yet. Add a title with Status on its page; hold OK on a card here to move or remove it.";
 
 /** What it says on a server from before the watchlist (v2.5 and older). */
 export const WATCHLIST_MISSING = "This server doesn't have a watchlist yet. Update OnScreen to use it.";
@@ -268,4 +268,107 @@ export function statusOfFocusKey(key: string | null | undefined): WatchStatusVal
 /** The card as it reads after a move to `next`. */
 export function withStatus(item: WatchlistItem, next: WatchStatusValue, now: Date = new Date()): WatchlistItem {
   return { ...item, status: next, status_updated_at: now.toISOString() };
+}
+
+// ── Status on a title's page ───────────────────────────────────────────
+
+// The title-page types that offer Status: what the Watchlist lists and the
+// page renders a button row for.
+const STATUS_TYPES = new Set(['movie', 'show', 'season', 'episode', 'album', 'artist', 'audiobook', 'book']);
+
+/** True when a title page of this type offers the Status button. */
+export function offersStatus(type: string | null | undefined): boolean {
+  return !!type && STATUS_TYPES.has(type);
+}
+
+/** What the page knows of the title's status: one of the five, null for
+ *  none, undefined while unknown (its read failed). */
+export type ItemStatus = WatchStatusValue | null | undefined;
+
+/** A GET / PUT /items/{id}/watch-status answer (already unwrapped from
+ *  `data`) as a status: null for "" (none set) and for anything that isn't
+ *  one of the five. */
+export function parseItemStatus(raw: unknown): WatchStatusValue | null {
+  const s = raw && typeof raw === 'object' ? (raw as { status?: unknown }).status : undefined;
+  return isStatus(s) ? s : null;
+}
+
+/** The Status button: "Add to Watchlist" with none, "Status: Watching"
+ *  with one, plain "Watchlist" when the read failed. */
+export function statusButtonLabel(current: ItemStatus): string {
+  if (current === undefined) return 'Watchlist';
+  return current ? `Status: ${STATUS_LABELS[current]}` : 'Add to Watchlist';
+}
+
+export interface StatusChoice {
+  /** The status to set; null clears it. */
+  status: WatchStatusValue | null;
+  label: string;
+  danger?: boolean;
+}
+
+/** The Status menu: the five statuses in row order, the current one
+ *  checked, then "Remove from Watchlist" unless there is none to remove. */
+export function statusChoices(current: ItemStatus): StatusChoice[] {
+  const out: StatusChoice[] = WATCHLIST_STATUSES.map((s) => ({
+    status: s,
+    label: `${s === current ? '✓ ' : ''}${STATUS_LABELS[s]}`,
+  }));
+  if (current !== null) out.push({ status: null, label: 'Remove from Watchlist', danger: true });
+  return out;
+}
+
+/** The line under the Status menu's title. */
+export function statusMenuMessage(current: ItemStatus): string | undefined {
+  if (current === undefined) return undefined;
+  return current ? `On your watchlist as ${STATUS_LABELS[current]}` : 'Not on your watchlist';
+}
+
+/** Where the Status menu starts: on the current status, else the top. */
+export function statusChoiceIndex(current: ItemStatus): number {
+  return current ? WATCHLIST_STATUSES.indexOf(current) : 0;
+}
+
+/** The line the page shows once a pick is saved. */
+export function statusChangedText(next: WatchStatusValue | null): string {
+  return next ? `Status: ${STATUS_LABELS[next]}` : 'Removed from your watchlist';
+}
+
+export interface ItemStatusApi {
+  get: (itemID: string) => Promise<unknown>;
+  set: (itemID: string, status: WatchStatusValue) => Promise<unknown>;
+  clear: (itemID: string) => Promise<unknown>;
+}
+
+function httpStatus(e: unknown): number | undefined {
+  const s = e && typeof e === 'object' ? (e as { status?: unknown }).status : undefined;
+  return typeof s === 'number' ? s : undefined;
+}
+
+/** The title's status for its page: null for none (a 404 included, from a
+ *  server or an item without one). Any other failure rejects. */
+export async function readItemStatus(api: ItemStatusApi, itemID: string): Promise<WatchStatusValue | null> {
+  try {
+    return parseItemStatus(await api.get(itemID));
+  } catch (e) {
+    if (httpStatus(e) === 404) return null;
+    throw e;
+  }
+}
+
+/** Save a pick: PUT the status, or DELETE for null. Resolves to the status
+ *  the title now has (the server's answer, else the pick); a failure
+ *  rejects, and the caller keeps what it showed. */
+export async function writeItemStatus(
+  api: ItemStatusApi,
+  itemID: string,
+  next: WatchStatusValue | null,
+): Promise<WatchStatusValue | null> {
+  if (next === null) {
+    await api.clear(itemID);
+    return null;
+  }
+  const answer = await api.set(itemID, next);
+  const saved = parseItemStatus(answer);
+  return saved ?? next;
 }
