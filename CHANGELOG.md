@@ -37,6 +37,15 @@ API change lands only when every first-party client moves with it — see
   "Show · S1 E2". OK opens the title's page (Back returns to the same card,
   refreshed); holding OK moves a card to another status or off the list.
   The top bar's pills sit a little closer together so all ten fit.
+- **Status on a title's page in the TV web apps (LG webOS, Samsung Tizen and
+  the Xbox / `/tvapp/` app).** Movies, shows, seasons, episodes, albums,
+  artists, audiobooks and books get a button after ♥ Favorite: **Add to
+  Watchlist**, or **Status: Watching** (etc.) once set. OK opens a menu of
+  Plan to Watch, Watching, On Hold, Completed and Dropped, the current one
+  checked, plus **Remove from Watchlist**; Back closes it. The status loads
+  without holding up the page, and Play keeps the first focus. Uses the
+  per-item `/api/v1/items/{id}/watch-status` endpoints; no server change.
+  The Watchlist screen's empty text now points here.
 - **Watchlist on Roku.** A **Watchlist** button in the Roku home header
   (between Favorites and History) opens one row per status — Plan to Watch,
   Watching, On Hold, Completed, Dropped — each titled with its count from

@@ -486,15 +486,17 @@ export type WatchStatusValue =
   | 'on_hold'
   | 'dropped';
 
+/** GET / PUT answer: status "" when the title has none. */
 export interface WatchStatus {
-  status: WatchStatusValue;
-  updated_at: string;
+  status: WatchStatusValue | '';
+  created_at?: string;
+  updated_at?: string;
 }
 
 export const watchStatus = {
-  get: (itemID: string) => api.get<WatchStatus | null>(`/api/v1/items/${itemID}/watch-status`),
+  get: (itemID: string) => api.get<WatchStatus>(`/api/v1/items/${itemID}/watch-status`),
   set: (itemID: string, status: WatchStatusValue) =>
-    api.put<void>(`/api/v1/items/${itemID}/watch-status`, { status }),
+    api.put<WatchStatus>(`/api/v1/items/${itemID}/watch-status`, { status }),
   clear: (itemID: string) => api.del<void>(`/api/v1/items/${itemID}/watch-status`),
 };
 

@@ -12,6 +12,7 @@
     type SimilarArtist,
     type UpNext
   } from '$lib/api';
+  import type { WatchStatusValue } from '$lib/api/endpoints';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
   import {
@@ -45,6 +46,17 @@
   import { logoArtworkPath, showsLogo } from '$lib/artwork';
   import { groupVersions } from '$lib/player/versions';
   import { latestOnly } from '$lib/latest';
+  import {
+    offersStatus,
+    readItemStatus,
+    statusButtonLabel,
+    statusChangedText,
+    statusChoiceIndex,
+    statusChoices,
+    statusMenuMessage,
+    writeItemStatus,
+    type ItemStatus,
+  } from '$lib/watchlist';
 
   // Back from the player: how long to wait before reading the item again
   // (see afterNavigate below).
@@ -101,6 +113,15 @@
   // the server refuses. Seeded from the item's is_favorite.
   let isFavorite = $state(false);
   let favoriteBusy = false;
+
+  // Watchlist status (Plan to Watch … Dropped, lib/watchlist): read as the
+  // page opens without holding it up; the Status button joins the row once
+  // the read has answered, so it never reads "Add to Watchlist" for a title
+  // that has one. undefined = the read failed (every status still offered).
+  let listStatus = $state<ItemStatus>(undefined);
+  let listStatusReady = $state(false);
+  let statusMenuOpen = $state(false);
+  let listStatusBusy = false;
 
   // Versions (v2.6, lib/player/versions): a movie with editions or several
   // files picks which one Play starts. Keyed by the version's key; null =
@@ -221,9 +242,25 @@
     onclick: () => void;
   }
 
+  // Status: after Favorite, so it doesn't push Play (or the button the
+  // user is on) along when it turns up.
+  const statusAction = $derived.by<Action | null>(() => {
+    if (!item || !listStatusReady || !offersStatus(item.type)) return null;
+    return {
+      key: 'status',
+      label: statusButtonLabel(listStatus),
+      onclick: () => {
+        menuOrigin = focusManager.currentElement();
+        statusMenuOpen = true;
+      },
+    };
+  });
+
   // The hero's buttons, in order. The first one takes focus on load.
   const actions = $derived.by<Action[]>(() => {
-    if (!item || !actionsReady || item.type === 'book') return [];
+    if (!item || !actionsReady) return [];
+    // A book can't be read here (see the note): Status is all it offers.
+    if (item.type === 'book') return statusAction ? [statusAction] : [];
     const out: Action[] = [];
     const it = item;
     if (it.files.length > 0) {
@@ -338,6 +375,7 @@
       label: isFavorite ? '♥ Favorited' : '♥ Favorite',
       onclick: () => void toggleFavorite(),
     });
+    if (statusAction) out.push(statusAction);
     if (reportAvailable) {
       out.push({
         key: 'report',
@@ -368,6 +406,7 @@
         if (!it) return;
         isFavorite = !!it.is_favorite;
         if (canReportProblem(it.type)) void loadReportState();
+        if (offersStatus(it.type)) void loadListStatus(it.id);
         // Container types load children. "audiobook" is dual-shape:
         // single-file books have files of their own (children empty),
         // multi-file books expose audiobook_chapter children.
@@ -578,6 +617,41 @@
       // 404 = a server without reports: no button. Anything else still
       // offers it (the dialog reports its own errors).
       if (!(e instanceof Unauthorized) && !endpointMissing(e)) reportAvailable = true;
+    }
+  }
+
+  async function loadListStatus(id: string) {
+    try {
+      const s = await readItemStatus(endpoints.watchStatus, id);
+      if (alive) listStatus = s;
+    } catch {
+      // Unknown (listStatus stays undefined): the button still offers every
+      // status. A rejected sign-in is the client's to act on.
+    } finally {
+      if (alive) listStatusReady = true;
+    }
+  }
+
+  // A pick from the Status menu: saved first, then the button says it. A
+  // failure keeps the old status and says so. The current status again
+  // just closes the menu.
+  async function pickListStatus(next: WatchStatusValue | null) {
+    statusMenuOpen = false;
+    await restoreFocus();
+    const it = item;
+    if (!it || listStatusBusy || next === listStatus) return;
+    listStatusBusy = true;
+    try {
+      const saved = await writeItemStatus(endpoints.watchStatus, it.id, next);
+      if (!alive) return;
+      listStatus = saved;
+      showStatus(statusChangedText(saved));
+    } catch (e) {
+      if (!alive) return;
+      if (e instanceof Unauthorized) goto('#/login');
+      else showStatus(watchWriteError(e, "Couldn't update the status."));
+    } finally {
+      listStatusBusy = false;
     }
   }
 
@@ -916,14 +990,14 @@
           </div>
           {#if item.summary}<p class="summary">{item.summary}</p>{/if}
 
+          {#if item.type === 'book'}
+            <!-- Ebooks (EPUB / CBZ / CBR) need a paginated reader; the
+                 TV clients don't ship one. Show a clear message instead
+                 of routing to /watch, which would stall trying to play
+                 an archive file as video. Status still works (below). -->
+            <div class="note book-note">Book reading isn't available on TV. Open this book in the web or phone app.</div>
+          {/if}
           <div class="actions">
-        {#if item.type === 'book'}
-          <!-- Ebooks (EPUB / CBZ / CBR) need a paginated reader; the
-               TV clients don't ship one. Show a clear message instead
-               of routing to /watch, which would stall trying to play
-               an archive file as video. -->
-          <div class="note">Book reading isn't available on TV. Open this book in the web or phone app.</div>
-        {:else}
           <!-- Keyed for focus memory: Back from the player puts focus on
                the button that started it ("Play from Beginning" too). -->
           {#each actions as a, i (a.key)}
@@ -939,7 +1013,6 @@
               {a.label}
             </button>
           {/each}
-        {/if}
           </div>
           {#if status}<div class="status" role="status">{status}</div>{/if}
         </div>
@@ -1138,6 +1211,24 @@
     />
   {/if}
 
+  {#if statusMenuOpen}
+    <!-- Starts on the current status (✓); OK on it changes nothing. -->
+    <OptionsDialog
+      title={item.title}
+      message={statusMenuMessage(listStatus)}
+      options={statusChoices(listStatus).map((c) => ({
+        label: c.label,
+        danger: c.danger,
+        onselect: () => void pickListStatus(c.status),
+      }))}
+      initialIndex={statusChoiceIndex(listStatus)}
+      oncancel={() => {
+        statusMenuOpen = false;
+        void restoreFocus();
+      }}
+    />
+  {/if}
+
   {#if reportOpen}
     <ReportProblemDialog
       itemId={item.id}
@@ -1276,6 +1367,11 @@
     margin-top: 20px;
     font-size: var(--font-sm);
     color: var(--text-secondary);
+  }
+
+  /* The book note sits over the button row (Status). */
+  .book-note {
+    margin-bottom: 32px;
   }
 
   .note {
