@@ -139,6 +139,23 @@ interface OnScreenApi {
     @DELETE("api/v1/items/{id}/watch-status")
     suspend fun clearWatchStatus(@Path("id") id: String): Response<Unit>
 
+    /** The caller's watch-status list (v2.6). [status] is one of
+     *  [WatchStatusValues] or "all"; [sort] recent (default, newest status
+     *  change first) | title; [limit] ≤ 200. The server applies library
+     *  access, the rating ceiling, label restrictions and profiles. */
+    @GET("api/v1/watchlist")
+    suspend fun getWatchlist(
+        @Query("status") status: String,
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+        @Query("type") type: String? = null,
+        @Query("sort") sort: String? = null,
+    ): ApiListResponse<WatchlistItem>
+
+    /** Per-status totals for the watchlist rows (v2.6). */
+    @GET("api/v1/watchlist/counts")
+    suspend fun getWatchlistCounts(): ApiResponse<WatchlistCounts>
+
     // ── Manual watch state (v2.5) ───────────────────────────────────────────
     // Played / unplayed marks (a show or season expands to its episodes),
     // hide-from-Continue-Watching, and which episode Play on a show / season

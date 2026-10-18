@@ -36,6 +36,7 @@ import tv.onscreen.android.ui.livetv.LiveTVFragment
 import tv.onscreen.android.ui.livetv.RecordingsFragment
 import tv.onscreen.android.ui.search.SearchFragment
 import tv.onscreen.android.ui.settings.SettingsFragment
+import tv.onscreen.android.ui.watchlist.WatchlistFragment
 import androidx.leanback.widget.FocusHighlight
 import javax.inject.Inject
 
@@ -278,6 +279,7 @@ class HomeFragment : BrowseSupportFragment() {
                 is NavCard -> {
                     val fragment = when (item.id) {
                         NAV_FAVORITES -> FavoritesFragment()
+                        NAV_WATCHLIST -> WatchlistFragment()
                         NAV_HISTORY -> HistoryFragment()
                         // Gated as well as the cards themselves, so the
                         // firetv flavor has no path to the Live TV screens
@@ -459,11 +461,12 @@ class HomeFragment : BrowseSupportFragment() {
             )
         }
 
-        // Browse row: Favorites / History / [Live TV / Recordings] / Settings.
+        // Browse row: Favorites / Watchlist / History / [Live TV / Recordings] / Settings.
         // The Fire TV build has no Live TV or Recordings (BuildConfig.LIVE_TV;
         // see the flavor comment in app/build.gradle.kts).
         val navAdapter = ArrayObjectAdapter(navPresenter)
         navAdapter.add(NavCard(NAV_FAVORITES, getString(R.string.favorites), R.drawable.ic_heart_filled))
+        navAdapter.add(NavCard(NAV_WATCHLIST, getString(R.string.watchlist), R.drawable.ic_bookmark))
         navAdapter.add(NavCard(NAV_HISTORY, getString(R.string.history), R.drawable.ic_history))
         if (BuildConfig.LIVE_TV) {
             navAdapter.add(NavCard(NAV_LIVE_TV, getString(R.string.live_tv), R.drawable.ic_live_tv))
@@ -544,6 +547,7 @@ class HomeFragment : BrowseSupportFragment() {
 
     companion object {
         private const val NAV_FAVORITES = "favorites"
+        private const val NAV_WATCHLIST = "watchlist"
         private const val NAV_HISTORY = "history"
         private const val NAV_LIVE_TV = "live_tv"
         private const val NAV_RECORDINGS = "recordings"
