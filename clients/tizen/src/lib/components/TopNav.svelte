@@ -19,6 +19,7 @@
     { href: '#/libraries/',  label: 'Libraries' },
     { href: '#/search/',     label: 'Search' },
     { href: '#/favorites/',  label: 'Favorites' },
+    { href: '#/watchlist/',  label: 'Watchlist' },
     { href: '#/history/',    label: 'History' },
     { href: '#/discover/',   label: 'Discover',   gate: 'discover' },
     { href: '#/livetv/',     label: 'Live TV',    gate: 'liveTv' },
@@ -86,8 +87,9 @@
   }
 
   .brand {
-    /* The bar's old 48px gap: space-between spreads what's left over. */
-    margin-right: 48px;
+    /* The least room left beside the pills: space-between spreads what's
+       left over. */
+    margin-right: 32px;
     /* Hard-override the user-agent <a> defaults — webOS Chromium 79
        sometimes wins before scoped CSS applies. */
     color: var(--accent);
@@ -104,15 +106,18 @@
     align-items: center;
   }
 
+  /* Ten pills (with Discover, Live TV and Recordings shown) have to fit in
+     the 1760 px between the page insets: 8 px apart and 18 px in from each
+     side leaves them about 30 px to spare (measured in desktop Chromium). */
   .link + .link {
-    margin-left: 12px;
+    margin-left: 8px;
   }
 
   .link {
     color: var(--text-secondary);
     text-decoration: none !important;
     font-size: var(--font-md);
-    padding: 10px 22px;
+    padding: 10px 18px;
     border-radius: 999px;
     border: 2px solid transparent;
     transition: color 0.15s ease, background 0.15s ease, border-color 0.15s ease;
