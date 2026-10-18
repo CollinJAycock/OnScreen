@@ -21,6 +21,15 @@ API change lands only when every first-party client moves with it — see
   the list refreshes when you come back; a long-press of OK moves the card
   to another status or removes it. Uses the v2.6.0
   `GET /api/v1/watchlist` and `/watchlist/counts`.
+- **Status on Android TV / Fire TV title pages.** Movie, show, season,
+  episode, album, artist, audiobook and book pages get a **Status** button
+  in the action row (after Play, before the heart): it reads "Add to
+  Watchlist", or "Status: Plan to Watch" once one is set, and opens a picker
+  of the five statuses with the current one checked, plus "Remove from
+  Watchlist". Play keeps the initial focus; a failed change says so and
+  keeps the old status. So titles can now be added to the TV app's
+  Watchlist from the TV itself. Uses the existing
+  `GET/PUT/DELETE /api/v1/items/{id}/watch-status`; no server change.
 - **Watchlist on the Android phone app.** A new **Watchlist** entry in the
   home screen's ⋮ menu opens the same lists as the web page: one tab per
   status (Plan to Watch, Watching, On Hold, Completed, Dropped) with its
