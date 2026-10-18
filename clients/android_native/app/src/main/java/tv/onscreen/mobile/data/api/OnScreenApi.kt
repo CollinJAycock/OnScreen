@@ -205,6 +205,24 @@ interface OnScreenApi {
     @DELETE("api/v1/items/{id}/watch-status")
     suspend fun clearWatchStatus(@Path("id") id: String)
 
+    // ── Watchlist (v2.6) ─────────────────────────────────────────────────────
+    // The caller's statuses as a pageable list + per-(status, type) counts.
+    // Library access, rating ceiling, labels and profiles apply server-side.
+    // Unlike the per-item route above, these use the normal envelopes.
+
+    /** [type] null = every type (Retrofit drops a null query param). */
+    @GET("api/v1/watchlist")
+    suspend fun getWatchlist(
+        @Query("status") status: String,
+        @Query("type") type: String? = null,
+        @Query("sort") sort: String = "recent",
+        @Query("limit") limit: Int = 50,
+        @Query("offset") offset: Int = 0,
+    ): ApiListResponse<WatchlistItem>
+
+    @GET("api/v1/watchlist/counts")
+    suspend fun getWatchlistCounts(): ApiResponse<WatchlistCounts>
+
     // ── Manual watch state (v2.5) ────────────────────────────────────────────
     // Marks + dismiss answer 204 (no body). A show / season mark expands to
     // every episode under it server-side; other non-video types answer 422.

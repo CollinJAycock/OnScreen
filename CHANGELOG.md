@@ -21,6 +21,14 @@ API change lands only when every first-party client moves with it — see
   the list refreshes when you come back; a long-press of OK moves the card
   to another status or removes it. Uses the v2.6.0
   `GET /api/v1/watchlist` and `/watchlist/counts`.
+- **Watchlist on the Android phone app.** A new **Watchlist** entry in the
+  home screen's ⋮ menu opens the same lists as the web page: one tab per
+  status (Plan to Watch, Watching, On Hold, Completed, Dropped) with its
+  count, type chips for the selected tab, a Recently changed / Title sort and
+  a poster grid that pages in 50 at a time (episodes read "Show · S1 E2").
+  Tap opens the title; long-press or a card's ⋮ moves it to another status
+  or removes it. Uses the v2.6 `GET /api/v1/watchlist` and
+  `/watchlist/counts`; no server change.
 
 ## [v2.6.0] — 2026-10-17
 

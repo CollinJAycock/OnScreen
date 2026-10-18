@@ -15,6 +15,8 @@ object Routes {
      *  in a WebView with bundled epub.js. */
     const val BOOK = "book/{id}"
     const val FAVORITES = "favorites"
+    /** The caller's watching statuses, one tab per status (v2.6). */
+    const val WATCHLIST = "watchlist"
     const val HISTORY = "history"
     const val COLLECTIONS = "collections"
     const val COLLECTION = "collection/{id}"

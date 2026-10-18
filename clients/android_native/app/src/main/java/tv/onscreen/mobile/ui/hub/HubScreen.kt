@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bookmarks
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.MoreVert
@@ -82,6 +83,7 @@ fun HubScreen(
     onOpenLibrary: (String) -> Unit,
     onOpenSearch: () -> Unit,
     onOpenFavorites: () -> Unit,
+    onOpenWatchlist: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenCollections: () -> Unit,
     onOpenDownloads: () -> Unit,
@@ -132,6 +134,11 @@ fun HubScreen(
                             text = { Text("Favorites") },
                             leadingIcon = { Icon(Icons.Default.Favorite, contentDescription = null) },
                             onClick = { menuOpen = false; onOpenFavorites() },
+                        )
+                        DropdownMenuItem(
+                            text = { Text("Watchlist") },
+                            leadingIcon = { Icon(Icons.Default.Checklist, contentDescription = null) },
+                            onClick = { menuOpen = false; onOpenWatchlist() },
                         )
                         DropdownMenuItem(
                             text = { Text("History") },
