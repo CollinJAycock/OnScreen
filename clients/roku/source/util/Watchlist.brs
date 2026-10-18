@@ -1,6 +1,7 @@
 ' Pure helpers behind WatchlistScene: which status rows to show (from
 ' GET /api/v1/watchlist/counts), their titles, the card second line and
-' where OK on a card goes. No SceneGraph — unit-tested in
+' where OK on a card goes — plus the detail page's Status button (label,
+' menu, parsing the watch-status reply). No SceneGraph — unit-tested in
 ' tests/Watchlist_test.brs. Wording and order mirror the web page
 ' (web/src/lib/watchlist.ts). Depends on source/util/WatchState.brs for
 ' WatchState_Str / WatchState_Num / WatchState_EpisodeCode.
@@ -86,6 +87,67 @@ function Watchlist_Join(a as String, b as String) as String
     if a = "" then return b
     if b = "" then return a
     return a + " · " + b
+end function
+
+' ── Status control (DetailScene) ───────────────────────────────────
+' GET / PUT / DELETE /api/v1/items/{id}/watch-status (ApiItemWatchStatus).
+
+' Item types whose detail page offers the Status button.
+function Watchlist_SupportsStatus(itemType as Dynamic) as Boolean
+    t = WatchState_Str(itemType)
+    return t = "movie" or t = "show" or t = "season" or t = "episode" or t = "album" or t = "artist" or t = "audiobook" or t = "book"
+end function
+
+' "Watching" for "watching"; "" for none or a status this build doesn't know.
+function Watchlist_StatusLabel(status as Dynamic) as String
+    s = WatchState_Str(status)
+    for each st in Watchlist_Statuses()
+        if st.key = s then return st.label
+    end for
+    return ""
+end function
+
+' The button: "Add to Watchlist" with no status, else "Status: Watching".
+function Watchlist_StatusButtonLabel(status as Dynamic) as String
+    label = Watchlist_StatusLabel(status)
+    if label = "" then return "Add to Watchlist"
+    return "Status: " + label
+end function
+
+' The status from a GET / PUT result (ApiResult_From, the data envelope
+' already off; an older build's bare object reads the same): the status
+' key, "" for none (status "" / missing, an unknown value, a 204 or a 404),
+' or invalid when the call failed and the status is unknown.
+function Watchlist_StatusFromResult(res as Dynamic) as Dynamic
+    if res = invalid or type(res) <> "roAssociativeArray" then return invalid
+    if res.code = 404 then return ""
+    if res.ok <> true then return invalid
+    data = res.data
+    if data = invalid or type(data) <> "roAssociativeArray" then return ""
+    s = WatchState_Str(data.status)
+    if Watchlist_StatusLabel(s) = "" then return ""
+    return s
+end function
+
+' The Status menu's entries, [{ label, action, status }]: the five
+' statuses in Watchlist_Statuses order (the current one marked "● ",
+' action "set"), then "Remove from Watchlist" (action "clear") when one is
+' set. The scene appends Cancel.
+function Watchlist_StatusMenu(current as Dynamic) as Object
+    cur = WatchState_Str(current)
+    out = []
+    for each st in Watchlist_Statuses()
+        label = st.label
+        if st.key = cur then label = "● " + label
+        out.push({ label: label, action: "set", status: st.key })
+    end for
+    if Watchlist_StatusLabel(cur) <> "" then out.push({ label: "Remove from Watchlist", action: "clear", status: "" })
+    return out
+end function
+
+' PUT body.
+function Watchlist_StatusBody(status as String) as Object
+    return { status: status }
 end function
 
 ' The scene OK on a card opens: photos go to their viewer, everything else

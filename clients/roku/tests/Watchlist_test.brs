@@ -7,6 +7,11 @@ sub Main()
     testItems()
     testCardSubtitle()
     testDestination()
+    testSupportsStatus()
+    testStatusLabels()
+    testStatusFromResult()
+    testStatusMenu()
+    testStatusBody()
 
     print "DONE: Watchlist_test"
 end sub
@@ -84,6 +89,87 @@ sub testDestination()
     runStr("dest: missing type", Watchlist_Destination(invalid), "DetailScene")
 end sub
 
+sub testSupportsStatus()
+    supported = ""
+    for each t in ["movie", "show", "season", "episode", "album", "artist", "audiobook", "book", "track", "audiobook_chapter", "podcast", "podcast_episode", "book_author", "book_series", "photo", "collection", ""]
+        if Watchlist_SupportsStatus(t)
+            if supported <> "" then supported = supported + "|"
+            supported = supported + t
+        end if
+    end for
+    runStr("supports: detail types with a status", supported, "movie|show|season|episode|album|artist|audiobook|book")
+    runBool("supports: missing type", Watchlist_SupportsStatus(invalid), false)
+    runBool("supports: not a string", Watchlist_SupportsStatus(3), false)
+end sub
+
+sub testStatusLabels()
+    runStr("label: plan to watch", Watchlist_StatusLabel("plan_to_watch"), "Plan to Watch")
+    runStr("label: on hold", Watchlist_StatusLabel("on_hold"), "On Hold")
+    runStr("label: none", Watchlist_StatusLabel(""), "")
+    runStr("label: unknown", Watchlist_StatusLabel("rewatching"), "")
+    runStr("label: invalid", Watchlist_StatusLabel(invalid), "")
+    runStr("button: none", Watchlist_StatusButtonLabel(""), "Add to Watchlist")
+    runStr("button: invalid", Watchlist_StatusButtonLabel(invalid), "Add to Watchlist")
+    runStr("button: watching", Watchlist_StatusButtonLabel("watching"), "Status: Watching")
+    runStr("button: completed", Watchlist_StatusButtonLabel("completed"), "Status: Completed")
+    runStr("button: dropped", Watchlist_StatusButtonLabel("dropped"), "Status: Dropped")
+    runStr("button: unknown status", Watchlist_StatusButtonLabel("rewatching"), "Add to Watchlist")
+end sub
+
+sub testStatusFromResult()
+    ' What ApiResult_From hands back: the body is
+    ' {"status":…,"created_at":…,"data":{same}}, unwrapped to data.
+    setData = ParseJson("{""status"":""watching"",""created_at"":""2026-10-01T00:00:00Z"",""updated_at"":""2026-10-02T00:00:00Z""}")
+    runStr("result: set", optStr(Watchlist_StatusFromResult({ code: 200, ok: true, data: setData })), "watching")
+    runStr("result: none", optStr(Watchlist_StatusFromResult({ code: 200, ok: true, data: ParseJson("{""status"":"""",""created_at"":""0001-01-01T00:00:00Z""}") })), "")
+    runStr("result: status missing", optStr(Watchlist_StatusFromResult({ code: 200, ok: true, data: {} })), "")
+    runStr("result: status not a string", optStr(Watchlist_StatusFromResult({ code: 200, ok: true, data: { status: 3 } })), "")
+    runStr("result: unknown status", optStr(Watchlist_StatusFromResult({ code: 200, ok: true, data: { status: "rewatching" } })), "")
+    runStr("result: 204 (delete)", optStr(Watchlist_StatusFromResult({ code: 204, ok: true, data: invalid })), "")
+    runStr("result: 404 is none", optStr(Watchlist_StatusFromResult({ code: 404, ok: false, data: invalid })), "")
+    runStr("result: server error", optStr(Watchlist_StatusFromResult({ code: 500, ok: false, data: invalid })), "<invalid>")
+    runStr("result: network failure", optStr(Watchlist_StatusFromResult({ code: -28, ok: false, data: invalid })), "<invalid>")
+    runStr("result: never completed", optStr(Watchlist_StatusFromResult({ code: 0, ok: false, data: invalid })), "<invalid>")
+    runStr("result: invalid", optStr(Watchlist_StatusFromResult(invalid)), "<invalid>")
+end sub
+
+sub testStatusMenu()
+    menu = Watchlist_StatusMenu("")
+    runStr("menu: none set", menuLabels(menu), "Plan to Watch|Watching|On Hold|Completed|Dropped")
+    runStr("menu: actions", menuActions(menu), "set:plan_to_watch|set:watching|set:on_hold|set:completed|set:dropped")
+    menu = Watchlist_StatusMenu("on_hold")
+    runStr("menu: current marked, remove offered", menuLabels(menu), "Plan to Watch|Watching|● On Hold|Completed|Dropped|Remove from Watchlist")
+    runStr("menu: remove clears", menuActions(menu), "set:plan_to_watch|set:watching|set:on_hold|set:completed|set:dropped|clear:")
+    runStr("menu: invalid current", menuLabels(Watchlist_StatusMenu(invalid)), "Plan to Watch|Watching|On Hold|Completed|Dropped")
+end sub
+
+sub testStatusBody()
+    runStr("body: json", FormatJson(Watchlist_StatusBody("plan_to_watch")), "{""status"":""plan_to_watch""}")
+end sub
+
+function optStr(v as Dynamic) as String
+    if v = invalid then return "<invalid>"
+    return v
+end function
+
+function menuLabels(menu as Object) as String
+    out = ""
+    for i = 0 to menu.Count() - 1
+        if i > 0 then out = out + "|"
+        out = out + menu[i].label
+    end for
+    return out
+end function
+
+function menuActions(menu as Object) as String
+    out = ""
+    for i = 0 to menu.Count() - 1
+        if i > 0 then out = out + "|"
+        out = out + menu[i].action + ":" + menu[i].status
+    end for
+    return out
+end function
+
 function rowStatuses(rows as Object) as String
     out = ""
     for i = 0 to rows.Count() - 1
@@ -116,5 +202,13 @@ sub runStr(name as String, actual as String, expected as String)
         print "PASS: " + name
     else
         print "FAIL: " + name + " — expected=[" + expected + "] actual=[" + actual + "]"
+    end if
+end sub
+
+sub runBool(name as String, actual as Boolean, expected as Boolean)
+    if actual = expected
+        print "PASS: " + name
+    else
+        print "FAIL: " + name
     end if
 end sub

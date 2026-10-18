@@ -61,6 +61,14 @@ API change lands only when every first-party client moves with it — see
   `GET /api/v1/watchlist/counts`; empty statuses are left out. Up to 200
   titles per row, episodes labelled "Show · S1 · E2", and OK opens the
   title's detail page. Not yet tried on a Roku.
+- **Watchlist status on Roku.** The Roku detail page of a movie, show,
+  season, episode, album, artist, audiobook or book has a **Status** button
+  next to Mark watched — "Add to Watchlist", or "Status: Watching" once one
+  is set. OK lists the five statuses (the current one marked) plus "Remove
+  from Watchlist"; the button changes once the server confirms, and a failed
+  save says so and keeps the old status. The Watchlist screen's empty message
+  now points there. Uses `GET` / `PUT` / `DELETE /api/v1/items/{id}/watch-status`.
+  Not yet tried on a Roku.
 
 ## [v2.6.0] — 2026-10-17
 

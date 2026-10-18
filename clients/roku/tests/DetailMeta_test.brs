@@ -4,6 +4,7 @@
 sub Main()
     testLine()
     testStudios()
+    testFitWidths()
 
     print "DONE: DetailMeta_test"
 end sub
@@ -25,6 +26,31 @@ sub testStudios()
     runStr("studios: not a list", DetailMeta_Studios("A24", 2), "")
 end sub
 
+sub testFitWidths()
+    ' Play + Mark + Status + Report: 1560 + 72 fits 1760 as is.
+    runStr("fit: row that fits is unchanged", joinInts(DetailMeta_FitWidths([400, 360, 440, 360], 24, 1760)), "400,360,440,360")
+    ' + Version (480): 2040 + 96 > 1760 → every width × 1664 / 2040.
+    fitted = DetailMeta_FitWidths([400, 480, 360, 440, 360], 24, 1760)
+    runStr("fit: overflowing row scaled down", joinInts(fitted), "326,391,293,358,293")
+    total = 0
+    for each w in fitted
+        total = total + w
+    end for
+    runBool("fit: scaled row fits", total + 96 <= 1760, true)
+    runStr("fit: exactly full is unchanged", joinInts(DetailMeta_FitWidths([868, 868], 24, 1760)), "868,868")
+    runStr("fit: one button", joinInts(DetailMeta_FitWidths([400], 24, 1760)), "400")
+    runStr("fit: none", joinInts(DetailMeta_FitWidths([], 24, 1760)), "")
+end sub
+
+function joinInts(list as Object) as String
+    out = ""
+    for i = 0 to list.Count() - 1
+        if i > 0 then out = out + ","
+        out = out + list[i].ToStr()
+    end for
+    return out
+end function
+
 sub runStr(name as String, actual as Dynamic, expected as String)
     got = "<invalid>"
     if actual <> invalid then got = actual
@@ -32,5 +58,13 @@ sub runStr(name as String, actual as Dynamic, expected as String)
         print "PASS: " + name
     else
         print "FAIL: " + name + " — expected=[" + expected + "] actual=[" + got + "]"
+    end if
+end sub
+
+sub runBool(name as String, actual as Boolean, expected as Boolean)
+    if actual = expected
+        print "PASS: " + name
+    else
+        print "FAIL: " + name
     end if
 end sub

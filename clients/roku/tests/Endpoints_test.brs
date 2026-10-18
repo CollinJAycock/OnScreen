@@ -15,6 +15,7 @@ sub Main()
     runCase("optimized stream path with a query", AssetOptimizedPath("/media/optimized/v-1?x=1", "tok"), "/media/optimized/v-1?x=1&token=tok")
     runCase("watchlist", ApiWatchlist("on_hold"), "/api/v1/watchlist?status=on_hold&sort=recent&limit=200")
     runCase("watchlist counts", ApiWatchlistCounts(), "/api/v1/watchlist/counts")
+    runCase("watch status", ApiItemWatchStatus(id), "/api/v1/items/" + id + "/watch-status")
 
     print "DONE: Endpoints_test"
 end sub
