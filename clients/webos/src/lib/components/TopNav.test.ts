@@ -104,12 +104,13 @@ function currentPill(): string | null {
   return m ? m[1] : null;
 }
 
-const ALWAYS = ['Home', 'Libraries', 'Search', 'Favorites', 'History', 'Settings'];
+const ALWAYS = ['Home', 'Libraries', 'Search', 'Favorites', 'Watchlist', 'History', 'Settings'];
 const EVERY = [
   'Home',
   'Libraries',
   'Search',
   'Favorites',
+  'Watchlist',
   'History',
   'Discover',
   'Live TV',
@@ -180,7 +181,7 @@ describe('TopNav pills', () => {
   it('shows Live TV and Recordings on a server older than live_tv_configured', async () => {
     server = { capabilities: OLDER, quota: quota(false) };
     await mountAndLoad();
-    expect(pills()).toEqual([...ALWAYS.slice(0, 5), 'Live TV', 'Recordings', 'Settings']);
+    expect(pills()).toEqual([...ALWAYS.slice(0, 6), 'Live TV', 'Recordings', 'Settings']);
   });
 
   it('shows Discover when the server has no quota endpoint (404)', async () => {
@@ -189,7 +190,7 @@ describe('TopNav pills', () => {
       quota: fail(404, 'NOT_FOUND', 'resource not found'),
     };
     await mountAndLoad();
-    expect(pills()).toEqual([...ALWAYS.slice(0, 5), 'Discover', 'Settings']);
+    expect(pills()).toEqual([...ALWAYS.slice(0, 6), 'Discover', 'Settings']);
   });
 
   it("shows Discover when an older server's /requests/{id} answers the quota with 400", async () => {
@@ -244,7 +245,7 @@ describe('TopNav across sign-out and server change', () => {
     signIn('reviewer');
     server = { capabilities: CONFIGURED, quota: quota(false) };
     await mountAndLoad();
-    expect(pills()).toEqual([...ALWAYS.slice(0, 5), 'Live TV', 'Recordings', 'Settings']);
+    expect(pills()).toEqual([...ALWAYS.slice(0, 6), 'Live TV', 'Recordings', 'Settings']);
   });
 
   it('drops the pills when a refresh is rejected', async () => {

@@ -40,6 +40,7 @@ import type {
 } from './types';
 import { watchQuery } from '$lib/watchState';
 import type { PageResult } from '$lib/paging';
+import { parseWatchlistCounts, watchlistPage, watchlistQueryString } from '$lib/watchlist';
 
 // Response shape for list endpoints that wrap data in { data, meta }.
 // The client unwraps `data` already, so these pull the array directly.
@@ -495,6 +496,66 @@ export const watchStatus = {
   set: (itemID: string, status: WatchStatusValue) =>
     api.put<void>(`/api/v1/items/${itemID}/watch-status`, { status }),
   clear: (itemID: string) => api.del<void>(`/api/v1/items/${itemID}/watch-status`),
+};
+
+// ── Watchlist (v2.6) ──────────────────────────────────────────────────────
+// The caller's watch statuses as a list, scoped by the server like every
+// other list (libraries the user can open, rating ceiling, labels). Statuses
+// are set and cleared through watchStatus above. Parsing lives in
+// lib/watchlist (pure, tested).
+
+/** One card on the Watchlist screen. */
+export interface WatchlistItem {
+  id: string;
+  library_id: string;
+  type: string;
+  title: string;
+  year?: number;
+  /** Episode / season / track number. */
+  index?: number;
+  parent_id?: string;
+  /** Season for an episode, album for a track, show for a season. */
+  parent_title?: string;
+  /** Season number for an episode. */
+  parent_index?: number;
+  grandparent_id?: string;
+  /** Show for an episode, artist for a track. */
+  grandparent_title?: string;
+  /** The item's poster, else its parent's, else its grandparent's. */
+  poster_path?: string;
+  fanart_path?: string;
+  thumb_path?: string;
+  duration_ms?: number;
+  watch_state: 'watched' | 'in_progress' | 'unwatched';
+  status: WatchStatusValue;
+  status_created_at: string;
+  status_updated_at: string;
+}
+
+export type WatchlistSort = 'recent' | 'title';
+
+export interface WatchlistQuery {
+  status?: WatchStatusValue | 'all';
+  type?: string;
+  sort?: WatchlistSort;
+  limit?: number;
+  offset?: number;
+}
+
+/** GET /watchlist/counts: per status, its total and per-type counts. A
+ *  status with nothing in it may be missing. */
+export interface WatchlistCounts {
+  total: number;
+  statuses: Partial<Record<WatchStatusValue, { total: number; types: Record<string, number> }>>;
+}
+
+export const watchlist = {
+  /** One page of one status (newest status change first by default) with
+   *  meta.total. The server filters in the same SQL it pages, so the total
+   *  is what paging can deliver. */
+  list: async (q: WatchlistQuery = {}): Promise<PageResult<WatchlistItem>> =>
+    watchlistPage(await api.getEnvelope<WatchlistItem[]>(`/api/v1/watchlist?${watchlistQueryString(q)}`)),
+  counts: async (): Promise<WatchlistCounts> => parseWatchlistCounts(await api.get<unknown>('/api/v1/watchlist/counts')),
 };
 
 // ── Cross-device playback transfer (v2.2) ─────────────────────────────────
