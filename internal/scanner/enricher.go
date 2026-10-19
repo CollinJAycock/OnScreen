@@ -227,6 +227,10 @@ type Enricher struct {
 	extras       ItemExtrasStore
 	extraArtFn   func() metadata.ExtraArtAgent
 	localMediaFn func() bool
+
+	// metaPlugins, when set, runs the metadata-role MCP plugins after the
+	// built-in agents (see enricher_plugins.go). nil = no plugin pass.
+	metaPlugins MetadataPlugins
 }
 
 // aniListEpsCacheEntry is the cached return of a streamingEpisodes
@@ -403,8 +407,24 @@ func inShowCascade(ctx context.Context) bool {
 
 // Enrich implements MetadataAgent. It's called for newly discovered files.
 // Errors are logged but never propagated — a metadata failure must not abort a scan.
+//
+// The built-in agents run first; the metadata plugins, if any, then see the
+// result and may fill or override unlocked fields (enricher_plugins.go). The
+// plugin pass runs even when the built-in pass failed or had no agent: a
+// plugin may be the only source an item has.
 func (e *Enricher) Enrich(ctx context.Context, item *media.Item, file *media.File) error {
 	ctx = e.withLibraryLanguage(ctx, item.LibraryID)
+	err := e.enrichBuiltIn(ctx, item, file)
+	fileName := ""
+	if file != nil {
+		fileName = file.FilePath
+	}
+	e.runMetadataPlugins(ctx, item.ID, e.pluginArtDir(item, file), fileName)
+	return err
+}
+
+// enrichBuiltIn is the built-in agents' pass for one item (see Enrich).
+func (e *Enricher) enrichBuiltIn(ctx context.Context, item *media.Item, file *media.File) error {
 	agent := e.agentFn()
 	if agent == nil {
 		// No metadata agent, but a movie's NFO collections are still
@@ -1621,6 +1641,9 @@ func (e *Enricher) enrichEpisodeWith(ctx context.Context, agent metadata.Agent, 
 				e.logger.WarnContext(ctx, "cascade show enrich from episode failed",
 					"show_id", show.ID, "err", err)
 			}
+			// The scan enriches episodes, not shows, so this is where a
+			// show meets the metadata plugins outside a manual refresh.
+			e.runMetadataPlugins(ctx, show.ID, showDirFromFile(file.FilePath), "")
 			// Re-load show to pick up TMDB / TVDB / AniList IDs.
 			show, err = e.updater.GetItem(ctx, show.ID)
 			if err != nil || (show.TMDBID == nil && show.TVDBID == nil && show.AniListID == nil) {
@@ -2188,6 +2211,9 @@ func (e *Enricher) enrichMusicOnce(ctx context.Context, agent metadata.MusicAgen
 		case "artist":
 			innerErr = e.enrichArtist(ctx, agent, item, artDir)
 		}
+		// Tracks walk up to their album and artist here, so this is
+		// where those meet the metadata plugins during a scan.
+		e.runMetadataPlugins(ctx, item.ID, artDir, "")
 		e.musicAttempted.Store(key, struct{}{})
 		return nil, innerErr
 	})

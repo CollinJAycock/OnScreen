@@ -9,6 +9,7 @@ import (
 	"context"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const createPlugin = `-- name: CreatePlugin :one
@@ -50,12 +51,73 @@ func (q *Queries) CreatePlugin(ctx context.Context, arg CreatePluginParams) (Plu
 	return i, err
 }
 
+const deleteOrphanPluginTasks = `-- name: DeleteOrphanPluginTasks :execrows
+DELETE FROM scheduled_tasks st
+WHERE st.task_type = 'plugin_task'
+  AND NOT EXISTS (
+      SELECT 1 FROM plugins p
+      WHERE p.role = 'task' AND p.id::text = st.config ->> 'plugin_id'
+  )
+`
+
+// Boot-time cleanup: plugin_task rows whose plugin is gone or is no longer a
+// task-role plugin.
+func (q *Queries) DeleteOrphanPluginTasks(ctx context.Context) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteOrphanPluginTasks)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const deletePlugin = `-- name: DeletePlugin :exec
 DELETE FROM plugins WHERE id = $1
 `
 
 func (q *Queries) DeletePlugin(ctx context.Context, id uuid.UUID) error {
 	_, err := q.db.Exec(ctx, deletePlugin, id)
+	return err
+}
+
+const deletePluginTask = `-- name: DeletePluginTask :exec
+DELETE FROM scheduled_tasks
+WHERE task_type = 'plugin_task' AND config ->> 'plugin_id' = $1::uuid::text
+`
+
+// Removes a plugin's scheduled task (its task_runs cascade).
+func (q *Queries) DeletePluginTask(ctx context.Context, pluginID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, deletePluginTask, pluginID)
+	return err
+}
+
+const ensurePluginTask = `-- name: EnsurePluginTask :exec
+INSERT INTO scheduled_tasks (name, task_type, config, cron_expr, enabled, next_run_at)
+VALUES ($1, 'plugin_task',
+        jsonb_build_object('plugin_id', $2::uuid::text),
+        $3, $4, $5)
+ON CONFLICT ((config ->> 'plugin_id')) WHERE task_type = 'plugin_task' DO NOTHING
+`
+
+type EnsurePluginTaskParams struct {
+	Name      string             `json:"name"`
+	PluginID  uuid.UUID          `json:"plugin_id"`
+	CronExpr  string             `json:"cron_expr"`
+	Enabled   bool               `json:"enabled"`
+	NextRunAt pgtype.Timestamptz `json:"next_run_at"`
+}
+
+// Creates the scheduled_tasks row a task-role plugin runs from (migration
+// 00058): type plugin_task, config {"plugin_id": ...}. Idempotent on the
+// one-row-per-plugin index, so an existing row keeps the schedule, name and
+// enabled flag an admin gave it.
+func (q *Queries) EnsurePluginTask(ctx context.Context, arg EnsurePluginTaskParams) error {
+	_, err := q.db.Exec(ctx, ensurePluginTask,
+		arg.Name,
+		arg.PluginID,
+		arg.CronExpr,
+		arg.Enabled,
+		arg.NextRunAt,
+	)
 	return err
 }
 

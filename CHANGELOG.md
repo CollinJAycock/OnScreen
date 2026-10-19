@@ -9,6 +9,44 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Upgrade notes
+
+- **Migration 00058** (applied at boot). Task plugins each get a
+  scheduled task, so the rule allowing one enabled task per task type no
+  longer applies to plugin tasks; one task per plugin applies instead.
+  Task plugins registered earlier get their task on the first start.
+
+### Added
+
+- **Metadata plugins.** A plugin registered with the `metadata` role is
+  now called during enrichment through its `enrich_item` tool, after
+  TMDB, TVDB, AniList, MusicBrainz and NFO files. It gets the item's
+  type, title, year, numbering, provider IDs and file name, and may
+  return a title, summary, tagline, genres, year, rating, content rating,
+  release date, poster URL and provider IDs. By default those fill only
+  empty fields; `"mode": "override"` replaces them. Locked fields are
+  never changed, provider IDs and posters are only ever filled, and the
+  poster must come from one of the plugin's allowed hosts and is fetched
+  through the SSRF-guarded artwork client. A slow or failing plugin never
+  fails a scan. Contract in [docs/plugins.md](docs/plugins.md).
+- **Task plugins.** A plugin registered with the `task` role becomes a
+  scheduled task (`Plugin: <name>`, daily at 04:30 until changed) in
+  Settings → Tasks, with the usual schedule, Run now, last run, status,
+  error and run history. Its `run_task` tool gets the server version and
+  the library list (no paths or keys); its text reply is the run output,
+  and an error reply fails the run.
+- **Settings → Plugins** offers all three roles, shows each one's
+  contract, and Test checks that a metadata or task plugin is reachable
+  and advertises its tool.
+
+### Changed
+
+- The per-plugin circuit breaker (three failures in a row, five minutes
+  open) now covers all three roles, and opening or closing it is audited
+  for each (`plugin.metadata.*`, `plugin.task.*`).
+
 ## [v2.6.2] — unreleased
 
 Patch release for the web app: Home rows can be dragged into order, and
