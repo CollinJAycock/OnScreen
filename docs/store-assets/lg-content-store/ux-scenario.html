@@ -2,7 +2,10 @@
 <!-- LG Seller Lounge "UX Scenario File" for OnScreen for LG webOS TV.
      Rendered to PDF for upload (A4). The test account's password is the
      placeholder below, filled in only in the uploaded PDF; it is never
-     committed. Keep every statement in step with clients/webos. -->
+     committed (render-pdf.mjs takes it from REVIEWER_PASSWORD). The
+     screenshots in ux/ were captured on an LG OLED77C1 (webOS 6) running
+     the submitted build against the test server. Keep every statement in
+     step with clients/webos. -->
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -25,12 +28,17 @@
   .flow { font-family: Consolas, "DejaVu Sans Mono", monospace; font-size: 9pt; background: #fafafa; border: 1px solid #ddd; padding: 3mm; white-space: pre; }
   .page-break { page-break-before: always; }
   .muted { color: #555; }
+  .shots { display: flex; flex-wrap: wrap; justify-content: space-between; }
+  figure { width: 49%; margin: 0 0 4mm; page-break-inside: avoid; }
+  figure img { width: 100%; border: 1px solid #999; display: block; }
+  figcaption { font-size: 8.8pt; margin-top: 1.2mm; line-height: 1.3; }
+  figcaption b { color: #4b3cc0; }
 </style>
 </head>
 <body>
 
 <h1>OnScreen for LG webOS TV</h1>
-<p class="sub">UX scenario &middot; app ID <code>com.onscreen.tv</code> &middot; version 0.2.1 &middot; developer: Collin Aycock (collin.j.aycock@gmail.com)</p>
+<p class="sub">UX scenario &middot; app ID <code>com.onscreen.tv</code> &middot; version 0.2.2 &middot; developer: Collin Aycock (collin.j.aycock@gmail.com)</p>
 
 <h2>1. What the app is</h2>
 <p>OnScreen is the TV client for <b>OnScreen Media Server</b>, free open-source software that people install on their own computer or NAS. The app plays the movies, TV shows, music, audiobooks and photos the user has added to <b>their own</b> server. The app itself contains no content and does not provide, sell or link to any. It has no web browser, no add-ons and no way to open stream links or playlists.</p>
@@ -65,6 +73,7 @@
   <li>The <b>Sign in</b> screen opens. Type the username <code>reviewer</code> and select <b>done</b>.</li>
   <li>Type the password and select <b>done</b>. The <b>Home</b> screen opens.</li>
 </ol>
+<p>Figures 1&ndash;4 in section 4 show these screens.</p>
 <p class="muted">Alternatives on the Sign in screen: <b>Sign in with another device</b> shows a PIN to enter on a phone or computer (not needed for testing); <b>Change server</b> returns to the address screen. Back on the username step returns to the address screen when that screen opened Sign in. The sign-in is remembered: later launches open on Home.</p>
 
 <h2>3. Screen flow</h2>
@@ -73,11 +82,13 @@
  ├─ not signed in ────► Sign in ──► Home
  └─ signed in ────────► Home
 
-Home ── top menu: Home · Libraries · Search · Favorites · History · Settings
+Home ── top menu: Home · Libraries · Search · Favorites · Watchlist · History · Settings
  │        (Discover, Live TV and Recordings appear only on servers that
  │         offer them to the account; they are hidden for the test account)
  ├─ card ──► Detail page (film / show / season / album / book)
- │             └─ Play / Resume ──► Player (video)  or  Now playing (music, audiobook)
+ │             ├─ Play / Resume ──► Player (video)  or  Now playing (music, audiobook)
+ │             └─ Add to Watchlist / Status ──► status menu
+ ├─ Watchlist ──► rows per status ──► Detail page  (hold OK: move / remove)
  ├─ Libraries ──► Library grid ──► Detail page
  ├─ Photos library ──► Photo viewer ──► Slideshow
  └─ Settings ──► Playback preferences · Scrobbling · Sign out · Forget server
@@ -90,13 +101,49 @@ Home ── top menu: Home · Libraries · Search · Favorites · History · Set
   <tr><td>Libraries</td><td>The user's libraries. Each opens a grid of posters with sort and filter chips.</td></tr>
   <tr><td>Search</td><td>On-screen keyboard; results by type (films, shows, albums, books...).</td></tr>
   <tr><td>Favorites / History</td><td>Items the user marked as favourite, and what they played recently.</td></tr>
-  <tr><td>Detail page</td><td>Artwork, description and buttons: Play or Resume, Play from Beginning, Mark watched / unwatched, Favorite, Report a problem. Shows list seasons and episodes; albums list tracks (Play All, Shuffle).</td></tr>
+  <tr><td>Watchlist</td><td>Everything the user gave a watching status (Plan to Watch, Watching, On Hold, Completed, Dropped), one row per status with its count. OK opens the title; holding OK opens Move to&hellip; / Remove from Watchlist.</td></tr>
+  <tr><td>Detail page</td><td>Artwork, description and buttons: Play or Resume, Play from Beginning, Mark watched / unwatched, Favorite, Add to Watchlist (or Status: &hellip; once one is set), Report a problem. Shows list seasons and episodes; albums list tracks (Play All, Shuffle).</td></tr>
   <tr><td>Player (video)</td><td>Full-screen video with a progress bar, Skip Intro / Skip Credits where the server has marked them, and buttons for Audio, Subtitles and Chapters. Up Next offers the next episode near the end.</td></tr>
   <tr><td>Now playing</td><td>Music and audiobooks: cover art, title, progress; audiobooks have a playback-speed picker.</td></tr>
-  <tr><td>Settings</td><td>Audio and subtitle language preferences, scrobbling links, Sign out, Forget server, About (version, privacy policy with QR code, Licence &amp; terms).</td></tr>
+  <tr><td>Settings</td><td>Audio and subtitle language preferences, playback quality limits, scrobbling links, Sign out, Forget server, About (version, privacy policy with QR code, Licence &amp; terms).</td></tr>
 </table>
 
-<h2>4. Remote control</h2>
+<h2 class="page-break">4. App screens</h2>
+<p>Captured on an LG OLED77C1 (webOS 6) running this build, signed in to the test server with the test account.</p>
+<div class="shots">
+<figure><img src="ux/01-add-server.jpg" alt="Add your OnScreen server"><figcaption><b>Figure 1. Add your OnScreen server.</b> First launch. The user types their server address with the on-screen keyboard (D-pad + OK, or the Magic Remote pointer).</figcaption></figure>
+<figure><img src="ux/02-server-typed.jpg" alt="Server address entered"><figcaption><b>Figure 2. Server address entered.</b> The test server address typed in; <b>done</b> connects (https:// is tried first).</figcaption></figure>
+<figure><img src="ux/03-sign-in-username.jpg" alt="Sign in &mdash; username"><figcaption><b>Figure 3. Sign in &mdash; username.</b> The test username typed in.</figcaption></figure>
+<figure><img src="ux/04-sign-in-password.jpg" alt="Sign in &mdash; password"><figcaption><b>Figure 4. Sign in &mdash; password.</b> The password is shown masked. <b>done</b> signs in and opens Home. Change user and Sign in with another device are below the keyboard.</figcaption></figure>
+<figure><img src="ux/05-home.jpg" alt="Home"><figcaption><b>Figure 5. Home.</b> Rows: Continue Watching (hold OK for options) and Recently Added per library. The top menu leads to every section.</figcaption></figure>
+<figure><img src="ux/06-libraries.jpg" alt="Libraries"><figcaption><b>Figure 6. Libraries.</b> The account's libraries: Movies, TV Shows, Music, Audiobooks, Photos.</figcaption></figure>
+<figure><img src="ux/07-library-grid.jpg" alt="Library grid"><figcaption><b>Figure 7. Library grid.</b> Posters with sort and filter chips (watched state, genre, Surprise me).</figcaption></figure>
+<figure><img src="ux/08-detail-movie.jpg" alt="Detail page"><figcaption><b>Figure 8. Detail page.</b> Description and actions: Play, Mark watched, Favorite, Add to Watchlist, Report a problem.</figcaption></figure>
+<figure><img src="ux/09-status-menu.jpg" alt="Add to Watchlist"><figcaption><b>Figure 9. Add to Watchlist.</b> OK on Add to Watchlist opens the five watching statuses.</figcaption></figure>
+<figure><img src="ux/10-status-set.jpg" alt="Status set"><figcaption><b>Figure 10. Status set.</b> The button now reads Status: Plan to Watch; the status also shows under the buttons.</figcaption></figure>
+<figure><img src="ux/11-watchlist.jpg" alt="Watchlist"><figcaption><b>Figure 11. Watchlist.</b> One row per status with its count; OK opens the title.</figcaption></figure>
+<figure><img src="ux/12-watchlist-options.jpg" alt="Watchlist options"><figcaption><b>Figure 12. Watchlist options.</b> Holding OK on a card: Open, Move to another status, Remove from Watchlist.</figcaption></figure>
+<figure><img src="ux/13-detail-show.jpg" alt="TV show"><figcaption><b>Figure 13. TV show.</b> Seasons and episodes; Play starts the next episode to watch.</figcaption></figure>
+<figure><img src="ux/14-player.jpg" alt="Video player"><figcaption><b>Figure 14. Video player.</b> Progress bar with chapter marks and a thumbnail preview, and the Audio / Subtitles / Chapters buttons. (The film picture is on the TV's video plane, which screen capture leaves black.)</figcaption></figure>
+<figure><img src="ux/15-player-subtitles.jpg" alt="Subtitles"><figcaption><b>Figure 15. Subtitles.</b> The subtitle menu (also on the Blue key); Off removes them.</figcaption></figure>
+<figure><img src="ux/16-artist.jpg" alt="Music artist"><figcaption><b>Figure 16. Music artist.</b> Play All, Shuffle, Instant mix, Favorite, Add to Watchlist, and the artist's albums.</figcaption></figure>
+<figure><img src="ux/17-music-playing.jpg" alt="Now playing (music)"><figcaption><b>Figure 17. Now playing (music).</b> Cover, track, album and progress; CH and the seek keys change tracks.</figcaption></figure>
+<figure><img src="ux/18-audiobook.jpg" alt="Audiobook"><figcaption><b>Figure 18. Audiobook.</b> The book and its chapters.</figcaption></figure>
+<figure><img src="ux/19-audiobook-playing.jpg" alt="Now playing (audiobook)"><figcaption><b>Figure 19. Now playing (audiobook).</b> Chapter, progress and speed.</figcaption></figure>
+<figure><img src="ux/20-audiobook-speed.jpg" alt="Playback speed"><figcaption><b>Figure 20. Playback speed.</b> &uarr; / &darr; open the speed picker (0.75&times; to 3&times;).</figcaption></figure>
+<figure><img src="ux/21-photos.jpg" alt="Photos"><figcaption><b>Figure 21. Photos.</b> The photo library grid.</figcaption></figure>
+<figure><img src="ux/22-photo-viewer.jpg" alt="Photo viewer"><figcaption><b>Figure 22. Photo viewer.</b> &larr; / &rarr; move between photos; the counter is bottom right.</figcaption></figure>
+<figure><img src="ux/23-slideshow.jpg" alt="Slideshow"><figcaption><b>Figure 23. Slideshow.</b> OK starts and stops a slideshow; Back leaves the viewer.</figcaption></figure>
+<figure><img src="ux/24-search.jpg" alt="Search"><figcaption><b>Figure 24. Search.</b> Results appear as the title is typed (here: sintel).</figcaption></figure>
+<figure><img src="ux/25-favorites.jpg" alt="Favorites"><figcaption><b>Figure 25. Favorites.</b> Titles the user marked with the heart.</figcaption></figure>
+<figure><img src="ux/26-history.jpg" alt="History"><figcaption><b>Figure 26. History.</b> What the account played recently, newest first.</figcaption></figure>
+<figure><img src="ux/27-settings.jpg" alt="Settings"><figcaption><b>Figure 27. Settings.</b> Account (Sign out, Forget server) and playback preferences.</figcaption></figure>
+<figure><img src="ux/28-settings-about.jpg" alt="Settings &gt; About"><figcaption><b>Figure 28. Settings &gt; About.</b> Version, account and server, and the privacy policy address with a QR code.</figcaption></figure>
+<figure><img src="ux/29-licence-terms.jpg" alt="Licence &amp; terms"><figcaption><b>Figure 29. Licence &amp; terms.</b> Terms of use, the app's licence and third-party notices.</figcaption></figure>
+<figure><img src="ux/30-exit-popup.jpg" alt="Back on Home"><figcaption><b>Figure 30. Back on Home.</b> webOS 6&ndash;22: the Exit OnScreen? popup, starting on Cancel. webOS 23+: the TV's Home screen.</figcaption></figure>
+</div>
+
+<h2 class="page-break">5. Remote control</h2>
 <p>Every screen works with both the Magic Remote's pointer and its D-pad. Pointing at an item highlights it; OK or a click selects it; the wheel scrolls lists and pages.</p>
 <table>
   <tr><th style="width:26%">Key</th><th>Outside the player</th><th>In the player (video)</th></tr>
@@ -116,10 +163,10 @@ Home ── top menu: Home · Libraries · Search · Favorites · History · Set
   <li>On webOS TV 23 and later, Back on that screen shows the TV's Home screen instead, as LG's checklist asks.</li>
 </ul>
 
-<h2>5. Test scenarios</h2>
+<h2>6. Test scenarios</h2>
 <table>
   <tr><th style="width:4%">#</th><th style="width:44%">Steps</th><th>Expected result</th></tr>
-  <tr><td>1</td><td>First launch; enter the server address and sign in with the test account (section 2).</td><td>Home opens with rows of the test libraries.</td></tr>
+  <tr><td>1</td><td>First launch; enter the server address and sign in with the test account (section 2).</td><td>Home opens with rows of the test libraries (figures 1&ndash;5).</td></tr>
   <tr><td>2</td><td>Libraries &gt; Movies.</td><td>A grid of film posters; the pointer and the D-pad both move the highlight; the wheel scrolls.</td></tr>
   <tr><td>3</td><td>Open <b>Sintel</b>, select <b>Play</b>.</td><td>The film plays full screen. OK pauses and resumes; &larr; / &rarr; seek 10 s.</td></tr>
   <tr><td>4</td><td>During Sintel press &darr; twice, select <b>Subtitles</b> (or press Blue), pick a language.</td><td>Subtitles appear. Off removes them.</td></tr>
@@ -130,6 +177,7 @@ Home ── top menu: Home · Libraries · Search · Favorites · History · Set
   <tr><td>9</td><td>Audiobooks &gt; a book &gt; Play, press &uarr; / &darr;.</td><td>The book plays; the speed picker changes the playback speed.</td></tr>
   <tr><td>10</td><td>Photos &gt; open a photo; &larr; / &rarr; move between photos; press OK.</td><td>OK starts a slideshow (&#9654; Slideshow shows in the corner); OK again stops it; Back leaves.</td></tr>
   <tr><td>11</td><td>Search &gt; type <code>Sintel</code>.</td><td>Sintel is found. A title not in the test libraries finds nothing.</td></tr>
+  <tr><td>11a</td><td>Open <b>Sintel</b>, select <b>Add to Watchlist</b>, pick <b>Plan to Watch</b>; then open <b>Watchlist</b> in the top menu and hold OK on the card.</td><td>The button reads Status: Plan to Watch; Sintel is in the Plan to Watch row; holding OK offers Open, Move to&hellip; and Remove from Watchlist (figures 8&ndash;12).</td></tr>
   <tr><td>12</td><td>Settings &gt; About &gt; Privacy policy, then Licence &amp; terms.</td><td>The policy address and a QR code; the terms of use, licence and third-party notices. Back returns to Settings.</td></tr>
   <tr><td>13</td><td>Settings &gt; Sign out, confirm.</td><td>The Sign in screen opens; sign in again to continue.</td></tr>
   <tr><td>14</td><td>On Home press Back.</td><td>webOS TV 6.0&ndash;22: the Exit OnScreen? popup (Cancel stays, Exit closes the app). webOS TV 23 and later: the TV's Home screen.</td></tr>
