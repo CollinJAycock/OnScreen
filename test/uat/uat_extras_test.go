@@ -1056,6 +1056,13 @@ func (s *stubPluginRegistryDB) UpdatePlugin(_ context.Context, _ gen.UpdatePlugi
 	return gen.Plugin{}, nil
 }
 func (s *stubPluginRegistryDB) DeletePlugin(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubPluginRegistryDB) EnsurePluginTask(_ context.Context, _ gen.EnsurePluginTaskParams) error {
+	return nil
+}
+func (s *stubPluginRegistryDB) DeletePluginTask(_ context.Context, _ uuid.UUID) error { return nil }
+func (s *stubPluginRegistryDB) DeleteOrphanPluginTasks(_ context.Context) (int64, error) {
+	return 0, nil
+}
 
 func TestPlugins_ListRequiresAdmin(t *testing.T) {
 	ts := newExtrasServer(t, func(h *api.Handlers) {
