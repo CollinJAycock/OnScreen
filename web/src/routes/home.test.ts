@@ -307,6 +307,31 @@ describe('Hub layout customization', () => {
     expect(rows.map((r: { key: string }) => r.key)).toContain('library:lib-movies');
   });
 
+  // #49: rows can be dragged into place as well as moved with the arrows.
+  it('reorders rows by drag and drop', async () => {
+    mockGetPreferences.mockResolvedValue({});
+    mockSetHubLayout.mockResolvedValue(undefined);
+    render(Page);
+    await waitFor(() => expect(screen.getByText('Customize rows')).toBeTruthy());
+    await fireEvent.click(screen.getByText('Customize rows'));
+    await waitFor(() => expect(screen.getByText('Hub rows')).toBeTruthy());
+    const rowKeys = () => Array.from(document.querySelectorAll('.edit-name'))
+      .map((el) => el.firstChild?.textContent?.trim() ?? '');
+    const before = rowKeys();
+    const from = before.indexOf('Recently Added to Movies');
+    expect(from).toBeGreaterThan(0);
+    const rows = document.querySelectorAll('.edit-row');
+    await fireEvent.dragStart(rows[from]);
+    await fireEvent.dragOver(rows[0]);
+    await fireEvent.drop(rows[0]);
+    await fireEvent.dragEnd(rows[from]);
+    expect(rowKeys()[0]).toBe('Recently Added to Movies');
+    expect(rowKeys().slice(1)).toEqual(before.filter((_, i) => i !== from));
+    await fireEvent.click(screen.getByText('Save'));
+    await waitFor(() => expect(mockSetHubLayout).toHaveBeenCalledTimes(1));
+    expect(mockSetHubLayout.mock.calls[0][0][0].key).toBe('library:lib-movies');
+  });
+
   // A music library's Recently Added row is albums, so its header opens the
   // albums index newest first; other libraries keep their plain sorted link.
   it('links a music library row to its albums, newest first', async () => {

@@ -128,11 +128,46 @@
   }
 
   function moveEntry(i: number, delta: number) {
-    const j = i + delta;
-    if (j < 0 || j >= editEntries.length) return;
+    moveEntryTo(i, i + delta);
+  }
+
+  function moveEntryTo(from: number, to: number) {
+    if (from === to || to < 0 || to >= editEntries.length) return;
     const next = [...editEntries];
-    [next[i], next[j]] = [next[j], next[i]];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
     editEntries = next;
+  }
+
+  // Drag to reorder (mouse). The ↑ / ↓ buttons stay for the keyboard and
+  // touch screens, where HTML drag and drop doesn't fire.
+  let dragFrom: number | null = null;
+  let dragOver: number | null = null;
+
+  function onRowDragStart(e: DragEvent, i: number) {
+    dragFrom = i;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      // Firefox starts a drag only when some data is set.
+      e.dataTransfer.setData('text/plain', editEntries[i].key);
+    }
+  }
+
+  function onRowDragOver(e: DragEvent, i: number) {
+    if (dragFrom === null) return;
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+    dragOver = i;
+  }
+
+  function onRowDrop(e: DragEvent, i: number) {
+    e.preventDefault();
+    if (dragFrom !== null) moveEntryTo(dragFrom, i);
+    dragFrom = dragOver = null;
+  }
+
+  function onRowDragEnd() {
+    dragFrom = dragOver = null;
   }
 
   async function saveLayout() {
@@ -387,10 +422,22 @@
     {#if editMode}
       <div class="edit-panel">
         <h2 class="edit-title">Hub rows</h2>
-        <p class="edit-hint">Reorder rows and toggle which ones you see. This only affects your account.</p>
+        <p class="edit-hint">Drag rows (or use the arrows) to reorder them, and choose which ones you see. This only affects your account.</p>
         <ul class="edit-list">
           {#each editEntries as entry, i (entry.key)}
-            <li class="edit-row" class:disabled={!entry.enabled}>
+            <li
+              class="edit-row"
+              class:disabled={!entry.enabled}
+              class:dragging={dragFrom === i}
+              class:drop-before={dragOver === i && dragFrom !== null && dragFrom > i}
+              class:drop-after={dragOver === i && dragFrom !== null && dragFrom < i}
+              draggable="true"
+              on:dragstart={(e) => onRowDragStart(e, i)}
+              on:dragover={(e) => onRowDragOver(e, i)}
+              on:drop={(e) => onRowDrop(e, i)}
+              on:dragend={onRowDragEnd}
+            >
+              <span class="edit-grip" aria-hidden="true">⠿</span>
               <div class="edit-move">
                 <button class="edit-btn" disabled={i === 0} on:click={() => moveEntry(i, -1)} aria-label="Move {entry.title} up">↑</button>
                 <button class="edit-btn" disabled={i === editEntries.length - 1} on:click={() => moveEntry(i, 1)} aria-label="Move {entry.title} down">↓</button>
@@ -650,6 +697,11 @@
     display: flex; align-items: center; gap: 0.75rem;
     padding: 0.4rem 0.6rem; border: 1px solid var(--border); border-radius: 7px;
   }
+  .edit-row[draggable="true"] { cursor: grab; }
+  .edit-row.dragging { opacity: 0.45; }
+  .edit-row.drop-before { box-shadow: 0 -2px 0 var(--accent); }
+  .edit-row.drop-after { box-shadow: 0 2px 0 var(--accent); }
+  .edit-grip { color: var(--text-muted); font-size: 0.9rem; line-height: 1; user-select: none; }
   .edit-row.disabled .edit-name { color: var(--text-muted); text-decoration: line-through; }
   .edit-move { display: flex; gap: 0.25rem; }
   .edit-btn {

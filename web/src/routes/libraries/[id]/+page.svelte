@@ -1142,9 +1142,11 @@
                 <span>{item.title[0]?.toUpperCase()}</span>
               </div>
             {/if}
+            <!-- The title is under the card already, so the hover layer holds
+                 only the play mark (centred) and the details line; the
+                 buttons sit bottom-right, clear of that line. -->
             <div class="poster-overlay">
-              {#if !isPhotoLibrary && !isMusicLibrary && !isAudiobookLibrary}<div class="play-icon">▶</div>{/if}
-              <div class="overlay-title">{item.title}</div>
+              {#if !isPhotoLibrary && !isMusicLibrary && !isAudiobookLibrary}<div class="play-icon center">▶</div>{/if}
               {#if item.type === 'audiobook' && item.original_title}
                 <div class="overlay-meta">by {item.original_title}{#if item.duration_ms} · {dur(item.duration_ms)}{/if}</div>
               {:else if item.type === 'book_author' || item.type === 'book_series'}
@@ -1161,21 +1163,24 @@
             {#if item.rating}
               <div class="rating">{item.rating.toFixed(1)}</div>
             {/if}
-            {#if !item.poster_path}
-              <button
-                class="refresh-art"
-                class:spinning={enrichingIds.has(item.id)}
-                title="Refresh artwork"
-                on:click={(e) => enrichItem(e, item.id)}
-              >⟳</button>
-            {/if}
-            {#if !isMusicLibrary && !isPhotoLibrary && !isAudiobookLibrary}
-              <button
-                class="add-playlist-btn"
-                title="Add to playlist"
-                on:click={(e) => openPlaylistPicker(e, item.id)}
-              >+</button>
-            {/if}
+            <div class="poster-actions">
+              {#if !item.poster_path}
+                <button
+                  class="refresh-art"
+                  class:spinning={enrichingIds.has(item.id)}
+                  title="Refresh artwork"
+                  on:click={(e) => enrichItem(e, item.id)}
+                >⟳</button>
+              {/if}
+              {#if !isMusicLibrary && !isPhotoLibrary && !isAudiobookLibrary}
+                <button
+                  class="add-playlist-btn"
+                  title="Add to playlist"
+                  aria-label="Add {item.title} to a playlist"
+                  on:click={(e) => openPlaylistPicker(e, item.id)}
+                >+</button>
+              {/if}
+            </div>
             {#if selecting && canSelect && selectable(item)}
               <span class="select-check" aria-hidden="true">{tileSelected ? '✓' : ''}</span>
             {/if}
@@ -1713,8 +1718,16 @@
     margin-bottom: 0.3rem;
     text-shadow: 0 2px 8px rgba(0,0,0,0.6);
   }
+  .play-icon.center {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    margin: 0;
+    font-size: 1.8rem;
+  }
   .overlay-title { font-size: 0.72rem; font-weight: 700; color: #fff; line-height: 1.3; }
-  .overlay-meta { font-size: 0.65rem; color: rgba(255,255,255,0.55); margin-top: 0.15rem; }
+  .overlay-meta { font-size: 0.65rem; color: rgba(255,255,255,0.55); margin-top: 0.15rem; padding-right: 1.7rem; }
 
   .rating {
     position: absolute;
@@ -1729,10 +1742,16 @@
     backdrop-filter: blur(4px);
   }
 
-  .refresh-art {
+  /* Card buttons, bottom-right: refresh artwork (only without a poster)
+     then add to playlist. */
+  .poster-actions {
     position: absolute;
     bottom: 0.35rem;
     right: 0.35rem;
+    display: flex;
+    gap: 0.3rem;
+  }
+  .refresh-art {
     background: rgba(0,0,0,0.65);
     border: none;
     border-radius: 50%;
@@ -1779,9 +1798,6 @@
   .edit-meta-btn:hover { color: var(--accent); }
 
   .add-playlist-btn {
-    position: absolute;
-    bottom: 0.35rem;
-    left: 0.35rem;
     background: rgba(0,0,0,0.65);
     border: none;
     border-radius: 50%;

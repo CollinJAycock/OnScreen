@@ -1,11 +1,13 @@
 package tv.onscreen.mobile.ui.book
 
+import android.content.Context
 import com.google.common.truth.Truth.assertThat
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.verify
+import java.io.IOException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
@@ -14,9 +16,12 @@ import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import okhttp3.OkHttpClient
 import org.junit.After
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
+import org.junit.rules.TemporaryFolder
 import tv.onscreen.mobile.data.model.ItemDetail
 import tv.onscreen.mobile.data.model.ItemFile
 import tv.onscreen.mobile.data.model.ReadingPosition
@@ -30,6 +35,8 @@ import tv.onscreen.mobile.data.repository.ReadingProgressRepository
 class ReadingSyncTest {
 
     private val dispatcher = StandardTestDispatcher()
+
+    @get:Rule val tmp = TemporaryFolder()
 
     @Before fun setUp() { Dispatchers.setMain(dispatcher) }
     @After fun tearDown() { Dispatchers.resetMain() }
@@ -92,9 +99,16 @@ class ReadingSyncTest {
         coEvery { items.getItem("b1") } returns detail
         val prefs = mockk<ServerPrefs>(relaxed = true)
         coEvery { prefs.getServerUrl() } returns "http://srv"
-        return BookReaderViewModel(mockk(relaxed = true), items, prefs, mockk(relaxed = true), progress).also {
+        // EPUB prefetch: a real cache dir and a client that fails at once,
+        // run on the test dispatcher so nothing outlives the test.
+        val context = mockk<Context>()
+        every { context.cacheDir } returns tmp.root
+        val http = mockk<OkHttpClient>()
+        every { http.newCall(any()) } throws IOException("offline")
+        return BookReaderViewModel(context, items, prefs, http, progress).also {
             it.deviceName = { "Pixel" }
             it.now = { 9_000L }
+            it.ioDispatcher = dispatcher
         }
     }
 
@@ -143,11 +157,12 @@ class ReadingSyncTest {
     @Test
     fun `an EPUB is not synced here`() = runTest(dispatcher) {
         val repo = progress(local = null, server = ReadingPosition("40", 0.4, 2_000))
-        // EPUB prefetch needs a real cache dir; fail it, which is fine — the
-        // point is that the reader never asked for a position.
+        // The EPUB download fails (see reader()), which is fine — the point
+        // is that the reader never asked for a position.
         val vm = reader(repo, comic(container = "epub"))
         vm.load("b1")
         advanceUntilIdle()
+        assertThat(vm.state.value.error).isEqualTo("offline")
         coVerify(exactly = 0) { repo.server(any()) }
     }
 }

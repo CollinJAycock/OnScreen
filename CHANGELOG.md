@@ -9,6 +9,35 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [v2.6.2] — unreleased
+
+Patch release for the web app: Home rows can be dragged into order, and
+the library grid's hover buttons no longer cover the year.
+
+### Upgrade notes (from v2.6.1)
+
+- **No migrations** and nothing to do: pull the new image (`:2.6` or
+  `:2.6.2`) or install the new binary.
+- The desktop installers are rebuilt as 2.6.2.
+
+### Changed
+
+- **Drag Home rows into order** ([#49](https://github.com/CollinJAycock/OnScreen/issues/49)).
+  **Customize rows** on Home, which sets each user's row order and which
+  rows show, now lets you drag a row into place. The ↑ / ↓ buttons stay
+  for the keyboard and touch screens.
+- **Library cards on hover** ([#48](https://github.com/CollinJAycock/OnScreen/issues/48)).
+  The play mark is centred, the title (already under the card) is no
+  longer repeated on the poster, and the add-to-playlist and refresh-artwork
+  buttons sit together bottom-right instead of over the year and running
+  time.
+
+### Fixed
+
+- **Android phone app tests:** a test of the EPUB reader let its download
+  run on past the end of the test, which now and then failed an unrelated
+  Home test in CI. No change to the app's behaviour.
+
 ## [v2.6.1] — 2026-10-19
 
 Patch release. The server: History shows artwork for movies and music again,
