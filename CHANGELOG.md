@@ -48,6 +48,12 @@ API change lands only when every first-party client moves with it — see
   for the same session can no longer both start an ffmpeg for one rung.
   The 2-second floor between forced restarts is shared through Valkey
   too. If Valkey errors, the lock falls back to the in-process mutex.
+- **Faster rescans of large TV and music libraries.** A scan no longer
+  repeats the show / season (or artist / album) lookup for every file: a
+  per-scan cache resolves repeats with one primary-key read, which still
+  checks the item hasn't been merged, deleted or moved since. For a show
+  whose title no longer matches its folder, a 60-episode rescan made 183
+  queries instead of 360 and one full-text search instead of 60.
 
 ## [v2.6.2] — unreleased
 

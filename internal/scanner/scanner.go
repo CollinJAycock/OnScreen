@@ -496,6 +496,13 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 	))
 	defer span.End()
 
+	// One item cache per scan run: every episode of a show resolves the same
+	// show and season, every track the same artist and album, and the cache
+	// turns those repeat lookups into one primary-key read each (see
+	// media.ScanCache). Scoped to this run, so nothing outlives the scan.
+	itemCache := media.NewScanCache(media.DefaultScanCacheSize)
+	ctx = media.WithScanCache(ctx, itemCache)
+
 	// All path-shape parsing inside the scan body uses parsingRoots. The
 	// walkPaths are only used to enumerate the files to process.
 	paths := parsingRoots
@@ -741,11 +748,14 @@ func (s *Scanner) scan(ctx context.Context, libraryID uuid.UUID, libraryType str
 		attribute.Int("scan.files_found", result.Found),
 		attribute.Int("scan.files_new", result.New),
 	)
+	cacheStats := itemCache.Stats()
 	s.logger.InfoContext(ctx, "scan completed",
 		"library_id", libraryID,
 		"found", result.Found,
 		"new", result.New,
 		"duration_ms", result.Duration.Milliseconds(),
+		"item_cache_hits", cacheStats.Hits,
+		"item_cache_misses", cacheStats.Misses,
 	)
 	if s.metrics != nil && result.Found > 0 {
 		s.metrics.ScannerFilesTotal.WithLabelValues(libraryID.String()).Add(float64(result.Found))

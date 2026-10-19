@@ -1557,23 +1557,49 @@ func (s *Service) createMuFor(p CreateItemParams) *sync.Mutex {
 // This is used by the local scanner to ensure every file has an owning item.
 // Searches on rw (not ro) to avoid creating duplicates due to replication lag.
 // Serialized per (library, type, title, year) to prevent concurrent duplicate inserts.
+//
+// Within a scan (WithScanCache) repeated lookups for the same params resolve
+// through the scan's cache: one primary-key read instead of the title lookups.
 func (s *Service) FindOrCreateItem(ctx context.Context, p CreateItemParams) (*Item, error) {
 	mu := s.createMuFor(p)
 	mu.Lock()
 	defer mu.Unlock()
 
+	cache, key := s.scanCacheFor(ctx, scanKindItem, p)
+	if cache != nil {
+		if it := s.cachedItem(ctx, cache, scanKindItem, key, p); it != nil {
+			return it, nil
+		}
+	}
+	remember := func(it *Item) *Item {
+		if cache != nil {
+			cache.put(key, it.ID)
+		}
+		return it
+	}
+
 	if found := s.findItemByTitle(ctx, p); found != nil {
-		return found, nil
+		return remember(found), nil
 	}
 	item, err := s.rw.CreateMediaItem(ctx, p)
 	if err != nil {
 		// If a concurrent goroutine just created the same item, retry search.
 		if found := s.findItemByTitle(ctx, p); found != nil {
-			return found, nil
+			return remember(found), nil
 		}
 		return nil, fmt.Errorf("create media item: %w", err)
 	}
-	return &item, nil
+	return remember(&item), nil
+}
+
+// scanCacheFor returns the scan cache on ctx and p's key in it, or nil when
+// there is no cache or p can't be cached (see cacheable).
+func (s *Service) scanCacheFor(ctx context.Context, kind byte, p CreateItemParams) (*ScanCache, string) {
+	cache := scanCacheFrom(ctx)
+	if cache == nil || !cacheable(kind, p) {
+		return nil, ""
+	}
+	return cache, scanCacheKey(kind, p)
 }
 
 func (s *Service) findItemByTitle(ctx context.Context, p CreateItemParams) *Item {
@@ -1769,23 +1795,39 @@ func (s *Service) FindTopLevelItem(ctx context.Context, libraryID uuid.UUID, ite
 // ListMediaItemChildren for parented items and SearchMediaItems for top-level
 // items, then filters by normalized title. This ensures hierarchical items
 // (artists, albums, seasons) are matched precisely within their parent context.
+//
+// Within a scan (WithScanCache) repeated lookups for the same params resolve
+// through the scan's cache, as for FindOrCreateItem.
 func (s *Service) FindOrCreateHierarchyItem(ctx context.Context, p CreateItemParams) (*Item, error) {
 	mu := s.createMuFor(p)
 	mu.Lock()
 	defer mu.Unlock()
 
+	cache, key := s.scanCacheFor(ctx, scanKindHierarchy, p)
+	if cache != nil {
+		if it := s.cachedItem(ctx, cache, scanKindHierarchy, key, p); it != nil {
+			return it, nil
+		}
+	}
+	remember := func(it *Item) *Item {
+		if cache != nil {
+			cache.put(key, it.ID)
+		}
+		return it
+	}
+
 	if found := s.findHierarchyItem(ctx, p); found != nil {
-		return found, nil
+		return remember(found), nil
 	}
 	item, err := s.rw.CreateMediaItem(ctx, p)
 	if err != nil {
 		// Concurrent insert race — retry search.
 		if found := s.findHierarchyItem(ctx, p); found != nil {
-			return found, nil
+			return remember(found), nil
 		}
 		return nil, fmt.Errorf("create hierarchy item: %w", err)
 	}
-	return &item, nil
+	return remember(&item), nil
 }
 
 // findHierarchyItem searches for a matching item in the hierarchy.
@@ -1829,13 +1871,7 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 			if c.Type != p.Type {
 				continue
 			}
-			// Index-based matching (seasons, episodes, tracks) is the more
-			// reliable key: titles can change after enrichment.
-			byIndex := p.Index != nil && c.Index != nil && *c.Index == *p.Index &&
-				TrackDisc(c.DiscNumber) == pDisc
-			// Title matching covers named items and unnumbered rows.
-			byTitle := p.Title != "" && titleKeyOf(c.Title) == pKey &&
-				(c.DiscNumber == nil || *c.DiscNumber == pDisc)
+			byIndex, byTitle := siblingMatch(c, p, pKey, pDisc)
 			if byIndex && byTitle {
 				return c
 			}
@@ -1862,6 +1898,20 @@ func (s *Service) findHierarchyItem(ctx context.Context, p CreateItemParams) *It
 		}
 	}
 	return nil
+}
+
+// siblingMatch reports whether child c of p's parent matches p by index and/or
+// by title (see findHierarchyItem). pKey and pDisc are titleKeyOf(p.Title) and
+// TrackDisc(p.DiscNumber), hoisted by callers that loop.
+func siblingMatch(c *Item, p CreateItemParams, pKey titleKey, pDisc int) (byIndex, byTitle bool) {
+	// Index-based matching (seasons, episodes, tracks) is the more
+	// reliable key: titles can change after enrichment.
+	byIndex = p.Index != nil && c.Index != nil && *c.Index == *p.Index &&
+		TrackDisc(c.DiscNumber) == pDisc
+	// Title matching covers named items and unnumbered rows.
+	byTitle = p.Title != "" && titleKeyOf(c.Title) == pKey &&
+		(c.DiscNumber == nil || *c.DiscNumber == pDisc)
+	return byIndex, byTitle
 }
 
 func mapNotFound(err error) error {
