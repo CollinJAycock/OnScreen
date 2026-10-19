@@ -243,9 +243,14 @@ SELECT e.id, e.user_id, e.media_id, e.event_type,
        e.occurred_at,
        m.library_id AS library_id,
        m.type AS media_type, m.title AS media_title, m.year AS media_year,
-       m.thumb_path AS media_thumb
+       -- Movies and tracks keep their art in poster_path (a track's is its
+       -- album's); only episodes carry a thumb_path still, which the handler
+       -- swaps for the show's poster. Without the fallbacks History showed
+       -- movies and tracks as blank tiles.
+       COALESCE(m.thumb_path, m.poster_path, par.poster_path) AS media_thumb
 FROM events e
 JOIN media_items m ON m.id = e.media_id
+LEFT JOIN media_items par ON par.id = m.parent_id
 WHERE (e.next_at IS NULL OR (e.next_at - e.occurred_at) > INTERVAL '30 minutes')
   AND ($1::int IS NULL
        OR content_rating_rank(m.content_rating) <= $1::int)
