@@ -12,12 +12,16 @@ const mkv: CastableFile = {
   stream_token: 'stok', resolution_w: 1920, resolution_h: 1080,
 };
 
-function fakeSdk(friendlyName: string, loadMedia: (req: any) => Promise<void> = async () => {}) {
+function fakeSdk(
+  friendlyName: string,
+  loadMedia: (req: any) => Promise<void> = async () => {},
+  capabilities?: string[],
+) {
   const loads: any[] = [];
   const player: any = { isMediaLoaded: true, isPaused: false, playerState: 'PLAYING', currentTime: 0, duration: 0 };
   const rpc = { addEventListener: vi.fn(), removeEventListener: vi.fn(), playOrPause: vi.fn(), seek: vi.fn() };
   const session = {
-    getCastDevice: () => ({ friendlyName }),
+    getCastDevice: () => ({ friendlyName, capabilities }),
     loadMedia: vi.fn(async (req: any) => {
       loads.push(req);
       await loadMedia(req);
@@ -112,6 +116,20 @@ describe('CastController', () => {
     expect(deps.start).not.toHaveBeenCalled();
     expect(sdk.loads[0].media.contentId).toBe('https://o.example/media/stream/f1?token=stok');
     expect(sdk.loads[0].currentTime).toBe(42);
+  });
+
+  it('reads the receiver capabilities: video_out keeps 4K, without it HD', async () => {
+    const shield = fakeSdk('SHIELD', undefined, ['video_out', 'audio_out']);
+    const d1 = fakeDeps('directPlay');
+    await new CastController(shield.w, 'https://o.example', d1, () => {}, vi.fn())
+      .start({ item, file: { ...mkv, container: 'mp4', audio_codec: 'aac' }, positionSec: 0, durationSec: 60 });
+    expect(d1.decide).toHaveBeenCalledWith('i1', CHROMECAST_CAPS['4k'], 'f1');
+
+    const speaker = fakeSdk('Ultra speaker', undefined, ['audio_out']);
+    const d2 = fakeDeps('directPlay');
+    await new CastController(speaker.w, 'https://o.example', d2, () => {}, vi.fn())
+      .start({ item, file: { ...mkv, container: 'mp4', audio_codec: 'aac' }, positionSec: 0, durationSec: 60 });
+    expect(d2.decide).toHaveBeenCalledWith('i1', CHROMECAST_CAPS.hd, 'f1');
   });
 
   it('retries a 4K load the receiver rejects with the HD profile, once', async () => {

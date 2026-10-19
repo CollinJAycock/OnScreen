@@ -59,6 +59,25 @@ describe('Chromecast capability profiles', () => {
     }
   });
 
+  it('never picks 4K for a receiver without video_out', () => {
+    expect(castProfileForDevice({ friendlyName: 'SHIELD', capabilities: ['audio_out'] })).toBe('hd');
+    expect(castProfileForDevice({ friendlyName: 'Kitchen speaker group', capabilities: ['audio_out', 'multizone_group'] })).toBe('hd');
+    expect(castProfileForDevice({ friendlyName: 'SHIELD', capabilities: ['video_out', 'audio_out'] })).toBe('4k');
+    // No capability list (older SDK, fake): the name decides.
+    expect(castProfileForDevice({ friendlyName: 'SHIELD', capabilities: [] })).toBe('4k');
+    expect(castProfileForDevice({ friendlyName: 'SHIELD' })).toBe('4k');
+  });
+
+  it('a model name, when present, decides before the friendly name', () => {
+    expect(castProfileForDevice({ modelName: 'MITV-MSSP2', friendlyName: 'Bedroom' })).toBe('4k');
+    expect(castProfileForDevice({ modelName: 'Bose Smart Ultra Soundbar', friendlyName: 'Den' })).toBe('hd');
+    expect(castProfileForDevice({ modelName: 'Chromecast HD', friendlyName: 'Google TV room' })).toBe('hd');
+    expect(castProfileForDevice({ modelName: 'Google TV Streamer', friendlyName: 'Living Room TV' })).toBe('4k');
+    // Ambiguous "Chromecast" (gen 3 or Chromecast with Google TV): the name decides.
+    expect(castProfileForDevice({ modelName: 'Chromecast', friendlyName: 'Den Google TV' })).toBe('4k');
+    expect(castProfileForDevice({ modelName: 'Chromecast', friendlyName: 'Den' })).toBe('hd');
+  });
+
   it('falls back from 4K to HD once', () => {
     expect(fallbackCastProfile('4k')).toBe('hd');
     expect(fallbackCastProfile('hd')).toBeNull();

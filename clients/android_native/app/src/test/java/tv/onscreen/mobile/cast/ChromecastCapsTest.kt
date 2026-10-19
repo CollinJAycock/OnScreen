@@ -49,6 +49,55 @@ class ChromecastCapsTest {
     }
 
     @Test
+    fun `known models decide before the friendly name`() {
+        // Mi Box S: a 4K box the name pattern misses.
+        assertThat(ChromecastCaps.forDevice("MITV-MSSP2", "Bedroom", true)).isEqualTo(ChromecastCaps.Profile.UHD)
+        // A soundbar named "Ultra" is not a Chromecast Ultra.
+        assertThat(ChromecastCaps.forDevice("Bose Smart Ultra Soundbar", "Living Room", null))
+            .isEqualTo(ChromecastCaps.Profile.HD)
+        // A known HD model stays HD whatever it was renamed to.
+        assertThat(ChromecastCaps.forDevice("Chromecast HD", "Google TV room", true))
+            .isEqualTo(ChromecastCaps.Profile.HD)
+    }
+
+    @Test
+    fun `an ambiguous model falls back to the friendly name`() {
+        // Gen 1-3 and the 4K Chromecast with Google TV both say "Chromecast".
+        assertThat(ChromecastCaps.forDevice("Chromecast", "Living Room Google TV", true))
+            .isEqualTo(ChromecastCaps.Profile.UHD)
+        assertThat(ChromecastCaps.forDevice("Chromecast", "Living Room TV", true))
+            .isEqualTo(ChromecastCaps.Profile.HD)
+        assertThat(ChromecastCaps.forDevice(null, "SHIELD", null)).isEqualTo(ChromecastCaps.Profile.UHD)
+    }
+
+    @Test
+    fun `an audio-only receiver never gets 4K`() {
+        assertThat(ChromecastCaps.forDevice("Google TV Streamer", "Streamer", videoOut = false))
+            .isEqualTo(ChromecastCaps.Profile.HD)
+        assertThat(ChromecastCaps.forDevice("Google TV Streamer", "Streamer", videoOut = true))
+            .isEqualTo(ChromecastCaps.Profile.UHD)
+    }
+
+    @Test
+    fun `the user's quality setting overrides detection`() {
+        // A Hisense set reporting its panel model: Auto says HD, 4K forces it.
+        assertThat(ChromecastCaps.forDevice("55A6H", "Living Room TV", true)).isEqualTo(ChromecastCaps.Profile.HD)
+        assertThat(ChromecastCaps.forDevice("55A6H", "Living Room TV", true, ChromecastCaps.Quality.UHD))
+            .isEqualTo(ChromecastCaps.Profile.UHD)
+        assertThat(ChromecastCaps.forDevice("Chromecast Ultra", null, true, ChromecastCaps.Quality.HD))
+            .isEqualTo(ChromecastCaps.Profile.HD)
+    }
+
+    @Test
+    fun `quality round-trips its wire value, unknown is auto`() {
+        ChromecastCaps.Quality.entries.forEach {
+            assertThat(ChromecastCaps.Quality.fromWire(it.wire)).isEqualTo(it)
+        }
+        assertThat(ChromecastCaps.Quality.fromWire(null)).isEqualTo(ChromecastCaps.Quality.AUTO)
+        assertThat(ChromecastCaps.Quality.fromWire("8k")).isEqualTo(ChromecastCaps.Quality.AUTO)
+    }
+
+    @Test
     fun `profiles carry their header, height and HEVC flag`() {
         assertThat(ChromecastCaps.Profile.HD.header).isEqualTo(ChromecastCaps.HD)
         assertThat(ChromecastCaps.Profile.HD.maxHeight).isEqualTo(1080)

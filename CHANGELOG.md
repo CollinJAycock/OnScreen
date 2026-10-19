@@ -20,6 +20,15 @@ API change lands only when every first-party client moves with it — see
   item carries the new match, then updates the page in place (title,
   artwork, episodes, cast) and says "Matched to …"; if the match is still
   loading after 24 s it says so.
+- **Better 4K Cast detection** (v2.7 item 8, known issue 9). The phone app
+  and the web player place a Chromecast from what the Cast SDK reports
+  instead of the name alone: a receiver without video out (a speaker or a
+  group) never gets the 4K profile, known model names decide next (a "Bose
+  Smart Ultra Soundbar" no longer passes as a Chromecast Ultra, a Mi Box S
+  is 4K), and the name pattern stays as the fallback. The phone adds
+  **Settings → Playback → Chromecast quality** (Auto / 4K / HD) for a 4K TV
+  the detection can't place, such as a TV with Google TV built in that
+  reports its panel's model number.
 
 ## [v2.6.2] — unreleased
 
