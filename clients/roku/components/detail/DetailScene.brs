@@ -19,6 +19,13 @@
 ' artist and album pages get an Instant mix button (GET /music/mix?seed=)
 ' that plays the mix as PlayerScene's queue. Rows are tracked by kind in
 ' m.rowKinds ("children", "similar", "appears").
+'
+' Watchlist status (v2.6): movies, shows, seasons, episodes, albums,
+' artists, audiobooks and books get a Status button once GET
+' /items/{id}/watch-status lands ("Add to Watchlist" / "Status: Watching");
+' OK lists the five statuses, and a pick PUTs or DELETEs the same path. The
+' button keeps its old value until the write succeeds. Labels and parsing
+' live in source/util/Watchlist.brs.
 
 sub init()
     m.fanart = m.top.findNode("fanart")
@@ -30,6 +37,7 @@ sub init()
     m.versionBtn = m.top.findNode("versionBtn")
     m.mixBtn = m.top.findNode("mixBtn")
     m.markBtn = m.top.findNode("markBtn")
+    m.statusBtn = m.top.findNode("statusBtn")
     m.reportBtn = m.top.findNode("reportBtn")
     m.childrenHeader = m.top.findNode("childrenHeader")
     m.childrenList = m.top.findNode("children")
@@ -69,8 +77,20 @@ sub init()
     ' file id ("" = the first, which is what Play starts by default).
     m.versions = []
     m.selectedFileId = ""
+    ' Watchlist status: the current key ("" = none), whether the GET has
+    ' landed (the button stays hidden until then, and when it failed), and
+    ' whether a PUT / DELETE is in flight.
+    m.watchStatus = ""
+    m.statusLoaded = false
+    m.statusSaving = false
+    m.statusMenu = []
     ' In-flight ApiCallTasks, held so they aren't collected mid-request.
     m.pendingCalls = []
+    ' Each button's XML width; layoutButtons scales from these.
+    m.baseWidths = {}
+    for each b in allButtons()
+        m.baseWidths[b.id] = b.minWidth
+    end for
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.childrenTask.observeField("state", "onChildrenTaskState")
@@ -78,6 +98,7 @@ sub init()
     m.versionBtn.observeField("buttonSelected", "onVersionPressed")
     m.mixBtn.observeField("buttonSelected", "onMixPressed")
     m.markBtn.observeField("buttonSelected", "onMarkPressed")
+    m.statusBtn.observeField("buttonSelected", "onStatusPressed")
     m.reportBtn.observeField("buttonSelected", "onReportPressed")
     m.childrenList.observeField("rowItemSelected", "onChildSelected")
     m.childrenList.observeField("rowItemFocused", "onChildFocused")
@@ -114,6 +135,7 @@ sub onItemTaskState()
     renderItem()
     if firstLoad and WatchState_IsContainer(item.type) then fetchUpNext()
     if firstLoad and WatchState_Str(item.type) = "artist" then fetchArtistRows()
+    if firstLoad and Watchlist_SupportsStatus(item.type) then fetchWatchStatus()
 end sub
 
 sub onChildrenTaskState()
@@ -242,9 +264,9 @@ end sub
 
 ' ── Action buttons ─────────────────────────────────────────────────
 
-' Label, show / hide and lay out Play / Mark / Report from the current
-' item, children and up-next state. Keeps focus on the same button when
-' it survives the re-render.
+' Label, show / hide and lay out Play / Mark / Status / Report from the
+' current item, children, up-next and watchlist state. Keeps focus on the
+' same button when it survives the re-render.
 sub renderButtons()
     item = m.item
     if item = invalid then return
@@ -296,6 +318,10 @@ sub renderButtons()
 
     m.mixBtn.visible = (t = "artist" or t = "album")
 
+    ' Watchlist status, once its GET has landed.
+    m.statusBtn.text = Watchlist_StatusButtonLabel(m.watchStatus)
+    m.statusBtn.visible = (m.statusLoaded and Watchlist_SupportsStatus(t))
+
     m.reportBtn.visible = ReportProblem_IsReportable(t)
 
     layoutButtons()
@@ -314,20 +340,31 @@ function containerPlayLabel() as String
     return ""
 end function
 
-' Place the visible buttons left to right (fixed widths from the XML) and
-' keep the focus index valid.
+' Place the visible buttons left to right (fixed widths from the XML,
+' scaled down together when they'd overflow the content width) and keep
+' the focus index valid.
 sub layoutButtons()
     previous = invalid
     if m.btnIndex >= 0 and m.btnIndex < m.visibleButtons.Count() then previous = m.visibleButtons[m.btnIndex]
 
     m.visibleButtons = []
-    x = 0
-    for each b in [m.playBtn, m.versionBtn, m.mixBtn, m.markBtn, m.reportBtn]
+    widths = []
+    for each b in allButtons()
         if b.visible
-            b.translation = [x, 0]
-            x = x + b.minWidth + 24
             m.visibleButtons.push(b)
+            widths.push(m.baseWidths[b.id])
         end if
+    end for
+    widths = DetailMeta_FitWidths(widths, 24, 1760)
+    x = 0
+    for i = 0 to m.visibleButtons.Count() - 1
+        b = m.visibleButtons[i]
+        if b.minWidth <> widths[i]
+            b.minWidth = widths[i]
+            b.maxWidth = widths[i]
+        end if
+        b.translation = [x, 0]
+        x = x + widths[i] + 24
     end for
 
     m.btnIndex = 0
@@ -345,6 +382,11 @@ sub layoutButtons()
         m.visibleButtons[m.btnIndex].setFocus(true)
     end if
 end sub
+
+' Every action button in row order.
+function allButtons() as Object
+    return [m.playBtn, m.versionBtn, m.mixBtn, m.markBtn, m.statusBtn, m.reportBtn]
+end function
 
 sub focusButtons()
     if m.visibleButtons.Count() = 0 then return
@@ -440,6 +482,66 @@ sub onMixDone(res as Dynamic)
         return
     end if
     getMainScene().callFunc("navigateToWithParams", "PlayerScene", queue[0].id, { queue: queue })
+end sub
+
+' ── Watchlist status ───────────────────────────────────────────────
+
+sub fetchWatchStatus()
+    if m.item = invalid then return
+    startCall("GET", ApiItemWatchStatus(m.item.id), invalid, { action: "status" })
+end sub
+
+' No status ("" or a 404) shows "Add to Watchlist"; a failed read leaves
+' the button out rather than offer "Add" over a status that may exist.
+sub onWatchStatusDone(res as Dynamic)
+    status = Watchlist_StatusFromResult(res)
+    if status = invalid then return
+    m.watchStatus = status
+    m.statusLoaded = true
+    renderButtons()
+end sub
+
+sub onStatusPressed()
+    if m.item = invalid or not m.statusLoaded or m.statusSaving then return
+    m.statusMenu = Watchlist_StatusMenu(m.watchStatus)
+    labels = []
+    for each e in m.statusMenu
+        labels.push(e.label)
+    end for
+    labels.push("Cancel")
+    Menu_Show("status", "Watchlist status", WatchState_Str(m.item.title), labels)
+end sub
+
+' A pick from the Status menu. Picking the current status changes nothing.
+sub applyStatusChoice(index as Integer)
+    if index < 0 or index >= m.statusMenu.Count() or m.item = invalid then return
+    e = m.statusMenu[index]
+    if e.action = "set"
+        if e.status = m.watchStatus then return
+        m.statusSaving = true
+        startCall("PUT", ApiItemWatchStatus(m.item.id), Watchlist_StatusBody(e.status), { action: "statusSet", status: e.status })
+    else if e.action = "clear"
+        m.statusSaving = true
+        startCall("DELETE", ApiItemWatchStatus(m.item.id), invalid, { action: "statusSet", status: "" })
+    end if
+end sub
+
+' The button moves only once the server has the change; a failure keeps
+' the old value and says so.
+sub onStatusSetDone(res as Dynamic, ctx as Object)
+    m.statusSaving = false
+    if res = invalid or res.ok <> true
+        Menu_ShowMessage("statusFailed", "Watchlist status", WatchState_WriteErrorText(res, "Couldn't update your watchlist status. Try again later."))
+        return
+    end if
+    status = ctx.status
+    ' A PUT echoes the saved row; trust it over the request when present.
+    if ctx.status <> ""
+        saved = Watchlist_StatusFromResult(res)
+        if saved <> invalid and saved <> "" then status = saved
+    end if
+    m.watchStatus = status
+    renderButtons()
 end sub
 
 ' ── Up next (shows / seasons) ──────────────────────────────────────
@@ -855,6 +957,8 @@ sub onMenuChoice(menuId as String, index as Integer)
             if a = "unwatch" then sendMark(cm.child.id, false, "child")
             if a = "report" then openReportMenu({ id: cm.child.id, fileId: invalid, title: WatchState_Str(cm.child.title) })
         end if
+    else if menuId = "status"
+        applyStatusChoice(index)
     else if menuId = "report"
         kinds = ReportProblem_Kinds()
         if m.reportTarget <> invalid and index >= 0 and index < kinds.Count()
@@ -940,6 +1044,10 @@ sub onApiCallDone(evt as Object)
         onMarkDone(res, ctx)
     else if ctx.action = "report"
         onReportDone(res)
+    else if ctx.action = "status"
+        onWatchStatusDone(res)
+    else if ctx.action = "statusSet"
+        onStatusSetDone(res, ctx)
     end if
 end sub
 

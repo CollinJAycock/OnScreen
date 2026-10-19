@@ -178,7 +178,15 @@ class DetailFragment : Fragment() {
             }
         }
 
-        // One-shot results of the watched marks.
+        // The Status action's value: loaded after the item, changed by picks.
+        viewLifecycleOwner.lifecycleScope.launch {
+            viewModel.status.collect {
+                val item = viewModel.uiState.value.item
+                if (detailBound && item != null) bindStatus(view, item)
+            }
+        }
+
+        // One-shot results of the watched marks and Status picks.
         viewLifecycleOwner.lifecycleScope.launch {
             viewModel.events.collect { event ->
                 when (event) {
@@ -215,6 +223,8 @@ class DetailFragment : Fragment() {
                     }
                     is DetailEvent.MarkFailed ->
                         toast(if (event.rateLimited) R.string.watch_rate_limited else R.string.mark_failed)
+                    is DetailEvent.StatusFailed ->
+                        toast(if (event.rateLimited) R.string.watch_rate_limited else R.string.watchlist_change_failed)
                 }
             }
         }
@@ -264,7 +274,55 @@ class DetailFragment : Fragment() {
         bindVersionPicker(root, item)
         configurePlayButtons(item, btnPlay, btnFromStart)
         bindInstantMix(root, item)
+        bindStatus(root, item)
         bindReportProblem(root, item)
+    }
+
+    /**
+     * "Status: Plan to Watch" / "Add to Watchlist" on a movie, show, season,
+     * episode, album, artist, audiobook or book (DetailStatus); OK opens the
+     * picker. Re-applied whenever the status changes. It sits after the
+     * primary actions and never requests focus, so Play keeps the initial
+     * focus.
+     */
+    private fun bindStatus(root: View, item: ItemDetail) {
+        val btn = root.findViewById<Button>(R.id.btn_status) ?: return
+        if (!DetailStatus.isStatusable(item.type)) {
+            btn.visibility = View.GONE
+            return
+        }
+        val state = viewModel.status.value
+        val (labelRes, statusRes) = DetailStatus.buttonLabel(state.status)
+        btn.text = if (statusRes != null) getString(labelRes, getString(statusRes)) else getString(labelRes)
+        btn.visibility = View.VISIBLE
+        // Dimmed, not disabled, while a change is in flight (see the note in
+        // bindWatchState); the ViewModel ignores a second pick meanwhile.
+        btn.alpha = if (state.busy) 0.5f else 1f
+        btn.setOnClickListener { showStatusPicker() }
+    }
+
+    /**
+     * The status picker: the five statuses with the current one checked, then
+     * "Remove from Watchlist" when one is set. Same single-choice dialog as the
+     * version picker; Back cancels.
+     */
+    private fun showStatusPicker() {
+        if (!isAdded) return
+        val current = viewModel.status.value.status
+        val choices = DetailStatus.choices(current)
+        AlertDialog.Builder(requireContext(), R.style.PlayerDialog)
+            .setTitle(R.string.status_title)
+            .setSingleChoiceItems(
+                choices.map { getString(it.labelRes) }.toTypedArray(),
+                DetailStatus.checkedIndex(current),
+            ) { d, idx ->
+                d.dismiss()
+                if (!isAdded) return@setSingleChoiceItems
+                choices.getOrNull(idx)?.let { viewModel.setStatus(it.status) }
+            }
+            .create()
+            .dismissOnViewDestroyed(this)
+            .show()
     }
 
     /** "Instant Mix" on an artist or album (v2.6). */

@@ -256,6 +256,28 @@
                     android:visibility="gone"
                     android:text="@string/mark_watched" />
 
+                <!-- Status (watch-status): "Add to Watchlist", or "Status:
+                     Plan to Watch" once one is set; opens the status picker.
+                     Movies, shows, seasons, episodes, albums, artists,
+                     audiobooks and books; hidden otherwise. DetailFragment
+                     wires it. Never takes initial focus (Play does). -->
+                <Button
+                    android:id="@+id/btn_status"
+                    style="?android:attr/borderlessButtonStyle"
+                    android:layout_width="wrap_content"
+                    android:layout_height="52dp"
+                    android:layout_marginStart="14dp"
+                    android:paddingHorizontal="28dp"
+                    android:background="@drawable/btn_pill_secondary"
+                    android:textColor="@color/text_primary"
+                    android:textSize="14sp"
+                    android:textAllCaps="false"
+                    android:maxLines="1"
+                    android:focusable="true"
+                    android:focusableInTouchMode="true"
+                    android:visibility="gone"
+                    android:text="@string/status_add" />
+
                 <ImageView
                     android:id="@+id/btn_favorite"
                     android:layout_width="52dp"

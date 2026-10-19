@@ -21,6 +21,15 @@ API change lands only when every first-party client moves with it — see
   the list refreshes when you come back; a long-press of OK moves the card
   to another status or removes it. Uses the v2.6.0
   `GET /api/v1/watchlist` and `/watchlist/counts`.
+- **Status on Android TV / Fire TV title pages.** Movie, show, season,
+  episode, album, artist, audiobook and book pages get a **Status** button
+  in the action row (after Play, before the heart): it reads "Add to
+  Watchlist", or "Status: Plan to Watch" once one is set, and opens a picker
+  of the five statuses with the current one checked, plus "Remove from
+  Watchlist". Play keeps the initial focus; a failed change says so and
+  keeps the old status. So titles can now be added to the TV app's
+  Watchlist from the TV itself. Uses the existing
+  `GET/PUT/DELETE /api/v1/items/{id}/watch-status`; no server change.
 - **Watchlist on the Android phone app.** A new **Watchlist** entry in the
   home screen's ⋮ menu opens the same lists as the web page: one tab per
   status (Plan to Watch, Watching, On Hold, Completed, Dropped) with its
@@ -37,12 +46,29 @@ API change lands only when every first-party client moves with it — see
   "Show · S1 E2". OK opens the title's page (Back returns to the same card,
   refreshed); holding OK moves a card to another status or off the list.
   The top bar's pills sit a little closer together so all ten fit.
+- **Status on a title's page in the TV web apps (LG webOS, Samsung Tizen and
+  the Xbox / `/tvapp/` app).** Movies, shows, seasons, episodes, albums,
+  artists, audiobooks and books get a button after ♥ Favorite: **Add to
+  Watchlist**, or **Status: Watching** (etc.) once set. OK opens a menu of
+  Plan to Watch, Watching, On Hold, Completed and Dropped, the current one
+  checked, plus **Remove from Watchlist**; Back closes it. The status loads
+  without holding up the page, and Play keeps the first focus. Uses the
+  per-item `/api/v1/items/{id}/watch-status` endpoints; no server change.
+  The Watchlist screen's empty text now points here.
 - **Watchlist on Roku.** A **Watchlist** button in the Roku home header
   (between Favorites and History) opens one row per status — Plan to Watch,
   Watching, On Hold, Completed, Dropped — each titled with its count from
   `GET /api/v1/watchlist/counts`; empty statuses are left out. Up to 200
   titles per row, episodes labelled "Show · S1 · E2", and OK opens the
   title's detail page. Not yet tried on a Roku.
+- **Watchlist status on Roku.** The Roku detail page of a movie, show,
+  season, episode, album, artist, audiobook or book has a **Status** button
+  next to Mark watched — "Add to Watchlist", or "Status: Watching" once one
+  is set. OK lists the five statuses (the current one marked) plus "Remove
+  from Watchlist"; the button changes once the server confirms, and a failed
+  save says so and keeps the old status. The Watchlist screen's empty message
+  now points there. Uses `GET` / `PUT` / `DELETE /api/v1/items/{id}/watch-status`.
+  Not yet tried on a Roku.
 
 ## [v2.6.0] — 2026-10-17
 

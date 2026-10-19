@@ -1,15 +1,24 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from './api/client';
-import { watchlist } from './api/endpoints';
+import { watchStatus, watchlist } from './api/endpoints';
 import type { WatchlistItem } from './api/endpoints';
 import type { PageResult } from './paging';
 import {
+  WATCHLIST_EMPTY,
   WATCHLIST_STATUSES,
   WatchlistRow,
   episodeLabel,
   moveTargets,
+  offersStatus,
+  parseItemStatus,
   parseWatchlistCounts,
+  readItemStatus,
   rowTitle,
+  statusButtonLabel,
+  statusChangedText,
+  statusChoiceIndex,
+  statusChoices,
+  statusMenuMessage,
   statusOfFocusKey,
   statusesToLoad,
   visibleRows,
@@ -17,6 +26,8 @@ import {
   watchlistPage,
   watchlistQueryString,
   withStatus,
+  writeItemStatus,
+  type ItemStatusApi,
 } from './watchlist';
 
 function item(id: string, over: Partial<WatchlistItem> = {}): WatchlistItem {
@@ -389,5 +400,205 @@ describe('endpoints.watchlist', () => {
   it('rejects with the status on a server without the watchlist', async () => {
     answer = respond(404, { error: { code: 'NOT_FOUND', message: 'not found' } });
     await expect(watchlist.counts()).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('Status on a title page', () => {
+  it('is offered on the title types the watchlist lists', () => {
+    for (const t of ['movie', 'show', 'season', 'episode', 'album', 'artist', 'audiobook', 'book']) {
+      expect(offersStatus(t)).toBe(true);
+    }
+    for (const t of ['track', 'photo', 'book_author', 'book_series', 'podcast', 'audiobook_chapter', '', null, undefined]) {
+      expect(offersStatus(t)).toBe(false);
+    }
+  });
+
+  it('reads the status, "" and anything unknown as none', () => {
+    expect(parseItemStatus({ status: 'on_hold', created_at: 'x', updated_at: 'y' })).toBe('on_hold');
+    expect(parseItemStatus({ status: '' })).toBeNull();
+    expect(parseItemStatus({ status: 'finished' })).toBeNull();
+    expect(parseItemStatus(null)).toBeNull();
+    expect(parseItemStatus(undefined)).toBeNull();
+    expect(parseItemStatus('watching')).toBeNull();
+  });
+
+  it('labels the button by the status', () => {
+    expect(statusButtonLabel(null)).toBe('Add to Watchlist');
+    expect(statusButtonLabel('watching')).toBe('Status: Watching');
+    expect(statusButtonLabel('plan_to_watch')).toBe('Status: Plan to Watch');
+    expect(statusButtonLabel(undefined)).toBe('Watchlist');
+  });
+
+  it('lists the five statuses, the current one checked, then Remove', () => {
+    expect(statusChoices('on_hold')).toEqual([
+      { status: 'plan_to_watch', label: 'Plan to Watch' },
+      { status: 'watching', label: 'Watching' },
+      { status: 'on_hold', label: '✓ On Hold' },
+      { status: 'completed', label: 'Completed' },
+      { status: 'dropped', label: 'Dropped' },
+      { status: null, label: 'Remove from Watchlist', danger: true },
+    ]);
+    expect(statusChoiceIndex('on_hold')).toBe(2);
+    expect(statusMenuMessage('on_hold')).toBe('On your watchlist as On Hold');
+  });
+
+  it('has nothing to remove with no status', () => {
+    const choices = statusChoices(null);
+    expect(choices.map((c) => c.status)).toEqual([...WATCHLIST_STATUSES]);
+    expect(choices.some((c) => c.label.startsWith('✓'))).toBe(false);
+    expect(statusChoiceIndex(null)).toBe(0);
+    expect(statusMenuMessage(null)).toBe('Not on your watchlist');
+  });
+
+  it('offers Remove when the status is unknown, none checked', () => {
+    const choices = statusChoices(undefined);
+    expect(choices).toHaveLength(6);
+    expect(choices[5]).toEqual({ status: null, label: 'Remove from Watchlist', danger: true });
+    expect(choices.some((c) => c.label.startsWith('✓'))).toBe(false);
+    expect(statusChoiceIndex(undefined)).toBe(0);
+    expect(statusMenuMessage(undefined)).toBeUndefined();
+  });
+
+  it('says what a saved pick did', () => {
+    expect(statusChangedText('completed')).toBe('Status: Completed');
+    expect(statusChangedText(null)).toBe('Removed from your watchlist');
+  });
+
+  it("points the empty Watchlist at Status on a title's page, keeping the hold-OK hint", () => {
+    expect(WATCHLIST_EMPTY).toContain('Status');
+    expect(WATCHLIST_EMPTY).toContain('page');
+    expect(WATCHLIST_EMPTY).toContain('hold OK');
+    expect(WATCHLIST_EMPTY).not.toContain('web or phone');
+  });
+});
+
+describe('readItemStatus / writeItemStatus', () => {
+  function fake(over: Partial<ItemStatusApi> = {}) {
+    const calls: string[] = [];
+    const api: ItemStatusApi = {
+      get: async (id) => {
+        calls.push(`get ${id}`);
+        return { status: 'watching' };
+      },
+      set: async (id, s) => {
+        calls.push(`set ${id} ${s}`);
+        return { status: s };
+      },
+      clear: async (id) => {
+        calls.push(`clear ${id}`);
+        return undefined;
+      },
+      ...over,
+    };
+    return { api, calls };
+  }
+
+  it("reads the title's status", async () => {
+    const { api, calls } = fake();
+    expect(await readItemStatus(api, 'm1')).toBe('watching');
+    expect(calls).toEqual(['get m1']);
+  });
+
+  it('reads a 404 as none', async () => {
+    const { api } = fake({ get: async () => Promise.reject(Object.assign(new Error('nf'), { status: 404 })) });
+    expect(await readItemStatus(api, 'm1')).toBeNull();
+  });
+
+  it('rejects any other failure', async () => {
+    const { api } = fake({ get: async () => Promise.reject(Object.assign(new Error('boom'), { status: 500 })) });
+    await expect(readItemStatus(api, 'm1')).rejects.toMatchObject({ status: 500 });
+    const offline = fake({ get: async () => Promise.reject(new TypeError('Failed to fetch')) });
+    await expect(readItemStatus(offline.api, 'm1')).rejects.toBeInstanceOf(TypeError);
+  });
+
+  it('PUTs a status and resolves to what the server saved', async () => {
+    const { api, calls } = fake();
+    expect(await writeItemStatus(api, 'm1', 'completed')).toBe('completed');
+    expect(calls).toEqual(['set m1 completed']);
+  });
+
+  it('falls back to the pick when the PUT answers without a status', async () => {
+    const { api } = fake({ set: async () => undefined });
+    expect(await writeItemStatus(api, 'm1', 'dropped')).toBe('dropped');
+  });
+
+  it('DELETEs for Remove', async () => {
+    const { api, calls } = fake();
+    expect(await writeItemStatus(api, 'm1', null)).toBeNull();
+    expect(calls).toEqual(['clear m1']);
+  });
+
+  it('rejects a failed write, so the page keeps the old status', async () => {
+    const { api } = fake({ set: async () => Promise.reject(Object.assign(new Error('slow down'), { status: 429 })) });
+    await expect(writeItemStatus(api, 'm1', 'watching')).rejects.toMatchObject({ status: 429 });
+  });
+});
+
+describe('endpoints.watchStatus', () => {
+  let fetchMock: ReturnType<typeof vi.fn>;
+  let answer: Response;
+
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
+    answer = respond(200, {});
+    fetchMock = vi.fn(async () => answer);
+    vi.stubGlobal('fetch', fetchMock);
+    api.setOrigin('https://onscreen.example');
+    api.setTokens({
+      access_token: 'access',
+      refresh_token: 'refresh',
+      asset_token: 'asset',
+      expires_at: '2099-01-01T00:00:00Z',
+      user_id: 'u1',
+      username: 'u1',
+      is_admin: false,
+    });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('GETs the status from the body the server sends (fields at the top and under data)', async () => {
+    const st = { status: 'watching', created_at: '2026-10-01T00:00:00Z', updated_at: '2026-10-02T00:00:00Z' };
+    answer = respond(200, { ...st, data: st });
+    expect(await readItemStatus(watchStatus, 'm1')).toBe('watching');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://onscreen.example/api/v1/items/m1/watch-status');
+    expect((init as RequestInit).method ?? 'GET').toBe('GET');
+  });
+
+  it('reads status "" as none', async () => {
+    const st = { status: '', created_at: '0001-01-01T00:00:00Z', updated_at: '0001-01-01T00:00:00Z' };
+    answer = respond(200, { ...st, data: st });
+    expect(await readItemStatus(watchStatus, 'm1')).toBeNull();
+  });
+
+  it('reads a 404 as none', async () => {
+    answer = respond(404, { error: { code: 'NOT_FOUND', message: 'not found' } });
+    expect(await readItemStatus(watchStatus, 'm1')).toBeNull();
+  });
+
+  it('PUTs the status as JSON', async () => {
+    const st = { status: 'on_hold', created_at: 'a', updated_at: 'b' };
+    answer = respond(200, { ...st, data: st });
+    expect(await writeItemStatus(watchStatus, 'm1', 'on_hold')).toBe('on_hold');
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://onscreen.example/api/v1/items/m1/watch-status');
+    expect((init as RequestInit).method).toBe('PUT');
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ status: 'on_hold' });
+  });
+
+  it('DELETEs to remove', async () => {
+    answer = respond(204);
+    expect(await writeItemStatus(watchStatus, 'm1', null)).toBeNull();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('https://onscreen.example/api/v1/items/m1/watch-status');
+    expect((init as RequestInit).method).toBe('DELETE');
+  });
+
+  it('rejects a refused PUT with its status', async () => {
+    answer = respond(500, { error: { code: 'INTERNAL', message: 'nope' } });
+    await expect(writeItemStatus(watchStatus, 'm1', 'watching')).rejects.toMatchObject({ status: 500 });
   });
 });
