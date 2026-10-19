@@ -9,6 +9,24 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Added
+
+- **Seek thumbnails on Roku.** `GET /trickplay/{id}/index.bif` (alias
+  `/api/v1/items/{id}/trickplay/index.bif`) serves an item's trickplay
+  thumbnails as a BIF, the format the Roku Video node's trick-play bar
+  renders natively. The server cuts it from the existing sprite sheets
+  (frames up to 320 px wide) on the first request and caches it next to
+  them until the sprites are regenerated; concurrent first requests share
+  one build. Same gates as the sprites: Bearer / cookie or an asset
+  `?token=`, the library ACL and the rating ceiling; 404 until the item
+  has thumbnails. The Roku player points the content's `HDBifUrl` /
+  `SDBifUrl` / `FHDBifUrl` at it, so scrubbing shows thumbnails; the
+  unused client-side VTT parser is gone. Thumbnails are left off for
+  another version (edition) than the one they were cut from, for a
+  re-issued session that starts mid-item, and for audio.
+
 ## [v2.6.2] — unreleased
 
 Patch release for the web app: Home rows can be dragged into order, and
