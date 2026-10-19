@@ -302,6 +302,8 @@ services:
       - "127.0.0.1:7071:7071"
     volumes:
       - /path/to/your/media:/media:ro
+      # Where the scheduled database backup writes (see "Backup and Maintenance").
+      - backup_data:/var/backups/onscreen
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:7070/health/live || exit 1"]
       interval: 10s
@@ -336,6 +338,7 @@ services:
 
 volumes:
   postgres_data:
+  backup_data:
 ```
 
 Replace `/path/to/your/media` with the actual path to your media library. Remove `:ro` if transcoding writes output alongside source files.
@@ -982,19 +985,46 @@ restart) so the redirect URIs OnScreen generates use your public host name.
 
 ### Database backups
 
+**Scheduled backups.** A fresh install (v2.7 and later) comes with a
+`Database backup` task in **Settings ▸ Tasks**: daily at 03:11 server time,
+writing `onscreen-backup-<timestamp>.dump` (pg_dump custom format, owner-only)
+to `/var/backups/onscreen` and keeping the newest 7. An upgraded server gets no
+task added: create one in **Settings ▸ Tasks** (type `backup_database`) if you
+don't already back up another way. A failed run sends the `backup_failed`
+notification.
+
+- **Docker:** the images pre-create `/var/backups/onscreen`; mount a volume
+  there (`backup_data:/var/backups/onscreen`, as in the compose files above),
+  or dumps are lost when the container is recreated.
+- **Linux installer:** `install-service.sh` creates the directory for the
+  service user.
+- **Windows:** the path resolves to `\var\backups\onscreen` on the install
+  drive; the installer creates it readable by SYSTEM and Administrators only.
+  Point the task elsewhere (an absolute path) if that doesn't suit.
+
+Copy dumps off the host regularly; a dump on the same disk as the database
+doesn't survive losing that disk.
+
+**On demand.** **Settings ▸ Backup ▸ Download backup** (or
+`GET /api/v1/admin/backup`) streams a dump named with its schema version;
+**Restore database** (`POST /api/v1/admin/restore`) replaces the database with
+one and migrates an older dump forward.
+
+**Rehearse restores.** [Restore drill](restore-drill.md) walks through
+restoring a backup into a throwaway server and checking it, via the API and by
+hand with `pg_restore`. Run it quarterly and after major upgrades. Keep
+`SECRET_KEY` with your backups: encrypted settings in a dump are unreadable
+without it.
+
+**Manually, or for larger setups:** `pg_dump -Fc` from cron, or
+[pgBackRest](https://pgbackrest.org/) for point-in-time recovery.
+
 ```bash
 # Full backup
 pg_dump -U onscreen -Fc onscreen > onscreen_$(date +%Y%m%d).dump
 
-# Restore
-pg_restore -U onscreen -d onscreen --clean onscreen_20260328.dump
-```
-
-For automated backups, use a cron job or a tool like [pgBackRest](https://pgbackrest.org/).
-
-```bash
-# Example cron entry (daily at 3 AM)
-0 3 * * * pg_dump -U onscreen -Fc onscreen > /backups/onscreen_$(date +\%Y\%m\%d).dump
+# Restore (server stopped; then run migrations)
+pg_restore -U onscreen -d onscreen --clean --if-exists --no-owner --no-acl onscreen_20260328.dump
 ```
 
 ### Media path considerations

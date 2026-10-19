@@ -11,6 +11,27 @@ API change lands only when every first-party client moves with it — see
 
 ## [Unreleased]
 
+### Upgrade notes
+
+- **Migration 00060** adds a daily `Database backup` task, but only on a
+  **fresh install** (a database with no accounts yet). Upgraded servers
+  are left as they are; create the task in **Settings ▸ Tasks** if you
+  don't back up another way.
+- Docker: `docker/docker-compose.yml` now mounts a `backup_data` volume
+  at `/var/backups/onscreen`. Add the same to your own compose file if
+  you use the scheduled backup, or its dumps go when the container is
+  recreated.
+
+### Added
+
+- **Backups by default, and a restore drill.** New installs back up the
+  database every night at 03:11 to `/var/backups/onscreen`, keeping the
+  newest 7 dumps. The Linux installer creates that directory for the
+  service user and the Windows installer creates it readable by SYSTEM and
+  Administrators only. [docs/restore-drill.md](docs/restore-drill.md) is a
+  step-by-step rehearsal: take a backup, restore it into a throwaway
+  server through the API or with `pg_restore`, verify it, tear it down.
+
 ### Changed
 
 - **ABR works on a replicated API tier.** Starting or restarting a
