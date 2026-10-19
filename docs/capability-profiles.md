@@ -409,7 +409,7 @@ Checked with ffmpeg 8.1: a TrueHD copy writes an `mlpa` track and fails at the
 header without `-strict -2`; DTS-HD MA copies as an `mp4a` (object type 0xA9,
 DTS) track. Audio item details carry ffprobe's `profile`. Clients still have to
 send the key (Android TV first), and Media3's reading of TrueHD (`mlpa`) and
-DTS out of fMP4 HLS needs checking on a device with a receiver.
+DTS out of fMP4 HLS was checked through an AV receiver on 2026-10-19: it works.
 
 **Remaining:**
 1. Device-test on Roku (the verdict is now final there, unit-tested only),

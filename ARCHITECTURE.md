@@ -575,7 +575,7 @@ A **bootstrap one-shot `pgx.Conn`** reads these at process startup so the logger
 | 9 | Low | `web/src/lib/cast.ts`, `clients/android_native/.../cast/ChromecastCaps.kt` | The 4K cast profile (HEVC, 2160p, HDR) is picked by matching the receiver's name against `ultra\|google tv\|streamer\|shield\|android tv\|bravia`; anything else gets the 1080p H.264 profile. The Hisense Google TV used for testing matches none of them, so it gets HD. The web sender only has the device's friendly name, so a renamed 4K device also falls back to HD. |
 | 10 | Resolved (v2.6.1) | `web/src/lib/cast.ts` (`castPosterUrl`) | ~~The cast's poster URL had no token, so the receiver showed no poster.~~ The web player and the phone app send `/artwork/<path>?token=<asset token>`. |
 | 11 | Resolved (v2.6.1) | `clients/` | ~~The Watchlist page was web-only.~~ Android TV / Fire TV, the phone, the TV web apps and Roku have it, and the TV apps a Status button on title pages. |
-| 12 | Low | `internal/transcode/ffmpeg.go` (burn-in, passthrough) | Burned-in picture subtitles were verified with x264, x265, SVT-AV1, NVENC and AMF, but not on VAAPI or QSV. TrueHD / DTS passthrough on remux is unit-tested only; no device check with an AV receiver yet. |
+| 12 | Low | `internal/transcode/ffmpeg.go` (burn-in, passthrough) | Burned-in picture subtitles were verified with x264, x265, SVT-AV1, NVENC and AMF, but not on VAAPI or QSV. TrueHD / DTS passthrough on remux works through an AV receiver (checked 2026-10-19). |
 
 ---
 
