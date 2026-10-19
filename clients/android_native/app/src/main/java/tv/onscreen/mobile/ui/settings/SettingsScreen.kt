@@ -41,6 +41,7 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import tv.onscreen.mobile.cast.ChromecastCaps
 import tv.onscreen.mobile.playback.ReplayGain
 import tv.onscreen.mobile.playback.ReplayGainMode
 
@@ -60,6 +61,7 @@ fun SettingsScreen(
     val serverUrl by vm.serverUrl.collectAsStateWithLifecycle(initialValue = null)
     val replayGainMode by vm.replayGainMode.collectAsStateWithLifecycle(initialValue = ReplayGainMode.OFF)
     val replayGainPreampDb by vm.replayGainPreampDb.collectAsStateWithLifecycle(initialValue = 0.0)
+    val castQuality by vm.castQuality.collectAsStateWithLifecycle(initialValue = ChromecastCaps.Quality.AUTO)
 
     var showSignOutConfirm by remember { mutableStateOf(false) }
     var showDisconnectConfirm by remember { mutableStateOf(false) }
@@ -118,6 +120,8 @@ fun SettingsScreen(
                 onModeChange = vm::setReplayGainMode,
                 onPreampChange = vm::setReplayGainPreampDb,
             )
+
+            CastQualitySetting(quality = castQuality, onChange = vm::setCastQuality)
 
             Spacer(Modifier.height(16.dp))
             HorizontalDivider()
@@ -391,6 +395,47 @@ private fun ReplayGainSettings(
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
+}
+
+/**
+ * Chromecast quality: which capability profile a cast asks the server for.
+ * Auto reads the device's model and capabilities; 4K or HD overrides it for
+ * a receiver the detection gets wrong (a TV with Google TV built in reports
+ * its panel's model number, which says nothing about 4K).
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CastQualitySetting(
+    quality: ChromecastCaps.Quality,
+    onChange: (ChromecastCaps.Quality) -> Unit,
+) {
+    Column(modifier = Modifier.padding(vertical = 8.dp)) {
+        Text("Chromecast quality", style = MaterialTheme.typography.bodyLarge)
+        Spacer(Modifier.height(2.dp))
+        Text(
+            "Auto picks 4K (HEVC, HDR) for devices it recognises, such as a Chromecast Ultra, " +
+                "Chromecast with Google TV or Google TV Streamer, and HD for the rest. Choose 4K " +
+                "if your TV plays 4K but casts in HD. If a 4K cast fails, it is retried in HD.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Spacer(Modifier.height(12.dp))
+        val options = listOf(
+            ChromecastCaps.Quality.AUTO to "Auto",
+            ChromecastCaps.Quality.UHD to "4K",
+            ChromecastCaps.Quality.HD to "HD",
+        )
+        SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+            options.forEachIndexed { i, (value, label) ->
+                SegmentedButton(
+                    selected = quality == value,
+                    onClick = { onChange(value) },
+                    shape = SegmentedButtonDefaults.itemShape(index = i, count = options.size),
+                    modifier = Modifier.semantics { contentDescription = "Chromecast quality $label" },
+                ) { Text(label) }
+            }
+        }
     }
 }
 

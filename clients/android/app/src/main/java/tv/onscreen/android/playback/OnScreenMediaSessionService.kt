@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -35,6 +36,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.TooManyStreamsException
@@ -151,6 +153,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
     /** Obeys an admin "stop this stream" aimed at the player here (see
      *  [watchAdminStops]). */
     private var adminStopJob: Job? = null
+    /** A remote's Next / Previous being carried out ([skip]). */
+    private var skipJob: Job? = null
 
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -318,6 +322,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // wiring needed. The fragment already plays audio items with
         // these attributes, so this doesn't touch the audio output.
         player.setAudioAttributes(AudioItemTypes.MUSIC_ATTRIBUTES, /* handleAudioFocus = */ true)
+        // Background streaming: a Wi-Fi lock as well as the CPU wake lock,
+        // held by ExoPlayer only while it plays or buffers. With the screen
+        // off (screensaver, TV in standby with the stick awake) Wi-Fi drops
+        // into power save, and a stream fetching segments then stalls; the
+        // fragment's WAKE_MODE_LOCAL is for the screen-on foreground, and it
+        // sets that again when it takes the player back. Media3's advice for
+        // streaming in the background; the lock costs nothing while paused.
+        player.setWakeMode(C.WAKE_MODE_NETWORK)
         activePlayer = player
         attachedGeneration = AudioHandoff.generation()
 
@@ -345,6 +357,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
             offsetMs = { activeHlsOffsetMs },
             itemDurationMs = { activeItemDurationMs },
             nowPlaying = { activeNowPlaying },
+            queue = queue,
         )
         // Full access for the platform's controllers (the assistant, the
         // system's media controls), which Media3 1.11 would otherwise leave
@@ -406,6 +419,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
     private fun detachInternal() {
         progressJob?.cancel()
         progressJob = null
+        skipJob?.cancel()
+        skipJob = null
         pauseReleaseJob?.cancel()
         pauseReleaseJob = null
         adminStopJob?.cancel()
@@ -472,12 +487,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
      *  marker would freeze the moment the user navigates away from the
      *  player. The first beat goes out at once: the fragment's tracker
      *  stops when it hands the player over, and waiting a full interval
-     *  left a gap of up to 20 s at every hand-off. */
+     *  left a gap of up to 20 s at every hand-off. The loop never waits for
+     *  a beat's PUT ([BackgroundBeats]): one that hung used to hold every
+     *  later beat back until the API client's 60 s timeout. */
     private fun startProgressReporter(player: ExoPlayer) {
         progressJob?.cancel()
         progressJob = scope.launch {
             while (isActive) {
-                if (!heartbeat(player)) return@launch
+                heartbeat(player)
                 delay(10_000)
             }
         }
@@ -496,16 +513,17 @@ class OnScreenMediaSessionService : MediaSessionService() {
     /** One 'playing' heartbeat if the player is actually playing (not
      *  paused, buffering, or finished — a finished player keeps
      *  playWhenReady, which kept reporting "playing" every 10 s after the
-     *  last track ended). Returns false once the server refused playback. */
-    private suspend fun heartbeat(player: ExoPlayer): Boolean {
-        val itemId = activeItemId ?: return true
-        if (!player.isPlaying) return true
+     *  last track ended), unless the last one is still out. Main thread
+     *  (it reads the player); the PUT goes out on the report lane. */
+    private fun heartbeat(player: ExoPlayer) {
+        val itemId = activeItemId ?: return
+        if (!player.isPlaying) return
         // Absolutise BOTH sides of the pair. Position is already
         // offset-corrected; duration must be too, or a resumed HLS
         // session reports content-time position against remaining-time
         // duration and trips the server's watched threshold early.
         val dur = contentDurationMs(player)
-        if (dur <= 0) return true
+        if (dur <= 0) return
         // A VBR file can play a little past the length it listed.
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(dur)
         // Best-effort EXCEPT a refusal: any 403 on this heartbeat means
@@ -514,14 +532,17 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // lowered). Swallowing it kept parked music streaming on its
         // already-issued token. Same decision as the fragment's
         // ProgressTracker — see HeartbeatRefusal.
-        val refusal = HeartbeatRefusal.heartbeat {
-            itemRepo.updateProgress(itemId, pos, dur, "playing")
-        }
-        if (refusal != null) {
-            haltForRefusal(player, itemId, refusal)
-            return false
-        }
-        return true
+        val sent = beats.beat(
+            send = { itemRepo.updateProgress(itemId, pos, dur, "playing") },
+            onRefused = { refusal ->
+                // Back on the main thread, and only for the player and item
+                // the beat was about: a chain may have moved on meanwhile.
+                scope.launch {
+                    if (activePlayer === player && activeItemId == itemId) haltForRefusal(player, itemId, refusal)
+                }
+            },
+        )
+        if (!sent) android.util.Log.i(TAG, "heartbeat skipped: the last one is still out")
     }
 
     /** A 'paused' or 'stopped' report for the active item at the player's
@@ -535,6 +556,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         if (dur <= 0) return
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(dur)
         if (pos <= 0) return
+        beats.beforeTerminal()
         reports.launch {
             runCatching { itemRepo.updateProgress(itemId, pos, dur, state) }
         }
@@ -621,6 +643,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
             // On the detached scope: at the end of the queue the service
             // stops right away, and its own scope's cancellation would take
             // this, the item's only completion report, with it.
+            beats.beforeTerminal()
             reports.launch {
                 runCatching { itemRepo.updateProgress(itemId, dur, dur, "stopped") }
             }
@@ -662,7 +685,10 @@ class OnScreenMediaSessionService : MediaSessionService() {
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(maxOf(dur, 0L))
         scope.launch {
             val refusal = if (dur > 0) {
-                HeartbeatRefusal.heartbeat { itemRepo.updateProgress(itemId, pos, dur, "playing") }
+                // Bounded: a hung probe would hold a dead player here.
+                withTimeoutOrNull(BackgroundBeats.BEAT_TIMEOUT_MS) {
+                    HeartbeatRefusal.heartbeat { itemRepo.updateProgress(itemId, pos, dur, "playing") }
+                }
             } else {
                 null
             }
@@ -695,7 +721,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
      *  MediaSource: a direct-play URL with the same per-file stream-token
      *  machinery the fragment uses, or a new server session for a track
      *  this device can't decode. */
-    private suspend fun chainTo(itemId: String) {
+    private suspend fun chainTo(itemId: String, fromEnd: Boolean = true) {
         val player = activePlayer ?: return
         val fromItemId = activeItemId
         val item = try { itemRepo.getItem(itemId) } catch (_: Exception) { return }
@@ -757,11 +783,17 @@ class OnScreenMediaSessionService : MediaSessionService() {
         }
         // Still ours, and still at the end of the item this chains from? A
         // session start can take a while, and a play from the system media
-        // controls meanwhile restarted that item.
-        if (activePlayer !== player || activeItemId != fromItemId || player.playbackState != Player.STATE_ENDED) {
+        // controls meanwhile restarted that item. (A skip leaves an item
+        // mid-way: it only has to still be the one playing.)
+        if (activePlayer !== player || activeItemId != fromItemId ||
+            (fromEnd && player.playbackState != Player.STATE_ENDED)
+        ) {
             next?.let { transcodeRepo.stopDetached(it) }
             return
         }
+        // Skipped mid-way: the item it leaves gets its 'stopped' at the
+        // point it got to (an ended one reported its full length already).
+        if (!fromEnd) reportState(player, "stopped")
 
         // The player leaves the old session for good: end it.
         activeStreamSession?.let { transcodeRepo.stopDetached(it) }
@@ -837,6 +869,52 @@ class OnScreenMediaSessionService : MediaSessionService() {
         }
     }
 
+    /**
+     * Next / Previous from a remote or the system's media controls, for the
+     * item playing here ([SessionPlayer.Queue]). The session's player holds
+     * one item, so without this MEDIA_NEXT did nothing for background music:
+     * the session offered no SKIP_TO_NEXT at all. The service walks the same
+     * queue its chain at an item's end does ([NextSiblingResolver]): Next
+     * plays what would follow, Previous what came before in the album, the
+     * book or the instant mix (or restarts the item at the first one).
+     */
+    private val queue = object : SessionPlayer.Queue {
+        override fun skips(): Boolean = activeItemId != null && AudioItemTypes.isAudio(activeItemType)
+
+        override fun skipToNext() = skip(forward = true)
+
+        override fun skipToPrevious() = skip(forward = false)
+    }
+
+    /** Resolve the item after (or before) the one playing and chain to it.
+     *  A press while one is still being carried out is ignored: it would
+     *  resolve from the same item again. Main thread. */
+    private fun skip(forward: Boolean) {
+        val player = activePlayer ?: return
+        val itemId = activeItemId ?: return
+        val type = activeItemType ?: return
+        if (!AudioItemTypes.isAudio(type) || skipJob?.isActive == true) return
+        val parentId = activeParentId
+        val index = activeIndex
+        skipJob = scope.launch {
+            val resolver = NextSiblingResolver(itemRepo)
+            val target = if (forward) {
+                resolver.resolve(itemId, type, parentId, index)
+            } else {
+                resolver.resolvePrevious(itemId, type, parentId, index)
+            }
+            if (activePlayer !== player || activeItemId != itemId) return@launch
+            if (target == null) {
+                android.util.Log.i(TAG, "skip (forward=$forward): no item next to $itemId")
+                // Previous at the first item restarts it; Next at the last
+                // one has nowhere to go.
+                if (!forward) session?.player?.seekTo(0L)
+                return@launch
+            }
+            chainTo(target.id, fromEnd = false)
+        }
+    }
+
     /** Let go of the player now and stop the service. Done here rather
      *  than left to onDestroy, which doesn't run while a system controller
      *  is still bound to the session. */
@@ -861,6 +939,8 @@ class OnScreenMediaSessionService : MediaSessionService() {
     private fun teardown() {
         progressJob?.cancel()
         progressJob = null
+        skipJob?.cancel()
+        skipJob = null
         pauseReleaseJob?.cancel()
         pauseReleaseJob = null
         adminStopJob?.cancel()
@@ -900,10 +980,18 @@ class OnScreenMediaSessionService : MediaSessionService() {
         const val STRAY_CHANNEL_ID = "playback_service"
         const val STRAY_NOTIFICATION_ID = 0x0A5E
 
-        /** The pause / stop reports. Outlives the service: the final
+        /** Where the reports go out. Outlives the service: the final
          *  'stopped' report is sent as it is destroyed, when its own scope is
-         *  already cancelled. One lane for every instance, so a 'paused'
-         *  never lands after the 'stopped' that follows it. */
-        val reports = ReportLane(CoroutineScope(SupervisorJob() + Dispatchers.IO))
+         *  already cancelled. */
+        val reportScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        /** The pause / stop reports and the heartbeats. One lane for every
+         *  instance, so a 'paused' never lands after the 'stopped' that
+         *  follows it, nor a 'playing' after either. */
+        val reports = ReportLane(reportScope)
+
+        /** The 'playing' heartbeats, on [reports]: bounded, never awaited by
+         *  the beat loop (see [BackgroundBeats]). */
+        val beats = BackgroundBeats(reports, reportScope)
     }
 }

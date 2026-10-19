@@ -25,6 +25,12 @@ import java.util.IdentityHashMap
  *    edge (TranscodeHls.mediaItem), and Next with no next item goes there.
  *    The session takes the default for the start of what the player holds,
  *    and has no such Next, as for a direct play — its listeners included.
+ *  - Next / Previous for a queue. The player holds one item; the album's
+ *    next track or the book's next chapter is found and loaded by the
+ *    service ([queue]). With one, the session offers Next and Previous
+ *    (a remote's MEDIA_NEXT / MEDIA_PREVIOUS, the system's media controls)
+ *    and hands them to it. Previous more than [getMaxSeekToPreviousPosition]
+ *    into the item restarts it instead, as a player with a playlist does.
  *
  * The lambdas are read on every call, so a chain to the next item (new
  * offset, duration and names) shows at once.
@@ -35,7 +41,23 @@ class SessionPlayer(
     private val offsetMs: () -> Long,
     private val itemDurationMs: () -> Long?,
     private val nowPlaying: () -> NowPlaying?,
+    private val queue: Queue? = null,
 ) : ForwardingPlayer(player) {
+
+    /** The queue the playing item belongs to, walked by the service. */
+    interface Queue {
+        /** The item playing now has a queue to skip through (music, books). */
+        fun skips(): Boolean
+
+        /** Load the item after the one playing. */
+        fun skipToNext()
+
+        /** Load the item before the one playing, or restart this one when
+         *  there is none. */
+        fun skipToPrevious()
+    }
+
+    private fun queueSkips(): Boolean = queue?.skips() == true
 
     override fun getCurrentPosition(): Long = super.getCurrentPosition() + offsetMs()
 
@@ -67,14 +89,52 @@ class SessionPlayer(
      *  transcoded track only. The next track comes when this one ends (the
      *  service's chain). */
     override fun seekToNext() {
-        if (super.hasNextMediaItem()) super.seekToNext()
+        when {
+            super.hasNextMediaItem() -> super.seekToNext()
+            queueSkips() -> queue?.skipToNext()
+        }
     }
 
-    override fun isCommandAvailable(command: Int): Boolean =
-        if (command == Player.COMMAND_SEEK_TO_NEXT) nextAvailable() else super.isCommandAvailable(command)
+    override fun seekToNextMediaItem() {
+        when {
+            super.hasNextMediaItem() -> super.seekToNextMediaItem()
+            queueSkips() -> queue?.skipToNext()
+        }
+    }
+
+    /** With a queue: back to the item's start once it is under way, else
+     *  the previous item (the service restarts this one when there is none). */
+    override fun seekToPrevious() {
+        if (!queueSkips() || super.hasPreviousMediaItem()) return super.seekToPrevious()
+        if (getCurrentPosition() > maxSeekToPreviousPosition) seekTo(0L) else queue?.skipToPrevious()
+    }
+
+    override fun seekToPreviousMediaItem() {
+        if (!queueSkips() || super.hasPreviousMediaItem()) return super.seekToPreviousMediaItem()
+        queue?.skipToPrevious()
+    }
+
+    override fun isCommandAvailable(command: Int): Boolean = when (command) {
+        Player.COMMAND_SEEK_TO_NEXT -> queueSkips() || nextAvailable()
+        Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+        Player.COMMAND_SEEK_TO_PREVIOUS,
+        Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM ->
+            queueSkips() || super.isCommandAvailable(command)
+        else -> super.isCommandAvailable(command)
+    }
 
     override fun getAvailableCommands(): Player.Commands {
         val commands = super.getAvailableCommands()
+        if (queueSkips()) {
+            return commands.buildUpon()
+                .addAll(
+                    Player.COMMAND_SEEK_TO_NEXT,
+                    Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                    Player.COMMAND_SEEK_TO_PREVIOUS,
+                    Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+                )
+                .build()
+        }
         if (nextAvailable() || !commands.contains(Player.COMMAND_SEEK_TO_NEXT)) return commands
         return commands.buildUpon().remove(Player.COMMAND_SEEK_TO_NEXT).build()
     }

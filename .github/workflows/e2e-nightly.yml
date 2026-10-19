@@ -1,9 +1,13 @@
 name: E2E (nightly)
 
-# The compose E2E suite (`make test-e2e`): builds the image, brings up
-# postgres + valkey + migrate + server + worker on a throwaway project, and
-# runs test/e2e against it over HTTP. Too slow for every PR, so it runs once
-# a day against main, and on demand from the Actions tab.
+# The compose E2E suites, against a throwaway compose stack (postgres +
+# valkey + migrate + server + worker) built from this commit:
+#   - e2e: the Go suite in test/e2e (`make test-e2e`), over HTTP;
+#   - browser: the Playwright specs in web/tests/e2e, in Chromium, against a
+#     second stack seeded with an admin and an empty library. Specs that need
+#     media, an IdP or other services skip themselves (their env is unset).
+# Too slow for every PR, so they run once a day against main, and on demand
+# from the Actions tab.
 on:
   schedule:
     - cron: "23 7 * * *" # 07:23 UTC, off the top of the hour
@@ -53,3 +57,77 @@ jobs:
         run: |
           docker compose -p onscreen-e2e -f docker/docker-compose.yml ps -a || true
           docker compose -p onscreen-e2e -f docker/docker-compose.yml logs --no-color --tail=300 || true
+
+  browser:
+    name: Playwright (Chromium)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # Its own compose project and ports, so it can't collide with anything.
+      COMPOSE_PROJECT: onscreen-browser
+      PG_PORT: "55433"
+      VALKEY_PORT: "56380"
+      SERVER_PORT: "7092"
+      DEBUG_PORT: "7093"
+      ONSCREEN_IMAGE: onscreen-browser-server
+      BASE_URL: http://localhost:7092
+      E2E_USERNAME: e2eadmin
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      # Throwaway secrets for a stack that is destroyed at the end: the
+      # database password, the server key and the admin's password.
+      - name: Generate stack secrets
+        run: |
+          for kv in "SECRET_KEY=$(openssl rand -hex 32)" "DB_PASS=$(openssl rand -hex 16)" "E2E_PASSWORD=E2e-$(openssl rand -hex 12)"; do
+            echo "::add-mask::${kv#*=}"
+            echo "$kv" >> "$GITHUB_ENV"
+          done
+
+      - name: Start the stack
+        run: docker compose -p "$COMPOSE_PROJECT" -f docker/docker-compose.yml up -d --build --wait
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: |
+          npm ci --no-audit --no-fund
+          npx playwright install --with-deps chromium
+
+      # Registers the first user (the admin) and one empty movie library.
+      - name: Seed the stack
+        working-directory: web
+        run: node tests/e2e/seed.mjs
+
+      - name: Run the Playwright specs
+        working-directory: web
+        env:
+          CI: "1"
+        run: npx playwright test --project=chromium
+
+      - name: Upload the Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: |
+            web/playwright-report
+            web/test-results
+          retention-days: 14
+
+      - name: Stack logs
+        if: failure()
+        run: |
+          docker compose -p "$COMPOSE_PROJECT" -f docker/docker-compose.yml ps -a || true
+          docker compose -p "$COMPOSE_PROJECT" -f docker/docker-compose.yml logs --no-color --tail=300 || true
+
+      - name: Tear down the stack
+        if: always()
+        run: docker compose -p "$COMPOSE_PROJECT" -f docker/docker-compose.yml down -v || true

@@ -581,14 +581,24 @@ and `internal/transcode/decision_cast_test.go` pins what they decide.
 | Profile | When | `X-Client-Capabilities` |
 |---|---|---|
 | HD (default) | Chromecast gen 1–3, Chromecast HD, anything unrecognised | `videoDecoder=h264,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=1920,maxHeight=1080,maxAudioChannels=2,maxbitdepth=8,hdr=0` |
-| 4K | model name matches `/ultra\|google tv\|streamer\|shield\|android tv\|bravia/i` | `videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=10,hdr=1` |
+| 4K | a video receiver whose model name is a known 4K model or matches `/ultra\|google tv\|streamer\|shield\|android tv\|bravia/i`, else whose friendly name matches it | `videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=10,hdr=1` |
 
 - `protocols` must list `mp4`: with `hls` alone no file container matches,
   so even an MP4 the receiver plays as-is comes back `directStream`. `hls`
   only says the device takes HLS.
-- The Web Sender SDK exposes no model name (Android's `CastDevice` does), so
-  the web matches the regex against the device's friendly name; a renamed
-  device gets HD.
+- How a device is placed, in order (`castProfileForDevice` on the web,
+  `ChromecastCaps.forDevice` on the phone, same tables): the phone's
+  **Chromecast quality** setting (Auto / 4K / HD) when it isn't Auto; a
+  receiver without the video-out capability (a speaker or group) gets HD; a
+  known HD/audio model (Chromecast HD, Nest Hub, Bose Smart Ultra Soundbar…)
+  gets HD; a known 4K model or one matching the regex gets 4K; then the
+  friendly name against the regex; else HD. Plain "Chromecast" is reported by
+  gen 1–3 and by the 4K Chromecast with Google TV alike, so it falls through
+  to the friendly name.
+- The Cast SDKs report no resolution or codec support. The Web Sender SDK
+  has no model name either (`chrome.cast.Receiver` has `friendlyName` and
+  `capabilities`), so a renamed 4K device gets HD on the web; on the phone
+  the user can set Chromecast quality to 4K.
 - A 4K-profile load the receiver fails (the LOAD rejected, or the media goes
   IDLE with reason ERROR before it ever played) is retried once with HD.
 

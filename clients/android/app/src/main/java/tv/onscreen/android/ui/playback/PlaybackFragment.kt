@@ -182,6 +182,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
     /** The server session a player taken back from the background service
      *  is still reading, for prepare() to adopt (see initPlayer). */
     private var resumedSession: tv.onscreen.android.playback.StreamSession? = null
+    /** The listed length of the item a player taken back from the background
+     *  service plays (its handoff metadata), for the transport bar until the
+     *  item itself arrives with the first state emission. */
+    private var parkedItemDurationMs: Long? = null
+    /** Set by the first state emission for a taken-back player: refresh the
+     *  transport bar once the item is in place ([refreshGlueTimeline]). */
+    private var retimeGlueAfterItem: Boolean = false
 
     /** True once we've parked the audio player in the MediaSessionService
      *  from onStop (app backgrounded / HOME). onStart reclaims it;
@@ -496,6 +503,7 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                     }
                     playerWasReused -> {
                         playerWasReused = false
+                        retimeGlueAfterItem = true
                         installProgressTracker(itemId)
                     }
                     // A source that arrives AFTER onStop released the player.
@@ -542,6 +550,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
                 currentItemType = state.item?.type.orEmpty()
                 currentItem = state.item
                 currentFile = state.file
+                // A player taken back: the transport bar's length now comes
+                // from the item's file rather than the handoff.
+                if (retimeGlueAfterItem) {
+                    retimeGlueAfterItem = false
+                    refreshGlueTimeline()
+                }
 
                 // After currentItem: the title block's logo reads it.
                 glue?.title = state.item?.title ?: ""
@@ -1162,6 +1176,13 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
             // server session it was parked with, which prepare() adopts
             // rather than starting a second one.
             resumedSession = parkedMeta?.session
+            // ...and the transport bar shows content time from the first
+            // frame: the session's offset and the item's length, from the
+            // handoff, not the remux window's own scale ("1:30 / 2:28" for
+            // up to 21 s, until the next HLS timeline update). prepare()
+            // adopts the same session again later, which changes nothing.
+            parkedMeta?.session?.let { viewModel.adoptSession(it) }
+            parkedItemDurationMs = parkedMeta?.itemDurationMs
             // Reused-parked-player flag suppresses the next
             // setMediaSource/prepare on the first state emission so
             // the song doesn't restart from 0:00 when the user
@@ -1290,6 +1311,25 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         val listener = createPlayerListener()
         exo.addListener(listener)
         playerListener = listener
+        // A player taken back mid-track: the glue read its duration from
+        // the adapter before the offset was known; read it again now.
+        if (parked != null) refreshGlueTimeline()
+    }
+
+    /**
+     * Have the transport bar read the position and duration again. The
+     * Leanback adapter reads the duration only on a player event (a timeline
+     * change), so when the content-time inputs change without one (a player
+     * taken back from the background service: its session's offset and the
+     * item's length arrive after the glue first drew) the bar kept the remux
+     * window's scale until the session's next playlist update, 4 to 21 s.
+     */
+    private fun refreshGlueTimeline() {
+        val adapter = glue?.playerAdapter ?: return
+        val callback = adapter.callback ?: return
+        callback.onDurationChanged(adapter)
+        callback.onCurrentPositionChanged(adapter)
+        callback.onBufferedPositionChanged(adapter)
     }
 
     /** Build the player listener that drives the screen-on flag,
@@ -2815,7 +2855,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
      *  parked player, whose session left the view model. */
     private fun contentDurationMs(exo: ExoPlayer?, hlsOffsetMs: Long, hlsSession: Boolean): Long =
         PlaybackHelper.contentDurationMs(
-            listedDurationMs = listedDurationMs(currentItem),
+            // Before the first state emission brings the item, a player taken
+            // back from the service has its length from the handoff.
+            listedDurationMs = currentItem.let { if (it != null) listedDurationMs(it) else parkedItemDurationMs },
             playerDurationMs = exo?.duration ?: 0L,
             hlsOffsetMs = hlsOffsetMs,
             hlsSession = hlsSession,
@@ -3241,7 +3283,12 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // The server session came back with the player (handed over in
         // handOffAudioPlayerToService): this view model owns it again.
         parkedMeta?.session?.let { viewModel.adoptSession(it) }
+        // The service held a Wi-Fi lock for background streaming; back on
+        // screen, the CPU wake lock alone, as initPlayer sets it.
+        reclaimed.setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL)
         player = reclaimed
+        // Offset and length as the service left them: tell the transport bar.
+        refreshGlueTimeline()
         val listener = createPlayerListener()
         reclaimed.addListener(listener)
         playerListener = listener

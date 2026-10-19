@@ -154,9 +154,14 @@ export class CastController {
     this.ended = false;
     this.lastContentSec = opts.positionSec;
     const device = session.getCastDevice?.() ?? {};
-    // The Web Sender SDK has no model name; a future one might.
     this.clientName = castClientName(device.friendlyName);
-    this.profile = castProfileForDevice(device.modelName ?? device.friendlyName);
+    // chrome.cast.Receiver: friendlyName + capabilities (video_out rules out
+    // speakers); no model name today, read in case a future SDK adds one.
+    this.profile = castProfileForDevice({
+      friendlyName: device.friendlyName,
+      modelName: device.modelName,
+      capabilities: device.capabilities,
+    });
     const fw = this.w.cast.framework;
     this.player = new fw.RemotePlayer();
     this.rpc = new fw.RemotePlayerController(this.player);

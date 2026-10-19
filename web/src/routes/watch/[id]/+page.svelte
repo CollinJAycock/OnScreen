@@ -25,6 +25,10 @@
     type SleepTimerMode,
   } from '$lib/stores/sleepTimer';
   import { toast } from '$lib/stores/toast';
+  import {
+    pollForItemChange, updatedSince, matchApplied, matchAppliedMsg,
+    REFRESH_UPDATED_MSG, REFRESH_NO_CHANGE_MSG, MATCH_PENDING_MSG,
+  } from '$lib/itemRefresh';
   import Hls from 'hls.js';
   import PlaylistPicker from '$lib/components/PlaylistPicker.svelte';
   import CollectionPicker from '$lib/components/CollectionPicker.svelte';
@@ -1703,13 +1707,62 @@
     matchError = '';
     try {
       await itemApi.applyMatch(item.id, tmdbId);
-      showMatchModal = false;
-      // Reload the page after a short delay to let enrichment finish.
-      setTimeout(() => { load(); }, 2000);
     } catch (e: unknown) {
       matchError = e instanceof Error ? e.message : 'Failed to apply match';
-    } finally {
       matchApplying = false;
+      return;
+    }
+    matchApplying = false;
+    showMatchModal = false;
+    // The match is applied in the background (metadata, then credits).
+    // Poll for the row carrying the new TMDB id, then re-render in place
+    // instead of reloading the page after a guessed delay.
+    await pollAndApply(matchApplied(tmdbId, item.updated_at), {
+      onChange: (fresh) => toast.success(matchAppliedMsg(fresh.title)),
+      onTimeout: () => toast.info(MATCH_PENDING_MSG, 8000),
+      errorMsg: 'Could not reload the item after matching',
+      reloadCredits: true,
+    });
+  }
+
+  // Shared by Refresh and Fix Match: poll GET /items/{id} until `changed`
+  // says the background work landed, then swap the fresh row in and reload
+  // what hangs off it (children for shows/seasons, cast for a new match).
+  async function pollAndApply(
+    changed: (fresh: ItemDetail) => boolean,
+    o: {
+      onChange: (fresh: ItemDetail) => void;
+      onTimeout: () => void;
+      errorMsg: string;
+      reloadCredits?: boolean;
+    },
+  ) {
+    if (!item) return;
+    const itemId = item.id;
+    try {
+      const fresh = await pollForItemChange(() => itemApi.get(itemId), changed, {
+        cancelled: () => item?.id !== itemId,
+      });
+      if (item?.id !== itemId) return; // navigated away mid-poll
+      if (!fresh) {
+        o.onTimeout();
+        return;
+      }
+      item = fresh;
+      itemWatched = detailWatched(item);
+      // For shows / seasons, also reload the children so OVA badges,
+      // episode titles, and thumbnails refresh inline.
+      if (item.type === 'show' || item.type === 'season') {
+        await loadShowDetail();
+      }
+      if (o.reloadCredits) {
+        peopleApi.credits(itemId)
+          .then(c => { if (item?.id === itemId) cast = c; })
+          .catch(() => { /* keep the old strip */ });
+      }
+      o.onChange(fresh);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error && e.message ? e.message : o.errorMsg);
     }
   }
 
@@ -1860,22 +1913,13 @@
       await mediaApi.enrichItem(item.id);
       // Background work — poll for the row updating, then re-render.
       // 12 × 2 s = 24 s ceiling; AniList is fast, TMDB cascades with
-      // children take longer. Bail out as soon as we see a change.
-      const startUpdated = item.updated_at;
-      for (let i = 0; i < 12; i++) {
-        await new Promise(r => setTimeout(r, 2000));
-        if (!item) break;
-        const fresh = await itemApi.get(item.id);
-        if (fresh.updated_at > startUpdated) {
-          item = fresh;
-          // For shows / seasons, also reload the children so OVA
-          // badges, episode titles, and thumbnails refresh inline.
-          if (item.type === 'show' || item.type === 'season') {
-            await loadShowDetail();
-          }
-          break;
-        }
-      }
+      // children take longer. Bail out as soon as we see a change, and
+      // say so either way: a toast on success, "no changes" at the end.
+      await pollAndApply(updatedSince(item.updated_at), {
+        onChange: () => toast.success(REFRESH_UPDATED_MSG),
+        onTimeout: () => toast.info(REFRESH_NO_CHANGE_MSG, 8000),
+        errorMsg: 'Refresh failed',
+      });
     } catch (e: unknown) {
       toast.error(e instanceof Error ? e.message : 'Refresh failed');
     } finally {

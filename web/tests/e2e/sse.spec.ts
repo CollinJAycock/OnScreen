@@ -13,8 +13,8 @@
 //   E2E_PASSWORD   OnScreen password — required; block skips otherwise
 
 import { test, expect } from '@playwright/test';
+import { loginUI } from './_auth';
 
-const USERNAME = process.env.E2E_USERNAME ?? 'admin';
 const PASSWORD = process.env.E2E_PASSWORD ?? '';
 
 test.describe('SSE — notifications stream', () => {
@@ -36,11 +36,8 @@ test.describe('SSE — notifications stream', () => {
     const ctx = await browser.newContext();
     try {
       const loginPage = await ctx.newPage();
-      await loginPage.goto('/login', { waitUntil: 'domcontentloaded' });
-      await loginPage.getByLabel(/username/i).fill(USERNAME);
-      await loginPage.getByLabel(/password/i).fill(PASSWORD);
-      await loginPage.locator('button[type="submit"]').first().click();
-      await expect(loginPage).not.toHaveURL(/\/login/, { timeout: 15_000 });
+      // Rate-limit aware: waits out a full auth limiter and submits again.
+      await loginUI(loginPage);
       // Done with the login page; close to free its EventSource (the
       // hydrated app may have opened one) so we measure exactly the
       // three subscribers we open below.

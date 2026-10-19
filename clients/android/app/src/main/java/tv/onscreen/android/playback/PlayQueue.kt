@@ -39,6 +39,14 @@ object PlayQueue {
         return if (i < 0) null else q.getOrNull(i + 1)
     }
 
+    /** The track before [itemId]; null at the first, or when [itemId] isn't
+     *  in the queue. */
+    fun previousBefore(itemId: String): ChildItem? {
+        val q = tracks
+        val i = q.indexOfFirst { it.id == itemId }
+        return if (i <= 0) null else q[i - 1]
+    }
+
     /** The player started [itemId]: keep the queue only if it holds it (a
      *  playback that isn't the mix's ends the mix). */
     fun retainFor(itemId: String) {

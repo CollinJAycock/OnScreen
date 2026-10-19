@@ -268,12 +268,65 @@ export const CHROMECAST_CAPS: Readonly<Record<CastProfile, string>> = {
 
 const FOUR_K_DEVICE = /ultra|google tv|streamer|shield|android tv|bravia/i;
 
-/** castProfileForDevice picks the profile from the receiver's model name.
- * The Web Sender SDK exposes no model name (Android's CastDevice does), so
- * the web passes the device's friendly name: a set-up name like "SHIELD" or
- * "BRAVIA 4K" still matches, a renamed device ("Living Room TV") falls back
- * to HD, which every Chromecast plays. */
-export function castProfileForDevice(name: string | null | undefined): CastProfile {
+/** Exact model names (lowercased mDNS `md=` values) of 4K receivers the
+ *  pattern misses. Same list as the phone's ChromecastCaps. */
+const FOUR_K_MODELS = new Set(['mitv-mssp2']);
+
+/** Exact model names that never get 4K: 1080p Chromecasts, smart displays,
+ *  audio-only speakers and groups (a "Bose Smart Ultra Soundbar" is not a
+ *  Chromecast Ultra). Plain "Chromecast" isn't listed: gen 1–3 and the 4K
+ *  Chromecast with Google TV both report it. Same list as the phone's. */
+const HD_MODELS = new Set([
+  'chromecast hd',
+  'chromecast audio',
+  'eureka dongle',
+  'google home',
+  'google home mini',
+  'google nest mini',
+  'nest audio',
+  'nest wifi point',
+  'google nest hub',
+  'google nest hub max',
+  'google cast group',
+  'lenovo smart display 7',
+  'lenovo smart display 10',
+  'bose smart ultra soundbar',
+]);
+
+/** What the Web Sender SDK tells us about a receiver: a chrome.cast.Receiver
+ *  (session.getCastDevice()) has `friendlyName` and `capabilities`
+ *  (chrome.cast.Capability strings: 'video_out', 'audio_out', …) but no
+ *  model name. `modelName` is read in case a future SDK adds one. */
+export interface CastReceiverInfo {
+  friendlyName?: string | null;
+  modelName?: string | null;
+  capabilities?: readonly string[] | null;
+}
+
+/** castProfileForDevice picks the profile for a receiver:
+ *  1. a receiver whose capabilities lack video_out (a speaker, a group) is
+ *     never 4K;
+ *  2. a model name, when there is one: a known HD/audio model is HD, a known
+ *     4K model or one matching the 4K pattern is 4K;
+ *  3. the friendly name against the 4K pattern: a set-up name like "SHIELD"
+ *     or "BRAVIA 4K" still matches;
+ *  4. otherwise HD, which every Chromecast plays. A renamed 4K device
+ *     ("Living Room TV") lands here on the web, because the Web Sender SDK
+ *     reports no model; a 4K load the receiver can't play is retried as HD.
+ *  A bare string is taken as the friendly name. */
+export function castProfileForDevice(
+  device: string | CastReceiverInfo | null | undefined,
+): CastProfile {
+  const info: CastReceiverInfo =
+    typeof device === 'string' ? { friendlyName: device } : (device ?? {});
+  const caps = info.capabilities;
+  if (Array.isArray(caps) && caps.length > 0 && !caps.includes('video_out')) return 'hd';
+  const model = (info.modelName ?? '').trim().toLowerCase();
+  if (model) {
+    if (HD_MODELS.has(model)) return 'hd';
+    if (FOUR_K_MODELS.has(model) || FOUR_K_DEVICE.test(model)) return '4k';
+  }
+  const name = info.friendlyName ?? '';
   return name && FOUR_K_DEVICE.test(name) ? '4k' : 'hd';
 }
 

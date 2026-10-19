@@ -2,6 +2,7 @@ package tv.onscreen.mobile.cast
 
 import android.content.Context
 import android.util.Log
+import com.google.android.gms.cast.CastDevice
 import com.google.android.gms.cast.MediaSeekOptions
 import com.google.android.gms.cast.MediaStatus
 import com.google.android.gms.cast.framework.CastContext
@@ -30,6 +31,7 @@ import tv.onscreen.mobile.data.api.apiError
 import tv.onscreen.mobile.data.backgroundScope
 import tv.onscreen.mobile.data.model.ItemFile
 import tv.onscreen.mobile.data.model.TranscodeRequest
+import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
 import tv.onscreen.mobile.data.repository.ItemRepository
 import tv.onscreen.mobile.data.repository.PlayDecisionResult
@@ -70,6 +72,7 @@ class CastPlaybackController @Inject constructor(
     private val transcodeRepo: TranscodeRepository,
     private val itemRepo: ItemRepository,
     private val serverPrefs: ServerPrefs,
+    private val playbackPrefs: PlaybackPrefs,
     private val serverCapabilities: ServerCapabilitiesRepository,
     private val http: OkHttpClient,
 ) {
@@ -235,7 +238,13 @@ class CastPlaybackController @Inject constructor(
         }
         val origin = serverPrefs.getServerUrl()?.trimEnd('/').orEmpty()
         if (origin.isEmpty()) return
-        val profile = profileOverride ?: ChromecastCaps.forModelName(session.castDevice?.modelName)
+        val device = session.castDevice
+        val profile = profileOverride ?: ChromecastCaps.forDevice(
+            modelName = device?.modelName,
+            friendlyName = device?.friendlyName,
+            videoOut = device?.hasCapability(CastDevice.CAPABILITY_VIDEO_OUT),
+            quality = playbackPrefs.getCastQuality(),
+        )
 
         // A different item was cast before: that one ends here.
         active?.takeIf { it.req.item.id != req.item.id }?.let { finish(it, currentContentMs(it)) }
@@ -265,7 +274,7 @@ class CastPlaybackController @Inject constructor(
             audioTrackSelected = (req.audioStreamIndex ?: 0) > 0,
             burnIn = req.burnSubtitleStreamIndex != null && req.hasVideo,
         )
-        Log.i(TAG, "cast decision: model=${session.castDevice?.modelName} server=${decided.verdict} profile=$profile -> $route")
+        Log.i(TAG, "cast decision: model=${device?.modelName} videoOut=${device?.hasCapability(CastDevice.CAPABILITY_VIDEO_OUT)} server=${decided.verdict} profile=$profile -> $route")
         when (route) {
             is CastHls.Route.Refuse -> when (route.reason) {
                 CastHls.Refusal.DOLBY_VISION -> fail(null, "Dolby Vision is not supported")

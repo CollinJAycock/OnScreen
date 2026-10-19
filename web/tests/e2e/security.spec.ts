@@ -10,7 +10,7 @@
 
 import { test, expect, request as pwRequest } from '@playwright/test';
 import {
-  USERNAME, PASSWORD, adminToken, loginAs, registerUser, retryOn429, drainAuthRateLimit,
+  USERNAME, PASSWORD, adminToken, loginAs, loginUI, registerUser, retryOn429, drainAuthRateLimit,
 } from './_auth';
 
 
@@ -282,11 +282,7 @@ test.describe('Security — XSS reflection', () => {
 
   test('search query with <script> tag is not reflected unescaped', async ({ page }) => {
     // Log in first so the search UI is reachable.
-    await page.goto('/login');
-    await page.getByLabel(/username/i).fill(USERNAME);
-    await page.getByLabel(/password/i).fill(PASSWORD);
-    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-    await expect(page).not.toHaveURL(/\/login/);
+    await loginUI(page);
 
     // Intercept any XSS execution — if the script tag is reflected and
     // executed, window.__xss_fired will be set to true.
