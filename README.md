@@ -2,7 +2,7 @@
 
 A modern, open-source media server. PostgreSQL-native. Single binary. Native clients across web, desktop, TV, and phone.
 
-> **Status:** v2.6.0 is the current release; the release note is [docs/releases/v2.6.0.md](docs/releases/v2.6.0.md), and [CHANGELOG.md](CHANGELOG.md) has the full list and the upgrade notes from v2.5.x. Since v2.4, a breaking API change lands only when every first-party client moves with it (see [docs/server-lock.md](docs/server-lock.md)). A private beta is running. Headline v2.6: **metadata editing with field locks**; **multi-episode files**, **movie editions** and multi-part movies; per-user **label restrictions**; **smaller converted downloads** and **optimized versions**; **studio and network pages**; **instant mix** and similar artists; an **OPDS** catalog for e-reader apps; **import from Plex, Jellyfin or Emby**; **IMDb, Rotten Tomatoes and Metacritic** scores; **podcast RSS subscriptions**; **burned-in picture subtitles** and audio passthrough on remux; **Dolby Vision** for apps that decode it; **Chromecast casting of any video**; a **Watchlist** page; and the server's **play decision is final** on every app. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md).
+> **Status:** v2.6.1 is the current release (v2.6.0 plus History artwork, the Chromecast poster, and the Watchlist and Status in the TV web app); the release note is [docs/releases/v2.6.0.md](docs/releases/v2.6.0.md), and [CHANGELOG.md](CHANGELOG.md) has the full list and the upgrade notes from v2.5.x. Since v2.4, a breaking API change lands only when every first-party client moves with it (see [docs/server-lock.md](docs/server-lock.md)). A private beta is running. Headline v2.6: **metadata editing with field locks**; **multi-episode files**, **movie editions** and multi-part movies; per-user **label restrictions**; **smaller converted downloads** and **optimized versions**; **studio and network pages**; **instant mix** and similar artists; an **OPDS** catalog for e-reader apps; **import from Plex, Jellyfin or Emby**; **IMDb, Rotten Tomatoes and Metacritic** scores; **podcast RSS subscriptions**; **burned-in picture subtitles** and audio passthrough on remux; **Dolby Vision** for apps that decode it; **Chromecast casting of any video**; a **Watchlist** page; and the server's **play decision is final** on every app. Per-platform store-submission state in [docs/comparison-matrix.md](docs/comparison-matrix.md).
 
 ## Why another media server?
 
@@ -116,7 +116,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 
 ### Docker (recommended)
 
-Release images are published to `ghcr.io/collinjaycock/onscreen` (tags `2.6.0`, `2.6`, `2`). To build your own instead: `docker build -f docker/Dockerfile -t onscreen .`
+Release images are published to `ghcr.io/collinjaycock/onscreen` (tags `2.6.1`, `2.6`, `2`). To build your own instead: `docker build -f docker/Dockerfile -t onscreen .`
 
 ```bash
 docker run -p 7070:7070 \
@@ -124,7 +124,7 @@ docker run -p 7070:7070 \
   -e VALKEY_URL="redis://valkey:6379" \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
   -v /your/media:/media:ro \
-  ghcr.io/collinjaycock/onscreen:2.6.0
+  ghcr.io/collinjaycock/onscreen:2.6.1
 
 # Prometheus metrics (and /debug/pprof) bind to 127.0.0.1:7071 inside the
 # container by default. To scrape them, add
