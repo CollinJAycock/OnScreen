@@ -121,6 +121,10 @@ type BuildArgs struct {
 	// 8-bit-only HEVC client got a 10-bit HEVC "fix" it couldn't decode, audio
 	// over a black screen. Set from the client's declared MaxVideoBitDepth.
 	Force8Bit bool
+	// OutputLimits holds a re-encode to the client's declared H.264 profile
+	// and per-codec level (TranscodeJob.OutputLimits): -profile:v / -level in
+	// the encoder's own form (outputLimitArgs). Ignored on a copy.
+	OutputLimits OutputLimits
 	// HasLibfdkAAC selects the libfdk_aac encoder over the native aac encoder for
 	// AAC output. libfdk is higher quality and — critically — far faster to start
 	// on multichannel audio: a 7.1 TrueHD source's first HLS segment took ~15s
@@ -750,6 +754,9 @@ func BuildHLS(a BuildArgs) []string {
 				args = append(args, "-profile:v", "main")
 			}
 		}
+		// The client's profile / level ceiling (h264Profile, h264Level,
+		// hevcLevel, av1Level) for the codec this encoder writes.
+		args = append(args, outputLimitArgs(a.Encoder, a.OutputLimits, a.Width, a.Height)...)
 	}
 
 	// ── Stream mapping ───────────────────────────────────────────────────────

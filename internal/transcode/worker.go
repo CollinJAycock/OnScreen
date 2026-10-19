@@ -719,6 +719,7 @@ func (w *Worker) runJob(ctx context.Context, job TranscodeJob) (err error) {
 				AudioOnly:            job.AudioOnly,
 				NoAudio:              job.NoAudio,
 				Force8Bit:            job.Force8Bit,
+				OutputLimits:         job.outputLimits(),
 				Encoder:              enc,
 				IsVAAPI:              enc == EncoderVAAPI || enc == EncoderHEVCVAAPI || enc == EncoderAV1VAAPI,
 				IsHEVC:               job.IsHEVC,

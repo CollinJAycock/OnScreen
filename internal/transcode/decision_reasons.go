@@ -98,6 +98,17 @@ func DecisionReasons(file media.File, caps ClientCapabilities) []Reason {
 				}
 			}
 		}
+		if profileOver, levelOver := videoLimitExceeded(file, caps); profileOver || levelOver {
+			lim := caps.VideoLimitFor(videoAlias)
+			if profileOver {
+				add(ReasonVideo, "%s %s profile → client max %s", videoCodecLabel(videoAlias),
+					deref(file.VideoProfile), profileLabel(videoAlias, lim.Profile))
+			}
+			if levelOver {
+				add(ReasonVideo, "%s level %s → client max %s", videoCodecLabel(videoAlias),
+					FormatLevel(VideoLevelTenths(videoAlias, derefInt(file.VideoLevel))), FormatLevel(lim.Level))
+			}
+		}
 		w, h := derefInt(file.ResolutionW), derefInt(file.ResolutionH)
 		if (w > 0 && caps.MaxWidth > 0 && w > caps.MaxWidth) ||
 			(h > 0 && caps.MaxHeight > 0 && h > caps.MaxHeight) {
