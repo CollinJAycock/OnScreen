@@ -22,16 +22,9 @@ The original audit missed that [PlayerScene.brs](components/playback/PlayerScene
 
 ---
 
-### 3. Trickplay thumbnails on the seekbar — ⚠ partial: data side shipped, rendering deferred
+### 3. Trickplay thumbnails on the seekbar — ✅ done (v2.7)
 
-**What shipped 2026-05-06:** [Trickplay.brs](source/playback/Trickplay.brs) — a VTT parser that converts the WebVTT index into an array of `{start_ms, end_ms, sprite_path, x, y, w, h}` cues, plus `Trickplay_FindCue(cues, posMs)` for per-frame lookup. 18 unit tests cover timestamp parsing, cue parsing (with / without nested paths, with / without xywh fragment), full VTT parsing, CRLF tolerance, cue-lookup boundary cases.
-
-**What's deferred:** rendering the cropped sprite above the seekbar during scrub. The original scope assumed Roku's `Poster` had an `imageRegion` field — it doesn't. Two paths for the visual layer:
-
-   1. **Server-side BIF endpoint** (preferred — Roku firmware natively renders trickplay from a BIF binary on the Video node's built-in scrub bar; no custom UI). Add `/api/v1/items/{id}/trickplay/index.bif` that assembles per-frame JPEGs from the existing sprite chunks at scan time. Roku then sets `Content.bifUrl` and gets thumbnails for free. Benefits any future Apple TV / webOS / Tizen client too.
-   2. **SceneGraph clipping with offset Poster** (no server change, device-tier validation needed). Wrap a full-sprite Poster in a Group sized to (w, h) with the Poster offset by (-x, -y); only the cue region renders. Scrub detection by observing `Video.position` jumps faster than playback rate.
-
-Path 1 is cleaner. Path 2 reaches deeper into BrightScript than is comfortable to ship without on-device testing.
+The server builds a BIF from the trickplay sprites (`GET /trickplay/{id}/index.bif`, cached next to the sprites after the first request) and [PlayerScene.brs](components/playback/PlayerScene.brs) points the content node's `HDBifUrl` / `SDBifUrl` / `FHDBifUrl` at it, so the firmware's own trick-play bar renders the thumbnails — no custom UI. [Trickplay.brs](source/playback/Trickplay.brs) holds the URL builder and the rule for when the thumbnails apply (the version holding the item's first file, a clock starting at 0, not audio). The earlier client-side VTT parser was removed; nothing rendered from it. Needs a check on a real Roku.
 
 ---
 

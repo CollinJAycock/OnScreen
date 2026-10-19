@@ -116,6 +116,9 @@ sub init()
     m.reissuing = false
     m.item = invalid
     m.file = invalid
+    ' The played version's files (Versions_Pick(...).files) — decides
+    ' whether the item's seek thumbnails apply (Trickplay_Applies).
+    m.versionFiles = invalid
 
     ' Admin stop. playbackMode is Playback_Decide's mode once playback
     ' starts; directStreamPath is the /media/stream path the direct-play
@@ -240,6 +243,7 @@ sub onItemTaskState()
     end if
     ' Part 1 of a multi-part movie, else the version's one file.
     m.file = version.primary
+    m.versionFiles = version.files
     m.stacked = version.files.Count() > 1
 
     ' Fire markers + children fetches in parallel — neither blocks
@@ -379,6 +383,7 @@ sub startDirectPlayback(serverUrl as String)
     if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
+    attachTrickplay(content, serverUrl)
 
     m.video.content = content
     m.video.control = "play"
@@ -416,6 +421,7 @@ sub startOptimizedPlayback(plan as Object)
     if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
+    attachTrickplay(content, serverUrl)
 
     m.video.content = content
     m.video.control = "play"
@@ -528,10 +534,22 @@ sub onTranscodeTaskState()
     else if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
+    ' After m.streamOffsetMs is final: a session clock that starts
+    ' mid-item gets no thumbnails (they'd be offset).
+    attachTrickplay(content, serverUrl)
 
     m.video.content = content
     m.video.control = "play"
     m.video.setFocus(true)
+end sub
+
+' Seek thumbnails on the firmware's trick-play bar: the item's BIF
+' (Trickplay.brs), when they match what this content plays. Call once
+' m.streamOffsetMs is final for the content.
+sub attachTrickplay(content as Object, serverUrl as String)
+    if m.item = invalid then return
+    applies = Trickplay_Applies(m.item.type, m.item.files, m.versionFiles, m.streamOffsetMs)
+    Trickplay_AttachBif(content, serverUrl, m.top.itemId, Prefs_GetAssetTokenStr(), applies)
 end sub
 
 sub onVideoState()

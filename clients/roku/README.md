@@ -88,10 +88,10 @@ npm run package
 ROKU_HOST=192.168.1.42 ROKU_DEV_PASSWORD=mypass npm run sideload
 ```
 
-**Local-only test coverage** (523 cases as of v2.6): `UrlEncodePath`,
+**Local-only test coverage** (593 cases as of v2.7): `UrlEncodePath`,
 `AssetStream`/`AssetArtwork` and API path contracts, `Json_Parse`/
 `UnwrapData`/`UnwrapList` envelope handling, string utils, the playback
-decision, trickplay VTT parsing, next-sibling order, and the v2.5 watch
+decision, the trickplay BIF URL and when it applies, next-sibling order, and the v2.5 watch
 logic — `ApiResult_From` (status + error envelope), admin-stop message
 parsing, up-next labels, card badges, home rows and "Report a problem" —
 plus the v2.6 additions: multi-episode ranges, version grouping, the
@@ -178,6 +178,14 @@ universal anyway.
   page; Similar artists / Appears on rows and Instant mix. Not here:
   chapter thumbnails (no chapter list on Roku) and the Playback quality
   setting (no settings screen).
+- **Seek thumbnails (v2.7)** — the firmware's own trick-play bar shows
+  the item's thumbnails: the content node's `HDBifUrl` / `SDBifUrl` /
+  `FHDBifUrl` point at the server's `GET /trickplay/{id}/index.bif`
+  (a BIF cut from the trickplay sprites, asset token in `?token=`).
+  Set only when they line up with what plays — the version holding the
+  item's first file, on a clock that starts at 0 (not a re-issued
+  session that starts mid-item) — and never for audio. Items with no
+  generated thumbnails answer 404 and the bar shows none.
 
 ## What's not done yet
 
@@ -187,7 +195,7 @@ universal anyway.
 - Cross-device progress sync (server publishes `progress.updated` SSE
   events; Roku has no native SSE — would need long-poll fallback or
   chunked-read on `roUrlTransfer`)
-- Skip intro / credits, trickplay scrub previews, chapter picker
+- Skip intro / credits, chapter picker
 - Search, library browse, favorites, history, settings, notifications
 - Channel art (PNG icons + splash JPEGs) — see `images/README.md`
 

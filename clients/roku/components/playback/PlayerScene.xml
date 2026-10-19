@@ -51,6 +51,7 @@
     <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/TranscodeRequest.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Subtitles.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Trickplay.brs" />
 
     <children>
         <Video id="video"
