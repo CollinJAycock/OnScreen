@@ -149,6 +149,10 @@ type NativeTranscodeHandler struct {
 	// Optional; without them a burn-in runs unshifted.
 	subOffsets SubtitleStreamOffsetReader
 	extSubs    ExternalSubLister
+
+	// abrLock makes ABR rung-child create/restart exclusive across API
+	// instances (WithABRLock). Optional; nil = in-process lock only.
+	abrLock *valkey.Client
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.

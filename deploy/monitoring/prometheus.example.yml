@@ -1,0 +1,42 @@
+# Example Prometheus configuration for OnScreen. Merge the parts you need into
+# your own prometheus.yml; the alert rules and dashboard expect the server's
+# scrape job to be named "onscreen".
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 30s
+
+rule_files:
+  - /etc/prometheus/rules/onscreen-alerts.yml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # Each OnScreen server's METRICS_ADDR (default 127.0.0.1:7071; in a
+  # container set METRICS_ADDR=0.0.0.0:7071 and keep the port private: the
+  # same listener serves /debug/pprof). List every API replica.
+  - job_name: onscreen
+    static_configs:
+      - targets: ["onscreen:7071"]
+
+  # Optional: per-worker health through the blackbox exporter, for the
+  # OnScreenWorkerUnhealthy rule. Workers serve /health/ready on
+  # WORKER_HEALTH_ADDR (default :7074) and export no metrics of their own.
+  # The blackbox exporter's default http_2xx module is enough.
+  - job_name: onscreen-worker-health
+    metrics_path: /probe
+    params:
+      module: [http_2xx]
+    static_configs:
+      - targets:
+          - http://worker:7074/health/ready
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: __param_target
+      - source_labels: [__param_target]
+        target_label: instance
+      - target_label: __address__
+        replacement: blackbox-exporter:9115

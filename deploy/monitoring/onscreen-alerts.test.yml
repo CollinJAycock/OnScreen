@@ -1,0 +1,134 @@
+# Unit tests for onscreen-alerts.yml:  promtool test rules onscreen-alerts.test.yml
+rule_files:
+  - onscreen-alerts.yml
+
+evaluation_interval: 1m
+
+tests:
+  # Server stops answering scrapes.
+  - interval: 1m
+    input_series:
+      - series: 'up{job="onscreen", instance="srv:7071"}'
+        values: '1 1 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: OnScreenDown
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: OnScreenDown
+        exp_alerts:
+          - exp_labels: {severity: critical, job: onscreen, instance: "srv:7071"}
+            exp_annotations:
+              summary: "OnScreen instance srv:7071 is down"
+              description: "Prometheus could not scrape srv:7071 for 2 minutes. The process is stopped, crashed, or METRICS_ADDR is not reachable from Prometheus."
+
+  # 10% of traffic fails: the warning fires, the critical doesn't.
+  - interval: 1m
+    input_series:
+      - series: 'onscreen_http_requests_total{job="onscreen", instance="srv:7071", method="GET", path="/api/v1/hubs", status="200"}'
+        values: '0+540x20'
+      - series: 'onscreen_http_requests_total{job="onscreen", instance="srv:7071", method="GET", path="/api/v1/hubs", status="500"}'
+        values: '0+60x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: OnScreenHigh5xxRate
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: "srv:7071"}
+            exp_annotations:
+              summary: "srv:7071: 10% of requests fail with 5xx"
+              description: "More than 5% of HTTP requests have returned a 5xx status for 10 minutes. The dashboard's \"5xx by route\" panel shows which routes."
+      - eval_time: 20m
+        alertname: OnScreenVeryHigh5xxRate
+        exp_alerts: []
+
+  # Valkey outage: the limiter lets requests through.
+  - interval: 1m
+    input_series:
+      - series: 'onscreen_ratelimit_failopen_total{job="onscreen", instance="srv:7071"}'
+        values: '0 0 0 5 12'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: OnScreenRateLimiterFailOpen
+        exp_alerts: []
+      - eval_time: 4m
+        alertname: OnScreenRateLimiterFailOpen
+        exp_alerts:
+          - exp_labels: {severity: warning, job: onscreen, instance: "srv:7071"}
+            exp_annotations:
+              summary: "srv:7071: rate limiter is failing open"
+              description: "12 requests in the last 5 minutes were let through without a rate-limit check because Valkey could not be reached. Login and API rate limits are not being enforced, and sessions, the leader lock and transcode dispatch are likely affected too. Check Valkey."
+
+  # No live worker: jobs land on the fallback queue.
+  - interval: 1m
+    input_series:
+      - series: 'onscreen_transcode_jobs_total{job="onscreen", instance="srv:7071", status="dispatched"}'
+        values: '0+2x10'
+      - series: 'onscreen_transcode_jobs_total{job="onscreen", instance="srv:7071", status="queued"}'
+        values: '0 0 0 0 0 1 2 3'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: OnScreenTranscodeNoWorkers
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: OnScreenTranscodeNoWorkers
+        exp_alerts:
+          - exp_labels: {severity: critical, job: onscreen, instance: "srv:7071", status: queued}
+            exp_annotations:
+              summary: "srv:7071: transcode jobs found no live worker"
+              description: "3 transcode jobs in the last 10 minutes were parked on the fallback queue because no worker had a live registration (heartbeats expire after 15 s). Every worker, including the embedded one, is down, disabled or cannot reach Valkey, so remux and transcode playback is stalling. Check Settings > Nodes and the workers' /health/ready."
+
+  # A flood of failed webhook deliveries across two endpoints.
+  - interval: 1m
+    input_series:
+      - series: 'onscreen_webhook_failures_total{job="onscreen", instance="srv:7071", url="https://a.example/hook?token=secret"}'
+        values: '0+1x15'
+      - series: 'onscreen_webhook_failures_total{job="onscreen", instance="srv:7071", url="https://b.example/hook"}'
+        values: '0+1x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: OnScreenWebhookFailureStorm
+        # No url label: the alert must not carry webhook URLs.
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: "srv:7071"}
+            exp_annotations:
+              summary: "srv:7071: 30 webhook deliveries failed in 15 minutes"
+              description: "Webhook deliveries are failing after all retries. A receiver is down or rejecting requests; Settings > Webhooks shows which endpoint, and the dashboard's webhook panel shows when it started."
+
+  # Slow SELECTs for 10+ minutes.
+  - interval: 1m
+    input_series:
+      - series: 'onscreen_db_query_duration_seconds_bucket{job="onscreen", instance="srv:7071", query="SELECT", le="0.5"}'
+        values: '0+90x20'
+      - series: 'onscreen_db_query_duration_seconds_bucket{job="onscreen", instance="srv:7071", query="SELECT", le="1"}'
+        values: '0+90x20'
+      - series: 'onscreen_db_query_duration_seconds_bucket{job="onscreen", instance="srv:7071", query="SELECT", le="2.5"}'
+        values: '0+100x20'
+      - series: 'onscreen_db_query_duration_seconds_bucket{job="onscreen", instance="srv:7071", query="SELECT", le="+Inf"}'
+        values: '0+100x20'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: OnScreenDBQueryLatencyHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, instance: "srv:7071", query: SELECT}
+            exp_annotations:
+              summary: "srv:7071: p99 SELECT latency is 2.35s"
+              description: "The 99th percentile of SELECT queries has been over 1 s for 10 minutes. Look for lock contention, a long-running scan, an exhausted connection pool, or a struggling Postgres host."
+      - eval_time: 20m
+        alertname: OnScreenDBQueryLatencyCritical
+        exp_alerts: []
+
+  # A library that scanned once, then never completed another scan.
+  - interval: 1h
+    input_series:
+      - series: 'onscreen_scanner_files_scanned_total{job="onscreen", instance="srv:7071", library_id="lib-stalled"}'
+        values: '100x60'
+      - series: 'onscreen_scanner_files_scanned_total{job="onscreen", instance="srv:7071", library_id="lib-ok"}'
+        values: '0+100x60'
+    alert_rule_test:
+      - eval_time: 55h
+        alertname: OnScreenLibraryScansStalled
+        exp_alerts:
+          - exp_labels: {severity: warning, job: onscreen, instance: "srv:7071", library_id: lib-stalled}
+            exp_annotations:
+              summary: "Library lib-stalled has not completed a scan in 50 hours"
+              description: "No scan of library lib-stalled has completed in 50 hours. Scans may be failing (check the server log for \"scan failed\" and the library's path) or the library's scan interval was raised past two days, in which case silence this alert."

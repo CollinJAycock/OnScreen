@@ -21,6 +21,7 @@ import (
 	"github.com/onscreen/onscreen/internal/audit"
 	"github.com/onscreen/onscreen/internal/domain/media"
 	"github.com/onscreen/onscreen/internal/transcode"
+	"github.com/onscreen/onscreen/internal/valkey"
 )
 
 // On-demand adaptive-bitrate HLS (the Jellyfin model). The parent
@@ -37,10 +38,11 @@ import (
 // session for a rung is keyed "{parentID}-r{label}".
 
 // abrChildLocks serializes create/restart of a given rung child so two
-// concurrent segment fetches don't both spawn an ffmpeg. Per-process
-// (keyed by child ID) — correct for the embedded worker / single API
-// instance; a multi-instance API tier would need a Valkey lock (the
-// segment requests for one session aren't pinned to an instance).
+// concurrent segment fetches don't both spawn an ffmpeg. This per-process
+// mutex is the fast path: same-instance contenders queue here without a
+// Valkey round trip each. Segment requests for one session aren't pinned to
+// an instance, so a replicated API tier also needs the cross-instance lock
+// layered on top of it (WithABRLock → lockRungChild).
 var abrChildLocks sync.Map // childID -> *sync.Mutex
 
 func abrChildLock(childID string) *sync.Mutex {
@@ -50,8 +52,81 @@ func abrChildLock(childID string) *sync.Mutex {
 
 // abrLastRestart stamps the last FORCED restart per child ID, so a client
 // cannot span-kill encodes by alternating segment indices. Cleared alongside
-// the child's lock in abrForget.
+// the child's lock in abrForget. With WithABRLock the stamp lives in Valkey
+// instead (abrRestartKey), so the floor holds across API instances.
 var abrLastRestart sync.Map // childID -> time.Time
+
+// Cross-instance rung lock (WithABRLock). The critical section is a few
+// Valkey ops plus a kill and a job dispatch — well under a second — so the TTL
+// is generous headroom, and the lease renews itself if it ever runs long. The
+// wait budget sits under the 10 s segment wait so a request that loses the race
+// still has time to find the winner's segments.
+const abrLockTTL = 15 * time.Second
+
+var abrLockWait = 8 * time.Second // var so tests can shorten it
+
+func abrLockKey(childID string) string    { return "transcode:abrlock:" + childID }
+func abrRestartKey(childID string) string { return "transcode:abrrestart:" + childID }
+
+// WithABRLock makes rung-child create/restart exclusive across API instances
+// through a Valkey lease, on top of the in-process mutex. Without it the lock
+// is per-process — correct for a single API instance only.
+func (h *NativeTranscodeHandler) WithABRLock(v *valkey.Client) *NativeTranscodeHandler {
+	h.abrLock = v
+	return h
+}
+
+// lockRungChild takes the per-child lock: the in-process mutex first, then the
+// Valkey lease when configured. ok=false means another instance held the lease
+// for the whole wait budget — it is (re)starting this very child, so the
+// caller must not start a second one; it falls through to waiting for the
+// winner's segments. A Valkey error fails open to the in-process lock alone
+// (logged): a rare duplicate encode beats refusing playback while Valkey is
+// degraded, and the incarnation scheme keeps a duplicate's files apart.
+func (h *NativeTranscodeHandler) lockRungChild(ctx context.Context, childID string) (unlock func(), ok bool) {
+	mu := abrChildLock(childID)
+	mu.Lock()
+	if h.abrLock == nil {
+		return mu.Unlock, true
+	}
+	lease, err := h.abrLock.Lock(ctx, abrLockKey(childID), abrLockTTL, abrLockWait)
+	switch {
+	case err == nil:
+		return func() {
+			relCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+			_ = lease.Release(relCtx)
+			cancel()
+			mu.Unlock()
+		}, true
+	case errors.Is(err, valkey.ErrLockTimeout), ctx.Err() != nil:
+		mu.Unlock()
+		return nil, false
+	default:
+		h.logger.WarnContext(ctx, "abr rung lock unavailable; using in-process lock only",
+			"child", childID, "err", err)
+		return mu.Unlock, true
+	}
+}
+
+// claimForcedRestart applies abrMinRestartInterval to a forced restart and
+// stamps it, reporting whether the restart may go ahead. Called under the rung
+// lock. With Valkey the check and the stamp are one SET NX PX shared by every
+// instance; on a Valkey error it falls back to the in-process stamp.
+func (h *NativeTranscodeHandler) claimForcedRestart(ctx context.Context, childID string) bool {
+	if h.abrLock != nil {
+		fresh, err := h.abrLock.SetNX(ctx, abrRestartKey(childID), "1", abrMinRestartInterval)
+		if err == nil {
+			return fresh
+		}
+	}
+	if last, ok := abrLastRestart.Load(childID); ok {
+		if t, _ := last.(time.Time); time.Since(t) < abrMinRestartInterval {
+			return false
+		}
+	}
+	abrLastRestart.Store(childID, time.Now())
+	return true
+}
 
 // abrMinRestartInterval floors the gap between forced restarts of one child.
 // Comfortably above human scrub cadence and far below the cost of an encode
@@ -627,9 +702,11 @@ const abrAnySeg = -1
 // forceRestart is set (forward-seek recovery). globalSeg abrAnySeg accepts
 // any existing child (see above). Serialized per child.
 func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *transcode.Session, rung transcode.Rendition, childID string, globalSeg int, forceRestart bool) {
-	mu := abrChildLock(childID)
-	mu.Lock()
-	defer mu.Unlock()
+	unlock, ok := h.lockRungChild(ctx, childID)
+	if !ok {
+		return // another instance holds this child's lock and is (re)starting it
+	}
+	defer unlock()
 
 	child, _ := h.sessions.Get(ctx, childID)
 	if child != nil && globalSeg == abrAnySeg {
@@ -647,17 +724,12 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 	// encodes as fast as HTTP allowed, and the queued jobs outlived the
 	// attacker. A seek-happy player reaches this non-maliciously too.
 	//
-	// Held under the same per-child mutex as the restart itself, so the check
+	// Held under the same per-child lock as the restart itself, so the check
 	// and the stamp cannot race. Legitimate seeking is unaffected: a human
 	// cannot scrub faster than this, and a rejected restart simply serves from
 	// the existing child (possibly with a longer wait) rather than erroring.
-	if forceRestart && child != nil {
-		if last, ok := abrLastRestart.Load(childID); ok {
-			if t, _ := last.(time.Time); time.Since(t) < abrMinRestartInterval {
-				return
-			}
-		}
-		abrLastRestart.Store(childID, time.Now())
+	if forceRestart && child != nil && !h.claimForcedRestart(ctx, childID) {
+		return
 	}
 	startSeg := globalSeg
 	if startSeg == abrAnySeg {

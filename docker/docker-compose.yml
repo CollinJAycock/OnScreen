@@ -93,6 +93,10 @@ services:
       - "127.0.0.1:${DEBUG_PORT:-7071}:7071"
     volumes:
       - media_data:/media
+      # Scheduled database backups (the default backup task writes here).
+      # A named volume so dumps survive the container being recreated; copy
+      # them off this host too — see docs/restore-drill.md.
+      - backup_data:/var/backups/onscreen
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:7070/health/live || exit 1"]
       interval: 10s
@@ -140,3 +144,4 @@ services:
 volumes:
   postgres_data:
   media_data:
+  backup_data:
