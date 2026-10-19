@@ -3,6 +3,7 @@ package v1
 import (
 	"context"
 	"errors"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
+	"golang.org/x/sync/singleflight"
 
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
@@ -75,7 +77,18 @@ type TrickplayHandler struct {
 	planner   TrickplayPlanner
 	libraries TrickplayLibraryLookup
 	audit     *audit.Logger
+
+	// bifBuild collapses concurrent first requests for one item's BIF
+	// (a Roku fetches it as playback starts; several screens may start the
+	// same title) into one build. bifSlots bounds builds across items: each
+	// decodes the item's sprite sheets and re-encodes every frame.
+	bifBuild singleflight.Group
+	bifSlots chan struct{}
 }
+
+// maxConcurrentBIFBuilds bounds in-flight BIF assemblies (pure-Go JPEG
+// decode/encode, ~1–2 s of one core for a feature-length film).
+const maxConcurrentBIFBuilds = 2
 
 // MaxConcurrentTrickplayGenerations bounds in-flight ffmpeg sprite jobs
 // across the process. 2 covers typical admin "regenerate everything"
@@ -97,6 +110,7 @@ func NewTrickplayHandler(svc TrickplayService, media TrickplayMediaLookup, logge
 		logger:      logger,
 		genSlots:    make(chan struct{}, MaxConcurrentTrickplayGenerations),
 		genInFlight: make(map[uuid.UUID]struct{}),
+		bifSlots:    make(chan struct{}, maxConcurrentBIFBuilds),
 	}
 }
 
@@ -389,6 +403,50 @@ func (h *TrickplayHandler) ServeFile(w http.ResponseWriter, r *http.Request) {
 	// artwork path uses, not a hardcoded `public`.
 	w.Header().Set("Cache-Control", "private, max-age=86400, must-revalidate")
 	http.ServeFile(w, r, full)
+}
+
+// ServeBIF handles GET /trickplay/{id}/index.bif (and the
+// /api/v1/items/{id}/trickplay/index.bif alias): the item's seek thumbnails
+// as a Roku BIF, which the Roku Video node's trick-play bar renders natively
+// (content HDBifUrl). Built from the existing sprite sheets on first request
+// and cached next to them (trickplay.EnsureBIF); a regeneration wipes the
+// cache with the sprites. Same gates as ServeFile — the router's
+// RequiredAllowQueryToken (Roku sends the purpose=asset token in ?token=)
+// plus the item's library ACL and the caller's rating ceiling. 404 until
+// the item's sprites exist.
+func (h *TrickplayHandler) ServeBIF(w http.ResponseWriter, r *http.Request) {
+	if h.svc == nil {
+		http.NotFound(w, r)
+		return
+	}
+	id, ok := h.requireItemAccess(w, r)
+	if !ok {
+		return
+	}
+	dir := h.svc.ItemDir(id)
+	// Not tied to the request context: a build a client gave up on still
+	// lands in the cache for its retry, and singleflight shares one build
+	// between callers whose contexts end at different times.
+	v, err, _ := h.bifBuild.Do(id.String(), func() (any, error) {
+		h.bifSlots <- struct{}{}
+		defer func() { <-h.bifSlots }()
+		return trickplay.EnsureBIF(dir)
+	})
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, trickplay.ErrBIFStale) {
+			http.NotFound(w, r)
+			return
+		}
+		h.logger.ErrorContext(r.Context(), "trickplay bif build", "id", id, "err", err)
+		respond.InternalError(w, r)
+		return
+	}
+	// No registered media type for BIF; Roku keys off the content field,
+	// not the Content-Type. Cache policy matches the sprites: per-request
+	// authorization, so `private` (see ServeFile).
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("Cache-Control", "private, max-age=86400, must-revalidate")
+	http.ServeFile(w, r, v.(string))
 }
 
 // requireItemAccess parses {id}, loads the item, and enforces library ACLs.
