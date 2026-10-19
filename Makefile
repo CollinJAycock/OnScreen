@@ -146,6 +146,9 @@ test-e2e:
 ## http://localhost:7070) plus E2E_USERNAME / E2E_PASSWORD for the auth
 ## paths and E2E_GAPLESS_ALBUM for the gapless rollover spec. First
 ## run only: `make test-browser-install` to download browser engines.
+## A fresh server needs its admin and a library first:
+## `cd web && node tests/e2e/seed.mjs` (same env). CI runs the Chromium
+## project nightly against a compose stack (.github/workflows/e2e-nightly.yml).
 ##
 ## Auto-rebuilds the embedded webui first if any file under web/src has
 ## changed since the last sync — a stale internal/webui/dist used to

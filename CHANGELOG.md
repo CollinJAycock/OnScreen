@@ -30,6 +30,17 @@ API change lands only when every first-party client moves with it — see
   the detection can't place, such as a TV with Google TV built in that
   reports its panel's model number.
 
+### CI
+
+- **TV web apps on every PR** (v2.7 item 10). A new `TV web clients`
+  workflow runs `svelte-check` and the Vitest suites of the webOS, Tizen and
+  Xbox TV apps (about 2,600 tests) on PRs and pushes that touch them.
+- **Playwright nightly** (v2.7 item 10). The nightly E2E workflow gains a
+  Chromium job that runs the web Playwright specs against its own compose
+  stack, seeded by `web/tests/e2e/seed.mjs` (an admin and an empty library).
+  Form logins in the specs now wait out the auth rate limiter instead of
+  failing on it.
+
 ## [v2.6.2] — unreleased
 
 Patch release for the web app: Home rows can be dragged into order, and
