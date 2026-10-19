@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OnScreen — open-source media server</title>
+<meta name="description" content="OnScreen is an open-source, PostgreSQL-native media server for movies, TV, music, audiobooks, books and photos, with hardware transcoding, Live TV and DVR, and SSO in core under AGPLv3.">
+<meta name="theme-color" content="#0a0910">
+<link rel="canonical" href="https://on-screen.tv/">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png">
+<meta property="og:type" content="website">
+<meta property="og:title" content="OnScreen — open-source media server">
+<meta property="og:description" content="PostgreSQL-native. Single binary. Hardware transcoding, Live TV, DVR and SSO in core. Apps for the web, desktop, TV and phone.">
+<meta property="og:url" content="https://on-screen.tv/">
+<meta property="og:image" content="https://on-screen.tv/assets/og.jpg">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+  :root {
+    --bg: #0a0910;
+    --bg-2: #12101c;
+    --bg-3: #1a1728;
+    --line: #2a2640;
+    --text: #ecebf5;
+    --text-2: #b4b1c8;
+    --muted: #7d7a93;
+    --accent: #7c6af7;
+    --accent-2: #a597ff;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --radius: 14px;
+    --max: 1120px;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent-2); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  img { max-width: 100%; height: auto; display: block; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 24px; }
+  code, pre { font-family: ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace; }
+
+  /* Nav */
+  header.nav {
+    position: sticky; top: 0; z-index: 10;
+    background: rgba(10, 9, 16, 0.82);
+    backdrop-filter: blur(10px);
+    border-bottom: 1px solid var(--line);
+  }
+  .nav .wrap { display: flex; align-items: center; gap: 24px; height: 60px; }
+  .brand { display: flex; align-items: center; gap: 10px; color: var(--text); font-weight: 700; font-size: 1.1rem; }
+  .brand:hover { text-decoration: none; }
+  .brand img { width: 30px; height: 30px; border-radius: 7px; }
+  .nav nav { margin-left: auto; display: flex; gap: 22px; font-size: 0.92rem; }
+  .nav nav a { color: var(--text-2); }
+  .nav nav a:hover { color: var(--text); text-decoration: none; }
+  .nav .gh { padding: 6px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); }
+  @media (max-width: 720px) { .nav nav a:not(.gh) { display: none; } }
+
+  /* Hero */
+  .hero { padding: 72px 0 40px; text-align: center; position: relative; overflow: hidden; }
+  .hero::before {
+    content: ""; position: absolute; inset: -40% -10% auto; height: 620px; z-index: -1;
+    background: radial-gradient(closest-side, rgba(124, 106, 247, 0.28), transparent 70%);
+  }
+  .hero .icon { width: 96px; height: 96px; border-radius: 22px; margin: 0 auto 22px; box-shadow: 0 12px 40px rgba(124, 106, 247, 0.35); }
+  .hero h1 { font-size: clamp(2.2rem, 5vw, 3.6rem); line-height: 1.1; margin: 0 0 16px; letter-spacing: -0.02em; }
+  .hero h1 span { color: var(--accent-2); }
+  .hero p.lead { font-size: clamp(1.05rem, 2vw, 1.25rem); color: var(--text-2); max-width: 720px; margin: 0 auto 30px; }
+  .cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    padding: 12px 22px; border-radius: 10px; font-weight: 600; font-size: 0.98rem;
+    border: 1px solid var(--line); color: var(--text); background: var(--bg-3);
+  }
+  .btn:hover { text-decoration: none; border-color: var(--accent); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.primary:hover { background: #8d7cff; }
+  .tags { margin-top: 22px; color: var(--muted); font-size: 0.88rem; }
+  .shot-hero { margin: 48px auto 0; max-width: 1000px; border-radius: var(--radius); overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px rgba(0, 0, 0, 0.6); }
+
+  /* Sections */
+  section { padding: 72px 0; scroll-margin-top: 60px; }
+  section + section { border-top: 1px solid var(--line); }
+  .eyebrow { color: var(--accent-2); font-weight: 600; font-size: 0.82rem; letter-spacing: 0.08em; text-transform: uppercase; margin: 0 0 8px; }
+  h2 { font-size: clamp(1.6rem, 3vw, 2.2rem); margin: 0 0 14px; letter-spacing: -0.01em; line-height: 1.2; }
+  .sub { color: var(--text-2); max-width: 720px; margin: 0 0 36px; }
+
+  .grid { display: grid; gap: 18px; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); }
+  .card { background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); padding: 22px; }
+  .card h3 { margin: 0 0 8px; font-size: 1.05rem; }
+  .card p { margin: 0; color: var(--text-2); font-size: 0.95rem; }
+  .card .ico { width: 36px; height: 36px; border-radius: 9px; background: rgba(124, 106, 247, 0.16); color: var(--accent-2); display: grid; place-items: center; margin-bottom: 14px; }
+  .card .ico svg { width: 20px; height: 20px; }
+
+  .media-types { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 28px; }
+  .chip { padding: 6px 14px; border-radius: 999px; background: var(--bg-3); border: 1px solid var(--line); color: var(--text-2); font-size: 0.9rem; }
+
+  /* Gallery */
+  .gallery { display: grid; gap: 18px; grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 760px) { .gallery { grid-template-columns: 1fr; } }
+  figure { margin: 0; }
+  figure .frame { border-radius: 12px; overflow: hidden; border: 1px solid var(--line); background: var(--bg-2); }
+  figcaption { color: var(--muted); font-size: 0.88rem; margin-top: 8px; }
+
+  /* Platforms */
+  .platforms { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .plat { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 18px; background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; }
+  .plat b { font-weight: 600; }
+  .status { font-size: 0.78rem; padding: 3px 10px; border-radius: 999px; white-space: nowrap; border: 1px solid transparent; }
+  .status.live { color: var(--ok); background: rgba(74, 222, 128, 0.1); border-color: rgba(74, 222, 128, 0.3); }
+  .status.review { color: var(--warn); background: rgba(251, 191, 36, 0.1); border-color: rgba(251, 191, 36, 0.3); }
+  .status.soon { color: var(--text-2); background: var(--bg-3); border-color: var(--line); }
+  .note { color: var(--muted); font-size: 0.88rem; margin-top: 16px; }
+
+  /* Compare */
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+  table { width: 100%; border-collapse: collapse; min-width: 620px; font-size: 0.95rem; }
+  th, td { padding: 12px 16px; text-align: left; border-bottom: 1px solid var(--line); }
+  th { color: var(--text-2); font-weight: 600; background: var(--bg-2); }
+  tr:last-child td { border-bottom: none; }
+  td.us { color: var(--text); font-weight: 600; }
+  .y { color: var(--ok); } .p { color: var(--warn); } .n { color: var(--muted); }
+
+  /* Quick start */
+  .code { position: relative; background: #07060c; border: 1px solid var(--line); border-radius: var(--radius); }
+  .code pre { margin: 0; padding: 20px 22px; overflow-x: auto; font-size: 0.88rem; line-height: 1.7; color: #d7d4ea; }
+  .code .c { color: var(--muted); }
+  .copy { position: absolute; top: 10px; right: 10px; font: inherit; font-size: 0.8rem; padding: 5px 12px; border-radius: 7px; border: 1px solid var(--line); background: var(--bg-3); color: var(--text-2); cursor: pointer; }
+  .copy:hover { color: var(--text); border-color: var(--accent); }
+  .steps { margin: 28px 0 0; padding: 0; list-style: none; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); }
+  .steps li { background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; color: var(--text-2); font-size: 0.95rem; }
+  .steps b { color: var(--text); display: block; margin-bottom: 4px; }
+
+  footer { border-top: 1px solid var(--line); padding: 40px 0 56px; color: var(--muted); font-size: 0.88rem; }
+  footer .row { display: flex; flex-wrap: wrap; gap: 18px 32px; justify-content: space-between; }
+  footer a { color: var(--text-2); }
+  footer .links { display: flex; gap: 20px; flex-wrap: wrap; }
+  .credits { margin-top: 18px; max-width: 760px; }
+</style>
+</head>
+<body>
+
+<header class="nav">
+  <div class="wrap">
+    <a class="brand" href="#top"><img src="/assets/icon-256.png" alt="" width="30" height="30">OnScreen</a>
+    <nav>
+      <a href="#features">Features</a>
+      <a href="#apps">Apps</a>
+      <a href="#compare">Compare</a>
+      <a href="#start">Get started</a>
+      <a class="gh" href="https://github.com/CollinJAycock/OnScreen">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="hero">
+    <div class="wrap">
+      <img class="icon" src="/assets/icon-256.png" alt="OnScreen icon" width="96" height="96">
+      <h1>Your media, <span>on every screen</span>.</h1>
+      <p class="lead">OnScreen is an open-source media server for movies, TV, music, audiobooks, books and photos. It runs on PostgreSQL, ships as a single binary, and puts hardware transcoding, Live TV, DVR and single sign-on in the core, not behind a subscription.</p>
+      <div class="cta">
+        <a class="btn primary" href="#start">Get started</a>
+        <a class="btn" href="https://github.com/CollinJAycock/OnScreen">
+          <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+          View on GitHub
+        </a>
+      </div>
+      <p class="tags">Free and open source · AGPLv3 · Self-hosted · No account with us, ever</p>
+      <div class="shot-hero">
+        <picture>
+          <source srcset="/assets/library.webp" type="image/webp">
+          <img src="/assets/library.jpg" alt="OnScreen's Movies library on a TV, with sort, genre and watched filters" width="1600" height="900">
+        </picture>
+      </div>
+    </div>
+  </div>
+
+  <section id="features">
+    <div class="wrap">
+      <p class="eyebrow">Why OnScreen</p>
+      <h2>Built like infrastructure, made for your couch.</h2>
+      <p class="sub">Plex, Jellyfin and Emby are all good. OnScreen exists for people who want a server that scales past one machine, keeps every feature in the open-source core, and treats the database as the source of truth.</p>
+      <div class="grid">
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg></div>
+          <h3>PostgreSQL-native</h3>
+          <p>No SQLite file to corrupt. Use the backup, replication and tooling you already trust, and run more than one API instance behind a load balancer.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="10" rx="2"/><path d="M6 11h.01M10 11h.01M6 7V5M18 7V5M12 7V4"/></svg></div>
+          <h3>A GPU transcode fleet</h3>
+          <p>NVENC, Quick Sync, VAAPI and AMF, with HDR tone mapping on the GPU. Add worker machines that pull the file over HTTP; jobs go to the node that can handle them and fail over when a GPU is full.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2l3 7h7l-5.5 4 2 7L12 16l-6.5 4 2-7L2 9h7z"/></svg></div>
+          <h3>Everything in core</h3>
+          <p>Live TV and DVR, hardware transcoding, downloads on the Android phone app, intro and credit skipping, Trakt and Last.fm scrobbling. No premium tier, because there isn't one.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg></div>
+          <h3>Serious about accounts</h3>
+          <p>OIDC, SAML and LDAP sign-in, two-factor codes for local accounts, per-user rating limits and library access, and an audit log. Nothing depends on a vendor's cloud.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg></div>
+          <h3>Music for listeners</h3>
+          <p>MusicBrainz metadata, ReplayGain, gapless playback, lyrics, and a bit-perfect desktop engine with WASAPI exclusive mode and DSD over DoP.</p>
+        </div>
+        <div class="card">
+          <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg></div>
+          <h3>Playback that adapts</h3>
+          <p>Each app tells the server what it can decode, and the server decides: direct play, remux or transcode. Adaptive bitrate, Dolby Vision where the TV supports it, and Chromecast for any video.</p>
+        </div>
+      </div>
+      <div class="media-types" aria-label="Library types">
+        <span class="chip">Movies</span><span class="chip">TV shows</span><span class="chip">Anime (AniList)</span><span class="chip">Music</span><span class="chip">Audiobooks</span><span class="chip">Podcasts (RSS)</span><span class="chip">Books &amp; comics</span><span class="chip">Photos</span><span class="chip">Home videos</span><span class="chip">Live TV</span>
+      </div>
+    </div>
+  </section>
+
+  <section id="screens">
+    <div class="wrap">
+      <p class="eyebrow">A look around</p>
+      <h2>One app design, from the phone to the living room.</h2>
+      <p class="sub">The TV apps share a design built for the remote: big targets, clear focus, and every action a button press away.</p>
+      <div class="gallery">
+        <figure>
+          <div class="frame"><picture><source srcset="/assets/detail.webp" type="image/webp"><img src="/assets/detail.jpg" alt="A show's page with Play, Mark all watched and Favorite buttons, seasons and episodes" loading="lazy" width="1600" height="900"></picture></div>
+          <figcaption>Title pages: play the next episode, mark watched, track it on your Watchlist.</figcaption>
+        </figure>
+        <figure>
+          <div class="frame"><picture><source srcset="/assets/status.webp" type="image/webp"><img src="/assets/status.jpg" alt="The Watchlist status menu on a title page: Plan to Watch, Watching, On Hold, Completed, Dropped" loading="lazy" width="1280" height="720"></picture></div>
+          <figcaption>Watchlist: give anything a status, then pick up where you left off on any device.</figcaption>
+        </figure>
+        <figure>
+          <div class="frame"><picture><source srcset="/assets/music.webp" type="image/webp"><img src="/assets/music.jpg" alt="The music player showing a track, its album art and progress" loading="lazy" width="1600" height="900"></picture></div>
+          <figcaption>Music and audiobooks keep playing in the background on Android TV.</figcaption>
+        </figure>
+        <figure>
+          <div class="frame"><picture><source srcset="/assets/audiobook.webp" type="image/webp"><img src="/assets/audiobook.jpg" alt="An audiobook's page with its chapters" loading="lazy" width="1280" height="720"></picture></div>
+          <figcaption>Audiobooks: chapters, speed kept per book, and your place synced across devices.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </section>
+
+  <section id="apps">
+    <div class="wrap">
+      <p class="eyebrow">Apps</p>
+      <h2>Watch anywhere.</h2>
+      <p class="sub">Every app talks to your server and nothing else. Here is where each one stands today.</p>
+      <div class="platforms">
+        <div class="plat"><b>Web browser</b><span class="status live">Built in</span></div>
+        <div class="plat"><b>Windows &amp; Linux desktop</b><a class="status live" href="https://github.com/CollinJAycock/OnScreen/releases/latest">Download</a></div>
+        <div class="plat"><b>Amazon Fire TV</b><a class="status live" href="https://www.amazon.com/dp/B0GX2XH9P2">Appstore</a></div>
+        <div class="plat"><b>LG webOS</b><span class="status review">In store review</span></div>
+        <div class="plat"><b>Samsung Tizen</b><span class="status review">In store review</span></div>
+        <div class="plat"><b>Android TV / Google TV</b><span class="status review">Google Play testing</span></div>
+        <div class="plat"><b>Android phone</b><span class="status review">Google Play testing</span></div>
+        <div class="plat"><b>Roku</b><span class="status soon">In development</span></div>
+        <div class="plat"><b>Xbox</b><span class="status soon">In development</span></div>
+      </div>
+      <p class="note">On iPhone, iPad and Mac, use the web app in Safari.</p>
+    </div>
+  </section>
+
+  <section id="compare">
+    <div class="wrap">
+      <p class="eyebrow">Compare</p>
+      <h2>How it stacks up.</h2>
+      <p class="sub">A few highlights. The <a href="https://github.com/CollinJAycock/OnScreen/blob/main/docs/comparison-matrix.md">full comparison</a> covers fourteen areas, including where OnScreen is behind.</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th></th><th>OnScreen</th><th>Plex</th><th>Jellyfin</th><th>Emby</th></tr></thead>
+          <tbody>
+            <tr><td>Database</td><td class="us">PostgreSQL</td><td>SQLite</td><td>SQLite</td><td>SQLite</td></tr>
+            <tr><td>License</td><td class="us">AGPLv3</td><td>Proprietary</td><td>GPLv2</td><td>GPLv2 + proprietary</td></tr>
+            <tr><td>Live TV &amp; DVR</td><td class="us y">Free</td><td class="p">Paid</td><td class="y">Free</td><td class="p">Paid</td></tr>
+            <tr><td>Hardware transcoding</td><td class="us y">Free</td><td class="p">Paid</td><td class="y">Free</td><td class="p">Paid</td></tr>
+            <tr><td>OIDC / SAML / LDAP</td><td class="us y">Built in</td><td class="n">No</td><td class="p">Plugin</td><td class="p">Paid</td></tr>
+            <tr><td>Multi-node transcode fleet</td><td class="us y">Built in</td><td class="n">No</td><td class="n">No</td><td class="n">No</td></tr>
+            <tr><td>Books: CBZ, CBR and EPUB</td><td class="us y">Built in</td><td class="n">No</td><td class="p">Partial</td><td class="p">Partial</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section id="start">
+    <div class="wrap">
+      <p class="eyebrow">Get started</p>
+      <h2>Up in a few minutes.</h2>
+      <p class="sub">OnScreen needs PostgreSQL 16+ and Valkey (or Redis) 7+ next to it. Point it at your media folder and open port 7070.</p>
+      <div class="code">
+        <button class="copy" type="button" data-copy="quickstart">Copy</button>
+<pre id="quickstart"><span class="c"># Release images: ghcr.io/collinjaycock/onscreen (tags 2.6, 2)</span>
+docker run -p 7070:7070 \
+  -e DATABASE_URL="postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable" \
+  -e VALKEY_URL="redis://valkey:6379" \
+  -e SECRET_KEY="$(openssl rand -hex 32)" \
+  -e AUTO_MIGRATE=true \
+  -v /your/media:/media:ro \
+  ghcr.io/collinjaycock/onscreen:2.6</pre>
+      </div>
+      <ol class="steps">
+        <li><b>1. Run the server</b>With Docker as above, or with the Windows and Linux installers from the GitHub releases.</li>
+        <li><b>2. Open the web app</b>Go to <code>http://your-server:7070</code> and create the admin account.</li>
+        <li><b>3. Add libraries</b>Point each library at a folder. Metadata and artwork come from TMDB, TVDB, MusicBrainz and AniList.</li>
+        <li><b>4. Pair your TV</b>Install an app, enter your server's address, or sign in with a code from another device.</li>
+      </ol>
+      <p class="note">GPU transcoding, worker nodes, high availability and upgrade notes: see the <a href="https://github.com/CollinJAycock/OnScreen/blob/main/docs/deployment.md">deployment guide</a>.</p>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <div class="row">
+      <div>© OnScreen contributors · Licensed AGPLv3 (the LG webOS and Xbox TV apps: Apache-2.0)</div>
+      <div class="links">
+        <a href="https://github.com/CollinJAycock/OnScreen">GitHub</a>
+        <a href="https://github.com/CollinJAycock/OnScreen/releases">Releases</a>
+        <a href="https://github.com/CollinJAycock/OnScreen/blob/main/CHANGELOG.md">Changelog</a>
+        <a href="https://github.com/CollinJAycock/OnScreen/issues">Issues</a>
+      </div>
+    </div>
+    <p class="credits">Screenshots show open-licensed media: Blender Foundation open movies (CC BY, <a href="https://studio.blender.org/films">studio.blender.org</a>) music by Kevin MacLeod (<a href="https://incompetech.com">incompetech.com</a>, CC BY 4.0), and a public-domain <a href="https://librivox.org">LibriVox</a> recording. This site sets no cookies and loads nothing from third parties.</p>
+  </div>
+</footer>
+
+<script>
+  document.querySelectorAll('.copy').forEach(function (btn) {
+    btn.addEventListener('click', function () {
+      var text = document.getElementById(btn.dataset.copy).innerText
+        .split('\n').filter(function (l) { return l.trim().charAt(0) !== '#'; }).join('\n');
+      navigator.clipboard.writeText(text).then(function () {
+        btn.textContent = 'Copied';
+        setTimeout(function () { btn.textContent = 'Copy'; }, 1600);
+      });
+    });
+  });
+</script>
+</body>
+</html>
