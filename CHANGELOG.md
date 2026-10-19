@@ -9,6 +9,44 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Upgrade notes
+
+- **Migration 00063** adds `media_files.video_profile` and `video_level`
+  (applied at startup with `AUTO_MIGRATE=true`). Files already in the
+  library have neither until they are re-probed
+  (`POST /api/v1/maintenance/reprobe-metadata`, then a scan); until then
+  they aren't checked against a client's profile/level, as before.
+- **Workers:** the re-encode passthrough of TrueHD and DTS uses the
+  `audio_passthrough` worker feature v2.6 workers already have. The encoder
+  level flags need v2.7 workers; an older worker ignores them and picks the
+  level itself, for an output the server has already sized to fit.
+
+### Added
+
+- **Audio passthrough on full transcodes** (capability profiles Phase 3).
+  When the video has to be re-encoded, a client that lists the audio codec in
+  `audioPassthrough` now gets the track copied for its receiver instead of
+  AAC: AC-3 and E-AC-3 in the usual segments, TrueHD and DTS in fMP4
+  segments on workers with the `audio_passthrough` feature. Every rung of an
+  ABR ladder carries the same copied track, and the master playlist's
+  `CODECS` and `BANDWIDTH` name it. AAC stays the answer for clients that
+  don't list the codec, for MPEG-TS requests or an old fleet (TrueHD/DTS),
+  under a bitrate limit (user cap, internet limit or quality profile), and
+  for audio-only files. Now Playing shows `audio_passthrough` on the output
+  and "TrueHD audio passed through to the receiver".
+- **Video profile and level in the capability profile.** New
+  `X-Client-Capabilities` keys `h264Profile` / `h264Level`, `hevcProfile` /
+  `hevcLevel` and `av1Profile` / `av1Level` (e.g. `h264Profile=high,
+  h264Level=4.1,hevcProfile=main10,hevcLevel=5.1`) declare the most a
+  client's decoder takes. A source above either is transcoded (the scanner
+  now stores each file's profile and level), the re-encode is sized to fit
+  the level at the source frame rate and the encoder is told the level, and
+  ABR ladders are capped the same way. Clients that don't send the keys get
+  the same decisions as before. Item details show `video_profile` /
+  `video_level`.
+
 ## [v2.6.2] — unreleased
 
 Patch release for the web app: Home rows can be dragged into order, and

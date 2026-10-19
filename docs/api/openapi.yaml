@@ -2469,6 +2469,17 @@ paths:
         for the client's fallback (the version has only the default audio
         track). Clients that don't send `optimized=1` never get this
         verdict.
+
+        **Video profile / level (v2.7).** `X-Client-Capabilities` may carry
+        the highest profile and level the client decodes per codec:
+        `h264Profile` (`baseline`, `main`, `high`, `high10`, `high422`,
+        `high444`) / `h264Level`, `hevcProfile` (`main`, `main10`, `rext`) /
+        `hevcLevel`, `av1Profile` (`main`, `high`, `professional`) /
+        `av1Level`; levels as `4.1`, `5`, or H.264-style `41`. A source whose
+        probed profile or level (`video_profile` / `video_level` on the
+        file) is above them gets `transcode`, and the re-encode is sized to
+        and encoded at the declared level. Absent keys, and files probed
+        before v2.7, are not checked.
       requestBody:
         required: false
         content:
@@ -8478,6 +8489,8 @@ components:
         bitrate:           { type: integer, format: int64, nullable: true }
         hdr_type:          { type: string, nullable: true, description: 'What a player without Dolby Vision has to handle: hdr10, hlg, dolby_vision (profile 5 only, no compatible base layer), or absent for SDR. A Dolby Vision file with an HDR10 / HLG / SDR base layer reports that base layer.' }
         dv_profile:        { type: integer, nullable: true, description: 'v2.5.1. Dolby Vision profile from the file''s configuration record (5, 7, 8, ...); absent when the file has none.' }
+        video_profile:     { type: string, nullable: true, description: 'v2.7. The video stream''s codec profile as ffprobe names it ("High", "Main 10"); absent until the file is probed by a v2.7 scan.' }
+        video_level:       { type: integer, nullable: true, description: 'v2.7. The video stream''s level as ffprobe reports it: H.264 level_idc (41 = 4.1), HEVC general_level_idc (153 = 5.1), AV1 seq_level_idx (13 = 5.1); absent when unknown or not yet probed.' }
         frame_rate:        { type: number, format: double, nullable: true, description: 'Video frames per second as probed (e.g. 23.976, 25, 59.94). TV clients match the display refresh rate to it.' }
         duration_ms:       { type: integer, format: int64, nullable: true, description: 'This file''s own length. For one part of a multi-part movie it is that part''s length; the item''s duration_ms is the whole movie''s.' }
         edition:           { type: string, nullable: true, description: 'v2.6. Edition label from the file name ("Director''s Cut", "Extended", a Jellyfin "1080p" version suffix, Plex {edition-…}); absent when the name gives none. Show it in a version picker in place of the resolution/codec description.' }
@@ -9156,7 +9169,7 @@ components:
             + `.m4s` segment shape.
         audio_stream_index:
           type: integer
-          description: 'Audio track to play, counted among audio streams only: its position in the file''s `audio_streams` array (0 = first), not that entry''s absolute `index`. nil/omitted = default (first) audio stream. Past the last audio track: 400. On a remux (`video_copy`) this track is passed through untouched only when it is AAC, AC3, E-AC3 or MP3, the client declares that codec, and its channels fit the client''s maximum, or (v2.6) when the client lists its codec in the `audioPassthrough` capability, whatever its channels: AC3, E-AC3, TrueHD or DTS, the last two packaged as fMP4 segments (not for an audio-only file or a `segment_container: ts` request); otherwise it is re-encoded to AAC. Re-issuing the session with a different index drives the in-player audio picker.'
+          description: 'Audio track to play, counted among audio streams only: its position in the file''s `audio_streams` array (0 = first), not that entry''s absolute `index`. nil/omitted = default (first) audio stream. Past the last audio track: 400. On a remux (`video_copy`) this track is passed through untouched only when it is AAC, AC3, E-AC3 or MP3, the client declares that codec, and its channels fit the client''s maximum, or (v2.6) when the client lists its codec in the `audioPassthrough` capability, whatever its channels: AC3, E-AC3, TrueHD or DTS, the last two packaged as fMP4 segments (not for an audio-only file or a `segment_container: ts` request); otherwise it is re-encoded to AAC. On a full transcode (v2.7) a track whose codec the client lists in `audioPassthrough` is copied the same way, in every ABR rung too, unless a bitrate limit (the user''s cap, the internet limit or their quality profile) applies to the session. Re-issuing the session with a different index drives the in-player audio picker.'
         supports_hevc:
           type: boolean
           description: 'Client can decode HEVC (H.265). Server uses this to pick HEVC output when transcoding (saves bandwidth) and to enable the HEVC-source remux path.'
@@ -9349,6 +9362,7 @@ components:
         bitrate_kbps:   { type: integer }
         audio_channels: { type: integer }
         hdr:            { type: string }
+        audio_passthrough: { type: boolean, description: 'Output only (v2.7): the audio is copied for the viewer''s AV receiver (audioPassthrough), on a remux or a full transcode.' }
 
     # ── Users / preferences / profiles ─────────────────────────────────────
     Preferences:
