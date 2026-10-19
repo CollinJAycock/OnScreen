@@ -9,7 +9,20 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [Unreleased]
+## [v2.6.1] — unreleased
+
+Patch release. The server: History shows artwork for movies and music again,
+a Chromecast gets the poster of what it plays, and the TV web app at
+`/tvapp/` (the Xbox app) gets the Watchlist and a Status button on title
+pages. The native TV, phone and Roku apps get the same Watchlist and Status
+screens in their next store builds. Coming from v2.5.x, read the v2.6.0
+upgrade notes below first.
+
+### Upgrade notes (from v2.6.0)
+
+- **No migrations** and nothing to do: pull the new image (`:2.6` or
+  `:2.6.1`) or install the new binary.
+- The desktop installers are rebuilt as 2.6.1.
 
 ### Added
 

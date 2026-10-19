@@ -739,6 +739,12 @@ unready until they're applied.
 
 Back up the database first (see [Database backups](#database-backups)).
 
+### v2.6.0 → v2.6.1
+
+Pull the new image (`ghcr.io/collinjaycock/onscreen:2.6`, or `:2.6.1`). No
+migrations and no settings change. Remote transcode workers can stay on
+v2.6.0.
+
 ### v2.5.x → v2.6.0
 
 1. **Pull the new image** (`ghcr.io/collinjaycock/onscreen:2.6`, or `:2.6.0`)

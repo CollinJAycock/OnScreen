@@ -350,7 +350,19 @@ re-read the real admin's session.
   subtitles. Library access, the rating ceiling and labels apply as on the
   other subtitle routes.
 - The web sender hands the receiver only a segment token (HLS session) or the
-  file's stream token (direct file, subtitles).
+  file's stream token (direct file, subtitles), plus, since v2.6.1, the
+  user's purpose=asset token on the poster URL (`/artwork/…?token=`): the
+  receiver has none of the sender's cookies and `/artwork` requires auth.
+  An asset token reads only what its user already can (library access,
+  rating ceiling and labels still apply per request) and works on no other
+  route. The phone app sends the asset token it already keeps.
+- To have that token, browser builds keep the purpose=asset token from their
+  last login or refresh response in memory (`getRemoteAssetToken` in
+  `web/src/lib/api.ts`), and only that one. The refresh and access tokens
+  stay cookie-only, as the session-wipe fix requires. An asset token is
+  read-only, lasts 24 h and is never rotated, so a copy left behind by another
+  tab's refresh can't trigger refresh-token reuse detection. It never
+  authenticates the tab's own requests, and signing out clears it.
 
 **DVR post-processing programs are environment-only**
 (`internal/config/config.go`)
