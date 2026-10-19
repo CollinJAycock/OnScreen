@@ -122,11 +122,12 @@ func TestDispatcher_MissingNotifyTool_NoBreaker(t *testing.T) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	for _, w := range d.workers {
-		if !w.openUntil.IsZero() {
+		fails, openUntil := w.breaker.state()
+		if !openUntil.IsZero() {
 			t.Errorf("breaker tripped on tool-not-advertised — should stay closed")
 		}
-		if w.consecFails != 0 {
-			t.Errorf("consecFails should stay at 0 for tool-not-advertised, got %d", w.consecFails)
+		if fails != 0 {
+			t.Errorf("consecFails should stay at 0 for tool-not-advertised, got %d", fails)
 		}
 	}
 }
@@ -159,11 +160,12 @@ func TestDispatcher_BreakerTripsAfterConsecutiveFailures(t *testing.T) {
 		t.Fatalf("expected 1 worker, got %d", len(d.workers))
 	}
 	for _, w := range d.workers {
-		if w.openUntil.IsZero() {
+		fails, openUntil := w.breaker.state()
+		if openUntil.IsZero() {
 			t.Errorf("expected breaker open, got zero")
 		}
-		if w.consecFails < breakerThreshold {
-			t.Errorf("expected consecFails >= %d, got %d", breakerThreshold, w.consecFails)
+		if fails < breakerThreshold {
+			t.Errorf("expected consecFails >= %d, got %d", breakerThreshold, fails)
 		}
 	}
 }
