@@ -1,0 +1,241 @@
+# Prometheus alerting rules for OnScreen.
+#
+# Load with `rule_files:` in prometheus.yml (see prometheus.example.yml) and
+# route the alerts with Alertmanager. Every expression uses only metrics the
+# server exports today (internal/observability/metrics.go) plus Prometheus's
+# own `up`, and assumes the server's /metrics is scraped as job="onscreen".
+# If your scrape job has another name, replace job="onscreen" throughout.
+#
+# Validate after editing:  promtool check rules onscreen-alerts.yml
+#                          promtool test rules onscreen-alerts.test.yml
+#
+# OnScreen has no scanner-error counter and transcode workers export no
+# metrics of their own, so those two groups alert on the closest signals that
+# do exist; each alert's description says what it can and can't see.
+
+groups:
+  - name: onscreen-availability
+    rules:
+      - alert: OnScreenDown
+        expr: up{job="onscreen"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "OnScreen instance {{ $labels.instance }} is down"
+          description: >-
+            Prometheus could not scrape {{ $labels.instance }} for 2 minutes.
+            The process is stopped, crashed, or METRICS_ADDR is not reachable
+            from Prometheus.
+
+      - alert: OnScreenMetricsAbsent
+        expr: absent(up{job="onscreen"})
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "No OnScreen scrape target"
+          description: >-
+            Prometheus has no target for job="onscreen", so none of the other
+            OnScreen alerts can fire. Check the scrape config.
+
+  - name: onscreen-http
+    rules:
+      - alert: OnScreenHigh5xxRate
+        expr: |
+          (
+            sum by (instance) (rate(onscreen_http_requests_total{job="onscreen", status=~"5.."}[5m]))
+            /
+            sum by (instance) (rate(onscreen_http_requests_total{job="onscreen"}[5m]))
+          ) > 0.05
+          and
+          sum by (instance) (rate(onscreen_http_requests_total{job="onscreen"}[5m])) > 0.1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value | humanizePercentage }} of requests fail with 5xx"
+          description: >-
+            More than 5% of HTTP requests have returned a 5xx status for 10
+            minutes. The dashboard's "5xx by route" panel shows which routes.
+
+      - alert: OnScreenVeryHigh5xxRate
+        expr: |
+          (
+            sum by (instance) (rate(onscreen_http_requests_total{job="onscreen", status=~"5.."}[5m]))
+            /
+            sum by (instance) (rate(onscreen_http_requests_total{job="onscreen"}[5m]))
+          ) > 0.20
+          and
+          sum by (instance) (rate(onscreen_http_requests_total{job="onscreen"}[5m])) > 0.1
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value | humanizePercentage }} of requests fail with 5xx"
+          description: >-
+            More than 20% of HTTP requests have returned a 5xx status for 5
+            minutes. Usually the database or Valkey is unreachable; check
+            /health/ready.
+
+  - name: onscreen-database
+    rules:
+      - alert: OnScreenDBQueryLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            sum by (instance, query, le) (rate(onscreen_db_query_duration_seconds_bucket{job="onscreen"}[5m]))
+          ) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: p99 {{ $labels.query }} latency is {{ $value | humanizeDuration }}"
+          description: >-
+            The 99th percentile of {{ $labels.query }} queries has been over
+            1 s for 10 minutes. Look for lock contention, a long-running scan,
+            an exhausted connection pool, or a struggling Postgres host.
+
+      - alert: OnScreenDBQueryLatencyCritical
+        expr: |
+          histogram_quantile(0.95,
+            sum by (instance, query, le) (rate(onscreen_db_query_duration_seconds_bucket{job="onscreen"}[5m]))
+          ) > 2.5
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }}: p95 {{ $labels.query }} latency is {{ $value | humanizeDuration }}"
+          description: >-
+            One in twenty {{ $labels.query }} queries takes over 2.5 s. Users
+            will see slow pages and timeouts.
+
+  - name: onscreen-valkey
+    rules:
+      - alert: OnScreenRateLimiterFailOpen
+        expr: increase(onscreen_ratelimit_failopen_total{job="onscreen"}[5m]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: rate limiter is failing open"
+          description: >-
+            {{ $value | humanize }} requests in the last 5 minutes were let
+            through without a rate-limit check because Valkey could not be
+            reached. Login and API rate limits are not being enforced, and
+            sessions, the leader lock and transcode dispatch are likely
+            affected too. Check Valkey.
+
+  - name: onscreen-transcode
+    rules:
+      - alert: OnScreenTranscodeNoWorkers
+        expr: increase(onscreen_transcode_jobs_total{job="onscreen", status="queued"}[10m]) > 0
+        labels:
+          severity: critical
+        annotations:
+          summary: "{{ $labels.instance }}: transcode jobs found no live worker"
+          description: >-
+            {{ $value | humanize }} transcode jobs in the last 10 minutes were
+            parked on the fallback queue because no worker had a live
+            registration (heartbeats expire after 15 s). Every worker,
+            including the embedded one, is down, disabled or cannot reach
+            Valkey, so remux and transcode playback is stalling. Check
+            Settings > Nodes and the workers' /health/ready.
+
+      - alert: OnScreenTranscodeDispatchErrors
+        expr: increase(onscreen_transcode_jobs_total{job="onscreen", status="error"}[10m]) > 3
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: transcode dispatch is failing"
+          description: >-
+            {{ $value | humanize }} transcode jobs could not be dispatched in
+            the last 10 minutes: no live worker has a feature the job needs
+            (subtitle burn-in, Dolby Vision conversion, HTTP source, …), or
+            pushing to the worker's queue in Valkey failed.
+
+  - name: onscreen-scanner
+    rules:
+      # A library's counter only grows when one of its scans COMPLETES with
+      # files found, so a library whose scans keep failing stays flat. Default
+      # libraries rescan daily, so 50 hours is two missed scans. Needs at least
+      # 50 hours of retention, and stays silent for a library that has not
+      # completed a scan since the server last restarted.
+      - alert: OnScreenLibraryScansStalled
+        expr: |
+          increase(onscreen_scanner_files_scanned_total{job="onscreen"}[50h]) == 0
+          and
+          onscreen_scanner_files_scanned_total{job="onscreen"} offset 50h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Library {{ $labels.library_id }} has not completed a scan in 50 hours"
+          description: >-
+            No scan of library {{ $labels.library_id }} has completed in 50
+            hours. Scans may be failing (check the server log for "scan
+            failed" and the library's path) or the library's scan interval
+            was raised past two days, in which case silence this alert.
+
+      - alert: OnScreenScanRequestFailing
+        expr: |
+          sum by (instance) (
+            increase(onscreen_http_requests_total{job="onscreen", path=~".*/libraries/.+/scan", status=~"5.."}[15m])
+          ) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: library scan requests return 5xx"
+          description: >-
+            Starting a library scan failed with a server error in the last 15
+            minutes. Check the server log around the failing request.
+
+  - name: onscreen-webhooks
+    rules:
+      # Summed over all endpoints on purpose: the url label holds the full
+      # webhook URL, which often embeds a token, and alert notifications should
+      # not carry it.
+      - alert: OnScreenWebhookFailureStorm
+        expr: sum by (instance) (increase(onscreen_webhook_failures_total{job="onscreen"}[15m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $value | humanize }} webhook deliveries failed in 15 minutes"
+          description: >-
+            Webhook deliveries are failing after all retries. A receiver is
+            down or rejecting requests; Settings > Webhooks shows which
+            endpoint, and the dashboard's webhook panel shows when it started.
+
+  - name: onscreen-background
+    rules:
+      - alert: OnScreenHubRefreshSlow
+        expr: |
+          histogram_quantile(0.95,
+            sum by (instance, hub, le) (rate(onscreen_hub_cache_refresh_duration_seconds_bucket{job="onscreen"}[30m]))
+          ) > 5
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "{{ $labels.instance }}: {{ $labels.hub }} hub refresh takes {{ $value | humanizeDuration }}"
+          description: >-
+            Refreshing the {{ $labels.hub }} materialized view takes over 5 s
+            at p95. Home rows go stale and the refresh competes with user
+            queries. Usually the database is under load or needs a VACUUM.
+
+  # Optional. Transcode workers serve /health/live and /health/ready on
+  # WORKER_HEALTH_ADDR (default :7074) but no Prometheus metrics, so watching
+  # each worker directly needs the blackbox exporter probing those URLs as
+  # job="onscreen-worker-health" (see prometheus.example.yml). Without that
+  # job these rules never fire; OnScreenTranscodeNoWorkers still covers the
+  # case where no worker at all is left.
+  - name: onscreen-worker-probes
+    rules:
+      - alert: OnScreenWorkerUnhealthy
+        expr: probe_success{job="onscreen-worker-health"} == 0
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Transcode worker {{ $labels.instance }} is unhealthy"
+          description: >-
+            {{ $labels.instance }} has failed its /health/ready probe for 2
+            minutes: the worker is down, or it cannot reach Postgres or
+            Valkey. Jobs go to the remaining workers.

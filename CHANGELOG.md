@@ -31,6 +31,13 @@ API change lands only when every first-party client moves with it — see
   Administrators only. [docs/restore-drill.md](docs/restore-drill.md) is a
   step-by-step rehearsal: take a backup, restore it into a throwaway
   server through the API or with `pg_restore`, verify it, tear it down.
+- **Alerting pack** in `deploy/monitoring/`: a Grafana dashboard for the
+  server's Prometheus metrics, Prometheus alert rules (server down, 5xx
+  rate, slow database queries, rate limiter failing open, transcode jobs
+  finding no live worker, dispatch errors, stalled library scans, webhook
+  failure storms, slow hub refresh, optional per-worker health probes)
+  with `promtool` unit tests, and an example `prometheus.yml`. Loading
+  them is described in [docs/deployment.md](docs/deployment.md#dashboards-and-alerts).
 
 ### Changed
 

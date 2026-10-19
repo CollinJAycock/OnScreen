@@ -1164,6 +1164,60 @@ Label-bearing counters/histograms only emit a series once they've been observed
 at least once — a freshly-restarted server may show only the runtime + gauge
 metrics until traffic / a scan / a transcode session / a watch event fires.
 
+### Dashboards and alerts
+
+[`deploy/monitoring/`](../deploy/monitoring/) has a ready-made Grafana
+dashboard and Prometheus alert rules built on the metrics above:
+
+| File | What it is |
+|---|---|
+| `onscreen-dashboard.json` | Grafana dashboard: overview stats, HTTP rate/5xx/latency by route, DB query latency by statement type, transcode sessions and dispatch results, scans, watch events, hub refresh, webhook failures, rate-limiter fail-open, Go runtime |
+| `onscreen-alerts.yml` | Prometheus alerting rules (below) |
+| `onscreen-alerts.test.yml` | `promtool test rules` unit tests for the rules |
+| `prometheus.example.yml` | Scrape config, `rule_files`, Alertmanager target, optional worker health probes |
+
+Everything assumes the server is scraped as `job="onscreen"`; list every API
+replica as a target of that job. To load them:
+
+1. **Prometheus.** Copy `onscreen-alerts.yml` next to your `prometheus.yml`
+   (for example `/etc/prometheus/rules/`), add it under `rule_files:` as in
+   `prometheus.example.yml`, and reload Prometheus
+   (`kill -HUP <pid>`, or `POST /-/reload` with `--web.enable-lifecycle`).
+   Check it first with `promtool check rules onscreen-alerts.yml`.
+2. **Alertmanager.** Point Prometheus at it (`alerting:` in the example) and
+   route on the `severity` label (`critical` / `warning`) to email, Slack,
+   ntfy or whatever you use. OnScreen's own notification channels
+   (**Settings ▸ Notifications**) are separate and cover in-app events like
+   failed backups; these rules cover the server from the outside, including
+   when it is down.
+3. **Grafana.** **Dashboards ▸ New ▸ Import**, upload
+   `onscreen-dashboard.json`, pick your Prometheus data source. To provision
+   it instead, drop the file into a dashboards provider directory; the
+   `datasource` variable picks the default Prometheus source.
+
+The rules:
+
+| Alert | Severity | Fires when |
+|---|---|---|
+| `OnScreenDown` / `OnScreenMetricsAbsent` | critical / warning | An instance can't be scraped for 2 min / there is no `onscreen` target at all |
+| `OnScreenHigh5xxRate` / `OnScreenVeryHigh5xxRate` | warning / critical | Over 5% of requests return 5xx for 10 min / over 20% for 5 min |
+| `OnScreenDBQueryLatencyHigh` / `…Critical` | warning / critical | p99 of a statement type over 1 s for 10 min / p95 over 2.5 s for 5 min |
+| `OnScreenRateLimiterFailOpen` | warning | `onscreen_ratelimit_failopen_total` increased: Valkey unreachable, rate limits not enforced |
+| `OnScreenTranscodeNoWorkers` | critical | A transcode job found no worker with a live registration (all workers down, disabled, or cut off from Valkey) |
+| `OnScreenTranscodeDispatchErrors` | warning | More than 3 dispatch errors in 10 min (no capable worker, or Valkey push failed) |
+| `OnScreenLibraryScansStalled` | warning | A library that has completed scans before hasn't completed one in 50 h (two missed daily scans) |
+| `OnScreenScanRequestFailing` | warning | Starting a scan returned 5xx |
+| `OnScreenWebhookFailureStorm` | warning | More than 10 webhook deliveries failed after retries in 15 min |
+| `OnScreenHubRefreshSlow` | warning | Hub materialized-view refresh p95 over 5 s for 30 min |
+| `OnScreenWorkerUnhealthy` | warning | Optional: a worker's `/health/ready` probe fails for 2 min (needs the blackbox exporter job in the example) |
+
+Two gaps to know about: there is no scanner-error counter, so scan failures
+show up as a library whose completed-scan counter stops growing (or as 5xx on
+the scan endpoint); and transcode workers export no metrics, so individual
+worker health needs the blackbox probe. The webhook alert is summed over
+endpoints on purpose: the `url` label holds full webhook URLs, which often
+carry tokens.
+
 ---
 
 ## High Availability, Object Storage & Multi-Site
