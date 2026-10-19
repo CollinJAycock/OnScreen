@@ -138,7 +138,13 @@ object CastMediaInfo {
      *
      * Returns null if the file isn't castable.
      */
-    fun build(item: Item, file: File, baseUrl: String, positionSeconds: Double = 0.0): Payload? {
+    fun build(
+        item: Item,
+        file: File,
+        baseUrl: String,
+        positionSeconds: Double = 0.0,
+        assetToken: String? = null,
+    ): Payload? {
         if (!isCastable(file)) return null
         val origin = baseUrl.trimEnd('/')
         val token = file.streamToken!!
@@ -153,7 +159,7 @@ object CastMediaInfo {
         // segment while preserving '/'. We can't call artworkUrl() itself:
         // it uses android.net.Uri, and this module is deliberately
         // Android-free so its unit tests run on the plain JVM.
-        val images = posterUrls(item, origin)
+        val images = posterUrls(item, origin, assetToken)
         return Payload(
             contentId = url,
             contentType = contentType(file),
@@ -187,6 +193,7 @@ object CastMediaInfo {
         sessionId: String?,
         baseUrl: String,
         textTrack: CastHls.TextTrack? = null,
+        assetToken: String? = null,
     ): Payload {
         val remaining = contentDurationMs?.takeIf { it > 0 }?.let { (it - offsetMs).coerceAtLeast(0) }
         val custom = buildMap {
@@ -202,7 +209,7 @@ object CastMediaInfo {
             metadataType = metadataType(item),
             title = item.title,
             subtitle = item.parentTitle,
-            imageUrls = posterUrls(item, baseUrl.trimEnd('/')),
+            imageUrls = posterUrls(item, baseUrl.trimEnd('/'), assetToken),
             durationSeconds = remaining?.let { it / 1000L },
             positionSeconds = receiverStartMs.coerceAtLeast(0) / 1000.0,
             customData = custom,
@@ -212,10 +219,14 @@ object CastMediaInfo {
         )
     }
 
-    private fun posterUrls(item: Item, origin: String): List<String> =
+    // The receiver loads the poster itself, with none of the phone's auth:
+    // /artwork needs a token, and only a purpose=asset one is accepted in a
+    // URL. Without it the receiver gets a 401 and shows no poster.
+    private fun posterUrls(item: Item, origin: String, assetToken: String?): List<String> =
         if (item.posterPath != null) {
             val encodedPath = item.posterPath.split("/").joinToString("/") { urlEncode(it) }
-            listOf("$origin/artwork/$encodedPath?w=500")
+            val token = assetToken?.takeIf { it.isNotEmpty() }?.let { "&token=${urlEncode(it)}" }.orEmpty()
+            listOf("$origin/artwork/$encodedPath?w=500$token")
         } else {
             emptyList()
         }

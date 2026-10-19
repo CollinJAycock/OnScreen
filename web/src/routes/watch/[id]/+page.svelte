@@ -9,7 +9,7 @@
   import { progressUpdates } from '$lib/stores/notifications';
   // Admin stop (Now Playing): playback.stop SSE + PLAYBACK_STOPPED refusals.
   import { playbackStops } from '$lib/stores/notifications';
-  import { getClientName } from '$lib/api';
+  import { getClientName, getRemoteAssetToken } from '$lib/api';
   import { isStopForPlayer, adminStopText, PLAYBACK_STOPPED_CODE } from '$lib/playback-stop';
   import { parseAtParam } from '$lib/playback-transfer';
   import { detectClientCaps, demoteCodec, isCodecDemoted, canDirectPlay as canDirectPlayDecision, canRemuxVideo as canRemuxVideoDecision, settleWithin, VERDICT_WAIT_MS } from '$lib/playback-decision';
@@ -438,6 +438,7 @@
           if (!r.ok) throw new Error(`playlist: HTTP ${r.status}`);
           return r.text();
         },
+        assetToken: getRemoteAssetToken,
       }, onCastState, (msg) => toast.error(msg));
       castCtl = ctl;
       const ok = await ctl.start({

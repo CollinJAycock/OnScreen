@@ -188,6 +188,7 @@ export function buildCastMediaInfo(
   item: CastableItem,
   file: CastableFile,
   baseUrl: string,
+  assetToken: string | null = null,
 ): CastMediaInfo | null {
   if (!isCastable(file)) return null;
   const contentType = castContentType(file);
@@ -200,7 +201,7 @@ export function buildCastMediaInfo(
     contentId: url,
     contentType,
     streamType: 'BUFFERED',
-    metadata: castMetadata(item, origin),
+    metadata: castMetadata(item, origin, assetToken),
     duration: fileDurationSec(file),
     customData: { itemId: item.id, fileId: file.id },
   };
@@ -215,13 +216,24 @@ function fileDurationSec(file: CastableFile): number | undefined {
   return file.duration_seconds ?? undefined;
 }
 
-function castMetadata(item: CastableItem, origin: string): CastMediaInfo['metadata'] {
+/** castPosterUrl is the absolute poster URL the receiver loads itself:
+ * /artwork/<library-relative path> (each segment encoded), with the
+ * purpose=asset token, since the Chromecast has none of this browser's
+ * cookies and /artwork requires auth. The API's poster_path is relative
+ * ("Movies/Sintel/poster.jpg"); a leading "/" or "/artwork/" is tolerated.
+ * Without a token the receiver gets a 401 and shows no poster. */
+export function castPosterUrl(origin: string, posterPath: string, assetToken: string | null): string {
+  const rel = posterPath.replace(/^\/+/, '').replace(/^artwork\//, '');
+  const enc = rel.split('/').map(encodeURIComponent).join('/');
+  const url = `${trimOrigin(origin)}/artwork/${enc}?w=600`;
+  return assetToken ? `${url}&token=${encodeURIComponent(assetToken)}` : url;
+}
+
+function castMetadata(item: CastableItem, origin: string, assetToken: string | null): CastMediaInfo['metadata'] {
   const type = castMetadataType(item);
   const images: { url: string }[] = [];
   if (item.poster_path) {
-    // Posters live under /artwork/<path>; absolute URL again because
-    // the receiver fetches directly.
-    images.push({ url: `${origin}${item.poster_path}` });
+    images.push({ url: castPosterUrl(origin, item.poster_path, assetToken) });
   }
   return {
     type,
@@ -506,6 +518,8 @@ export function buildCastHlsMediaInfo(
     playlistUrl: string;
     segmentFormat: HlsSegmentFormat;
     subtitle?: CastTextTrack | null;
+    /** purpose=asset token for the poster URL (see castPosterUrl). */
+    assetToken?: string | null;
   },
 ): CastMediaInfo {
   const audioOnly = !file.video_codec && !!file.audio_codec;
@@ -514,7 +528,7 @@ export function buildCastHlsMediaInfo(
     contentUrl: opts.playlistUrl,
     contentType: 'application/x-mpegurl',
     streamType: 'BUFFERED',
-    metadata: castMetadata(item, trimOrigin(opts.origin)),
+    metadata: castMetadata(item, trimOrigin(opts.origin), opts.assetToken ?? null),
     customData: { itemId: item.id, fileId: file.id },
     ...castHlsFormatFields(opts.segmentFormat, audioOnly),
   };

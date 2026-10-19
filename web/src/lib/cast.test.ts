@@ -9,7 +9,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   CAST_METADATA_TYPE,
+  buildCastHlsMediaInfo,
   buildCastMediaInfo,
+  castPosterUrl,
   castContentType,
   castMetadataType,
   isCastable,
@@ -31,7 +33,7 @@ const goodItem: CastableItem = {
   id: 'item-uuid',
   type: 'movie',
   title: 'The Movie',
-  poster_path: '/artwork/poster.jpg',
+  poster_path: 'Movies/Big Buck Bunny/poster.jpg',
   parent_title: null,
 };
 
@@ -210,7 +212,14 @@ describe('buildCastMediaInfo', () => {
   it('includes poster image as absolute URL when poster_path present', () => {
     const got = buildCastMediaInfo(goodItem, goodFile, 'https://o.example');
     expect(got!.metadata.images).toEqual([
-      { url: 'https://o.example/artwork/poster.jpg' },
+      { url: 'https://o.example/artwork/Movies/Big%20Buck%20Bunny/poster.jpg?w=600' },
+    ]);
+  });
+
+  it('puts the asset token on the poster URL (the receiver has no cookies)', () => {
+    const got = buildCastMediaInfo(goodItem, goodFile, 'https://o.example', 'v4.local.a+b');
+    expect(got!.metadata.images).toEqual([
+      { url: 'https://o.example/artwork/Movies/Big%20Buck%20Bunny/poster.jpg?w=600&token=v4.local.a%2Bb' },
     ]);
   });
 
@@ -242,5 +251,26 @@ describe('buildCastMediaInfo', () => {
   it('customData carries item + file ids for the receiver', () => {
     const got = buildCastMediaInfo(goodItem, goodFile, 'https://o.example');
     expect(got!.customData).toEqual({ itemId: 'item-uuid', fileId: 'file-uuid' });
+  });
+});
+
+describe('castPosterUrl', () => {
+  it('builds /artwork/<encoded segments> on the origin', () => {
+    expect(castPosterUrl('https://o.example/', 'TV Shows/Café #1/poster.jpg', null)).toBe(
+      'https://o.example/artwork/TV%20Shows/Caf%C3%A9%20%231/poster.jpg?w=600',
+    );
+  });
+  it('tolerates a leading slash or /artwork/ prefix', () => {
+    expect(castPosterUrl('https://o.example', '/artwork/a/b.jpg', 't')).toBe('https://o.example/artwork/a/b.jpg?w=600&token=t');
+    expect(castPosterUrl('https://o.example', '/a/b.jpg', null)).toBe('https://o.example/artwork/a/b.jpg?w=600');
+  });
+  it('carries the token on the HLS load too', () => {
+    const info = buildCastHlsMediaInfo(goodItem, goodFile, {
+      origin: 'https://o.example',
+      playlistUrl: 'https://o.example/api/v1/transcode/sessions/s/index.m3u8?token=x',
+      segmentFormat: 'ts',
+      assetToken: 'tok',
+    });
+    expect(info.metadata.images?.[0].url).toBe('https://o.example/artwork/Movies/Big%20Buck%20Bunny/poster.jpg?w=600&token=tok');
   });
 });

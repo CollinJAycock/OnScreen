@@ -51,6 +51,23 @@ export function setBearerToken(
   bearerToken = access;
   refreshTokenStore = refresh;
   assetTokenStore = asset;
+  // Signing out (all null) drops the browser's remote-asset copy too.
+  if (access === null) browserAssetToken = null;
+}
+
+// Browser builds: the purpose=asset token from this tab's last login or
+// refresh response, kept ONLY for URLs another device fetches — a cast
+// receiver has none of this browser's cookies. Unlike the refresh token it
+// can't trip reuse detection (it is read-only, 24 h, never rotated), so a
+// copy another tab's refresh leaves behind is harmless, and it never
+// authenticates this tab's own requests.
+let browserAssetToken: string | null = null;
+
+/** The purpose=asset token for a URL another device loads (a Chromecast's
+ *  poster): the cached one in Tauri / cross-origin builds, else the
+ *  browser's copy. Null before this tab's first login or refresh. */
+export function getRemoteAssetToken(): string | null {
+  return assetTokenStore ?? browserAssetToken;
 }
 
 /** Read the cached bearer token. Used by the native audio engine
@@ -210,6 +227,7 @@ async function persistTokensIfTauri(access: string, refresh: string, asset: stri
   // (Tauri, cross-origin embeds); browser builds keep the cache null, as
   // getBearerToken/getAssetToken document.
   if (!apiBase.startsWith('/')) setBearerToken(access, refresh, asset || null);
+  else browserAssetToken = asset || null;
   try {
     const { isTauri, setStoredTokens } = await import('./native');
     if (isTauri()) await setStoredTokens(access, refresh, asset);

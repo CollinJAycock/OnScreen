@@ -295,7 +295,10 @@ class CastPlaybackController @Inject constructor(
         val next: Active
         when (route) {
             CastHls.Route.Direct -> {
-                val built = CastMediaInfo.build(req.item, castFileOf(req.file), origin, req.positionMs / 1000.0)
+                val built = CastMediaInfo.build(
+                    req.item, castFileOf(req.file), origin, req.positionMs / 1000.0,
+                    assetToken = serverPrefs.getAssetToken(),
+                )
                 if (built == null) {
                     fail(null, "This can't be cast.")
                     return
@@ -376,6 +379,7 @@ class CastPlaybackController @Inject constructor(
                     sessionId = session.session_id,
                     baseUrl = origin,
                     textTrack = text,
+                    assetToken = serverPrefs.getAssetToken(),
                 )
                 next = Active(
                     req, origin, profile, route, CastHls.decisionOf(route, burning), clientName,

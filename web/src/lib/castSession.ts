@@ -65,6 +65,9 @@ export interface CastControllerDeps {
   ): Promise<unknown>;
   /** GET a same-origin URL as text (the session playlist). */
   fetchText(url: string, signal: AbortSignal): Promise<string>;
+  /** The purpose=asset token for the poster URL the receiver loads (it has
+   *  no cookies, and /artwork needs auth). Absent or null: no token. */
+  assetToken?(): string | null;
 }
 
 export interface CastStartOptions {
@@ -281,7 +284,7 @@ export class CastController {
       let offsetSec = 0;
       let fullTimeline = true;
       if (plan.mode === 'direct') {
-        info = buildCastMediaInfo(o.item, o.file, this.origin)!;
+        info = buildCastMediaInfo(o.item, o.file, this.origin, this.deps.assetToken?.() ?? null)!;
         const track = o.subtitle ? castSubtitleTrack(this.origin, o.subtitle, o.file.stream_token, 0) : null;
         if (track) info.tracks = [track];
         loadTime = positionSec;
@@ -327,6 +330,7 @@ export class CastController {
           playlistUrl,
           segmentFormat: probe.format,
           subtitle: track,
+          assetToken: this.deps.assetToken?.() ?? null,
         });
       }
 
