@@ -530,14 +530,17 @@ func NewRouter(h *Handlers) http.Handler {
 	// required + per-library ACL enforced inside the handler — sprites can
 	// leak adult-library thumbnails into a kids-restricted session otherwise.
 	// Filenames are regex-whitelisted (index.vtt | sprite_NNN.jpg) to block
-	// path traversal.
+	// path traversal. index.bif (static segment, so chi routes it ahead of
+	// {file}) is the Roku BIF cut from the same sprites on first request.
 	//
 	// Uses RequiredAllowQueryToken because sprites are loaded via CSS
 	// background-image — no Authorization header support — and the Tauri
-	// cross-origin client carries auth as `?token=<paseto>`.
+	// cross-origin client carries auth as `?token=<paseto>`. The Roku Video
+	// node fetches the BIF the same way (asset token in ?token=).
 	if h.Trickplay != nil {
 		r.Group(func(r chi.Router) {
 			r.Use(h.Auth_mw.RequiredAllowQueryToken)
+			r.Get("/trickplay/{id}/index.bif", h.Trickplay.ServeBIF)
 			r.Get("/trickplay/{id}/{file}", h.Trickplay.ServeFile)
 		})
 	}
@@ -780,6 +783,7 @@ func NewRouter(h *Handlers) http.Handler {
 			// + rating ceiling as the canonical /trickplay/{id}/{file}; the
 			// VTT's relative sprite names resolve under this path too.
 			if h.Trickplay != nil {
+				r.Get("/items/{id}/trickplay/index.bif", h.Trickplay.ServeBIF)
 				r.Get("/items/{id}/trickplay/{file}", h.Trickplay.ServeFile)
 			}
 			// A ready converted download. The browser fetches it through a
