@@ -17,4 +17,5 @@ Preview locally:
 Deploy:
 
     aws s3 sync site/ s3://on-screen-site-353750335352/ --delete --exclude README.md --profile loadHub
+    # Git Bash: prefix MSYS_NO_PATHCONV=1, or it rewrites "/*" into a Windows path
     aws cloudfront create-invalidation --distribution-id E2MIVU3W0V9WL5 --paths "/*" --profile loadHub
