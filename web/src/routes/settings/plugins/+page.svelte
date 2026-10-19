@@ -3,12 +3,30 @@
   import { pluginApi, type Plugin, type PluginRole } from '$lib/api';
   import { toast } from '$lib/stores/toast';
 
-  // Only notification is wired end-to-end in v1; metadata/task are reserved.
-  const ROLES: { value: PluginRole; label: string; enabled: boolean; hint: string }[] = [
-    { value: 'notification', label: 'Notification', enabled: true, hint: 'Receives media.play / pause / stop / scrobble events' },
-    { value: 'metadata', label: 'Metadata', enabled: false, hint: 'Coming soon' },
-    { value: 'task', label: 'Task', enabled: false, hint: 'Coming soon' }
+  // Each role's contract in brief: the tool the plugin must advertise and
+  // what OnScreen does with it. docs/plugins.md has the full JSON.
+  type RoleInfo = { value: PluginRole; label: string; tool: string; hint: string; summary: string };
+  const ROLES: RoleInfo[] = [
+    {
+      value: 'notification', label: 'Notification', tool: 'notify',
+      hint: 'Receives playback (play / pause / resume / stop / scrobble) and library.scan.complete events. Fire-and-forget: the result is ignored.',
+      summary: 'Gets playback and scan events'
+    },
+    {
+      value: 'metadata', label: 'Metadata', tool: 'enrich_item',
+      hint: 'Called for each item during enrichment, after TMDB, TVDB, AniList and MusicBrainz, with its type, title, year, provider IDs and file name. It may return title, summary, tagline, genres, year, rating, release date, poster_url and provider IDs. By default those fill only empty fields; mode "override" replaces them. Locked fields are never changed, and provider IDs and posters are only filled.',
+      summary: 'Fills or overrides unlocked metadata during enrichment'
+    },
+    {
+      value: 'task', label: 'Task', tool: 'run_task',
+      hint: 'Runs as a scheduled task — daily at 04:30 until you change it in Settings → Tasks — and receives the server version and the library list (no paths or keys). The text it returns becomes the run output; an error result fails the run.',
+      summary: 'Runs on its schedule in Settings → Tasks'
+    }
   ];
+
+  function roleInfo(role: PluginRole): RoleInfo | undefined {
+    return ROLES.find(r => r.value === role);
+  }
 
   let loading = true;
   let error = '';
@@ -153,13 +171,20 @@
     }
   }
 
-  async function testPlugin(id: string) {
+  async function testPlugin(p: Plugin) {
+    const id = p.id;
     testingId = id;
     testResult = null;
     try {
       await pluginApi.test(id);
-      testResult = { id, ok: true, message: 'Test event delivered successfully' };
-      toast.success('Test event delivered');
+      // Notification plugins get a real test event; metadata and task
+      // plugins are only checked for their tool (a real call would change
+      // an item or run the task).
+      const message = p.role === 'notification'
+        ? 'Test event delivered successfully'
+        : `Plugin is reachable and advertises ${roleInfo(p.role)?.tool ?? 'its tool'}`;
+      testResult = { id, ok: true, message };
+      toast.success(p.role === 'notification' ? 'Test event delivered' : 'Plugin reachable');
     } catch (e: unknown) {
       testResult = { id, ok: false, message: e instanceof Error ? e.message : 'Test failed' };
       toast.error(e instanceof Error ? e.message : 'Test failed');
@@ -175,8 +200,9 @@
   <div class="header">
     <div class="header-left">
       <p class="intro">
-        Plugins are external MCP servers OnScreen calls out to when events fire.
-        Endpoints must speak Streamable HTTP and expose a <code>notify</code> tool.
+        Plugins are external MCP servers OnScreen calls out to. Endpoints must speak
+        Streamable HTTP and expose the tool for their role: <code>notify</code>,
+        <code>enrich_item</code> or <code>run_task</code>.
       </p>
     </div>
     {#if !showAdd && !loading}
@@ -212,14 +238,16 @@
         </div>
         <div class="field">
           <label for="add-role">Role</label>
-          <select id="add-role" bind:value={addRole}>
+          <select
+            id="add-role"
+            value={addRole}
+            on:change={(e) => (addRole = e.currentTarget.value as PluginRole)}
+          >
             {#each ROLES as r}
-              <option value={r.value} disabled={!r.enabled}>
-                {r.label}{r.enabled ? '' : ' — coming soon'}
-              </option>
+              <option value={r.value}>{r.label} — {r.tool}</option>
             {/each}
           </select>
-          <div class="hint">{ROLES.find(r => r.value === addRole)?.hint ?? ''}</div>
+          <div class="hint" data-testid="role-contract">{roleInfo(addRole)?.hint ?? ''}</div>
         </div>
         <div class="field">
           <label for="add-endpoint">Endpoint URL</label>
@@ -353,6 +381,14 @@
                   </button>
                 </div>
                 <div class="p-endpoint">{p.endpoint_url}</div>
+                {#if roleInfo(p.role)}
+                  <div class="p-contract">
+                    Calls <code>{roleInfo(p.role)?.tool}</code> · {roleInfo(p.role)?.summary}
+                    {#if p.role === 'task'}
+                      · <a href="/settings/tasks">Schedule</a>
+                    {/if}
+                  </div>
+                {/if}
                 {#if p.allowed_hosts.length > 0}
                   <div class="p-hosts">
                     {#each p.allowed_hosts as host}
@@ -362,7 +398,7 @@
                 {/if}
               </div>
               <div class="p-actions">
-                <button class="btn-icon" title="Test" on:click={() => testPlugin(p.id)} disabled={testingId === p.id}>
+                <button class="btn-icon" title="Test" on:click={() => testPlugin(p)} disabled={testingId === p.id}>
                   {#if testingId === p.id}
                     <svg class="spinner" viewBox="0 0 20 20" width="15" height="15"><circle cx="10" cy="10" r="7" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="30 14"/></svg>
                   {:else}
@@ -577,6 +613,19 @@
     word-break: break-all;
     margin-bottom: 0.45rem;
   }
+  .p-contract {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-bottom: 0.45rem;
+    line-height: 1.45;
+  }
+  .p-contract code {
+    background: var(--bg-hover);
+    padding: 0.05rem 0.3rem;
+    border-radius: 4px;
+    font-size: 0.72rem;
+  }
+  .p-contract a { color: var(--accent-text); }
   .p-hosts {
     display: flex;
     flex-wrap: wrap;
