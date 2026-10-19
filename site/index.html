@@ -139,6 +139,11 @@
   .steps li { background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; color: var(--text-2); font-size: 0.95rem; }
   .steps b { color: var(--text); display: block; margin-bottom: 4px; }
 
+  /* Thanks */
+  .thanks { text-align: center; }
+  .thanks .heart { width: 44px; height: 44px; margin: 0 auto 16px; color: var(--accent-2); }
+  .thanks blockquote { margin: 0 auto; max-width: 640px; font-size: clamp(1.1rem, 2.2vw, 1.3rem); line-height: 1.7; color: var(--text); }
+
   footer { border-top: 1px solid var(--line); padding: 40px 0 56px; color: var(--muted); font-size: 0.88rem; }
   footer .row { display: flex; flex-wrap: wrap; gap: 18px 32px; justify-content: space-between; }
   footer a { color: var(--text-2); }
@@ -318,6 +323,13 @@ docker run -p 7070:7070 \
         <li><b>4. Pair your TV</b>Install an app, enter your server's address, or sign in with a code from another device.</li>
       </ol>
       <p class="note">GPU transcoding, worker nodes, high availability and upgrade notes: see the <a href="https://github.com/CollinJAycock/OnScreen/blob/main/docs/deployment.md">deployment guide</a>.</p>
+    </div>
+  </section>
+  <section id="thanks" class="thanks">
+    <div class="wrap">
+      <svg class="heart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.6-10-9.3C.4 8.6 2.1 4.5 6 4.1c2.1-.2 3.7.9 4.6 2.4.5.8 2.3.8 2.8 0 .9-1.5 2.5-2.6 4.6-2.4 3.9.4 5.6 4.5 4 7.6C19.5 16.4 12 21 12 21z"/></svg>
+      <p class="eyebrow">Special thanks</p>
+      <blockquote>Thank you to my wife, parents, friend and daughter. You all put up with my rambling about this project and being used as guinea pigs.</blockquote>
     </div>
   </section>
 </main>
