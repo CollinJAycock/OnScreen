@@ -2831,13 +2831,27 @@ func (e *Enricher) SetItemPoster(ctx context.Context, itemID uuid.UUID, posterUR
 		// poster_path that 404s on every render.
 		return fmt.Errorf("downloaded poster %s falls outside library scan_paths", absPath)
 	}
+	// UpdateItemMetadata writes every text column it's given (a nil
+	// summary clears the summary), so carry the item's current values
+	// through and change only the poster. Passing just title / year /
+	// genres here used to wipe the summary, tagline, ratings, content
+	// rating, runtime, tags and release date of whatever was unlocked.
 	p := media.UpdateItemMetadataParams{
-		ID:         item.ID,
-		Title:      item.Title,
-		SortTitle:  item.SortTitle,
-		Year:       item.Year,
-		Genres:     item.Genres,
-		PosterPath: &rel,
+		ID:                    item.ID,
+		Title:                 item.Title,
+		SortTitle:             item.SortTitle,
+		OriginalTitle:         item.OriginalTitle,
+		Year:                  item.Year,
+		Summary:               item.Summary,
+		Tagline:               item.Tagline,
+		Rating:                item.Rating,
+		AudienceRating:        item.AudienceRating,
+		ContentRating:         item.ContentRating,
+		DurationMS:            item.DurationMS,
+		Genres:                item.Genres,
+		Tags:                  item.Tags,
+		PosterPath:            &rel,
+		OriginallyAvailableAt: item.OriginallyAvailableAt,
 	}
 	if _, err := e.updater.UpdateItemMetadata(ctx, p); err != nil {
 		return fmt.Errorf("update poster_path: %w", err)
