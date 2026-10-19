@@ -9,6 +9,18 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Changed
+
+- **Refresh metadata and Fix Match say how it went** (v2.7 item 7, known
+  issue 4). Refresh shows "Metadata refreshed" when the item changes, and
+  "No changes found" when the 24 s polling window ends without one. Fix
+  Match no longer reloads the page after a fixed 2 s: it polls until the
+  item carries the new match, then updates the page in place (title,
+  artwork, episodes, cast) and says "Matched to …"; if the match is still
+  loading after 24 s it says so.
+
 ## [v2.6.2] — unreleased
 
 Patch release for the web app: Home rows can be dragged into order, and
