@@ -16,10 +16,10 @@ import (
 	"github.com/onscreen/onscreen/internal/testdb"
 )
 
-const defaultBackupVersion = 60
+const defaultBackupVersion = 59
 
-// gooseBefore60 opens dsn for goose and steps the schema down to just before 00060.
-func gooseBefore60(t *testing.T, dsn string) *sql.DB {
+// gooseBefore59 opens dsn for goose and steps the schema down to just before 00059.
+func gooseBefore59(t *testing.T, dsn string) *sql.DB {
 	t.Helper()
 	db, err := goose.OpenDBWithDriver("pgx", dsn)
 	if err != nil {
@@ -43,7 +43,7 @@ func gooseBefore60(t *testing.T, dsn string) *sql.DB {
 func TestDefaultBackupTask_FreshInstall_Integration(t *testing.T) {
 	pool, dsn := testdb.NewWithDSN(t)
 	ctx := context.Background()
-	db := gooseBefore60(t, dsn)
+	db := gooseBefore59(t, dsn)
 
 	if _, err := pool.Exec(ctx, `DELETE FROM scheduled_tasks WHERE task_type = 'backup_database'`); err != nil {
 		t.Fatal(err)
@@ -89,7 +89,7 @@ func TestDefaultBackupTask_FreshInstall_Integration(t *testing.T) {
 func TestDefaultBackupTask_UpgradeUntouched_Integration(t *testing.T) {
 	pool, dsn := testdb.NewWithDSN(t)
 	ctx := context.Background()
-	db := gooseBefore60(t, dsn)
+	db := gooseBefore59(t, dsn)
 
 	if _, err := pool.Exec(ctx, `DELETE FROM scheduled_tasks WHERE task_type = 'backup_database'`); err != nil {
 		t.Fatal(err)

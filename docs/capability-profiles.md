@@ -208,7 +208,7 @@ track label, on files scanned (or re-probed) since it was stored.
 the client's decoder takes, per codec (Android's `MediaCodecInfo` reports
 these as profile/level pairs). The file side is ffprobe's profile name and
 raw level of the video stream, stored by the scanner as
-`media_files.video_profile` / `video_level` (migration 00063): H.264 reports
+`media_files.video_profile` / `video_level` (migration 00060): H.264 reports
 `level_idc` (41 = 4.1), HEVC 30 × the level (153 = 5.1), AV1 its
 `seq_level_idx` (13 = 5.1).
 - **Profiles are ranked** within a codec, each rank taking every lower one:
@@ -471,7 +471,7 @@ DTS out of fMP4 HLS was checked through an AV receiver on 2026-10-19: it works.
 transcodes, ABR ladder included (§5.1 "Audio passthrough"), and video
 profile/level in the grammar (§5.1 "Video profile / level"), with
 `media_files.video_profile` / `video_level` from the scanner (migration
-00063). Checked with ffmpeg 8.1: a libx264 re-encode held to Main@4.1 with
+00060). Checked with ffmpeg 8.1: a libx264 re-encode held to Main@4.1 with
 AC-3 / E-AC-3 copied into MPEG-TS and TrueHD / DTS copied into fMP4
 (`mlpa` / `mp4a` sample entries) produces valid segments
 (`TestFFmpeg_ReencodeAudioPassthrough`, generated sources).

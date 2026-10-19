@@ -12,7 +12,7 @@ import (
 // Video profile / level: the most a client's decoder takes for one codec
 // (h264Profile=high, h264Level=4.1, hevcProfile=main10, hevcLevel=5.1,
 // av1Profile, av1Level), compared with the source's ffprobe profile and level
-// (media_files.video_profile / video_level, migration 00063).
+// (media_files.video_profile / video_level, migration 00060).
 //
 // Levels are held in tenths everywhere here: 41 = level 4.1, 51 = 5.1. That's
 // H.264's own level_idc; HEVC stores 30 × the level and AV1 an index, both
@@ -241,7 +241,7 @@ func profileLabel(codec, token string) string {
 
 // videoLimitExceeded reports whether the file's video is over the client's
 // declared profile and/or level for its codec. A source whose profile or
-// level wasn't probed (NULL, pre-00063 rows) or isn't ranked is never over.
+// level wasn't probed (NULL, pre-00060 rows) or isn't ranked is never over.
 func videoLimitExceeded(file media.File, caps ClientCapabilities) (profileOver, levelOver bool) {
 	codec := canonicalVideoCodec(deref(file.VideoCodec))
 	lim := caps.VideoLimitFor(codec)
