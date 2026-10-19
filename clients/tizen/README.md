@@ -97,7 +97,7 @@ What is Samsung's own:
 | Module | What it does on Tizen |
 |---|---|
 | `src/lib/focus/keys.ts` | Samsung's `VK_*` codes (Return 10009, CH ▲▼ 427 / 428) and `registerTizenKeys()`, which asks the TV for the media, colour and channel keys (the arrows, OK and Return always come). |
-| `src/lib/appExit.ts` | Return on a first screen (Home, Setup, Sign in) closes the app to Smart Hub (`tizen.application.getCurrentApplication().exit()`), as Samsung's checklist asks; elsewhere it goes back a page. Exit and Smart Hub stay the system's. |
+| `src/lib/appExit.ts` | Return on a first screen (Home, Setup, Sign in) opens the Exit / Cancel popup (`components/ExitPopup`), whose Exit closes the app to Smart Hub (`tizen.application.getCurrentApplication().exit()`), as Samsung's Return Key Policy asks; elsewhere it goes back a page. Exit and Smart Hub stay the system's. |
 | `src/lib/player/avplayMedia.ts` | AVPlay behind an `HTMLVideoElement`'s surface (`src`, `currentTime`, `play()` / `pause()`, `seekable`, the element's events), so the shared player runs unchanged. It reads the session's HLS playlist for `seekable` / `duration`, which AVPlay doesn't report, and maps AVPlay errors to `MediaError` codes (a "not supported" demotes the HEVC claim once and restarts as H.264). Music and audiobooks play on the page's own `<video>`. |
 | `src/lib/player/loadingLayer.ts` | "Starting playback…" on `<body>` while AVPlay opens: its picture plane covers the page until the first frame. |
 | `src/lib/player/hls-loader.ts` | hls.js is never loaded: the page takes its native-HLS path, which lands on AVPlay. (hls.js is a dev dependency for its types and tests only.) |
@@ -127,8 +127,8 @@ Samsung panel:
 - Up Next, the end of a film, Back, and a trip to Smart Hub and back
   mid-film (the player releases AVPlay and re-opens it at the position).
 - A track and an audiobook on the `<video>` element; audiobook speed.
-- CH ▲▼ step tracks, chapters and Live TV channels; Return on Home closes
-  the app.
+- CH ▲▼ step tracks, chapters and Live TV channels; Return on Home opens
+  the "Exit OnScreen?" popup, its Exit closes the app and Cancel stays.
 - Tizen 5.5 (2020) if one is at hand: the polyfills and the CSS floor.
 
 ## What's still not done

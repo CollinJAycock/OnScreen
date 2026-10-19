@@ -7,15 +7,18 @@
 // of them took lands here, and only the app's first screens may end the app:
 //
 //   - Home when signed in, Setup and Sign in when not (and the splash that
-//     picks between them): Samsung's TV app checklist, "In Main(First) page
-//     of App, Return key returns to SmartHub", and "at the initial page,
-//     close the App and go to Smart Hub". The app closes itself
-//     (tizen.application.getCurrentApplication().exit()), with no popup in
-//     between. Exit stays the system's: it closes the app from anywhere.
+//     picks between them): the app's own Exit / Cancel popup, an HTML
+//     element (components/ExitPopup), whose Exit closes the app
+//     (tizen.application.getCurrentApplication().exit()) and goes back to
+//     Smart Hub. Samsung's review of 1.1.0 (2026-10) rejected closing on
+//     Return without asking: "You must make the application exit
+//     confirmation popup independently, using an HTML element" (Return Key
+//     Policy, developer.samsung.com ... terminating-applications). Exit
+//     stays the system's: it closes the app from anywhere, no popup.
 //   - Anywhere else, the previous page (nav.goBack, the hub when the stack is
 //     empty): never out of the app.
 
-/** Routes where Return closes the app (SvelteKit route ids). */
+/** Routes where Return offers to close the app (SvelteKit route ids). */
 export const ENTRY_ROUTES: readonly string[] = ['/', '/hub', '/login', '/setup'];
 
 export function isEntryRoute(routeId: string | null | undefined): boolean {
@@ -26,11 +29,11 @@ export function isEntryRoute(routeId: string | null | undefined): boolean {
 export type RootBack =
   /** nav.goBack: the screen before this one. */
   | 'previous'
-  /** Close the app, back to Smart Hub. */
-  | 'exit';
+  /** The app's own Exit / Cancel popup. */
+  | 'exit-popup';
 
 export function rootBack(routeId: string | null | undefined): RootBack {
-  return isEntryRoute(routeId) ? 'exit' : 'previous';
+  return isEntryRoute(routeId) ? 'exit-popup' : 'previous';
 }
 
 export interface RootBackDeps {
@@ -38,15 +41,15 @@ export interface RootBackDeps {
   routeId(): string | null | undefined;
   /** The previous page (nav.goBack). */
   goBack(): void;
-  /** Close the app (closeApp). */
-  exit(): void;
+  /** Show the Exit / Cancel popup. */
+  openExitPopup(): void;
 }
 
 /** The focus manager's root Back handler (setRootBack): it always takes the
  *  key, so nothing else acts on it. */
 export function rootBackHandler(deps: RootBackDeps): () => boolean {
   return () => {
-    if (rootBack(deps.routeId()) === 'exit') deps.exit();
+    if (rootBack(deps.routeId()) === 'exit-popup') deps.openExitPopup();
     else deps.goBack();
     return true;
   };
@@ -63,7 +66,7 @@ interface TizenGlobals {
   close?: () => void;
 }
 
-/** Close the app: Tizen's application exit, which returns to Smart Hub;
+/** The popup's Exit: Tizen's application exit, which returns to Smart Hub;
  *  window.close() outside a Tizen webview (the emulator's browser, vite
  *  dev), where it may do nothing at all. */
 export function closeApp(g: TizenGlobals = globalThis as TizenGlobals): void {

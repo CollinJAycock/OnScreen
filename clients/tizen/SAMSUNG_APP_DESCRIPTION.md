@@ -14,7 +14,7 @@
 | Samsung App ID | 3202605045527 |
 | Tizen Application ID | OnScreenTV.OnScreen |
 | Tizen Package ID | OnScreenTV |
-| Version | 1.1.0 (first submission) |
+| Version | 1.1.1 (resubmission: 1.1.0 was rejected for the Return Key Policy; Return on the first screen now asks with an HTML exit popup) |
 | Category | Video / Entertainment |
 | Required Tizen Version | 5.5 |
 | Supported Models | 2020 and newer (Tizen 5.5+); hardware-verified on a Samsung QN75Q80B (2022, Tizen 6.5) |
@@ -137,9 +137,11 @@ few seconds apart.
 4. **Card selected** → Detail page → Play.
 5. **Playback** → full-screen player; **Return** goes back to the Detail
    page; **Exit** closes the app.
-6. **Return on Home** (and on the first-launch and Sign in screens) closes
-   the app and returns to Smart Hub (Self Checklist item 13). On every other
-   screen Return goes to the previous screen (item 14).
+6. **Return on Home** (and on the first-launch and Sign in screens) opens
+   the app's own **"Exit OnScreen?"** popup (an HTML element, with **Exit**
+   and **Cancel**, starting on Cancel). **Exit** closes the app and returns
+   to Smart Hub; **Cancel** or Return closes the popup and stays on the
+   screen. On every other screen Return goes to the previous screen.
 
 ## 7. Remote-Key Behavior
 
@@ -147,7 +149,7 @@ few seconds apart.
 |---|---|
 | Up / Down / Left / Right | Move focus. In the player with the controls hidden: Left / Right skip back / forward 10 s and show the controls; Up / Down / OK show the controls. |
 | OK / Enter | Activate the focused element. Hold OK on a card for its options. |
-| Return | Home and first-launch screens: closes the app to Smart Hub. Elsewhere: previous screen. In the player: closes an open menu or the Up Next card first, then returns to the Detail page. |
+| Return | Home and first-launch screens: the "Exit OnScreen?" popup (Exit closes the app to Smart Hub, Cancel stays). Elsewhere: previous screen. In the player: closes an open menu or the Up Next card first, then returns to the Detail page. |
 | Exit | Always closes the app. |
 | Play / Pause / Play-Pause | In the player: play, pause, toggle. Photos: start / stop the slideshow. |
 | Stop | In the player: pauses. |

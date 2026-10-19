@@ -9,11 +9,11 @@ describe('rootBack (Return that no screen took)', () => {
     expect(isEntryRoute(null)).toBe(false);
   });
 
-  // Samsung's checklist: "In Main(First) page of App, Return key returns to
-  // SmartHub" — no popup in between.
-  it('closes the app on a first screen, and goes back a page everywhere else', () => {
-    expect(rootBack('/hub')).toBe('exit');
-    expect(rootBack('/login')).toBe('exit');
+  // Samsung's Return Key Policy (1.1.0 review, 2026-10): on the first
+  // screen, ask with the app's own HTML popup before exiting.
+  it('offers the exit popup on a first screen, and goes back a page everywhere else', () => {
+    expect(rootBack('/hub')).toBe('exit-popup');
+    expect(rootBack('/login')).toBe('exit-popup');
     expect(rootBack('/library/[id]')).toBe('previous');
     expect(rootBack('/watch/[id]')).toBe('previous');
   });
@@ -21,14 +21,14 @@ describe('rootBack (Return that no screen took)', () => {
 
 describe('rootBackHandler', () => {
   function setup(route: string) {
-    const deps = { routeId: () => route, goBack: vi.fn(), exit: vi.fn() };
+    const deps = { routeId: () => route, goBack: vi.fn(), openExitPopup: vi.fn() };
     return { deps, handler: rootBackHandler(deps) };
   }
 
-  it('closes the app on Home, never going back to an earlier page', () => {
+  it('opens the exit popup on Home, never going back to an earlier page', () => {
     const { deps, handler } = setup('/hub');
     expect(handler()).toBe(true);
-    expect(deps.exit).toHaveBeenCalledTimes(1);
+    expect(deps.openExitPopup).toHaveBeenCalledTimes(1);
     expect(deps.goBack).not.toHaveBeenCalled();
   });
 
@@ -36,7 +36,7 @@ describe('rootBackHandler', () => {
     const { deps, handler } = setup('/settings');
     expect(handler()).toBe(true);
     expect(deps.goBack).toHaveBeenCalledTimes(1);
-    expect(deps.exit).not.toHaveBeenCalled();
+    expect(deps.openExitPopup).not.toHaveBeenCalled();
   });
 });
 
