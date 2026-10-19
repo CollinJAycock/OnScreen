@@ -70,6 +70,13 @@ API change lands only when every first-party client moves with it — see
   now points there. Uses `GET` / `PUT` / `DELETE /api/v1/items/{id}/watch-status`.
   Not yet tried on a Roku.
 
+### Fixed
+
+- **History showed movies and music as blank tiles.** `GET /api/v1/history`
+  sent only an item's `thumb_path`, which episodes have and movies and tracks
+  don't. `thumb_path` now falls back to the item's poster, then its parent's
+  (a track's album), so every app's History shows artwork for them.
+
 ## [v2.6.0] — 2026-10-17
 
 The catch-up release: metadata editing with locks, multi-episode files,

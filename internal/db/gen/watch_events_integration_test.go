@@ -313,3 +313,59 @@ func TestWatchEvents_Integration_ListStateMultipleItems(t *testing.T) {
 		t.Errorf("first row mediaID = %s, want %s (most recent)", rows[0].MediaID, itemB)
 	}
 }
+
+// TestWatchEvents_Integration_HistoryArtworkFallbacks proves every history
+// row carries artwork: an episode's own still, a movie's poster, and a
+// track's album poster. History used to read thumb_path only, which movies
+// and tracks don't have, so they showed as blank tiles.
+func TestWatchEvents_Integration_HistoryArtworkFallbacks(t *testing.T) {
+	pool := testdb.New(t)
+	q := gen.New(pool)
+	ctx := context.Background()
+
+	user := seedUser(ctx, t, q, "we-art-"+uuid.New().String()[:8])
+	lib := seedLibrary(ctx, t, q, "we-art-lib-"+uuid.New().String()[:8])
+	movie := seedMediaItem(ctx, t, q, lib, "Poster Movie")
+	album := seedMediaItem(ctx, t, q, lib, "Poster Album")
+	track := seedMediaItem(ctx, t, q, lib, "Bare Track")
+	still := seedMediaItem(ctx, t, q, lib, "Still Episode")
+	for _, stmt := range []struct {
+		sql  string
+		args []any
+	}{
+		{`UPDATE media_items SET poster_path = 'movie/poster.jpg', thumb_path = NULL WHERE id = $1`, []any{movie}},
+		{`UPDATE media_items SET poster_path = 'album/cover.jpg', thumb_path = NULL WHERE id = $1`, []any{album}},
+		{`UPDATE media_items SET parent_id = $2, poster_path = NULL, thumb_path = NULL WHERE id = $1`, []any{track, album}},
+		{`UPDATE media_items SET thumb_path = 'episode/still.jpg', poster_path = 'episode/poster.jpg' WHERE id = $1`, []any{still}},
+	} {
+		if _, err := pool.Exec(ctx, stmt.sql, stmt.args...); err != nil {
+			t.Fatalf("seed artwork: %v", err)
+		}
+	}
+	base := time.Now()
+	insertWatch(t, q, user, movie, "stop", 1000, base.Add(-3*time.Hour))
+	insertWatch(t, q, user, track, "stop", 1000, base.Add(-2*time.Hour))
+	insertWatch(t, q, user, still, "stop", 1000, base.Add(-1*time.Hour))
+
+	rows, err := q.ListWatchHistory(ctx, gen.ListWatchHistoryParams{UserID: user, Lim: 10, Off: 0})
+	if err != nil {
+		t.Fatalf("ListWatchHistory: %v", err)
+	}
+	want := map[uuid.UUID]string{
+		movie: "movie/poster.jpg",
+		track: "album/cover.jpg",
+		still: "episode/still.jpg",
+	}
+	if len(rows) != len(want) {
+		t.Fatalf("history: got %d rows, want %d", len(rows), len(want))
+	}
+	for _, r := range rows {
+		got := ""
+		if r.MediaThumb != nil {
+			got = *r.MediaThumb
+		}
+		if got != want[r.MediaID] {
+			t.Errorf("%s: media_thumb = %q, want %q", r.MediaTitle, got, want[r.MediaID])
+		}
+	}
+}
