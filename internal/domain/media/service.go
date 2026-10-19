@@ -206,7 +206,15 @@ type File struct {
 	// VideoBitDepth is the primary video stream's bit depth (8/10/12), derived
 	// from pix_fmt at scan time. Distinct from BitDepth (audio). Drives the
 	// 10-bit play decision (HEVC Main 10 / H.264 Hi10P).
-	VideoBitDepth       *int
+	VideoBitDepth *int
+	// VideoProfile / VideoLevel are the primary video stream's codec profile
+	// ("High", "Main 10") and raw level number as ffprobe reports them (H.264
+	// 41 = 4.1, HEVC 153 = 5.1, AV1 seq_level_idx 13 = 5.1; see
+	// transcode.VideoLevelTenths). nil until the file is (re)probed, and for a
+	// profile or level ffprobe doesn't know. Drives the profile/level check of
+	// the play decision (h264Profile / hevcLevel / … capability keys).
+	VideoProfile        *string
+	VideoLevel          *int
 	SampleRate          *int
 	ChannelLayout       *string
 	Lossless            *bool
@@ -685,7 +693,10 @@ type CreateFileParams struct {
 	// VideoBitDepth is the primary video stream's bit depth (8/10/12), derived
 	// from pix_fmt at scan time. Distinct from BitDepth (audio). Drives the
 	// 10-bit play decision (HEVC Main 10 / H.264 Hi10P).
-	VideoBitDepth       *int
+	VideoBitDepth *int
+	// VideoProfile / VideoLevel: see File.VideoProfile.
+	VideoProfile        *string
+	VideoLevel          *int
 	SampleRate          *int
 	ChannelLayout       *string
 	Lossless            *bool

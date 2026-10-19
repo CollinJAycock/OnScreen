@@ -224,6 +224,9 @@ type streamFormat struct {
 	BitrateKbps   int    `json:"bitrate_kbps,omitempty"`
 	AudioChannels int    `json:"audio_channels,omitempty"`
 	HDR           string `json:"hdr,omitempty"`
+	// AudioPassthrough (output only): the audio is bitstreamed to the
+	// viewer's receiver undecoded, a remux's or a re-encode's (v2.7).
+	AudioPassthrough bool `json:"audio_passthrough,omitempty"`
 }
 
 // liveSession is a card plus what the admin stop needs to act on it.
@@ -704,6 +707,7 @@ func sessionOutput(s *transcode.Session, src *media.File, bitrateKbps *int) *str
 		if src != nil {
 			out.AudioCodec = transcode.SourceAudioCodec(src, s.AudioStreamIndex)
 		}
+		out.AudioPassthrough = s.OutputAudioPassthrough
 	default:
 		out.AudioCodec = s.OutputAudioCodec
 	}

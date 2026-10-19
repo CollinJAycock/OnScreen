@@ -53,6 +53,12 @@ type ClientCapabilities struct {
 	// the copy, because some clients list codecs there that they can't
 	// output (the phone lists dts without being able to pass it anywhere).
 	AudioPassthrough []string
+	// VideoLimits holds the highest profile and level the client decodes per
+	// canonical video codec ("h264", "h265", "av1"), from h264Profile /
+	// h264Level / hevcProfile / hevcLevel / av1Profile / av1Level. nil (or a
+	// codec missing) = not declared: that codec isn't profile/level gated.
+	// See profilelevel.go.
+	VideoLimits map[string]VideoLimit
 }
 
 // ParseCapabilities parses the X-Client-Capabilities header value. Keys are
@@ -134,6 +140,11 @@ func ParseCapabilities(header string) ClientCapabilities {
 			caps.SupportsDV = len(caps.DVProfiles) > 0
 		case "optimized":
 			caps.AcceptsOptimized = parseInt(val) > 0 || strings.EqualFold(val, "true")
+		default:
+			// h264Profile=high, hevcLevel=5.1, av1Level=5.1, ...
+			if codec, field, ok := limitCodec(key); ok {
+				caps.setVideoLimit(codec, field, val)
+			}
 		}
 	}
 	// Safe no-profile defaults: a client that declared no codecs still gets the

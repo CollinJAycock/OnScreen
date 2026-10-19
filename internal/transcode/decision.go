@@ -174,6 +174,18 @@ func decide(file media.File, caps ClientCapabilities, serverCaps ServerCaps) Dec
 		}
 	}
 
+	// Profile / level check: a source above the highest profile or level the
+	// client declared for its codec (h264Profile=high, hevcLevel=5.1, …) is
+	// one its decoder may refuse — High 10 on a High-only decoder, a 1080p60
+	// level 4.2 stream on a 4.1 one — and only a re-encode, sized and
+	// flagged for that level (OutputLimitsFor), fixes it. Not declared, or
+	// not probed (video_profile / video_level NULL): not gated.
+	if !audioOnly {
+		if profileOver, levelOver := videoLimitExceeded(file, caps); profileOver || levelOver {
+			return DecisionTranscode
+		}
+	}
+
 	// Resolution check: if source exceeds client's declared max, must transcode.
 	w := derefInt(file.ResolutionW)
 	h := derefInt(file.ResolutionH)

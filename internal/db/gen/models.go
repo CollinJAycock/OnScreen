@@ -383,6 +383,8 @@ type MediaFile struct {
 	Edition             *string            `json:"edition"`
 	PartIndex           *int16             `json:"part_index"`
 	ReplaygainSource    *string            `json:"replaygain_source"`
+	VideoProfile        *string            `json:"video_profile"`
+	VideoLevel          *int32             `json:"video_level"`
 }
 
 type MediaFileLoudness struct {

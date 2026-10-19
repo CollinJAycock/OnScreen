@@ -1337,6 +1337,8 @@ func (s *Scanner) processFile(ctx context.Context, libraryID uuid.UUID, libraryT
 		DurationMS:      probe.DurationMs,
 		BitDepth:        probe.BitDepth,
 		VideoBitDepth:   probe.VideoBitDepth,
+		VideoProfile:    probe.VideoProfile,
+		VideoLevel:      probe.VideoLevel,
 		SampleRate:      probe.SampleRate,
 		ChannelLayout:   probe.ChannelLayout,
 		Lossless:        probe.Lossless,
