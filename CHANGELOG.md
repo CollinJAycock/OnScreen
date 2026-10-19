@@ -9,7 +9,7 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [v2.6.1] — unreleased
+## [v2.6.1] — 2026-10-19
 
 Patch release. The server: History shows artwork for movies and music again,
 a Chromecast gets the poster of what it plays, and the TV web app at
