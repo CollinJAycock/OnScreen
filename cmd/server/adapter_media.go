@@ -521,6 +521,8 @@ func (a *mediaAdapter) UpdateMediaFileTechnicalMetadata(ctx context.Context, id 
 		Chapters:        p.Chapters,
 		DurationMs:      p.DurationMS,
 		VideoBitDepth:   intPtrToInt32Ptr(p.VideoBitDepth),
+		VideoProfile:    p.VideoProfile,
+		VideoLevel:      intPtrToInt32Ptr(p.VideoLevel),
 		Edition:         p.Edition,
 		PartIndex:       intPtrToInt16Ptr(p.PartIndex),
 	})

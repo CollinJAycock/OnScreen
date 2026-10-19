@@ -105,6 +105,33 @@ func TestVideoBitDepth(t *testing.T) {
 	}
 }
 
+func TestVideoProfileLevel(t *testing.T) {
+	ip := func(n int) *int { return &n }
+	cases := []struct {
+		name        string
+		s           ffprobeStream
+		wantProfile string // "" = nil
+		wantLevel   int    // 0 = nil
+	}{
+		{"h264 High@4.1", ffprobeStream{Profile: "High", Level: ip(41)}, "High", 41},
+		{"hevc Main 10@5.1", ffprobeStream{Profile: "Main 10", Level: ip(153)}, "Main 10", 153},
+		{"unknown level -99", ffprobeStream{Profile: "Main", Level: ip(-99)}, "Main", 0},
+		{"unknown profile", ffprobeStream{Profile: "unknown", Level: ip(40)}, "", 40},
+		{"neither reported", ffprobeStream{}, "", 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p, l := videoProfileLevel(&tc.s)
+			if (p == nil) != (tc.wantProfile == "") || (p != nil && *p != tc.wantProfile) {
+				t.Errorf("profile = %v, want %q", p, tc.wantProfile)
+			}
+			if (l == nil) != (tc.wantLevel == 0) || (l != nil && *l != tc.wantLevel) {
+				t.Errorf("level = %v, want %d", l, tc.wantLevel)
+			}
+		})
+	}
+}
+
 func TestChannelLayoutFromCount(t *testing.T) {
 	cases := []struct {
 		n    int

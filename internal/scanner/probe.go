@@ -37,6 +37,8 @@ type ProbeResult struct {
 	// VideoBitDepth is the primary video stream's bit depth (8/10/12), from
 	// pix_fmt. Distinct from BitDepth (audio). nil when not a video stream.
 	VideoBitDepth   *int
+	VideoProfile    *string // ffprobe profile name, nil when unknown (videoProfileLevel)
+	VideoLevel      *int    // ffprobe raw level, nil when unknown (videoProfileLevel)
 	AudioStreams    []byte
 	SubtitleStreams []byte
 	Chapters        []byte
@@ -69,6 +71,7 @@ type ffprobeStream struct {
 	Channels         int               `json:"channels"`
 	ChannelLayout    string            `json:"channel_layout"`
 	Profile          string            `json:"profile"`
+	Level            *int              `json:"level"` // video: H.264 level_idc, HEVC general_level_idc, AV1 seq_level_idx; -99 = unknown
 	SampleRate       string            `json:"sample_rate"`
 	BitsPerRawSample string            `json:"bits_per_raw_sample"`
 	BitsPerSample    int               `json:"bits_per_sample"`
@@ -351,6 +354,7 @@ func ProbeFile(ctx context.Context, path string) (*ProbeResult, error) {
 				if bd := videoBitDepth(&s); bd > 0 {
 					result.VideoBitDepth = &bd
 				}
+				result.VideoProfile, result.VideoLevel = videoProfileLevel(&s)
 			}
 
 		case "audio":
@@ -692,4 +696,21 @@ func ProbeImageReader(r io.Reader, name string) *ProbeResult {
 		ResolutionW: &w,
 		ResolutionH: &h,
 	}
+}
+
+// videoProfileLevel returns a video stream's profile name and raw level as
+// ffprobe reports them, each nil when unknown: ffprobe says "unknown" (or
+// nothing) for a profile it can't name and -99 for an unknown level. MJPEG
+// and other codecs without levels report 0 or below, which is dropped too.
+func videoProfileLevel(s *ffprobeStream) (*string, *int) {
+	var profile *string
+	if p := strings.TrimSpace(s.Profile); p != "" && !strings.EqualFold(p, "unknown") {
+		profile = &p
+	}
+	var level *int
+	if s.Level != nil && *s.Level > 0 {
+		l := *s.Level
+		level = &l
+	}
+	return profile, level
 }

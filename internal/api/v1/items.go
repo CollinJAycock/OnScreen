@@ -629,6 +629,8 @@ type ItemFileResponse struct {
 	Faststart           bool     `json:"faststart"`
 	BitDepth            *int     `json:"bit_depth,omitempty"`
 	VideoBitDepth       *int     `json:"video_bit_depth,omitempty"`
+	VideoProfile        *string  `json:"video_profile,omitempty"` // ffprobe's name: "High", "Main 10"
+	VideoLevel          *int     `json:"video_level,omitempty"`   // ffprobe's raw level: H.264 41, HEVC 153, AV1 13
 	SampleRate          *int     `json:"sample_rate,omitempty"`
 	ChannelLayout       *string  `json:"channel_layout,omitempty"`
 	Lossless            *bool    `json:"lossless,omitempty"`
@@ -1093,6 +1095,8 @@ func (h *ItemHandler) Get(w http.ResponseWriter, r *http.Request) {
 			Faststart:           h.faststart(r.Context(), f.FilePath),
 			BitDepth:            f.BitDepth,
 			VideoBitDepth:       f.VideoBitDepth,
+			VideoProfile:        f.VideoProfile,
+			VideoLevel:          f.VideoLevel,
 			SampleRate:          f.SampleRate,
 			ChannelLayout:       f.ChannelLayout,
 			Lossless:            f.Lossless,
