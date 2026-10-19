@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -35,6 +36,7 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import tv.onscreen.android.data.api.HeartbeatRefusal
 import tv.onscreen.android.data.api.PlaybackStop
 import tv.onscreen.android.data.api.TooManyStreamsException
@@ -320,6 +322,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // wiring needed. The fragment already plays audio items with
         // these attributes, so this doesn't touch the audio output.
         player.setAudioAttributes(AudioItemTypes.MUSIC_ATTRIBUTES, /* handleAudioFocus = */ true)
+        // Background streaming: a Wi-Fi lock as well as the CPU wake lock,
+        // held by ExoPlayer only while it plays or buffers. With the screen
+        // off (screensaver, TV in standby with the stick awake) Wi-Fi drops
+        // into power save, and a stream fetching segments then stalls; the
+        // fragment's WAKE_MODE_LOCAL is for the screen-on foreground, and it
+        // sets that again when it takes the player back. Media3's advice for
+        // streaming in the background; the lock costs nothing while paused.
+        player.setWakeMode(C.WAKE_MODE_NETWORK)
         activePlayer = player
         attachedGeneration = AudioHandoff.generation()
 
@@ -477,12 +487,14 @@ class OnScreenMediaSessionService : MediaSessionService() {
      *  marker would freeze the moment the user navigates away from the
      *  player. The first beat goes out at once: the fragment's tracker
      *  stops when it hands the player over, and waiting a full interval
-     *  left a gap of up to 20 s at every hand-off. */
+     *  left a gap of up to 20 s at every hand-off. The loop never waits for
+     *  a beat's PUT ([BackgroundBeats]): one that hung used to hold every
+     *  later beat back until the API client's 60 s timeout. */
     private fun startProgressReporter(player: ExoPlayer) {
         progressJob?.cancel()
         progressJob = scope.launch {
             while (isActive) {
-                if (!heartbeat(player)) return@launch
+                heartbeat(player)
                 delay(10_000)
             }
         }
@@ -501,16 +513,17 @@ class OnScreenMediaSessionService : MediaSessionService() {
     /** One 'playing' heartbeat if the player is actually playing (not
      *  paused, buffering, or finished — a finished player keeps
      *  playWhenReady, which kept reporting "playing" every 10 s after the
-     *  last track ended). Returns false once the server refused playback. */
-    private suspend fun heartbeat(player: ExoPlayer): Boolean {
-        val itemId = activeItemId ?: return true
-        if (!player.isPlaying) return true
+     *  last track ended), unless the last one is still out. Main thread
+     *  (it reads the player); the PUT goes out on the report lane. */
+    private fun heartbeat(player: ExoPlayer) {
+        val itemId = activeItemId ?: return
+        if (!player.isPlaying) return
         // Absolutise BOTH sides of the pair. Position is already
         // offset-corrected; duration must be too, or a resumed HLS
         // session reports content-time position against remaining-time
         // duration and trips the server's watched threshold early.
         val dur = contentDurationMs(player)
-        if (dur <= 0) return true
+        if (dur <= 0) return
         // A VBR file can play a little past the length it listed.
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(dur)
         // Best-effort EXCEPT a refusal: any 403 on this heartbeat means
@@ -519,14 +532,17 @@ class OnScreenMediaSessionService : MediaSessionService() {
         // lowered). Swallowing it kept parked music streaming on its
         // already-issued token. Same decision as the fragment's
         // ProgressTracker — see HeartbeatRefusal.
-        val refusal = HeartbeatRefusal.heartbeat {
-            itemRepo.updateProgress(itemId, pos, dur, "playing")
-        }
-        if (refusal != null) {
-            haltForRefusal(player, itemId, refusal)
-            return false
-        }
-        return true
+        val sent = beats.beat(
+            send = { itemRepo.updateProgress(itemId, pos, dur, "playing") },
+            onRefused = { refusal ->
+                // Back on the main thread, and only for the player and item
+                // the beat was about: a chain may have moved on meanwhile.
+                scope.launch {
+                    if (activePlayer === player && activeItemId == itemId) haltForRefusal(player, itemId, refusal)
+                }
+            },
+        )
+        if (!sent) android.util.Log.i(TAG, "heartbeat skipped: the last one is still out")
     }
 
     /** A 'paused' or 'stopped' report for the active item at the player's
@@ -540,6 +556,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
         if (dur <= 0) return
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(dur)
         if (pos <= 0) return
+        beats.beforeTerminal()
         reports.launch {
             runCatching { itemRepo.updateProgress(itemId, pos, dur, state) }
         }
@@ -626,6 +643,7 @@ class OnScreenMediaSessionService : MediaSessionService() {
             // On the detached scope: at the end of the queue the service
             // stops right away, and its own scope's cancellation would take
             // this, the item's only completion report, with it.
+            beats.beforeTerminal()
             reports.launch {
                 runCatching { itemRepo.updateProgress(itemId, dur, dur, "stopped") }
             }
@@ -667,7 +685,10 @@ class OnScreenMediaSessionService : MediaSessionService() {
         val pos = (player.currentPosition + activeHlsOffsetMs).coerceAtMost(maxOf(dur, 0L))
         scope.launch {
             val refusal = if (dur > 0) {
-                HeartbeatRefusal.heartbeat { itemRepo.updateProgress(itemId, pos, dur, "playing") }
+                // Bounded: a hung probe would hold a dead player here.
+                withTimeoutOrNull(BackgroundBeats.BEAT_TIMEOUT_MS) {
+                    HeartbeatRefusal.heartbeat { itemRepo.updateProgress(itemId, pos, dur, "playing") }
+                }
             } else {
                 null
             }
@@ -959,10 +980,18 @@ class OnScreenMediaSessionService : MediaSessionService() {
         const val STRAY_CHANNEL_ID = "playback_service"
         const val STRAY_NOTIFICATION_ID = 0x0A5E
 
-        /** The pause / stop reports. Outlives the service: the final
+        /** Where the reports go out. Outlives the service: the final
          *  'stopped' report is sent as it is destroyed, when its own scope is
-         *  already cancelled. One lane for every instance, so a 'paused'
-         *  never lands after the 'stopped' that follows it. */
-        val reports = ReportLane(CoroutineScope(SupervisorJob() + Dispatchers.IO))
+         *  already cancelled. */
+        val reportScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+
+        /** The pause / stop reports and the heartbeats. One lane for every
+         *  instance, so a 'paused' never lands after the 'stopped' that
+         *  follows it, nor a 'playing' after either. */
+        val reports = ReportLane(reportScope)
+
+        /** The 'playing' heartbeats, on [reports]: bounded, never awaited by
+         *  the beat loop (see [BackgroundBeats]). */
+        val beats = BackgroundBeats(reports, reportScope)
     }
 }

@@ -45,6 +45,21 @@ API change lands only when every first-party client moves with it — see
   background service, which plays the album's (or instant mix's, or book's)
   next or previous item. Previous more than 3 s into an item restarts it,
   and at the first item of an album or book it restarts too.
+- **A hung progress report no longer holds up background heartbeats**
+  (v2.7 item 14; the phone app too). The background service awaited each
+  'playing' PUT before the next tick, so one that hung (up to the client's
+  60 s timeout) delayed every beat after it. Beats now go out without the
+  loop waiting, are cut off after 15 s, and a tick is skipped while the last
+  beat is still out. On the TV a pause or stop report waits for a beat still
+  out for 2 s at most.
+- **Background streaming keeps Wi-Fi awake** (v2.7 item 14; the phone app
+  too). The background player uses Media3's `WAKE_MODE_NETWORK`: a Wi-Fi
+  lock as well as the CPU wake lock, held only while it plays or buffers, so
+  Wi-Fi power save with the screen off can't starve a stream. The TV's
+  player screen keeps the CPU wake lock alone, as before.
+- A buffering stall is not reported as a pause (v2.7 item 13): already true
+  since v2.5.0, where a rebuffer holds the heartbeat instead of sending
+  'paused'.
 
 ### CI
 

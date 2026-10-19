@@ -3283,6 +3283,9 @@ class PlaybackFragment : VideoSupportFragment(), KeyEventHandler {
         // The server session came back with the player (handed over in
         // handOffAudioPlayerToService): this view model owns it again.
         parkedMeta?.session?.let { viewModel.adoptSession(it) }
+        // The service held a Wi-Fi lock for background streaming; back on
+        // screen, the CPU wake lock alone, as initPlayer sets it.
+        reclaimed.setWakeMode(androidx.media3.common.C.WAKE_MODE_LOCAL)
         player = reclaimed
         // Offset and length as the service left them: tell the transport bar.
         refreshGlueTimeline()
