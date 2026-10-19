@@ -72,6 +72,13 @@ API change lands only when every first-party client moves with it — see
 
 ### Fixed
 
+- **A Chromecast showed no poster for what it was playing.** The web
+  player sent `<server><poster_path>` (no `/artwork/`, no token) and the
+  phone app `/artwork/<path>` without a token, but `/artwork` needs auth and
+  the receiver has none of the sender's. Both now send
+  `/artwork/<path>?w=…&token=<asset token>`; the browser keeps the
+  purpose=asset token from its last sign-in or refresh for this (read-only,
+  24 h, never used for its own requests).
 - **History showed movies and music as blank tiles.** `GET /api/v1/history`
   sent only an item's `thumb_path`, which episodes have and movies and tracks
   don't. `thumb_path` now falls back to the item's poster, then its parent's

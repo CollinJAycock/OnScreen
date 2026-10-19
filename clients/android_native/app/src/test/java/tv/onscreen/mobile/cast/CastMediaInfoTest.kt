@@ -229,4 +229,11 @@ class CastMediaInfoTest {
         val got = CastMediaInfo.build(goodItem, goodFile, "https://o.example")
         assertThat(got!!.customData).containsExactly("itemId", "item-uuid", "fileId", "file-uuid")
     }
+
+    @Test
+    fun `poster URL carries the asset token for the receiver`() {
+        val got = CastMediaInfo.build(goodItem, goodFile, "https://o.example", assetToken = "v4.local.a+b")
+        assertThat(got!!.imageUrls)
+            .containsExactly("https://o.example/artwork/Movies/Inception%20%282010%29/poster.jpg?w=500&token=v4.local.a%2Bb")
+    }
 }

@@ -166,7 +166,7 @@ describe('HLS LOAD payload', () => {
       hlsVideoSegmentFormat: 'fmp4',
       customData: { itemId: 'i1', fileId: 'f1' },
     });
-    expect(info.metadata.images).toEqual([{ url: 'https://o.example/artwork/p.jpg' }]);
+    expect(info.metadata.images).toEqual([{ url: 'https://o.example/artwork/p.jpg?w=600' }]);
     expect(info.tracks).toEqual([track]);
     expect(buildCastHlsMediaInfo(item, mkv, { origin: 'https://o.example', playlistUrl: url, segmentFormat: 'ts' }).tracks).toBeUndefined();
   });
