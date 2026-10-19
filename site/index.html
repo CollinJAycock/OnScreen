@@ -62,7 +62,7 @@
   .nav nav a { color: var(--text-2); }
   .nav nav a:hover { color: var(--text); text-decoration: none; }
   .nav .gh { padding: 6px 14px; border: 1px solid var(--line); border-radius: 8px; color: var(--text); }
-  @media (max-width: 720px) { .nav nav a:not(.gh) { display: none; } }
+  @media (max-width: 720px) { .nav nav a:not(.gh) { display: none; } .nav nav { gap: 10px; } }
 
   /* Hero */
   .hero { padding: 72px 0 40px; text-align: center; position: relative; overflow: hidden; }
@@ -139,6 +139,16 @@
   .steps li { background: var(--bg-2); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; color: var(--text-2); font-size: 0.95rem; }
   .steps b { color: var(--text); display: block; margin-bottom: 4px; }
 
+  /* Sponsor */
+  .nav .sponsor { display: inline-flex; align-items: center; gap: 6px; color: #f2a7d8; border-color: rgba(242, 167, 216, 0.35); }
+  .nav .sponsor svg { width: 14px; height: 14px; }
+  .nav .sponsor:hover { border-color: #f2a7d8; color: #ffd0ee; }
+  .support { text-align: center; }
+  .support .sub { margin: 0 auto 28px; }
+  .btn.sponsor-btn { background: #db61a2; border-color: #db61a2; color: #fff; }
+  .btn.sponsor-btn:hover { background: #e879b5; }
+  .btn.sponsor-btn svg { width: 18px; height: 18px; }
+
   /* Thanks */
   .thanks { text-align: center; }
   .thanks .heart { width: 44px; height: 44px; margin: 0 auto 16px; color: var(--accent-2); }
@@ -161,6 +171,7 @@
       <a href="#apps">Apps</a>
       <a href="#compare">Compare</a>
       <a href="#start">Get started</a>
+      <a class="gh sponsor" href="https://github.com/sponsors/CollinJAycock"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.6-10-9.3C.4 8.6 2.1 4.5 6 4.1c2.1-.2 3.7.9 4.6 2.4.5.8 2.3.8 2.8 0 .9-1.5 2.5-2.6 4.6-2.4 3.9.4 5.6 4.5 4 7.6C19.5 16.4 12 21 12 21z"/></svg>Sponsor</a>
       <a class="gh" href="https://github.com/CollinJAycock/OnScreen">GitHub</a>
     </nav>
   </div>
@@ -325,6 +336,15 @@ docker run -p 7070:7070 \
       <p class="note">GPU transcoding, worker nodes, high availability and upgrade notes: see the <a href="https://github.com/CollinJAycock/OnScreen/blob/main/docs/deployment.md">deployment guide</a>.</p>
     </div>
   </section>
+  <section id="support" class="support">
+    <div class="wrap">
+      <p class="eyebrow">Support the project</p>
+      <h2>Free, with no paid tier. Help keep it that way.</h2>
+      <p class="sub">OnScreen is built in spare time. If it's useful to you, a one-off or monthly sponsorship helps keep it going.</p>
+      <a class="btn sponsor-btn" href="https://github.com/sponsors/CollinJAycock"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.6-10-9.3C.4 8.6 2.1 4.5 6 4.1c2.1-.2 3.7.9 4.6 2.4.5.8 2.3.8 2.8 0 .9-1.5 2.5-2.6 4.6-2.4 3.9.4 5.6 4.5 4 7.6C19.5 16.4 12 21 12 21z"/></svg>Sponsor on GitHub</a>
+    </div>
+  </section>
+
   <section id="thanks" class="thanks">
     <div class="wrap">
       <svg class="heart" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 21s-7.5-4.6-10-9.3C.4 8.6 2.1 4.5 6 4.1c2.1-.2 3.7.9 4.6 2.4.5.8 2.3.8 2.8 0 .9-1.5 2.5-2.6 4.6-2.4 3.9.4 5.6 4.5 4 7.6C19.5 16.4 12 21 12 21z"/></svg>
