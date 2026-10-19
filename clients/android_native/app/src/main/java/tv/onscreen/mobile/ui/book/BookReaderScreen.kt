@@ -47,6 +47,7 @@ import androidx.webkit.WebViewAssetLoader.AssetsPathHandler
 import coil.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -101,6 +102,12 @@ class BookReaderViewModel @Inject constructor(
     /** Wall clock for a position's time (the server compares them). A seam
      *  for tests. */
     internal var now: () -> Long = { System.currentTimeMillis() }
+
+    /** Where the EPUB download runs. A seam for tests: on the real IO pool
+     *  the download outlives `advanceUntilIdle()`, and once the test has
+     *  reset Main it resumes into no Main dispatcher, failing whichever test
+     *  runs next. */
+    internal var ioDispatcher: CoroutineDispatcher = Dispatchers.IO
 
     /** The page position not yet sent to the server, and its debounce. */
     private var unsaved: ReadingPosition? = null
@@ -225,7 +232,7 @@ class BookReaderViewModel @Inject constructor(
         fileId: String,
         itemId: String,
         serverUrl: String,
-    ): File = withContext(Dispatchers.IO) {
+    ): File = withContext(ioDispatcher) {
         val dir = File(appContext.cacheDir, "book-epubs").apply { mkdirs() }
         // Name the cache file from a hash of the id, never the raw string.
         // itemId is a nav argument, and Navigation URL-DECODES path arguments
