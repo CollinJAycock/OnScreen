@@ -9,6 +9,18 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Changed
+
+- **ABR works on a replicated API tier.** Starting or restarting a
+  ladder rung's encoder now takes a Valkey lease (`SET NX PX` with a
+  per-holder token, renewed while held, released with compare-and-delete)
+  on top of the in-process mutex, so two API instances serving segments
+  for the same session can no longer both start an ffmpeg for one rung.
+  The 2-second floor between forced restarts is shared through Valkey
+  too. If Valkey errors, the lock falls back to the in-process mutex.
+
 ## [v2.6.2] — unreleased
 
 Patch release for the web app: Home rows can be dragged into order, and

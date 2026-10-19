@@ -905,7 +905,10 @@ func run() error {
 		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)}).
 		// Server-wide internet streaming limit for remote clients.
 		WithRemotePolicy(remotePolicy).
-		WithStreamLimit(streamLimit)
+		WithStreamLimit(streamLimit).
+		// ABR rung-child create/restart is exclusive across API replicas:
+		// segment requests for one session can land on any instance.
+		WithABRLock(valkeyClient)
 
 	// Attach the SECRET_KEY-derived bearer to every API→worker segment/seghead
 	// proxy request, matching what each worker's segment server now requires.
