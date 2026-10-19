@@ -17,4 +17,4 @@ Preview locally:
 Deploy:
 
     aws s3 sync site/ s3://on-screen-site-353750335352/ --delete --exclude README.md --profile loadHub
-    aws cloudfront create-invalidation --distribution-id <id> --paths "/*" --profile loadHub
+    aws cloudfront create-invalidation --distribution-id E2MIVU3W0V9WL5 --paths "/*" --profile loadHub
