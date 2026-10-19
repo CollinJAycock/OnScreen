@@ -19,6 +19,9 @@ type sessionPlaybackMeta struct {
 	outW, outH    int
 	audioCodec    string // "aac" | "copy"
 	audioChannels int
+	// audioPassthrough: the copied track is bitstreamed to the client's
+	// receiver (audioPassthrough), not decoded by the client.
+	audioPassthrough bool
 }
 
 func (m sessionPlaybackMeta) apply(s *transcode.Session) {
@@ -27,6 +30,7 @@ func (m sessionPlaybackMeta) apply(s *transcode.Session) {
 	s.OutputWidth, s.OutputHeight = m.outW, m.outH
 	s.OutputAudioCodec = m.audioCodec
 	s.OutputAudioChannels = m.audioChannels
+	s.OutputAudioPassthrough = m.audioPassthrough
 }
 
 // startReasons explains, in words an admin can act on, why Start is running a

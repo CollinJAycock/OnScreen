@@ -178,14 +178,24 @@ func (h *NativeTranscodeHandler) serveABRMaster(w http.ResponseWriter, r *http.R
 	codecs := ""
 	if len(sess.ABRRenditions) > 0 {
 		topH := sess.ABRRenditions[0].Height // [0] = tallest rung
+		// The rungs' level is held to the client's declared one, and their
+		// audio may be a passed-through track: CODECS names both.
+		levelCap := 0
 		switch {
 		case sess.AV1Output:
-			codecs = transcode.AV1MasterCodecs(topH)
+			if sess.OutputLimits != nil {
+				levelCap = sess.OutputLimits.AV1Level
+			}
+			codecs = transcode.MasterCodecs(transcode.LadderAV1, topH, levelCap, sess.AudioPassthroughCodec)
 		case sess.HEVCOutput:
-			codecs = transcode.HEVCMasterCodecs(topH)
+			if sess.OutputLimits != nil {
+				levelCap = sess.OutputLimits.HEVCLevel
+			}
+			codecs = transcode.MasterCodecs(transcode.LadderHEVC, topH, levelCap, sess.AudioPassthroughCodec)
 		}
 	}
-	master := transcode.BuildMasterPlaylist(sess.ABRRenditions, codecs, func(rd transcode.Rendition) string {
+	audioKbps := transcode.PassthroughAudioKbps(sess.AudioPassthroughCodec)
+	master := transcode.BuildMasterPlaylistAudio(sess.ABRRenditions, codecs, audioKbps, func(rd transcode.Rendition) string {
 		return publicSeg(h.segBase(), fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token))
 	})
 	w.Header().Set("Content-Type", "application/x-mpegURL")
@@ -746,10 +756,15 @@ func (h *NativeTranscodeHandler) ensureRungChild(ctx context.Context, parent *tr
 		Width:            rung.Width,
 		Height:           rung.Height,
 		BitrateKbps:      rung.BitrateKbps,
-		AudioCodec:       "aac",
+		AudioCodec:       abrRungAudioCodec(parent),
 		AudioChannels:    parent.AudioChannels,
 		AudioBitrateKbps: parent.AudioBitrateKbps,
 		AudioStreamIndex: parent.AudioStreamIndex,
+		// A TrueHD/DTS track every rung copies for the client's receiver:
+		// fMP4 (the parent's FMP4Segments already pinned ForceFMP4) and
+		// -strict -2, on a worker with the audio_passthrough feature.
+		AudioPassthrough: abrRungFMP4Audio(parent),
+		OutputLimits:     parent.OutputLimits,
 		NeedsToneMap:     parent.NeedsToneMap,
 		EnqueuedAt:       time.Now(),
 	}
@@ -831,4 +846,24 @@ func findRung(rends []transcode.Rendition, label string) *transcode.Rendition {
 		}
 	}
 	return nil
+}
+
+// abrRungAudioCodec is a rung child's audio: "copy" when the parent passes a
+// track through to the client's receiver (every rung carries the same
+// copied track), else AAC.
+func abrRungAudioCodec(parent *transcode.Session) string {
+	if parent.AudioPassthroughCodec != "" {
+		return "copy"
+	}
+	return "aac"
+}
+
+// abrRungFMP4Audio reports whether the rungs copy TrueHD or DTS, which only
+// fMP4 carries (TranscodeJob.AudioPassthrough).
+func abrRungFMP4Audio(parent *transcode.Session) bool {
+	switch parent.AudioPassthroughCodec {
+	case "truehd", "dts":
+		return true
+	}
+	return false
 }
