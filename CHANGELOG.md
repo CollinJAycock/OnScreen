@@ -30,6 +30,16 @@ API change lands only when every first-party client moves with it — see
   the detection can't place, such as a TV with Google TV built in that
   reports its panel's model number.
 
+### Android TV / Fire TV
+
+- **The remote's Next and Previous work for background music and books**
+  (v2.7 item 12). The background session's player holds one item, so its
+  media session offered no skip at all and MEDIA_NEXT did nothing. It now
+  offers Next and Previous for music and audiobooks and hands them to the
+  background service, which plays the album's (or instant mix's, or book's)
+  next or previous item. Previous more than 3 s into an item restarts it,
+  and at the first item of an album or book it restarts too.
+
 ### CI
 
 - **TV web apps on every PR** (v2.7 item 10). A new `TV web clients`

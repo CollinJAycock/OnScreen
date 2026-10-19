@@ -194,6 +194,73 @@ class SessionPlayerTest {
         assertThat(heard).containsExactly(offered)
     }
 
+    private class FakeQueue(var skips: Boolean = true) : SessionPlayer.Queue {
+        var nexts = 0
+        var previouses = 0
+        override fun skips() = skips
+        override fun skipToNext() { nexts++ }
+        override fun skipToPrevious() { previouses++ }
+    }
+
+    @Test
+    fun `with a queue, Next and Previous are offered and go to the service`() {
+        val queue = FakeQueue()
+        val p = SessionPlayer(inner, { offset }, { itemDuration }, { names }, queue)
+        every { inner.hasNextMediaItem() } returns false
+        every { inner.hasPreviousMediaItem() } returns false
+        every { inner.isCommandAvailable(any()) } returns false
+        every { inner.maxSeekToPreviousPosition } returns 3_000L
+        val built = mockk<Player.Commands>()
+        val builder = mockk<Player.Commands.Builder>()
+        every { builder.addAll(*anyIntVararg()) } returns builder
+        every { builder.build() } returns built
+        every { inner.availableCommands } returns mockk { every { buildUpon() } returns builder }
+
+        assertThat(p.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT)).isTrue()
+        assertThat(p.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM)).isTrue()
+        assertThat(p.isCommandAvailable(Player.COMMAND_SEEK_TO_PREVIOUS)).isTrue()
+        assertThat(p.availableCommands).isSameInstanceAs(built)
+        verify {
+            builder.addAll(
+                Player.COMMAND_SEEK_TO_NEXT,
+                Player.COMMAND_SEEK_TO_NEXT_MEDIA_ITEM,
+                Player.COMMAND_SEEK_TO_PREVIOUS,
+                Player.COMMAND_SEEK_TO_PREVIOUS_MEDIA_ITEM,
+            )
+        }
+
+        p.seekToNext()
+        p.seekToNextMediaItem()
+        assertThat(queue.nexts).isEqualTo(2)
+        verify(exactly = 0) { inner.seekToNext() }
+
+        // 2 s into the item (offset 0): Previous goes to the previous item.
+        offset = 0L
+        every { inner.currentPosition } returns 2_000L
+        p.seekToPrevious()
+        assertThat(queue.previouses).isEqualTo(1)
+        // Under way: Previous restarts it, in item time.
+        every { inner.currentPosition } returns 45_000L
+        p.seekToPrevious()
+        assertThat(queue.previouses).isEqualTo(1)
+        verify { inner.seekTo(0L) }
+        verify(exactly = 0) { inner.seekToPrevious() }
+    }
+
+    @Test
+    fun `a queue with nothing to skip (video) leaves the player's own commands`() {
+        val queue = FakeQueue(skips = false)
+        val p = SessionPlayer(inner, { offset }, { itemDuration }, { names }, queue)
+        every { inner.hasNextMediaItem() } returns false
+        every { inner.isCommandAvailable(any()) } returns true
+        p.seekToNext()
+        p.seekToPrevious()
+        assertThat(queue.nexts).isEqualTo(0)
+        assertThat(queue.previouses).isEqualTo(0)
+        assertThat(p.isCommandAvailable(Player.COMMAND_SEEK_TO_NEXT)).isFalse()
+        verify { inner.seekToPrevious() }
+    }
+
     @Test
     fun `the session names the item`() {
         val md = player.mediaMetadata
