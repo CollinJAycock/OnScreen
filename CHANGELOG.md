@@ -32,6 +32,12 @@ API change lands only when every first-party client moves with it — see
 
 ### Android TV / Fire TV
 
+- **The seek bar's scale after taking back background audio** (v2.7 item
+  11). Reopening a transcoded or remuxed track that was playing in the
+  background showed the server session's own scale ("1:30 / 2:28") for 4 to
+  21 s. The player screen now takes the session's offset and the track's
+  length from the hand-off before the transport bar first draws, and tells
+  the bar to read them again once the item has loaded.
 - **The remote's Next and Previous work for background music and books**
   (v2.7 item 12). The background session's player holds one item, so its
   media session offered no skip at all and MEDIA_NEXT did nothing. It now
