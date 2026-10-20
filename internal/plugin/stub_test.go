@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
-	"net/url"
 	"sync/atomic"
 	"testing"
 
@@ -41,11 +40,6 @@ func newToolStub(t *testing.T, tool string, handle func(args map[string]any) (*m
 }
 
 func (s *toolStub) endpoint() string { return s.server.URL + "/mcp" }
-
-func (s *toolStub) host() string {
-	u, _ := url.Parse(s.server.URL)
-	return u.Hostname()
-}
 
 func (s *toolStub) args(t *testing.T, into any) {
 	t.Helper()

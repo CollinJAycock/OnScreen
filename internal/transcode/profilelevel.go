@@ -501,6 +501,8 @@ func outputLimitArgs(e Encoder, o OutputLimits, w, h int) []string {
 			switch e {
 			case EncoderAMF, EncoderVAAPI:
 				p = "constrained_baseline"
+			default:
+				// x264, NVENC and QSV take "baseline" as it is.
 			}
 		}
 		args = append(args, "-profile:v", p)
@@ -521,8 +523,10 @@ func outputLimitArgs(e Encoder, o OutputLimits, w, h int) []string {
 	case EncoderVAAPI, EncoderHEVCVAAPI:
 		// Named levels without a trailing .0 ("4", "4.1").
 		return append(args, "-level", FormatLevel(level))
+	default:
+		// x264, NVENC and AMF: the dotted level ("4.1", "5.0").
+		return append(args, "-level", levelDotted(level))
 	}
-	return append(args, "-level", levelDotted(level))
 }
 
 // levelDotted renders tenths as major.minor always: 40 → "4.0".
