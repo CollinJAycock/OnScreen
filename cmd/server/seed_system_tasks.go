@@ -25,7 +25,9 @@ type systemTask struct {
 // on. A missing row here isn't a user choice — the corresponding feature
 // silently fails (DVR never matches schedules → never records; EPG goes
 // stale → matcher has nothing to match against). Keep this list narrow:
-// genuinely operator-discretion tasks (e.g. backup) stay out entirely. The
+// genuinely operator-discretion tasks (e.g. backup) stay out entirely —
+// migration 00059 seeds a daily backup on FRESH installs only, once, so an
+// admin who deletes it on an existing server never sees it come back. The
 // one exception is OCR, seeded **disabled** below: a heavy sweep that must
 // never run unprompted, but operators previously had to know it existed and
 // hand-create it. A disabled, pre-configured (off-peak weekly) row makes it

@@ -188,12 +188,13 @@ func (d *NotificationDispatcher) workerFor(p Plugin) (*pluginWorker, error) {
 		return nil, err
 	}
 	w := &pluginWorker{
-		plugin: p,
-		client: pc,
-		queue:  make(chan NotificationEvent, queueDepth),
-		stopCh: make(chan struct{}),
-		logger: d.logger,
-		audit:  d.audit,
+		plugin:  p,
+		client:  pc,
+		queue:   make(chan NotificationEvent, queueDepth),
+		stopCh:  make(chan struct{}),
+		logger:  d.logger,
+		audit:   d.audit,
+		breaker: newBreaker(),
 	}
 	d.wg.Add(1)
 	// SafeGo so a panic inside w.run (a bad plugin payload, a connection
@@ -220,9 +221,9 @@ type pluginWorker struct {
 
 	stopOnce sync.Once
 
-	// Breaker fields are only touched from run, so no mutex needed.
-	consecFails int
-	openUntil   time.Time
+	// breaker is shared with nothing else (one per worker), but uses the
+	// same type, threshold and cooldown as the metadata and task roles.
+	breaker *breaker
 }
 
 func (w *pluginWorker) matches(p Plugin) bool {
@@ -285,7 +286,7 @@ func (w *pluginWorker) run(ctx context.Context) {
 }
 
 func (w *pluginWorker) deliver(ctx context.Context, evt NotificationEvent) {
-	if !w.openUntil.IsZero() && time.Now().Before(w.openUntil) {
+	if ok, _ := w.breaker.allow(); !ok {
 		// Breaker open — drop with audit row.
 		w.logger.Debug("plugin breaker open, dropping event",
 			"plugin", w.plugin.Name, "event", evt.Event,
@@ -306,9 +307,7 @@ func (w *pluginWorker) deliver(ctx context.Context, evt NotificationEvent) {
 	cancel()
 
 	if err == nil {
-		if w.consecFails > 0 || !w.openUntil.IsZero() {
-			w.openUntil = time.Time{}
-			w.consecFails = 0
+		if w.breaker.success() {
 			if w.audit != nil {
 				w.audit.Log(ctx, nil, ActionPluginNotifyBreakerClose,
 					w.plugin.Name, nil, "")
@@ -342,12 +341,12 @@ func (w *pluginWorker) deliver(ctx context.Context, evt NotificationEvent) {
 		return
 	}
 
-	w.consecFails++
+	opened, openUntil, fails := w.breaker.failure()
 	w.logger.Warn("plugin delivery failed",
 		"plugin", w.plugin.Name,
 		"event", evt.Event,
 		"correlation_id", evt.CorrelationID,
-		"consec_fails", w.consecFails,
+		"consec_fails", fails,
 		"err", err)
 	if w.audit != nil {
 		w.audit.Log(ctx, nil, ActionPluginNotifyFailed, w.plugin.Name,
@@ -358,12 +357,11 @@ func (w *pluginWorker) deliver(ctx context.Context, evt NotificationEvent) {
 			}, "")
 	}
 
-	if w.consecFails >= breakerThreshold {
-		w.openUntil = time.Now().Add(breakerCooldown)
+	if opened {
 		w.logger.Warn("plugin breaker tripped",
 			"plugin", w.plugin.Name,
 			"cooldown", breakerCooldown,
-			"open_until", w.openUntil)
+			"open_until", openUntil)
 		if w.audit != nil {
 			w.audit.Log(ctx, nil, ActionPluginNotifyBreakerOpen,
 				w.plugin.Name, map[string]any{

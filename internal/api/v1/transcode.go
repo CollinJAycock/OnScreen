@@ -149,6 +149,10 @@ type NativeTranscodeHandler struct {
 	// Optional; without them a burn-in runs unshifted.
 	subOffsets SubtitleStreamOffsetReader
 	extSubs    ExternalSubLister
+
+	// abrLock makes ABR rung-child create/restart exclusive across API
+	// instances (WithABRLock). Optional; nil = in-process lock only.
+	abrLock *valkey.Client
 }
 
 // NewNativeTranscodeHandler creates a NativeTranscodeHandler.
@@ -1105,7 +1109,35 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// deep sources on these clients — but the job then picked an HEVC encoder
 	// (source preservation) and emitted Main 10: the exact property that
 	// forced the transcode, handed back to the client that can't decode it.
-	force8Bit := caps.MaxVideoBitDepth > 0 && caps.MaxVideoBitDepth < 10 && !body.VideoCopy
+	// A client whose HEVC ceiling is Main (hevcProfile=main) needs the same
+	// for an HEVC re-encode: Main 10 is above its profile.
+	force8Bit := ((caps.MaxVideoBitDepth > 0 && caps.MaxVideoBitDepth < 10) ||
+		(preferHEVC && caps.HEVCMain8Only())) && !body.VideoCopy
+
+	// Profile / level ceiling for the re-encode (h264Profile, h264Level,
+	// hevcLevel, av1Level): the picture is sized to fit the predicted output
+	// codec's level at the source frame rate, the bitrate kept within it,
+	// and the encoder told the level (outputLimits → the job). Nothing
+	// changes for a client that declares none.
+	var outputLimits *transcode.OutputLimits
+	if !body.VideoCopy && !sourceAudioOnly {
+		fps := 0.0
+		if file.FrameRate != nil {
+			fps = *file.FrameRate
+		}
+		if ol := transcode.OutputLimitsFor(caps, fps); !ol.IsZero() {
+			outputLimits = &ol
+			outCodec := "h264"
+			switch {
+			case preferAV1:
+				outCodec = "av1"
+			case preferHEVC:
+				outCodec = "h265"
+			}
+			width, height, bitrateKbps = fitOutputLevel(outCodec, ol.LevelFor(outCodec), sourceW, sourceH, fps,
+				width, height, bitrateKbps)
+		}
+	}
 
 	// Audio passthrough on remux: when DirectStream was chosen for the
 	// CONTAINER (the client decodes the source audio, within its channel cap,
@@ -1129,6 +1161,10 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// this: audioDecoder alone never widens the copy.
 	tsSegments := strings.EqualFold(body.SegmentContainer, "ts")
 	audioCopy, audioPassthrough := false, false
+	// passthroughCodec names the track copied for the client's receiver
+	// (audioPassthrough), on a remux or a re-encode; "" when the audio is
+	// encoded to AAC or copied for the client's own decoder.
+	passthroughCodec := ""
 	if selCodec := transcode.SourceAudioCodec(file, audioStreamIdx); body.VideoCopy && selCodec != "" {
 		alias := transcode.CanonicalAudioCodec(selCodec)
 		srcCh := transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx)
@@ -1136,11 +1172,30 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		switch alias {
 		case "aac", "ac3", "eac3", "mp3": // valid in both MPEG-TS and fMP4
 			audioCopy = (caps.SupportsAudioCodec(alias) && chFit) || caps.PassesThroughAudio(alias)
+			if audioCopy && caps.PassesThroughAudio(alias) && !(caps.SupportsAudioCodec(alias) && chFit) {
+				passthroughCodec = alias
+			}
 		case "truehd", "dts":
 			if caps.PassesThroughAudio(alias) && !tsSegments && !sourceAudioOnly &&
 				h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureAudioPassthrough) {
 				audioCopy, audioPassthrough = true, true
+				passthroughCodec = alias
 			}
+		}
+	} else if selCodec != "" {
+		// Re-encode (v2.7): the video is converted, but a track the client
+		// bitstreams to its receiver is still copied, single rendition and
+		// every ABR rung alike, with the remux's fMP4 / worker-feature rules
+		// for TrueHD and DTS. Not under a bitrate limit: a lossless track
+		// alone can be several Mbps.
+		alias := transcode.CanonicalAudioCodec(selCodec)
+		bitrateLimited := streamCaps.BitrateKbps > 0 || streamCaps.Quality.MaxAudioBitrateKbps > 0
+		audioCopy, audioPassthrough = transcodeAudioPassthrough(alias, caps, sourceAudioOnly, tsSegments,
+			bitrateLimited, audioRate, func() bool {
+				return h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureAudioPassthrough)
+			})
+		if audioCopy {
+			passthroughCodec = alias
 		}
 	}
 	// Dolby Vision on a video copy: kept (the configuration record and each
@@ -1174,7 +1229,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// The worker overwrites these via SetWorkerInfo once it knows the encoder
 	// it actually got, but the client can ask for the playlist before that
 	// lands, so the initial guess has to be right on its own.
-	sessVout := transcode.VideoOutput{HEVC: preferHEVC, AV1: preferAV1, TSSegments: tsSegments}
+	sessVout := transcode.VideoOutput{HEVC: preferHEVC, AV1: preferAV1, ForcedFMP4: audioPassthrough, TSSegments: tsSegments}
 	if body.VideoCopy {
 		sessVout = transcode.ResolveVideoOutput(transcode.EncoderCopy, isSourceHEVC, isSourceAV1, audioPassthrough, tsSegments)
 	}
@@ -1199,6 +1254,12 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	if audioCopy {
 		playMeta.audioCodec = "copy"
 		playMeta.audioChannels = transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx)
+	}
+	if passthroughCodec != "" {
+		playMeta.audioPassthrough = true
+		if decision == "transcode" {
+			playMeta.reasons = append(playMeta.reasons, passthroughReason(passthroughCodec))
+		}
 	}
 	if burn != nil {
 		// The burn-in is the reason when nothing else is (startReasons'
@@ -1247,7 +1308,9 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if file.VideoBitDepth != nil {
 			sourceDepth = *file.VideoBitDepth
 		}
-		depthOK := !force8Bit || sourceDepth < 10
+		depthOK := !(caps.MaxVideoBitDepth > 0 && caps.MaxVideoBitDepth < 10) || sourceDepth < 10
+		// Likewise an HEVC ladder for a client whose HEVC ceiling is Main.
+		hevcDepthOK := depthOK && !(caps.HEVCMain8Only() && sourceDepth >= 10)
 		abrCodec := transcode.LadderH264
 		switch {
 		// A client that asked for MPEG-TS segments keeps the H.264 ladder:
@@ -1258,7 +1321,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			h.sessions.FleetCanEncode(ctx, "av1"):
 			abrCodec = transcode.LadderAV1
 		case caps.SupportsHEVC && (isSourceHEVC || sourceH >= 2160 || streamCaps.Quality.PreferredVideoCodec == "hevc") &&
-			depthOK && h.sessions.FleetCanEncode(ctx, "hevc"):
+			hevcDepthOK && h.sessions.FleetCanEncode(ctx, "hevc"):
 			abrCodec = transcode.LadderHEVC
 		}
 		// Resolve the ladder height ceiling. An explicit quality pick wins;
@@ -1273,6 +1336,16 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if caps.MaxHeight > 0 && (ladderCap == 0 || caps.MaxHeight < ladderCap) {
 			ladderCap = caps.MaxHeight
 		}
+		// ... and so does its level for the ladder's codec (hevcLevel=4.1 is
+		// 1080p30 at most): no rung above what the decoder takes.
+		ladderLevel := 0
+		if outputLimits != nil {
+			ladderLevel = outputLimits.LevelFor(abrCodec)
+			if lh := transcode.LevelMaxHeight(abrCodec, ladderLevel, sourceW, sourceH, outputLimits.FrameRate); lh > 0 &&
+				(ladderCap == 0 || lh < ladderCap) {
+				ladderCap = lh
+			}
+		}
 		// Same ceiling the single-rendition path applies below: the per-user
 		// stream cap wins over the server-wide default when it is lower. The
 		// ladder used to ignore both and take its bitrates straight from the
@@ -1282,12 +1355,21 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if streamCaps.BitrateKbps > 0 && (abrMaxBitrate <= 0 || streamCaps.BitrateKbps < abrMaxBitrate) {
 			abrMaxBitrate = streamCaps.BitrateKbps
 		}
+		if lk := transcode.LevelMaxKbps(abrCodec, ladderLevel); lk > 0 && (abrMaxBitrate <= 0 || lk < abrMaxBitrate) {
+			abrMaxBitrate = lk
+		}
 		ladder := transcode.BuildLadder(sourceW, sourceH, srcBitrate, abrCodec, ladderCap, abrMaxBitrate)
 		if len(ladder) > 1 {
 			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser, playMeta.apply,
 				func(s *transcode.Session) {
 					s.Parts = srcParts
 					s.AudioBitrateKbps = streamCaps.Quality.aacKbps(audioChannels)
+					// Every rung copies the same passed-through track
+					// (muxed into each rung, as the AAC is); TrueHD and DTS
+					// make the whole ladder fMP4.
+					s.AudioPassthroughCodec = passthroughCodec
+					s.FMP4Segments = audioPassthrough
+					s.OutputLimits = outputLimits
 				})
 			// startABR answers the client itself; its parent session existing
 			// under sessionID is the success signal.
@@ -1406,6 +1488,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		AudioOnly:        sourceAudioOnly,
 		NoAudio:          sourceNoAudio,
 		Force8Bit:        force8Bit,
+		OutputLimits:     outputLimits,
 		NeedsToneMap:     isSourceHDR && !body.VideoCopy,
 		PreferHEVC:       preferHEVC,
 		PreferAV1:        preferAV1,
@@ -1438,6 +1521,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		"supports_av1", caps.SupportsAV1,
 		"audio_channels", audioChannels,
 		"audio_passthrough", audioPassthrough,
+		"passthrough_codec", passthroughCodec,
+		"output_limits", outputLimits != nil,
 		"burn_subtitle", burn != nil,
 		"dolby_vision", string(dvMode),
 		"client_profile", hasProfile,

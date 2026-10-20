@@ -83,6 +83,16 @@ if ! sudo -u "$RUN_USER" test -r "$INSTALL_DIR/server"; then
     exit 1
 fi
 
+# Default output_dir of the scheduled database backup (a fresh install seeds a
+# daily backup task pointing here). The run user can't create it under the
+# root-owned /var, and a dump is the whole database, so make it owner-only.
+# An existing directory is left as it is.
+BACKUP_DIR="/var/backups/onscreen"
+if [ ! -d "$BACKUP_DIR" ]; then
+    echo "==> Creating $BACKUP_DIR for scheduled database backups"
+    install -d -m 700 -o "$RUN_USER" "$BACKUP_DIR"
+fi
+
 echo "==> Reloading systemd"
 systemctl daemon-reload
 

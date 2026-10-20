@@ -42,7 +42,9 @@ and that app loses access on its next request.
 - **Search** (the app's search box) — title, author and text.
 
 Each book shows its title, author, year, genres, summary and cover, and a
-download link for the file in its own format.
+download link for the file in its own format. An EPUB's title, author and
+description come from the book itself (its OPF metadata); a book without
+them is titled after its filename.
 
 You see exactly what you see in the web app: only the libraries you have
 access to, and only books within your content-rating limit and label

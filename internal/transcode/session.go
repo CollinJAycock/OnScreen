@@ -150,6 +150,19 @@ type Session struct {
 	// OutputAudioChannels the resulting channel count.
 	OutputAudioCodec    string `json:"output_audio_codec,omitempty"`
 	OutputAudioChannels int    `json:"output_audio_channels,omitempty"`
+	// OutputAudioPassthrough: the copied track goes to the client's
+	// receiver undecoded (audioPassthrough). Display only.
+	OutputAudioPassthrough bool `json:"output_audio_passthrough,omitempty"`
+
+	// AudioPassthroughCodec (ABR parent): the canonical codec of the track
+	// every rung copies for the client's receiver ("ac3", "eac3", "truehd",
+	// "dts"); empty = the rungs encode AAC. TrueHD and DTS also set
+	// FMP4Segments, so the whole ladder is fMP4. Read by the rung children
+	// and the master playlist's CODECS / BANDWIDTH.
+	AudioPassthroughCodec string `json:"audio_passthrough_codec,omitempty"`
+	// OutputLimits (ABR parent): the client's profile / level ceiling, passed
+	// to every rung child's job. nil = none.
+	OutputLimits *OutputLimits `json:"output_limits,omitempty"`
 }
 
 // VideoOutput reads the two *Output flags back as the container question they
@@ -1179,6 +1192,11 @@ type TranscodeJob struct {
 	// MaxVideoBitDepth is below 10, so a bit-depth-forced transcode cannot
 	// hand back the very property that forced it. See BuildArgs.Force8Bit.
 	Force8Bit bool `json:"force_8bit,omitempty"`
+	// OutputLimits caps a re-encode at the client's declared H.264 profile
+	// and per-codec level (see OutputLimitsFor); nil = none. A worker that
+	// predates it ignores it and the encoder picks the level itself — the
+	// API has already sized the picture to fit, so that is still in range.
+	OutputLimits *OutputLimits `json:"output_limits,omitempty"`
 	// CostCenti is the job's weighted cost (see JobCostCenti), stamped by
 	// DispatchJob so the worker can decrement the right amount on Ack.
 	CostCenti  int       `json:"cost_centi,omitempty"`
@@ -1218,6 +1236,14 @@ type SubtitleBurn struct {
 	// OffsetMS shifts the subtitles' timing (positive = later), the stream's
 	// admin offset.
 	OffsetMS int64 `json:"offset_ms,omitempty"`
+}
+
+// outputLimits dereferences OutputLimits (zero = none).
+func (j TranscodeJob) outputLimits() OutputLimits {
+	if j.OutputLimits == nil {
+		return OutputLimits{}
+	}
+	return *j.OutputLimits
 }
 
 // ForcesFMP4 reports whether the job's output must be fMP4 whatever encoder

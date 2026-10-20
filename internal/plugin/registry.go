@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -22,6 +23,11 @@ type registryDB interface {
 	ListEnabledPluginsByRole(ctx context.Context, role string) ([]gen.Plugin, error)
 	UpdatePlugin(ctx context.Context, arg gen.UpdatePluginParams) (gen.Plugin, error)
 	DeletePlugin(ctx context.Context, id uuid.UUID) error
+
+	// Task-role plugins own a scheduled_tasks row (see TaskTypePlugin).
+	EnsurePluginTask(ctx context.Context, arg gen.EnsurePluginTaskParams) error
+	DeletePluginTask(ctx context.Context, pluginID uuid.UUID) error
+	DeleteOrphanPluginTasks(ctx context.Context) (int64, error)
 }
 
 // Registry is the persistence layer for plugin records. It hides the sqlc
@@ -85,7 +91,52 @@ func (r *Registry) Create(ctx context.Context, in CreateInput) (Plugin, error) {
 	if err != nil {
 		return Plugin{}, err
 	}
-	return fromGen(row), nil
+	created := fromGen(row)
+	if created.Role == RoleTask {
+		// A task plugin without its scheduled_tasks row would never run.
+		// Undo the insert rather than leave one behind (SyncTasks would
+		// also heal it at the next boot, but the admin should see the
+		// failure now).
+		if err := r.ensureTask(ctx, created); err != nil {
+			_ = r.db.DeletePlugin(ctx, created.ID)
+			return Plugin{}, fmt.Errorf("schedule task for plugin: %w", err)
+		}
+	}
+	return created, nil
+}
+
+// ensureTask creates p's scheduled task unless it already has one.
+func (r *Registry) ensureTask(ctx context.Context, p Plugin) error {
+	params, err := pluginTaskParams(p, time.Now())
+	if err != nil {
+		return err
+	}
+	return r.db.EnsurePluginTask(ctx, params)
+}
+
+// SyncTasks makes the scheduled tasks match the task plugins: every task
+// plugin gets its row (plugins registered before v2.7 had none), and rows
+// left by deleted plugins go. Called once at boot; errors are returned for
+// logging and never block startup.
+func (r *Registry) SyncTasks(ctx context.Context) error {
+	var errs []error
+	if _, err := r.db.DeleteOrphanPluginTasks(ctx); err != nil {
+		errs = append(errs, fmt.Errorf("delete orphan plugin tasks: %w", err))
+	}
+	rows, err := r.db.ListPlugins(ctx)
+	if err != nil {
+		return errors.Join(append(errs, fmt.Errorf("list plugins: %w", err))...)
+	}
+	for _, row := range rows {
+		p := fromGen(row)
+		if p.Role != RoleTask {
+			continue
+		}
+		if err := r.ensureTask(ctx, p); err != nil {
+			errs = append(errs, fmt.Errorf("plugin %q: %w", p.Name, err))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // Get returns a single plugin or ErrPluginNotFound.
@@ -149,8 +200,13 @@ func (r *Registry) Update(ctx context.Context, id uuid.UUID, in UpdateInput) (Pl
 	return fromGen(row), nil
 }
 
-// Delete removes a plugin record.
+// Delete removes a plugin record, and its scheduled task when it has one
+// (a no-op for other roles). The task goes first: a task row whose plugin is
+// gone would fail every run until the next boot's SyncTasks.
 func (r *Registry) Delete(ctx context.Context, id uuid.UUID) error {
+	if err := r.db.DeletePluginTask(ctx, id); err != nil {
+		return fmt.Errorf("delete plugin task: %w", err)
+	}
 	return r.db.DeletePlugin(ctx, id)
 }
 

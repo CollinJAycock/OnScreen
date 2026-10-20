@@ -11,6 +11,7 @@ import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
+import tv.onscreen.mobile.cast.ChromecastCaps
 import tv.onscreen.mobile.playback.ReplayGain
 import tv.onscreen.mobile.playback.ReplayGainMode
 
@@ -44,6 +45,12 @@ private val Context.playbackDataStore: DataStore<Preferences> by preferencesData
  *
  * Applied by PlaybackService's audio stage — see
  * [tv.onscreen.mobile.playback.ReplayGainAudioProcessor].
+ *
+ * And casting (Settings → Playback):
+ *
+ *  - cast_quality — auto / 4k / hd: the capability profile sent for a
+ *    Chromecast. Auto detects it from the device ([ChromecastCaps.forDevice]);
+ *    4K or HD overrides that for a receiver the detection gets wrong.
  */
 class PlaybackPrefs(private val context: Context) {
 
@@ -52,6 +59,17 @@ class PlaybackPrefs(private val context: Context) {
         private val KEY_WARN_CELLULAR_STREAM = booleanPreferencesKey("warn_cellular_stream")
         private val KEY_REPLAYGAIN_MODE = stringPreferencesKey("replaygain_mode")
         private val KEY_REPLAYGAIN_PREAMP_DB = doublePreferencesKey("replaygain_preamp_db")
+        private val KEY_CAST_QUALITY = stringPreferencesKey("cast_quality")
+    }
+
+    val castQuality: Flow<ChromecastCaps.Quality> = context.playbackDataStore.data.map {
+        ChromecastCaps.Quality.fromWire(it[KEY_CAST_QUALITY])
+    }
+
+    suspend fun getCastQuality(): ChromecastCaps.Quality = castQuality.first()
+
+    suspend fun setCastQuality(q: ChromecastCaps.Quality) {
+        context.playbackDataStore.edit { it[KEY_CAST_QUALITY] = q.wire }
     }
 
     val downloadOnWifiOnly: Flow<Boolean> = context.playbackDataStore.data.map {

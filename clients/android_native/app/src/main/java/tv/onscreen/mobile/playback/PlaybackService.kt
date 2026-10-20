@@ -105,6 +105,8 @@ class PlaybackService : MediaSessionService() {
     private var session: MediaSession? = null
     private val scope = backgroundScope("PlaybackService", Dispatchers.Main)
     private var progressJob: Job? = null
+    /** The 'playing' heartbeat's PUTs: bounded, never awaited by the loop. */
+    private val beats = BoundedBeat(scope)
     private var expandJob: Job? = null
     private var extendJob: Job? = null
     private var stopEventsJob: Job? = null
@@ -217,6 +219,12 @@ class PlaybackService : MediaSessionService() {
                 /* handleAudioFocus = */ true,
             )
             .setHandleAudioBecomingNoisy(true)
+            // Background streaming with the screen off: a Wi-Fi lock as well
+            // as the CPU wake lock, held only while playing or buffering.
+            // Without either (the default) the phone could sleep the CPU and
+            // put Wi-Fi in power save under a stream fetching its next file.
+            // Same call as the Android TV app's background service.
+            .setWakeMode(C.WAKE_MODE_NETWORK)
             .build()
         player.addListener(playerListener(player))
         session = MediaSession.Builder(this, player)
@@ -695,9 +703,12 @@ class PlaybackService : MediaSessionService() {
     // ── Progress ──────────────────────────────────────────────────────────
 
     /** Periodic 'playing' heartbeat so the resume marker stays fresh
-     *  while the user browses other screens with audio in the background. */
+     *  while the user browses other screens with audio in the background.
+     *  The loop never waits for a beat's PUT ([BoundedBeat]): one that hung
+     *  used to hold every later beat back until the client's 60 s timeout. */
     private fun startProgressReporter(player: Player) {
         progressJob?.cancel()
+        beats.cancel()
         progressJob = scope.launch {
             while (isActive) {
                 delay(10_000)
@@ -718,15 +729,19 @@ class PlaybackService : MediaSessionService() {
                 // lowered, an admin stop). Swallowing it kept background music
                 // streaming on its already-issued token. Same decision as
                 // PlayerViewModel.reportProgress — see HeartbeatRefusal.
-                when (
-                    val refusal = HeartbeatRefusal.heartbeat {
-                        itemRepo.updateProgress(id, pos, dur, "playing")
-                    }
-                ) {
-                    null -> Unit
-                    is HeartbeatRefusal.PlaybackStopped -> haltForAdminStop(player, id, refusal.message)
-                    else -> haltForRefusal(player, id, refusal)
-                }
+                val sent = beats.beat(
+                    send = { itemRepo.updateProgress(id, pos, dur, "playing") },
+                    onRefused = { refusal ->
+                        // Still the item the beat was about? A skip or the
+                        // queue's next track may have moved on meanwhile.
+                        if (player.currentMediaItem?.mediaId != id) return@beat
+                        when (refusal) {
+                            is HeartbeatRefusal.PlaybackStopped -> haltForAdminStop(player, id, refusal.message)
+                            else -> haltForRefusal(player, id, refusal)
+                        }
+                    },
+                )
+                if (!sent) android.util.Log.i(TAG, "heartbeat skipped: the last one is still out")
             }
         }
     }

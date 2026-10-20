@@ -843,6 +843,12 @@ func run() error {
 
 	pluginRegistry := plugin.NewRegistry(gen.New(rwPool))
 	pluginDispatcher := plugin.NewNotificationDispatcher(pluginRegistry, logger, auditLogger)
+	// Metadata plugins run after the built-in agents on every enrichment;
+	// task plugins run from the scheduler (plugin_task, registered below).
+	metadataPlugins := plugin.NewMetadataDispatcher(pluginRegistry, logger, auditLogger)
+	metaAgent.SetMetadataPlugins(metadataPlugins)
+	taskPlugins := plugin.NewTaskDispatcher(pluginRegistry,
+		pluginTaskInfo{libs: libSvc, version: version}, logger, auditLogger)
 	pluginHandler := v1.NewPluginHandler(pluginRegistry, pluginDispatcher, logger).WithAudit(auditLogger)
 	webhookDispatcher := worker.NewWebhookDispatcher(
 		gen.New(rwPool),
@@ -905,7 +911,10 @@ func run() error {
 		WithUserCaps(streamCapsAdapter{q: gen.New(roPool)}).
 		// Server-wide internet streaming limit for remote clients.
 		WithRemotePolicy(remotePolicy).
-		WithStreamLimit(streamLimit)
+		WithStreamLimit(streamLimit).
+		// ABR rung-child create/restart is exclusive across API replicas:
+		// segment requests for one session can land on any instance.
+		WithABRLock(valkeyClient)
 
 	// Attach the SECRET_KEY-derived bearer to every API→worker segment/seghead
 	// proxy request, matching what each worker's segment server now requires.
@@ -1787,6 +1796,13 @@ func run() error {
 	// Without it, a fresh install has handlers registered in memory but
 	// nothing to trigger them — DVR silently stops recording.
 	seedSystemTasks(ctx, gen.New(rwPool), logger)
+	// Task-role plugins: one plugin_task row each, created with the plugin;
+	// the sync adds rows for plugins registered before v2.7 and drops rows
+	// whose plugin is gone.
+	schedRegistry.Register(plugin.TaskTypePlugin, scheduler.NewPluginTaskHandler(taskPlugins))
+	if err := pluginRegistry.SyncTasks(ctx); err != nil {
+		logger.WarnContext(ctx, "sync plugin tasks", "err", err)
+	}
 	sched := scheduler.New(scheduler.NewPgxQuerier(rwPool), schedRegistry, logger).
 		OnResult(func(ctx context.Context, t scheduler.Task, runErr error) {
 			notifyAgents.TaskResult(ctx, t.ID, t.Name, t.Type, runErr) // task_failed / backup_failed
@@ -2234,6 +2250,8 @@ func run() error {
 		// Stop plugin workers after the HTTP servers so we don't drop
 		// in-flight notifications triggered by requests already in progress.
 		pluginDispatcher.Close()
+		metadataPlugins.Close()
+		taskPlugins.Close()
 		// Release the subtitle handler's background OCR-sweep goroutine.
 		subtitleHandler.Close()
 		return nil

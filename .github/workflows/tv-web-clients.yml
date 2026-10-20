@@ -1,0 +1,65 @@
+name: TV web clients
+
+# Svelte check + Vitest for the TV web apps: LG webOS, Samsung Tizen (its own
+# copy of the webOS code with a Samsung platform layer) and the Xbox TV app
+# (served by the server at /tvapp/). Each has a few hundred unit tests that
+# CI never ran before v2.7. Path-filtered: only PRs and pushes that touch one
+# of the apps (or this file) run it; the matrix runs all three, since they
+# share code by copy and a fix in one is often ported to the others.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'clients/webos/**'
+      - 'clients/tizen/**'
+      - 'clients/xbox/**'
+      - '.github/workflows/tv-web-clients.yml'
+  pull_request:
+    paths:
+      - 'clients/webos/**'
+      - 'clients/tizen/**'
+      - 'clients/xbox/**'
+      - '.github/workflows/tv-web-clients.yml'
+
+# Least privilege: the jobs only read the repo. npm lifecycle scripts and
+# test code must not see a write-scoped token.
+permissions:
+  contents: read
+
+concurrency:
+  group: tv-web-clients-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: ${{ matrix.client }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        client: [webos, tizen, xbox]
+    defaults:
+      run:
+        working-directory: clients/${{ matrix.client }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: clients/${{ matrix.client }}/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # `check` runs `svelte-kit sync` first, which writes the
+      # .svelte-kit/tsconfig.json that the Vitest transform also needs.
+      - name: Svelte check
+        run: npm run check
+
+      - name: Test
+        run: npx vitest run

@@ -4,7 +4,7 @@
 // Requires a running OnScreen server reachable at BASE_URL.
 
 import { test, expect } from '@playwright/test';
-import { USERNAME, PASSWORD, adminToken, collectConsoleErrors, resetTokenCache } from './_auth';
+import { USERNAME, PASSWORD, adminToken, collectConsoleErrors, loginUI, resetTokenCache } from './_auth';
 
 test.describe('Tier 1 — boot', () => {
   test('health/live returns ok', async ({ request }) => {
@@ -39,11 +39,7 @@ test.describe('Tier 1 — auth', () => {
   test.skip(!PASSWORD, 'set E2E_PASSWORD to run auth specs');
 
   test('login → home, logout → login', async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel(/username/i).fill(USERNAME);
-    await page.getByLabel(/password/i).fill(PASSWORD);
-    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-    await expect(page).not.toHaveURL(/\/login/);
+    await loginUI(page);
 
     // Refresh-token cookie should be set after login. Name varies per
     // build (renamed in S1), so just check at least one cookie exists.
@@ -82,11 +78,7 @@ test.describe('Tier 1 — library + admin smoke', () => {
   });
 
   test('settings page loads after login', async ({ page }) => {
-    await page.goto('/login');
-    await page.getByLabel(/username/i).fill(USERNAME);
-    await page.getByLabel(/password/i).fill(PASSWORD);
-    await page.getByRole('button', { name: 'Sign In', exact: true }).click();
-    await expect(page).not.toHaveURL(/\/login/);
+    await loginUI(page);
 
     await page.goto('/settings');
     // Settings page has a "TMDB" label somewhere — exact UI is fluid but

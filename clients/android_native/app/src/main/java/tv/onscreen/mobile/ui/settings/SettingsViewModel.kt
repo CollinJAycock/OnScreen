@@ -7,6 +7,7 @@ import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.launch
+import tv.onscreen.mobile.cast.ChromecastCaps
 import tv.onscreen.mobile.data.downloads.OnScreenDownloadManager
 import tv.onscreen.mobile.data.prefs.PlaybackPrefs
 import tv.onscreen.mobile.data.prefs.ServerPrefs
@@ -31,6 +32,13 @@ class SettingsViewModel @Inject constructor(
      *  PlaybackService's audio stage — a change reaches the playing track. */
     val replayGainMode: Flow<ReplayGainMode> = prefs.replayGainMode
     val replayGainPreampDb: Flow<Double> = prefs.replayGainPreampDb
+
+    /** Chromecast quality: Auto (detected from the device) / 4K / HD. */
+    val castQuality: Flow<ChromecastCaps.Quality> = prefs.castQuality
+
+    fun setCastQuality(q: ChromecastCaps.Quality) {
+        viewModelScope.launch { prefs.setCastQuality(q) }
+    }
 
     /** Currently bound server URL (for the About row + the
      *  disconnect-confirm message). Empty when none — that should

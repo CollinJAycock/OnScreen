@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -22,10 +23,43 @@ type mockRegistryDB struct {
 	listErr   error
 	updateErr error
 	deleteErr error
+
+	// tasks mirrors the plugin_task scheduled_tasks rows, keyed by plugin.
+	tasks         map[uuid.UUID]gen.EnsurePluginTaskParams
+	ensureTaskErr error
 }
 
 func newMockRegistryDB() *mockRegistryDB {
-	return &mockRegistryDB{rows: map[uuid.UUID]gen.Plugin{}}
+	return &mockRegistryDB{
+		rows:  map[uuid.UUID]gen.Plugin{},
+		tasks: map[uuid.UUID]gen.EnsurePluginTaskParams{},
+	}
+}
+
+func (m *mockRegistryDB) EnsurePluginTask(_ context.Context, arg gen.EnsurePluginTaskParams) error {
+	if m.ensureTaskErr != nil {
+		return m.ensureTaskErr
+	}
+	if _, ok := m.tasks[arg.PluginID]; !ok {
+		m.tasks[arg.PluginID] = arg
+	}
+	return nil
+}
+
+func (m *mockRegistryDB) DeletePluginTask(_ context.Context, pluginID uuid.UUID) error {
+	delete(m.tasks, pluginID)
+	return nil
+}
+
+func (m *mockRegistryDB) DeleteOrphanPluginTasks(_ context.Context) (int64, error) {
+	var n int64
+	for id := range m.tasks {
+		if row, ok := m.rows[id]; !ok || row.Role != string(RoleTask) {
+			delete(m.tasks, id)
+			n++
+		}
+	}
+	return n, nil
 }
 
 func (m *mockRegistryDB) CreatePlugin(_ context.Context, arg gen.CreatePluginParams) (gen.Plugin, error) {
@@ -79,6 +113,8 @@ func (m *mockRegistryDB) ListEnabledPluginsByRole(_ context.Context, role string
 			out = append(out, r)
 		}
 	}
+	// Same order as the real query (ORDER BY name).
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out, nil
 }
 

@@ -1981,6 +1981,64 @@ func TestSetItemPoster_OutsideScanRoot_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestSetItemPoster_KeepsOtherMetadata guards the manual poster
+// picker against wiping the item: UpdateItemMetadata writes every text
+// column it's given, so the picker must pass the current values through
+// and change only poster_path.
+func TestSetItemPoster_KeepsOtherMetadata(t *testing.T) {
+	updater := newMockUpdater()
+	itemID := uuid.New()
+	summary, tagline, original, content := "A hacker learns the truth.", "Free your mind", "The Matrix", "R"
+	rating, audience := 8.7, 9.1
+	year := 1999
+	dur := int64(136 * 60 * 1000)
+	released := time.Date(1999, 3, 31, 0, 0, 0, 0, time.UTC)
+	updater.items[itemID] = &media.Item{
+		ID: itemID, Type: "movie", Title: "The Matrix", SortTitle: "matrix",
+		OriginalTitle: &original, Year: &year, Summary: &summary, Tagline: &tagline,
+		Rating: &rating, AudienceRating: &audience, ContentRating: &content,
+		DurationMS: &dur, Genres: []string{"Action", "Sci-Fi"}, Tags: []string{"cyberpunk"},
+		OriginallyAvailableAt: &released,
+	}
+	updater.files[itemID] = []media.File{
+		{ID: uuid.New(), MediaItemID: itemID, FilePath: "/media/movies/matrix/matrix.mkv", Status: "active"},
+	}
+	artwork := &mockArtwork{posterPath: "/media/movies/matrix/poster.jpg"}
+	e := newTestEnricher(nil, updater, artwork)
+
+	if err := e.SetItemPoster(context.Background(), itemID, "http://example.com/new.jpg"); err != nil {
+		t.Fatalf("SetItemPoster: %v", err)
+	}
+	if len(updater.updateCalls) != 1 {
+		t.Fatalf("update calls: got %d, want 1", len(updater.updateCalls))
+	}
+	p := updater.updateCalls[0]
+	if p.PosterPath == nil || *p.PosterPath == "" {
+		t.Fatalf("poster_path not set: %v", p.PosterPath)
+	}
+	checks := []struct {
+		name string
+		ok   bool
+	}{
+		{"summary", p.Summary != nil && *p.Summary == summary},
+		{"tagline", p.Tagline != nil && *p.Tagline == tagline},
+		{"original_title", p.OriginalTitle != nil && *p.OriginalTitle == original},
+		{"rating", p.Rating != nil && *p.Rating == rating},
+		{"audience_rating", p.AudienceRating != nil && *p.AudienceRating == audience},
+		{"content_rating", p.ContentRating != nil && *p.ContentRating == content},
+		{"duration_ms", p.DurationMS != nil && *p.DurationMS == dur},
+		{"tags", len(p.Tags) == 1 && p.Tags[0] == "cyberpunk"},
+		{"genres", len(p.Genres) == 2},
+		{"originally_available_at", p.OriginallyAvailableAt != nil && p.OriginallyAvailableAt.Equal(released)},
+		{"year", p.Year != nil && *p.Year == year},
+	}
+	for _, c := range checks {
+		if !c.ok {
+			t.Errorf("%s was not carried through to the update (would be wiped)", c.name)
+		}
+	}
+}
+
 func TestLooksLikeSeasonDir(t *testing.T) {
 	tests := []struct {
 		name string

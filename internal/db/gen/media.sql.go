@@ -190,7 +190,8 @@ INSERT INTO media_files (
     replaygain_track_gain, replaygain_track_peak,
     replaygain_album_gain, replaygain_album_peak,
     video_bit_depth, dv_profile,
-    edition, part_index, replaygain_source
+    edition, part_index, replaygain_source,
+    video_profile, video_level
 ) VALUES (
     $1, $2, $3, $4, $5,
     $6, $7, $8, $9, $10, $11,
@@ -199,7 +200,8 @@ INSERT INTO media_files (
     $21, $22,
     $23, $24,
     $25, $26,
-    $27, $28, $29
+    $27, $28, $29,
+    $30, $31
 )
 RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           audio_codec, resolution_w, resolution_h, bitrate, hdr_type, frame_rate,
@@ -209,7 +211,7 @@ RETURNING id, media_item_id, file_path, file_size, container, video_codec,
           replaygain_track_gain, replaygain_track_peak,
           replaygain_album_gain, replaygain_album_peak, video_bit_depth,
           integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-          edition, part_index, replaygain_source
+          edition, part_index, replaygain_source, video_profile, video_level
 `
 
 type CreateMediaFileParams struct {
@@ -242,6 +244,8 @@ type CreateMediaFileParams struct {
 	Edition             *string        `json:"edition"`
 	PartIndex           *int16         `json:"part_index"`
 	ReplaygainSource    *string        `json:"replaygain_source"`
+	VideoProfile        *string        `json:"video_profile"`
+	VideoLevel          *int32         `json:"video_level"`
 }
 
 // best quality first (ADR-031)
@@ -276,6 +280,8 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		arg.Edition,
 		arg.PartIndex,
 		arg.ReplaygainSource,
+		arg.VideoProfile,
+		arg.VideoLevel,
 	)
 	var i MediaFile
 	err := row.Scan(
@@ -316,6 +322,8 @@ func (q *Queries) CreateMediaFile(ctx context.Context, arg CreateMediaFileParams
 		&i.Edition,
 		&i.PartIndex,
 		&i.ReplaygainSource,
+		&i.VideoProfile,
+		&i.VideoLevel,
 	)
 	return i, err
 }
@@ -1097,7 +1105,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index, replaygain_source
+       edition, part_index, replaygain_source, video_profile, video_level
 FROM media_files
 WHERE id = $1
 `
@@ -1144,6 +1152,8 @@ func (q *Queries) GetMediaFile(ctx context.Context, id uuid.UUID) (MediaFile, er
 		&i.Edition,
 		&i.PartIndex,
 		&i.ReplaygainSource,
+		&i.VideoProfile,
+		&i.VideoLevel,
 	)
 	return i, err
 }
@@ -1157,7 +1167,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index, replaygain_source
+       edition, part_index, replaygain_source, video_profile, video_level
 FROM media_files
 WHERE file_hash = $1 AND status = 'missing'
 ORDER BY created_at DESC
@@ -1208,6 +1218,8 @@ func (q *Queries) GetMediaFileByHash(ctx context.Context, fileHash *string) (Med
 		&i.Edition,
 		&i.PartIndex,
 		&i.ReplaygainSource,
+		&i.VideoProfile,
+		&i.VideoLevel,
 	)
 	return i, err
 }
@@ -1221,7 +1233,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index, replaygain_source
+       edition, part_index, replaygain_source, video_profile, video_level
 FROM media_files
 WHERE file_path = $1
 `
@@ -1267,6 +1279,8 @@ func (q *Queries) GetMediaFileByPath(ctx context.Context, filePath string) (Medi
 		&i.Edition,
 		&i.PartIndex,
 		&i.ReplaygainSource,
+		&i.VideoProfile,
+		&i.VideoLevel,
 	)
 	return i, err
 }
@@ -1659,7 +1673,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
        mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
-       mf.edition, mf.part_index, mf.replaygain_source
+       mf.edition, mf.part_index, mf.replaygain_source, mf.video_profile, mf.video_level
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 WHERE mi.library_id = $1 AND mf.status = 'active'
@@ -1712,6 +1726,8 @@ func (q *Queries) ListActiveFilesForLibrary(ctx context.Context, libraryID uuid.
 			&i.Edition,
 			&i.PartIndex,
 			&i.ReplaygainSource,
+			&i.VideoProfile,
+			&i.VideoLevel,
 		); err != nil {
 			return nil, err
 		}
@@ -2264,7 +2280,7 @@ SELECT mf.id, mf.media_item_id, mf.file_path, mf.file_size, mf.container, mf.vid
        mf.replaygain_track_gain, mf.replaygain_track_peak,
        mf.replaygain_album_gain, mf.replaygain_album_peak, mf.video_bit_depth,
        mf.integrity_status, mf.integrity_checked_at, mf.integrity_detail, mf.dv_profile,
-       mf.edition, mf.part_index, mf.replaygain_source
+       mf.edition, mf.part_index, mf.replaygain_source, mf.video_profile, mf.video_level
 FROM media_files mf
 JOIN media_items mi ON mi.id = mf.media_item_id
 JOIN libraries l ON l.id = mi.library_id
@@ -2337,6 +2353,8 @@ func (q *Queries) ListFilesForIntegrityCheck(ctx context.Context, arg ListFilesF
 			&i.Edition,
 			&i.PartIndex,
 			&i.ReplaygainSource,
+			&i.VideoProfile,
+			&i.VideoLevel,
 		); err != nil {
 			return nil, err
 		}
@@ -2575,7 +2593,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index, replaygain_source
+       edition, part_index, replaygain_source, video_profile, video_level
 FROM media_files
 WHERE media_item_id = $1 AND status = 'active'
 ORDER BY (resolution_w * resolution_h * COALESCE(bitrate, 0)) DESC
@@ -2628,6 +2646,8 @@ func (q *Queries) ListMediaFilesForItem(ctx context.Context, mediaItemID uuid.UU
 			&i.Edition,
 			&i.PartIndex,
 			&i.ReplaygainSource,
+			&i.VideoProfile,
+			&i.VideoLevel,
 		); err != nil {
 			return nil, err
 		}
@@ -4791,7 +4811,7 @@ SELECT id, media_item_id, file_path, file_size, container, video_codec,
        replaygain_track_gain, replaygain_track_peak,
        replaygain_album_gain, replaygain_album_peak, video_bit_depth,
        integrity_status, integrity_checked_at, integrity_detail, dv_profile,
-       edition, part_index, replaygain_source
+       edition, part_index, replaygain_source, video_profile, video_level
 FROM media_files
 WHERE status = 'missing' AND missing_since < $1
 LIMIT 5000
@@ -4844,6 +4864,8 @@ func (q *Queries) ListMissingFilesOlderThan(ctx context.Context, missingSince pg
 			&i.Edition,
 			&i.PartIndex,
 			&i.ReplaygainSource,
+			&i.VideoProfile,
+			&i.VideoLevel,
 		); err != nil {
 			return nil, err
 		}
@@ -6557,6 +6579,8 @@ SET container            = $2,
     dv_profile           = $15,
     edition              = $16,
     part_index           = $17,
+    video_profile        = $18,
+    video_level          = $19,
     integrity_status     = 'unchecked',
     integrity_checked_at = NULL,
     integrity_detail     = NULL,
@@ -6582,6 +6606,8 @@ type UpdateMediaFileTechnicalMetadataParams struct {
 	DvProfile       *int16         `json:"dv_profile"`
 	Edition         *string        `json:"edition"`
 	PartIndex       *int16         `json:"part_index"`
+	VideoProfile    *string        `json:"video_profile"`
+	VideoLevel      *int32         `json:"video_level"`
 }
 
 // Also resets the integrity verdict: this update only runs when the scanner
@@ -6609,6 +6635,8 @@ func (q *Queries) UpdateMediaFileTechnicalMetadata(ctx context.Context, arg Upda
 		arg.DvProfile,
 		arg.Edition,
 		arg.PartIndex,
+		arg.VideoProfile,
+		arg.VideoLevel,
 	)
 	return err
 }

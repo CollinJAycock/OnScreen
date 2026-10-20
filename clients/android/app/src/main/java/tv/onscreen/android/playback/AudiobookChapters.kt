@@ -33,4 +33,13 @@ object AudiobookChapters {
         if (at < 0) return null
         return ordered.getOrNull(at + 1)
     }
+
+    /** The chapter before [currentId], or null at the start of the book (or
+     *  when [currentId] is no longer listed). */
+    fun previousBefore(children: List<ChildItem>, currentId: String): ChildItem? {
+        val ordered = inOrder(children)
+        val at = ordered.indexOfFirst { it.id == currentId }
+        if (at <= 0) return null
+        return ordered[at - 1]
+    }
 }

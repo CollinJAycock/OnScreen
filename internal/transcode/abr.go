@@ -171,11 +171,21 @@ func renditionAt(height, refBitrateKbps int, aspect float64, codec string, sourc
 // per the HLS spec's "peak segment bit rate" field — players use it to
 // pick the highest rung the measured throughput can sustain.
 func BuildMasterPlaylist(rends []Rendition, codecs string, variantPath func(Rendition) string) string {
+	return BuildMasterPlaylistAudio(rends, codecs, 0, variantPath)
+}
+
+// BuildMasterPlaylistAudio is BuildMasterPlaylist with the muxed audio's
+// bitrate given: audioKbps > 0 replaces the AAC allowance in BANDWIDTH, for
+// a ladder whose rungs copy a passed-through track (PassthroughAudioKbps).
+func BuildMasterPlaylistAudio(rends []Rendition, codecs string, audioKbps int, variantPath func(Rendition) string) string {
+	if audioKbps <= 0 {
+		audioKbps = audioAllowanceKbps
+	}
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
 	b.WriteString("#EXT-X-VERSION:6\n")
 	for _, r := range rends {
-		bandwidth := (r.BitrateKbps + audioAllowanceKbps) * 1000
+		bandwidth := (r.BitrateKbps + audioKbps) * 1000
 		fmt.Fprintf(&b, "#EXT-X-STREAM-INF:BANDWIDTH=%d,RESOLUTION=%dx%d", bandwidth, r.Width, r.Height)
 		if codecs != "" {
 			fmt.Fprintf(&b, ",CODECS=%q", codecs)
@@ -193,14 +203,19 @@ func BuildMasterPlaylist(rends []Rendition, codecs string, variantPath func(Rend
 // the smaller rungs is harmless — players only reject when the advertised
 // level is BELOW what the stream needs). L153 = level 5.1 (handles 4K).
 func HEVCMasterCodecs(maxHeight int) string {
-	level := "L123" // 4.1 — up to 1080p60
+	return MasterCodecs(LadderHEVC, maxHeight, 0, "")
+}
+
+// hevcCodecLevel is the HEVC level (tenths) HEVCMasterCodecs advertises for
+// a ladder topping out at maxHeight.
+func hevcCodecLevel(maxHeight int) int {
 	switch {
 	case maxHeight > 2160:
-		level = "L180" // 6.0 — up to 8K
+		return 60 // up to 8K
 	case maxHeight > 1080:
-		level = "L153" // 5.1 — up to 4K
+		return 51 // up to 4K
 	}
-	return "hvc1.1.6." + level + ".B0,mp4a.40.2"
+	return 41 // up to 1080p60
 }
 
 // AV1MasterCodecs returns the CODECS attribute value for an AV1 fMP4
@@ -208,12 +223,87 @@ func HEVCMasterCodecs(maxHeight int) string {
 // The seq_level_idx is sized to the tallest rung — 4.0 (1080p), 5.1 (4K),
 // 6.0 (8K) — over-advertising on smaller rungs, which players tolerate.
 func AV1MasterCodecs(maxHeight int) string {
-	level := "08" // 4.0 — up to 1080p
+	return MasterCodecs(LadderAV1, maxHeight, 0, "")
+}
+
+// av1CodecLevel is the AV1 level (tenths) AV1MasterCodecs advertises for a
+// ladder topping out at maxHeight.
+func av1CodecLevel(maxHeight int) int {
 	switch {
 	case maxHeight > 2160:
-		level = "16" // 6.0 — up to 8K
+		return 60 // up to 8K
 	case maxHeight > 1080:
-		level = "13" // 5.1 — up to 4K
+		return 51 // up to 4K
 	}
-	return "av01.0." + level + "M.08,mp4a.40.2"
+	return 40 // up to 1080p
+}
+
+// MasterCodecs returns a ladder's CODECS attribute: the video codec string
+// at the level its tallest rung needs, held to levelCap (tenths; the
+// client's declared level, which the rungs were sized and encoded to; 0 =
+// none), plus the muxed audio — AAC-LC, or a passed-through codec's
+// AudioCodecString (audio "" = AAC). H.264 ladders advertise no CODECS ("").
+//
+// The audio entry has to name what the rungs really carry: Media3 takes a
+// muxed variant's audio format from CODECS, and reading AC-3 as AAC fails.
+func MasterCodecs(ladderCodec string, maxHeight, levelCap int, audio string) string {
+	audioStr := AudioCodecString(audio)
+	switch ladderCodec {
+	case LadderHEVC:
+		level := hevcCodecLevel(maxHeight)
+		if levelCap > 0 && levelCap < level {
+			level = levelCap
+		}
+		return fmt.Sprintf("hvc1.1.6.L%d.B0,%s", level*3, audioStr)
+	case LadderAV1:
+		level := av1CodecLevel(maxHeight)
+		if levelCap > 0 && levelCap < level {
+			level = levelCap
+		}
+		return fmt.Sprintf("av01.0.%02dM.08,%s", av1SeqLevelIdx(level), audioStr)
+	}
+	return ""
+}
+
+// av1SeqLevelIdx converts an AV1 level in tenths to its seq_level_idx
+// (4.0 → 8, 5.1 → 13).
+func av1SeqLevelIdx(tenths int) int {
+	idx := (tenths/10-2)*4 + tenths%10
+	return max(0, min(idx, 23))
+}
+
+// AudioCodecString is the RFC 6381 codec string of an HLS audio track, for
+// CODECS: AAC-LC by default, or the codec a rung copies for a receiver. DTS
+// is what ffmpeg's mp4 muxer writes for it: an mp4a sample entry with object
+// type 0xA9.
+func AudioCodecString(codec string) string {
+	switch CanonicalAudioCodec(codec) {
+	case "ac3":
+		return "ac-3"
+	case "eac3":
+		return "ec-3"
+	case "truehd":
+		return "mlpa"
+	case "dts":
+		return "mp4a.a9"
+	}
+	return "mp4a.40.2"
+}
+
+// PassthroughAudioKbps estimates the bitrate of a passed-through track for a
+// master playlist's BANDWIDTH (the peak a player sizes rungs by): AC-3 at its
+// 640 kbps maximum, E-AC-3 at 1 Mbps, TrueHD and DTS-HD at the averages of
+// lossless film tracks. 0 = not a passthrough codec (the AAC allowance).
+func PassthroughAudioKbps(codec string) int {
+	switch CanonicalAudioCodec(codec) {
+	case "ac3":
+		return 640
+	case "eac3":
+		return 1024
+	case "truehd":
+		return 6000
+	case "dts":
+		return 4000
+	}
+	return 0
 }

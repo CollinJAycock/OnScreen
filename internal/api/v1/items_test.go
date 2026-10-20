@@ -957,6 +957,32 @@ func TestDownloadFile_Success_HeadersAndBody(t *testing.T) {
 	}
 }
 
+// A book downloads with its own type (an e-reader app fetching an OPDS
+// acquisition link files it by type), still as an attachment.
+func TestDownloadFile_BookContentType(t *testing.T) {
+	tmp := filepath.Join(t.TempDir(), "dorian.epub")
+	if err := os.WriteFile(tmp, []byte("PK\x03\x04fake-epub"), 0o644); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+	ms := &mockItemMedia{
+		file: &media.File{ID: uuid.New(), Status: "active", FilePath: tmp, MediaItemID: uuid.New()},
+		item: &media.Item{ID: uuid.New(), LibraryID: uuid.New(), Type: "book", Title: "The Picture of Dorian Gray"},
+	}
+	h := newItemHandler(ms)
+	rec := httptest.NewRecorder()
+	h.DownloadFile(rec, withChiParam(httptest.NewRequest("GET", "/", nil), "id", uuid.New().String()))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: got %d, want %d", rec.Code, http.StatusOK)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "application/epub+zip" {
+		t.Errorf("Content-Type: got %q, want application/epub+zip", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, `filename="The Picture of Dorian Gray.epub"`) {
+		t.Errorf("Content-Disposition: got %q", cd)
+	}
+}
+
 func TestDownloadFile_Range(t *testing.T) {
 	// Mobile download managers (Android Download Manager, iOS Safari)
 	// use Range to resume an interrupted download. http.ServeFile

@@ -128,6 +128,16 @@ Set-RestrictedTreeAcl -Path $InstallDir -UsersReadExecute
 Protect-SecretFile $envFile
 Write-Log "ACLs: $dataRoot and $InstallDir restricted (SYSTEM/Administrators; Users read-only on the install dir)"
 
+# The scheduled database backup's default output_dir, "/var/backups/onscreen"
+# (seeded on fresh installs), resolves against the service's working
+# directory ({app}) to <install drive>\var\backups\onscreen. Pre-create it with
+# the restricted ACL: made on demand by the server it would inherit the drive
+# root's "Users: read", and a dump is the whole database.
+$backupDir = Join-Path (Split-Path -Qualifier $InstallDir) 'var\backups\onscreen'
+New-Item -ItemType Directory -Path $backupDir -Force | Out-Null
+Set-RestrictedTreeAcl -Path $backupDir
+Write-Log "ACLs: $backupDir (scheduled backups) restricted to SYSTEM/Administrators"
+
 # Random password / secret. PostgreSQL needs an ASCII-printable password
 # without URL-special chars (we put it in DATABASE_URL); SECRET_KEY needs
 # 32+ bytes of entropy. Use base64-of-random-bytes for both, stripped of

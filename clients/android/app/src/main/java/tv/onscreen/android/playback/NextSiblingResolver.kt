@@ -74,6 +74,35 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
         }
     }
 
+    /**
+     * The item before [currentItemId], for a remote's Previous on background
+     * audio (the service's session): the instant mix's previous track, the
+     * book's previous chapter, or the previous track or episode in the same
+     * container. Unlike [resolve] it never crosses into the previous album or
+     * season; at the start of a container it returns null and Previous
+     * restarts the item instead.
+     */
+    suspend fun resolvePrevious(
+        currentItemId: String,
+        type: String,
+        parentId: String?,
+        currentIndex: Int?,
+    ): ChildItem? {
+        if (PlayQueue.contains(currentItemId)) return PlayQueue.previousBefore(currentItemId)
+        if (parentId == null) return null
+        return try {
+            if (type == AudiobookSpeed.CHAPTER) {
+                AudiobookChapters.previousBefore(itemRepo.getChildren(parentId), currentItemId)
+            } else if (currentIndex == null) {
+                null
+            } else {
+                previousInContainer(itemRepo.getChildren(parentId), currentItemId, type, currentIndex)
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** The chapter of [bookId] after [chapterId], by the book's listing
      *  ([AudiobookChapters]). Null after the last one. */
     private suspend fun nextChapter(chapterId: String, bookId: String): ChildItem? =
@@ -121,6 +150,27 @@ class NextSiblingResolver(private val itemRepo: ItemRepository) {
                 .firstOrNull {
                     val d = it.disc_number ?: 1
                     d > disc || (d == disc && (it.index ?: Int.MIN_VALUE) > after)
+                }
+        }
+
+        /** The [type] row of [children] that comes just before [currentItemId]
+         *  in (disc, index) order: the nearest one before it, stepping over a
+         *  numbering gap as [nextInContainer] does. Null at the first row. */
+        fun previousInContainer(
+            children: List<ChildItem>,
+            currentItemId: String,
+            type: String,
+            currentIndex: Int,
+        ): ChildItem? {
+            val current = children.firstOrNull { it.id == currentItemId }
+            val disc = current?.disc_number ?: 1
+            val before = current?.index ?: currentIndex
+            return children
+                .filter { it.type == type && it.index != null && it.id != currentItemId }
+                .sortedWith(ChildItem.PLAY_ORDER)
+                .lastOrNull {
+                    val d = it.disc_number ?: 1
+                    d < disc || (d == disc && (it.index ?: Int.MAX_VALUE) < before)
                 }
         }
     }

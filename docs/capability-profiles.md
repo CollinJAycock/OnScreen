@@ -116,7 +116,9 @@ Extend it minimally and feed it from the client. Conceptual shape:
 **What to add to `ClientCapabilities` now:** per-audio-codec `maxChannels` (or at
 least honor the existing global `MaxAudioChannels` in `Decide` + target
 selection). Video profile/level is optional and can come later — bit-depth +
-resolution already cover the common decode failures.
+resolution already cover the common decode failures. (Added in v2.7 as the
+`h264Profile` / `h264Level` / `hevcProfile` / `hevcLevel` / `av1Profile` /
+`av1Level` keys, §5.1.)
 
 **Transport — recommendation: the `X-Client-Capabilities` header.**
 - Reuse the existing `ParseCapabilities()`; one parse path for *every* request
@@ -151,7 +153,12 @@ videoDecoder=h264:h265:vp9,audioDecoder=aac:ac3,protocols=mp4:mkv,maxWidth=3840,
 | `hlg` | boolean | not declared — `hdr` decides HLG | HLG check (below) |
 | `dovi` (alias `dolbyvision`) | Dolby Vision profiles: `5`, `7`, `8.1`, `8.4` (`8` = `8.1`, `8.x` = both 8s); `1` = `5:8.1:8.4` | none | profile 5 plays instead of `unsupported`; the listed profiles are kept on a remux (below) |
 | `optimized` | boolean | no | the client plays an `optimized_version` from the decision (§13) |
-| `audioPassthrough` | codecs bitstreamed to a receiver: `ac3`, `eac3`, `truehd`, `dts` (`dts-hd` folds to `dts`; others ignored) | none | channel cap lifted for these + remux copies them (below) |
+| `audioPassthrough` | codecs bitstreamed to a receiver: `ac3`, `eac3`, `truehd`, `dts` (`dts-hd` folds to `dts`; others ignored) | none | channel cap lifted for these + remux and (v2.7) transcode copy them (below) |
+| `h264Profile` (alias `avcProfile`) | highest H.264 profile: `baseline`, `main`, `high`, `high10`, `high422`, `high444` (ffprobe-style names like `High 10` fold) | not gated | profile check + H.264 output profile (below) |
+| `h264Level` (alias `avcLevel`) | highest H.264 level: `4.1`, `5`, or `41` | not gated | level check + output size, bitrate and `-level` (below) |
+| `hevcProfile` (alias `h265Profile`) | highest HEVC profile: `main`, `main10`, `rext` | not gated | profile check; `main` makes HEVC output 8-bit |
+| `hevcLevel` (alias `h265Level`) | highest HEVC level: `5.1`, `51`, or the raw `153` | not gated | as `h264Level` |
+| `av1Profile` / `av1Level` | `main`, `high`, `professional` / `5.1` | not gated | as above |
 
 **Dolby Vision (`dovi`).** A client lists the Dolby Vision profiles its decoder and display handle. Each file has a profile key from its `dv_profile` and its base layer: `5` (no base other players can show), `7` (dual layer, HDR10 base: UHD Blu-ray), `8.1` (HDR10 base) or `8.4` (HLG base). A profile 8 record over SDR video has no key and plays as SDR.
 - **Decide:** profile 5 is `unsupported` unless `5` is listed. A file whose key the client lists skips the HDR tone-map check (it's shown as Dolby Vision, not as its base layer). A profile 7 file for a client that lists `8.1` but not `7` is a `remux` when a worker can convert it (below), so the client gets Dolby Vision rather than the base layer.
@@ -173,14 +180,63 @@ AV receiver undecoded (HDMI/S/PDIF bitstreaming: Android TV's
   experimental). That needs a worker that advertises the `audio_passthrough`
   feature; on an all-old fleet, for a client that asked for TS segments, or for
   an audio-only file, TrueHD/DTS fall back to the AAC conversion.
-- **Transcode** (video re-encoded) is unchanged: audio is AAC, as the ABR
-  ladder's CODECS string advertises.
+- **Transcode** (video re-encoded; v2.7) copies the track too: AC-3/E-AC-3
+  in the codec's usual segments, TrueHD/DTS in fMP4 with `-strict -2` on a
+  worker with the `audio_passthrough` feature (H.264 output included). An ABR
+  ladder muxes the same copied track into every rung, as it does the AAC
+  (TrueHD/DTS make the whole ladder fMP4), and its master playlist's
+  `CODECS` names the track (`ac-3`, `ec-3`, `mlpa`, `mp4a.a9` for DTS, which
+  ffmpeg writes as an `mp4a` entry with object type 0xA9; Media3 takes a
+  muxed variant's audio format from `CODECS`) and `BANDWIDTH` counts an
+  estimate of it (640 / 1024 / 6000 / 4000 kbps). AAC stays the answer for
+  a codec not listed, for TS segments or an old fleet (TrueHD/DTS), for an
+  audio-only file or a server-side speed change, and **under any bitrate
+  limit** (the user's cap, the internet limit, the quality profile's video or
+  audio bitrate): a lossless track alone can be several Mbps. A subtitle
+  burn-in doesn't stop the copy (it only touches the picture). Now Playing
+  marks the output `audio_passthrough` and adds "TrueHD audio passed through
+  to the receiver" to a transcode's reasons.
 
 It's opt-in on purpose: `audioDecoder` alone never widens the copy, since a
 client may list a codec there it can demux but not output (the phone lists
 `dts`). Item details give each audio stream ffprobe's `profile` ("DTS-HD MA",
 "Dolby TrueHD + Dolby Atmos", "Dolby Digital Plus + Dolby Atmos") for the
 track label, on files scanned (or re-probed) since it was stored.
+
+**Video profile / level (`h264Profile`, `h264Level`, `hevcProfile`,
+`hevcLevel`, `av1Profile`, `av1Level`; v2.7).** The highest profile and level
+the client's decoder takes, per codec (Android's `MediaCodecInfo` reports
+these as profile/level pairs). The file side is ffprobe's profile name and
+raw level of the video stream, stored by the scanner as
+`media_files.video_profile` / `video_level` (migration 00060): H.264 reports
+`level_idc` (41 = 4.1), HEVC 30 × the level (153 = 5.1), AV1 its
+`seq_level_idx` (13 = 5.1).
+- **Profiles are ranked** within a codec, each rank taking every lower one:
+  H.264 Baseline < Main < High < High 10 < High 4:2:2 < High 4:4:4; HEVC
+  Main < Main 10 < RExt; AV1 Main < High < Professional. A profile outside the
+  ladder (H.264 Extended, multiview) isn't gated.
+- **Decide:** a source over the declared profile or level is a `transcode`
+  ("H.264 level 5.1 → client max 4.1" on Now Playing). Not declared, or a file
+  probed before v2.7 (NULL): not gated, exactly as before.
+- **Transcode output:** the output is sized to fit the declared level of the
+  predicted output codec at the source frame rate (the pipeline keeps the
+  frame rate, so a 1080p60 source on an H.264 4.1 decoder comes out at about
+  750 lines, still 60 fps), the bitrate is held to the level's maximum ÷ 1.5 (the encoder's
+  peak headroom), and ABR ladders are capped the same way, their `CODECS`
+  advertising the declared level rather than a higher one. The job carries
+  the limits (`output_limits`) and the encoder is given the level in its own
+  form: `-level 4.1` (x264, NVENC, AMF), `-level 4` (VAAPI), `-level 41`
+  (QSV), `-x265-params level-idc=4.1` (x265); libsvtav1 has none. The level
+  is written only when the output fits it, so a worker falling back from
+  HEVC to H.264 is never handed a level its picture is over. An H.264
+  ceiling of Main or Baseline pins `-profile:v main` / `baseline`
+  (`constrained_baseline` on AMF and VAAPI); High and above pin nothing, H.264
+  output being 8-bit High at most. `hevcProfile=main` makes an HEVC re-encode
+  8-bit, and keeps a 10-bit source off an HEVC ABR ladder (its rungs keep the
+  source depth). A worker older than v2.7 ignores the limits; the output is
+  still sized for the level.
+- Not covered: optimized versions (offered by their codec, size and bitrate,
+  not their level), VP9, and HEVC tiers.
 
 **HLG (`hlg`).** An HDR10 display isn't necessarily an HLG one: NVIDIA SHIELD
 outputs HDR10 but sends HLG flagged as SDR (dark, green picture). So for an HLG
@@ -411,11 +467,25 @@ DTS) track. Audio item details carry ffprobe's `profile`. Clients still have to
 send the key (Android TV first), and Media3's reading of TrueHD (`mlpa`) and
 DTS out of fMP4 HLS was checked through an AV receiver on 2026-10-19: it works.
 
+**Done — Phase 3 rest (2026-10-19, server).** Audio passthrough on full
+transcodes, ABR ladder included (§5.1 "Audio passthrough"), and video
+profile/level in the grammar (§5.1 "Video profile / level"), with
+`media_files.video_profile` / `video_level` from the scanner (migration
+00060). Checked with ffmpeg 8.1: a libx264 re-encode held to Main@4.1 with
+AC-3 / E-AC-3 copied into MPEG-TS and TrueHD / DTS copied into fMP4
+(`mlpa` / `mp4a` sample entries) produces valid segments
+(`TestFFmpeg_ReencodeAudioPassthrough`, generated sources).
+
 **Remaining:**
 1. Device-test on Roku (the verdict is now final there, unit-tested only),
    Fire TV, Tizen and webOS.
-2. Phase 3 rest: passthrough on full transcodes (audio is always AAC there,
-   ABR ladder included), video profile/level.
+2. Clients have to send the new keys: the Android TV app should add
+   `h264Profile` / `h264Level` / `hevcProfile` / `hevcLevel` (and AV1) from
+   `MediaCodecInfo.CodecCapabilities.profileLevels`. Then check on a device
+   through an AV receiver: a re-encode (e.g. VC-1, or a burn-in) with TrueHD /
+   DTS / E-AC-3 copied, single rendition and ABR (Media3 reading the
+   master's `CODECS`), and a level-capped re-encode on a decoder that refuses
+   the source's level.
 
 Why staged: the flip changes how playback *starts*. Driving the real endpoint
 per-client (local dev, then the phone on-device) caught both the `DirectStream`
@@ -511,14 +581,24 @@ and `internal/transcode/decision_cast_test.go` pins what they decide.
 | Profile | When | `X-Client-Capabilities` |
 |---|---|---|
 | HD (default) | Chromecast gen 1–3, Chromecast HD, anything unrecognised | `videoDecoder=h264,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=1920,maxHeight=1080,maxAudioChannels=2,maxbitdepth=8,hdr=0` |
-| 4K | model name matches `/ultra\|google tv\|streamer\|shield\|android tv\|bravia/i` | `videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=10,hdr=1` |
+| 4K | a video receiver whose model name is a known 4K model or matches `/ultra\|google tv\|streamer\|shield\|android tv\|bravia/i`, else whose friendly name matches it | `videoDecoder=h264:h265,audioDecoder=aac:mp3,protocols=mp4:hls,maxWidth=3840,maxHeight=2160,maxAudioChannels=6,maxbitdepth=10,hdr=1` |
 
 - `protocols` must list `mp4`: with `hls` alone no file container matches,
   so even an MP4 the receiver plays as-is comes back `directStream`. `hls`
   only says the device takes HLS.
-- The Web Sender SDK exposes no model name (Android's `CastDevice` does), so
-  the web matches the regex against the device's friendly name; a renamed
-  device gets HD.
+- How a device is placed, in order (`castProfileForDevice` on the web,
+  `ChromecastCaps.forDevice` on the phone, same tables): the phone's
+  **Chromecast quality** setting (Auto / 4K / HD) when it isn't Auto; a
+  receiver without the video-out capability (a speaker or group) gets HD; a
+  known HD/audio model (Chromecast HD, Nest Hub, Bose Smart Ultra Soundbar…)
+  gets HD; a known 4K model or one matching the regex gets 4K; then the
+  friendly name against the regex; else HD. Plain "Chromecast" is reported by
+  gen 1–3 and by the 4K Chromecast with Google TV alike, so it falls through
+  to the friendly name.
+- The Cast SDKs report no resolution or codec support. The Web Sender SDK
+  has no model name either (`chrome.cast.Receiver` has `friendlyName` and
+  `capabilities`), so a renamed 4K device gets HD on the web; on the phone
+  the user can set Chromecast quality to 4K.
 - A 4K-profile load the receiver fails (the LOAD rejected, or the media goes
   IDLE with reason ERROR before it ever played) is retried once with HD.
 

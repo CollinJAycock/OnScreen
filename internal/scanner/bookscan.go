@@ -55,6 +55,23 @@ func (s *Scanner) processBook(ctx context.Context, libraryID uuid.UUID, path str
 		SortTitle:  sortTitle(title),
 		DurationMS: &pagesMS,
 	}
+	// An EPUB names itself: its OPF's title wins over the filename, and
+	// its author and description fill the row (author in original_title,
+	// as audiobooks keep it; OPDS and the clients read it from there).
+	if isEPUB(path) {
+		if m, ok := readEpubMetadata(path); ok {
+			if m.Title != "" {
+				p.Title = m.Title
+				p.SortTitle = sortTitle(m.Title)
+			}
+			if m.Author != "" {
+				p.OriginalTitle = &m.Author
+			}
+			if m.Description != "" {
+				p.Summary = &m.Description
+			}
+		}
+	}
 	item, err := s.media.FindOrCreateItem(ctx, p)
 	if err != nil {
 		return nil, err
@@ -122,8 +139,11 @@ func (s *Scanner) extractBookCover(ctx context.Context, book *media.Item, cbzPat
 		relPath = filepath.ToSlash(filepath.Join(filepath.Base(bookDir), book.ID.String()+"-poster.jpg"))
 	}
 
-	// Idempotent: if the cover is already on disk, just sync the DB pointer.
-	if s.posterExists(ctx, posterFile) {
+	// Idempotent: if the cover is already on disk, just sync the DB
+	// pointer — unless it's an SVG an older scan saved under the .jpg
+	// name (an advanced EPUB's cover), which no client can show; that one
+	// is extracted again and overwritten.
+	if s.posterExists(ctx, posterFile) && s.posterIsRaster(ctx, posterFile) {
 		s.syncBookCoverPath(ctx, book, relPath)
 		return
 	}
@@ -141,6 +161,12 @@ func (s *Scanner) extractBookCover(ctx context.Context, book *media.Item, cbzPat
 		}
 	}
 	if outData == nil {
+		// Not decodable here (a WebP, say): keep the original bytes, but
+		// only if a browser can show them as an image.
+		if !isRasterImage(imgBytes) {
+			s.logger.DebugContext(ctx, "book cover is not a raster image; skipped", "book_id", book.ID)
+			return
+		}
 		outData = imgBytes
 	}
 
@@ -271,6 +297,104 @@ func isCBZPageEntry(name string) bool {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	return imageExtensions[ext]
+}
+
+// posterIsRaster reports whether the poster file starts like an image a
+// client can show. A read failure counts as fine: only a poster known to
+// be wrong is rewritten.
+func (s *Scanner) posterIsRaster(ctx context.Context, key string) bool {
+	rc, err := s.mediaStore().Open(ctx, key)
+	if err != nil {
+		return true
+	}
+	defer rc.Close()
+	head := make([]byte, 16)
+	n, _ := io.ReadFull(rc, head)
+	return isRasterImage(head[:n])
+}
+
+// healBookPoster rewrites, on an unchanged file, a book poster an older
+// scan saved from an SVG cover (raw SVG under {id}-poster.jpg, which
+// shows as a broken image): the EPUB is read again for the raster its
+// cover embeds. Same key, so the item's poster_path is unchanged.
+func (s *Scanner) healBookPoster(ctx context.Context, libraryType string, item *media.Item, path string) {
+	if (libraryType != "book" && libraryType != "manga") || item == nil || item.Type != "book" || !isEPUB(path) {
+		return
+	}
+	posterFile := filepath.Join(filepath.Dir(path), item.ID.String()+"-poster.jpg")
+	if !s.posterExists(ctx, posterFile) || s.posterIsRaster(ctx, posterFile) {
+		return
+	}
+	imgBytes, ok := s.readBookCover(ctx, path)
+	if !ok {
+		return
+	}
+	img, err := decodeImageBytes(imgBytes)
+	if err != nil {
+		return
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		return
+	}
+	if err := s.writePoster(ctx, posterFile, buf.Bytes()); err != nil {
+		s.logger.WarnContext(ctx, "failed to rewrite book cover", "book_id", item.ID, "err", err)
+		return
+	}
+	s.logger.InfoContext(ctx, "book cover rewritten from the EPUB's embedded image", "book_id", item.ID)
+}
+
+// healUnchangedBook gives an EPUB scanned before the scanner read OPF
+// metadata its title, author and description, in place, on an unchanged
+// file: the item keeps its id, so reading progress and history stay.
+// Only a row still carrying the filename title is touched (anything
+// else was named by enrichment or an admin), and locked fields stay
+// locked (UpdateMediaItemMetadata's guards). Once healed the title no
+// longer matches the filename, so the file is read once.
+func (s *Scanner) healUnchangedBook(ctx context.Context, libraryType string, item *media.Item, path string) {
+	if (libraryType != "book" && libraryType != "manga") || item == nil || item.Type != "book" || !isEPUB(path) {
+		return
+	}
+	if item.Title != parseBookTitle(path) {
+		return
+	}
+	m, ok := readEpubMetadata(path)
+	if !ok || (m.Title == "" || m.Title == item.Title) && m.Author == "" {
+		return
+	}
+	p := media.UpdateItemMetadataParams{
+		ID:                    item.ID,
+		Title:                 item.Title,
+		SortTitle:             item.SortTitle,
+		OriginalTitle:         item.OriginalTitle,
+		Year:                  item.Year,
+		Summary:               item.Summary,
+		Tagline:               item.Tagline,
+		Rating:                item.Rating,
+		AudienceRating:        item.AudienceRating,
+		ContentRating:         item.ContentRating,
+		DurationMS:            item.DurationMS,
+		Genres:                item.Genres,
+		Tags:                  item.Tags,
+		OriginallyAvailableAt: item.OriginallyAvailableAt,
+	}
+	if m.Title != "" {
+		p.Title = m.Title
+		p.SortTitle = sortTitle(m.Title)
+	}
+	if m.Author != "" && (item.OriginalTitle == nil || *item.OriginalTitle == "") {
+		p.OriginalTitle = &m.Author
+	}
+	if m.Description != "" && (item.Summary == nil || *item.Summary == "") {
+		p.Summary = &m.Description
+	}
+	updated, err := s.media.UpdateItemMetadata(ctx, p)
+	if err != nil {
+		s.logger.WarnContext(ctx, "book metadata from the EPUB failed", "item_id", item.ID, "err", err)
+		return
+	}
+	*item = *updated
+	s.logger.InfoContext(ctx, "book named from its EPUB metadata", "item_id", item.ID, "title", item.Title)
 }
 
 // parseBookTitle returns a clean title from a book file path. Strips

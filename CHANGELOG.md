@@ -9,6 +9,214 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+v2.7, the last server release of the v2 line (see
+[docs/v2.7-roadmap.md](docs/v2.7-roadmap.md)): the plugin host's metadata and
+task roles, audio passthrough on full transcodes and video profile/level in
+the capability profile, Roku seek thumbnails, a Valkey lock for the ABR
+ladder, a default backup task with a restore drill, a monitoring pack, and
+fixes across the web and Android apps.
+
+### Upgrade notes
+
+- **Migration 00058** (applied at boot). Task plugins each get a
+  scheduled task, so the rule allowing one enabled task per task type no
+  longer applies to plugin tasks; one task per plugin applies instead.
+  Task plugins registered earlier get their task on the first start.
+- **Migration 00060** adds `media_files.video_profile` and `video_level`
+  (applied at startup with `AUTO_MIGRATE=true`). Files already in the
+  library have neither until they are re-probed
+  (`POST /api/v1/maintenance/reprobe-metadata`, then a scan); until then
+  they aren't checked against a client's profile/level, as before.
+- **Workers:** the re-encode passthrough of TrueHD and DTS uses the
+  `audio_passthrough` worker feature v2.6 workers already have. The encoder
+  level flags need v2.7 workers; an older worker ignores them and picks the
+  level itself, for an output the server has already sized to fit.
+- **Migration 00059** adds a daily `Database backup` task, but only on a
+  **fresh install** (a database with no accounts yet). Upgraded servers
+  are left as they are; create the task in **Settings ▸ Tasks** if you
+  don't back up another way.
+- Docker: `docker/docker-compose.yml` now mounts a `backup_data` volume
+  at `/var/backups/onscreen`. Add the same to your own compose file if
+  you use the scheduled backup, or its dumps go when the container is
+  recreated.
+
+### Added
+
+- **Metadata plugins.** A plugin registered with the `metadata` role is
+  now called during enrichment through its `enrich_item` tool, after
+  TMDB, TVDB, AniList, MusicBrainz and NFO files. It gets the item's
+  type, title, year, numbering, provider IDs and file name, and may
+  return a title, summary, tagline, genres, year, rating, content rating,
+  release date, poster URL and provider IDs. By default those fill only
+  empty fields; `"mode": "override"` replaces them. Locked fields are
+  never changed, provider IDs and posters are only ever filled, and the
+  poster must come from one of the plugin's allowed hosts and is fetched
+  through the SSRF-guarded artwork client. A slow or failing plugin never
+  fails a scan. Contract in [docs/plugins.md](docs/plugins.md).
+- **Task plugins.** A plugin registered with the `task` role becomes a
+  scheduled task (`Plugin: <name>`, daily at 04:30 until changed) in
+  Settings → Tasks, with the usual schedule, Run now, last run, status,
+  error and run history. Its `run_task` tool gets the server version and
+  the library list (no paths or keys); its text reply is the run output,
+  and an error reply fails the run.
+- **Settings → Plugins** offers all three roles, shows each one's
+  contract, and Test checks that a metadata or task plugin is reachable
+  and advertises its tool.
+- **Seek thumbnails on Roku.** `GET /trickplay/{id}/index.bif` (alias
+  `/api/v1/items/{id}/trickplay/index.bif`) serves an item's trickplay
+  thumbnails as a BIF, the format the Roku Video node's trick-play bar
+  renders natively. The server cuts it from the existing sprite sheets
+  (frames up to 320 px wide) on the first request and caches it next to
+  them until the sprites are regenerated; concurrent first requests share
+  one build. Same gates as the sprites: Bearer / cookie or an asset
+  `?token=`, the library ACL and the rating ceiling; 404 until the item
+  has thumbnails. The Roku player points the content's `HDBifUrl` /
+  `SDBifUrl` / `FHDBifUrl` at it, so scrubbing shows thumbnails; the
+  unused client-side VTT parser is gone. Thumbnails are left off for
+  another version (edition) than the one they were cut from, for a
+  re-issued session that starts mid-item, and for audio.
+- **Audio passthrough on full transcodes** (capability profiles Phase 3).
+  When the video has to be re-encoded, a client that lists the audio codec in
+  `audioPassthrough` now gets the track copied for its receiver instead of
+  AAC: AC-3 and E-AC-3 in the usual segments, TrueHD and DTS in fMP4
+  segments on workers with the `audio_passthrough` feature. Every rung of an
+  ABR ladder carries the same copied track, and the master playlist's
+  `CODECS` and `BANDWIDTH` name it. AAC stays the answer for clients that
+  don't list the codec, for MPEG-TS requests or an old fleet (TrueHD/DTS),
+  under a bitrate limit (user cap, internet limit or quality profile), and
+  for audio-only files. Now Playing shows `audio_passthrough` on the output
+  and "TrueHD audio passed through to the receiver".
+- **Video profile and level in the capability profile.** New
+  `X-Client-Capabilities` keys `h264Profile` / `h264Level`, `hevcProfile` /
+  `hevcLevel` and `av1Profile` / `av1Level` (e.g. `h264Profile=high,
+  h264Level=4.1,hevcProfile=main10,hevcLevel=5.1`) declare the most a
+  client's decoder takes. A source above either is transcoded (the scanner
+  now stores each file's profile and level), the re-encode is sized to fit
+  the level at the source frame rate and the encoder is told the level, and
+  ABR ladders are capped the same way. Clients that don't send the keys get
+  the same decisions as before. Item details show `video_profile` /
+  `video_level`.
+- **Backups by default, and a restore drill.** New installs back up the
+  database every night at 03:11 to `/var/backups/onscreen`, keeping the
+  newest 7 dumps. The Linux installer creates that directory for the
+  service user and the Windows installer creates it readable by SYSTEM and
+  Administrators only. [docs/restore-drill.md](docs/restore-drill.md) is a
+  step-by-step rehearsal: take a backup, restore it into a throwaway
+  server through the API or with `pg_restore`, verify it, tear it down.
+- **Alerting pack** in `deploy/monitoring/`: a Grafana dashboard for the
+  server's Prometheus metrics, Prometheus alert rules (server down, 5xx
+  rate, slow database queries, rate limiter failing open, transcode jobs
+  finding no live worker, dispatch errors, stalled library scans, webhook
+  failure storms, slow hub refresh, optional per-worker health probes)
+  with `promtool` unit tests, and an example `prometheus.yml`. Loading
+  them is described in [docs/deployment.md](docs/deployment.md#dashboards-and-alerts).
+
+### Changed
+
+- The per-plugin circuit breaker (three failures in a row, five minutes
+  open) now covers all three roles, and opening or closing it is audited
+  for each (`plugin.metadata.*`, `plugin.task.*`).
+- **ABR works on a replicated API tier.** Starting or restarting a
+  ladder rung's encoder now takes a Valkey lease (`SET NX PX` with a
+  per-holder token, renewed while held, released with compare-and-delete)
+  on top of the in-process mutex, so two API instances serving segments
+  for the same session can no longer both start an ffmpeg for one rung.
+  The 2-second floor between forced restarts is shared through Valkey
+  too. If Valkey errors, the lock falls back to the in-process mutex.
+- **Faster rescans of large TV and music libraries.** A scan no longer
+  repeats the show / season (or artist / album) lookup for every file: a
+  per-scan cache resolves repeats with one primary-key read, which still
+  checks the item hasn't been merged, deleted or moved since. For a show
+  whose title no longer matches its folder, a 60-episode rescan made 183
+  queries instead of 360 and one full-text search instead of 60.
+- **Refresh metadata and Fix Match say how it went** (v2.7 item 7, known
+  issue 4). Refresh shows "Metadata refreshed" when the item changes, and
+  "No changes found" when the 24 s polling window ends without one. Fix
+  Match no longer reloads the page after a fixed 2 s: it polls until the
+  item carries the new match, then updates the page in place (title,
+  artwork, episodes, cast) and says "Matched to …"; if the match is still
+  loading after 24 s it says so.
+- **Better 4K Cast detection** (v2.7 item 8, known issue 9). The phone app
+  and the web player place a Chromecast from what the Cast SDK reports
+  instead of the name alone: a receiver without video out (a speaker or a
+  group) never gets the 4K profile, known model names decide next (a "Bose
+  Smart Ultra Soundbar" no longer passes as a Chromecast Ultra, a Mi Box S
+  is 4K), and the name pattern stays as the fallback. The phone adds
+  **Settings → Playback → Chromecast quality** (Auto / 4K / HD) for a 4K TV
+  the detection can't place, such as a TV with Google TV built in that
+  reports its panel's model number.
+
+### Fixed
+
+- **EPUBs are named from the book, not the file.** The scanner reads the
+  EPUB's own title, author and description (its OPF metadata) instead of
+  titling the book after its filename ("oscar-wilde the-picture-of-dorian-gray"
+  becomes *The Picture of Dorian Gray* by Oscar Wilde). Books scanned before
+  are renamed in place on the next scan, unless their title was set by
+  enrichment or an admin; locked fields stay as they are. The title is what
+  OPDS e-reader apps, the web and the TV apps show, and what OpenLibrary
+  enrichment searches with.
+- **Covers for "advanced" EPUBs.** A cover that is an SVG (Standard Ebooks'
+  Advanced EPUB embeds the painting as a JPEG inside an SVG with the title
+  drawn over it) was saved raw under `{id}-poster.jpg` and showed as a broken
+  image everywhere, OPDS included. The scanner now takes the image the SVG
+  embeds or links, falls back to another raster image in the book, and never
+  saves bytes that aren't an image. A poster saved the old way is rewritten
+  on the next scan.
+- **Book downloads carry their own type** (`application/epub+zip`, PDF, CBZ,
+  CBR…) instead of `application/octet-stream`, so an e-reader app fetching
+  an OPDS acquisition link files the download correctly.
+- **The manual poster picker no longer wipes an item's details.** Choosing
+  a poster (Set Poster, or a poster from the item page) cleared the
+  summary, tagline, original title, ratings, content rating, runtime,
+  tags and release date of every field that wasn't locked. It now changes
+  only the poster. Items already affected get their details back on the
+  next Refresh metadata.
+
+### Android TV / Fire TV
+
+- **The seek bar's scale after taking back background audio** (v2.7 item
+  11). Reopening a transcoded or remuxed track that was playing in the
+  background showed the server session's own scale ("1:30 / 2:28") for 4 to
+  21 s. The player screen now takes the session's offset and the track's
+  length from the hand-off before the transport bar first draws, and tells
+  the bar to read them again once the item has loaded.
+- **The remote's Next and Previous work for background music and books**
+  (v2.7 item 12). The background session's player holds one item, so its
+  media session offered no skip at all and MEDIA_NEXT did nothing. It now
+  offers Next and Previous for music and audiobooks and hands them to the
+  background service, which plays the album's (or instant mix's, or book's)
+  next or previous item. Previous more than 3 s into an item restarts it,
+  and at the first item of an album or book it restarts too.
+- **A hung progress report no longer holds up background heartbeats**
+  (v2.7 item 14; the phone app too). The background service awaited each
+  'playing' PUT before the next tick, so one that hung (up to the client's
+  60 s timeout) delayed every beat after it. Beats now go out without the
+  loop waiting, are cut off after 15 s, and a tick is skipped while the last
+  beat is still out. On the TV a pause or stop report waits for a beat still
+  out for 2 s at most.
+- **Background streaming keeps Wi-Fi awake** (v2.7 item 14; the phone app
+  too). The background player uses Media3's `WAKE_MODE_NETWORK`: a Wi-Fi
+  lock as well as the CPU wake lock, held only while it plays or buffers, so
+  Wi-Fi power save with the screen off can't starve a stream. The TV's
+  player screen keeps the CPU wake lock alone, as before.
+- A buffering stall is not reported as a pause (v2.7 item 13): already true
+  since v2.5.0, where a rebuffer holds the heartbeat instead of sending
+  'paused'.
+
+### CI
+
+- **TV web apps on every PR** (v2.7 item 10). A new `TV web clients`
+  workflow runs `svelte-check` and the Vitest suites of the webOS, Tizen and
+  Xbox TV apps (about 2,600 tests) on PRs and pushes that touch them.
+- **Playwright nightly** (v2.7 item 10). The nightly E2E workflow gains a
+  Chromium job that runs the web Playwright specs against its own compose
+  stack, seeded by `web/tests/e2e/seed.mjs` (an admin and an empty library).
+  Form logins in the specs now wait out the auth rate limiter instead of
+  failing on it.
+
 ## [v2.6.2] — unreleased
 
 Patch release for the web app: Home rows can be dragged into order, and
