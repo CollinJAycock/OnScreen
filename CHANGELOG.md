@@ -150,6 +150,17 @@ fixes across the web and Android apps.
 
 ### Fixed
 
+- **EPUBs are named from the book, not the file.** The scanner reads the
+  EPUB's own title, author and description (its OPF metadata) instead of
+  titling the book after its filename ("oscar-wilde the-picture-of-dorian-gray"
+  becomes *The Picture of Dorian Gray* by Oscar Wilde). Books scanned before
+  are renamed in place on the next scan, unless their title was set by
+  enrichment or an admin; locked fields stay as they are. The title is what
+  OPDS e-reader apps, the web and the TV apps show, and what OpenLibrary
+  enrichment searches with.
+- **Book downloads carry their own type** (`application/epub+zip`, PDF, CBZ,
+  CBR…) instead of `application/octet-stream`, so an e-reader app fetching
+  an OPDS acquisition link files the download correctly.
 - **The manual poster picker no longer wipes an item's details.** Choosing
   a poster (Set Poster, or a poster from the item page) cleared the
   summary, tagline, original title, ratings, content rating, runtime,
