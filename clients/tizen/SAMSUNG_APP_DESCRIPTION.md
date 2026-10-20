@@ -14,7 +14,7 @@
 | Samsung App ID | 3202605045527 |
 | Tizen Application ID | OnScreenTV.OnScreen |
 | Tizen Package ID | OnScreenTV |
-| Version | 1.1.1 (resubmission: 1.1.0 was rejected for the Return Key Policy; Return on the first screen now asks with an HTML exit popup) |
+| Version | 1.1.2 (resubmission: 1.1.0 was rejected for the Return Key Policy; Return on the first screen now asks with an HTML exit popup) |
 | Category | Video / Entertainment |
 | Required Tizen Version | 5.5 |
 | Supported Models | 2020 and newer (Tizen 5.5+); hardware-verified on a Samsung QN75Q80B (2022, Tizen 6.5) |
