@@ -1481,6 +1481,9 @@ func (s *Scanner) resolveUnchangedFile(ctx context.Context, libraryID uuid.UUID,
 	// And an EPUB scanned before the OPF's title and author were read
 	// gains them (one read per file, ever).
 	s.healUnchangedBook(ctx, libraryType, item, path)
+	// And one whose cover was saved as raw SVG (an advanced EPUB) gets
+	// the image the SVG embeds.
+	s.healBookPoster(ctx, libraryType, item, path)
 	// And an episode filed before multi-episode names were read gains its
 	// range ("S01E01-E02" → index_end 2).
 	s.healUnchangedEpisode(ctx, libraryType, item, path)

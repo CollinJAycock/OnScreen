@@ -158,6 +158,13 @@ fixes across the web and Android apps.
   enrichment or an admin; locked fields stay as they are. The title is what
   OPDS e-reader apps, the web and the TV apps show, and what OpenLibrary
   enrichment searches with.
+- **Covers for "advanced" EPUBs.** A cover that is an SVG (Standard Ebooks'
+  Advanced EPUB embeds the painting as a JPEG inside an SVG with the title
+  drawn over it) was saved raw under `{id}-poster.jpg` and showed as a broken
+  image everywhere, OPDS included. The scanner now takes the image the SVG
+  embeds or links, falls back to another raster image in the book, and never
+  saves bytes that aren't an image. A poster saved the old way is rewritten
+  on the next scan.
 - **Book downloads carry their own type** (`application/epub+zip`, PDF, CBZ,
   CBR…) instead of `application/octet-stream`, so an e-reader app fetching
   an OPDS acquisition link files the download correctly.

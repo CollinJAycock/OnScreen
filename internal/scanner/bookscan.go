@@ -139,8 +139,11 @@ func (s *Scanner) extractBookCover(ctx context.Context, book *media.Item, cbzPat
 		relPath = filepath.ToSlash(filepath.Join(filepath.Base(bookDir), book.ID.String()+"-poster.jpg"))
 	}
 
-	// Idempotent: if the cover is already on disk, just sync the DB pointer.
-	if s.posterExists(ctx, posterFile) {
+	// Idempotent: if the cover is already on disk, just sync the DB
+	// pointer — unless it's an SVG an older scan saved under the .jpg
+	// name (an advanced EPUB's cover), which no client can show; that one
+	// is extracted again and overwritten.
+	if s.posterExists(ctx, posterFile) && s.posterIsRaster(ctx, posterFile) {
 		s.syncBookCoverPath(ctx, book, relPath)
 		return
 	}
@@ -158,6 +161,12 @@ func (s *Scanner) extractBookCover(ctx context.Context, book *media.Item, cbzPat
 		}
 	}
 	if outData == nil {
+		// Not decodable here (a WebP, say): keep the original bytes, but
+		// only if a browser can show them as an image.
+		if !isRasterImage(imgBytes) {
+			s.logger.DebugContext(ctx, "book cover is not a raster image; skipped", "book_id", book.ID)
+			return
+		}
 		outData = imgBytes
 	}
 
@@ -288,6 +297,51 @@ func isCBZPageEntry(name string) bool {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	return imageExtensions[ext]
+}
+
+// posterIsRaster reports whether the poster file starts like an image a
+// client can show. A read failure counts as fine: only a poster known to
+// be wrong is rewritten.
+func (s *Scanner) posterIsRaster(ctx context.Context, key string) bool {
+	rc, err := s.mediaStore().Open(ctx, key)
+	if err != nil {
+		return true
+	}
+	defer rc.Close()
+	head := make([]byte, 16)
+	n, _ := io.ReadFull(rc, head)
+	return isRasterImage(head[:n])
+}
+
+// healBookPoster rewrites, on an unchanged file, a book poster an older
+// scan saved from an SVG cover (raw SVG under {id}-poster.jpg, which
+// shows as a broken image): the EPUB is read again for the raster its
+// cover embeds. Same key, so the item's poster_path is unchanged.
+func (s *Scanner) healBookPoster(ctx context.Context, libraryType string, item *media.Item, path string) {
+	if (libraryType != "book" && libraryType != "manga") || item == nil || item.Type != "book" || !isEPUB(path) {
+		return
+	}
+	posterFile := filepath.Join(filepath.Dir(path), item.ID.String()+"-poster.jpg")
+	if !s.posterExists(ctx, posterFile) || s.posterIsRaster(ctx, posterFile) {
+		return
+	}
+	imgBytes, ok := s.readBookCover(ctx, path)
+	if !ok {
+		return
+	}
+	img, err := decodeImageBytes(imgBytes)
+	if err != nil {
+		return
+	}
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: 90}); err != nil {
+		return
+	}
+	if err := s.writePoster(ctx, posterFile, buf.Bytes()); err != nil {
+		s.logger.WarnContext(ctx, "failed to rewrite book cover", "book_id", item.ID, "err", err)
+		return
+	}
+	s.logger.InfoContext(ctx, "book cover rewritten from the EPUB's embedded image", "book_id", item.ID)
 }
 
 // healUnchangedBook gives an EPUB scanned before the scanner read OPF
