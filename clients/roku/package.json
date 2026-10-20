@@ -15,7 +15,7 @@
     "node": ">=20"
   },
   "devDependencies": {
-    "archiver": "^7.0.1",
+    "archiver": "^8.0.0",
     "brighterscript": "^0.69.0",
     "brs": "^0.45.0"
   }
