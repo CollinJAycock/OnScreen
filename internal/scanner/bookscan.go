@@ -55,6 +55,23 @@ func (s *Scanner) processBook(ctx context.Context, libraryID uuid.UUID, path str
 		SortTitle:  sortTitle(title),
 		DurationMS: &pagesMS,
 	}
+	// An EPUB names itself: its OPF's title wins over the filename, and
+	// its author and description fill the row (author in original_title,
+	// as audiobooks keep it; OPDS and the clients read it from there).
+	if isEPUB(path) {
+		if m, ok := readEpubMetadata(path); ok {
+			if m.Title != "" {
+				p.Title = m.Title
+				p.SortTitle = sortTitle(m.Title)
+			}
+			if m.Author != "" {
+				p.OriginalTitle = &m.Author
+			}
+			if m.Description != "" {
+				p.Summary = &m.Description
+			}
+		}
+	}
 	item, err := s.media.FindOrCreateItem(ctx, p)
 	if err != nil {
 		return nil, err
@@ -271,6 +288,59 @@ func isCBZPageEntry(name string) bool {
 	}
 	ext := strings.ToLower(filepath.Ext(name))
 	return imageExtensions[ext]
+}
+
+// healUnchangedBook gives an EPUB scanned before the scanner read OPF
+// metadata its title, author and description, in place, on an unchanged
+// file: the item keeps its id, so reading progress and history stay.
+// Only a row still carrying the filename title is touched (anything
+// else was named by enrichment or an admin), and locked fields stay
+// locked (UpdateMediaItemMetadata's guards). Once healed the title no
+// longer matches the filename, so the file is read once.
+func (s *Scanner) healUnchangedBook(ctx context.Context, libraryType string, item *media.Item, path string) {
+	if (libraryType != "book" && libraryType != "manga") || item == nil || item.Type != "book" || !isEPUB(path) {
+		return
+	}
+	if item.Title != parseBookTitle(path) {
+		return
+	}
+	m, ok := readEpubMetadata(path)
+	if !ok || (m.Title == "" || m.Title == item.Title) && m.Author == "" {
+		return
+	}
+	p := media.UpdateItemMetadataParams{
+		ID:                    item.ID,
+		Title:                 item.Title,
+		SortTitle:             item.SortTitle,
+		OriginalTitle:         item.OriginalTitle,
+		Year:                  item.Year,
+		Summary:               item.Summary,
+		Tagline:               item.Tagline,
+		Rating:                item.Rating,
+		AudienceRating:        item.AudienceRating,
+		ContentRating:         item.ContentRating,
+		DurationMS:            item.DurationMS,
+		Genres:                item.Genres,
+		Tags:                  item.Tags,
+		OriginallyAvailableAt: item.OriginallyAvailableAt,
+	}
+	if m.Title != "" {
+		p.Title = m.Title
+		p.SortTitle = sortTitle(m.Title)
+	}
+	if m.Author != "" && (item.OriginalTitle == nil || *item.OriginalTitle == "") {
+		p.OriginalTitle = &m.Author
+	}
+	if m.Description != "" && (item.Summary == nil || *item.Summary == "") {
+		p.Summary = &m.Description
+	}
+	updated, err := s.media.UpdateItemMetadata(ctx, p)
+	if err != nil {
+		s.logger.WarnContext(ctx, "book metadata from the EPUB failed", "item_id", item.ID, "err", err)
+		return
+	}
+	*item = *updated
+	s.logger.InfoContext(ctx, "book named from its EPUB metadata", "item_id", item.ID, "title", item.Title)
 }
 
 // parseBookTitle returns a clean title from a book file path. Strips

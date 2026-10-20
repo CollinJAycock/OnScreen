@@ -3,9 +3,11 @@ package scanner
 import (
 	"archive/zip"
 	"encoding/xml"
+	"html"
 	"io"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -20,9 +22,9 @@ import (
 //      "page" in our reader; epub.js does its own re-pagination
 //      client-side so this is mostly a "how big is this book" hint)
 //   2. Cover image bytes → poster
-//   3. Title from the OPF metadata (currently unused; the scanner
-//      falls back to the filename, which is usually fine for personal
-//      libraries)
+//   3. Title, author and description from the OPF metadata
+//      (readEpubMetadata); the scanner falls back to the filename when
+//      the book doesn't carry them
 //
 // EPUB is just a ZIP, so all the work happens through stdlib
 // archive/zip + encoding/xml — no new dependency needed.
@@ -35,7 +37,26 @@ type epubContainer struct {
 }
 
 type epubPackage struct {
-	XMLName  xml.Name `xml:"package"`
+	XMLName xml.Name `xml:"package"`
+	// Dublin Core fields of the OPF's <metadata>. The tags carry no
+	// namespace, so dc:title, dc:creator and dc:description match
+	// whatever prefix the book uses.
+	Metadata struct {
+		Titles   []string `xml:"title"`
+		Creators []struct {
+			Name string `xml:",chardata"`
+			ID   string `xml:"id,attr"`
+			// EPUB 2 puts the role on the element (opf:role="aut").
+			Role string `xml:"role,attr"`
+		} `xml:"creator"`
+		Descriptions []string `xml:"description"`
+		// EPUB 3 puts it in a refining <meta property="role">aut</meta>.
+		Metas []struct {
+			Refines  string `xml:"refines,attr"`
+			Property string `xml:"property,attr"`
+			Value    string `xml:",chardata"`
+		} `xml:"meta"`
+	} `xml:"metadata"`
 	Manifest struct {
 		Items []struct {
 			ID         string `xml:"id,attr"`
@@ -140,6 +161,92 @@ func readFirstEpubCover(epubPath string) ([]byte, bool) {
 		}
 	}
 	return nil, false
+}
+
+// epubMetadata is what the scanner takes from an EPUB's OPF: the title,
+// the author(s) as one display string, and the description as plain
+// text. Empty fields mean the book didn't say.
+type epubMetadata struct {
+	Title       string
+	Author      string
+	Description string
+}
+
+// readEpubMetadata reads the OPF's Dublin Core title, creators and
+// description. Authors are the creators marked "aut" (EPUB 2 opf:role or
+// an EPUB 3 refining role meta); with no roles at all, every creator.
+// The publication date is left out on purpose: dc:date is usually the
+// ebook edition's date (Standard Ebooks, Gutenberg), not the work's.
+func readEpubMetadata(epubPath string) (epubMetadata, bool) {
+	pkg, _, ok := openEpubPackage(epubPath)
+	if !ok {
+		return epubMetadata{}, false
+	}
+	var m epubMetadata
+	for _, t := range pkg.Metadata.Titles {
+		if t = collapseSpace(t); t != "" {
+			m.Title = t
+			break
+		}
+	}
+
+	// creator id → its EPUB 3 roles; one creator can have several
+	// (Standard Ebooks marks Wilde both "aut" and "wpr").
+	roles := map[string][]string{}
+	for _, meta := range pkg.Metadata.Metas {
+		if meta.Property == "role" && strings.HasPrefix(meta.Refines, "#") {
+			id := strings.TrimPrefix(meta.Refines, "#")
+			roles[id] = append(roles[id], strings.TrimSpace(meta.Value))
+		}
+	}
+	var authors, all []string
+	anyRole := false
+	for _, c := range pkg.Metadata.Creators {
+		name := collapseSpace(c.Name)
+		if name == "" {
+			continue
+		}
+		all = append(all, name)
+		cr := roles[c.ID]
+		if c.Role != "" {
+			cr = append(cr, c.Role)
+		}
+		if len(cr) > 0 {
+			anyRole = true
+		}
+		for _, r := range cr {
+			if r == "aut" {
+				authors = append(authors, name)
+				break
+			}
+		}
+	}
+	if !anyRole {
+		authors = all
+	}
+	m.Author = strings.Join(authors, ", ")
+
+	for _, d := range pkg.Metadata.Descriptions {
+		if d = plainText(d); d != "" {
+			m.Description = d
+			break
+		}
+	}
+	return m, true
+}
+
+var htmlTag = regexp.MustCompile(`(?s)<[^>]*>`)
+
+// plainText turns an OPF description, which is often escaped HTML
+// ("&lt;p&gt;…" decoding to "<p>…"), into plain text for the summary.
+func plainText(s string) string {
+	s = htmlTag.ReplaceAllString(s, " ")
+	s = html.UnescapeString(s)
+	return collapseSpace(s)
+}
+
+func collapseSpace(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // openEpubPackage parses META-INF/container.xml to find the OPF, then

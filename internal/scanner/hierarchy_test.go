@@ -173,6 +173,7 @@ func (m *mockMediaService) UpdateItemMetadata(_ context.Context, p media.UpdateI
 	if it, ok := m.items[p.ID]; ok {
 		it.Title = p.Title
 		it.SortTitle = p.SortTitle
+		it.OriginalTitle = p.OriginalTitle
 		it.Summary = p.Summary
 		it.Year = p.Year
 		it.OriginallyAvailableAt = p.OriginallyAvailableAt

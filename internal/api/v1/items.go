@@ -2727,10 +2727,11 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		"Content-Disposition",
 		`attachment; filename="`+dispositionFilename+`"; filename*=UTF-8''`+url.PathEscape(dispositionFilename),
 	)
-	// Tell the browser this is a binary blob, not something to render
-	// inline. The exact MIME doesn't matter for save-as — application/
-	// octet-stream is the universal "treat as opaque" hint.
-	w.Header().Set("Content-Type", "application/octet-stream")
+	// A binary blob, not something to render inline (the disposition is
+	// attachment). Book formats get their own type — an e-reader app
+	// fetching an OPDS acquisition link files the download by it (EPUB,
+	// PDF, CBZ, CBR…); anything else stays the opaque octet-stream.
+	w.Header().Set("Content-Type", bookMIMEType(file.FilePath))
 
 	// Same WriteTimeout reset as StreamFile — large downloads shouldn't
 	// be capped by the JSON-handler 60 s ceiling.
@@ -2738,7 +2739,7 @@ func (h *ItemHandler) DownloadFile(w http.ResponseWriter, r *http.Request) {
 		_ = rc.SetWriteDeadline(time.Time{})
 	}
 
-	// Content-Type is already set to octet-stream above, so ServeContent keeps it
+	// Content-Type is already set above, so ServeContent keeps it
 	// (the basename is only a content-type hint and is ignored here). The store
 	// streams from disk today; an object-storage backend would 302 to a CDN.
 	if err := mediastore.Serve(w, r, h.mediaStore(), file.FilePath, filepath.Base(file.FilePath), auth.StreamTokenTTL); err != nil {
