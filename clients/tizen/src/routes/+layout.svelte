@@ -1,11 +1,12 @@
 <script lang="ts">
   import '../app.css';
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { focusManager } from '$lib/focus/manager';
   import { api, type NotificationEvent, type SignOutReason } from '$lib/api';
   import { closeApp, rootBackHandler } from '$lib/appExit';
+  import ExitPopup from '$lib/components/ExitPopup.svelte';
   import { registerTizenKeys } from '$lib/focus/keys';
   import { avplay } from '$lib/player/avplay';
   import { clientName } from '$lib/device';
@@ -39,13 +40,44 @@
   let booted = $state(false);
 
   // Return that no screen took (lib/appExit): the previous page, or on a
-  // first screen (Home, Setup, Sign in) closing the app, back to Smart Hub,
-  // as Samsung's checklist asks.
+  // first screen (Home, Setup, Sign in) the Exit / Cancel popup Samsung's
+  // Return Key Policy asks for. The popup puts the ring back where it was
+  // when cancelled.
+  let exitOpen = $state(false);
+  let exitReturn: HTMLElement | null = null;
+
   const onRootBack = rootBackHandler({
     routeId: () => page.route.id,
     goBack: () => goBack(),
-    exit: () => closeApp(),
+    openExitPopup: () => {
+      if (exitOpen) return;
+      exitReturn = focusManager.currentElement();
+      exitOpen = true;
+    },
   });
+
+  async function cancelExit() {
+    exitOpen = false;
+    const back = exitReturn;
+    exitReturn = null;
+    await tick();
+    // What the page put the ring on behind the popup (a Return restore of
+    // the hub that finished while it was up) when nothing had it before.
+    const behind = focusManager.takeBehindModal();
+    if (back && document.body.contains(back)) focusManager.focus(back);
+    else if (behind) focusManager.focus(behind);
+    // Nothing had the ring when the popup opened: the page is still placing
+    // it; the D-pad brings the ring up meanwhile.
+    else if (!back) return;
+    else focusManager.refocus();
+  }
+
+  // Exit: Tizen's application exit, back to Smart Hub. Where that does
+  // nothing (a desktop browser) the popup goes as Cancel would.
+  function exitApp() {
+    closeApp();
+    void cancelExit();
+  }
 
   // The app's one event stream ($lib/events) follows the route: open on every
   // signed-in screen, closed on login / setup / pairing, where sign-out,
@@ -160,6 +192,9 @@
 <main class="tv-root">
   {#if booted}
     {@render children()}
+  {/if}
+  {#if exitOpen}
+    <ExitPopup onexit={exitApp} oncancel={() => void cancelExit()} />
   {/if}
 </main>
 
