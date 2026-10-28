@@ -39,7 +39,7 @@ func TestGenerateSprites_StackedParts(t *testing.T) {
 	outDir := filepath.Join(dir, "out")
 	// 1 thumb per 2 s, 1x1 grid → one sprite per thumb: 20 s → 10 sprites.
 	spec := Spec{IntervalSec: 2, ThumbWidth: 64, ThumbHeight: 36, GridCols: 1, GridRows: 1}
-	names, err := generateSprites(context.Background(), parts[0].Input, parts, outDir, spec)
+	names, err := generateSprites(context.Background(), parts[0].Input, parts, outDir, spec, 20)
 	if err != nil {
 		t.Fatal(err)
 	}

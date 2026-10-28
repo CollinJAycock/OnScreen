@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/onscreen/onscreen/internal/ffsafe"
@@ -25,12 +26,12 @@ import (
 // parts, when it names two or more files, is a stacked movie: the sprites are
 // cut from all of them in order, through a concat list written to a private
 // temp file (never into outDir, which is served).
-func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.ConcatPart, outDir string, spec Spec) ([]string, error) {
+func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.ConcatPart, outDir string, spec Spec, durationSec int) ([]string, error) {
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return nil, fmt.Errorf("trickplay mkdir %s: %w", outDir, err)
 	}
 
-	vf := spriteFilter(spec)
+	vf := spriteFilter(spec, durationSec)
 
 	// %03d in the output template: ffmpeg emits sprite_000.jpg,
 	// sprite_001.jpg, … which sort lexicographically.
@@ -54,9 +55,20 @@ func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.Conca
 		inArgs = ffsafe.ConcatInputArgs(parts)
 	}
 
+	// Decode keyframes only (-skip_frame nokey, before -i): the fps filter
+	// keeps one frame per IntervalSec, so decoding every frame of the file
+	// was almost all wasted work — a full software decode of a 4K HEVC film
+	// pinned every core for most of an hour, and the backfill runs through
+	// the whole library on the server's own CPU. Each thumb is now the
+	// keyframe at or before its slot, at most a GOP (a few seconds) early,
+	// for ~1% of the CPU (spriteFilter pads the tail past the last
+	// keyframe). -threads caps what is left so a backfill can't starve
+	// playback or Postgres; lowerPriority does the same at the OS.
 	args := append([]string{
 		"-nostdin", "-hide_banner", "-loglevel", "error",
 		"-y",
+		"-skip_frame", "nokey",
+		"-threads", strconv.Itoa(spriteDecodeThreads),
 	}, inArgs...)
 	args = append(args,
 		"-i", inputPath,
@@ -68,7 +80,12 @@ func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.Conca
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	stderr := &strings.Builder{}
 	cmd.Stderr = stderr
-	if err := cmd.Run(); err != nil {
+	err := cmd.Start()
+	if err == nil {
+		lowerPriority(cmd.Process.Pid)
+		err = cmd.Wait()
+	}
+	if err != nil {
 		return nil, fmt.Errorf("trickplay ffmpeg %s: %w (stderr: %s)", inputPath, err, strings.TrimSpace(stderr.String()))
 	}
 
@@ -93,17 +110,28 @@ func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.Conca
 	return names, nil
 }
 
-// spriteFilter is the -vf graph for one sprite run. fps=1/N samples one frame
+// spriteDecodeThreads caps ffmpeg's decoder threads for a sprite run. With
+// keyframe-only decoding two threads keep up easily (a 2-minute 4K HEVC clip
+// takes under a second).
+const spriteDecodeThreads = 2
+
+// spriteFilter is the -vf graph for one sprite run. The decoder only hands
+// it keyframes (see generateSprites), so tpad repeats the last one forever
+// and trim stops the stream at the item's duration: without them a file whose
+// final keyframe lands more than an interval before the end comes up a thumb
+// or a whole sheet short, and WriteVTT fails the run. trim counts duration
+// from the first frame, not absolute timestamps, so a stream that doesn't
+// start at 0 (MPEG-TS) isn't cut off. fps=1/N samples one frame
 // every N seconds. scale+pad letterboxes each thumb into a fixed WxH box so
 // the VTT #xywh coordinates line up regardless of the source video's aspect
 // ratio. tile packs them into a CxR grid per output file. format=yuvj420p
 // converts to full range: ffmpeg 8's mjpeg encoder refuses the limited-range
 // YUV nearly all video uses ("Non full-range YUV is non-standard") unless
 // -strict unofficial, which writes JPEGs browsers render washed out.
-func spriteFilter(spec Spec) string {
+func spriteFilter(spec Spec, durationSec int) string {
 	return fmt.Sprintf(
-		"fps=1/%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,tile=%dx%d,format=yuvj420p",
-		spec.IntervalSec,
+		"tpad=stop=-1:stop_mode=clone,trim=duration=%d,fps=1/%d,scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,tile=%dx%d,format=yuvj420p",
+		durationSec, spec.IntervalSec,
 		spec.ThumbWidth, spec.ThumbHeight,
 		spec.ThumbWidth, spec.ThumbHeight,
 		spec.GridCols, spec.GridRows,

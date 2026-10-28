@@ -246,20 +246,30 @@ LIMIT @lim::int;
 -- Photos taken inside any of the given [from, to) windows (one per past
 -- year, computed in the server's time zone by the caller), across the
 -- given libraries, with the caller's rating ceiling and label restriction.
+--
+-- Driven from the windows, not the photos: each [from, to) pair is its own
+-- range scan on idx_photo_metadata_taken_at, so the query reads only the
+-- photos inside the windows. Testing every dated photo against all the
+-- windows (the first shape) cost photos × windows comparisons on every
+-- home-page load. The LATERAL's OFFSET 0 keeps the planner from flattening it
+-- back into a join: it guesses 1000 rows for generate_subscripts and then
+-- prefers walking every photo in taken_at order to satisfy the ORDER BY.
+-- The windows are a year apart, so no photo matches two of them.
 SELECT mi.id, mi.library_id, mi.title, mi.poster_path, mi.updated_at,
        pm.taken_at, pm.width, pm.height, pm.orientation,
        (SELECT COUNT(*) FROM photo_faces f WHERE f.item_id = mi.id)::int AS face_count
-FROM media_items mi
-JOIN photo_metadata pm ON pm.item_id = mi.id
+FROM generate_subscripts(@range_from::timestamptz[], 1) AS w(i)
+CROSS JOIN LATERAL (
+    SELECT p.item_id, p.taken_at, p.width, p.height, p.orientation
+    FROM photo_metadata p
+    WHERE p.taken_at >= (@range_from::timestamptz[])[w.i]
+      AND p.taken_at <  (@range_to::timestamptz[])[w.i]
+    OFFSET 0
+) pm
+JOIN media_items mi ON mi.id = pm.item_id
 WHERE mi.library_id = ANY(@library_ids::uuid[])
   AND mi.type = 'photo'
   AND mi.deleted_at IS NULL
-  AND pm.taken_at IS NOT NULL
-  AND EXISTS (
-      SELECT 1 FROM generate_subscripts(@range_from::timestamptz[], 1) AS i
-      WHERE pm.taken_at >= (@range_from::timestamptz[])[i]
-        AND pm.taken_at <  (@range_to::timestamptz[])[i]
-  )
   AND (sqlc.narg('max_rating_rank')::int IS NULL
        OR content_rating_rank(mi.content_rating) <= sqlc.narg('max_rating_rank')::int)
   AND media_item_labels_permitted(mi.labels, mi.parent_id, sqlc.narg('blocked_labels')::text[], sqlc.narg('allowed_labels')::text[])
