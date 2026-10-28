@@ -22,7 +22,9 @@ import (
 // trendingCacheTTL controls how long a /api/v1/hub trending result
 // stays warm. 5 minutes amortizes the ~1s underlying query across
 // the dozens of hub fetches a client makes per session while
-// keeping freshly-watched items visible within minutes. Tunable
+// keeping freshly-watched items visible within minutes. A stale
+// entry is still served while it refreshes in the background (see
+// trendingCache), so the query rarely runs on a request. Tunable
 // via WithTrendingCacheTTL for tests.
 const trendingCacheTTL = 5 * time.Minute
 

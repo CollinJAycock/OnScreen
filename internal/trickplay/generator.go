@@ -115,7 +115,7 @@ func (g *Generator) Generate(ctx context.Context, itemID uuid.UUID) error {
 			return err
 		}
 	}
-	names, err := generateSprites(ctx, path, parts, outDir, g.spec)
+	names, err := generateSprites(ctx, path, parts, outDir, g.spec, duration)
 	if err != nil {
 		g.markFailed(ctx, itemID, err.Error())
 		return err
