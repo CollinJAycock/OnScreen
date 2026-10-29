@@ -2882,8 +2882,16 @@
         // seeks the player forward toward the live edge and stalls.
         liveSyncDurationCount: 999,
         liveMaxLatencyDurationCount: 1002,
-        // Skip the 3×1s nudge loop for PTS-offset sources — seek immediately.
-        nudgeMaxRetry: 0,
+        // nudgeMaxRetry was 0 here ("skip the nudge loop, seek
+        // immediately"), which hls.js 1.5 honoured: skipping a buffer hole
+        // always seeked. In 1.7 the hole skip counts against this budget
+        // too, so 0 made the very first skip fatal without seeking.
+        // Our streams start ~0.125 s in (B-frame delay); Chrome jumps that
+        // start gap itself, but Safari waits for the player to, and got
+        // bufferSeekOverHole ("after 0 attempts") on every stream. The hole
+        // skip already seeks on the first stall, so the default budget
+        // costs nothing.
+        nudgeMaxRetry: 3,
       });
       hlsInstance.loadSource(playlistUrl);
       hlsInstance.attachMedia(videoEl);
