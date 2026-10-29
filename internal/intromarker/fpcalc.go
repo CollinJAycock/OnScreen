@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/onscreen/onscreen/internal/ffsafe"
+	"github.com/onscreen/onscreen/internal/lowprio"
 )
 
 // fingerprintSecondsPerFrame is the chromaprint default: one fingerprint
@@ -50,21 +51,26 @@ func fingerprintWithFFmpegSeek(ctx context.Context, filePath string, startSec, d
 	_ = tmp.Close()
 	defer os.Remove(tmpPath)
 
+	// Detection is background work over every new episode: capped threads,
+	// low priority (see lowprio), for ffmpeg and fpcalc alike.
 	args := []string{
 		"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-ss", strconv.Itoa(startSec),
 		"-t", strconv.Itoa(durationSec),
+	}
+	args = append(args, lowprio.InputArgs()...)
+	args = append(args,
 		// Confine the demuxer to this input's protocols (must precede -i).
 		"-protocol_whitelist", ffsafe.Whitelist(filePath),
 		"-i", filePath,
 		"-vn", "-ac", "1", "-ar", "11025", "-f", "wav",
 		tmpPath,
-	}
-	if out, err := exec.CommandContext(ctx, "ffmpeg", args...).CombinedOutput(); err != nil {
+	)
+	if out, err := lowprio.CombinedOutput(exec.CommandContext(ctx, "ffmpeg", args...)); err != nil {
 		return nil, fmt.Errorf("ffmpeg decode %s: %w: %s", filePath, err, strings.TrimSpace(string(out)))
 	}
 
-	out, err := exec.CommandContext(ctx, "fpcalc", "-raw", "-length", strconv.Itoa(durationSec), tmpPath).Output()
+	out, err := lowprio.Output(exec.CommandContext(ctx, "fpcalc", "-raw", "-length", strconv.Itoa(durationSec), tmpPath))
 	if err != nil {
 		return nil, fmt.Errorf("fpcalc %s: %w", filePath, err)
 	}

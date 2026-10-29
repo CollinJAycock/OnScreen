@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/onscreen/onscreen/internal/ffsafe"
+	"github.com/onscreen/onscreen/internal/lowprio"
 )
 
 // blackdetect runs ffmpeg's blackdetect filter over the tail of filePath and
@@ -24,9 +25,14 @@ func blackdetect(ctx context.Context, filePath string, fileDurationSec, tailSec 
 	if startSec < 0 {
 		startSec = 0
 	}
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	// A full video decode of the tail: background work, so capped threads
+	// and low priority (see lowprio).
+	args := []string{
 		"-nostdin", "-hide_banner", "-loglevel", "info",
 		"-ss", strconv.Itoa(startSec),
+	}
+	args = append(args, lowprio.InputArgs()...)
+	args = append(args,
 		// Confine the demuxer to this input's protocols (must precede -i).
 		"-protocol_whitelist", ffsafe.Whitelist(filePath),
 		"-i", filePath,
@@ -34,12 +40,13 @@ func blackdetect(ctx context.Context, filePath string, fileDurationSec, tailSec 
 		"-vf", "blackdetect=d=0.4:pic_th=0.98",
 		"-f", "null", "-",
 	)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	// blackdetect writes to stderr. Collect everything and scan after.
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
 		return 0, fmt.Errorf("blackdetect stderr pipe: %w", err)
 	}
-	if err := cmd.Start(); err != nil {
+	if err := lowprio.Start(cmd); err != nil {
 		return 0, fmt.Errorf("blackdetect start: %w", err)
 	}
 
