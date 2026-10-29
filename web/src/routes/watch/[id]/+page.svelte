@@ -58,6 +58,7 @@
     type SubtitleOutline,
   } from './subtitle-style';
   import { pickPreferredSubtitle } from './subtitle-select';
+  import { watchForPicture } from './picture-check';
   // Image subtitles (PGS / VobSub): OCR text version if there is one, else
   // burned into a transcode. Decisions tested in $lib/subtitleBurn.test.ts.
   import {
@@ -860,6 +861,10 @@
   // *before* any frame decodes, and we'd spuriously escalate to a
   // brand-new transcode session that resets currentTime to 0.
   let codecEscalationArmed = true;
+  // Cancels the pending "is a picture coming?" check that onVideoLoaded starts
+  // (see picture-check.ts). destroyHls calls it, so a verdict never lands on
+  // a pipeline that has since been replaced.
+  let stopPictureWatch: () => void = () => {};
   // True while switchToTranscode/switchToDirectPlay is mid-flight
   // (between destroyHls and attachHls/source assignment). loadedmetadata
   // events that fire in this window have stale videoEl state — both
@@ -2976,6 +2981,7 @@
   }
 
   function destroyHls() {
+    stopPictureWatch();
     stopStallWatchdog();
     if (hlsInstance) {
       hlsInstance.destroy();
@@ -3003,37 +3009,27 @@
   let buffering = false;
 
   function onVideoLoaded() {
-    // If the browser received video segments but videoWidth is 0, it can't decode
-    // the video codec (e.g. Hi10P H.264, HEVC in remux). Escalate to full transcode.
+    // videoWidth 0 here MAY mean the browser can't decode the video codec
+    // (e.g. Hi10P H.264, HEVC in remux) — or, on Safari, only that no frame
+    // has been decoded yet: WebKit reports 0 at loadedmetadata for an MSE
+    // stream. Deciding on this one reading looped Safari through transcode
+    // after transcode until the start rate limit refused (429), so watch for
+    // an actual picture and escalate only on evidence (picture-check.ts).
     // Skip this check for audio-only files — they legitimately have no video track.
-    // Only fires on the first decode attempt for the current session: hls.js's
+    // Only armed on the first decode attempt for the current session: hls.js's
     // recoverMediaError detaches/reattaches MediaSource which re-fires this
-    // event before any frame has decoded, and a spurious escalation here
-    // creates a brand-new session that resets currentTime to 0.
+    // event before any frame has decoded.
     if (codecEscalationArmed && !switchingTranscode && videoEl.videoWidth === 0 && item?.files?.[0] && item.files[0].video_codec) {
       codecEscalationArmed = false;
       const file = item.files[0];
-      const posMs = hlsActive
-        ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
-        : (item.view_offset_ms > 0 ? item.view_offset_ms : 0);
-      if (!hlsActive && canRemuxVideo(file)) {
-        // Direct play failed — try remux first. No demotion yet: a failed
-        // progressive <src> play is at least as likely a CONTAINER problem
-        // (browser can't demux Matroska) as a codec one, and the remux
-        // resolves exactly that.
-        switchToTranscode(0, posMs, true);
-      } else {
-        // Remux also failed (hlsIsRemux) or no remux option — full transcode.
-        // When the failed stream came through HLS, MSE accepted the bytes and
-        // the decoder produced zero frames: that's the codec claim disproven,
-        // same as a rejected append. Demote it, or the server's
-        // source-preservation re-encodes an HEVC source straight back to the
-        // codec that just produced no pictures.
-        if (hlsActive) demoteCodecClaim(file.video_codec);
-        const h = file.resolution_h ?? 1080;
-        switchToTranscode(h, posMs);
-      }
-      return;
+      stopPictureWatch();
+      stopPictureWatch = watchForPicture(videoEl, (verdict) => {
+        stopPictureWatch = () => {};
+        if (verdict === 'no-picture' && !switchingTranscode && item?.files?.[0] === file) {
+          escalateNoPicture(file);
+        }
+      });
+      // Fall through: play() is what gets the first frame decoded.
     }
     if (videoEl.videoWidth > 0) {
       // Successful decode — disarm escalation so future re-attaches
@@ -3074,6 +3070,47 @@
       skipAutoSeek = false;
     }
     videoEl.play().catch(() => {});
+  }
+
+  /** escalateNoPicture moves off a pipeline that produced no picture: a failed
+   *  direct play tries a remux, anything else a full re-encode — at most once
+   *  per item (the same budget the media-error path spends), so a stream that
+   *  won't show a picture even as H.264 ends at an error, not in a loop of
+   *  new sessions. */
+  function escalateNoPicture(file: ItemFile) {
+    const posMs = hlsActive
+      ? Math.round((videoEl.currentTime + hlsOffsetSec) * 1000)
+      : videoEl.currentTime > 0
+        ? Math.round(videoEl.currentTime * 1000)
+        : (item && item.view_offset_ms > 0 ? item.view_offset_ms : 0);
+    if (!hlsActive && canRemuxVideo(file)) {
+      // Direct play failed — try remux first. No demotion yet: a failed
+      // progressive <src> play is at least as likely a CONTAINER problem
+      // (browser can't demux Matroska) as a codec one, and the remux
+      // resolves exactly that.
+      void switchToTranscode(0, posMs, true);
+      return;
+    }
+    // A failed direct play may always try one re-encode; a failed HLS stream
+    // only when a re-encode could change what the browser is handed
+    // (canEscalateAfterMediaError: a remux, or an HEVC/AV1 source).
+    if (hlsActive ? !canEscalateAfterMediaError() : mediaErrorEscalated) {
+      console.warn('[capability] no picture and no re-encode left to try — giving up');
+      error = 'Playback error: this browser could not display the video';
+      buffering = false;
+      destroyHls();
+      void stopTranscodeSession();
+      return;
+    }
+    // Remux also failed (hlsIsRemux) or no remux option — full transcode.
+    // When the failed stream came through HLS, MSE accepted the bytes and
+    // the decoder produced zero frames: that's the codec claim disproven,
+    // same as a rejected append. Demote it, or the server's
+    // source-preservation re-encodes an HEVC source straight back to the
+    // codec that just produced no pictures.
+    mediaErrorEscalated = true;
+    if (hlsActive) demoteCodecClaim(file.video_codec);
+    void switchToTranscode(file.resolution_h ?? 1080, posMs);
   }
 
   // One transcode retry per item for a direct play that failed on the
