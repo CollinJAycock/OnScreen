@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/onscreen/onscreen/internal/ffsafe"
+	"github.com/onscreen/onscreen/internal/lowprio"
 )
 
 // ── Chapter thumbnails ────────────────────────────────────────────────────────
@@ -154,6 +155,9 @@ func generateChapterThumbs(ctx context.Context, inputPath string, chapters []Cha
 func extractFrame(ctx context.Context, inputPath string, atSec float64, out string) error {
 	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error", "-y",
 		"-ss", strconv.FormatFloat(atSec, 'f', 3, 64)}
+	// Background work: capped threads, low priority (see lowprio). An
+	// uncapped decode of a 4K HEVC frame took ~4 cores per chapter.
+	args = append(args, lowprio.InputArgs()...)
 	// Confine the demuxer to this input's protocols (must precede -i).
 	args = append(args, ffsafe.InputProtocolArgs(inputPath)...)
 	args = append(args,
@@ -163,12 +167,13 @@ func extractFrame(ctx context.Context, inputPath string, atSec float64, out stri
 		// Full-range for the mjpeg encoder (see spriteFilter).
 		"-vf", fmt.Sprintf("scale=%d:-2,format=yuvj420p", ChapterThumbWidth),
 		"-qscale:v", "4",
-		out,
 	)
+	args = append(args, lowprio.OutputArgs()...)
+	args = append(args, out)
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	if err := lowprio.Run(cmd); err != nil {
 		return fmt.Errorf("ffmpeg: %w (%s)", err, strings.TrimSpace(stderr.String()))
 	}
 	if fi, err := os.Stat(out); err != nil || fi.Size() == 0 {

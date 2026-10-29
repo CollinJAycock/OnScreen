@@ -7,10 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/onscreen/onscreen/internal/ffsafe"
+	"github.com/onscreen/onscreen/internal/lowprio"
 )
 
 // generateSprites extracts thumbnails from inputPath every spec.IntervalSec
@@ -62,30 +62,27 @@ func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.Conca
 	// the whole library on the server's own CPU. Each thumb is now the
 	// keyframe at or before its slot, at most a GOP (a few seconds) early,
 	// for ~1% of the CPU (spriteFilter pads the tail past the last
-	// keyframe). -threads caps what is left so a backfill can't starve
-	// playback or Postgres; lowerPriority does the same at the OS.
-	args := append([]string{
+	// keyframe). lowprio caps the threads of what is left and its priority,
+	// so a backfill can't starve playback or Postgres.
+	args := []string{
 		"-nostdin", "-hide_banner", "-loglevel", "error",
 		"-y",
 		"-skip_frame", "nokey",
-		"-threads", strconv.Itoa(spriteDecodeThreads),
-	}, inArgs...)
+	}
+	args = append(args, lowprio.InputArgs()...)
+	args = append(args, inArgs...)
 	args = append(args,
 		"-i", inputPath,
 		"-an", "-sn",
 		"-vf", vf,
 		"-qscale:v", "5",
-		outPattern,
 	)
+	args = append(args, lowprio.OutputArgs()...)
+	args = append(args, outPattern)
 	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	stderr := &strings.Builder{}
 	cmd.Stderr = stderr
-	err := cmd.Start()
-	if err == nil {
-		lowerPriority(cmd.Process.Pid)
-		err = cmd.Wait()
-	}
-	if err != nil {
+	if err := lowprio.Run(cmd); err != nil {
 		return nil, fmt.Errorf("trickplay ffmpeg %s: %w (stderr: %s)", inputPath, err, strings.TrimSpace(stderr.String()))
 	}
 
@@ -109,11 +106,6 @@ func generateSprites(ctx context.Context, inputPath string, parts []ffsafe.Conca
 	}
 	return names, nil
 }
-
-// spriteDecodeThreads caps ffmpeg's decoder threads for a sprite run. With
-// keyframe-only decoding two threads keep up easily (a 2-minute 4K HEVC clip
-// takes under a second).
-const spriteDecodeThreads = 2
 
 // spriteFilter is the -vf graph for one sprite run. The decoder only hands
 // it keyframes (see generateSprites), so tpad repeats the last one forever
