@@ -106,15 +106,15 @@
     display: inline-flex;
     align-items: center;
     gap: 0.35rem;
-    margin-left: 0.5rem;
-    vertical-align: middle;
+    /* Sized by the item page's action row (--detail-action-h). */
+    height: var(--detail-action-h, 2.25rem);
     background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
-    color: var(--text-muted);
-    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
     font-weight: 500;
-    padding: 0.35rem 0.7rem;
+    padding: 0 0.9rem;
     cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }

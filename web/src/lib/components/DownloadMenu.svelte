@@ -223,19 +223,22 @@
 </div>
 
 <style>
-  .dl { position: relative; display: inline-block; margin-left: 0.6rem; }
+  .dl { position: relative; display: inline-block; }
+  /* Sized by the item page's action row (--detail-action-h). */
   .dl-btn {
     display: inline-flex;
     align-items: center;
     gap: 0.4rem;
-    padding: 0.5rem 0.9rem;
-    border-radius: 4px;
+    height: var(--detail-action-h, 2.25rem);
+    padding: 0 0.9rem;
+    border-radius: 6px;
     /* Theme tokens, like the Play on / Report a problem pills beside it:
        fixed white text vanished on the light theme. */
     border: 1px solid var(--border-strong);
     background: var(--input-bg);
     color: var(--text-secondary);
-    font-size: 0.85rem;
+    font-size: 0.8rem;
+    font-weight: 500;
     cursor: pointer;
     transition: background 120ms ease, border-color 120ms ease;
   }

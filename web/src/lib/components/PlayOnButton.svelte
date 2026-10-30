@@ -185,10 +185,6 @@
     display: inline-flex;
     align-items: center;
   }
-  .play-on.detail {
-    margin-left: 0.5rem;
-    vertical-align: middle;
-  }
 
   .trigger {
     display: inline-flex;
@@ -210,15 +206,17 @@
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
   }
-  /* Item page: matches the Download pill next to it. */
+  /* Item page: sized by the page's action row (--detail-action-h), like
+     the Mark watched and Download buttons beside it. */
   .detail .trigger {
+    height: var(--detail-action-h, 2.25rem);
     background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
-    color: var(--text-muted);
-    font-size: 0.75rem;
+    color: var(--text-secondary);
+    font-size: 0.8rem;
     font-weight: 500;
-    padding: 0.35rem 0.7rem;
+    padding: 0 0.9rem;
   }
   .detail .trigger:hover,
   .detail .trigger.open {

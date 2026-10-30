@@ -4963,6 +4963,9 @@
         {#if item.summary}
           <p class="detail-summary">{item.summary}</p>
         {/if}
+        <!-- One wrapping row, so every action shares a height, a gap and a
+             left edge (a wrapped "Report a problem" used to land indented). -->
+        <div class="detail-actions">
         {#if item.type === 'movie' && item.files?.length}
           <button class="play-btn" on:click={startMoviePlayback}>
             <svg viewBox="0 0 24 24" fill="currentColor" width="16" height="16"><polygon points="6 4 20 12 6 20 6 4"/></svg>
@@ -5023,6 +5026,7 @@
         {#if item.type === 'show' && item.tmdb_id}
           <RequestMoreSeasonsButton tmdbId={item.tmdb_id} title={item.title} />
         {/if}
+        </div>
       </div>
     </div>
 
@@ -5087,16 +5091,6 @@
       </div>
     {/if}
 
-    <!-- Edit Metadata (movies, shows and seasons, admin): edits lock the
-         fields so refreshes and Fix Match keep them. Episodes are edited
-         from the pencil on their row below. -->
-    {#if (item.type === 'show' || item.type === 'movie' || item.type === 'season') && isAdmin}
-      <button class="fix-match-btn" on:click={() => item && openMetaEditor(item.id)}
-              title="Edit title, summary, genres, rating and other details">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
-        Edit Metadata
-      </button>
-    {/if}
     <!-- Admin labels (what per-user label restrictions match). -->
     {#if isAdmin}
       <ItemLabels itemId={item.id} labels={item.labels ?? []} />
@@ -5106,6 +5100,22 @@
          direct-plays instead of transcoding; with their progress. -->
     {#if isAdmin && ['movie', 'episode', 'show', 'season', 'home_video', 'music_video'].includes(item.type)}
       <OptimizePanel itemId={item.id} itemType={item.type} title={item.title} />
+    {/if}
+
+    <!-- Item tools: the admin buttons, episode order, the user's watching
+         status and tracker links share one wrapping row, so they line up
+         at one height instead of stacking with per-button margins. -->
+    {#if item.type === 'show' || item.type === 'movie' || (isAdmin && (item.type === 'season' || item.type === 'home_video'))}
+    <div class="detail-tools">
+    <!-- Edit Metadata (movies, shows and seasons, admin): edits lock the
+         fields so refreshes and Fix Match keep them. Episodes are edited
+         from the pencil on their row below. -->
+    {#if (item.type === 'show' || item.type === 'movie' || item.type === 'season') && isAdmin}
+      <button class="fix-match-btn" on:click={() => item && openMetaEditor(item.id)}
+              title="Edit title, summary, genres, rating and other details">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="14" height="14"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>
+        Edit Metadata
+      </button>
     {/if}
 
     <!-- Fix Match + Choose Poster + Refresh + Remove (shows and movies, admin) -->
@@ -5216,11 +5226,15 @@
         Remove
       </button>
     {/if}
+    </div>
+    {/if}
 
     <!-- Same web_downloads gate as the player-bar download button above: this
          second link used to be unconditional and pointed at /media/stream,
-         which quietly defeated the admin "Allow web downloads" kill switch. -->
-    {#if $capabilities?.features?.web_downloads && item.files?.length}
+         which quietly defeated the admin "Allow web downloads" kill switch.
+         Only a fallback: when the file has a stream token the Download menu
+         in the actions row already offers the original. -->
+    {#if $capabilities?.features?.web_downloads && item.files?.length && !item.files[0].stream_token}
       <a
         class="download-btn"
         href="{assetUrl('/media/stream/' + item.files[0].id)}"
@@ -5736,27 +5750,6 @@
      that a session is running. */
   .cast-btn.active {
     color: var(--accent, #4dd0e1);
-  }
-
-  /* Download button on the detail page. Sized to match .play-btn so
-     they line up; styled secondary so the play CTA stays primary. */
-  .download-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.4rem;
-    padding: 0.5rem 0.9rem;
-    margin-left: 0.6rem;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.18);
-    background: rgba(255, 255, 255, 0.06);
-    color: rgba(255, 255, 255, 0.9);
-    font-size: 0.85rem;
-    text-decoration: none;
-    transition: background 120ms ease, border-color 120ms ease;
-  }
-  .download-btn:hover {
-    background: rgba(255, 255, 255, 0.12);
-    border-color: rgba(255, 255, 255, 0.32);
   }
 
   .fanart-bg {
@@ -6745,15 +6738,26 @@
   .ep-edit-btn:hover { border-color: var(--border-strong); color: var(--text-primary); }
   .ep-edit-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
+  /* The detail page's action row: Play, Play on, Mark watched, Download,
+     Report a problem, Request seasons. The row owns the spacing; every
+     button in it is --detail-action-h tall (the components read the same
+     variable for their detail variant). */
+  .detail-actions {
+    --detail-action-h: 2.25rem;
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+
   /* Watched toggle / "Mark all" buttons beside Play on the detail page. */
   .mark-watched-btn {
     display: inline-flex; align-items: center; gap: 0.35rem;
+    height: var(--detail-action-h);
     background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     color: var(--text-secondary); font-size: 0.8rem; font-weight: 500;
-    cursor: pointer; padding: 0.55rem 0.9rem;
-    margin-top: 1rem; margin-left: 0.5rem;
+    cursor: pointer; padding: 0 0.9rem;
     transition: all 0.12s;
   }
   .mark-watched-btn:hover:not(:disabled) { color: var(--text-primary); border-color: var(--accent); background: var(--bg-hover); }
@@ -6761,28 +6765,36 @@
   .mark-watched-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .mark-watched-btn:disabled { opacity: 0.55; cursor: progress; }
 
-  /* Fix Match button */
   .play-btn {
     display: inline-flex; align-items: center; gap: 0.5rem;
+    height: var(--detail-action-h);
     background: var(--accent);
     border: none;
     border-radius: 6px;
     color: white; font-size: 0.95rem; font-weight: 600;
-    cursor: pointer; padding: 0.6rem 1.4rem;
-    margin-top: 1rem;
+    cursor: pointer; padding: 0 1.4rem;
     transition: filter 0.12s, transform 0.12s;
   }
   .play-btn:hover { filter: brightness(1.1); }
   .play-btn:active { transform: scale(0.98); }
 
+  /* Item tools row below the cast: admin buttons, episode order, watching
+     status, tracker links. Same idea as .detail-actions, one size down. */
+  .detail-tools {
+    --detail-tool-h: 1.75rem;
+    display: flex; flex-wrap: wrap; align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 1.5rem;
+  }
+
   .fix-match-btn {
     display: inline-flex; align-items: center; gap: 0.35rem;
+    height: var(--detail-tool-h);
     background: var(--input-bg);
     border: 1px solid var(--border-strong);
     border-radius: 6px;
     color: var(--text-muted); font-size: 0.75rem; font-weight: 500;
-    cursor: pointer; padding: 0.35rem 0.7rem;
-    margin-bottom: 1.5rem;
+    cursor: pointer; padding: 0 0.7rem;
     transition: all 0.12s;
   }
   .fix-match-btn:hover { color: var(--text-secondary); border-color: var(--border-strong); background: var(--bg-hover); }
@@ -6809,13 +6821,11 @@
   .external-links {
     display: inline-flex;
     gap: 0.4rem;
-    margin-bottom: 1.5rem;
-    margin-left: 0.4rem;
-    vertical-align: middle;
   }
   .external-link {
     display: inline-flex; align-items: center;
-    padding: 0.3rem 0.7rem;
+    height: var(--detail-tool-h);
+    padding: 0 0.7rem;
     border-radius: 6px;
     font-size: 0.7rem; font-weight: 600;
     letter-spacing: 0.02em;
@@ -6835,11 +6845,11 @@
     display: inline-flex;
     align-items: center;
     gap: 0.5rem;
-    margin-bottom: 1.5rem;
-    padding: 0.25rem 0.7rem 0.25rem 0.85rem;
+    height: var(--detail-tool-h);
+    padding: 0 0.7rem 0 0.85rem;
     background: var(--input-bg);
     border: 1px solid var(--border-strong);
-    border-radius: 999px;
+    border-radius: 6px;
   }
   .watch-status-label {
     font-size: 0.7rem; font-weight: 600;
@@ -6866,7 +6876,7 @@
     border-radius: 6px;
     color: var(--text-muted); font-size: 0.75rem; font-weight: 500;
     cursor: pointer; padding: 0.35rem 0.7rem;
-    margin-bottom: 1.5rem; margin-left: 0.5rem;
+    margin-bottom: 1.5rem;
     text-decoration: none;
     transition: all 0.12s;
   }
