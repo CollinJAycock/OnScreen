@@ -68,8 +68,16 @@ android {
         // cover and controls over playing audio, media keys during a video,
         // and the watch-limit check on that fast reopen. 1006 exists as more
         // than one build, so 1007 is the next clean code.
-        versionCode = 1007
-        versionName = "0.3.0"
+        //
+        // 1008 / 0.4.0: v2.6 parity (stream limit, converted downloads,
+        // optimized versions and stacked parts, multi-episode ranges, playback
+        // quality, comic position sync, instant mix), the server's play
+        // decision treated as final with OCR / burned-in image subtitles,
+        // Chromecast over HLS to the Default Media Receiver, the Watchlist
+        // screen, and bounded non-blocking background heartbeats. 1007 is on
+        // the Play testing track.
+        versionCode = 1008
+        versionName = "0.4.0"
     }
 
     signingConfigs {
