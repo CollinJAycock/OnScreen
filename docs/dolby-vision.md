@@ -35,9 +35,14 @@ clients that don't take profile 7). OnScreen therefore patches `dovi_rpu` in its
 own ffmpeg build with a `convert_p81` option
 (`docker/patches/0005-dovi-rpu-convert-p7-to-p81.patch`); a worker advertises
 `dolby_vision_p7_to_p81` only when its ffmpeg has it (`ffmpeg -h bsf=dovi_rpu`).
-That is the GPU image (`docker/Dockerfile.ffmpeg`); the standard image uses
-Alpine's ffmpeg and the Windows installer Gyan's, so there profile 7 keeps
-playing from its base layer.
+Both Docker images have it: the GPU image builds its own ffmpeg
+(`docker/Dockerfile.ffmpeg`), and after v2.7.0 the standard image installs
+Alpine's ffmpeg packages rebuilt with the patch
+(`docker/ffmpeg-alpine/`, published as
+`ghcr.io/collinjaycock/onscreen-ffmpeg-alpine`) instead of Alpine's stock
+ones. The Windows installer (Gyan's ffmpeg) and the Linux tarball (the
+system's ffmpeg) don't, so there profile 7 keeps playing from its base
+layer.
 
 The patch does what dovi_tool's mode 2 does, frame by frame: it drops every
 enhancement-layer NAL unit, sets `disable_residual_flag`, removes the NLQ data,
