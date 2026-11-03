@@ -291,6 +291,11 @@ v2.6.2 changes below, which were never tagged.
   stack, seeded by `web/tests/e2e/seed.mjs` (an admin and an empty library).
   Form logins in the specs now wait out the auth rate limiter instead of
   failing on it.
+- **The release image builds natively** (#164). The Docker build stages
+  run on the build machine's platform and Go cross-compiles, so the arm64
+  image no longer compiles the web apps and the Go binaries under QEMU,
+  which took over an hour for v2.7.0's first image build. Only the runtime
+  stage is per-platform.
 - **The Playwright nightly's metrics tests** never passed: the job
   publishes the metrics port as `127.0.0.1:${DEBUG_PORT}` but didn't pass
   `METRICS_URL`, so `metrics.spec.ts` tried `localhost:7071`. The job sets
