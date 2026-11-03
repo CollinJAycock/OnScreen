@@ -9,14 +9,18 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [Unreleased]
+## [v2.7.0] — unreleased
 
 v2.7, the last server release of the v2 line (see
 [docs/v2.7-roadmap.md](docs/v2.7-roadmap.md)): the plugin host's metadata and
 task roles, audio passthrough on full transcodes and video profile/level in
 the capability profile, Roku seek thumbnails, a Valkey lock for the ABR
 ladder, a default backup task with a restore drill, a monitoring pack, and
-fixes across the web and Android apps.
+fixes across the web and Android apps. Since that batch: background ffmpeg
+work no longer starves the server, Safari plays again, the Xbox app plays
+HEVC, HDR10 and Dolby Vision in the console's own player, and the Roku
+channel has its art and Roku's certification hooks. It also carries the
+v2.6.2 changes below, which were never tagged.
 
 ### Upgrade notes
 
@@ -37,6 +41,11 @@ fixes across the web and Android apps.
   **fresh install** (a database with no accounts yet). Upgraded servers
   are left as they are; create the task in **Settings ▸ Tasks** if you
   don't back up another way.
+- **Migration 00061** (applied at startup) turns the library permission
+  check for labels into a plain SQL wrapper that Postgres can inline, so
+  unrestricted users skip a function call per row. No data changes.
+- v2.6.2 was prepared but never tagged; its changes (draggable Home rows,
+  library card hover) ship in v2.7.0.
 - Docker: `docker/docker-compose.yml` now mounts a `backup_data` volume
   at `/var/backups/onscreen`. Add the same to your own compose file if
   you use the scheduled backup, or its dumps go when the container is
@@ -147,8 +156,33 @@ fixes across the web and Android apps.
   **Settings → Playback → Chromecast quality** (Auto / 4K / HD) for a 4K TV
   the detection can't place, such as a TV with Google TV built in that
   reports its panel's model number.
+- **Background ffmpeg work is held back** (#150, #153). Trickplay sprites,
+  chapter thumbnails, intro detection (audio fingerprints) and credits
+  detection now run ffmpeg with 2 threads at nice 10 (new package
+  `internal/lowprio`), and the sprite pass decodes keyframes only. A backlog
+  of new episodes had kept a 24-thread server near a load of 12 and starved
+  Postgres: the home page took 1.7 s, 7 s every 5 minutes. Playback
+  transcodes are unchanged. On a 4K HEVC clip, credits detection drops from
+  15.8 to 2 cores and a sprite pass from 108 CPU-seconds to about 1.
+- **Faster Home** (#150). Memories reads one index range per date window
+  (28 to 1 ms), Trending serves its last result while one background query
+  refreshes it, and the label permission check is inlined (migration 00061;
+  Recently added 20 to 11 ms).
+- **Item page buttons line up** (#155). On the web app's movie and show
+  pages the main actions (Play, Play on, Download, Request more seasons)
+  share one height in one row, and the smaller tools (Report a problem and
+  the like) share another.
 
 ### Fixed
+
+- **Safari plays again** (#152, #154). The web player read a video width of
+  0 at `loadedmetadata`, which WebKit always reports for a stream until a
+  frame is decoded, as "can't decode", and escalated to a transcode, again
+  and again until the transcode rate limit answered 429. It now waits for a
+  picture or for real playback without one, and escalates once per item.
+  Then every Safari stream failed at once with `bufferSeekOverHole`: since
+  hls.js 1.7 a start-gap skip counts against `nudgeMaxRetry`, which the
+  watch page set to 0. It is back at the default.
 
 - **EPUBs are named from the book, not the file.** The scanner reads the
   EPUB's own title, author and description (its OPF metadata) instead of
@@ -206,6 +240,47 @@ fixes across the web and Android apps.
   since v2.5.0, where a rebuffer holds the heartbeat instead of sending
   'paused'.
 
+### Xbox
+
+- **The console's own player for HEVC, HDR10 and Dolby Vision** (#157).
+  The Xbox web view decodes only H.264 and VP9 (it claims HEVC, AV1 and
+  AC-3 and plays none of them; #156 stopped claiming them) and can't switch
+  the TV into HDR. Video now plays in a `MediaPlayerElement` behind the
+  transparent web view, driven by the page through a stand-in for the video
+  element, so the player screen, pickers and subtitles are unchanged. With
+  it the app claims HEVC to 10-bit, MKV, AC-3 / E-AC-3, HDR when the TV
+  takes HDR10, and Dolby Vision 8.1; the shell switches the TV into a 4K
+  HDR10 or Dolby Vision mode and back. Checked on a Series X and an LG C1.
+  Direct play of a file is limited to a server on the home network. Music
+  and audiobooks stay in the web view.
+- **Controller input** (#156). The web view gets no controller key events,
+  so the shell forwards the controller's keys to the page; B is Back on
+  every screen, once.
+- **Microsoft Store packaging** (#157, #158): the Partner Center identity,
+  tiles and splash at every scale, `build.ps1 -Store` for the
+  `.msixupload`, and the listing text and images.
+
+### Roku
+
+- **Channel art** (#160). The images the manifest names didn't exist, so
+  the channel couldn't be sideloaded.
+- **The capability header follows the device** (#160). It claimed 4K,
+  10-bit and HDR on every Roku; an HD Roku, or a 4K one on a TV without HDR,
+  would have been sent HDR untouched. 4K, 10-bit HEVC, HDR10 and HLG now
+  come from the firmware's own reports.
+- **Certification hooks** (#161): the launch beacons (`AppLaunchComplete`,
+  and `AppDialogInitiate` / `AppDialogComplete` around a sign-in at launch)
+  and deep links at launch and while running. Only an item id is accepted
+  as a deep link's `contentId`. The channel has still not run on a Roku.
+
+### TV web apps (webOS, Tizen, Xbox)
+
+- The D-pad can leave the sign-in and token keyboards, Back to Libraries
+  returns the focus to the library left, and a GET that stalls is sent once
+  more before the app gives up (#156).
+- **Tizen 1.1.1 / 1.1.2** (#146, #147): Return on the first screen opens an
+  exit popup, as Samsung's review requires.
+
 ### CI
 
 - **TV web apps on every PR** (v2.7 item 10). A new `TV web clients`
@@ -216,8 +291,12 @@ fixes across the web and Android apps.
   stack, seeded by `web/tests/e2e/seed.mjs` (an admin and an empty library).
   Form logins in the specs now wait out the auth rate limiter instead of
   failing on it.
+- **The Playwright nightly's metrics tests** never passed: the job
+  publishes the metrics port as `127.0.0.1:${DEBUG_PORT}` but didn't pass
+  `METRICS_URL`, so `metrics.spec.ts` tried `localhost:7071`. The job sets
+  it now.
 
-## [v2.6.2] — unreleased
+## [v2.6.2] — never tagged (shipped in v2.7.0)
 
 Patch release for the web app: Home rows can be dragged into order, and
 the library grid's hover buttons no longer cover the year.

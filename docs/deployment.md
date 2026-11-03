@@ -742,6 +742,28 @@ unready until they're applied.
 
 Back up the database first (see [Database backups](#database-backups)).
 
+### v2.6.x → v2.7.0
+
+1. **Back up** the database (above).
+2. **Pull the new image** (`ghcr.io/collinjaycock/onscreen:2.7`, or
+   `:2.7.0`) or install the new binaries. Migrations 00058 to 00061 apply at
+   startup with `AUTO_MIGRATE=true`, or run the migrate step first. They
+   add plugin tasks, the video profile/level columns and a faster label
+   permission check; none rewrites existing rows.
+3. **Remote transcode workers:** upgrade them too. A v2.6 worker still
+   works, but it ignores the new encoder level flags and picks the level
+   itself.
+4. **Backups:** a fresh v2.7 install gets a daily `Database backup` task; an
+   upgraded server doesn't, so create it in **Settings ▸ Tasks** if you
+   don't back up another way. In Docker, mount a volume at
+   `/var/backups/onscreen` (the bundled compose file now has
+   `backup_data`), or the dumps go when the container is recreated.
+5. **Optional:** to match files against a client's H.264 / HEVC profile and
+   level, re-probe the library (`POST /api/v1/maintenance/reprobe-metadata`,
+   then a scan). Until then files are matched as before.
+
+v2.6.2 was never tagged; its changes are in v2.7.0.
+
 ### v2.6.1 → v2.6.2
 
 Pull the new image (`ghcr.io/collinjaycock/onscreen:2.6`, or `:2.6.2`). No
