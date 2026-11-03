@@ -19,7 +19,7 @@ describe('collectDiagnostics', () => {
     expect(sections.map((s) => s.title)).toEqual([
       'This console',
       'Display',
-      'MSE (what hls.js can play)',
+      'MSE claims (a Series X claims HEVC, AV1 and AC-3 but decodes none)',
       'Decoding (MediaCapabilities)',
       'Sent to the server',
     ]);

@@ -11,14 +11,14 @@ Two parts:
   form Xbox runs. It asks for the server, checks that `<server>/tvapp/`
   answers, and shows it full screen. This is the Jellyfin Xbox app's design.
 
-Status: phase 0 (no console yet). Everything below runs on a Windows PC; the
-console visit (phase 1) is the checklist at the end.
+Status: phase 1. Runs on an Xbox Series X in Dev Mode (November 2026); what
+the console showed is under "Phase 1 results" at the end.
 
 ## The Xbox layer (what differs from the webOS app)
 
 | File | What |
 |---|---|
-| `src/lib/shell.ts` | The page ↔ shell bridge. The shell passes `?shell=xbox&device=…&uhd=…&hdr=…`; the page posts `exit`, `changeServer` and `nativeKeys` through `window.chrome.webview`, and receives `back`. The API origin is the page's own (`servedOrigin`). |
+| `src/lib/shell.ts` | The page ↔ shell bridge. The shell passes `?shell=xbox&device=…&uhd=…&hdr=…`; the page posts `exit`, `changeServer`, `nativeKeys` and `webKeys` through `window.chrome.webview`, and receives `back` and the controller's keys (`key`, played as key events with their gamepad codes). The API origin is the page's own (`servedOrigin`). |
 | `src/lib/focus/keys.ts` | The controller: Windows' gamepad key codes 195–218 (A = OK, B = Back, X / Y = Subtitles / Audio pickers, bumpers = next / previous, triggers = skip, left stick = D-pad). |
 | `src/lib/gamepad.ts` | The Gamepad API as the same key events, for a PC with a controller; stands down for good once the platform sends gamepad key events itself. |
 | `src/lib/appExit.ts` | B on a first screen: the Exit / Cancel popup; Exit asks the shell to close the app. |
@@ -78,7 +78,7 @@ Before going:
    server), and check `https://<server>/tvapp/` shows the Sign in screen in a
    browser.
 3. Build the package: `shell\.\build.ps1`. Take the folder
-   `shell\AppPackages\OnScreen.Xbox_0.1.0.0_x64_Test\` (the `.msix`, the
+   `shell\AppPackages\OnScreen.Xbox_<ver>_x64_Test\` (the `.msix`, the
    `.cer`, and `Dependencies\x64\`).
 
 On the console:
@@ -117,3 +117,24 @@ questions in one go):
 
 Afterwards, switch the console back to Retail Mode in Dev Home (its games and
 saves are untouched).
+
+## Phase 1 results (Series X, OS 26100, WebView2 150, November 2026)
+
+- **Controller:** the web view gets no key events from the controller (the
+  key log showed only `lib/gamepad`'s polled presses, code 0). The shell now
+  passes the window's gamepad keys on to the page. B reaches the shell only
+  as the system's Back request, which it still forwards. Device Portal's
+  remote input (`wss://<console>:11443/ext/remoteinput`) goes the same way,
+  so the app can be driven from a PC for testing.
+- **Codecs:** MSE answers yes for HEVC, AV1, AC-3 and E-AC-3, but the web
+  view decodes none of them. HEVC fails decoder set-up (`kUnsupportedConfig`)
+  at every profile, tier and size tried; AV1 and AC-3 / E-AC-3 append and
+  never produce a frame. H.264 (to 4K) and VP9 Profile 0 and 2 play. So the
+  app claims H.264 and VP9 only (`src/lib/api/capabilities.ts`), and 4K HEVC
+  sources reach it as H.264 transcodes. DTS and Dolby Vision say no.
+- **Checked on the console:** D-pad, A, B (pages, player, pickers), the exit
+  popup, the sign-in keyboard's way down to Change server, pair sign-in,
+  playback start and resume, the Audio (Y) and Subtitles (X) pickers,
+  seeking, Libraries, music with next track (RB).
+- **Not yet:** HDR (the test TV isn't HDR), audiobooks, Photos, Up Next,
+  Forget server, triggers.

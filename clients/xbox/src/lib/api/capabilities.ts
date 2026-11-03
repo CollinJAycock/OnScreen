@@ -1,12 +1,16 @@
 // X-Client-Capabilities profile for the Xbox app.
 //
 // The app plays video through hls.js + MediaSource Extensions in the shell's
-// WebView2 (see the watch page), so — exactly like the web client — actual
-// codec support is *probed* via MediaSource.isTypeSupported rather than
-// assumed. Audio claims stay at the browser-decodable set (no AC-3/E-AC-3/
-// DTS) until a console has shown what its WebView2 decodes (Settings >
-// Diagnostics), and 7.1 AAC is undecodable over MSE, so channels cap at 5.1.
-// See docs/capability-profiles.md for the grammar.
+// WebView2 (see the watch page). VP9 is probed via MediaSource.isTypeSupported;
+// HEVC and AV1 are not claimed at all, because the probe can't be trusted for
+// them here. A Series X (OS 26100, WebView2 150, November 2026) answers yes for
+// HEVC, AV1, AC-3 and E-AC-3, yet its web view decodes none of them: every
+// HEVC stream (Main / Main 10, Main / High tier, 1080p / 4K) fails decoder
+// set-up with kUnsupportedConfig, and AV1 and AC-3 / E-AC-3 append but never
+// produce a frame. H.264 and VP9 (Profile 0 and 2) play. Claimed, HEVC and AV1
+// only cost a failed start and a demotion before the H.264 retry. Audio stays
+// at the browser-decodable set, and 7.1 AAC is undecodable over MSE, so
+// channels cap at 5.1. See docs/capability-profiles.md for the grammar.
 //
 // The header itself is built by a pure function from injected probes
 // (buildClientCapabilitiesHeader, unit-tested); clientCapabilitiesHeader()
@@ -18,9 +22,6 @@ import { panelHdr, readPanelSize, startPanelProbe, type PanelSize } from '../pla
 /** The MSE type strings each claim is probed with. hls.js hands MSE fMP4,
  *  so every probe names the mp4 container. */
 export const PROBE_TYPES = {
-  hevc: 'video/mp4; codecs="hvc1.1.6.L150.B0"',
-  hevc10: 'video/mp4; codecs="hvc1.2.4.L150.B0"',
-  av1: 'video/mp4; codecs="av01.0.05M.08"',
   // webOS's spec lists VP9 in mkv only; whether this firmware takes it in
   // fMP4 (what hls.js would append) is exactly what this asks.
   vp9: 'video/mp4; codecs="vp09.00.10.08"',
@@ -80,30 +81,23 @@ export function isCodecDemoted(codec: string | undefined): boolean {
   return false;
 }
 
-/** Whether this TV can decode HEVC over MSE (hls.js transmuxes to fMP4,
- *  so we probe the mp4 codec string). Drives the transcode-start
- *  supports_hevc flag — telling the server we can take HEVC lets it
- *  stream-copy or HEVC-encode instead of falling back to H.264 on a
- *  panel that can't actually decode it. A runtime demotion overrides
- *  the probe. */
+/** The transcode-start supports_hevc flag: always false, so the server
+ *  never stream-copies or HEVC-encodes for the Xbox web view, which can't
+ *  decode HEVC whatever MSE claims (see the top of this file). */
 export function supportsHEVC(): boolean {
-  return !demoted.has('hevc') && isTypeSupported(PROBE_TYPES.hevc);
+  return false;
 }
 
-/** Whether this TV can decode AV1 over MSE (webOS 5.0+ UHD panels). Drives
- *  the transcode-start supports_av1 flag, sent on every start as an explicit
- *  bool (Android parity), so a runtime demotion reaches the server as false.
- *  The capability header's av1 claim reads it too. */
+/** The transcode-start supports_av1 flag, sent on every start as an
+ *  explicit bool (Android parity): always false, as for HEVC. */
 export function supportsAV1(): boolean {
-  return !demoted.has('av1') && isTypeSupported(PROBE_TYPES.av1);
+  return false;
 }
 
 /** Everything the header depends on, injected so the builder is pure. */
 export interface CapabilityProbes {
   /** MediaSource.isTypeSupported (false when MSE is missing). */
   isTypeSupported: (type: string) => boolean;
-  /** A codec this panel has PROVED it can't decode (runtime demotion). */
-  isDemoted: (codec: 'hevc' | 'av1') => boolean;
   /** The video plane's size (lib/platform readPanelSize). */
   panel: PanelSize;
   /** Luna's tv.model.supportHDR: true / false, null when unknown. */
@@ -115,6 +109,8 @@ export interface CapabilityProbes {
 
 /**
  * The X-Client-Capabilities value for these probes.
+ *   - h264, and no h265 / av1 (see the top of this file), so maxbitdepth
+ *     stays 8: the server transcodes 10-bit H.264 whatever it says.
  *   - vp9 only when MSE takes VP9 in fMP4 (it used to be claimed outright,
  *     though webOS lists VP9 in mkv only), with vp9MaxBitDepth from the
  *     Profile 2 probe (Android sends the same key; without it the server
@@ -124,17 +120,12 @@ export interface CapabilityProbes {
  *     query (the long-standing behaviour).
  */
 export function buildClientCapabilitiesHeader(p: CapabilityProbes): string {
-  const hevc = !p.isDemoted('hevc') && p.isTypeSupported(PROBE_TYPES.hevc);
-  const hevc10bit = !p.isDemoted('hevc') && p.isTypeSupported(PROBE_TYPES.hevc10);
-  const av1 = !p.isDemoted('av1') && p.isTypeSupported(PROBE_TYPES.av1);
   const vp9 = p.isTypeSupported(PROBE_TYPES.vp9);
   const vp9Profile2 = vp9 && p.isTypeSupported(PROBE_TYPES.vp9Profile2);
   const hdr = p.panelHdr ?? p.mediaHdr;
 
   const video = ['h264'];
   if (vp9) video.push('vp9');
-  if (hevc) video.push('h265');
-  if (av1) video.push('av1');
 
   const keys = [
     `videoDecoder=${video.join(':')}`,
@@ -143,7 +134,7 @@ export function buildClientCapabilitiesHeader(p: CapabilityProbes): string {
     `maxWidth=${p.panel.width}`,
     `maxHeight=${p.panel.height}`,
     'maxAudioChannels=6',
-    `maxbitdepth=${hevc10bit ? 10 : 8}`,
+    'maxbitdepth=8',
   ];
   if (vp9) keys.push(`vp9MaxBitDepth=${vp9Profile2 ? 10 : 8}`);
   keys.push(`hdr=${hdr ? 1 : 0}`);
@@ -169,7 +160,6 @@ export function clientCapabilitiesHeader(): string {
   startPanelProbe();
   return buildClientCapabilitiesHeader({
     isTypeSupported,
-    isDemoted: (codec) => demoted.has(codec),
     panel: readPanelSize(),
     panelHdr: panelHdr(),
     mediaHdr: mediaQueryHdr(),

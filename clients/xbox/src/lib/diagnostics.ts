@@ -99,7 +99,7 @@ export async function collectDiagnostics(env: DiagEnv): Promise<DiagSection[]> {
   return [
     { title: 'This console', rows: Object.entries(env.info).map(([label, value]) => ({ label, value, ok: null })) },
     { title: 'Display', rows: display },
-    { title: 'MSE (what hls.js can play)', rows: mse },
+    { title: 'MSE claims (a Series X claims HEVC, AV1 and AC-3 but decodes none)', rows: mse },
     { title: 'Decoding (MediaCapabilities)', rows: decode },
     { title: 'Sent to the server', rows: [{ label: 'X-Client-Capabilities', value: env.capabilityHeader, ok: null }] },
   ];

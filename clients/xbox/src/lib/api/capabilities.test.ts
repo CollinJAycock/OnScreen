@@ -3,6 +3,8 @@ import {
   PROBE_TYPES,
   buildClientCapabilitiesHeader,
   clientCapabilitiesHeader,
+  supportsAV1,
+  supportsHEVC,
   type CapabilityProbes,
 } from './capabilities';
 import { FHD_PANEL, UHD_PANEL } from '../platform';
@@ -16,7 +18,6 @@ function keys(header: string): Record<string, string> {
 function probes(supported: string[], over: Partial<CapabilityProbes> = {}): CapabilityProbes {
   return {
     isTypeSupported: (t) => supported.includes(t),
-    isDemoted: () => false,
     panel: UHD_PANEL,
     panelHdr: null,
     mediaHdr: false,
@@ -29,7 +30,7 @@ const ALL = Object.values(PROBE_TYPES);
 describe('buildClientCapabilitiesHeader', () => {
   it('claims no vp9 when MSE refuses VP9 in fMP4', () => {
     const h = keys(buildClientCapabilitiesHeader(probes(ALL.filter((t) => t !== PROBE_TYPES.vp9))));
-    expect(h.videoDecoder).toBe('h264:h265:av1');
+    expect(h.videoDecoder).toBe('h264');
     expect(h.vp9MaxBitDepth).toBeUndefined();
   });
 
@@ -56,14 +57,14 @@ describe('buildClientCapabilitiesHeader', () => {
     expect(keys(buildClientCapabilitiesHeader(probes(ALL))).hdr).toBe('0');
   });
 
-  it('drops a demoted codec and its bit depth', () => {
-    const h = keys(
-      buildClientCapabilitiesHeader(probes(ALL, { isDemoted: (c) => c === 'hevc' })),
-    );
-    expect(h.videoDecoder).toBe('h264:vp9:av1');
+  // A Series X's MSE says yes to both, but its web view decodes neither.
+  it('never claims HEVC or AV1, whatever MSE says', () => {
+    const yes = probes([], { isTypeSupported: () => true });
+    const h = keys(buildClientCapabilitiesHeader(yes));
+    expect(h.videoDecoder).toBe('h264:vp9');
     expect(h.maxbitdepth).toBe('8');
-    const noAv1 = keys(buildClientCapabilitiesHeader(probes(ALL, { isDemoted: (c) => c === 'av1' })));
-    expect(noAv1.videoDecoder).toBe('h264:vp9:h265');
+    expect(supportsHEVC()).toBe(false);
+    expect(supportsAV1()).toBe(false);
   });
 
   it('keeps the fixed audio and container keys', () => {
@@ -71,15 +72,15 @@ describe('buildClientCapabilitiesHeader', () => {
     expect(h.audioDecoder).toBe('aac:mp3:opus:flac');
     expect(h.protocols).toBe('mp4:webm:mov');
     expect(h.maxAudioChannels).toBe('6');
-    expect(h.maxbitdepth).toBe('10');
+    expect(h.maxbitdepth).toBe('8');
     // Plays an optimized version the decision hands out (v2.6).
     expect(h.optimized).toBe('1');
   });
 
   it('builds the whole header in a stable order', () => {
-    expect(buildClientCapabilitiesHeader(probes([PROBE_TYPES.hevc], { panel: FHD_PANEL }))).toBe(
-      'videoDecoder=h264:h265,audioDecoder=aac:mp3:opus:flac,protocols=mp4:webm:mov,' +
-        'maxWidth=1920,maxHeight=1080,maxAudioChannels=6,maxbitdepth=8,hdr=0,optimized=1',
+    expect(buildClientCapabilitiesHeader(probes([PROBE_TYPES.vp9], { panel: FHD_PANEL }))).toBe(
+      'videoDecoder=h264:vp9,audioDecoder=aac:mp3:opus:flac,protocols=mp4:webm:mov,' +
+        'maxWidth=1920,maxHeight=1080,maxAudioChannels=6,maxbitdepth=8,vp9MaxBitDepth=8,hdr=0,optimized=1',
     );
   });
 });
