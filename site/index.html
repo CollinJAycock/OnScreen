@@ -318,14 +318,14 @@
       <p class="sub">OnScreen needs PostgreSQL 16+ and Valkey (or Redis) 7+ next to it. Point it at your media folder and open port 7070.</p>
       <div class="code">
         <button class="copy" type="button" data-copy="quickstart">Copy</button>
-<pre id="quickstart"><span class="c"># Release images: ghcr.io/collinjaycock/onscreen (tags 2.6, 2)</span>
+<pre id="quickstart"><span class="c"># Release images: ghcr.io/collinjaycock/onscreen (tags 2.7, 2)</span>
 docker run -p 7070:7070 \
   -e DATABASE_URL="postgres://onscreen:${DB_PASS}@postgres:5432/onscreen?sslmode=disable" \
   -e VALKEY_URL="redis://valkey:6379" \
   -e SECRET_KEY="$(openssl rand -hex 32)" \
   -e AUTO_MIGRATE=true \
   -v /your/media:/media:ro \
-  ghcr.io/collinjaycock/onscreen:2.6</pre>
+  ghcr.io/collinjaycock/onscreen:2.7</pre>
       </div>
       <ol class="steps">
         <li><b>1. Run the server</b>With Docker as above, or with the Windows and Linux installers from the GitHub releases.</li>
