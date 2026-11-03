@@ -36,11 +36,12 @@ RUN apk add --no-cache alpine-sdk sudo \
 USER builder
 WORKDIR /home/builder/aports/ffmpeg
 
-# The APKBUILD and Alpine's own patches, at the pinned commit. The ffmpeg
-# tarball itself is fetched by abuild and checked against the APKBUILD's
-# sha512sums.
+# The APKBUILD and Alpine's own patches, at the pinned commit, from Alpine's
+# official GitHub mirror of aports (gitlab.alpinelinux.org answers GitHub's
+# runners with HTTP 418; the files are byte-identical). The ffmpeg tarball
+# itself is fetched by abuild and checked against the APKBUILD's sha512sums.
 RUN for f in APKBUILD add-av_stream_get_first_dts-for-chromium.patch posix-ioctl.patch; do \
-      wget -q "https://gitlab.alpinelinux.org/alpine/aports/-/raw/${APORTS_COMMIT}/community/ffmpeg/$f"; \
+      wget -q "https://raw.githubusercontent.com/alpinelinux/aports/${APORTS_COMMIT}/community/ffmpeg/$f"; \
     done \
  && grep -qx "pkgver=${FFMPEG_PKGVER}" APKBUILD
 
