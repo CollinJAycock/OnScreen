@@ -267,6 +267,30 @@ object PlaybackHelper {
             it == android.media.MediaCodecInfo.CodecProfileLevel.VP9Profile2HDR10Plus
     }
 
+    /** The header's video profile / level keys ([VideoProfileLevel]), from
+     *  what this device's HARDWARE H.264 / HEVC / AV1 decoders report,
+     *  probed once. A codec with no hardware decoder sends none (not
+     *  gated): a software decoder's profile list says nothing about what
+     *  plays smoothly. The phone app probes the same way. */
+    private val videoProfileLevelKeys: List<String> by lazy {
+        VideoProfileLevel.headerKeys(
+            VideoProfileLevel.MIME_TYPES.associateWith { hardwareProfileLevels(it) },
+        )
+    }
+
+    /** The (CodecProfileLevel profile, level) pairs every hardware decoder
+     *  of [mime] reports. */
+    private fun hardwareProfileLevels(mime: String): List<Pair<Int, Int>> =
+        decoderInfos.filter { isHardware(it) }.flatMap { info ->
+            info.supportedTypes.filter { it.equals(mime, ignoreCase = true) }.flatMap { type ->
+                try {
+                    info.getCapabilitiesForType(type).profileLevels.map { it.profile to it.level }
+                } catch (e: Exception) {
+                    emptyList()
+                }
+            }
+        }
+
     /** Whether the device can decode HEVC (probed from the platform codec list). */
     fun supportsHevc(): Boolean = hasDecoderFor("video/hevc")
 
@@ -891,7 +915,12 @@ object PlaybackHelper {
             // shows; left out otherwise, and the server sends the base layer.
             doviKey(dolbyVisionDecoderProfiles, out.dv, hlg = supports10Bit() && out.hlg),
         )
-        return (keys + depthAndHdrKeys(supports10Bit(), supportsVp9Profile2(), out.hdr, out.hlg)).joinToString(",")
+        return (
+            keys + depthAndHdrKeys(supports10Bit(), supportsVp9Profile2(), out.hdr, out.hlg) +
+                // v2.7: the highest H.264 / HEVC / AV1 profile and level the
+                // hardware decoders take; a file over them is transcoded.
+                videoProfileLevelKeys
+            ).joinToString(",")
     }
 
     /**

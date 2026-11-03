@@ -114,4 +114,32 @@ class PlaybackHelperTest {
         val header = PlaybackHelper.clientCapabilitiesHeader()
         assertThat(header.split(",")).contains("optimized=1")
     }
+
+    @Test
+    fun `the capability header declares no profile or level without a hardware decoder`() {
+        // This JVM has no decoders: every codec is left ungated, as before
+        // v2.7, rather than guessed (VideoProfileLevelTest has the mapping).
+        val keys = PlaybackHelper.clientCapabilitiesHeader().split(",").map { it.substringBefore("=") }
+        assertThat(keys).containsNoneOf("h264Profile", "h264Level", "hevcProfile", "hevcLevel", "av1Profile", "av1Level")
+        assertThat(keys).contains("videoDecoder")
+    }
+
+    @Test
+    fun `only hardware decoders count for the profile and level keys`() {
+        // The TV app's isHardwareCodec cases, with phone decoder names.
+        // Android 10+: the platform's own verdict.
+        assertThat(PlaybackHelper.isHardwareCodec("c2.qti.hevc.decoder", true)).isTrue()
+        assertThat(PlaybackHelper.isHardwareCodec("c2.android.av1.decoder", false)).isFalse()
+        // Before: known software decoders by name.
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.qcom.video.decoder.avc", null)).isTrue()
+        assertThat(PlaybackHelper.isHardwareCodec("c2.exynos.h264.decoder", null)).isTrue()
+        assertThat(PlaybackHelper.isHardwareCodec("c2.android.av1.decoder", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("c2.google.av1.decoder", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.google.h264.decoder", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.ffmpeg.av1.decoder", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.SEC.avc.sw.dec", null)).isFalse()
+        assertThat(PlaybackHelper.isHardwareCodec("libgav1", null)).isFalse()
+        // Secure-only decoders play DRM streams alone.
+        assertThat(PlaybackHelper.isHardwareCodec("OMX.qcom.video.decoder.avc.secure", true)).isFalse()
+    }
 }

@@ -479,9 +479,11 @@ AC-3 / E-AC-3 copied into MPEG-TS and TrueHD / DTS copied into fMP4
 **Remaining:**
 1. Device-test on Roku (the verdict is now final there, unit-tested only),
    Fire TV, Tizen and webOS.
-2. Clients have to send the new keys: the Android TV app should add
-   `h264Profile` / `h264Level` / `hevcProfile` / `hevcLevel` (and AV1) from
-   `MediaCodecInfo.CodecCapabilities.profileLevels`. Then check on a device
+2. Clients have to send the new keys. The Android TV and phone apps do
+   (after v2.7.0): `h264Profile` / `h264Level` / `hevcProfile` /
+   `hevcLevel` / `av1Profile` / `av1Level` from the hardware decoders'
+   `MediaCodecInfo.CodecCapabilities.profileLevels` (`VideoProfileLevel.kt`
+   in each app). Then check on a device
    through an AV receiver: a re-encode (e.g. VC-1, or a burn-in) with TrueHD /
    DTS / E-AC-3 copied, single rendition and ABR (Media3 reading the
    master's `CODECS`), and a level-capped re-encode on a decoder that refuses

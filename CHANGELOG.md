@@ -9,6 +9,20 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Android TV / Fire TV and Android phone
+
+- **The apps declare their decoders' video profile and level.** Both apps
+  now send `h264Profile` / `h264Level`, `hevcProfile` / `hevcLevel` and
+  `av1Profile` / `av1Level` (server v2.7) from what their hardware H.264,
+  HEVC and AV1 decoders report, so a file above them (an H.264 level 5.2
+  rip on a 5.1 decoder, 10-bit HEVC on an 8-bit-only one) is transcoded to
+  fit instead of failing to play. A codec with no hardware decoder sends
+  neither key and plays as before. The level sent is always one the
+  profile sent reaches; HEVC High-tier levels count as their level (the
+  server has no tier).
+
 ## [v2.7.0] — 2026-11-03
 
 v2.7, the last server release of the v2 line (see
