@@ -492,30 +492,39 @@ export class ApiClient {
     // server wedged) doesn't leave the caller waiting forever. A timeout
     // and a transport failure both surface as a clean Error the caller
     // can catch and retry, rather than a never-settling promise.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    let resp: Response;
-    try {
-      resp = await fetch(`${origin}${path}`, {
-        method,
-        headers,
-        body: body === undefined ? undefined : JSON.stringify(body),
-        signal: controller.signal,
-        // Every raw() call carries a credential (password, refresh token or
-        // Bearer). Following a 307/308 would replay the body (and on the old
-        // TV Chromium possibly the Authorization header) to wherever the
-        // Location points, including another host. The JSON API never
-        // redirects; a stale http origin is healed below via a probe.
-        redirect: 'manual'
-      });
-    } catch (e) {
-      if (controller.signal.aborted) {
-        throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`);
+    // A GET that hangs or can't connect is sent once more before the caller
+    // sees the error: a GET is safe to repeat, and a page whose first read
+    // stalls otherwise stays on its error (a Series X once sat 20 s on an
+    // artist page's item read).
+    const attempts = method === 'GET' ? 2 : 1;
+    let resp!: Response;
+    for (let attempt = 1; ; attempt++) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+      try {
+        resp = await fetch(`${origin}${path}`, {
+          method,
+          headers,
+          body: body === undefined ? undefined : JSON.stringify(body),
+          signal: controller.signal,
+          // Every raw() call carries a credential (password, refresh token or
+          // Bearer). Following a 307/308 would replay the body (and on the old
+          // TV Chromium possibly the Authorization header) to wherever the
+          // Location points, including another host. The JSON API never
+          // redirects; a stale http origin is healed below via a probe.
+          redirect: 'manual'
+        });
+        break;
+      } catch (e) {
+        if (attempt < attempts) continue;
+        if (controller.signal.aborted) {
+          throw new Error(`Request timed out after ${REQUEST_TIMEOUT_MS / 1000}s: ${method} ${path}`);
+        }
+        // DNS / TLS / connection-refused — normalise to a readable message.
+        throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
+      } finally {
+        clearTimeout(timer);
       }
-      // DNS / TLS / connection-refused — normalise to a readable message.
-      throw new Error(`Network error: ${(e as Error)?.message ?? 'request failed'}`);
-    } finally {
-      clearTimeout(timer);
     }
 
     if (resp.type === 'opaqueredirect' || (resp.status >= 300 && resp.status < 400)) {
