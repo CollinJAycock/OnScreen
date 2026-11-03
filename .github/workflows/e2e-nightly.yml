@@ -71,6 +71,11 @@ jobs:
       DEBUG_PORT: "7093"
       ONSCREEN_IMAGE: onscreen-browser-server
       BASE_URL: http://localhost:7092
+      # metrics.spec.ts: the metrics port is DEBUG_PORT, published on IPv4
+      # loopback only (docker-compose.yml), so not localhost, which Node
+      # resolves to ::1 first. Without this it tried localhost:7071 and
+      # failed every night.
+      METRICS_URL: http://127.0.0.1:7093
       E2E_USERNAME: e2eadmin
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
