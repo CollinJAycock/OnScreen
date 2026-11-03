@@ -89,35 +89,86 @@ end function
 ' header shipped, so an mp4 + ac3 direct play uses the same decoder. The
 ' local exclusion is about ac3 inside mkv and pre-2018 boxes without OS
 ' passthrough; that fallback Decide stays conservative, and mkv stays
-' undeclared. flac is left out (not direct-played in a video). The
-' maxbitdepth/hdr fields are starting values — verify per device before
-' trusting the server's directPlay verdicts. See docs/capability-profiles.md
-' for the grammar.
+' undeclared. flac is left out (not direct-played in a video). Resolution,
+' bit depth and HDR follow this Roku and the TV it is plugged into (see
+' Client_DeviceCaps), so an HD Roku, or a 4K one on a non-HDR TV, gets a
+' tone-mapped transcode instead of an HDR stream it would show washed out.
+' See docs/capability-profiles.md for the grammar.
 function Client_CapabilitiesHeader() as String
-    supportsHevc = false
-    info = CreateObject("roDeviceInfo")
-    if info <> invalid and info.CanDecodeVideo <> invalid
-        hevc = info.CanDecodeVideo({ Codec: "hevc" })
-        if hevc <> invalid and hevc.Result = true then supportsHevc = true
-    end if
-    return Client_CapabilitiesHeaderFor(supportsHevc)
+    return Client_CapabilitiesHeaderFor(Client_DeviceCaps())
 end function
 
-' The header for a device that does (or doesn't) decode HEVC. Pure —
+' What this Roku decodes and its display shows. Anything the firmware
+' doesn't report counts as unsupported: a missing claim costs a transcode,
+' a wrong one a broken picture.
+'   hevc   - decodes HEVC
+'   hevc10 - decodes HEVC Main 10
+'   uhd    - the video output is 2160p (Settings > Display type)
+'   hdr10  - the display takes HDR10
+'   hlg    - the display takes HLG
+function Client_DeviceCaps() as Object
+    caps = { hevc: false, hevc10: false, uhd: false, hdr10: false, hlg: false }
+    info = CreateObject("roDeviceInfo")
+    if info = invalid then return caps
+    if info.CanDecodeVideo <> invalid
+        r = info.CanDecodeVideo({ Codec: "hevc" })
+        if r <> invalid then caps.hevc = Client_IsTrue(r.Result)
+        r = info.CanDecodeVideo({ Codec: "hevc", Profile: "main 10" })
+        if r <> invalid then caps.hevc10 = Client_IsTrue(r.Result)
+    end if
+    mode = info.GetVideoMode()
+    caps.uhd = Prefs_IsString(mode) and Instr(1, mode, "2160") = 1
+    props = info.GetDisplayProperties()
+    if props <> invalid
+        caps.hdr10 = Client_IsTrue(props.Hdr10)
+        caps.hlg = Client_IsTrue(props.HLG)
+    end if
+    return caps
+end function
+
+' True only for a Boolean true: a field an older firmware doesn't report is
+' invalid, and comparing invalid with true is a type mismatch.
+function Client_IsTrue(v as Dynamic) as Boolean
+    t = type(v)
+    if t <> "Boolean" and t <> "roBoolean" then return false
+    return v
+end function
+
+' The header for a device with the given Client_DeviceCaps. Pure -
 ' tests/Capabilities_test.brs. optimized=1 (v2.6) says this player can
 ' play an optimized version the play decision hands it (an MP4, H.264 /
 ' AAC, direct-played from its own stream_url).
-function Client_CapabilitiesHeaderFor(supportsHevc as Boolean) as String
+function Client_CapabilitiesHeaderFor(caps as Object) as String
     video = "h264"
-    if supportsHevc then video = video + ":h265"
+    if caps.hevc = true then video = video + ":h265"
     header = "videoDecoder=" + video
     ' Playback_DirectAudioCodecs plus ac3 / eac3 (passthrough, see above);
     ' Playback_DirectContainers (the server's "mp4" covers mov and m4v).
     header = header + ",audioDecoder=aac:mp3:ac3:eac3"
     header = header + ",protocols=mp4"
-    header = header + ",maxWidth=3840,maxHeight=2160"
+    if caps.uhd = true
+        header = header + ",maxWidth=3840,maxHeight=2160"
+    else
+        header = header + ",maxWidth=1920,maxHeight=1080"
+    end if
     header = header + ",maxAudioChannels=6"
-    header = header + ",maxbitdepth=10,hdr=1"
+    if caps.hevc = true and caps.hevc10 = true
+        header = header + ",maxbitdepth=10"
+    else
+        header = header + ",maxbitdepth=8"
+    end if
+    ' HDR needs the 10-bit decoder as well as the display. hlg is sent
+    ' only with hdr=1: without it hdr=0 already tone-maps HLG.
+    if caps.hdr10 = true and caps.hevc10 = true
+        header = header + ",hdr=1"
+        if caps.hlg = true
+            header = header + ",hlg=1"
+        else
+            header = header + ",hlg=0"
+        end if
+    else
+        header = header + ",hdr=0"
+    end if
     header = header + ",optimized=1"
     return header
 end function

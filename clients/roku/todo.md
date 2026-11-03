@@ -8,6 +8,31 @@ Audit snapshot: 2026-05-05 (after android_native picked up subtitle styling + Ca
 
 ---
 
+## First run on a device
+
+The channel has never run on a Roku. When one is in Developer Mode:
+
+1. `ROKU_HOST=<ip> ROKU_DEV_PASSWORD=<pw> npm run package && npm run sideload`.
+2. Sign in with a PIN pair (Setup → server URL → pair code).
+3. Capability header: compare what the server logs for the device with
+   Client_DeviceCaps (4K output, HEVC Main 10, the TV's HDR10 / HLG).
+   CanDecodeVideo's "main 10" profile string and GetDisplayProperties'
+   Hdr10 / HLG fields are from Roku's docs and unconfirmed here.
+4. Playback, reading the server log's real decision (direct / remux /
+   transcode) for each: H.264 1080p, HEVC 4K SDR, HDR10 (TV's HDR badge),
+   HLG, an HDR file on an SDR TV (tone-mapped), E-AC-3 / AC-3 audio, image
+   subtitles (burn-in), seeking past the transcoded range, the BIF seek
+   thumbnails, Up Next and auto-advance, resume.
+5. Music, audiobooks, photos, search, Watchlist, Favorites, libraries.
+6. Back on every screen, and Home / relaunch keeping the session.
+7. Token refresh: let the access token expire with several screens loading.
+   If two refreshes race and the loser's 401 arrives before the winner has
+   stored the new pair, Client_RefreshSync clears the session; watch for an
+   unexpected sign-out.
+8. Dolby Vision: not claimed yet (no `dovi` key). Roku 4K models play DV
+   profiles 5 and 8; add the claim only after a DV file plays with the TV's
+   Dolby Vision badge.
+
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 
 ### 1. Browse library by type (`LibraryScene`) — ✅ shipped 2026-05-06

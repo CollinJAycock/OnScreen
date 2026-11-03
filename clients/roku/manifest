@@ -16,7 +16,7 @@ mm_icon_focus_hd=pkg:/images/icon_focus_hd.png
 mm_icon_focus_sd=pkg:/images/icon_focus_sd.png
 splash_screen_hd=pkg:/images/splash_hd.jpg
 splash_screen_fhd=pkg:/images/splash_fhd.jpg
-splash_color=#1a1a1a
+splash_color=#000000
 
 # Render at 1080p; Roku scales to the device's native resolution.
 # Channels designed at 720p ("hd") are also fine but lose sharpness
