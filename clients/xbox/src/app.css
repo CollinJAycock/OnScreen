@@ -86,3 +86,11 @@ a {
 .tv-root {
   scroll-padding: 110px 0 64px;
 }
+
+/* Video on the console's own player (Xbox shell, lib/player/nativeVideo):
+   its picture is behind the web view, so the page lets it through. */
+html.native-video,
+html.native-video body,
+html.native-video .tv-root {
+  background: transparent !important;
+}

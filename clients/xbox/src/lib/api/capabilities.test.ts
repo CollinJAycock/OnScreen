@@ -85,6 +85,34 @@ describe('buildClientCapabilitiesHeader', () => {
   });
 });
 
+describe('buildClientCapabilitiesHeader with the native player', () => {
+  // The console's own pipeline decodes HEVC 10-bit, HDR10 and Dolby audio
+  // (checked on a Series X), so the server can send HDR films as they are.
+  it('claims HEVC 10-bit, Dolby audio, MKV and the HDR the shell found', () => {
+    const h = keys(buildClientCapabilitiesHeader(probes([], { native: true, panelHdr: true })));
+    expect(h.videoDecoder).toBe('h264:h265');
+    expect(h.audioDecoder).toBe('aac:mp3:ac3:eac3');
+    expect(h.protocols).toBe('mp4:mkv:mov');
+    expect(h.maxbitdepth).toBe('10');
+    expect(h.hdr).toBe('1');
+    expect(h.dovi).toBe('8.1');
+    expect(h.vp9MaxBitDepth).toBeUndefined();
+  });
+
+  it('claims no HDR on an SDR TV', () => {
+    const sdr = keys(buildClientCapabilitiesHeader(probes([], { native: true, panelHdr: false })));
+    expect(sdr.hdr).toBe('0');
+    expect(sdr.dovi).toBeUndefined();
+  });
+
+  it('drops HEVC, its depth and HDR once HEVC is demoted', () => {
+    const h = keys(buildClientCapabilitiesHeader(probes([], { native: true, panelHdr: true, isDemoted: (c) => c === 'hevc' })));
+    expect(h.videoDecoder).toBe('h264');
+    expect(h.maxbitdepth).toBe('8');
+    expect(h.hdr).toBe('0');
+  });
+});
+
 describe('clientCapabilitiesHeader (runtime)', () => {
   it('stays sane outside a TV: H.264 only, the 4K default, no HDR', () => {
     // No MediaSource, PalmSystem, PalmServiceBridge or window under node.

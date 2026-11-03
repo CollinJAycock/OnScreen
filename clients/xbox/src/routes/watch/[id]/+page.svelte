@@ -24,6 +24,8 @@
   import type { RemoteKey } from '$lib/focus/keys';
   import Spinner from '$lib/components/Spinner.svelte';
   import { loadHls } from '$lib/player/hls-loader';
+  import { NativeVideo, onHomeNetwork } from '$lib/player/nativeVideo';
+  import { shellParams } from '$lib/shell';
   import type HlsType from 'hls.js';
   import {
     CONTENT_REVOKED_TEXT,
@@ -169,6 +171,25 @@
   // the default version. Read once, like the start.
   const fileOverride = takeFileOverride(itemID);
   let video: HTMLVideoElement | undefined = $state();
+  // The console's own player (Xbox shell, lib/player/nativeVideo): HEVC,
+  // HDR10 and Dolby audio the web view can't decode. A video item plays on it
+  // in place of the <video> element (begin swaps it in; music and audiobooks
+  // stay on the element). It shaped like the element, so everything below
+  // drives either.
+  const nativeVideo = shellParams().native ? new NativeVideo() : null;
+  // A source is on the native player: the page clears its background so the
+  // picture behind the web view shows.
+  let nativeActive = $state(false);
+  if (nativeVideo) {
+    nativeVideo.onActive = (on) => {
+      nativeActive = on;
+      document.documentElement.classList.toggle('native-video', on);
+    };
+  }
+  const onNative = () => !!nativeVideo && (video as unknown) === nativeVideo;
+  // The server's verdict was directPlay and the native player has the
+  // video: the console plays the file itself, no session (see startStream).
+  let nativeDirect = false;
 
   let item = $state<ItemDetail | null>(null);
   // The message on the error overlay ('' = none). Every failure ends up here
@@ -1195,6 +1216,13 @@
     // re-encode of the source with it ($lib/player/burnIn).
     const fields = streamVideoFields(req.videoCopy, isAudioOnly ? null : activeSubtitleKey);
     const burnIndex = fields.burnSubtitleStreamIndex ?? null;
+    // The console's own player takes the file as it is when the server said
+    // directPlay: no burn-in, the default audio track, not one part of a
+    // stack. A file it then can't play falls back to a session once
+    // (fallBackFromDirectAudio sets directAudioFailed).
+    if (nativeDirect && onNative() && !directAudioFailed && burnIndex === null && !isStackPart(file) && (ordinal === null || ordinal === 0)) {
+      return { kind: 'direct' };
+    }
     // The optimized version the decision handed out, on its default audio
     // (it carries no other track), until it has failed here: a direct play
     // of its MP4. Otherwise the source, with its own verdict (req.videoCopy).
@@ -1269,6 +1297,11 @@
       // The version carries the default track only.
       if (o.url) activeAudioIndex = 0;
       reporter?.setDecision('directPlay');
+      // The file itself keeps its HDR; an optimized version is SDR H.264.
+      if (nativeVideo) {
+        nativeVideo.hdr = !o.url && hdr10Source(file.hdr_type);
+        nativeVideo.dolbyVision = !o.url && dolbyVisionKept(file);
+      }
       video.src = o.url ?? api.assetUrl(file.stream_url);
       return;
     }
@@ -1286,6 +1319,11 @@
     // Measured on this session's first 'playing' (see ptsShiftOnFirstPlayMs).
     ptsCaptureStartSec = startSec;
     reporter?.setDecision(liveRemux() ? 'directStream' : 'transcode');
+    // A remux keeps the source's HDR; a re-encode is tone-mapped to SDR.
+    if (nativeVideo) {
+      nativeVideo.hdr = liveRemux() && hdr10Source(file.hdr_type);
+      nativeVideo.dolbyVision = liveRemux() && dolbyVisionKept(file);
+    }
     const url = fresh.playlist_url.startsWith('http')
       ? fresh.playlist_url
       : api.mediaUrl(fresh.playlist_url);
@@ -1303,7 +1341,7 @@
     currentPlaylistUrl = url;
     currentStartSec = startSec;
     streamReady = false;
-    if (Hls.isSupported()) {
+    if (!onNative() && Hls.isSupported()) {
       metadataSeekSec = null;
       createHls(Hls, url, startSec, freshRecovery());
     } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
@@ -1360,6 +1398,20 @@
     });
     inst.loadSource(url);
     inst.attachMedia(video);
+  }
+
+  // An HDR10 (or HDR10+, whose base layer it is) source: the TV goes into
+  // HDR10 for it on the native player. HLG and Dolby Vision aren't asked for.
+  function hdr10Source(hdrType: string | null | undefined): boolean {
+    const t = (hdrType ?? '').toLowerCase();
+    return t === 'hdr10' || t === 'hdr10plus';
+  }
+
+  // A Dolby Vision layer the stream keeps for the native player (it claims
+  // dovi=8.1): profile 8 as it is, profile 7 converted to 8.1 by the server.
+  function dolbyVisionKept(file: { dv_profile?: number | null }): boolean {
+    const p = file.dv_profile ?? 0;
+    return p === 7 || p === 8;
   }
 
   // The live session stream-copies the video: its verdict's remux, unless a
@@ -1570,6 +1622,11 @@
     clearLoadRetry();
     try {
       video?.pause();
+      // The console's own player goes now, not after the report: its stop
+      // takes the TV out of HDR / Dolby Vision, and the screen is blank while
+      // the TV resyncs, so starting that at once is the quicker way back (a
+      // B pressed into that blank read as a second Back).
+      if (onNative() && video?.getAttribute('src')) video.removeAttribute('src');
     } catch { /* element gone */ }
     if (reporter) await reporter.stopped(position, duration);
     teardownStream();
@@ -3124,6 +3181,8 @@
         it.type === 'audiobook' ||
         it.type === 'audiobook_chapter';
       isAudioOnly = audioType || (!file.video_codec && !!file.audio_codec);
+      // Video on the console's own player when the shell has one.
+      if (nativeVideo && !isAudioOnly) video = nativeVideo as unknown as HTMLVideoElement;
 
       // The saved audio / subtitle languages (one small GET), for video
       // only: direct audio picks no track and shows no subtitles, and an
@@ -3200,6 +3259,8 @@
         }
         videoCopy = verdict ? verdict !== 'transcode' : false;
         sessionVideoCopy = videoCopy;
+        // Over the internet a session paces the download (onHomeNetwork).
+        nativeDirect = verdict === 'directPlay' && onNative() && onHomeNetwork(api.getOrigin() ?? '');
       }
       // Never rejects (best-effort).
       if (prefsLoad) await prefsLoad;
@@ -3249,6 +3310,7 @@
     // Element listeners go on before any source is bound, so the first
     // loadedmetadata can't slip past them.
     if (video) wireVideoEvents(video);
+    if (nativeVideo) wireVideoEvents(nativeVideo as unknown as HTMLVideoElement);
     // Sync and the admin stop, from the app's event stream. The handlers
     // wait for the item and a ready stream themselves.
     subscribeEvents();
@@ -3287,6 +3349,10 @@
           el.load();
         }
       } catch { /* element already gone */ }
+      if (nativeVideo) {
+        nativeVideo.removeAttribute('src');
+        nativeVideo.dispose();
+      }
       clearAudioStartWatchdog();
       if (controlsTimer) clearTimeout(controlsTimer);
       if (upNextTimer) clearInterval(upNextTimer);
@@ -3429,7 +3495,7 @@
 {/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="player" onmousemove={onPointerMove}>
+<div class="player" class:native={nativeActive} onmousemove={onPointerMove}>
   <!-- svelte-ignore a11y_media_has_caption -->
   <video bind:this={video} class="video" class:hidden={nowPlaying} playsinline></video>
 
@@ -3725,6 +3791,10 @@
     left: 0;
     background: #000;
     overflow: hidden;
+  }
+  /* The native player's picture is behind the web view. */
+  .player.native {
+    background: transparent;
   }
 
   .video {

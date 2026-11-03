@@ -25,6 +25,44 @@ the console showed is under "Phase 1 results" at the end.
 | `src/lib/device.ts`, `src/lib/platform.ts` | The device name ("Xbox Series X #1a2b") and the display's 4K / HDR, from the shell. |
 | `src/app.html`, `+layout.svelte` | The 1920x1080 layout is scaled to the view with a transform (an Xbox app's web view is 960x540 CSS px). |
 | `src/routes/settings/diagnostics` | Settings > Diagnostics: what the console's web view decodes (MSE, MediaCapabilities, HDR), the capability header, and a live log of every key event. |
+| `shell/NativePlayer.cs`, `src/lib/player/nativeVideo.ts` | The native player (below). |
+
+## The native player (HEVC, HDR10, Dolby audio)
+
+The console's web view decodes only H.264 and VP9 and can't switch the TV
+into HDR. So video plays in the console's own player: a `MediaPlayerElement`
+behind the web view, which the shell makes transparent. The watch page drives
+it through `NativeVideo`, which has the shape of the `<video>` element the
+page already drives (`src`, `play()`, `currentTime`, the media events), so the
+player screen, pickers, subtitles, Up Next and progress reporting are
+unchanged and draw over the picture. Commands go to the shell as `native`
+messages (`load`, `play`, `pause`, `seek`, `rate`, `stop`), and events come
+back as `nativeEvent` messages, each tagged with its load. Music and
+audiobooks stay on the web view.
+
+- **What the server is told** (`src/lib/api/capabilities.ts`, with the shell's
+  `?native=1`): H.264 and HEVC to 10-bit, AAC / MP3 / AC-3 / E-AC-3, MP4 / MKV
+  / MOV, and HDR when the TV takes HDR10. So an HDR film comes as a remux of
+  its own video (or the file itself), not a tone-mapped transcode.
+- **HDR:** an HDR10 (or HDR10+) source that isn't re-encoded asks the shell
+  for HDR10. It picks a 4K SMPTE 2084 mode nearest 60 Hz (120 Hz modes aren't
+  for media; the console does 3:2 pulldown), and on stop goes back to the
+  default mode. The switches are logged to the app's
+  `LocalState\display-switches.txt` (Device Portal > File explorer).
+- **Dolby Vision:** the header claims `dovi=8.1` with HDR, so the server keeps
+  a profile 8.1 file's Dolby Vision on a direct play or remux and converts a
+  profile 7 (Blu-ray) one to 8.1. The console decodes it as `dvhe.08`, and the
+  shell asks for a Dolby Vision (low latency) mode, falling back to HDR10
+  without one. The console offers those modes only with *Video modes > Allow
+  Dolby Vision* on. Profile 5 isn't claimed.
+- **The `hevcPlayback` capability** (restricted, in `Package.appxmanifest`):
+  without it the console lists no HDR modes. It also gives the app 3.25 GB
+  and closes it when a game starts.
+- **Direct play** (the file itself, no session) only from a server on the
+  home network (`onHomeNetwork`). The console downloads a file as fast as the
+  link allows, and over the internet that filled the server's uplink and
+  stalled the app's own requests for a minute; a session's HLS is fetched a
+  segment at a time.
 
 ## Developing
 
@@ -55,14 +93,20 @@ cd shell
 .\build.ps1             # Release (.NET Native) x64: AppPackages\OnScreen.Xbox_<ver>_x64_Test\
 .\build.ps1 -Register   # also install it on this PC (Windows Developer Mode)
 .\build.ps1 -DevTools -Register   # a PC test build with DevTools on 127.0.0.1:9229
+.\build.ps1 -Store      # the Partner Center upload: AppPackages\*.msixupload
 ```
 
-The first build makes a local test signing certificate (`make-cert.ps1`,
-`CN=OnScreen Dev`; the `.pfx` / `.cer` are gitignored).
+The package identity is the Partner Center reservation: `OnScreen.OnScreen`,
+publisher `CN=4F8B1511-8473-4887-9ED7-421BC42D615E`, package family
+`OnScreen.OnScreen_d8tnyqrgg61zm`, Store ID `9N58M48F5XMW`. Builds sign with
+a local test certificate for that publisher (`make-cert.ps1`, run by
+`build.ps1`; the `.pfx` / `.cer` are gitignored); the Store re-signs what it
+ships. Tiles, logos and the splash come in every scale, made from
+`docs/store-assets/master/icon-1024.png`.
 
 On a PC, a UWP app can't reach the PC's own loopback address. To point the
 shell at a server running on the same PC, exempt it once (admin):
-`CheckNetIsolation LoopbackExempt -a -n=OnScreen.Xbox_fw6qcgmhrp7e8`.
+`CheckNetIsolation LoopbackExempt -a -n=OnScreen.OnScreen_d8tnyqrgg61zm`.
 
 Known: the Debug configuration crashes at start on this PC (an unhandled .NET
 exception before the app's own code runs, likely its debug runtime set-up);
@@ -126,15 +170,23 @@ saves are untouched).
   as the system's Back request, which it still forwards. Device Portal's
   remote input (`wss://<console>:11443/ext/remoteinput`) goes the same way,
   so the app can be driven from a PC for testing.
-- **Codecs:** MSE answers yes for HEVC, AV1, AC-3 and E-AC-3, but the web
-  view decodes none of them. HEVC fails decoder set-up (`kUnsupportedConfig`)
-  at every profile, tier and size tried; AV1 and AC-3 / E-AC-3 append and
-  never produce a frame. H.264 (to 4K) and VP9 Profile 0 and 2 play. So the
-  app claims H.264 and VP9 only (`src/lib/api/capabilities.ts`), and 4K HEVC
-  sources reach it as H.264 transcodes. DTS and Dolby Vision say no.
+- **Codecs in the web view:** MSE answers yes for HEVC, AV1, AC-3 and E-AC-3,
+  but the web view decodes none of them, even with `hevcPlayback`: HEVC fails
+  decoder set-up (`kUnsupportedConfig`) at every profile, tier and size tried;
+  AV1 and AC-3 / E-AC-3 append and never produce a frame. H.264 (to 4K) and VP9
+  Profile 0 and 2 play. Hence the native player.
+- **The native player:** plays 4K HEVC Main 10 HDR10 in MP4, MKV and the
+  server's fMP4 HLS, with E-AC-3 5.1, and switches an HDR TV to
+  3840x2160 @ 59.94 BT.2020 10-bit HDR10 (checked: Deadpool & Wolverine, a
+  remux of its own HDR10 video; the switch log read HighDynamicRange, and back
+  to SDR on leaving). The display APIs list HDR modes only with `hevcPlayback`.
+  Dolby Vision: the same film (a profile 7 Blu-ray remux the server converts
+  to 8.1) showed the LG C1's Dolby Vision banner with a correct picture; the
+  console read the track as `dvhe.08`.
 - **Checked on the console:** D-pad, A, B (pages, player, pickers), the exit
   popup, the sign-in keyboard's way down to Change server, pair sign-in,
   playback start and resume, the Audio (Y) and Subtitles (X) pickers,
   seeking, Libraries, music with next track (RB).
-- **Not yet:** HDR (the test TV isn't HDR), audiobooks, Photos, Up Next,
-  Forget server, triggers.
+- **Not yet:** suspend and resume during native playback (the Guide button),
+  DTS / TrueHD / Dolby Vision files (sent as transcodes), VP9 / AV1 on the
+  native player.

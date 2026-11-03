@@ -184,6 +184,9 @@ export interface ItemFile {
   resolution_h?: number;
   bitrate?: number;
   hdr_type?: string;
+  /** The Dolby Vision profile (5, 7, 8) when the video has a Dolby Vision
+   *  layer; absent otherwise. */
+  dv_profile?: number | null;
   /** Frame rate as probed (e.g. 23.976). Absent on older servers. */
   frame_rate?: number;
   /** The part's own length for a stacked movie's part (part_index); the

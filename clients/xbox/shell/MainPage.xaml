@@ -6,6 +6,10 @@
     Background="#0b0b12">
 
     <Grid>
+        <!-- The console's own player, behind the web view: it decodes what
+             the web view can't (HEVC, HDR10, Dolby audio). -->
+        <MediaPlayerElement x:Name="Native" Visibility="Collapsed" AreTransportControlsEnabled="False" Stretch="Uniform" />
+
         <!-- The TV app, from the server (<server>/tvapp/). Hidden until a
              server has answered. -->
         <muxc:WebView2 x:Name="Web" Visibility="Collapsed" />
