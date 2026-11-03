@@ -8,10 +8,13 @@
 #                               DevTools protocol on 127.0.0.1:9229; never
 #                               install that one on a console
 #   .\build.ps1 -Debug          Debug instead of Release
+#   .\build.ps1 -Store          the Partner Center upload (.msixupload),
+#                               Release x64
 param(
     [switch]$Register,
     [switch]$DevTools,
-    [switch]$Debug
+    [switch]$Debug,
+    [switch]$Store
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -20,10 +23,14 @@ $vs = & $vswhere -latest -version '[17.0,18.0)' -requires Microsoft.VisualStudio
 if (-not $vs) { throw "Visual Studio 2022 with the 'Universal Windows Platform development' workload is required." }
 $msbuild = Join-Path $vs 'MSBuild\Current\Bin\amd64\MSBuild.exe'
 
-if (-not (Test-Path (Join-Path $here 'OnScreen.Xbox_TemporaryKey.pfx'))) { & (Join-Path $here 'make-cert.ps1') }
+# Made, or remade for a changed Publisher, as needed.
+& (Join-Path $here 'make-cert.ps1')
+$packageName = ([xml](Get-Content (Join-Path $here 'Package.appxmanifest') -Raw)).Package.Identity.Name
 
+if ($Store -and ($Debug -or $DevTools)) { throw '-Store is a Release build without DevTools.' }
 $config = if ($Debug) { 'Debug' } else { 'Release' }
 $props = @("/p:Configuration=$config", '/p:Platform=x64')
+if ($Store) { $props += '/p:UapAppxPackageBuildMode=StoreUpload' }
 if ($DevTools) {
     $defines = if ($Debug) { 'DEBUG;TRACE;NETFX_CORE;WINDOWS_UWP;DEVTOOLS' } else { 'TRACE;NETFX_CORE;WINDOWS_UWP;DEVTOOLS' }
     # msbuild splits properties on ";", so escape it.
@@ -35,11 +42,15 @@ if ($LASTEXITCODE -ne 0) { throw "msbuild failed ($LASTEXITCODE)" }
 if ($Register) {
     # Release's runnable layout is the .NET Native one (ilc\).
     $layout = if ($Debug) { "bin\x64\Debug" } else { "bin\x64\Release\ilc" }
-    $old = Get-AppxPackage -Name OnScreen.Xbox
+    $old = Get-AppxPackage -Name $packageName
     # Same version, other folder: Windows keeps the old registration unless
     # it is removed first.
     if ($old) { Remove-AppxPackage -Package $old.PackageFullName }
     Add-AppxPackage -Register (Join-Path $here "$layout\AppxManifest.xml")
     Write-Host "registered: start 'OnScreen' from the Start menu"
 }
-Get-ChildItem (Join-Path $here 'AppPackages') -Recurse -Include *.msix | Where-Object FullName -match "_x64$(if ($Debug) { '_Debug' })_Test" | ForEach-Object { $_.FullName }
+if ($Store) {
+    Get-ChildItem (Join-Path $here 'AppPackages') -Filter *.msixupload | Sort-Object LastWriteTime | Select-Object -Last 1 | ForEach-Object { $_.FullName }
+} else {
+    Get-ChildItem (Join-Path $here 'AppPackages') -Recurse -Include *.msix | Where-Object FullName -match "_x64$(if ($Debug) { '_Debug' })_Test" | ForEach-Object { $_.FullName }
+}

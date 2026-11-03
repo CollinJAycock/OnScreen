@@ -4,26 +4,29 @@
   OnScreen server and show <server>/tvapp/ in a WebView2 (see MainPage.xaml.cs
   and ../src/lib/shell.ts). Runs on Xbox and, for testing, on Windows desktop.
 
-  Publisher must match the signing certificate. CN=OnScreen Dev is the local
-  test certificate (make-cert.ps1); a Store build gets the Partner Center
-  identity instead.
+  Identity is the Partner Center reservation (Store ID 9N58M48F5XMW, package
+  family OnScreen.OnScreen_d8tnyqrgg61zm); keep it exactly as reserved or the
+  Store refuses the upload. Publisher must also match the signing
+  certificate: make-cert.ps1 makes a local test one with this subject for
+  sideloading, and the Store re-signs what it ships.
 -->
 <Package
   xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
   xmlns:mp="http://schemas.microsoft.com/appx/2014/phone/manifest"
   xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
-  IgnorableNamespaces="uap mp">
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  IgnorableNamespaces="uap mp rescap">
 
   <Identity
-    Name="OnScreen.Xbox"
-    Publisher="CN=OnScreen Dev"
-    Version="0.1.2.0" />
+    Name="OnScreen.OnScreen"
+    Publisher="CN=4F8B1511-8473-4887-9ED7-421BC42D615E"
+    Version="0.1.12.0" />
 
   <mp:PhoneIdentity PhoneProductId="6b1f0a4e-3d2c-4f7a-9b8e-0c5d1e2f3a40" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
   <Properties>
     <DisplayName>OnScreen</DisplayName>
-    <PublisherDisplayName>Collin Aycock</PublisherDisplayName>
+    <PublisherDisplayName>OnScreen</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
   </Properties>
 
@@ -56,5 +59,9 @@
          self-hosted servers are a LAN address). -->
     <Capability Name="internetClient" />
     <Capability Name="privateNetworkClientServer" />
+    <!-- Xbox: 4K and HDR10 video (HEVC), HDR display modes and 3.25 GB of
+         memory. A restricted capability (justified at Store submission);
+         the app is then closed when a game starts. -->
+    <rescap:Capability Name="hevcPlayback" />
   </Capabilities>
 </Package>
