@@ -19,7 +19,7 @@ Optional but recommended for the Roku Channel Store submission:
 | `icon_side_hd.png` | 108 × 69 | PNG | Side-bar icon shown alongside other channel rows |
 | `splash_uhd.jpg` | 3840 × 2160 | JPEG | 4K splash for UHD Roku models |
 
-For dev placeholder art, even a solid-coloured PNG/JPG of the
-right dimensions is enough to satisfy the bundler. Real artwork
-matching the OnScreen brand can land later — same workflow as
-`web/static/`.
+The art here is generated from `docs/store-assets/master/icon-1024.png`
+on black (the manifest's `splash_color` is `#000000`, so the splash has no
+seam): the tiles show the art with "OnScreen" under it, the splashes are
+the brand banner (art, title and "Engage. All of your media.").
