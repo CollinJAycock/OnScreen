@@ -29,7 +29,18 @@ The channel has never run on a Roku. When one is in Developer Mode:
    If two refreshes race and the loser's 401 arrives before the winner has
    stored the new pair, Client_RefreshSync clears the session; watch for an
    unexpected sign-out.
-8. Dolby Vision: not claimed yet (no `dovi` key). Roku 4K models play DV
+8. Certification hooks (Roku's Static Analysis / Channel Behavior Analysis
+   tools in the developer dashboard, and the debug console on 8085):
+   - AppLaunchComplete once Home's rows are up; AppDialogInitiate /
+     AppDialogComplete around Setup / Sign in at launch; nothing twice.
+   - Deep links, launch and while running:
+     `curl -d '' "http://<ip>:8060/launch/dev?contentId=<item id>&mediaType=movie"`
+     and `.../input?contentId=…&mediaType=episode`: movie / episode play,
+     series / season open the page, Back goes player → page → Home → exit.
+     A deep link while signed out opens after sign-in. A bad contentId
+     (not a UUID, or an item that's gone) lands on Home or the page's
+     error, never a crash.
+9. Dolby Vision: not claimed yet (no `dovi` key). Roku 4K models play DV
    profiles 5 and 8; add the claim only after a DV file plays with the TV's
    Dolby Vision badge.
 

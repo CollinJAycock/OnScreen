@@ -11,15 +11,19 @@ sub Main(args as Object)
     port = CreateObject("roMessagePort")
     screen.SetMessagePort(port)
 
+    ' Deep links while the channel runs (Roku Search, another app, ECP
+    ' /input) arrive as roInputEvents on the same port.
+    input = CreateObject("roInput")
+    input.SetMessagePort(port)
+
     scene = screen.CreateScene("MainScene")
     screen.Show()
 
-    ' Forward any deep-link args (e.g., resume-with-item from voice
-    ' search or external apps) to the scene so it can route past the
-    ' first-run setup screen if appropriate.
-    if args <> invalid and args.contentId <> invalid
-        scene.deepLinkContentId = args.contentId
-    end if
+    ' A launch deep link (contentId + mediaType in args) goes to the scene
+    ' before start(), so the first screen mounted is the linked title and
+    ' not Home on its way out. MainScene ignores a link that isn't an item.
+    if args <> invalid then scene.deepLink = args
+    scene.callFunc("start")
 
     ' Main message-pump loop. roSGScreen events fire here as the user
     ' navigates. Channel exit fires roSGScreenEvent.isScreenClosed
@@ -28,6 +32,8 @@ sub Main(args as Object)
         msg = wait(0, port)
         if type(msg) = "roSGScreenEvent" and msg.isScreenClosed()
             return
+        else if type(msg) = "roInputEvent" and msg.IsInput()
+            scene.deepLink = msg.GetInfo()
         end if
     end while
 end sub
