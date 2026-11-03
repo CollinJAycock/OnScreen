@@ -66,6 +66,7 @@
     <Compile Include="MainPage.xaml.cs">
       <DependentUpon>MainPage.xaml</DependentUpon>
     </Compile>
+    <Compile Include="NativePlayer.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
   <ItemGroup>
@@ -76,11 +77,11 @@
   </ItemGroup>
   <ItemGroup>
     <Content Include="Properties\Default.rd.xml" />
-    <Content Include="Assets\SplashScreen.png" />
-    <Content Include="Assets\Square150x150Logo.png" />
-    <Content Include="Assets\Square44x44Logo.png" />
-    <Content Include="Assets\StoreLogo.png" />
-    <Content Include="Assets\Wide310x150Logo.png" />
+    <!-- Tiles, logos and the splash at every scale (and the app icon's
+         target sizes), from docs/store-assets/master/icon-1024.png on the
+         app background #0b0b12. The manifest names the unqualified file;
+         Windows picks the scale. -->
+    <Content Include="Assets\*.png" />
   </ItemGroup>
   <ItemGroup>
     <ApplicationDefinition Include="App.xaml">

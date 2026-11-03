@@ -12,12 +12,25 @@
 // at the browser-decodable set, and 7.1 AAC is undecodable over MSE, so
 // channels cap at 5.1. See docs/capability-profiles.md for the grammar.
 //
+// With the shell's native player (lib/player/nativeVideo, ?native=1) the
+// console's own media pipeline plays the video instead, and it decodes what
+// the web view can't: H.264 and HEVC to 10-bit, HDR10 (switching the TV to an
+// HDR10 mode), AC-3 / E-AC-3, in MP4, MKV or the server's HLS. The header
+// then says so, and supports_hevc is true, so HDR films reach the console as
+// a direct play or a remux instead of a tone-mapped H.264 transcode. Not
+// claimed there: VP9 and AV1 (untested in the console's pipeline), DTS and
+// TrueHD. Dolby Vision profile 8.1 is (dovi=8.1, with HDR; the server
+// converts profile 7 to it): the console decodes it as dvhe.08 and shows it
+// in a Dolby Vision mode (checked on an LG C1). Profile 5 isn't claimed (no
+// base layer to fall back on) and is refused as before.
+//
 // The header itself is built by a pure function from injected probes
 // (buildClientCapabilitiesHeader, unit-tested); clientCapabilitiesHeader()
 // feeds it the live ones. The display's size and HDR come from lib/platform
 // (the shell's HDMI answer).
 
 import { panelHdr, readPanelSize, startPanelProbe, type PanelSize } from '../platform';
+import { shellParams } from '../shell';
 
 /** The MSE type strings each claim is probed with. hls.js hands MSE fMP4,
  *  so every probe names the mp4 container. */
@@ -81,11 +94,11 @@ export function isCodecDemoted(codec: string | undefined): boolean {
   return false;
 }
 
-/** The transcode-start supports_hevc flag: always false, so the server
- *  never stream-copies or HEVC-encodes for the Xbox web view, which can't
- *  decode HEVC whatever MSE claims (see the top of this file). */
+/** The transcode-start supports_hevc flag: true with the native player,
+ *  which decodes HEVC; false for the web view, which can't whatever MSE
+ *  claims (see the top of this file). A runtime demotion still wins. */
 export function supportsHEVC(): boolean {
-  return false;
+  return shellParams().native && !demoted.has('hevc');
 }
 
 /** The transcode-start supports_av1 flag, sent on every start as an
@@ -98,6 +111,10 @@ export function supportsAV1(): boolean {
 export interface CapabilityProbes {
   /** MediaSource.isTypeSupported (false when MSE is missing). */
   isTypeSupported: (type: string) => boolean;
+  /** The shell plays video in the console's own player (?native=1). */
+  native?: boolean;
+  /** A codec PROVED undecodable here (runtime demotion); native only. */
+  isDemoted?: (codec: 'hevc' | 'av1') => boolean;
   /** The video plane's size (lib/platform readPanelSize). */
   panel: PanelSize;
   /** Luna's tv.model.supportHDR: true / false, null when unknown. */
@@ -120,6 +137,7 @@ export interface CapabilityProbes {
  *     query (the long-standing behaviour).
  */
 export function buildClientCapabilitiesHeader(p: CapabilityProbes): string {
+  if (p.native) return nativeHeader(p);
   const vp9 = p.isTypeSupported(PROBE_TYPES.vp9);
   const vp9Profile2 = vp9 && p.isTypeSupported(PROBE_TYPES.vp9Profile2);
   const hdr = p.panelHdr ?? p.mediaHdr;
@@ -145,6 +163,27 @@ export function buildClientCapabilitiesHeader(p: CapabilityProbes): string {
   return keys.join(',');
 }
 
+/** The header for the console's own player (see the top of this file). */
+function nativeHeader(p: CapabilityProbes): string {
+  const hevc = !(p.isDemoted?.('hevc') ?? false);
+  const video = hevc ? 'h264:h265' : 'h264';
+  const hdr = hevc && (p.panelHdr ?? p.mediaHdr);
+  return [
+    `videoDecoder=${video}`,
+    'audioDecoder=aac:mp3:ac3:eac3',
+    'protocols=mp4:mkv:mov',
+    `maxWidth=${p.panel.width}`,
+    `maxHeight=${p.panel.height}`,
+    'maxAudioChannels=6',
+    `maxbitdepth=${hevc ? 10 : 8}`,
+    `hdr=${hdr ? 1 : 0}`,
+    // Dolby Vision profile 8.1 (HDR10 base; the server converts 7 to it):
+    // kept on a direct play or remux, in a Dolby Vision display mode.
+    ...(hdr ? ['dovi=8.1'] : []),
+    'optimized=1',
+  ].join(',');
+}
+
 function mediaQueryHdr(): boolean {
   try {
     return typeof window !== 'undefined' && typeof window.matchMedia === 'function' &&
@@ -160,6 +199,8 @@ export function clientCapabilitiesHeader(): string {
   startPanelProbe();
   return buildClientCapabilitiesHeader({
     isTypeSupported,
+    native: shellParams().native,
+    isDemoted: (codec) => demoted.has(codec),
     panel: readPanelSize(),
     panelHdr: panelHdr(),
     mediaHdr: mediaQueryHdr(),

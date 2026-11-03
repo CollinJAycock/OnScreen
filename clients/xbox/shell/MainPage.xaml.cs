@@ -1,10 +1,12 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Web.WebView2.Core;
 using Windows.Data.Json;
+using Windows.Graphics.Display;
 using Windows.Graphics.Display.Core;
 using Windows.Security.ExchangeActiveSyncProvisioning;
 using Windows.Storage;
@@ -46,6 +48,8 @@ namespace OnScreen.Xbox
         // messages. Off for good once the page reports key events of its own
         // ("webKeys"), or both would arrive.
         private bool forwardKeys = true;
+        // The console's own player for what the web view can't play (NativePlayer).
+        private NativePlayer native;
 
         public MainPage()
         {
@@ -59,6 +63,8 @@ namespace OnScreen.Xbox
             CoreWindow window = Window.Current.CoreWindow;
             window.KeyDown += (s, a) => ForwardKey(a, "keydown");
             window.KeyUp += (s, a) => ForwardKey(a, "keyup");
+            native = new NativePlayer(Native, PostToPage);
+            _ = WriteDisplayReportAsync();
             if (settings.Values[ServerKey] is string saved && saved.Length > 0)
             {
                 ServerBox.Text = saved;
@@ -178,6 +184,10 @@ namespace OnScreen.Xbox
             {
                 if (!webReady)
                 {
+                    // Transparent where the page is: the native player draws
+                    // behind it, and the page clears its own background while
+                    // that plays.
+                    Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "00000000");
                     await Web.EnsureCoreWebView2Async();
                     CoreWebView2Settings s = Web.CoreWebView2.Settings;
                     s.AreDefaultContextMenusEnabled = false;
@@ -189,6 +199,8 @@ namespace OnScreen.Xbox
 #endif
                     Web.CoreWebView2.WebMessageReceived += OnWebMessage;
                     Web.CoreWebView2.NavigationCompleted += OnNavigationCompleted;
+                    // A reload or another server: nothing left drives the native player.
+                    Web.CoreWebView2.NavigationStarting += async (_, __) => await native.StopAsync();
                     webReady = true;
                 }
                 forwardBack = true;
@@ -211,7 +223,7 @@ namespace OnScreen.Xbox
         /// knows: the console model and what the TV takes.</summary>
         private static string TvAppUrl(string server)
         {
-            var q = new List<string> { "shell=xbox", "device=" + Uri.EscapeDataString(DeviceModel()) };
+            var q = new List<string> { "shell=xbox", "device=" + Uri.EscapeDataString(DeviceModel()), "native=1" };
             DisplayCaps(out bool? uhd, out bool? hdr);
             if (uhd.HasValue) q.Add("uhd=" + (uhd.Value ? "1" : "0"));
             if (hdr.HasValue) q.Add("hdr=" + (hdr.Value ? "1" : "0"));
@@ -253,12 +265,76 @@ namespace OnScreen.Xbox
             }
         }
 
+        /// <summary>Everything the display APIs say (HDMI modes and their HDR
+        /// flags, advanced colour) to LocalState\display.txt, readable over
+        /// Device Portal: which API answers a TV's HDR10 truthfully differs
+        /// by console and setting.</summary>
+        private static async Task WriteDisplayReportAsync()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("written " + DateTimeOffset.Now.ToString("o"));
+            try
+            {
+                HdmiDisplayInformation hdmi = HdmiDisplayInformation.GetForCurrentView();
+                if (hdmi == null)
+                {
+                    sb.AppendLine("hdmi: none");
+                }
+                else
+                {
+                    sb.AppendLine("current: " + DescribeMode(hdmi.GetCurrentDisplayMode()));
+                    IReadOnlyList<HdmiDisplayMode> modes = hdmi.GetSupportedDisplayModes();
+                    sb.AppendLine("modes: " + modes.Count + ", with SMPTE 2084: " + modes.Count(m => m.IsSmpte2084Supported) + ", Dolby Vision low latency: " + modes.Count(m => m.IsDolbyVisionLowLatencySupported));
+                    foreach (HdmiDisplayMode m in modes) sb.AppendLine("  " + DescribeMode(m));
+                }
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("hdmi error: " + ex.Message);
+            }
+            try
+            {
+                AdvancedColorInfo aci = DisplayInformation.GetForCurrentView().GetAdvancedColorInfo();
+                sb.AppendLine("advanced colour: kind " + aci.CurrentAdvancedColorKind +
+                    ", HDR10 metadata " + aci.IsHdrMetadataFormatCurrentlySupported(HdrMetadataFormat.Hdr10) +
+                    ", max " + aci.MaxLuminanceInNits + " nits, SDR white " + aci.SdrWhiteLevelInNits + " nits");
+            }
+            catch (Exception ex)
+            {
+                sb.AppendLine("advanced colour error: " + ex.Message);
+            }
+            try
+            {
+                StorageFile f = await ApplicationData.Current.LocalFolder.CreateFileAsync("display.txt", CreationCollisionOption.ReplaceExisting);
+                await FileIO.WriteTextAsync(f, sb.ToString());
+            }
+            catch
+            {
+                // Diagnostics only.
+            }
+        }
+
+        private static string DescribeMode(HdmiDisplayMode m) =>
+            m == null ? "none" :
+            m.ResolutionWidthInRawPixels + "x" + m.ResolutionHeightInRawPixels + "@" + m.RefreshRate.ToString("0.###") +
+            " " + m.ColorSpace + " " + m.PixelEncoding + " " + m.BitsPerPixel + "bpp" +
+            (m.IsSmpte2084Supported ? " 2084" : "") + (m.Is2086MetadataSupported ? " 2086" : "") +
+            (m.IsSdrLuminanceSupported ? " sdr" : "") + (m.IsDolbyVisionLowLatencySupported ? " dv-ll" : "") + (m.StereoEnabled ? " stereo" : "");
+
+        /// <summary>A message for the page (UI thread).</summary>
+        private void PostToPage(JsonObject o)
+        {
+            if (webReady && Web.CoreWebView2 != null) Web.CoreWebView2.PostWebMessageAsJson(o.Stringify());
+        }
+
         private async void OnWebMessage(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs args)
         {
+            JsonObject message;
             string type;
             try
             {
-                type = JsonObject.Parse(args.WebMessageAsJson).GetNamedString("type", "");
+                message = JsonObject.Parse(args.WebMessageAsJson);
+                type = message.GetNamedString("type", "");
             }
             catch
             {
@@ -266,10 +342,17 @@ namespace OnScreen.Xbox
             }
             switch (type)
             {
+                case "native":
+                    await native.HandleAsync(message);
+                    // The page keeps the keyboard focus whatever the player did
+                    // (B is the page's, through the web view).
+                    if (Web.Visibility == Visibility.Visible) Web.Focus(FocusState.Programmatic);
+                    break;
                 case "exit":
                     Application.Current.Exit();
                     break;
                 case "changeServer":
+                    await native.StopAsync();
                     settings.Values.Remove(ServerKey);
                     Web.CoreWebView2.Navigate("about:blank");
                     await Task.Yield();
@@ -297,6 +380,12 @@ namespace OnScreen.Xbox
             int code = (int)e.VirtualKey;
             if (code < 195 || code > 218) return;
             if (!forwardKeys || Web.Visibility != Visibility.Visible || !webReady) return;
+            if (code == (int)Windows.System.VirtualKey.GamepadB && DateTimeOffset.Now < native.IgnoreBackUntil)
+            {
+                // The TV is resyncing after a display-mode change (NativePlayer).
+                e.Handled = true;
+                return;
+            }
             if (code == (int)Windows.System.VirtualKey.GamepadB)
             {
                 forwardBack = false;
@@ -317,7 +406,7 @@ namespace OnScreen.Xbox
             // The app is the page's to leave (its exit popup), never the
             // system's on B.
             e.Handled = true;
-            if (!forwardBack) return;
+            if (!forwardBack || DateTimeOffset.Now < native.IgnoreBackUntil) return;
             // B may also reach the page as a key event; give the page a moment
             // to say so ("nativeKeys" cancels this) before playing it as Back.
             pendingBack?.Cancel();

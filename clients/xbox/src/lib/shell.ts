@@ -7,7 +7,7 @@
 // server, and the app updates with the server. The shell passes what only
 // native code can know on the page's query string, read once at boot:
 //
-//   ?shell=xbox&device=Xbox%20Series%20X&hdr=1&uhd=1
+//   ?shell=xbox&device=Xbox%20Series%20X&native=1&hdr=1&uhd=1
 //
 // and takes requests back over WebView2's message channel
 // (window.chrome.webview.postMessage): "exit" (the exit popup's Exit) and
@@ -32,9 +32,12 @@ export interface ShellParams {
   hdr: boolean | null;
   /** The display takes 2160p; null when unknown. */
   uhd: boolean | null;
+  /** The shell has the console's own player (lib/player/nativeVideo), for
+   *  the video the web view can't decode. */
+  native: boolean;
 }
 
-const NONE: ShellParams = { shell: null, device: '', hdr: null, uhd: null };
+const NONE: ShellParams = { shell: null, device: '', hdr: null, uhd: null, native: false };
 
 function flag(v: string | null): boolean | null {
   if (v === '1' || v === 'true') return true;
@@ -57,6 +60,7 @@ export function parseShellParams(search: string): ShellParams {
     device: (q.get('device') ?? '').trim().slice(0, 40),
     hdr: flag(q.get('hdr')),
     uhd: flag(q.get('uhd')),
+    native: flag(q.get('native')) === true,
   };
 }
 
@@ -86,6 +90,7 @@ export function resolveShellParams(search: string, store: Store | null): ShellPa
         device: typeof saved.device === 'string' ? saved.device : '',
         hdr: typeof saved.hdr === 'boolean' ? saved.hdr : null,
         uhd: typeof saved.uhd === 'boolean' ? saved.uhd : null,
+        native: saved.native === true,
       };
     }
   } catch {
@@ -124,6 +129,45 @@ function channel(): WebViewChannel | null {
  * key events (lib/gamepad saw one), so the shell must stop forwarding the
  * system's Back request as a "back" message, or B would act twice.
  */
+/** A command for the shell's native player (lib/player/nativeVideo). */
+export function postNative(command: Record<string, unknown>): boolean {
+  const c = channel();
+  if (!c) return false;
+  try {
+    c.postMessage({ type: 'native', ...command });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** An event from the shell's native player: what happened (ev), to which
+ *  load (gen), where (t) and of how long (d), in seconds. */
+export interface NativeEvent {
+  ev: string;
+  gen: number;
+  t: number;
+  d: number;
+  [k: string]: unknown;
+}
+
+/** A "nativeEvent" message as a NativeEvent; null for anything else. */
+export function nativeEvent(data: unknown): NativeEvent | null {
+  if (!data || typeof data !== 'object') return null;
+  const m = data as Record<string, unknown>;
+  if (m.type !== 'nativeEvent' || typeof m.ev !== 'string') return null;
+  const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+  return { ...m, ev: m.ev, gen: num(m.gen), t: num(m.t), d: num(m.d) };
+}
+
+const nativeListeners = new Set<(e: NativeEvent) => void>();
+
+/** Hear the native player's events; returns the unsubscribe. */
+export function onNativeEvent(fn: (e: NativeEvent) => void): () => void {
+  nativeListeners.add(fn);
+  return () => nativeListeners.delete(fn);
+}
+
 export function postToShell(type: 'exit' | 'changeServer' | 'nativeKeys' | 'webKeys'): boolean {
   const c = channel();
   if (!c) return false;
@@ -248,6 +292,11 @@ export function listenToShell(): void {
     true,
   );
   wv.addEventListener('message', (e) => {
+    const ne = nativeEvent(e.data);
+    if (ne) {
+      for (const fn of nativeListeners) fn(ne);
+      return;
+    }
     const key = shellKey(e.data);
     if (key) {
       if (!ownKeys) dispatchShellKey(key);

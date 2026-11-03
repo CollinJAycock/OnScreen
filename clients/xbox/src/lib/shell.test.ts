@@ -8,9 +8,11 @@ function memory() {
 
 describe('shell parameters', () => {
   it('reads the shell, the console model and the display flags', () => {
-    expect(parseShellParams('?shell=xbox&device=Xbox%20Series%20X&hdr=1&uhd=0')).toEqual({
-      shell: 'xbox', device: 'Xbox Series X', hdr: true, uhd: false,
+    expect(parseShellParams('?shell=xbox&device=Xbox%20Series%20X&native=1&hdr=1&uhd=0')).toEqual({
+      shell: 'xbox', device: 'Xbox Series X', hdr: true, uhd: false, native: true,
     });
+    // A shell without the native player (before 0.1.6).
+    expect(parseShellParams('?shell=xbox').native).toBe(false);
   });
 
   it('is no shell without ?shell, and unknown flags stay unknown', () => {
@@ -21,8 +23,8 @@ describe('shell parameters', () => {
 
   it('keeps the parameters for a reload that lost the query string', () => {
     const store = memory();
-    resolveShellParams('?shell=xbox&device=Xbox%20One', store);
-    expect(resolveShellParams('', store)).toEqual({ shell: 'xbox', device: 'Xbox One', hdr: null, uhd: null });
+    resolveShellParams('?shell=xbox&device=Xbox%20One&native=1', store);
+    expect(resolveShellParams('', store)).toEqual({ shell: 'xbox', device: 'Xbox One', hdr: null, uhd: null, native: true });
   });
 });
 
