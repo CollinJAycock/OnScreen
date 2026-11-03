@@ -9,7 +9,7 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
-## [v2.7.0] — unreleased
+## [v2.7.0] — 2026-11-03
 
 v2.7, the last server release of the v2 line (see
 [docs/v2.7-roadmap.md](docs/v2.7-roadmap.md)): the plugin host's metadata and
