@@ -2,32 +2,47 @@
   // Libraries index — top-level grid of every library the user has
   // access to. Each tile drills into /library/[id] for the full item
   // listing.
-  import { onMount } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import { goto } from '$app/navigation';
   import { endpoints, Unauthorized, type Library } from '$lib/api';
   import { focusable } from '$lib/focus/focusable';
   import { focusManager } from '$lib/focus/manager';
+  import { focusFirstOf, restoreGuard, restoreKeyed, takeFocusMemo } from '$lib/focus/memory';
   import Spinner from '$lib/components/Spinner.svelte';
   import TopNav from '$lib/components/TopNav.svelte';
   import { pushTo } from '$lib/nav';
 
   let libraries = $state<Library[] | null>(null);
   let error = $state('');
+  // Back from a library: the first tile holds its autofocus and the one the
+  // user opened takes focus again (lib/focus/memory), as on Favorites.
+  let restoring = $state(false);
 
   onMount(() => {
+    const memo = takeFocusMemo();
+    restoring = !!memo?.focusedId;
+    const guard = restoreGuard();
     (async () => {
       try {
         libraries = await endpoints.libraries.list();
+        if (restoring) {
+          await tick();
+          if (!restoreKeyed(memo, guard)) focusFirstOf('.grid [data-focusable]', guard);
+        }
       } catch (e) {
         if (e instanceof Unauthorized) goto('#/login');
         else error = (e as Error).message;
       }
     })();
 
-    return focusManager.pushBack(() => {
+    const offBack = focusManager.pushBack(() => {
       goto('#/hub');
       return true;
     });
+    return () => {
+      guard.end();
+      offBack();
+    };
   });
 
   function typeLabel(t: string): string {
@@ -62,7 +77,8 @@
     <div class="grid">
       {#each libraries as lib, i (lib.id)}
         <button
-          use:focusable={{ autofocus: i === 0 }}
+          use:focusable={{ autofocus: i === 0 && !restoring }}
+          data-focus-key={`library:${lib.id}`}
           class="lib-card"
           onclick={() => pushTo(`#/library/${lib.id}`)}
         >
