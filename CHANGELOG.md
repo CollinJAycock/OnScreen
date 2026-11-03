@@ -9,6 +9,21 @@ The v2.2.0 server lock was lifted after v2.3.0. Since v2.4, a breaking
 API change lands only when every first-party client moves with it — see
 [docs/server-lock.md](docs/server-lock.md).
 
+## [Unreleased]
+
+### Changed
+
+- **Dolby Vision profile 7 → 8.1 in the standard Docker image.** It
+  installs Alpine's own ffmpeg packages rebuilt with OnScreen's `dovi_rpu`
+  `convert_p81` patch (`docker/ffmpeg-alpine/`, published by the
+  `ffmpeg-alpine` workflow as `ghcr.io/collinjaycock/onscreen-ffmpeg-alpine`,
+  built natively for amd64 and arm64) instead of Alpine's stock ffmpeg, so a
+  remux for a client that takes Dolby Vision 8.1 converts profile 7 there
+  too, as the GPU image already did. The packages are built from Alpine's
+  APKBUILD with the same configure flags: same codecs, filters and hardware
+  paths (VAAPI, QSV, Vulkan). The Windows installer and the Linux tarball
+  are unchanged and still play profile 7 from its HDR10 base.
+
 ## [v2.7.0] — 2026-11-03
 
 v2.7, the last server release of the v2 line (see

@@ -64,9 +64,21 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     cp "$goose" /bin/goose && \
     test -x /bin/server && test -x /bin/worker && test -x /bin/goose
 
+# ── Stage 2b: ffmpeg packages ─────────────────────────────────────────────────
+# Alpine's own ffmpeg packages rebuilt with OnScreen's Dolby Vision patch
+# (profile 7 -> 8.1 on a remux; docker/ffmpeg-alpine, published by the
+# ffmpeg-alpine workflow). Same configure flags as Alpine's, so the same
+# codecs and hardware paths. Pinned by digest; the image holds only .apk
+# files, per platform.
+FROM ghcr.io/collinjaycock/onscreen-ffmpeg-alpine:8.1.3-r100@sha256:1fb2d10694e128f7144612df2b59240178ef00b52a75bd5f1b5786cb6b6a2b82 AS ffmpeg-apks
+
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
 FROM alpine:3.24
-RUN apk add --no-cache ffmpeg ca-certificates tzdata chromaprint postgresql17-client \
+# The ffmpeg packages come from a bind mount, so the .apk files never land in
+# a layer; their dependencies install from Alpine's repositories as usual.
+RUN --mount=type=bind,from=ffmpeg-apks,source=/apks,target=/tmp/ffmpeg-apks \
+    apk add --no-cache --allow-untrusted /tmp/ffmpeg-apks/*.apk \
+      ca-certificates tzdata chromaprint postgresql17-client \
       tesseract-ocr tesseract-ocr-data-eng tesseract-ocr-data-spa \
       tesseract-ocr-data-fra tesseract-ocr-data-deu tesseract-ocr-data-ita \
       tesseract-ocr-data-por tesseract-ocr-data-jpn tesseract-ocr-data-chi_sim \
