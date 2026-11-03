@@ -57,6 +57,15 @@ describe('Sign in', () => {
     expect(button(html, 'Change server')).not.toBeNull();
   });
 
+  // A keyboard that isn't exitable keeps the D-pad inside it, so Change
+  // server and Sign in with another device below it were unreachable
+  // (found on an Xbox Series X: only "done" left the keyboard).
+  it('lets the D-pad leave every keyboard for the buttons below it', () => {
+    const keyboards = source('./+page.svelte').match(/<OnScreenKeyboard\b[\s\S]*?\/>/g) ?? [];
+    expect(keyboards).toHaveLength(3);
+    for (const k of keyboards) expect(k).toMatch(/\bexitable\b/);
+  });
+
   it('changes server as the hub does: forget it, then Setup', () => {
     const page = source('./+page.svelte');
     expect(page).toMatch(/await api\.forgetServer\(\);\s*goto\('#\/setup'\);/);

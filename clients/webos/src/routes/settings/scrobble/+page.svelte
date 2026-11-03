@@ -311,7 +311,7 @@
 
       <!-- Masked: the token is a credential for the user's ListenBrainz
            account (Android masks it too). -->
-      <OnScreenKeyboard bind:value={token} onchange={(v) => (token = v)} onsubmit={link} masked />
+      <OnScreenKeyboard bind:value={token} onchange={(v) => (token = v)} onsubmit={link} masked exitable />
 
       <div class="actions">
         <button use:focusable class="btn primary" onclick={link} disabled={busy || !token.trim()}>
