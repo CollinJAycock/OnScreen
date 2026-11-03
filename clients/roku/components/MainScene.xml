@@ -13,9 +13,10 @@
 <component name="MainScene" extends="Scene">
 
     <interface>
-        <!-- Set by source/main.brs from launch args; routes past
-             the setup flow when the user came in via deep link. -->
-        <field id="deepLinkContentId" type="string" />
+        <!-- A deep link (Roku certification): source/main.brs sets the
+             launch args or an roInputEvent's info here ({ contentId,
+             mediaType }). See onDeepLink. -->
+        <field id="deepLink" type="assocarray" onChange="onDeepLink" />
 
         <!-- Called by the child scenes via callFunc, which only reaches
              functions declared here. -->
@@ -23,10 +24,15 @@
         <function name="navigateToWithItem" />
         <function name="navigateToWithParams" />
         <function name="runDetachedCall" />
+        <!-- main.brs, once launch args are in: the first routing. -->
+        <function name="start" />
+        <!-- A scene the user can use is on screen (AppLaunchComplete). -->
+        <function name="reportReady" />
     </interface>
 
     <script type="text/brightscript" uri="MainScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/DeepLink.brs" />
 
     <children>
         <!-- Container the .brs swaps fragment scenes in/out of.

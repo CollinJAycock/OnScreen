@@ -14,6 +14,14 @@
 ' channel). Child scenes leave "back" unhandled (return false) so
 ' the event reaches MainScene's onKeyEvent and the stack drives the
 ' transition.
+'
+' Roku certification also needs:
+' - Launch beacons (reportReady): AppLaunchComplete once the first screen
+'   the user can use is up (Home's rows, a deep-linked title page, or its
+'   playback). A sign-in or server screen at launch is a dialog, bracketed
+'   by AppDialogInitiate / AppDialogComplete, and doesn't count.
+' - Deep links (onDeepLink): open the linked title, playing it for movies
+'   and episodes, with Home under it so Back leads there.
 
 sub init()
     m.content = m.top.findNode("content")
@@ -22,7 +30,19 @@ sub init()
     ' Back-stack of { name, itemId } frames. The bottom frame is the
     ' root (channel-exit) screen; everything above it pops on Back.
     m.navStack = []
+    ' Launch beacons, each sent once (reportReady, navigateToWithParams).
+    m.launchReported = false
+    m.launchDialog = false
+    ' A parsed deep link waiting for start() or for sign-in to finish.
+    m.pendingDeepLink = invalid
+    m.started = false
+end sub
 
+' The first routing, called by main.brs after it has set any launch deep
+' link (init runs inside CreateScene, before that).
+sub start()
+    if m.started then return
+    m.started = true
     if not Prefs_HasServer()
         navigateTo("ServerSetupScene")
     else if not Prefs_IsLoggedIn()
@@ -30,6 +50,38 @@ sub init()
     else
         navigateTo("HomeScene")
     end if
+end sub
+
+' The deepLink field changed: a launch link (before start) or an
+' roInputEvent while running. A link that isn't an item is dropped. Before
+' start, or while signed out, it waits: navigateToWithParams opens it in
+' place of Home once there is a session.
+sub onDeepLink()
+    dl = DeepLink_Parse(m.top.deepLink)
+    if dl = invalid then return
+    if not m.started or not Prefs_HasServer() or not Prefs_IsLoggedIn()
+        m.pendingDeepLink = dl
+        return
+    end if
+    openDeepLink(dl)
+end sub
+
+' Mount the linked title over a stack of Home → title page (→ player), so
+' Back from playback reaches the title's page and then Home, which exits.
+' Only the top frame is mounted; the others mount when Back reaches them.
+sub openDeepLink(dl as Object)
+    m.navStack = [{ name: "HomeScene", itemId: "", params: {} }, { name: "DetailScene", itemId: dl.contentId, params: {} }]
+    if dl.play then m.navStack.push({ name: "PlayerScene", itemId: dl.contentId, params: {} })
+    top = m.navStack.peek()
+    mountScene(top.name, top.itemId, top.params)
+end sub
+
+' A scene the user can use is on screen: Home's rows (or its error),
+' a title page, or playback. Sends AppLaunchComplete the first time.
+sub reportReady()
+    if m.launchReported then return
+    m.launchReported = true
+    m.top.signalBeacon("AppLaunchComplete")
 end sub
 
 ' Replace the active child with a fresh instance of `name`. Sub-
@@ -62,6 +114,24 @@ end sub
 ' fileId for a chosen version). Fields the scene doesn't declare are
 ' skipped. Kept on the frame, so Back re-mounts the scene the same way.
 sub navigateToWithParams(name as String, itemId as String, params as Object)
+    ' Setup or sign-in before the channel has launched is a launch dialog.
+    if not m.launchReported
+        if name = "ServerSetupScene" or name = "LoginScene"
+            if not m.launchDialog then m.top.signalBeacon("AppDialogInitiate")
+            m.launchDialog = true
+        else if m.launchDialog
+            m.top.signalBeacon("AppDialogComplete")
+            m.launchDialog = false
+        end if
+    end if
+    ' Home with a deep link waiting (launch, or one that came in signed
+    ' out): the linked title instead, with Home under it.
+    if name = "HomeScene" and m.pendingDeepLink <> invalid
+        dl = m.pendingDeepLink
+        m.pendingDeepLink = invalid
+        openDeepLink(dl)
+        return
+    end if
     if isRootScene(name)
         m.navStack = []
     end if

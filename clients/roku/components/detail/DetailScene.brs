@@ -128,11 +128,15 @@ sub onItemTaskState()
     item = m.itemTask.result
     if item = invalid or item.id = invalid
         m.loading.text = "Couldn't load item details"
+        ' A deep link to a title that's gone still has to finish launching.
+        getMainScene().callFunc("reportReady")
         return
     end if
     firstLoad = (m.item = invalid)
     m.item = item
     renderItem()
+    ' Launched when this is a deep-linked title page (a no-op otherwise).
+    if firstLoad then getMainScene().callFunc("reportReady")
     if firstLoad and WatchState_IsContainer(item.type) then fetchUpNext()
     if firstLoad and WatchState_Str(item.type) = "artist" then fetchArtistRows()
     if firstLoad and Watchlist_SupportsStatus(item.type) then fetchWatchStatus()

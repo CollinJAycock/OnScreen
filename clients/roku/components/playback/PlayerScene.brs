@@ -558,6 +558,8 @@ sub onVideoState()
     ' way out — the stop's own state changes mean nothing more. Same once
     ' the too-many-streams message is up.
     if m.adminStopped or m.limitShown then return
+    ' A deep link straight to playback has launched once the video plays.
+    if state = "playing" then getMainScene().callFunc("reportReady")
     if state = "paused"
         ' Discrete pause report — pushes the resume offset to the
         ' server immediately (a paused player is exactly when another

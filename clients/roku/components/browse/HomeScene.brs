@@ -76,6 +76,8 @@ sub onHubTaskState()
     if hub = invalid or hub.Count() = 0
         m.loading.text = "Couldn't reach OnScreen — check your server URL"
         focusHeader()
+        ' The error screen is still the channel, launched (its menu works).
+        getMainScene().callFunc("reportReady")
         return
     end if
 
@@ -83,6 +85,7 @@ sub onHubTaskState()
     m.hubRows = HubRows_Build(hub)
     renderRows()
     focusRowsOrHeader()
+    getMainScene().callFunc("reportReady")
 end sub
 
 sub focusHeader()
