@@ -1,7 +1,13 @@
 # syntax=docker/dockerfile:1
 
+# The build stages run on the build machine's own platform ($BUILDPLATFORM):
+# the web apps are plain JS/HTML and Go cross-compiles, so a multi-arch build
+# (the release's linux/amd64 + linux/arm64) compiles nothing under QEMU. Only
+# the runtime stage is per-platform. Building the arm64 image emulated took
+# over an hour on GitHub's runners whenever the layer cache missed (v2.7.0).
+
 # ── Stage 1: build frontend ───────────────────────────────────────────────────
-FROM node:26-alpine AS frontend
+FROM --platform=$BUILDPLATFORM node:26-alpine AS frontend
 WORKDIR /app/web
 COPY web/package.json web/package-lock.json ./
 # npm ci, not npm install: installs exactly what package-lock.json pins (and
@@ -12,7 +18,7 @@ COPY web/ ./
 RUN npm run build
 
 # ── Stage 1b: build the TV web app (clients/xbox, served at /tvapp/) ───────────
-FROM node:26-alpine AS tvui
+FROM --platform=$BUILDPLATFORM node:26-alpine AS tvui
 WORKDIR /app/clients/xbox
 COPY clients/xbox/package.json clients/xbox/package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
@@ -24,8 +30,11 @@ RUN npm run build
 # Use a minor-version tag rather than a pinned patch so the image picks up
 # Go patch releases without a Dockerfile bump on every Go security release.
 # It may be ahead of go.mod's `go` directive, which is only a minimum.
-FROM golang:1.27-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine AS builder
 WORKDIR /app
+# Set by BuildKit from --platform: the image being built, not this stage.
+ARG TARGETOS
+ARG TARGETARCH
 
 COPY go.mod go.sum ./
 RUN --mount=type=cache,target=/go/pkg/mod \
@@ -37,17 +46,22 @@ COPY --from=tvui /app/clients/xbox/build ./internal/tvui/dist
 
 ARG VERSION=dev
 ARG BUILD_TIME
+# A cross-compiled `go install` puts goose in bin/<os>_<arch>/, a native one
+# in bin/.
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
     set -e && \
-    CGO_ENABLED=0 GOOS=linux go build \
+    export CGO_ENABLED=0 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH} && \
+    go build \
       -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
       -o /bin/server ./cmd/server && \
-    CGO_ENABLED=0 GOOS=linux go build \
+    go build \
       -ldflags "-X main.version=${VERSION} -X main.buildTime=${BUILD_TIME}" \
       -o /bin/worker ./cmd/worker && \
-    CGO_ENABLED=0 GOOS=linux go install github.com/pressly/goose/v3/cmd/goose@v3.24.1 && \
-    cp $(go env GOPATH)/bin/goose /bin/goose && \
+    go install github.com/pressly/goose/v3/cmd/goose@v3.24.1 && \
+    goose="$(go env GOPATH)/bin/${GOOS}_${GOARCH}/goose" && \
+    { [ -x "$goose" ] || goose="$(go env GOPATH)/bin/goose"; } && \
+    cp "$goose" /bin/goose && \
     test -x /bin/server && test -x /bin/worker && test -x /bin/goose
 
 # ── Stage 3: minimal runtime image ────────────────────────────────────────────
