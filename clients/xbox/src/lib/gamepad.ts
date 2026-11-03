@@ -14,7 +14,7 @@
 // delay only costs a PC a frame or two.
 
 import { GAMEPAD, isGamepadKeyCode } from './focus/keys';
-import { postToShell } from './shell';
+import { isShellKeyEvent, postToShell } from './shell';
 
 /** A press is held back this long so a native key event can claim it. */
 export const DEDUPE_MS = 60;
@@ -128,13 +128,15 @@ export function startGamepadKeys(): void {
 
   // The platform's own gamepad key event: stop polling for good, and tell
   // the shell, which then stops forwarding Back requests as "back"
-  // (lib/shell). Listened for even without a Gamepad API.
+  // (lib/shell). Listened for even without a Gamepad API. A key the shell
+  // passed on stops polling too, but says nothing: a console that raises B
+  // only as a Back request still needs that forwarded.
   window.addEventListener(
     'keydown',
     (e) => {
       if (!ours.has(e) && isGamepadKeyCode(e.keyCode) && !keys.isStopped) {
         keys.stop();
-        postToShell('nativeKeys');
+        if (!isShellKeyEvent(e)) postToShell('nativeKeys');
         if (frame) cancelAnimationFrame(frame);
         frame = 0;
       }

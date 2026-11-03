@@ -40,6 +40,12 @@ namespace OnScreen.Xbox
         // gets to it, so it is forwarded as a "back" message.
         private bool forwardBack = true;
         private CancellationTokenSource pendingBack;
+        // The console hands the web view no controller key events (the
+        // page's key log showed only its own Gamepad API polling, code 0),
+        // so the shell passes the window's gamepad keys on as "key"
+        // messages. Off for good once the page reports key events of its own
+        // ("webKeys"), or both would arrive.
+        private bool forwardKeys = true;
 
         public MainPage()
         {
@@ -50,6 +56,9 @@ namespace OnScreen.Xbox
         {
             base.OnNavigatedTo(e);
             SystemNavigationManager.GetForCurrentView().BackRequested += OnBackRequested;
+            CoreWindow window = Window.Current.CoreWindow;
+            window.KeyDown += (s, a) => ForwardKey(a, "keydown");
+            window.KeyUp += (s, a) => ForwardKey(a, "keyup");
             if (settings.Values[ServerKey] is string saved && saved.Length > 0)
             {
                 ServerBox.Text = saved;
@@ -270,7 +279,34 @@ namespace OnScreen.Xbox
                     forwardBack = false;
                     pendingBack?.Cancel();
                     break;
+                case "webKeys":
+                    forwardKeys = false;
+                    break;
             }
+        }
+
+        // ── Controller keys ─────────────────────────────────────────────────
+
+        /// <summary>A gamepad key (VK_GAMEPAD_*, 195-218) to the page, which
+        /// plays it as the key event a web view would have had
+        /// (../src/lib/shell.ts). If B comes this way too, the system's Back
+        /// request it also raises is no longer forwarded; a Series X raises
+        /// only the Back request for B, so that stays the way B arrives.</summary>
+        private void ForwardKey(KeyEventArgs e, string type)
+        {
+            int code = (int)e.VirtualKey;
+            if (code < 195 || code > 218) return;
+            if (!forwardKeys || Web.Visibility != Visibility.Visible || !webReady) return;
+            if (code == (int)Windows.System.VirtualKey.GamepadB)
+            {
+                forwardBack = false;
+                pendingBack?.Cancel();
+            }
+            bool repeat = type == "keydown" && e.KeyStatus.WasKeyDown;
+            Web.CoreWebView2.PostWebMessageAsJson(
+                "{\"type\":\"key\",\"event\":\"" + type + "\",\"code\":" + code +
+                ",\"repeat\":" + (repeat ? "true" : "false") + "}");
+            e.Handled = true;
         }
 
         // ── Back ────────────────────────────────────────────────────────────

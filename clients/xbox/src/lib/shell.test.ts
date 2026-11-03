@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { parseShellParams, postToShell, resolveShellParams, servedOrigin, shellCommand } from './shell';
+import { parseShellParams, postToShell, resolveShellParams, servedOrigin, shellCommand, shellKey } from './shell';
 
 function memory() {
   const m = new Map<string, string>();
@@ -57,5 +57,30 @@ describe('shellCommand', () => {
     expect(shellCommand({ type: 'exit' })).toBeNull();
     expect(shellCommand('back')).toBeNull();
     expect(shellCommand(null)).toBeNull();
+  });
+});
+
+describe('shellKey', () => {
+  it("reads the shell's controller keys by their gamepad name", () => {
+    expect(shellKey({ type: 'key', event: 'keydown', code: 196, repeat: false })).toEqual({
+      type: 'keydown',
+      key: 'GamepadB',
+      code: 196,
+      repeat: false,
+    });
+    expect(shellKey({ type: 'key', event: 'keydown', code: 206, repeat: true })?.repeat).toBe(true);
+    expect(shellKey({ type: 'key', event: 'keyup', code: 195, repeat: true })).toEqual({
+      type: 'keyup',
+      key: 'GamepadA',
+      code: 195,
+      repeat: false,
+    });
+  });
+
+  it('ignores anything that is not a gamepad key', () => {
+    expect(shellKey({ type: 'key', event: 'keydown', code: 13 })).toBeNull();
+    expect(shellKey({ type: 'key', event: 'press', code: 195 })).toBeNull();
+    expect(shellKey({ type: 'back' })).toBeNull();
+    expect(shellKey(null)).toBeNull();
   });
 });

@@ -17,7 +17,7 @@
   <Identity
     Name="OnScreen.Xbox"
     Publisher="CN=OnScreen Dev"
-    Version="0.1.0.0" />
+    Version="0.1.2.0" />
 
   <mp:PhoneIdentity PhoneProductId="6b1f0a4e-3d2c-4f7a-9b8e-0c5d1e2f3a40" PhonePublisherId="00000000-0000-0000-0000-000000000000"/>
 
