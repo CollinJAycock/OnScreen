@@ -72,7 +72,7 @@ For the full feature comparison vs Plex / Emby / Jellyfin (12 sections, plus "Wh
 - **Samsung Tizen** (SvelteKit + tizen-package) — hardware-verified on a Samsung QN75Q80B 2022 panel; AVPlay HEVC + HDR10 + audio passthrough confirmed. 1.1.0 submitted to Samsung 2026-10-06, its first store submission.
 - **LG webOS** (SvelteKit + ares-package) — first run on LG hardware 2026-10-01; 0.2.1 submitted to the LG Content Store 2026-10-02.
 - **Roku** (BrightScript + SceneGraph) — updated for v2.6 in code (it now plays the server's play decision), but has never run on a device.
-- **Xbox** — phase 0: a UWP WebView2 shell over the TV web app the server serves at `/tvapp/`; not yet run on a console.
+- **Xbox** — a UWP shell over the TV web app the server serves at `/tvapp/`, with video in the console's own player: HEVC, 4K HDR10 and Dolby Vision 8.1, the TV switched to the matching mode. Run on an Xbox Series X; Microsoft Store package and listing ready for its first submission.
 - **`onscreen-cli`** — a terminal client that browses a server and plays through mpv.
 - See [docs/comparison-matrix.md](docs/comparison-matrix.md) for current per-platform store-submission state, and [docs/store-assets/](docs/store-assets/) for all the screenshots / icons / banners uploaded to each console.
 
