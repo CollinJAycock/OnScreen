@@ -147,3 +147,49 @@ describe('token refresh (ApiClient)', () => {
     expect(refreshCalls()).toBe(1);
   });
 });
+
+describe('a stalled GET (ApiClient)', () => {
+  beforeEach(() => {
+    vi.stubGlobal('localStorage', memoryStorage());
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+
+  // A Series X once sat 20 s on an artist page's item read; the page then
+  // stayed on its error.
+  it('sends a GET that never answered once more', async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn((_u: string, init: RequestInit) =>
+      fetchMock.mock.calls.length === 1
+        ? new Promise<Response>((_r, reject) => {
+            init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')));
+          })
+        : Promise.resolve({
+            status: 200, ok: true, type: 'basic', redirected: false, url: '', statusText: '',
+            json: async () => ({ data: { id: 'artist' } }),
+          } as unknown as Response),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new ApiClient();
+    client.setOrigin(ORIGIN);
+    client.setTokens(pair(1));
+    const req = client.get<{ id: string }>('/api/v1/items/artist');
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(await req).toEqual({ id: 'artist' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('never repeats a POST', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const client = new ApiClient();
+    client.setOrigin(ORIGIN);
+    client.setTokens(pair(1));
+    await expect(client.post('/api/v1/items/x/progress', {})).rejects.toThrow();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+});

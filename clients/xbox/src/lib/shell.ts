@@ -12,10 +12,14 @@
 // and takes requests back over WebView2's message channel
 // (window.chrome.webview.postMessage): "exit" (the exit popup's Exit) and
 // "changeServer" (Settings' Forget server: back to the shell's server prompt).
+// The shell sends the controller's keys the other way ("key" messages): the
+// console gives the web view none of its own (found on a Series X).
 //
 // Outside the shell (a desktop browser at <server>/tvapp/, which is how the app
 // is tested on a PC) everything degrades: no device name, display answers
 // from the browser, and no exit or server change.
+
+import { GAMEPAD, isGamepadKeyCode } from './focus/keys';
 
 const PARAMS_KEY = 'onscreen.shell_params';
 
@@ -120,7 +124,7 @@ function channel(): WebViewChannel | null {
  * key events (lib/gamepad saw one), so the shell must stop forwarding the
  * system's Back request as a "back" message, or B would act twice.
  */
-export function postToShell(type: 'exit' | 'changeServer' | 'nativeKeys'): boolean {
+export function postToShell(type: 'exit' | 'changeServer' | 'nativeKeys' | 'webKeys'): boolean {
   const c = channel();
   if (!c) return false;
   try {
@@ -177,6 +181,47 @@ export function shellCommand(data: unknown): 'back' | null {
   return data && typeof data === 'object' && (data as { type?: unknown }).type === 'back' ? 'back' : null;
 }
 
+export interface ShellKey {
+  type: 'keydown' | 'keyup';
+  /** The GAMEPAD name ('GamepadA', ...). */
+  key: string;
+  /** The VK_GAMEPAD_* code (195-218). */
+  code: number;
+  repeat: boolean;
+}
+
+/** A controller key the shell passed on ("key" message); null for anything
+ *  else, or a code outside the gamepad range. */
+export function shellKey(data: unknown): ShellKey | null {
+  if (!data || typeof data !== 'object') return null;
+  const m = data as { type?: unknown; event?: unknown; code?: unknown; repeat?: unknown };
+  if (m.type !== 'key' || (m.event !== 'keydown' && m.event !== 'keyup')) return null;
+  if (typeof m.code !== 'number' || !isGamepadKeyCode(m.code)) return null;
+  const key = GAMEPAD_NAME_BY_CODE.get(m.code) ?? `Gamepad${m.code}`;
+  return { type: m.event, key, code: m.code, repeat: m.event === 'keydown' && m.repeat === true };
+}
+
+const GAMEPAD_NAME_BY_CODE = new Map(Object.entries(GAMEPAD).map(([name, g]) => [g.code, name]));
+
+/** Key events this page made from the shell's "key" messages. */
+const fromShell = new WeakSet<Event>();
+
+/** A key event made from the shell's "key" message, not the web view's own. */
+export function isShellKeyEvent(e: Event): boolean {
+  return fromShell.has(e);
+}
+
+/** The shell's key as a key event, with the code a web view would carry
+ *  (a KeyboardEvent can't be constructed with one), so lib/gamepad takes it
+ *  for the platform's own and stops polling. */
+function dispatchShellKey(k: ShellKey): void {
+  const e = new KeyboardEvent(k.type, { key: k.key, repeat: k.repeat, bubbles: true, cancelable: true });
+  Object.defineProperty(e, 'keyCode', { get: () => k.code });
+  Object.defineProperty(e, 'which', { get: () => k.code });
+  fromShell.add(e);
+  (document.activeElement ?? document.body).dispatchEvent(e);
+}
+
 let listening = false;
 
 /** Act on the shell's messages; idempotent, a no-op without a shell. */
@@ -190,7 +235,24 @@ export function listenToShell(): void {
   }
   if (!wv || typeof wv.addEventListener !== 'function') return;
   listening = true;
+  // A gamepad key event the shell didn't make: the web view has its own,
+  // so the shell's would arrive twice. It stops sending them.
+  let ownKeys = false;
+  window.addEventListener(
+    'keydown',
+    (e) => {
+      if (ownKeys || fromShell.has(e) || !isGamepadKeyCode(e.keyCode)) return;
+      ownKeys = true;
+      postToShell('webKeys');
+    },
+    true,
+  );
   wv.addEventListener('message', (e) => {
+    const key = shellKey(e.data);
+    if (key) {
+      if (!ownKeys) dispatchShellKey(key);
+      return;
+    }
     if (shellCommand(e.data) !== 'back') return;
     const target = document.activeElement ?? document.body;
     for (const type of ['keydown', 'keyup']) {

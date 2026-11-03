@@ -109,7 +109,7 @@
 
   {#if step === 'username'}
     <div class="label">Username</div>
-    <OnScreenKeyboard bind:value={username} onchange={(v) => (username = v)} onsubmit={submit} />
+    <OnScreenKeyboard bind:value={username} onchange={(v) => (username = v)} onsubmit={submit} exitable />
     <button use:focusable class="back-btn" onclick={() => void changeServer()}>
       Change server
     </button>
@@ -117,13 +117,13 @@
     <div class="label">Enter the code from your authenticator app (or a recovery code)</div>
     <!-- Masked like the password (Android masks this step too): a code
          read off the TV by the room is good for the rest of its window. -->
-    <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} masked />
+    <OnScreenKeyboard bind:value={totpCode} onchange={(v) => (totpCode = v)} onsubmit={submit} masked exitable />
     <button use:focusable class="back-btn" onclick={backToTotpStep}>
       back
     </button>
   {:else}
     <div class="label">Password for <strong>{username}</strong></div>
-    <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} masked />
+    <OnScreenKeyboard bind:value={password} onchange={(v) => (password = v)} onsubmit={submit} masked exitable />
     <button use:focusable class="back-btn" onclick={backToUsernameStep}>
       change user
     </button>
