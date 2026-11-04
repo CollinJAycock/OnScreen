@@ -212,7 +212,7 @@ type BuildArgs struct {
 	IsH264 bool
 
 	// Audio (ADR-018)
-	AudioCodec       string // "copy" | "aac"
+	AudioCodec       string // "copy" | "aac" | "eac3" | "ac3" (receiver encode, IsDolbyEncode)
 	AudioChannels    int    // 0 = keep source
 	AudioBitrateKbps int    // 0 = auto
 	AudioStreamIndex int    // -1 = default (first); >= 0 = specific stream index
@@ -793,8 +793,12 @@ func BuildHLS(a BuildArgs) []string {
 	// remux whose source audio the client already decodes (AAC/AC3/EAC3/MP3
 	// within its channel cap). Re-encoding those to AAC anyway, as the remux
 	// path always did, burned CPU to strictly degrade audio the client could
-	// have played bit-exact. The aac-only extras (-ac/-b:a/-af) are naturally
+	// have played bit-exact. The encode extras (-ac/-b:a/-af) are naturally
 	// skipped by the codec keying below.
+	//
+	// AudioCodec "eac3" / "ac3" encodes for the client's AV receiver (see
+	// IsDolbyEncode): ffmpeg's native encoders, at 5.1 at most and
+	// DolbyEncodeKbps, with the same -ac downmix and alignment as AAC.
 	if !a.NoAudio {
 		audioCodec := a.AudioCodec
 		if a.AudioCodec == "aac" && a.HasLibfdkAAC {
@@ -813,13 +817,22 @@ func BuildHLS(a BuildArgs) []string {
 	case dvCopy(a):
 		args = append(args, "-strict", "unofficial")
 	}
-	if !a.NoAudio && a.AudioCodec == "aac" {
+	if !a.NoAudio && EncodesAudio(a.AudioCodec) {
 		channels := a.AudioChannels
+		bitrate := a.AudioBitrateKbps
+		if IsDolbyEncode(a.AudioCodec) {
+			if channels <= 0 {
+				channels = maxDolbyEncodeChannels
+			}
+			channels = DolbyEncodeChannels(channels)
+			if bitrate <= 0 {
+				bitrate = DolbyEncodeKbps
+			}
+		}
 		if channels <= 0 {
 			channels = 2 // default stereo
 		}
 		args = append(args, "-ac", fmt.Sprint(channels))
-		bitrate := a.AudioBitrateKbps
 		if bitrate <= 0 {
 			// Scale with channel count so a 5.1 / 7.1 downmix isn't starved
 			// the way a flat 128k would be (128k stereo, ~64k/channel above).
@@ -984,8 +997,9 @@ func BuildHLS(a BuildArgs) []string {
 	// dropped by the default avoid_negative_ts=make_non_negative
 	// behavior. "make_zero" shifts the whole timeline instead of
 	// dropping, so the priming frames survive and seg 0 carries a
-	// valid audio stream with proper channel info.
-	if a.StartOffset > 0 && a.AudioCodec == "aac" {
+	// valid audio stream with proper channel info. The E-AC-3 / AC-3
+	// encoders prime too (256 samples), so a receiver encode gets the same.
+	if a.StartOffset > 0 && EncodesAudio(a.AudioCodec) {
 		args = append(args, "-avoid_negative_ts", "make_zero")
 	}
 	if needsFMP4 {

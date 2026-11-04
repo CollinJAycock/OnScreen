@@ -160,6 +160,12 @@ type Session struct {
 	// FMP4Segments, so the whole ladder is fMP4. Read by the rung children
 	// and the master playlist's CODECS / BANDWIDTH.
 	AudioPassthroughCodec string `json:"audio_passthrough_codec,omitempty"`
+	// AudioEncodeCodec (ABR parent): "eac3" or "ac3" when every rung encodes
+	// the audio to that codec for the client's receiver instead of AAC (see
+	// IsDolbyEncode); empty otherwise. AudioChannels and AudioBitrateKbps
+	// then describe that encode. Read by the rung children and the master
+	// playlist's CODECS / BANDWIDTH.
+	AudioEncodeCodec string `json:"audio_encode_codec,omitempty"`
 	// OutputLimits (ABR parent): the client's profile / level ceiling, passed
 	// to every rung child's job. nil = none.
 	OutputLimits *OutputLimits `json:"output_limits,omitempty"`
@@ -227,10 +233,18 @@ const (
 	// startup (ProbeDVConvert), not implied by the build: it needs OnScreen's
 	// patched ffmpeg.
 	WorkerFeatureDVConvert = "dolby_vision_p7_to_p81"
+	// WorkerFeatureAudioDolbyEncode: the worker knows TranscodeJob.AudioCodec
+	// "eac3" / "ac3" (a receiver encode, IsDolbyEncode). Every ffmpeg OnScreen
+	// ships has the native encoders, but an older worker would hand the value
+	// to -c:a without the -ac / -b:a / start-offset handling the encode needs.
+	WorkerFeatureAudioDolbyEncode = "audio_dolby_encode"
 )
 
 // workerFeatures is what every worker of this build advertises.
-var workerFeatures = []string{WorkerFeatureBurnSubtitles, WorkerFeatureAudioPassthrough, WorkerFeatureDolbyVision}
+var workerFeatures = []string{
+	WorkerFeatureBurnSubtitles, WorkerFeatureAudioPassthrough, WorkerFeatureDolbyVision,
+	WorkerFeatureAudioDolbyEncode,
+}
 
 // SessionStore manages transcode sessions in Valkey.
 type SessionStore struct {
@@ -914,6 +928,9 @@ func jobNeeds(j TranscodeJob) JobNeeds {
 	if j.AudioPassthrough {
 		needs.Features = append(needs.Features, WorkerFeatureAudioPassthrough)
 	}
+	if IsDolbyEncode(j.AudioCodec) {
+		needs.Features = append(needs.Features, WorkerFeatureAudioDolbyEncode)
+	}
 	return needs
 }
 
@@ -1134,7 +1151,7 @@ type TranscodeJob struct {
 	Width            int     `json:"width"`
 	Height           int     `json:"height"`
 	BitrateKbps      int     `json:"bitrate_kbps"`
-	AudioCodec       string  `json:"audio_codec"`
+	AudioCodec       string  `json:"audio_codec"` // "copy" | "aac" | "eac3" | "ac3" (receiver encode: WorkerFeatureAudioDolbyEncode)
 	AudioChannels    int     `json:"audio_channels"`
 	AudioStreamIndex int     `json:"audio_stream_index"` // -1 = default
 	NeedsToneMap     bool    `json:"needs_tone_map"`

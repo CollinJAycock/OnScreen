@@ -23,6 +23,17 @@ API change lands only when every first-party client moves with it — see
   APKBUILD with the same configure flags: same codecs, filters and hardware
   paths (VAAPI, QSV, Vulkan). The Windows installer and the Linux tarball
   are unchanged and still play profile 7 from its HDR10 base.
+- **Dolby audio for a receiver instead of AAC.** When a client bitstreams
+  to an AV receiver (`audioPassthrough` lists `eac3` or `ac3`) and the
+  server would otherwise encode a multichannel track to AAC (TrueHD or DTS
+  on a client that asks for MPEG-TS segments, such as Roku, or on an old
+  fleet), it encodes 5.1 E-AC-3 (or AC-3) at 640 kb/s instead, so the
+  receiver plays Dolby surround rather than getting AAC it can't take over
+  HDMI. Remux and transcode, TS and fMP4, single rendition and every ABR
+  rung (the master's `CODECS` names `ec-3` / `ac-3`). Stereo and audio-only
+  sources, and sessions under a bitrate limit, keep AAC. Workers advertise
+  it as the `audio_dolby_encode` feature; a fleet of older workers keeps
+  AAC. See docs/capability-profiles.md ("Receiver encode").
 
 ## [v2.7.0] — 2026-11-03
 

@@ -39,10 +39,53 @@ func transcodeAudioPassthrough(alias string, caps transcode.ClientCapabilities,
 	return false, false
 }
 
+// receiverAudioEncode decides whether audio Start would otherwise encode to
+// AAC (a remux or a re-encode whose track can't be copied) is encoded for the
+// client's receiver instead: E-AC-3 when its audioPassthrough lists eac3,
+// else AC-3 when it lists ac3, at transcode.DolbyEncodeChannels(sourceCh)
+// channels and transcode.DolbyEncodeKbps. AAC can't be bitstreamed, so a
+// TrueHD track on a client that asked for MPEG-TS segments (Roku), or on an
+// old fleet, otherwise reaches a home theater with no surround at all.
+//
+// codec is "" (AAC as before) for a stereo or unknown-layout source (no
+// surround to gain, and AAC is what every client decodes), an audio-only
+// source (music and audiobooks keep their own path), under a bitrate limit
+// (the same notion as the passthrough copy), and when no worker advertises
+// the audio_dolby_encode feature. Both codecs ride MPEG-TS and fMP4, so the
+// segment container is left alone.
+func receiverAudioEncode(caps transcode.ClientCapabilities, sourceCh int,
+	sourceAudioOnly, bitrateLimited bool, fleetHasFeature func() bool,
+) (codec string, channels int) {
+	if sourceAudioOnly || bitrateLimited || sourceCh <= 2 {
+		return "", 0
+	}
+	switch {
+	case caps.PassesThroughAudio("eac3"):
+		codec = "eac3"
+	case caps.PassesThroughAudio("ac3"):
+		codec = "ac3"
+	default:
+		return "", 0
+	}
+	if !fleetHasFeature() {
+		return "", 0
+	}
+	return codec, transcode.DolbyEncodeChannels(sourceCh)
+}
+
 // passthroughReason is the Now Playing line for a re-encode whose audio is
 // copied for the client's receiver.
 func passthroughReason(codec string) string {
 	return transcode.AudioCodecLabel(codec) + " audio passed through to the receiver"
+}
+
+// receiverEncodeReason is the Now Playing line for audio encoded to E-AC-3
+// / AC-3 for the client's receiver (receiverAudioEncode).
+func receiverEncodeReason(src, codec string) string {
+	if src == "" {
+		return "Audio converted to " + transcode.AudioCodecLabel(codec) + " for the receiver"
+	}
+	return transcode.AudioCodecLabel(src) + " audio converted to " + transcode.AudioCodecLabel(codec) + " for the receiver"
 }
 
 // fitOutputLevel shrinks a re-encode's output box and bitrate to what a
