@@ -31,6 +31,17 @@ sub testParseInvalid()
     else
         print "FAIL: invalid JSON should be invalid, got " + FormatJson(parsed)
     end if
+    ' A stream probe's first byte (a FLAC file starts "fLaC").
+    if Json_Parse("f") = invalid and Json_Parse("  fLaC") = invalid
+        print "PASS: a non-JSON body returns invalid"
+    else
+        print "FAIL: a non-JSON body should be invalid"
+    end if
+    if Json_Parse(" [1,2]") <> invalid
+        print "PASS: an array still parses"
+    else
+        print "FAIL: an array should parse"
+    end if
 end sub
 
 sub testUnwrapDataPresent()

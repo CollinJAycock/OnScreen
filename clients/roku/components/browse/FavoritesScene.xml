@@ -37,7 +37,7 @@
                      drawFocusFeedback="true" />
 
             <Label id="empty"
-                   text="Heart-click an item from its detail page to pin it here."
+                   text="Nothing here yet. Press + Favorite on a title&apos;s page to add it."
                    translation="[80, 540]"
                    color="0xa0a0a0ff" />
         </Group>

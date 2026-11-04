@@ -258,8 +258,12 @@ sub onItemTaskState()
     if m.itemTask.state <> "done" then return
     item = m.itemTask.result
     ' [player] lines on the debug console (8085) trace each step of a start.
+    ' A reply that isn't a playable item (a deleted title's error body has
+    ' no files) is a failed fetch: reading files.Count() on it crashed the
+    ' channel, from a deep link to a title that's gone.
+    if item <> invalid and (type(item) <> "roAssociativeArray" or type(item.files) <> "roArray") then item = invalid
     if item = invalid then print "[player] item fetch failed: "; m.top.itemId else print "[player] item "; m.top.itemId; " files="; item.files.Count(); " chapters="; chapterCount(item)
-    if item = invalid or item.files = invalid or item.files.Count() = 0
+    if item = invalid or item.files.Count() = 0
         bailToHome()
         return
     end if
@@ -313,21 +317,15 @@ sub onItemTaskState()
         return
     end if
 
-    ' Videos ask the server first (onDecisionDone), whose verdict is final:
-    ' direct, remux or transcode, a refusal (too many streams, unsupported,
-    ' damaged) or an optimized version. Audio plays straight away.
+    ' Everything asks the server first (onDecisionDone), whose verdict is
+    ' final: direct, remux or transcode, a refusal (too many streams,
+    ' unsupported, damaged) or an optimized version. Audio too: the server
+    ' judges the codec, its depth and the container against what this Roku
+    ' declares (Client_CapabilitiesHeader), where the local verdict played
+    ' every audio file directly and a hi-res one wouldn't open.
     m.localDecision = decision
     if lcaseSafe(m.file.video_codec) = "" then showNowPlaying()
-    if lcaseSafe(m.file.video_codec) <> ""
-        startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
-        return
-    end if
-    ' A book starts at its saved speed (onPlayerCallDone "rate").
-    if isBook()
-        startPlayerCall("GET", ApiItemPlaybackRate(m.top.itemId), invalid, { action: "rate" }, true, invalid)
-        return
-    end if
-    startPlayback(decision, -1)
+    startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
 end sub
 
 function isBook() as Boolean
@@ -383,6 +381,11 @@ sub onDecisionDone(result as Dynamic)
         startPlayback(plan.fallback, -1)
     else if plan.kind = "optimized"
         startOptimizedPlayback(plan)
+    else if isBook()
+        ' A book starts at its saved speed (onPlayerCallDone "rate"); at 1x
+        ' it plays this verdict (playBookAt).
+        m.localDecision = plan.decision
+        startPlayerCall("GET", ApiItemPlaybackRate(m.top.itemId), invalid, { action: "rate" }, true, invalid)
     else
         startPlayback(plan.decision, -1)
     end if
@@ -698,6 +701,12 @@ sub onVideoState()
     ' way out — the stop's own state changes mean nothing more. Same once
     ' the too-many-streams message is up.
     if m.adminStopped or m.limitShown then return
+    ' After an error the Video node also reports "finished". That isn't the
+    ' end of the item: reporting it at full length marked it played, and
+    ' auto-advancing went on to fail every track of an album in turn.
+    if state = "error" then m.videoErrored = true
+    if state = "playing" then m.videoErrored = false
+    if state = "finished" and m.videoErrored = true then return
     ' A deep link straight to playback has launched once the video plays.
     if state = "playing" then getMainScene().callFunc("reportReady")
     if state = "paused"
@@ -1034,6 +1043,16 @@ sub onPlayerCallDone(evt as Object)
         else if m.playbackMode = "optimized" and m.optimizedFallback <> invalid
             ' The optimized version itself failed: the source's verdict.
             fallBackFromOptimized(-1)
+        else if m.playbackMode = "direct" and m.directFellBack <> true
+            ' The Roku couldn't open the file itself: once, have the server
+            ' convert it, from where it got to.
+            m.directFellBack = true
+            print "[player] direct play failed; falling back to a server transcode"
+            posMs = playheadMs()
+            if posMs > 0 then m.item.view_offset_ms = posMs
+            m.video.control = "stop"
+            m.directStreamPath = ""
+            startPlayback({ mode: "transcode", height: m.localDecision.height, videoCopy: false, supportsHevc: m.localDecision.supportsHevc }, -1)
         else
             ' A real playback error — the pre-probe behaviour.
             stopTranscodeSession()
