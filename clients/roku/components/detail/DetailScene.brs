@@ -129,6 +129,8 @@ sub onItemTaskState()
     item = m.itemTask.result
     if item = invalid or item.id = invalid
         m.loading.text = "Couldn't load item details"
+        ' Nothing to act on: no Play button under the message.
+        m.top.findNode("actions").visible = false
         ' A deep link to a title that's gone still has to finish launching.
         getMainScene().callFunc("reportReady")
         return
@@ -140,6 +142,14 @@ sub onItemTaskState()
         m.isFavorite = (type(fav) = "Boolean" or type(fav) = "roBoolean") and fav
     end if
     renderItem()
+    ' The children may have landed first, titled before the item's type
+    ' was known ("Episodes" over a show's seasons): title the header again.
+    if m.rowKinds <> invalid and m.rowKinds.Count() > 0
+        headerRow = 0
+        f = m.childrenList.rowItemFocused
+        if f <> invalid and f.Count() > 0 and f[0] >= 0 and f[0] < m.rowKinds.Count() then headerRow = f[0]
+        m.childrenHeader.text = rowTitle(m.rowKinds[headerRow])
+    end if
     ' Launched when this is a deep-linked title page (a no-op otherwise).
     if firstLoad then getMainScene().callFunc("reportReady")
     if firstLoad and WatchState_IsContainer(item.type) then fetchUpNext()
@@ -757,6 +767,9 @@ sub addChildCards(row as Object, serverUrl as Dynamic)
         artPath = invalid
         if child.thumb_path <> invalid then artPath = child.thumb_path
         if artPath = invalid and child.poster_path <> invalid then artPath = child.poster_path
+        ' A season (or album) with no art of its own wears its parent's,
+        ' rather than an empty card.
+        if artPath = invalid and m.item <> invalid and m.item.poster_path <> invalid then artPath = m.item.poster_path
         if artPath <> invalid and serverUrl <> invalid and token <> invalid
             node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 400, Prefs_GetAssetTokenStr())
         end if

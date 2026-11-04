@@ -67,10 +67,11 @@
                color="0xff5050ff"
                visible="false" />
         <!-- The one keyboard, for whichever field is being edited. -->
-        <Keyboard id="keyboard"
-                  translation="[160, 670]"
-                  showTextEditBox="true"
-                  visible="false" />
+        <!-- DynamicKeyboard: Roku's voice-capable keyboard, which
+             certification requires for password and code entry. -->
+        <DynamicKeyboard id="keyboard"
+                         translation="[160, 596]"
+                         visible="false" />
     </children>
 
 </component>

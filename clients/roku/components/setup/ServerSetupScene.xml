@@ -38,13 +38,12 @@
                    translation="[160, 200]"
                    color="0xa0a0a0ff" />
 
-            <Keyboard id="keyboard"
-                      translation="[160, 280]"
-                      showTextEditBox="true" />
+            <DynamicKeyboard id="keyboard"
+                             translation="[160, 280]" />
 
             <OsButton id="connectBtn"
                     text="Connect"
-                    translation="[160, 720]"
+                    translation="[160, 760]"
                     minWidth="320" />
 
             <Label id="error"

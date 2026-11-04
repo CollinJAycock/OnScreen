@@ -92,6 +92,17 @@ launcher-tile spec, not the 512×512 the other stores use).
 App description doc (paste into Samsung's Word template):
 [`clients/tizen/SAMSUNG_APP_DESCRIPTION.md`](../../clients/tizen/SAMSUNG_APP_DESCRIPTION.md).
 
+### `roku/` — Roku Streaming Store (Developer Dashboard)
+
+| File | Dashboard field |
+|---|---|
+| `listing-en-US.md` | Every listing field: name, both descriptions (300 / 1,500 limits), app profile, test credentials, deep-link parameters, packaging notes |
+| `app-poster-540x405.png` | App poster (540×405), the same image as the manifest's `mm_icon_focus_fhd` |
+| `screenshots/` | Up to six 1920×1080 screenshots, taken on the Roku against the review server |
+
+Channel art the manifest reads (tiles, splashes) stays in
+`clients/roku/images/` (see its README).
+
 ## Regenerating
 
 The Samsung annotated `menu-*.png` images, the featured backgrounds,
