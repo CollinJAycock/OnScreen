@@ -25,6 +25,20 @@ sub init()
     m.loadingPage = false
     m.cardCount = 0
     m.lastRow = invalid
+    ' The view (LibraryView): sort option, ?watch= and genre. Header
+    ' buttons change it; each change reloads the grid from the top.
+    m.sortIdx = 0
+    m.watch = ""
+    m.genre = ""
+    m.genres = invalid
+    m.inHeader = false
+    m.headerIdx = 0
+    m.sortBtn = m.top.findNode("sortBtn")
+    m.watchBtn = m.top.findNode("watchBtn")
+    m.genreBtn = m.top.findNode("genreBtn")
+    m.sortBtn.observeField("buttonSelected", "onSortPressed")
+    m.watchBtn.observeField("buttonSelected", "onWatchPressed")
+    m.genreBtn.observeField("buttonSelected", "onGenrePressed")
 
     m.task.observeField("state", "onTaskState")
     m.rows.observeField("rowItemSelected", "onCardSelected")
@@ -48,13 +62,26 @@ end sub
 sub startFetch(libraryId as String)
     m.kickedOff = true
     m.libraryId = libraryId
+    ' The view: what Back hands back, else this library's saved sort.
+    m.sortIdx = LibraryView_ParseSort(Prefs_Get("libsort:" + libraryId))
+    if m.sortIdx < 0 then m.sortIdx = LibraryView_DefaultSort(m.top.libraryType)
+    rs = m.top.restoreState
+    if rs <> invalid
+        if rs.sortIdx <> invalid then m.sortIdx = rs.sortIdx
+        if rs.watch <> invalid then m.watch = rs.watch
+        if rs.genre <> invalid then m.genre = rs.genre
+    end if
+    m.hasFilters = LibraryView_HasFilters(m.top.libraryType)
+    m.watchBtn.visible = m.hasFilters
+    m.genreBtn.visible = m.hasFilters
+    updateViewButtons()
     fetchPage()
 end sub
 
 sub fetchPage()
     m.loadingPage = true
     m.task = renewTask(m.task, "ListFetchTask", "onTaskState")
-    m.task.path = ApiLibraryItemsPage(m.libraryId, m.offset, LibraryPageSize())
+    m.task.path = LibraryView_ItemsPath(m.libraryId, m.offset, LibraryPageSize(), m.sortIdx, m.watch, m.genre)
     m.task.control = "RUN"
 end sub
 
@@ -72,12 +99,18 @@ sub onTaskState()
     ' A full page may have more behind it; a short one is the last.
     m.hasMore = (items.Count() >= LibraryPageSize())
     if first and items.Count() = 0
-        m.empty.text = "This library is empty."
+        if m.watch <> "" or m.genre <> ""
+            m.empty.text = "Nothing here matches these filters."
+        else
+            m.empty.text = "This library is empty."
+        end if
+        m.empty.visible = true
+        focusHeader()
         return
     end if
     m.empty.visible = false
     appendCards(items)
-    if first then m.rows.setFocus(true)
+    if first and not m.inHeader then m.rows.setFocus(true)
     restoreFocus()
 end sub
 
@@ -176,8 +209,13 @@ end function
 ' ── Back to the card the viewer opened (MainScene's restoreState) ──
 
 sub saveFocus()
+    st = { sortIdx: m.sortIdx, watch: m.watch, genre: m.genre }
     f = m.rows.rowItemSelected
-    if f <> invalid and f.Count() >= 2 then m.top.focusState = { row: f[0], item: f[1] }
+    if f <> invalid and f.Count() >= 2
+        st.row = f[0]
+        st.item = f[1]
+    end if
+    m.top.focusState = st
 end sub
 
 ' Pages load until the saved row is in, then the grid jumps to it.
@@ -200,3 +238,151 @@ sub restoreFocus()
     m.rows.jumpToRowItem = [r, i]
     m.rows.setFocus(true)
 end sub
+
+' ── Sort and filters ───────────────────────────────────────────────
+
+sub updateViewButtons()
+    m.sortBtn.text = "Sort: " + LibraryView_SortOptions()[m.sortIdx].label
+    watchLabel = "All"
+    for each o in LibraryView_WatchOptions()
+        if o.value = m.watch then watchLabel = o.label
+    end for
+    m.watchBtn.text = "Show: " + watchLabel
+    if m.genre = "" then m.genreBtn.text = "Genre: All" else m.genreBtn.text = "Genre: " + m.genre
+end sub
+
+function headerButtons() as Object
+    if m.hasFilters = true then return [m.sortBtn, m.watchBtn, m.genreBtn]
+    return [m.sortBtn]
+end function
+
+sub focusHeader()
+    m.inHeader = true
+    btns = headerButtons()
+    if m.headerIdx >= btns.Count() then m.headerIdx = 0
+    btns[m.headerIdx].setFocus(true)
+end sub
+
+sub focusGrid()
+    if m.rows.content = invalid or m.rows.content.getChildCount() = 0 then return
+    m.inHeader = false
+    m.rows.setFocus(true)
+end sub
+
+sub onSortPressed()
+    labels = []
+    for each o in LibraryView_SortOptions()
+        labels.push(o.label)
+    end for
+    Menu_Show("sort", "Sort by", "", labels)
+end sub
+
+sub onWatchPressed()
+    labels = []
+    for each o in LibraryView_WatchOptions()
+        labels.push(o.label)
+    end for
+    Menu_Show("watch", "Show", "", labels)
+end sub
+
+' The genres come from the server the first time (with how many titles
+' each has), then open as a menu.
+sub onGenrePressed()
+    if m.genres <> invalid
+        showGenreMenu()
+        return
+    end if
+    m.genreTask = createObject("roSGNode", "ListFetchTask")
+    m.genreTask.observeField("state", "onGenresLoaded")
+    m.genreTask.path = "/api/v1/libraries/" + m.libraryId + "/genres"
+    m.genreTask.control = "RUN"
+end sub
+
+sub onGenresLoaded()
+    if m.genreTask = invalid or m.genreTask.state <> "done" then return
+    rows = m.genreTask.result
+    m.genreTask = invalid
+    m.genres = []
+    if rows <> invalid
+        for each g in rows
+            if g <> invalid and g.name <> invalid and g.name <> "" then m.genres.push(g.name)
+        end for
+    end if
+    showGenreMenu()
+end sub
+
+sub showGenreMenu()
+    if m.genres.Count() = 0
+        Menu_ShowMessage("noGenres", "Genre", "This library's titles have no genres yet.")
+        return
+    end if
+    labels = ["All genres"]
+    labels.Append(m.genres)
+    Menu_Show("genre", "Genre", "", labels)
+end sub
+
+sub onMenuChoice(menuId as String, index as Integer)
+    changed = false
+    if index >= 0
+        if menuId = "sort" and index <> m.sortIdx
+            m.sortIdx = index
+            Prefs_Set("libsort:" + m.libraryId, LibraryView_SortKey(index))
+            changed = true
+        else if menuId = "watch"
+            v = LibraryView_WatchOptions()[index].value
+            changed = (v <> m.watch)
+            m.watch = v
+        else if menuId = "genre"
+            g = ""
+            if index > 0 then g = m.genres[index - 1]
+            changed = (g <> m.genre)
+            m.genre = g
+        end if
+    end if
+    focusHeader()
+    if changed then reload()
+end sub
+
+' Start the grid over in the new view.
+sub reload()
+    updateViewButtons()
+    m.offset = 0
+    m.hasMore = false
+    m.cardCount = 0
+    m.lastRow = invalid
+    m.rows.content = createObject("roSGNode", "ContentNode")
+    m.empty.text = "Loading..."
+    m.empty.visible = true
+    fetchPage()
+end sub
+
+' Up from the first row to the buttons, Down back; Left / Right along them.
+function onKeyEvent(key as String, press as Boolean) as Boolean
+    if not press then return false
+    if m.inHeader
+        btns = headerButtons()
+        if key = "left" and m.headerIdx > 0
+            m.headerIdx = m.headerIdx - 1
+            btns[m.headerIdx].setFocus(true)
+            return true
+        end if
+        if key = "right" and m.headerIdx < btns.Count() - 1
+            m.headerIdx = m.headerIdx + 1
+            btns[m.headerIdx].setFocus(true)
+            return true
+        end if
+        if key = "down"
+            focusGrid()
+            return true
+        end if
+        return key = "left" or key = "right" or key = "up"
+    end if
+    if key = "up"
+        f = m.rows.rowItemFocused
+        if f = invalid or f.Count() < 1 or f[0] = 0
+            focusHeader()
+            return true
+        end if
+    end if
+    return false
+end function

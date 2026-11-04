@@ -63,7 +63,9 @@ sub onLibrarySelected()
     if libraryId = invalid or libraryId = "" then return
     name = m.libraries[idx].name
     if type(name) <> "String" and type(name) <> "roString" then name = ""
-    getMainScene().callFunc("navigateToWithParams", "LibraryScene", libraryId, { heading: name })
+    libType = m.libraries[idx].type
+    if type(libType) <> "String" and type(libType) <> "roString" then libType = ""
+    getMainScene().callFunc("navigateToWithParams", "LibraryScene", libraryId, { heading: name, libraryType: libType })
 end sub
 
 ' A library type as a person would say it; "" for an unknown one.
