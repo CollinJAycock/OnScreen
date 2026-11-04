@@ -3,16 +3,18 @@
 ' Continue Watching split and "remove from Continue Watching" are unit-
 ' tested (tests/HubRows_test.brs) without SceneGraph.
 '
-' Each row is { title, kind, items } where kind is:
+' Each row is { key, title, kind, items } where kind is:
 '   "continue"  Continue Watching (TV / Movies / Other) — * offers removal
 '   "next_up"   the next episode of shows in progress
 '   "plan"      Plan to Watch
-'   "trending"  / "recent"
+'   "collection" a collection an admin put on the home screen
+'   "trending" / "recent" / "library" (a library's recently added)
+' and key is the row's name in the saved home layout (HubRows_Order).
 
-' Row order matches the server's default hub layout: the Continue Watching
-' rows, then Next Up and Plan to Watch (hub_layout.go slots them straight
-' after continue_*), then Trending and Recently Added. Empty rows are left
-' out.
+' Default order, as the web home and Android TV (HomeFragment.buildRows):
+' Continue Watching TV, Next Up, Continue Watching Movies / Other, Plan to
+' Watch, the promoted collections, Trending, Recently Added, then each
+' library's recently added. Empty rows are left out.
 function HubRows_Build(hub as Dynamic) as Object
     rows = []
     if hub = invalid or type(hub) <> "roAssociativeArray" then return rows
@@ -42,24 +44,75 @@ function HubRows_Build(hub as Dynamic) as Object
             end for
         end if
     end if
-    HubRows_Add(rows, "Continue Watching TV Shows", "continue", cwTV)
-    HubRows_Add(rows, "Continue Watching Movies", "continue", cwMovies)
-    HubRows_Add(rows, "Continue Watching", "continue", cwOther)
-    HubRows_Add(rows, "Next Up", "next_up", hub.next_up)
-    HubRows_Add(rows, "Plan to Watch", "plan", hub.plan_to_watch)
-    HubRows_Add(rows, "Trending", "trending", hub.trending)
-    HubRows_Add(rows, "Recently Added", "recent", hub.recently_added)
+    HubRows_Add(rows, "continue_tv", "Continue Watching TV Shows", "continue", cwTV)
+    HubRows_Add(rows, "next_up", "Next Up", "next_up", hub.next_up)
+    HubRows_Add(rows, "continue_movies", "Continue Watching Movies", "continue", cwMovies)
+    HubRows_Add(rows, "continue_other", "Continue Watching", "continue", cwOther)
+    HubRows_Add(rows, "plan_to_watch", "Plan to Watch", "plan", hub.plan_to_watch)
+    if hub.collection_rows <> invalid and type(hub.collection_rows) = "roArray"
+        for each c in hub.collection_rows
+            if c <> invalid and type(c) = "roAssociativeArray" and HubRows_IsStr(c.collection_id) and HubRows_IsStr(c.name)
+                HubRows_Add(rows, "collection:" + c.collection_id, c.name, "collection", c.items)
+            end if
+        end for
+    end if
+    HubRows_Add(rows, "trending", "Trending", "trending", hub.trending)
+    HubRows_Add(rows, "recently_added", "Recently Added", "recent", hub.recently_added)
+    if hub.recently_added_by_library <> invalid and type(hub.recently_added_by_library) = "roArray"
+        for each l in hub.recently_added_by_library
+            if l <> invalid and type(l) = "roAssociativeArray" and HubRows_IsStr(l.library_id) and HubRows_IsStr(l.library_name)
+                HubRows_Add(rows, "library:" + l.library_id, "Recently Added in " + l.library_name, "library", l.items)
+            end if
+        end for
+    end if
     return rows
 end function
 
-sub HubRows_Add(rows as Object, title as String, kind as String, items as Dynamic)
+' rows under the saved home layout (GET /users/me/preferences ->
+' hub_layout, [{ key, enabled }], set on the web home and shared by every
+' client): rows it names first, in its order, a disabled one hidden; a key
+' with no row skipped; rows it doesn't name after, in default order. A
+' key listed twice counts once. No layout = default order.
+function HubRows_Order(rows as Object, layout as Dynamic) as Object
+    if layout = invalid or type(layout) <> "roArray" or layout.Count() = 0 then return rows
+    byKey = {}
+    for each r in rows
+        if not byKey.DoesExist(r.key) then byKey[r.key] = r
+    end for
+    used = {}
+    out = []
+    for each pref in layout
+        if pref <> invalid and type(pref) = "roAssociativeArray" and HubRows_IsStr(pref.key)
+            r = byKey[pref.key]
+            if r <> invalid and not used.DoesExist(pref.key)
+                used[pref.key] = true
+                if pref.enabled <> false then out.push(r)
+            end if
+        end if
+    end for
+    for each r in rows
+        if not used.DoesExist(r.key)
+            used[r.key] = true
+            out.push(r)
+        end if
+    end for
+    return out
+end function
+
+function HubRows_IsStr(v as Dynamic) as Boolean
+    if v = invalid then return false
+    if type(v) <> "String" and type(v) <> "roString" then return false
+    return v <> ""
+end function
+
+sub HubRows_Add(rows as Object, key as String, title as String, kind as String, items as Dynamic)
     if items = invalid or type(items) <> "roArray" then return
     kept = []
     for each it in items
         if it <> invalid and type(it) = "roAssociativeArray" then kept.push(it)
     end for
     if kept.Count() = 0 then return
-    rows.push({ title: title, kind: kind, items: kept })
+    rows.push({ key: key, title: title, kind: kind, items: kept })
 end sub
 
 ' Drop the tile with id `itemId` from row `rowIdx` (the row the user acted
@@ -94,7 +147,7 @@ function HubRows_RemoveItem(rows as Object, rowIdx as Integer, itemId as String)
         if i <> rowIdx
             newRows.push(rows[i])
         else if items.Count() > 0
-            newRows.push({ title: row.title, kind: row.kind, items: items })
+            newRows.push({ key: row.key, title: row.title, kind: row.kind, items: items })
         end if
     end for
     out.rows = newRows

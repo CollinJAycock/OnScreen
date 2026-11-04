@@ -7,6 +7,8 @@ sub Main()
     testRemoveKeepsRow()
     testRemoveLastInRow()
     testRemoveMissing()
+    testExtraRows()
+    testLayout()
 
     print "DONE: HubRows_test"
 end sub
@@ -24,9 +26,9 @@ end function
 
 sub testOrder()
     rows = HubRows_Build(ParseJson(hubJson()))
-    runStr("order: row titles", rowTitles(rows), "Continue Watching TV Shows|Continue Watching Movies|Next Up|Plan to Watch|Trending|Recently Added")
-    runStr("order: row kinds", rowKinds(rows), "continue|continue|next_up|plan|trending|recent")
-    runStr("order: next up items", rows[2].items[0].id, "nu1")
+    runStr("order: row titles", rowTitles(rows), "Continue Watching TV Shows|Next Up|Continue Watching Movies|Plan to Watch|Trending|Recently Added")
+    runStr("order: row kinds", rowKinds(rows), "continue|next_up|continue|plan|trending|recent")
+    runStr("order: next up items", rows[1].items[0].id, "nu1")
 end sub
 
 sub testLegacySplit()
@@ -56,23 +58,24 @@ end sub
 
 sub testRemoveKeepsRow()
     rows = HubRows_Build(ParseJson(hubJson()))
-    out = HubRows_RemoveItem(rows, 1, "mv1")
+    out = HubRows_RemoveItem(rows, 2, "mv1")
     runBool("remove: removed", out.removed, true)
-    runStr("remove: rows kept", rowTitles(out.rows), "Continue Watching TV Shows|Continue Watching Movies|Next Up|Plan to Watch|Trending|Recently Added")
-    runStr("remove: neighbour left", out.rows[1].items[0].id, "mv2")
-    runStr("remove: focus on the neighbour", focusStr(out.focus), "1,0")
+    runStr("remove: rows kept", rowTitles(out.rows), "Continue Watching TV Shows|Next Up|Continue Watching Movies|Plan to Watch|Trending|Recently Added")
+    runStr("remove: neighbour left", out.rows[2].items[0].id, "mv2")
+    runStr("remove: key kept", out.rows[2].key, "continue_movies")
+    runStr("remove: focus on the neighbour", focusStr(out.focus), "2,0")
     ' The input rows are untouched (the scene swaps the list only once the
     ' server confirms).
-    runStr("remove: input untouched", rows[1].items.Count().ToStr(), "2")
+    runStr("remove: input untouched", rows[2].items.Count().ToStr(), "2")
 
-    out = HubRows_RemoveItem(rows, 1, "mv2")
-    runStr("remove: last tile focuses the new last", focusStr(out.focus), "1,0")
+    out = HubRows_RemoveItem(rows, 2, "mv2")
+    runStr("remove: last tile focuses the new last", focusStr(out.focus), "2,0")
 end sub
 
 sub testRemoveLastInRow()
     rows = HubRows_Build(ParseJson(hubJson()))
     out = HubRows_RemoveItem(rows, 0, "tv1")
-    runStr("remove: emptied row dropped", rowTitles(out.rows), "Continue Watching Movies|Next Up|Plan to Watch|Trending|Recently Added")
+    runStr("remove: emptied row dropped", rowTitles(out.rows), "Next Up|Continue Watching Movies|Plan to Watch|Trending|Recently Added")
     runStr("remove: focus moves to the row that slid up", focusStr(out.focus), "0,0")
 
     only = HubRows_Build({ continue_watching_tv: [{ id: "a", type: "episode" }] })
@@ -130,4 +133,23 @@ sub runBool(name as String, actual as Boolean, expected as Boolean)
     else
         print "FAIL: " + name + " — expected=" + expected.ToStr() + " actual=" + actual.ToStr()
     end if
+end sub
+
+sub testExtraRows()
+    hub = {
+        trending: [{ id: "t", type: "movie" }],
+        collection_rows: [{ collection_id: "C1", name: "Oscar Winners", items: [{ id: "c", type: "movie" }] }, { collection_id: "C2", name: "Empty", items: [] }],
+        recently_added_by_library: [{ library_id: "L1", library_name: "4K Movies", items: [{ id: "l", type: "movie" }] }]
+    }
+    rows = HubRows_Build(hub)
+    runStr("extra: rows", rowTitles(rows), "Oscar Winners|Trending|Recently Added in 4K Movies")
+    runStr("extra: keys", rows[0].key + "|" + rows[2].key, "collection:C1|library:L1")
+end sub
+
+sub testLayout()
+    rows = HubRows_Build(ParseJson(hubJson()))
+    layout = [{ key: "trending", enabled: true }, { key: "next_up", enabled: false }, { key: "gone", enabled: true }, { key: "trending", enabled: false }, { key: "plan_to_watch" }]
+    runStr("layout: order, hidden, unknown, duplicate, rest", rowTitles(HubRows_Order(rows, layout)), "Trending|Plan to Watch|Continue Watching TV Shows|Continue Watching Movies|Recently Added")
+    runStr("layout: none", rowTitles(HubRows_Order(rows, invalid)), rowTitles(rows))
+    runStr("layout: empty", rowTitles(HubRows_Order(rows, [])), rowTitles(rows))
 end sub

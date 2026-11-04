@@ -91,6 +91,8 @@
              network). HomeScene observes state="done" on it,
              then reads `result` for the parsed envelope. -->
         <HubFetchTask id="hubTask" />
+        <!-- The saved row order (hub_layout), fetched beside the hub. -->
+        <PreferencesFetchTask id="prefsTask" />
     </children>
 
 </component>

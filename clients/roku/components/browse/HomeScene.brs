@@ -47,8 +47,28 @@ sub init()
     m.historyBtn.observeField("buttonSelected", "onHistoryPressed")
     m.librariesBtn.observeField("buttonSelected", "onLibrariesPressed")
 
-    ' Kick off the fetch. Task nodes start when control=RUN.
+    ' Kick off the fetches. Task nodes start when control=RUN. The rows
+    ' render once both the hub and the preferences (the saved row order)
+    ' are in; a failed preferences fetch means the default order.
+    m.prefsTask = m.top.findNode("prefsTask")
+    m.prefsTask.observeField("state", "onPrefsTaskState")
+    m.layout = invalid
+    m.prefsDone = false
+    m.pendingHub = invalid
     m.hubTask.control = "RUN"
+    m.prefsTask.control = "RUN"
+end sub
+
+sub onPrefsTaskState()
+    if m.prefsTask.state <> "done" then return
+    p = m.prefsTask.result
+    if p <> invalid then m.layout = p.hub_layout
+    m.prefsDone = true
+    if m.pendingHub <> invalid
+        hub = m.pendingHub
+        m.pendingHub = invalid
+        showHub(hub)
+    end if
 end sub
 
 sub onSearchPressed()
@@ -88,8 +108,16 @@ sub onHubTaskState()
         return
     end if
 
+    if not m.prefsDone
+        m.pendingHub = hub
+        return
+    end if
+    showHub(hub)
+end sub
+
+sub showHub(hub as Object)
     m.loading.visible = false
-    m.hubRows = HubRows_Build(hub)
+    m.hubRows = HubRows_Order(HubRows_Build(hub), m.layout)
     renderRows()
     restoreFocus()
     getMainScene().callFunc("reportReady")
