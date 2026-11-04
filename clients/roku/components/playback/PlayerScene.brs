@@ -232,6 +232,7 @@ sub onItemIdSet()
         return
     end if
     m.started = true
+    m.nowPlaying = m.top.findNode("nowPlaying")
 
     m.itemTask.itemId = m.top.itemId
     m.itemTask.control = "RUN"
@@ -306,6 +307,7 @@ sub onItemTaskState()
     ' direct, remux or transcode, a refusal (too many streams, unsupported,
     ' damaged) or an optimized version. Audio plays straight away.
     m.localDecision = decision
+    if lcaseSafe(m.file.video_codec) = "" then showNowPlaying()
     if lcaseSafe(m.file.video_codec) <> ""
         startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
         return
@@ -721,6 +723,7 @@ end sub
 ' Up Next overlay lead-in.
 sub onVideoPosition()
     posMs = playheadMs()
+    if m.nowPlaying <> invalid and m.nowPlaying.visible then updateNowPlayingTime(posMs)
     updateActiveMarker(posMs)
     maybeShowUpNext(posMs)
     maybeReportProgress(posMs)
@@ -830,6 +833,7 @@ sub onChildrenTaskState()
     if kids = invalid or m.item = invalid then return
     nxt = nextSiblingOf(m.item, kids)
     if nxt <> invalid then m.nextSibling = nxt
+    updateNowPlayingNext()
 end sub
 
 sub maybeShowUpNext(posMs as Integer)
@@ -1775,3 +1779,88 @@ function speedLabel(rate as Float) as String
     if Abs(rate - 1) < 0.01 then return "1x (normal)"
     return Str(rate).Trim() + "x"
 end function
+
+' ── Now playing (audio) ────────────────────────────────────────────
+
+sub showNowPlaying()
+    m.nowPlaying.visible = true
+    m.top.findNode("npTitle").text = WatchState_Str(m.item.title)
+    m.top.findNode("npLine2").text = ""
+    m.top.findNode("npLine3").text = ""
+    setNowPlayingArt(nowPlayingArtPath(m.item))
+    updateNowPlayingNext()
+    ' The parent (album / book / podcast) and its parent (artist), for the
+    ' lines under the title and a cover when the item has none.
+    if m.item.parent_id <> invalid and m.item.parent_id <> ""
+        m.npParentTask = createObject("roSGNode", "ItemFetchTask")
+        m.npParentTask.observeField("state", "onNowPlayingParent")
+        m.npParentTask.itemId = m.item.parent_id
+        m.npParentTask.control = "RUN"
+    end if
+end sub
+
+function nowPlayingArtPath(it as Dynamic) as String
+    if it = invalid then return ""
+    for each p in [it.poster_path, it.thumb_path, it.fanart_path]
+        if p <> invalid and (type(p) = "String" or type(p) = "roString") and p <> "" then return p
+    end for
+    return ""
+end function
+
+sub setNowPlayingArt(path as String)
+    if path = "" then return
+    serverUrl = Prefs_GetServerUrl()
+    if serverUrl = invalid then return
+    url = AssetArtwork(serverUrl, path, 720, Prefs_GetAssetTokenStr())
+    m.top.findNode("npArt").uri = url
+    m.top.findNode("npBackdrop").uri = url
+end sub
+
+sub onNowPlayingParent()
+    t = m.npParentTask
+    if t = invalid or t.state <> "done" then return
+    parent = t.result
+    m.npParentTask = invalid
+    if parent = invalid then return
+    line = WatchState_Str(parent.title)
+    if m.top.findNode("npArt").uri = "" then setNowPlayingArt(nowPlayingArtPath(parent))
+    if m.item.type = "track" and parent.parent_id <> invalid and parent.parent_id <> ""
+        ' Album known; its parent is the artist.
+        m.top.findNode("npLine3").text = line
+        m.npArtistTask = createObject("roSGNode", "ItemFetchTask")
+        m.npArtistTask.observeField("state", "onNowPlayingArtist")
+        m.npArtistTask.itemId = parent.parent_id
+        m.npArtistTask.control = "RUN"
+    else
+        m.top.findNode("npLine2").text = line
+    end if
+end sub
+
+sub onNowPlayingArtist()
+    t = m.npArtistTask
+    if t = invalid or t.state <> "done" then return
+    artist = t.result
+    m.npArtistTask = invalid
+    if artist <> invalid then m.top.findNode("npLine2").text = WatchState_Str(artist.title)
+end sub
+
+sub updateNowPlayingTime(posMs as Integer)
+    total = streamDurationMs()
+    if m.item <> invalid and m.item.duration_ms <> invalid and m.item.duration_ms > 0 then total = m.item.duration_ms
+    fill = 0
+    if total > 0 then fill = Int(900 * posMs / total)
+    if fill > 900 then fill = 900
+    if fill < 0 then fill = 0
+    m.top.findNode("npFill").width = fill
+    label = Chapters_FormatTime(posMs)
+    if total > 0 then label = label + " / " + Chapters_FormatTime(total)
+    if Abs(m.rate - 1) > 0.01 then label = label + "    " + speedLabel(m.rate)
+    m.top.findNode("npTime").text = label
+end sub
+
+sub updateNowPlayingNext()
+    if m.nowPlaying = invalid or not m.nowPlaying.visible then return
+    txt = ""
+    if m.nextSibling <> invalid then txt = "Up next: " + WatchState_Str(m.nextSibling.title)
+    m.top.findNode("npNext").text = txt
+end sub

@@ -41,6 +41,7 @@
 
     <script type="text/brightscript" uri="PlayerScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
     <!-- No Client.brs: this scene runs on the render thread, which has no
          roUrlTransfer. Its requests go through ApiCallTask / the fetch
          Tasks / MainScene.runDetachedCall. -->
@@ -59,6 +60,66 @@
                width="1920"
                height="1080"
                translation="[0,0]" />
+
+        <!-- Now playing, for audio (music, audiobooks, podcasts): the
+             cover, title, artist / album (or book, or podcast), progress
+             and what's next. The Video node plays the audio underneath. -->
+        <Group id="nowPlaying" visible="false">
+            <Rectangle width="1920" height="1080" color="0x0C0C12FF" />
+            <Poster id="npBackdrop"
+                    width="1920"
+                    height="1080"
+                    loadDisplayMode="scaleToFill"
+                    opacity="0.18" />
+            <Rectangle width="1920" height="1080" color="0x0C0C1299" />
+            <Poster id="npArt"
+                    translation="[160, 210]"
+                    width="620"
+                    height="620"
+                    loadDisplayMode="scaleToFit" />
+            <Label id="npTitle"
+                   translation="[860, 300]"
+                   width="900"
+                   wrap="true"
+                   maxLines="2"
+                   font="font:LargeBoldSystemFont"
+                   color="0xFFFFFFFF" />
+            <Label id="npLine2"
+                   translation="[860, 440]"
+                   width="900"
+                   font="font:MediumSystemFont"
+                   color="0xE8E8EEFF" />
+            <Label id="npLine3"
+                   translation="[860, 490]"
+                   width="900"
+                   font="font:SmallSystemFont"
+                   color="0xA0A0AAFF" />
+            <Rectangle id="npTrack"
+                       translation="[860, 600]"
+                       width="900"
+                       height="8"
+                       color="0xFFFFFF33" />
+            <Rectangle id="npFill"
+                       translation="[860, 600]"
+                       width="0"
+                       height="8"
+                       color="0x7C6AF7FF" />
+            <Label id="npTime"
+                   translation="[860, 625]"
+                   width="900"
+                   font="font:SmallSystemFont"
+                   color="0xA0A0AAFF" />
+            <Label id="npNext"
+                   translation="[860, 720]"
+                   width="900"
+                   font="font:SmallSystemFont"
+                   color="0xC8C8D0FF" />
+            <Label translation="[160, 960]"
+                   width="1600"
+                   font="font:SmallSystemFont"
+                   color="0x7A7A88FF"
+                   text="Down: options    Back: stop" />
+        </Group>
 
         <!-- Skip Intro / Skip Credits overlay. Visible while the
              playhead is inside an active marker window; the user
