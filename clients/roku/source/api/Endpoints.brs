@@ -47,7 +47,12 @@ end function
 ' the focus-feedback render starts dropping frames on lower-tier
 ' Roku hardware. Bigger libraries page on scroll once that lands.
 function ApiLibraryItems(libraryId as String) as String
-    return "/api/v1/libraries/" + libraryId + "/items?limit=200"
+    return ApiLibraryItemsPage(libraryId, 0, 200)
+end function
+
+' One page of a library (the server caps limit at 200), by title.
+function ApiLibraryItemsPage(libraryId as String, offset as Integer, limit as Integer) as String
+    return "/api/v1/libraries/" + libraryId + "/items?sort=title&sort_dir=asc&limit=" + limit.ToStr() + "&offset=" + offset.ToStr()
 end function
 
 function ApiSearch() as String

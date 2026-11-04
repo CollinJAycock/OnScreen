@@ -123,6 +123,7 @@ sub onQueryChange()
 end sub
 
 sub onDebounceFire()
+    m.task = renewTask(m.task, "SearchTask", "onSearchState")
     m.task.query = m.queryField.text
     m.task.control = "RUN"
     m.status.text = "Searching…"
@@ -275,4 +276,14 @@ function getMainScene() as Object
         node = node.getParent()
     end while
     return node
+end function
+
+' A fresh Task for every run: on a device a Task that has finished
+' ("done") never runs again when set to RUN (a second search hung on
+' "Searching..."; the library's second page never came).
+function renewTask(old as Dynamic, component as String, callback as String) as Object
+    if old <> invalid then old.unobserveField("state")
+    t = createObject("roSGNode", component)
+    t.observeField("state", callback)
+    return t
 end function

@@ -1000,6 +1000,8 @@ sub onMarkDone(res as Dynamic, ctx as Object)
     end if
     ' Show / season / child card: badges, the Play label and the Mark
     ' options all move — re-read them.
+    m.childrenTask = renewTask(m.childrenTask, "ChildrenFetchTask", "onChildrenTaskState")
+    m.childrenTask.itemId = m.top.itemId
     m.childrenTask.control = "RUN"
     if WatchState_IsContainer(m.item.type) then fetchUpNext()
 end sub
@@ -1063,4 +1065,14 @@ function getMainScene() as Object
         node = node.getParent()
     end while
     return node
+end function
+
+' A fresh Task for every run: on a device a Task that has finished
+' ("done") never runs again when set to RUN (a second search hung on
+' "Searching..."; the library's second page never came).
+function renewTask(old as Dynamic, component as String, callback as String) as Object
+    if old <> invalid then old.unobserveField("state")
+    t = createObject("roSGNode", component)
+    t.observeField("state", callback)
+    return t
 end function

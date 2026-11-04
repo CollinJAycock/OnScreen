@@ -381,6 +381,8 @@ end sub
 
 ' Fire the transcode start for a cached request at positionMs.
 sub runTranscodeStart(req as Object, positionMs as Integer)
+    ' A re-issue (track switch, burn-in) runs it again.
+    m.transcodeTask = renewTask(m.transcodeTask, "TranscodeStartTask", "onTranscodeTaskState")
     m.transcodeTask.itemId = req.itemId
     m.transcodeTask.fileId = req.fileId
     m.transcodeTask.height = req.height
@@ -976,6 +978,7 @@ sub onSyncTimerFire()
     ' slow/black-holed response shouldn't pile up overlapping runs.
     if m.syncInFlight = true then return
     m.syncInFlight = true
+    m.syncTask = renewTask(m.syncTask, "ItemFetchTask", "onSyncTaskState")
     m.syncTask.itemId = m.top.itemId
     m.syncTask.control = "RUN"
 end sub
@@ -1544,4 +1547,14 @@ function getMainScene() as Object
         node = node.getParent()
     end while
     return node
+end function
+
+' A fresh Task for every run: on a device a Task that has finished
+' ("done") never runs again when set to RUN (a second search hung on
+' "Searching..."; the library's second page never came).
+function renewTask(old as Dynamic, component as String, callback as String) as Object
+    if old <> invalid then old.unobserveField("state")
+    t = createObject("roSGNode", component)
+    t.observeField("state", callback)
+    return t
 end function
