@@ -30,8 +30,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -470,7 +468,10 @@ private fun PlayerHost(
     val screenPlayer: Player? = remember(videoPlayer) {
         val exo = videoPlayer ?: return@remember null
         if (source is PlaybackSource.Hls) {
-            HlsSessionPlayer(exo) { playerMediaSource(context, source, containerHint, loadedSideLoads.value) }
+            HlsSessionPlayer(
+                exo,
+                seekBeyond = { sessionMs -> vm.seekBeyondSession(sessionMs + vm.hlsOffsetMs) },
+            ) { playerMediaSource(context, source, containerHint, loadedSideLoads.value) }
         } else {
             exo
         }
@@ -485,6 +486,23 @@ private fun PlayerHost(
             CircularProgressIndicator(color = Color.White)
         }
         return
+    }
+
+    // What the PlayerView's controls see: on a remux / transcode session the
+    // content's clock (position from the file's start, the file's length)
+    // rather than the session's, which starts at 0 where the viewer resumed
+    // and grows as the server writes it. See ContentTimePlayer.
+    val viewPlayer: Player = remember(player, source) {
+        if (source is PlaybackSource.Hls) {
+            ContentTimePlayer(
+                inner = player,
+                offsetMs = { vm.hlsOffsetMs },
+                contentLengthMs = { vm.contentDurationMs(player.duration, false) },
+                seekOutside = { contentMs -> vm.seekBeyondSession(contentMs) },
+            )
+        } else {
+            player
+        }
     }
 
     // A screen bound to the item the service is playing shows before that
@@ -1142,17 +1160,15 @@ private fun PlayerHost(
                     val timeBar = findViewById<androidx.media3.ui.DefaultTimeBar?>(
                         androidx.media3.ui.R.id.exo_progress,
                     )
-                    // The TimeBar reports SESSION-relative positions; trickplay
-                    // cues are indexed against the whole file. Without the
-                    // offset, scrubbing a resumed transcode previews frames
-                    // hlsOffsetMs earlier than the thumb — the further into the
-                    // file the session started, the more wrong the preview.
+                    // The TimeBar reports content positions: on a session its
+                    // player is ContentTimePlayer, which counts from the file's
+                    // start, as trickplay's cues do.
                     timeBar?.addListener(object : androidx.media3.ui.TimeBar.OnScrubListener {
                         override fun onScrubStart(timeBar: androidx.media3.ui.TimeBar, position: Long) {
-                            vm.onScrubMove(position + vm.hlsOffsetMs)
+                            vm.onScrubMove(position)
                         }
                         override fun onScrubMove(timeBar: androidx.media3.ui.TimeBar, position: Long) {
-                            vm.onScrubMove(position + vm.hlsOffsetMs)
+                            vm.onScrubMove(position)
                         }
                         override fun onScrubStop(timeBar: androidx.media3.ui.TimeBar, position: Long, canceled: Boolean) {
                             vm.onScrubStop()
@@ -1166,8 +1182,8 @@ private fun PlayerHost(
             // rendering (and controlling) the released one, leaving a frozen
             // frame and dead transport controls for the rest of playback.
             update = { view ->
-                val attached = view.player !== player
-                if (attached) view.player = player
+                val attached = view.player !== viewPlayer
+                if (attached) view.player = viewPlayer
                 // Background music plays a real queue (the album), so offer the
                 // controller's shuffle toggle there; video has no queue.
                 view.setShowShuffleButton(serviceAudio)
@@ -1433,20 +1449,10 @@ private fun PlayerHost(
                 .collectAsStateWithLifecycle()
             rgDb?.let { ReplayGainReadout(it) }
         }
-        // Meta's requirement for media apps on Quest: a mute that silences
-        // this app only (the panel has no volume keys of its own).
+        // On a Quest: the app's own volume, with mute (the panel has no volume
+        // keys, and Meta asks media apps for a mute of their own).
         if (tv.onscreen.mobile.BuildConfig.IS_QUEST) {
-            var muted by remember { mutableStateOf(player.volume == 0f) }
-            IconButton(onClick = {
-                muted = !muted
-                player.volume = if (muted) 0f else 1f
-            }) {
-                Icon(
-                    if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
-                    contentDescription = if (muted) "Unmute" else "Mute",
-                    tint = Color.White,
-                )
-            }
+            AppVolumeButton(player)
         }
         if (ui.audioStreams.size > 1) {
             IconButton(onClick = { showAudioPicker = true }) {

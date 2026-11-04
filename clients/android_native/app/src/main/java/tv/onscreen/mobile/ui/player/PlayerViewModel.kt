@@ -1743,6 +1743,15 @@ class PlayerViewModel @Inject constructor(
         return null
     }
 
+    /** A seek to [contentPositionMs], past what the session has written:
+     *  restart the session there, with the same audio and any burned-in
+     *  subtitle. False off a session. */
+    fun seekBeyondSession(contentPositionMs: Long): Boolean {
+        val req = switchingTo() ?: return false
+        startSwitch(req, _state.value.targetAudioRow, contentPositionMs, subtitles = false)
+        return true
+    }
+
     /** The viewer picked Off or a text subtitle: a burned-in one is taken off
      *  by restarting the session without it at [currentPositionMs] (in the
      *  stream). Nothing to do when none is burned in. */
