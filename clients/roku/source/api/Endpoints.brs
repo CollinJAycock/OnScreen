@@ -55,6 +55,11 @@ function ApiLibraryItemsPage(libraryId as String, offset as Integer, limit as In
     return "/api/v1/libraries/" + libraryId + "/items?sort=title&sort_dir=asc&limit=" + limit.ToStr() + "&offset=" + offset.ToStr()
 end function
 
+' An audiobook's saved speed (GET -> { rate, source }) and saving one (PUT { rate }).
+function ApiItemPlaybackRate(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/playback-rate"
+end function
+
 ' Favorite (POST) / unfavorite (DELETE) an item.
 function ApiItemFavorite(itemId as String) as String
     return "/api/v1/items/" + itemId + "/favorite"

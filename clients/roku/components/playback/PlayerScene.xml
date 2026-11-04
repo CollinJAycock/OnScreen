@@ -135,6 +135,7 @@
                        translation="[24, 140]"
                        itemSize="[752, 56]"
                        numRows="11"
+                       vertFocusAnimationStyle="floatingFocus"
                        drawFocusFeedback="true"
                        focusBitmapUri="pkg:/images/pill.9.png"
                        focusBitmapBlendColor="0x7c6af7ff" />

@@ -12,7 +12,8 @@ sub runTranscodeStart()
         videoCopy: m.top.videoCopy,
         supportsHevc: m.top.supportsHevc,
         audioStreamIndex: m.top.audioStreamIndex,
-        burnSubtitleStreamIndex: m.top.burnSubtitleStreamIndex
+        burnSubtitleStreamIndex: m.top.burnSubtitleStreamIndex,
+        audioRate: m.top.audioRate
     }, m.top.positionMs)
     ' RequestSync rather than PostSync: a refused start carries its reason
     ' in the error envelope, and an admin stop (403 PLAYBACK_STOPPED) or

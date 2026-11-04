@@ -33,6 +33,8 @@
              image-based subtitle to burn into the picture; -1 = none.
              Burning always re-encodes the video (video_copy false). -->
         <field id="burnSubtitleStreamIndex" type="integer" value="-1" />
+        <!-- Audiobook speed (audio_rate); 0 or 1 = none. -->
+        <field id="audioRate" type="float" value="0" />
         <field id="result" type="assocArray" />
         <!-- Set when the server refused the start because an admin
              stopped this stream (403 PLAYBACK_STOPPED): the sentence to

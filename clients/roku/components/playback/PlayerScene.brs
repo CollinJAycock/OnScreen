@@ -217,6 +217,10 @@ sub init()
     ' fileId / queue, which it sets first), so the start waits for the
     ' field, as DetailScene's and the browse scenes' do.
     m.started = false
+    ' Audiobook speed: m.rate is the speed of the stream playing (its clock
+    ' runs at content / rate), m.bookRate the book's chosen speed.
+    m.rate = 1.0
+    m.bookRate = 1.0
     m.top.observeField("itemId", "onItemIdSet")
     if m.top.itemId <> invalid and m.top.itemId <> "" then onItemIdSet()
 end sub
@@ -306,7 +310,47 @@ sub onItemTaskState()
         startPlayerCall("POST", ApiItemPlaybackDecision(m.top.itemId), { file_id: m.file.id }, { action: "decision" }, true, invalid)
         return
     end if
+    ' A book starts at its saved speed (onPlayerCallDone "rate").
+    if isBook()
+        startPlayerCall("GET", ApiItemPlaybackRate(m.top.itemId), invalid, { action: "rate" }, true, invalid)
+        return
+    end if
     startPlayback(decision, -1)
+end sub
+
+function isBook() as Boolean
+    if m.item = invalid or m.item.type = invalid then return false
+    return m.item.type = "audiobook" or m.item.type = "audiobook_chapter"
+end function
+
+' Play the book at rate from posMs: direct at 1x, else a session with the
+' server's audio_rate. Stops whatever is playing first.
+sub playBookAt(rate as Float, posMs as Integer)
+    m.bookRate = rate
+    st = m.video.state
+    if st = "playing" or st = "paused" or st = "buffering" then m.video.control = "stop"
+    stopTranscodeSession()
+    m.item.view_offset_ms = posMs
+    if Abs(rate - 1) < 0.005
+        m.rate = 1.0
+        startPlayback(m.localDecision, -1)
+        return
+    end if
+    m.playbackMode = "transcode"
+    m.streamOffsetMs = 0
+    m.burnSubtitleIndex = -1
+    m.lastTranscodeRequest = {
+        itemId: m.top.itemId,
+        fileId: m.file.id,
+        height: 0,
+        videoCopy: false,
+        supportsHevc: false,
+        audioStreamIndex: -1,
+        burnSubtitleStreamIndex: -1,
+        audioRate: rate
+    }
+    m.sessionStartMs = posMs
+    runTranscodeStart(m.lastTranscodeRequest, posMs)
 end sub
 
 ' The server's play decision landed: refuse (too many streams, or a file
@@ -350,6 +394,7 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
     m.playbackMode = decision.mode
     m.streamOffsetMs = 0
     m.burnSubtitleIndex = -1
+    m.rate = 1.0
     if decision.mode = "direct"
         m.lastTranscodeRequest = invalid
         startDirectPlayback(serverUrl)
@@ -391,6 +436,8 @@ sub runTranscodeStart(req as Object, positionMs as Integer)
     m.transcodeTask.audioStreamIndex = req.audioStreamIndex
     m.transcodeTask.burnSubtitleStreamIndex = req.burnSubtitleStreamIndex
     m.transcodeTask.positionMs = positionMs
+    m.transcodeTask.audioRate = 0
+    if req.audioRate <> invalid then m.transcodeTask.audioRate = req.audioRate
     m.transcodeTask.control = "RUN"
 end sub
 
@@ -567,6 +614,17 @@ sub onTranscodeTaskState()
     else if m.sessionStartMs <> invalid
         wantMs = m.sessionStartMs
     end if
+    ' A book's session runs at the speed the server applied (audio_rate in
+    ' the reply; 0 or none = it couldn't, so the stream is at 1x).
+    m.rate = 1.0
+    if m.lastTranscodeRequest <> invalid and m.lastTranscodeRequest.audioRate <> invalid
+        applied = sess.audio_rate
+        if TranscodeRequest_IsNumber(applied) and applied > 0
+            m.rate = applied
+        else
+            m.bookRate = 1.0
+        end if
+    end if
     if reissued or wantMs > 0
         ' The session's content begins at start_offset_sec — the position
         ' it was asked for, the keyframe before it on a remux, or 0 for a
@@ -579,7 +637,7 @@ sub onTranscodeTaskState()
             m.streamOffsetMs = Int(startSec * 1000)
         end if
         if wantMs - m.streamOffsetMs >= 1000
-            content.playStart = Int((wantMs - m.streamOffsetMs) / 1000)
+            content.playStart = Int((wantMs - m.streamOffsetMs) / 1000 / m.rate)
         end if
     end if
     ' After m.streamOffsetMs is final: a session clock that starts
@@ -672,19 +730,19 @@ end sub
 ' where its stream starts, which for a re-issued session (audio switch,
 ' subtitle burn-in) is m.streamOffsetMs into the item.
 function playheadMs() as Integer
-    return m.streamOffsetMs + Int(m.video.position * 1000)
+    return m.streamOffsetMs + Int(m.video.position * 1000 * m.rate)
 end function
 
 ' The item's duration as the stream knows it, in ms; 0 when unknown.
 function streamDurationMs() as Integer
     if m.video.duration <= 0 then return 0
-    return m.streamOffsetMs + Int(m.video.duration * 1000)
+    return m.streamOffsetMs + Int(m.video.duration * 1000 * m.rate)
 end function
 
 ' Seek to a position in the item. A re-issued stream can't go back past
 ' its own start.
 sub seekToMs(ms as Dynamic)
-    rel = ms - m.streamOffsetMs
+    rel = (ms - m.streamOffsetMs) / m.rate
     if rel < 0 then rel = 0
     m.video.seek = rel / 1000
 end sub
@@ -911,6 +969,17 @@ sub onPlayerCallDone(evt as Object)
         else if parentalMsg <> ""
             onParentalLimit(parentalMsg)
         end if
+    else if ctx.action = "rate"
+        rate = 1.0
+        res = t.result
+        if res <> invalid and res.ok = true and res.data <> invalid
+            rv = res.data.rate
+            if TranscodeRequest_IsNumber(rv) and rv >= 0.5 and rv <= 3 then rate = rv
+        end if
+        startPos = 0
+        if m.item.view_offset_ms <> invalid then startPos = m.item.view_offset_ms
+        print "[player] book rate="; rate; " from "; startPos
+        playBookAt(rate, startPos)
     else if ctx.action = "decision"
         if parentalMsg <> ""
             onParentalLimit(parentalMsg)
@@ -1124,6 +1193,7 @@ function pickerModes() as Object
     if hasMultiAudio() then modes.push("audio")
     if hasSubtitles() then modes.push("subtitle")
     if hasChapters() then modes.push("chapter")
+    if isBook() then modes.push("speed")
     return modes
 end function
 
@@ -1154,7 +1224,7 @@ end function
 function pickerHint(mode as String) as String
     modes = pickerModes()
     if modes.Count() < 2 then return "Back to close"
-    names = { audio: "audio", subtitle: "subtitles", chapter: "chapters" }
+    names = { audio: "audio", subtitle: "subtitles", chapter: "chapters", speed: "speed" }
     listed = []
     for each md in modes
         listed.push(names[md])
@@ -1173,6 +1243,17 @@ sub openTrackPicker(mode as String)
         m.trackPickerTitle.text = "AUDIO  ·  " + pickerHint(mode)
         m.trackPickerList.content = buildAudioContent()
         m.trackPickerList.jumpToItem = m.activeAudioIndex
+    else if mode = "speed"
+        m.trackPickerTitle.text = "SPEED  ·  " + pickerHint(mode)
+        root = createObject("roSGNode", "ContentNode")
+        cur = 0
+        speeds = bookSpeeds()
+        for i = 0 to speeds.Count() - 1
+            root.createChild("ContentNode").title = speedLabel(speeds[i])
+            if Abs(speeds[i] - m.bookRate) < 0.01 then cur = i
+        end for
+        m.trackPickerList.content = root
+        m.trackPickerList.jumpToItem = cur
     else if mode = "chapter"
         m.trackPickerTitle.text = "CHAPTERS  ·  " + pickerHint(mode)
         root = createObject("roSGNode", "ContentNode")
@@ -1282,6 +1363,17 @@ end function
 ' LabelList delivers itemSelected when the user presses OK on a row.
 sub onTrackPickerSelect()
     idx = m.trackPickerList.itemSelected
+    ' A speed (books): save it for the book and replay from here at it.
+    if m.trackPickerMode = "speed"
+        speeds = bookSpeeds()
+        if idx >= 0 and idx < speeds.Count() and Abs(speeds[idx] - m.bookRate) > 0.01
+            rate = speeds[idx]
+            startPlayerCall("PUT", ApiItemPlaybackRate(m.top.itemId), { rate: rate }, { action: "rateSaved" }, true, invalid)
+            playBookAt(rate, playheadMs())
+        end if
+        closeTrackPicker()
+        return
+    end if
     ' A chapter: jump to its start. Direct play seeks; a server session
     ' (remux / transcode) restarts at the chapter, as a track switch
     ' restarts at the playhead: its playlist holds only what the server
@@ -1672,4 +1764,14 @@ function chapterCount(item as Object) as Integer
     f = item.files[0]
     if f = invalid or f.chapters = invalid or type(f.chapters) <> "roArray" then return 0
     return f.chapters.Count()
+end function
+
+function bookSpeeds() as Object
+    return [0.75, 1.0, 1.25, 1.5, 1.75, 2.0]
+end function
+
+' "1.25x"; 1 is "1x (normal)".
+function speedLabel(rate as Float) as String
+    if Abs(rate - 1) < 0.01 then return "1x (normal)"
+    return Str(rate).Trim() + "x"
 end function

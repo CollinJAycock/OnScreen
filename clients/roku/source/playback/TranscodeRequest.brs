@@ -46,6 +46,13 @@ function TranscodeRequest_Body(req as Object, positionMs as Integer) as Object
         supports_hevc: req.supportsHevc = true,
         segment_container: "ts"
     }
+    ' Server-side speed for an audiobook (audio_rate; the server applies it
+    ' to audio-only sources, pitch kept, and the stream's clock runs at
+    ' content / rate). Left out at 1x.
+    rate = req.audioRate
+    if TranscodeRequest_IsNumber(rate)
+        if rate > 0 and Abs(rate - 1) > 0.005 then body.audio_rate = rate
+    end if
     burn = TranscodeRequest_BurnIndex(req)
     if burn >= 0
         body.burn_subtitle_stream_index = burn
@@ -93,4 +100,9 @@ end function
 
 function TranscodeRequest_RefusalTitle() as String
     return "Can't switch tracks"
+end function
+
+function TranscodeRequest_IsNumber(v as Dynamic) as Boolean
+    t = type(v)
+    return t = "Float" or t = "roFloat" or t = "Double" or t = "roDouble" or t = "Integer" or t = "roInt" or t = "LongInteger"
 end function

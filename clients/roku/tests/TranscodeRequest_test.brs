@@ -44,6 +44,12 @@ sub testBodyPlain()
     runBool("body: remux keeps video_copy", b.video_copy, true)
     runBool("body: supports_hevc", b.supports_hevc, false)
     runBool("body: MPEG-TS segments (Dolby audio is silent in fMP4 on a Roku)", b.segment_container = "ts", true)
+    runBool("body: no audio_rate at 1x", b.DoesExist("audio_rate"), false)
+    sped = baseReq()
+    sped.audioRate = 1.5
+    runBool("body: audio_rate for a sped-up book", TranscodeRequest_Body(sped, 0).audio_rate = 1.5, true)
+    sped.audioRate = 1.0
+    runBool("body: audio_rate left out at 1.0", TranscodeRequest_Body(sped, 0).DoesExist("audio_rate"), false)
     runBool("body: default audio is null", b.audio_stream_index = invalid, true)
     runBool("body: no burn key", b.DoesExist("burn_subtitle_stream_index"), false)
     runBool("body: serialises audio as null", Instr(1, FormatJson(b), """audio_stream_index"":null") > 0, true)
