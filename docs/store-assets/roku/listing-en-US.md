@@ -47,7 +47,7 @@ limits are Roku's.
 | Asset | File |
 |---|---|
 | App poster (540×405) | `app-poster-540x405.png` (the same image as the manifest's `mm_icon_focus_fhd`) |
-| Screenshots (up to 6, 1920×1080) | `screenshots/` — taken on the Roku against the review server (open-licence demo media only) |
+| Screenshots (up to 6, 1920×1080) | `screenshots/01-home.jpg` … `06-photo.jpg`: Home (recently added rows), the Movies grid, Tears of Steel's page, Caminandes' page, music now playing (Kevin MacLeod, CC BY 4.0), a photo (Earthrise, NASA). Taken on the Roku against the review server; open-licence demo media only |
 
 ## App profile
 
@@ -87,9 +87,12 @@ to see them.
 
 | Media type | Content | Content ID |
 |---|---|---|
-| movie | A demo-library film | (from the review server) |
-| episode | A demo-library episode, if the demo library has a show | (from the review server) |
-| series | The same show's page | (from the review server) |
+| movie | Tears of Steel | `246dd9f5-4a39-46c8-a713-88859fd2b875` |
+| episode | Caminandes S1·E1, Llama Drama | `0e6a7f1e-5485-4cd8-9b9c-59e6e77518fd` |
+| series | Caminandes | `9f5e52a8-6738-4d14-8f85-384b3ed3139f` |
+
+All three checked on the Roku signed in as `reviewer` (2026-11-04): the
+movie and the episode start playing, the series opens its page.
 
 `movie` and `episode` start playback; `series` and `season` open the
 title's page (`source/util/DeepLink.brs`).
