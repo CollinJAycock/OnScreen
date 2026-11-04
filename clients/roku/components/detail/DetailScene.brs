@@ -38,6 +38,11 @@ sub init()
     m.mixBtn = m.top.findNode("mixBtn")
     m.markBtn = m.top.findNode("markBtn")
     m.statusBtn = m.top.findNode("statusBtn")
+    m.favBtn = m.top.findNode("favBtn")
+    ' Favorite (from the item's is_favorite); flipped at once on a press and
+    ' flipped back with a message if the server refuses, as the TV web app.
+    m.isFavorite = false
+    m.favoriteBusy = false
     m.reportBtn = m.top.findNode("reportBtn")
     m.childrenHeader = m.top.findNode("childrenHeader")
     m.childrenList = m.top.findNode("children")
@@ -94,6 +99,7 @@ sub init()
     m.mixBtn.observeField("buttonSelected", "onMixPressed")
     m.markBtn.observeField("buttonSelected", "onMarkPressed")
     m.statusBtn.observeField("buttonSelected", "onStatusPressed")
+    m.favBtn.observeField("buttonSelected", "onFavoritePressed")
     m.reportBtn.observeField("buttonSelected", "onReportPressed")
     m.childrenList.observeField("rowItemSelected", "onChildSelected")
     m.childrenList.observeField("rowItemFocused", "onChildFocused")
@@ -129,6 +135,10 @@ sub onItemTaskState()
     end if
     firstLoad = (m.item = invalid)
     m.item = item
+    if firstLoad
+        fav = item.is_favorite
+        m.isFavorite = (type(fav) = "Boolean" or type(fav) = "roBoolean") and fav
+    end if
     renderItem()
     ' Launched when this is a deep-linked title page (a no-op otherwise).
     if firstLoad then getMainScene().callFunc("reportReady")
@@ -320,6 +330,8 @@ sub renderButtons()
     m.mixBtn.visible = (t = "artist" or t = "album")
 
     ' Watchlist status, once its GET has landed.
+    m.favBtn.text = favoriteLabel()
+    m.favBtn.visible = true
     m.statusBtn.text = Watchlist_StatusButtonLabel(m.watchStatus)
     m.statusBtn.visible = (m.statusLoaded and Watchlist_SupportsStatus(t))
 
@@ -387,7 +399,7 @@ end sub
 
 ' Every action button in row order.
 function allButtons() as Object
-    return [m.playBtn, m.versionBtn, m.mixBtn, m.markBtn, m.statusBtn, m.reportBtn]
+    return [m.playBtn, m.versionBtn, m.mixBtn, m.markBtn, m.favBtn, m.statusBtn, m.reportBtn]
 end function
 
 sub focusButtons()
@@ -530,6 +542,31 @@ end sub
 
 ' The button moves only once the server has the change; a failure keeps
 ' the old value and says so.
+function favoriteLabel() as String
+    ' No ♥: Roku's system font has no glyph for it (an empty box).
+    if m.isFavorite then return "✓ Favorited"
+    return "+ Favorite"
+end function
+
+sub onFavoritePressed()
+    if m.item = invalid or m.favoriteBusy then return
+    was = m.isFavorite
+    m.favoriteBusy = true
+    m.isFavorite = not was
+    m.favBtn.text = favoriteLabel()
+    verb = "POST"
+    if was then verb = "DELETE"
+    startCall(verb, ApiItemFavorite(m.item.id), invalid, { action: "favorite", was: was })
+end sub
+
+sub onFavoriteDone(res as Dynamic, ctx as Object)
+    m.favoriteBusy = false
+    if res <> invalid and res.ok = true then return
+    m.isFavorite = (ctx.was = true)
+    m.favBtn.text = favoriteLabel()
+    Menu_ShowMessage("favoriteFailed", "Favorites", WatchState_WriteErrorText(res, "Couldn't update Favorites. Try again later."))
+end sub
+
 sub onStatusSetDone(res as Dynamic, ctx as Object)
     m.statusSaving = false
     if res = invalid or res.ok <> true
@@ -1052,6 +1089,8 @@ sub onApiCallDone(evt as Object)
         onWatchStatusDone(res)
     else if ctx.action = "statusSet"
         onStatusSetDone(res, ctx)
+    else if ctx.action = "favorite"
+        onFavoriteDone(res, ctx)
     end if
 end sub
 

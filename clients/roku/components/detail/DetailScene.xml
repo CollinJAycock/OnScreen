@@ -139,6 +139,9 @@
                         minWidth="360"
                         maxWidth="360"
                         visible="false" />
+                <OsButton id="favBtn"
+                        text=""
+                        visible="false" />
                 <OsButton id="statusBtn"
                         text=""
                         minWidth="440"

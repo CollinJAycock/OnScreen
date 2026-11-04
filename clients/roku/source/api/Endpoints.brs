@@ -55,6 +55,11 @@ function ApiLibraryItemsPage(libraryId as String, offset as Integer, limit as In
     return "/api/v1/libraries/" + libraryId + "/items?sort=title&sort_dir=asc&limit=" + limit.ToStr() + "&offset=" + offset.ToStr()
 end function
 
+' Favorite (POST) / unfavorite (DELETE) an item.
+function ApiItemFavorite(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/favorite"
+end function
+
 function ApiSearch() as String
     return "/api/v1/search"
 end function
