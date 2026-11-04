@@ -17,7 +17,7 @@ type sessionPlaybackMeta struct {
 	clientIP      string
 	reasons       []string
 	outW, outH    int
-	audioCodec    string // "aac" | "copy"
+	audioCodec    string // "aac" | "copy" | "eac3" / "ac3" (encoded for the receiver)
 	audioChannels int
 	// audioPassthrough: the copied track is bitstreamed to the client's
 	// receiver (audioPassthrough), not decoded by the client.

@@ -1157,7 +1157,8 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 	// it needs a worker that knows to (WorkerFeatureAudioPassthrough), a client
 	// that didn't ask for TS segments, and a video track (an audio-only
 	// session is always MPEG-TS). Failing any of those, they're converted to
-	// AAC as before. Only clients that declared audioPassthrough get any of
+	// AAC as before, or to E-AC-3 / AC-3 for the receiver (receiverAudioEncode
+	// below). Only clients that declared audioPassthrough get any of
 	// this: audioDecoder alone never widens the copy.
 	tsSegments := strings.EqualFold(body.SegmentContainer, "ts")
 	audioCopy, audioPassthrough := false, false
@@ -1219,6 +1220,24 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		audioCopy = false
 	}
 
+	// Audio that isn't copied is encoded: to AAC, or, for a client that
+	// bitstreams Dolby to a receiver, a multichannel track to E-AC-3 / AC-3
+	// (receiverAudioEncode), so a TrueHD film on a TS-segment client (Roku)
+	// or an old fleet still reaches the receiver as surround. Same bitrate
+	// limit as the copy; both codecs ride TS and fMP4, so nothing else here
+	// changes. audioChannels / audioKbps then describe that encode.
+	audioEncode := ""
+	audioKbps := streamCaps.Quality.aacKbps(audioChannels)
+	if !audioCopy && !sourceNoAudio {
+		bitrateLimited := streamCaps.BitrateKbps > 0 || streamCaps.Quality.MaxAudioBitrateKbps > 0
+		if codec, ch := receiverAudioEncode(caps, transcode.SourceAudioChannels(file.AudioStreams, audioStreamIdx),
+			sourceAudioOnly, bitrateLimited, func() bool {
+				return h.sessions != nil && h.sessions.FleetHasFeature(ctx, transcode.WorkerFeatureAudioDolbyEncode)
+			}); codec != "" {
+			audioEncode, audioChannels, audioKbps = codec, ch, transcode.DolbyEncodeKbps
+		}
+	}
+
 	// The session's HEVCOutput/AV1Output record the OUTPUT codec, which is what
 	// the playlist handler derives the segment container from. On a remux that
 	// is the SOURCE codec — and preferHEVC/preferAV1 above BOTH carry
@@ -1260,6 +1279,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		if decision == "transcode" {
 			playMeta.reasons = append(playMeta.reasons, passthroughReason(passthroughCodec))
 		}
+	}
+	if audioEncode != "" {
+		// Encoded for the receiver, which decodes it: marked as passthrough.
+		playMeta.audioCodec = audioEncode
+		playMeta.audioPassthrough = true
+		playMeta.reasons = append(playMeta.reasons,
+			receiverEncodeReason(transcode.SourceAudioCodec(file, audioStreamIdx), audioEncode))
 	}
 	if burn != nil {
 		// The burn-in is the reason when nothing else is (startReasons'
@@ -1363,11 +1389,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 			h.startABR(w, r, sessionID, segTok, sourceURL, claims.UserID, itemID, file, ladder, audioStreamIdx, audioChannels, isSourceHDR, abrCodec, body.PositionMS, maxSessionsPerUser, playMeta.apply,
 				func(s *transcode.Session) {
 					s.Parts = srcParts
-					s.AudioBitrateKbps = streamCaps.Quality.aacKbps(audioChannels)
+					s.AudioBitrateKbps = audioKbps
 					// Every rung copies the same passed-through track
 					// (muxed into each rung, as the AAC is); TrueHD and DTS
-					// make the whole ladder fMP4.
+					// make the whole ladder fMP4. Or every rung encodes the
+					// same E-AC-3 / AC-3 for the receiver.
 					s.AudioPassthroughCodec = passthroughCodec
+					s.AudioEncodeCodec = audioEncode
 					s.FMP4Segments = audioPassthrough
 					s.OutputLimits = outputLimits
 				})
@@ -1460,10 +1488,13 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 
 	// Audio passthrough when the remux was container-driven (see audioCopy
 	// above): "copy" reaches BuildHLS as `-c:a copy` with the AAC extras
-	// naturally skipped.
+	// naturally skipped. A receiver encode names its codec ("eac3" / "ac3").
 	jobAudioCodec := "aac"
-	if audioCopy {
+	switch {
+	case audioCopy:
 		jobAudioCodec = "copy"
+	case audioEncode != "":
+		jobAudioCodec = audioEncode
 	}
 
 	job := transcode.TranscodeJob{
@@ -1480,7 +1511,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		BitrateKbps:      jobBitrate,
 		AudioCodec:       jobAudioCodec,
 		AudioChannels:    audioChannels,
-		AudioBitrateKbps: streamCaps.Quality.aacKbps(audioChannels),
+		AudioBitrateKbps: audioKbps,
 		AudioStreamIndex: audioStreamIdx,
 		IsHEVC:           isSourceHEVC,
 		IsAV1:            isSourceAV1,
@@ -1522,6 +1553,7 @@ func (h *NativeTranscodeHandler) Start(w http.ResponseWriter, r *http.Request) {
 		"audio_channels", audioChannels,
 		"audio_passthrough", audioPassthrough,
 		"passthrough_codec", passthroughCodec,
+		"audio_encode", audioEncode,
 		"output_limits", outputLimits != nil,
 		"burn_subtitle", burn != nil,
 		"dolby_vision", string(dvMode),

@@ -709,7 +709,9 @@ func sessionOutput(s *transcode.Session, src *media.File, bitrateKbps *int) *str
 		}
 		out.AudioPassthrough = s.OutputAudioPassthrough
 	default:
+		// "aac", or "eac3" / "ac3" encoded for the receiver (passthrough).
 		out.AudioCodec = s.OutputAudioCodec
+		out.AudioPassthrough = s.OutputAudioPassthrough
 	}
 	return out
 }

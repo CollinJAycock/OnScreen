@@ -196,6 +196,28 @@ AV receiver undecoded (HDMI/S/PDIF bitstreaming: Android TV's
   burn-in doesn't stop the copy (it only touches the picture). Now Playing
   marks the output `audio_passthrough` and adds "TrueHD audio passed through
   to the receiver" to a transcode's reasons.
+- **Receiver encode** (remux or transcode; after v2.7): where the track
+  isn't copied and would be **encoded to AAC** (TrueHD/DTS on a client that
+  asked for TS segments, e.g. Roku; TrueHD/DTS on an old fleet; a codec the
+  client doesn't list), a client whose `audioPassthrough` lists `eac3` gets
+  **E-AC-3** instead, or **AC-3** when it lists only `ac3`, since AAC can't be
+  bitstreamed and a receiver would get no surround. ffmpeg's native encoders:
+  `-c:a eac3|ac3 -ac min(source, 6) -b:a 640k` (5.1 at most; a 7.1 track gets
+  ffmpeg's default downmix, as the AAC path does), with the AAC encode's
+  alignment (`aresample=async=1` from the start, `-avoid_negative_ts
+  make_zero` from mid-file: these encoders prime 256 samples). Both ride
+  MPEG-TS and fMP4, so the segment container isn't touched. Single rendition
+  and every ABR rung alike; the master's `CODECS` names `ec-3` / `ac-3` (HEVC
+  and AV1 ladders; H.264 ladders advertise no `CODECS`) and `BANDWIDTH`
+  counts 640 kbps. Only for a **multichannel** source (more than 2 channels:
+  a stereo track stays AAC, which every client decodes), not for an
+  audio-only file, not under a bitrate limit (same rule as the copy), and
+  only on a fleet with the `audio_dolby_encode` worker feature (an older
+  worker wouldn't know the codec value; without one, AAC as before). The
+  copy rules above win: AC-3/E-AC-3 sources are still copied, and TrueHD/DTS
+  still go into fMP4 where they can. Now Playing reports the output codec
+  (`eac3` / `ac3`, 6 channels) with `audio_passthrough` set, and adds
+  "TrueHD audio converted to E-AC-3 for the receiver" to the reasons.
 
 It's opt-in on purpose: `audioDecoder` alone never widens the copy, since a
 client may list a codec there it can demux but not output (the phone lists

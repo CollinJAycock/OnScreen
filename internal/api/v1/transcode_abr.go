@@ -254,22 +254,24 @@ func (h *NativeTranscodeHandler) serveABRMaster(w http.ResponseWriter, r *http.R
 	if len(sess.ABRRenditions) > 0 {
 		topH := sess.ABRRenditions[0].Height // [0] = tallest rung
 		// The rungs' level is held to the client's declared one, and their
-		// audio may be a passed-through track: CODECS names both.
+		// audio may be a passed-through track or E-AC-3 / AC-3 encoded for
+		// the receiver: CODECS names both.
+		audioCodec := abrAudioCodec(sess)
 		levelCap := 0
 		switch {
 		case sess.AV1Output:
 			if sess.OutputLimits != nil {
 				levelCap = sess.OutputLimits.AV1Level
 			}
-			codecs = transcode.MasterCodecs(transcode.LadderAV1, topH, levelCap, sess.AudioPassthroughCodec)
+			codecs = transcode.MasterCodecs(transcode.LadderAV1, topH, levelCap, audioCodec)
 		case sess.HEVCOutput:
 			if sess.OutputLimits != nil {
 				levelCap = sess.OutputLimits.HEVCLevel
 			}
-			codecs = transcode.MasterCodecs(transcode.LadderHEVC, topH, levelCap, sess.AudioPassthroughCodec)
+			codecs = transcode.MasterCodecs(transcode.LadderHEVC, topH, levelCap, audioCodec)
 		}
 	}
-	audioKbps := transcode.PassthroughAudioKbps(sess.AudioPassthroughCodec)
+	audioKbps := abrAudioKbps(sess)
 	master := transcode.BuildMasterPlaylistAudio(sess.ABRRenditions, codecs, audioKbps, func(rd transcode.Rendition) string {
 		return publicSeg(h.segBase(), fmt.Sprintf("/api/v1/transcode/sessions/%s/abr/%s/index.m3u8?token=%s", sess.ID, rd.Label, token))
 	})
@@ -922,12 +924,42 @@ func findRung(rends []transcode.Rendition, label string) *transcode.Rendition {
 
 // abrRungAudioCodec is a rung child's audio: "copy" when the parent passes a
 // track through to the client's receiver (every rung carries the same
-// copied track), else AAC.
+// copied track), "eac3" / "ac3" when every rung encodes that for the
+// receiver, else AAC.
 func abrRungAudioCodec(parent *transcode.Session) string {
-	if parent.AudioPassthroughCodec != "" {
+	switch {
+	case parent.AudioPassthroughCodec != "":
 		return "copy"
+	case transcode.IsDolbyEncode(parent.AudioEncodeCodec):
+		return parent.AudioEncodeCodec
 	}
 	return "aac"
+}
+
+// abrAudioCodec is the codec of the rungs' muxed audio as the master
+// playlist's CODECS names it (transcode.AudioCodecString): the
+// passed-through track's, the receiver encode's, or "" for AAC.
+func abrAudioCodec(parent *transcode.Session) string {
+	if parent.AudioPassthroughCodec != "" {
+		return parent.AudioPassthroughCodec
+	}
+	if transcode.IsDolbyEncode(parent.AudioEncodeCodec) {
+		return parent.AudioEncodeCodec
+	}
+	return ""
+}
+
+// abrAudioKbps is the master playlist's BANDWIDTH allowance for the rungs'
+// audio: the passed-through track's estimate, the receiver encode's
+// bitrate, or 0 for the AAC allowance.
+func abrAudioKbps(parent *transcode.Session) int {
+	if parent.AudioPassthroughCodec != "" {
+		return transcode.PassthroughAudioKbps(parent.AudioPassthroughCodec)
+	}
+	if transcode.IsDolbyEncode(parent.AudioEncodeCodec) {
+		return transcode.DolbyEncodeKbps
+	}
+	return 0
 }
 
 // abrRungFMP4Audio reports whether the rungs copy TrueHD or DTS, which only
