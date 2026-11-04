@@ -1612,7 +1612,8 @@ private fun PlayerHost(
         // video_codec so audiobooks and music don't surface a PiP
         // button that would just shrink the album art.
         val hasVideo = ui.item?.files?.firstOrNull()?.video_codec != null
-        if (hasVideo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+        // None on a Quest: a panel has no picture-in-picture.
+        if (hasVideo && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && !tv.onscreen.mobile.BuildConfig.IS_QUEST) {
             IconButton(onClick = { enterPip(context as? Activity) }) {
                 Icon(Icons.Default.PictureInPicture, contentDescription = "Picture in picture", tint = Color.White)
             }

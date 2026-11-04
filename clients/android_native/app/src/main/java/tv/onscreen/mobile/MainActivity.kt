@@ -115,6 +115,9 @@ class MainActivity : FragmentActivity() {
      *  next to first-party apps. */
     private fun updatePipParams() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) return
+        // A Quest panel has no picture-in-picture (the quest manifest turns
+        // it off too).
+        if (BuildConfig.IS_QUEST) return
         val playing = ActiveVideoTracker.isPlaying()
         try {
             val builder = PictureInPictureParams.Builder()
@@ -146,6 +149,7 @@ class MainActivity : FragmentActivity() {
         // would double-fire. Pre-12 still needs the manual call.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        if (BuildConfig.IS_QUEST) return
         if (!ActiveVideoTracker.isPlaying()) return
         if (isInPictureInPictureMode) return
         try {

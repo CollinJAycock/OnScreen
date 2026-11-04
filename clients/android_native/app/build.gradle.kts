@@ -114,6 +114,10 @@ android {
             dimension = "platform"
             applicationId = "tv.onscreen.quest"
             minSdk = 29
+            // Meta requires 64-bit binaries (VRC.Quest.Packaging.6), and
+            // every Quest is arm64; x86_64 keeps the build running on an
+            // emulator (the store screenshots).
+            ndk { abiFilters += listOf("arm64-v8a", "x86_64") }
             buildConfigField("boolean", "CAST_ENABLED", "false")
             buildConfigField("boolean", "IS_QUEST", "true")
         }

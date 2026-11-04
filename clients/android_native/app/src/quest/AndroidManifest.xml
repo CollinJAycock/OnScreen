@@ -52,6 +52,8 @@
         <activity
             android:name=".MainActivity"
             android:excludeFromRecents="true"
+            android:supportsPictureInPicture="false"
+            tools:replace="android:supportsPictureInPicture"
             tools:node="merge">
             <layout
                 android:defaultWidth="1024dp"

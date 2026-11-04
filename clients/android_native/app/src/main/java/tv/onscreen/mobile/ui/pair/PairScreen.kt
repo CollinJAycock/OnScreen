@@ -236,7 +236,8 @@ private fun ServerReadyChoice(
         }
     }
     Spacer(Modifier.height(16.dp))
-    Button(onClick = onPair) { Text("Pair this phone") }
+    // "phone" was wrong on a tablet or a Quest headset.
+    Button(onClick = onPair) { Text(if (tv.onscreen.mobile.BuildConfig.IS_QUEST) "Pair this headset" else "Pair this device") }
     // SSO bridge — when the server has OIDC or SAML enabled, offer
     // a one-tap Custom Tabs flow. Behind the scenes: request a pair
     // PIN, open the web /pair page in a Custom Tabs window with the
