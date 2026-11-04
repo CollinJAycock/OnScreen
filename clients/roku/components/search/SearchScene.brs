@@ -43,6 +43,13 @@ sub init()
     m.top.initialFocus = m.queryField
     m.restore = invalid
     m.top.observeField("restoreState", "onRestoreState")
+    ' Search in: "" is every library. Lasts as long as the screen (Back
+    ' from a result hands it back with the query).
+    m.scopeId = ""
+    m.scopeName = ""
+    m.libraries = invalid
+    m.scopeBtn = m.top.findNode("scopeBtn")
+    m.scopeBtn.observeField("buttonSelected", "onScopePressed")
 end sub
 
 ' ── Filter chips ───────────────────────────────────────────────────
@@ -127,6 +134,7 @@ end sub
 sub onDebounceFire()
     m.task = renewTask(m.task, "SearchTask", "onSearchState")
     m.task.query = m.queryField.text
+    m.task.libraryId = m.scopeId
     m.task.control = "RUN"
     m.status.text = "Searching…"
 end sub
@@ -231,9 +239,20 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
                 m.queryField.setFocus(true)
                 return true
             end if
+            if key = "up"
+                m.scopeBtn.setFocus(true)
+                return true
+            end if
             return false
         end if
     end for
+    if m.scopeBtn.hasFocus()
+        if key = "down"
+            chips[m.chipIndex].setFocus(true)
+            return true
+        end if
+        return key = "up" or key = "left" or key = "right"
+    end if
     if m.results.isInFocusChain() and (key = "left" or key = "up")
         m.queryField.setFocus(true)
         return true
@@ -298,7 +317,7 @@ end function
 ' ── Back to the query and the result the viewer opened ─────────────
 
 sub saveFocus()
-    st = { query: m.queryField.text }
+    st = { query: m.queryField.text, scopeId: m.scopeId, scopeName: m.scopeName }
     f = m.results.rowItemSelected
     if f <> invalid and f.Count() >= 2
         st.row = f[0]
@@ -311,6 +330,11 @@ end sub
 ' focused when the answer lands.
 sub onRestoreState()
     rs = m.top.restoreState
+    if rs <> invalid and rs.scopeId <> invalid and rs.scopeId <> ""
+        m.scopeId = rs.scopeId
+        m.scopeName = rs.scopeName
+        updateScopeButton()
+    end if
     if rs = invalid or rs.query = invalid or rs.query = "" then return
     m.restore = rs
     m.queryField.text = rs.query
@@ -330,4 +354,65 @@ sub restoreResultFocus()
     if i < 0 then i = 0
     m.results.jumpToRowItem = [r, i]
     m.results.setFocus(true)
+end sub
+
+' ── Search in (library scope) ──────────────────────────────────────
+
+sub updateScopeButton()
+    if m.scopeId = "" then m.scopeBtn.text = "Search in: All libraries" else m.scopeBtn.text = "Search in: " + m.scopeName
+end sub
+
+' The libraries come from the server the first time, then open as a menu.
+sub onScopePressed()
+    if m.libraries <> invalid
+        showScopeMenu()
+        return
+    end if
+    m.libTask = createObject("roSGNode", "ListFetchTask")
+    m.libTask.observeField("state", "onLibrariesLoaded")
+    m.libTask.path = ApiLibraries()
+    m.libTask.control = "RUN"
+end sub
+
+sub onLibrariesLoaded()
+    if m.libTask = invalid or m.libTask.state <> "done" then return
+    rows = m.libTask.result
+    m.libTask = invalid
+    m.libraries = []
+    if rows <> invalid
+        for each l in rows
+            if l <> invalid and l.id <> invalid and l.name <> invalid then m.libraries.push({ id: l.id, name: l.name })
+        end for
+    end if
+    showScopeMenu()
+end sub
+
+sub showScopeMenu()
+    labels = ["All libraries"]
+    for each l in m.libraries
+        labels.push(l.name)
+    end for
+    Menu_Show("scope", "Search in", "", labels)
+end sub
+
+sub onMenuChoice(menuId as String, index as Integer)
+    m.scopeBtn.setFocus(true)
+    if menuId <> "scope" or index < 0 then return
+    id = ""
+    name = ""
+    if index > 0
+        id = m.libraries[index - 1].id
+        name = m.libraries[index - 1].name
+    end if
+    if id = m.scopeId then return
+    m.scopeId = id
+    m.scopeName = name
+    updateScopeButton()
+    ' Search again in the new scope; the old scope's results go now.
+    q = m.queryField.text
+    if q <> invalid and Len(q) >= 2
+        m.rawResults = []
+        renderResults()
+        onDebounceFire()
+    end if
 end sub

@@ -10,6 +10,8 @@
 
     <interface>
         <field id="query" type="string" />
+        <!-- Narrows the search to one library (library_id); "" = all. -->
+        <field id="libraryId" type="string" />
         <field id="result" type="array" />
     </interface>
 
