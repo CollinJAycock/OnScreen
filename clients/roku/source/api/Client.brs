@@ -107,7 +107,7 @@ end function
 '   hdr10  - the display takes HDR10
 '   hlg    - the display takes HLG
 function Client_DeviceCaps() as Object
-    caps = { hevc: false, hevc10: false, uhd: false, hdr10: false, hlg: false }
+    caps = { hevc: false, hevc10: false, uhd: false, hdr10: false, hlg: false, aacChannels: 2, passthrough: [] }
     info = CreateObject("roDeviceInfo")
     if info = invalid then return caps
     ' Called directly: naming a method to test it (info.CanDecodeVideo <>
@@ -124,6 +124,21 @@ function Client_DeviceCaps() as Object
         caps.hdr10 = Client_IsTrue(props.Hdr10)
         caps.hlg = Client_IsTrue(props.HLG)
     end if
+    ' AAC's channel limit: "2:0:0:0:" on a Streaming Stick 4K, whose AAC
+    ' decoder is stereo. maxAudioChannels caps every codec but the
+    ' passthrough ones, so a 5.1 source is downmixed to a stereo AAC the
+    ' Roku can decode, while Dolby for a receiver keeps its channels.
+    decodeInfo = info.GetAudioDecodeInfo()
+    if decodeInfo <> invalid and Prefs_IsString(decodeInfo.AAC)
+        n = Val(decodeInfo.AAC.Split(":")[0])
+        if n >= 1 then caps.aacChannels = Int(n)
+    end if
+    ' What the HDMI sink takes as a bitstream (a receiver, or the TV):
+    ' AC-3 and E-AC-3 on that Roku, never TrueHD or DTS.
+    for each codec in ["ac3", "eac3"]
+        r = info.CanDecodeAudio({ Codec: codec, PassThru: 1 })
+        if r <> invalid and Client_IsTrue(r.result) then caps.passthrough.Push(codec)
+    end for
     return caps
 end function
 
@@ -152,7 +167,9 @@ function Client_CapabilitiesHeaderFor(caps as Object) as String
     else
         header = header + ",maxWidth=1920,maxHeight=1080"
     end if
-    header = header + ",maxAudioChannels=6"
+    aacCh = 2
+    if caps.aacChannels <> invalid and caps.aacChannels >= 1 then aacCh = caps.aacChannels
+    header = header + ",maxAudioChannels=" + aacCh.ToStr()
     if caps.hevc = true and caps.hevc10 = true
         header = header + ",maxbitdepth=10"
     else
@@ -169,6 +186,9 @@ function Client_CapabilitiesHeaderFor(caps as Object) as String
         end if
     else
         header = header + ",hdr=0"
+    end if
+    if caps.passthrough <> invalid and caps.passthrough.Count() > 0
+        header = header + ",audioPassthrough=" + caps.passthrough.Join(":")
     end if
     header = header + ",optimized=1"
     return header
