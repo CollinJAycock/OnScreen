@@ -18,6 +18,19 @@ sub init()
     if serverUrl <> invalid then m.urlLabel.text = serverUrl + "/pair"
 
     m.task.control = "RUN"
+    ' Which single sign-on the web pair page offers, if any (both probes
+    ' are public; a failed one counts as off).
+    m.ssoResults = {}
+    m.ssoTasks = []
+    for each kind in ["oidc", "saml"]
+        t = createObject("roSGNode", "ApiCallTask")
+        t.path = "/api/v1/auth/" + kind + "/enabled"
+        t.auth = false
+        t.context = { kind: kind }
+        t.observeField("state", "onSsoProbe")
+        m.ssoTasks.push(t)
+        t.control = "RUN"
+    end for
     m.cancelBtn.setFocus(true)
     m.top.initialFocus = m.cancelBtn
 end sub
@@ -35,6 +48,18 @@ sub onPhaseChanged()
         if msg = invalid or msg = "" then msg = "Couldn't reach server"
         m.status.text = msg + " — retrying…"
     end if
+end sub
+
+sub onSsoProbe(evt as Object)
+    t = evt.getRoSGNode()
+    if t.state <> "done" then return
+    res = t.result
+    data = invalid
+    if res <> invalid and res.ok = true then data = res.data
+    m.ssoResults[t.context.kind] = { data: data }
+    if m.ssoResults.Count() < 2 then return
+    m.ssoTasks = []
+    m.top.findNode("ssoHint").text = ApiResult_SsoHint(m.ssoResults.oidc.data, m.ssoResults.saml.data)
 end sub
 
 sub onPinChanged()

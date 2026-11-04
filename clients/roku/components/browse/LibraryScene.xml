@@ -18,6 +18,13 @@
         <field id="itemId" type="string" />
         <!-- The library's name for the heading (from the Libraries list). -->
         <field id="heading" type="string" onChange="onHeading" />
+        <!-- The library's kind (movie, show, home_video, ...): its default
+             sort and whether watch / genre filters apply. -->
+        <field id="libraryType" type="string" />
+        <!-- Where the viewer is, saved by MainScene on leaving (focusState)
+             and handed back on Back (restoreState). -->
+        <field id="focusState" type="assocArray" />
+        <field id="restoreState" type="assocArray" />
     </interface>
 
     <script type="text/brightscript" uri="LibraryScene.brs" />
@@ -25,13 +32,28 @@
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
     <script type="text/brightscript" uri="pkg:/components/common/CardFields.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/LibraryView.brs" />
 
     <children>
         <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
+            <!-- Sort and filters, right of the heading; Up from the
+                 grid's first row reaches them, Down goes back. -->
+            <LayoutGroup id="viewButtons"
+                         translation="[1840, 52]"
+                         layoutDirection="horiz"
+                         horizAlignment="right"
+                         itemSpacings="[16]">
+                <OsButton id="sortBtn" size="small" height="56" />
+                <OsButton id="watchBtn" size="small" height="56" />
+                <OsButton id="genreBtn" size="small" height="56" />
+            </LayoutGroup>
+
             <Label id="title"
                    text="Library"
+                   width="880"
                    translation="[80, 50]"
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />

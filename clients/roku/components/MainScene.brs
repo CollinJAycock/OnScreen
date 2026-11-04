@@ -135,6 +135,10 @@ sub navigateToWithParams(name as String, itemId as String, params as Object)
     end if
     if isRootScene(name)
         m.navStack = []
+    else if m.navStack.Count() > 0 and m.currentChild <> invalid and m.currentChild.hasField("focusState")
+        ' The scene being left records where the viewer was (its focused
+        ' card, a search query); Back hands it back as restoreState.
+        m.navStack.peek().saved = m.currentChild.focusState
     end if
     m.navStack.push({ name: name, itemId: itemId, params: params })
     mountScene(name, itemId, params)
@@ -220,6 +224,9 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
     ' Drop the current frame and re-mount the one beneath it.
     m.navStack.pop()
     parent = m.navStack.peek()
-    mountScene(parent.name, parent.itemId, parent.params)
+    params = {}
+    if parent.params <> invalid then params.Append(parent.params)
+    if parent.saved <> invalid then params.restoreState = parent.saved
+    mountScene(parent.name, parent.itemId, params)
     return true
 end function

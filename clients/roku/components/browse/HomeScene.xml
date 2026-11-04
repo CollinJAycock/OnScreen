@@ -13,6 +13,12 @@
     referenced via itemComponentName.
 -->
 <component name="HomeScene" extends="Group">
+    <interface>
+        <!-- Where the viewer is, saved by MainScene on leaving (focusState)
+             and handed back on Back (restoreState). -->
+        <field id="focusState" type="assocArray" />
+        <field id="restoreState" type="assocArray" />
+    </interface>
 
     <script type="text/brightscript" uri="HomeScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
@@ -85,6 +91,10 @@
              network). HomeScene observes state="done" on it,
              then reads `result` for the parsed envelope. -->
         <HubFetchTask id="hubTask" />
+        <!-- The saved row order (hub_layout), fetched beside the hub. -->
+        <PreferencesFetchTask id="prefsTask" />
+        <!-- The Collections row (GET /collections). -->
+        <ListFetchTask id="colsTask" />
     </children>
 
 </component>

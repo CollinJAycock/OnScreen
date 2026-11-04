@@ -47,27 +47,70 @@ sub init()
     m.historyBtn.observeField("buttonSelected", "onHistoryPressed")
     m.librariesBtn.observeField("buttonSelected", "onLibrariesPressed")
 
-    ' Kick off the fetch. Task nodes start when control=RUN.
+    ' Kick off the fetches. Task nodes start when control=RUN. The rows
+    ' render once both the hub and the preferences (the saved row order)
+    ' are in; a failed preferences fetch means the default order.
+    m.prefsTask = m.top.findNode("prefsTask")
+    m.prefsTask.observeField("state", "onPrefsTaskState")
+    m.layout = invalid
+    m.prefsDone = false
+    m.pendingHub = invalid
+    m.colsTask = m.top.findNode("colsTask")
+    m.colsTask.observeField("state", "onColsTaskState")
+    m.colsTask.path = "/api/v1/collections"
+    m.collections = invalid
+    m.colsDone = false
     m.hubTask.control = "RUN"
+    m.prefsTask.control = "RUN"
+    m.colsTask.control = "RUN"
+end sub
+
+sub onColsTaskState()
+    if m.colsTask.state <> "done" then return
+    m.collections = m.colsTask.result
+    m.colsDone = true
+    maybeShowHub()
+end sub
+
+' The rows render once the hub, the preferences and the collections are
+' all in (a failed one leaves its part out).
+sub maybeShowHub()
+    if m.pendingHub = invalid or not m.prefsDone or not m.colsDone then return
+    hub = m.pendingHub
+    m.pendingHub = invalid
+    showHub(hub)
+end sub
+
+sub onPrefsTaskState()
+    if m.prefsTask.state <> "done" then return
+    p = m.prefsTask.result
+    if p <> invalid then m.layout = p.hub_layout
+    m.prefsDone = true
+    maybeShowHub()
 end sub
 
 sub onSearchPressed()
+    saveFocus()
     getMainScene().callFunc("navigateTo", "SearchScene")
 end sub
 
 sub onFavoritesPressed()
+    saveFocus()
     getMainScene().callFunc("navigateTo", "FavoritesScene")
 end sub
 
 sub onWatchlistPressed()
+    saveFocus()
     getMainScene().callFunc("navigateTo", "WatchlistScene")
 end sub
 
 sub onHistoryPressed()
+    saveFocus()
     getMainScene().callFunc("navigateTo", "HistoryScene")
 end sub
 
 sub onLibrariesPressed()
+    saveFocus()
     getMainScene().callFunc("navigateTo", "LibraryListScene")
 end sub
 
@@ -83,10 +126,17 @@ sub onHubTaskState()
         return
     end if
 
+    m.pendingHub = hub
+    maybeShowHub()
+end sub
+
+sub showHub(hub as Object)
     m.loading.visible = false
-    m.hubRows = HubRows_Build(hub)
+    rows = HubRows_Build(hub)
+    HubRows_AddCollections(rows, m.collections)
+    m.hubRows = HubRows_Order(rows, m.layout)
     renderRows()
-    focusRowsOrHeader()
+    restoreFocus()
     getMainScene().callFunc("reportReady")
 end sub
 
@@ -160,6 +210,8 @@ function addItemToRow(row as Object, item as Object) as Boolean
         if token <> invalid and serverUrl <> invalid
             node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
         end if
+    else if item.poster_url <> invalid
+        node.HDPosterUrl = item.poster_url
     end if
     return text.subtitle <> ""
 end function
@@ -310,10 +362,12 @@ end sub
 ' single Navigator object.
 sub routeForType(itemType as String, itemId as String)
     if itemType = "collection" or itemType = "playlist"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
         return
     end if
     if itemType = "photo"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
         return
     end if
@@ -322,8 +376,10 @@ sub routeForType(itemType as String, itemId as String)
         detail = true
     end if
     if detail
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)
     end if
 end sub
@@ -337,5 +393,39 @@ function getMainScene() as Object
 end function
 
 sub onSettingsPressed()
+    saveFocus()
     getMainScene().callFunc("navigateTo", "SettingsScene")
+end sub
+
+' ── Back to where the viewer was (MainScene's focusState / restoreState) ──
+
+sub saveFocus()
+    if m.inHeader
+        m.top.focusState = { header: m.headerIdx }
+        return
+    end if
+    f = m.rows.rowItemFocused
+    if f <> invalid and f.Count() >= 2 then m.top.focusState = { row: f[0], item: f[1] }
+end sub
+
+' The hub is fetched afresh, so a row may have gone or shrunk: clamp.
+sub restoreFocus()
+    rs = invalid
+    if m.restoreDone <> true then rs = m.top.restoreState
+    m.restoreDone = true
+    if rs <> invalid and rs.header <> invalid and rs.header >= 0 and rs.header < m.headerButtons.Count()
+        m.headerIdx = rs.header
+        focusHeader()
+        return
+    end if
+    if rs <> invalid and rs.row <> invalid and m.rows.content <> invalid and m.rows.content.getChildCount() > 0
+        r = rs.row
+        if r >= m.rows.content.getChildCount() then r = m.rows.content.getChildCount() - 1
+        n = m.rows.content.getChild(r).getChildCount()
+        i = rs.item
+        if i >= n then i = n - 1
+        if i < 0 then i = 0
+        m.rows.jumpToRowItem = [r, i]
+    end if
+    focusRowsOrHeader()
 end sub

@@ -24,12 +24,17 @@
         <!-- The node MainScene focuses once this scene is attached (mountScene):
              a setFocus in init() runs before the scene is in the tree. -->
         <field id="initialFocus" type="node" />
+        <!-- Where the viewer is, saved by MainScene on leaving (focusState)
+             and handed back on Back (restoreState). -->
+        <field id="focusState" type="assocArray" />
+        <field id="restoreState" type="assocArray" />
     </interface>
 
 
     <script type="text/brightscript" uri="SearchScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
 
     <children>
         <Group translation="[0,0]">
@@ -40,6 +45,14 @@
                    translation="[80, 50]"
                    font="font:LargeBoldSystemFont"
                    color="0xffffffff" />
+
+            <!-- Search in: all libraries or one (the server's library_id),
+                 as Android TV's scope chip. Up from the chips. -->
+            <OsButton id="scopeBtn"
+                      translation="[740, 58]"
+                      size="small"
+                      height="56"
+                      text="Search in: All libraries" />
 
             <!-- Left column: filter chips, then the keyboard. Right column:
                  the results grid. Keys: SearchScene.brs onKeyEvent. -->

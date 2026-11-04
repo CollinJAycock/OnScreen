@@ -33,6 +33,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Client.brs" />
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Json.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/ApiResult.brs" />
 
     <children>
         <Group translation="[0,0]">
@@ -81,6 +82,15 @@
                    translation="[0, 760]"
                    width="1920"
                    horizAlign="center"
+                   color="0x9a9aaaff" />
+
+            <!-- The server's single sign-on, when it has some
+                 (ApiResult_SsoHint). -->
+            <Label id="ssoHint"
+                   translation="[0, 810]"
+                   width="1920"
+                   horizAlign="center"
+                   font="font:SmallSystemFont"
                    color="0x9a9aaaff" />
 
             <OsButton id="cancelBtn"
