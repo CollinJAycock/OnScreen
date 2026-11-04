@@ -67,6 +67,23 @@ private fun NavController.navigateDebounced(
     }
 }
 
+/**
+ * Debounced back, navigateDebounced's counterpart. A screen's back arrow
+ * popped whatever was on top: a double tap (or a tap while the previous
+ * pop was still animating) popped the screen underneath too, and on the
+ * first screen the last entry, leaving the NavHost nothing to show: a black
+ * screen with the app still running (seen on a Meta Quest, where pointing
+ * makes double taps easy). Only pop while the current entry is RESUMED, and
+ * never the first screen.
+ */
+private fun NavController.popBackDebounced() {
+    if (currentBackStackEntry?.lifecycle?.currentState == Lifecycle.State.RESUMED &&
+        previousBackStackEntry != null
+    ) {
+        popBackStack()
+    }
+}
+
 @HiltViewModel
 class RootViewModel @Inject constructor(
     prefs: ServerPrefs,
@@ -142,7 +159,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
         }
         composable(Routes.SETTINGS) {
             SettingsScreen(
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
                 // WHY: route these through navigateDebounced like every
                 // other tap target. Raw navigate() let a fast double-tap on
                 // a settings row fire twice before the entry reached RESUMED,
@@ -154,19 +171,19 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             )
         }
         composable(Routes.PLAYBACK_QUALITY) {
-            PlaybackQualityScreen(onBack = { nav.popBackStack() })
+            PlaybackQualityScreen(onBack = { nav.popBackDebounced() })
         }
         composable(Routes.ABOUT) {
-            AboutScreen(onBack = { nav.popBackStack() })
+            AboutScreen(onBack = { nav.popBackDebounced() })
         }
         composable(Routes.SECURITY) {
-            SecurityScreen(onBack = { nav.popBackStack() })
+            SecurityScreen(onBack = { nav.popBackDebounced() })
         }
         composable(Routes.SCROBBLE) {
-            ScrobbleScreen(onBack = { nav.popBackStack() })
+            ScrobbleScreen(onBack = { nav.popBackDebounced() })
         }
         composable(Routes.PLAYLISTS) {
-            PlaylistsScreen(onBack = { nav.popBackStack() })
+            PlaylistsScreen(onBack = { nav.popBackDebounced() })
         }
         composable(
             Routes.PHOTO_EXTRAS,
@@ -175,7 +192,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             PhotoExtrasScreen(
                 libraryId = entry.arguments!!.getString("libraryId")!!,
                 onOpenItem = { id -> nav.navigateDebounced(Routes.photo(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(Routes.DOWNLOADS) {
@@ -200,31 +217,31 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                         popUpTo(Routes.DOWNLOADS) { inclusive = true }
                     }
                 },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(Routes.FAVORITES) {
             FavoritesScreen(
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(Routes.WATCHLIST) {
             WatchlistScreen(
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(Routes.HISTORY) {
             HistoryScreen(
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(Routes.COLLECTIONS) {
             CollectionsScreen(
                 onOpenCollection = { id -> nav.navigateDebounced(Routes.collection(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -234,7 +251,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             CollectionDetailScreen(
                 collectionId = entry.arguments!!.getString("id")!!,
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -246,7 +263,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onOpenPhoto = { id -> nav.navigateDebounced(Routes.photo(id)) },
                 onOpenPhotoExtras = { libId -> nav.navigateDebounced(Routes.photoExtras(libId)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -281,13 +298,13 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                         popUpTo(Routes.ITEM) { inclusive = true }
                     }
                 },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(Routes.SEARCH) {
             SearchScreen(
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -296,7 +313,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
         ) { entry ->
             PhotoViewerScreen(
                 itemId = entry.arguments!!.getString("id")!!,
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -307,7 +324,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 authorId = entry.arguments!!.getString("id")!!,
                 onOpenSeries = { id -> nav.navigateDebounced(Routes.series(id)) },
                 onOpenBook = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -317,7 +334,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             SeriesScreen(
                 seriesId = entry.arguments!!.getString("id")!!,
                 onOpenBook = { id -> nav.navigateDebounced(Routes.item(id)) },
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -326,7 +343,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
         ) { entry ->
             BookReaderScreen(
                 itemId = entry.arguments!!.getString("id")!!,
-                onBack = { nav.popBackStack() },
+                onBack = { nav.popBackDebounced() },
             )
         }
         composable(
@@ -353,7 +370,7 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 fromStart = entry.arguments!!.getBoolean("fromStart"),
                 startMs = entry.arguments!!.getLong("startMs").takeIf { it >= 0 },
                 fileId = entry.arguments!!.getString("fileId"),
-                onClose = { nav.popBackStack() },
+                onClose = { nav.popBackDebounced() },
                 onNext = { nextId ->
                     // Replace current player route with the next
                     // sibling so back returns to the detail page,
