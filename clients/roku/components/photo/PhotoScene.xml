@@ -56,7 +56,28 @@
                        vertAlign="center"
                        color="0xffffffff" />
             </Group>
+
+            <!-- Slideshow: "Slideshow" while it runs, and once per visit
+                 (with photos to cycle) the hint for starting one. Same
+                 pill as the counter, bottom-left. -->
+            <Group id="slideBox" translation="[80, 1000]" visible="false">
+                <Poster id="slideBg"
+                        uri="pkg:/images/pill.9.png"
+                        width="460"
+                        height="60"
+                        blendColor="0x000000AA" />
+                <Label id="slideLabel"
+                       width="460"
+                       height="60"
+                       horizAlign="center"
+                       vertAlign="center"
+                       color="0xffffffff" />
+            </Group>
         </Group>
+
+        <!-- A new photo every 4 s (Android's SLIDESHOW_INTERVAL_MS). -->
+        <Timer id="slideTimer" duration="4" repeat="true" />
+        <Timer id="hintTimer" duration="4" repeat="false" />
 
         <ItemFetchTask id="itemTask" />
         <ListFetchTask id="parentChildrenTask" />
