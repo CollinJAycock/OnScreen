@@ -316,7 +316,7 @@ sub routeForType(itemType as String, itemId as String)
         return
     end if
     detail = false
-    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "movie"
+    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "book" or itemType = "movie"
         detail = true
     end if
     if detail

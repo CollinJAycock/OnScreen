@@ -6,7 +6,7 @@ function DetailMeta_Line(item as Object) as String
     parts = []
     if item.year <> invalid then parts.push(item.year.ToStr())
     if item.content_rating <> invalid and item.content_rating <> "" then parts.push(item.content_rating)
-    if item.duration_ms <> invalid and item.duration_ms > 0
+    if item.duration_ms <> invalid and item.duration_ms >= 60000
         mins = Int(item.duration_ms / 60000)
         if mins >= 60
             h = Int(mins / 60)

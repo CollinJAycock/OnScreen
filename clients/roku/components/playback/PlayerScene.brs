@@ -250,6 +250,13 @@ sub onItemTaskState()
         return
     end if
     m.item = item
+    ' A book (EPUB / PDF / comic archive) can't go through the video
+    ' pipeline: reached from Favorites, History, a collection or a deep
+    ' link, say where to read it, as the TV web app does.
+    if item.type = "book"
+        showUnsupportedDialog("Book reading isn't available on TV. Open this book in the web or phone app.")
+        return
+    end if
     version = Versions_Pick(item.files, m.top.fileId)
     if version = invalid
         bailToHome()

@@ -111,6 +111,14 @@
                  the visible ones out left to right (hidden ones leave
                  no gap), scaled down together when a full row would run
                  past the 1760 px content width (DetailMeta_FitWidths). -->
+            <!-- Books: no reader on TV (the TV web app says the same). -->
+            <Label id="bookNote"
+                   translation="[80, 680]"
+                   width="1500"
+                   wrap="true"
+                   color="0xA0A0AAFF"
+                   text="Book reading isn&apos;t available on TV. Open this book in the web or phone app."
+                   visible="false" />
             <Group id="actions" translation="[80, 580]">
                 <OsButton id="playBtn"
                         text="Play"

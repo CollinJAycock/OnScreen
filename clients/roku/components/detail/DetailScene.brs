@@ -277,7 +277,8 @@ sub renderButtons()
     ' play their first child. book_author + book_series are pure browse
     ' parents — the books grid is the only affordance there.
     playLabel = ""
-    if t = "book_author" or t = "book_series"
+    if t = "book_author" or t = "book_series" or t = "book"
+        ' A book can't be read on a TV (bookNote says where to read it).
         playLabel = ""
     else if WatchState_IsContainer(t)
         playLabel = containerPlayLabel()
@@ -290,6 +291,7 @@ sub renderButtons()
     end if
     m.playBtn.text = playLabel
     m.playBtn.visible = (playLabel <> "")
+    m.top.findNode("bookNote").visible = (t = "book")
 
     ' Version picker, for a playable item with a choice of versions.
     m.versions = []
