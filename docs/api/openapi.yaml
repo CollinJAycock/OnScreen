@@ -3348,7 +3348,9 @@ paths:
         `playback.transfer` event with the item id + offset; the
         client then loads the item itself rather than the server
         proxying media. Per-user device discovery uses the last-seen
-        client_name registry.
+        client_name registry. The transfer is also kept for two minutes
+        for `/playback/transfer/claim`, for a client that polls instead
+        of holding the stream open.
       tags: [Playback]
       requestBody:
         required: true
@@ -3362,8 +3364,46 @@ paths:
                 item_id:             { type: string, format: uuid }
                 position_ms:         { type: integer, format: int64, description: 'Where to resume; defaults to the user''s saved progress on the item.' }
       responses:
-        '202': { description: 'Event dispatched to the target client over SSE.' }
-        '404': { description: 'Target device not currently subscribed.' }
+        '204': { description: 'Published to the user''s notifications stream (whether or not the target is listening) and kept for a claim.' }
+        '400': { description: 'Missing or malformed item_id or target_client_name.' }
+
+  /api/v1/playback/transfer/claim:
+    post:
+      summary: Take the transfer waiting for this device
+      description: |
+        For a client that can't hold the notifications stream open (a
+        Roku: no streaming response body, no TLS socket). It calls this
+        every few seconds with its own client_name (the one its progress
+        reports carry, which the "Play on…" picker offers). A transfer is
+        returned once and removed; a newer transfer to the same name
+        replaces an older one; one unclaimed for two minutes is dropped.
+        Names match ignoring case and surrounding spaces.
+      tags: [Playback]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [client_name]
+              properties:
+                client_name: { type: string, description: 'This device''s client_name, e.g. "Roku".' }
+      responses:
+        '200':
+          description: The transfer for this device, now removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      item_id:            { type: string, format: uuid }
+                      position_ms:        { type: integer, format: int64 }
+                      target_client_name: { type: string }
+        '204': { description: 'Nothing waiting for this device.' }
+        '400': { description: 'Missing client_name or a malformed body.' }
 
   /api/v1/photos/map:
     get:

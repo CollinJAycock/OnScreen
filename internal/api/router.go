@@ -1603,6 +1603,9 @@ func NewRouter(h *Handlers) http.Handler {
 			if h.Playback != nil {
 				r.Get("/playback/devices", h.Playback.Devices)
 				r.Post("/playback/transfer", h.Playback.Transfer)
+				// The same transfer, for a client that polls instead of
+				// holding the SSE stream open (a Roku).
+				r.Post("/playback/transfer/claim", h.Playback.ClaimTransfer)
 			}
 
 			// Photo browse + on-demand resize. Image endpoint shares the

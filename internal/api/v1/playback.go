@@ -28,7 +28,9 @@ import (
 //     accepts — there's no per-device routing on the broker, just the
 //     existing per-user fan-out, so the matching policy lives on the
 //     receiving side. Same model the existing `progress.updated` path
-//     uses; keeps the broker minimal.
+//     uses; keeps the broker minimal. The transfer is also left for
+//     POST /playback/transfer/claim, for a client that can't hold the
+//     stream open (playback_transfer_claim.go).
 //
 // Auth: both endpoints sit inside the same authenticated group as
 // /items/{id}/progress and rely on the user owning the item. The
@@ -41,10 +43,11 @@ type PlaybackHandler struct {
 	queries *gen.Queries
 	sync    *notification.Broker
 	logger  *slog.Logger
+	pending *pendingTransfers
 }
 
 func NewPlaybackHandler(queries *gen.Queries, sync *notification.Broker, logger *slog.Logger) *PlaybackHandler {
-	return &PlaybackHandler{queries: queries, sync: sync, logger: logger}
+	return &PlaybackHandler{queries: queries, sync: sync, logger: logger, pending: newPendingTransfers()}
 }
 
 // DeviceRow is one entry in the device picker. last_seen is informational —
@@ -148,11 +151,12 @@ func (h *PlaybackHandler) Transfer(w http.ResponseWriter, r *http.Request) {
 		respond.InternalError(w, r)
 		return
 	}
-	data, err := json.Marshal(TransferPayload{
+	payload := TransferPayload{
 		ItemID:           body.ItemID,
 		PositionMS:       body.PositionMS,
 		TargetClientName: body.TargetClientName,
-	})
+	}
+	data, err := json.Marshal(payload)
 	if err != nil {
 		respond.InternalError(w, r)
 		return
@@ -164,5 +168,6 @@ func (h *PlaybackHandler) Transfer(w http.ResponseWriter, r *http.Request) {
 		CreatedAt: time.Now().UnixMilli(),
 		Data:      data,
 	})
+	h.pending.put(claims.UserID, payload)
 	respond.NoContent(w)
 }
