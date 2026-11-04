@@ -89,6 +89,11 @@ const suites = [
     test: 'tests/Chapters_test.brs',
   },
   {
+    name: 'SettingsPrefs',
+    sources: ['source/util/SettingsPrefs.brs'],
+    test: 'tests/SettingsPrefs_test.brs',
+  },
+  {
     name: 'Capabilities',
     sources: ['source/api/Client.brs'],
     test: 'tests/Capabilities_test.brs',

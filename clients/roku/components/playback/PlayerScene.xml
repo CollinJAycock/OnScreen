@@ -42,6 +42,7 @@
     <script type="text/brightscript" uri="PlayerScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/SettingsPrefs.brs" />
     <!-- No Client.brs: this scene runs on the render thread, which has no
          roUrlTransfer. Its requests go through ApiCallTask / the fetch
          Tasks / MainScene.runDetachedCall. -->

@@ -196,6 +196,8 @@ sub init()
     ' (m.pendingSubtitleIndex) and this observer applies it the moment
     ' the tracks surface — instead of silently dropping the pick.
     m.video.observeField("availableSubtitleTracks", "onAvailableSubtitleTracks")
+    m.video.observeField("availableAudioTracks", "onAvailableAudioTracks")
+    m.audioPrefApplied = false
     m.pendingSubtitleIndex = -1
 
     ' Preferred-subtitle auto-apply state. Fetched once on init from
@@ -206,6 +208,13 @@ sub init()
     ' (a track OR Off), which suppresses any later auto-apply for this
     ' session so we never override a deliberate manual choice.
     m.preferredSubtitleLang = ""
+    ' The preferred audio language (GET /users/me/preferences): the first
+    ' play of the item picks its track when the default isn't in it
+    ' (preferredAudioPosition). Prefs that land after playback started
+    ' don't restart it. m.pendingAudioPos: a direct play's pick, applied
+    ' once the firmware lists the tracks.
+    m.preferredAudioLang = ""
+    m.pendingAudioPos = -1
     m.forcedSubtitlesOnly = false
     m.userSelectedSubtitle = false
     m.prefsLoaded = false
@@ -368,6 +377,9 @@ sub onDecisionDone(result as Dynamic)
         onStreamLimit(plan.message)
     else if plan.kind = "unplayable"
         showUnsupportedDialog(plan.message)
+    else if plan.kind = "optimized" and preferredAudioPosition() >= 0 and plan.fallback <> invalid
+        ' The optimized version carries only the default audio track.
+        startPlayback(plan.fallback, -1)
     else if plan.kind = "optimized"
         startOptimizedPlayback(plan)
     else
@@ -392,6 +404,21 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
     ' stack turns a direct play into a session over all its parts.
     if m.stacked then decision = Playback_ForStack(decision)
 
+    ' The first play of the item picks the preferred audio language's
+    ' track; a re-issue or fallback passes its own.
+    if audioStreamIndex < 0 and not m.audioPrefApplied
+        m.audioPrefApplied = true
+        audioPos = preferredAudioPosition()
+        if audioPos >= 0
+            print "[player] preferred audio "; m.preferredAudioLang; " -> track "; audioPos
+            m.activeAudioIndex = audioPos
+            if decision.mode = "direct"
+                m.pendingAudioPos = audioPos
+            else
+                audioStreamIndex = TranscodeRequest_AudioIndex(m.file.audio_streams, audioPos)
+            end if
+        end if
+    end if
     print "[player] start mode="; decision.mode; " height="; decision.height; " videoCopy="; decision.videoCopy
     m.playbackMode = decision.mode
     m.streamOffsetMs = 0
@@ -773,6 +800,7 @@ sub onPrefsTaskState()
     if prefs <> invalid and type(prefs) = "roAssociativeArray"
         lang = prefs.preferred_subtitle_lang
         if Prefs_IsNonEmptyString(lang) then m.preferredSubtitleLang = lang
+        if Prefs_IsNonEmptyString(prefs.preferred_audio_lang) then m.preferredAudioLang = prefs.preferred_audio_lang
         if prefs.forced_subtitles_only = true then m.forcedSubtitlesOnly = true
     end if
     m.prefsLoaded = true
@@ -1932,4 +1960,22 @@ sub selectSideloaded(url as String)
     m.pendingSubtitleIndex = -1
     m.video.globalCaptionMode = "On"
     m.video.subtitleTrack = url
+end sub
+
+' ── Preferred audio language ───────────────────────────────────────
+
+' The track for the preferred audio language, -1 for the file's default.
+function preferredAudioPosition() as Integer
+    if not m.prefsLoaded or m.file = invalid then return -1
+    return SettingsPrefs_AudioPosition(m.file.audio_streams, m.preferredAudioLang)
+end function
+
+' A direct play's preferred track, once the firmware lists them (in the
+' file's order, as the subtitle tracks are).
+sub onAvailableAudioTracks()
+    if m.pendingAudioPos < 0 then return
+    avail = m.video.availableAudioTracks
+    if avail = invalid or m.pendingAudioPos >= avail.Count() then return
+    m.video.audioTrack = avail[m.pendingAudioPos].Track
+    m.pendingAudioPos = -1
 end sub
