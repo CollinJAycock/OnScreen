@@ -3,7 +3,6 @@
 # bundler enforces specific keys here — see
 # https://developer.roku.com/docs/developer-program/getting-started/architecture/channel-manifest.md
 title=OnScreen
-subtitle=Your media, your server
 major_version=1
 minor_version=0
 build_version=00001

@@ -124,15 +124,18 @@ function Client_DeviceCaps() as Object
         caps.hdr10 = Client_IsTrue(props.Hdr10)
         caps.hlg = Client_IsTrue(props.HLG)
     end if
-    ' AAC's channel limit: "2:0:0:0:" on a Streaming Stick 4K, whose AAC
-    ' decoder is stereo. maxAudioChannels caps every codec but the
-    ' passthrough ones, so a 5.1 source is downmixed to a stereo AAC the
-    ' Roku can decode, while Dolby for a receiver keeps its channels.
-    decodeInfo = info.GetAudioDecodeInfo()
-    if decodeInfo <> invalid and Prefs_IsString(decodeInfo.AAC)
-        n = Val(decodeInfo.AAC.Split(":")[0])
-        if n >= 1 then caps.aacChannels = Int(n)
-    end if
+    ' AAC's channel limit: stereo on a Streaming Stick 4K. maxAudioChannels
+    ' caps every codec but the passthrough ones, so a 5.1 source is
+    ' downmixed to a stereo AAC the Roku can decode, while Dolby for a
+    ' receiver keeps its channels. CanDecodeAudio with a channel count
+    ' (GetAudioDecodeInfo, which reported it directly, is deprecated).
+    for each ch in [8, 6]
+        r = info.CanDecodeAudio({ Codec: "aac", ChCnt: ch })
+        if r <> invalid and Client_IsTrue(r.result)
+            caps.aacChannels = ch
+            exit for
+        end if
+    end for
     ' What the HDMI sink takes as a bitstream (a receiver, or the TV):
     ' AC-3 and E-AC-3 on that Roku, never TrueHD or DTS.
     for each codec in ["ac3", "eac3"]

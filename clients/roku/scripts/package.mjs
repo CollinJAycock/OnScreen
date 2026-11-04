@@ -57,7 +57,9 @@ async function main() {
       if (!existsSync(fullPath)) continue;
       const s = statSync(fullPath);
       if (s.isDirectory()) {
-        archive.directory(fullPath, entry);
+        // Docs (images/README.md) aren't part of the channel; Static
+        // Analysis flags them as extraneous files.
+        archive.directory(fullPath, entry, (data) => (data.name.endsWith('.md') ? false : data));
       } else {
         archive.file(fullPath, { name: entry });
       }

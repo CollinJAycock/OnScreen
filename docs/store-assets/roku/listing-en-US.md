@@ -104,9 +104,26 @@ port 8080, then Utilities → Packager on the device's developer page)
 from the `1.0.0` build. Keep the genkey password and Dev ID: every
 update must be signed with the same key. Minimum firmware: 8.0 (squashfs).
 
-## Release notes
+## Release notes (max 1,500)
 
-(Leave blank: first submission.)
+1.0.0, 964 characters:
+
+```
+OnScreen 1.0.0 — first release on Roku.
+
+Watch and listen to the media library on your own OnScreen Media Server, the free open-source server you run on your own computer or NAS.
+
+• Home with Continue Watching, Next Up and each library's recently added, in the order you set on the web
+• Movies, TV shows, music, audiobooks and photos, with search, sorting and filters
+• 4K and HDR10 on TVs that support them; Dolby Digital and Dolby Digital Plus passed to your sound system
+• Resume where you left off, shared with your other OnScreen apps
+• Audio tracks, subtitles, chapters, and Skip Intro / Skip Credits where your server has marked them
+• Music and audiobooks with a now-playing screen and audiobook speed; photo slideshows
+• Send what you're watching on your phone or computer to your Roku with "Play on"
+• Sign in with your username and password, or from your phone with a PIN
+
+No ads, no analytics, no tracking. The app talks only to the server you choose.
+```
 
 ## Schedule publish
 
