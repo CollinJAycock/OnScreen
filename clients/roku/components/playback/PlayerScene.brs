@@ -1937,7 +1937,10 @@ sub onNowPlayingArtist()
 end sub
 
 sub updateNowPlayingTime(posMs as Integer)
+    ' The item's length, else its file's: a session's own duration only
+    ' covers what the server has written so far.
     total = streamDurationMs()
+    if m.file <> invalid and m.file.duration_ms <> invalid and m.file.duration_ms > 0 then total = m.file.duration_ms
     if m.item <> invalid and m.item.duration_ms <> invalid and m.item.duration_ms > 0 then total = m.item.duration_ms
     fill = 0
     if total > 0 then fill = Int(900 * posMs / total)
