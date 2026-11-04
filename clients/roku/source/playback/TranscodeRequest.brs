@@ -32,13 +32,19 @@ end function
 function TranscodeRequest_Body(req as Object, positionMs as Integer) as Object
     audioIdx = invalid
     if req.audioStreamIndex <> invalid and req.audioStreamIndex >= 0 then audioIdx = req.audioStreamIndex
+    ' segment_container "ts": a Roku plays AC-3 / E-AC-3 in MPEG-TS
+    ' segments (and plain MP4) but not in the fMP4 HLS the server writes for
+    ' HEVC by default, where the copy came through silent (Streaming Stick
+    ' 4K, Roku OS 15.3). HEVC and its HDR10 play in TS too. The server keeps
+    ' fMP4 where TS can't carry the stream (AV1, a Dolby Vision copy).
     body = {
         file_id: req.fileId,
         height: req.height,
         position_ms: positionMs,
         video_copy: req.videoCopy = true,
         audio_stream_index: audioIdx,
-        supports_hevc: req.supportsHevc = true
+        supports_hevc: req.supportsHevc = true,
+        segment_container: "ts"
     }
     burn = TranscodeRequest_BurnIndex(req)
     if burn >= 0

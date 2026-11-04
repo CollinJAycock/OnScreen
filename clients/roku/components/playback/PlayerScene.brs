@@ -362,7 +362,13 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
         audioStreamIndex: audioStreamIndex,
         burnSubtitleStreamIndex: -1
     }
-    runTranscodeStart(m.lastTranscodeRequest, 0)
+    ' Resume: the session itself starts at the saved position, as a
+    ' re-issue starts at the playhead. Asking the Video node to seek there
+    ' in a playlist that starts at 0 and is still being written left it
+    ' playing from the beginning (seen on a Streaming Stick 4K).
+    m.sessionStartMs = 0
+    if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0 then m.sessionStartMs = m.item.view_offset_ms
+    runTranscodeStart(m.lastTranscodeRequest, m.sessionStartMs)
 end sub
 
 ' Fire the transcode start for a cached request at positionMs.
@@ -537,23 +543,28 @@ sub onTranscodeTaskState()
     content.title = m.item.title
     content.url = streamUrl
     content.streamFormat = streamFormat
+    ' Where the session was asked to start: the playhead for a re-issue,
+    ' the resume position for a first start (startPlayback).
+    wantMs = 0
     if reissued
-        ' A re-issued session's content begins at start_offset_sec — the
-        ' playhead it was asked for, the keyframe before it on a remux, or
-        ' 0 for a full-timeline ABR playlist — and its clock starts at 0
-        ' there. Map positions back through m.streamOffsetMs and seek the
-        ' rest of the way to the playhead. A server that sends no offset
-        ' started exactly at the playhead.
-        m.streamOffsetMs = m.reissuePositionMs
+        wantMs = m.reissuePositionMs
+    else if m.sessionStartMs <> invalid
+        wantMs = m.sessionStartMs
+    end if
+    if reissued or wantMs > 0
+        ' The session's content begins at start_offset_sec — the position
+        ' it was asked for, the keyframe before it on a remux, or 0 for a
+        ' full-timeline ABR playlist — and its clock starts at 0 there.
+        ' Map positions back through m.streamOffsetMs and seek the rest of
+        ' the way. A server that sends no offset started exactly there.
+        m.streamOffsetMs = wantMs
         startSec = sess.start_offset_sec
         if startSec <> invalid and (type(startSec) = "Float" or type(startSec) = "Double" or type(startSec) = "Integer" or type(startSec) = "roFloat" or type(startSec) = "roDouble" or type(startSec) = "roInt") and startSec >= 0
             m.streamOffsetMs = Int(startSec * 1000)
         end if
-        if m.reissuePositionMs - m.streamOffsetMs >= 1000
-            content.playStart = Int((m.reissuePositionMs - m.streamOffsetMs) / 1000)
+        if wantMs - m.streamOffsetMs >= 1000
+            content.playStart = Int((wantMs - m.streamOffsetMs) / 1000)
         end if
-    else if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
-        content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
     ' After m.streamOffsetMs is final: a session clock that starts
     ' mid-item gets no thumbnails (they'd be offset).
