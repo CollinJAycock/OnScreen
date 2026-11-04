@@ -93,6 +93,8 @@
         <HubFetchTask id="hubTask" />
         <!-- The saved row order (hub_layout), fetched beside the hub. -->
         <PreferencesFetchTask id="prefsTask" />
+        <!-- The Collections row (GET /collections). -->
+        <ListFetchTask id="colsTask" />
     </children>
 
 </component>

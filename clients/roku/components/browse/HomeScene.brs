@@ -55,8 +55,30 @@ sub init()
     m.layout = invalid
     m.prefsDone = false
     m.pendingHub = invalid
+    m.colsTask = m.top.findNode("colsTask")
+    m.colsTask.observeField("state", "onColsTaskState")
+    m.colsTask.path = "/api/v1/collections"
+    m.collections = invalid
+    m.colsDone = false
     m.hubTask.control = "RUN"
     m.prefsTask.control = "RUN"
+    m.colsTask.control = "RUN"
+end sub
+
+sub onColsTaskState()
+    if m.colsTask.state <> "done" then return
+    m.collections = m.colsTask.result
+    m.colsDone = true
+    maybeShowHub()
+end sub
+
+' The rows render once the hub, the preferences and the collections are
+' all in (a failed one leaves its part out).
+sub maybeShowHub()
+    if m.pendingHub = invalid or not m.prefsDone or not m.colsDone then return
+    hub = m.pendingHub
+    m.pendingHub = invalid
+    showHub(hub)
 end sub
 
 sub onPrefsTaskState()
@@ -64,11 +86,7 @@ sub onPrefsTaskState()
     p = m.prefsTask.result
     if p <> invalid then m.layout = p.hub_layout
     m.prefsDone = true
-    if m.pendingHub <> invalid
-        hub = m.pendingHub
-        m.pendingHub = invalid
-        showHub(hub)
-    end if
+    maybeShowHub()
 end sub
 
 sub onSearchPressed()
@@ -108,16 +126,15 @@ sub onHubTaskState()
         return
     end if
 
-    if not m.prefsDone
-        m.pendingHub = hub
-        return
-    end if
-    showHub(hub)
+    m.pendingHub = hub
+    maybeShowHub()
 end sub
 
 sub showHub(hub as Object)
     m.loading.visible = false
-    m.hubRows = HubRows_Order(HubRows_Build(hub), m.layout)
+    rows = HubRows_Build(hub)
+    HubRows_AddCollections(rows, m.collections)
+    m.hubRows = HubRows_Order(rows, m.layout)
     renderRows()
     restoreFocus()
     getMainScene().callFunc("reportReady")
@@ -193,6 +210,8 @@ function addItemToRow(row as Object, item as Object) as Boolean
         if token <> invalid and serverUrl <> invalid
             node.HDPosterUrl = AssetArtwork(serverUrl, artPath, 500, Prefs_GetAssetTokenStr())
         end if
+    else if item.poster_url <> invalid
+        node.HDPosterUrl = item.poster_url
     end if
     return text.subtitle <> ""
 end function

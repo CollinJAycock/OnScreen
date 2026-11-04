@@ -164,3 +164,20 @@ function HubRows_RemoveItem(rows as Object, rowIdx as Integer, itemId as String)
     end if
     return out
 end function
+
+' The Collections row (GET /collections; Android TV's TV-only
+' "collections" row, last by default): each collection as a card that
+' opens CollectionScene. A franchise's cover is TMDB art (poster_url).
+sub HubRows_AddCollections(rows as Object, cols as Dynamic)
+    if cols = invalid or type(cols) <> "roArray" then return
+    items = []
+    for each c in cols
+        if c <> invalid and type(c) = "roAssociativeArray" and HubRows_IsStr(c.id) and HubRows_IsStr(c.name)
+            it = { id: c.id, type: "collection", title: c.name }
+            if HubRows_IsStr(c.poster_path) then it.poster_path = c.poster_path
+            if HubRows_IsStr(c.poster_url) and Left(c.poster_url, 4) = "http" then it.poster_url = c.poster_url
+            items.push(it)
+        end if
+    end for
+    HubRows_Add(rows, "collections", "Collections", "collections", items)
+end sub

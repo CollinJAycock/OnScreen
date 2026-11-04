@@ -9,6 +9,7 @@ sub Main()
     testRemoveMissing()
     testExtraRows()
     testLayout()
+    testCollections()
 
     print "DONE: HubRows_test"
 end sub
@@ -152,4 +153,16 @@ sub testLayout()
     runStr("layout: order, hidden, unknown, duplicate, rest", rowTitles(HubRows_Order(rows, layout)), "Trending|Plan to Watch|Continue Watching TV Shows|Continue Watching Movies|Recently Added")
     runStr("layout: none", rowTitles(HubRows_Order(rows, invalid)), rowTitles(rows))
     runStr("layout: empty", rowTitles(HubRows_Order(rows, [])), rowTitles(rows))
+end sub
+
+sub testCollections()
+    rows = []
+    HubRows_AddCollections(rows, [{ id: "C1", name: "Marvel", type: "franchise", poster_url: "https://image.tmdb.org/x.jpg" }, { id: "C2", name: "Faves", type: "manual", poster_path: "posters/a.jpg" }, { id: "", name: "bad" }])
+    runStr("collections: row", rowTitles(rows) + ":" + rows[0].key, "Collections:collections")
+    runStr("collections: cards", rows[0].items.Count().ToStr() + ":" + rows[0].items[0].type + ":" + rows[0].items[0].title, "2:collection:Marvel")
+    runStr("collections: tmdb cover", rows[0].items[0].poster_url, "https://image.tmdb.org/x.jpg")
+    runStr("collections: own cover", rows[0].items[1].poster_path, "posters/a.jpg")
+    none = []
+    HubRows_AddCollections(none, [])
+    runStr("collections: none, no row", rowTitles(none), "")
 end sub
