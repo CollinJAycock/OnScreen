@@ -20,6 +20,12 @@
     flood the API otherwise.
 -->
 <component name="SearchScene" extends="Group">
+    <interface>
+        <!-- The node MainScene focuses once this scene is attached (mountScene):
+             a setFocus in init() runs before the scene is in the tree. -->
+        <field id="initialFocus" type="node" />
+    </interface>
+
 
     <script type="text/brightscript" uri="SearchScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />

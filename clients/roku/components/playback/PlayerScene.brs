@@ -212,10 +212,21 @@ sub init()
     m.syncTimer.observeField("fire", "onSyncTimerFire")
     m.trackPickerList.observeField("itemSelected", "onTrackPickerSelect")
 
+    ' init() runs inside createObject, before MainScene sets itemId (and
+    ' fileId / queue, which it sets first), so the start waits for the
+    ' field, as DetailScene's and the browse scenes' do.
+    m.started = false
+    m.top.observeField("itemId", "onItemIdSet")
+    if m.top.itemId <> invalid and m.top.itemId <> "" then onItemIdSet()
+end sub
+
+sub onItemIdSet()
+    if m.started then return
     if m.top.itemId = invalid or m.top.itemId = ""
         bailToHome()
         return
     end if
+    m.started = true
 
     m.itemTask.itemId = m.top.itemId
     m.itemTask.control = "RUN"
@@ -231,6 +242,8 @@ end sub
 sub onItemTaskState()
     if m.itemTask.state <> "done" then return
     item = m.itemTask.result
+    ' [player] lines on the debug console (8085) trace each step of a start.
+    if item = invalid then print "[player] item fetch failed: "; m.top.itemId else print "[player] item "; m.top.itemId; " files="; item.files.Count()
     if item = invalid or item.files = invalid or item.files.Count() = 0
         bailToHome()
         return
@@ -294,6 +307,9 @@ end sub
 sub onDecisionDone(result as Dynamic)
     if m.adminStopped or m.limitShown then return
     plan = Playback_PlanFromServer(result, m.localDecision)
+    code = -1
+    if result <> invalid and result.code <> invalid then code = result.code
+    print "[player] server decision http="; code; " plan="; plan.kind
     if plan.kind = "limit"
         onStreamLimit(plan.message)
     else if plan.kind = "unplayable"
@@ -322,6 +338,7 @@ sub startPlayback(decision as Object, audioStreamIndex as Integer)
     ' stack turns a direct play into a session over all its parts.
     if m.stacked then decision = Playback_ForStack(decision)
 
+    print "[player] start mode="; decision.mode; " height="; decision.height; " videoCopy="; decision.videoCopy
     m.playbackMode = decision.mode
     m.streamOffsetMs = 0
     m.burnSubtitleIndex = -1
@@ -385,10 +402,12 @@ sub startDirectPlayback(serverUrl as String)
     end if
     attachTrickplay(content, serverUrl)
 
+    print "[player] direct play format="; content.streamFormat; " start="; content.playStart
     m.video.content = content
     m.video.control = "play"
     m.video.setFocus(true)
 end sub
+
 
 ' Play the optimized version the server chose: an MP4 (H.264 / AAC) served
 ' from its own stream_url, authenticated by its stream_token in ?token=
@@ -444,6 +463,8 @@ end sub
 
 sub onTranscodeTaskState()
     if m.transcodeTask.state <> "done" then return
+    r = m.transcodeTask.result
+    if r = invalid then print "[player] transcode start failed" else print "[player] transcode session "; r.session_id
     if m.adminStopped
         ' A start (audio re-issue) that was in flight when the stop landed:
         ' nothing will play it, so don't leave its ffmpeg running.
@@ -538,6 +559,7 @@ sub onTranscodeTaskState()
     ' mid-item gets no thumbnails (they'd be offset).
     attachTrickplay(content, serverUrl)
 
+    print "[player] session stream format="; content.streamFormat; " start="; content.playStart; " offsetMs="; m.streamOffsetMs
     m.video.content = content
     m.video.control = "play"
     m.video.setFocus(true)
@@ -554,6 +576,7 @@ end sub
 
 sub onVideoState()
     state = m.video.state
+    if state = "error" then print "[player] video error "; m.video.errorCode; " "; m.video.errorMsg; " "; m.video.errorStr else print "[player] video "; state
     ' Stopped by an admin: the message is up and the player is on its
     ' way out — the stop's own state changes mean nothing more. Same once
     ' the too-many-streams message is up.
@@ -1012,11 +1035,12 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
             return true
         end if
     end if
-    ' Back during normal playback (no overlay open) leaves the player
-    ' rather than exiting the channel. Stop playback, tear down any
-    ' transcode session, and return Home. Returning true consumes the
-    ' press so it never bubbles to MainScene as a channel exit — the
-    ' player is mid-stack, not the root.
+    ' Back during normal playback (no overlay open) leaves the player for
+    ' the screen it was opened from (Roku certification): stop playback,
+    ' tear down any transcode session, and leave the press to MainScene,
+    ' whose back-stack pops to the previous frame (the title page, also
+    ' under a deep-linked player). The player is never the root frame, so
+    ' the press can't exit the channel.
     if key = "back"
         ' Terminal progress report before teardown — the resume offset
         ' the user expects on every other device. posMs = 0 means
@@ -1026,8 +1050,8 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
         posMs = playheadMs()
         if posMs > 0 then reportProgress(posMs, "stopped")
         m.video.control = "stop"
-        bailToHome()
-        return true
+        stopTranscodeSession()
+        return false
     end if
     return false
 end function
@@ -1189,14 +1213,14 @@ sub onTrackPickerSelect()
     end if
 end sub
 
-' Apply a subtitle pick: pos is the track's position in subtitle_streams,
+' Apply a subtitle pick: rowPos is the track's position in subtitle_streams,
 ' -1 for Off. Through a session an image track is burned in by a re-issue,
 ' and turning it off (Off, or any other track) re-issues without it;
 ' everything else goes to the firmware's track selector (Subtitles_PickPlan).
-sub pickSubtitle(pos as Integer)
+sub pickSubtitle(rowPos as Integer)
     streams = invalid
     if m.file <> invalid then streams = m.file.subtitle_streams
-    plan = Subtitles_PickPlan(streams, pos, {
+    plan = Subtitles_PickPlan(streams, rowPos, {
         serverSession: inServerSession(),
         stacked: m.stacked,
         burnIndex: m.burnSubtitleIndex
@@ -1206,7 +1230,7 @@ sub pickSubtitle(pos as Integer)
         showPlayerDialog(TranscodeRequest_RefusalTitle(), TranscodeRequest_BurnUnsupportedText(), false)
         return
     end if
-    m.activeSubtitleIndex = pos
+    m.activeSubtitleIndex = rowPos
     if plan.kind = "reissue"
         audioIdx = -1
         if m.lastTranscodeRequest.audioStreamIndex <> invalid then audioIdx = m.lastTranscodeRequest.audioStreamIndex
@@ -1218,7 +1242,7 @@ sub pickSubtitle(pos as Integer)
             return
         end if
     end if
-    if pos < 0
+    if rowPos < 0
         ' Roku's Video node uses globalCaptionMode + the
         ' selected subtitle index from `availableSubtitleTracks`.
         ' Setting subtitleTrack to "" disables. Clear any deferred
@@ -1227,7 +1251,7 @@ sub pickSubtitle(pos as Integer)
         m.pendingSubtitleIndex = -1
         m.video.subtitleTrack = ""
     else
-        applySubtitleSelection(pos)
+        applySubtitleSelection(rowPos)
     end if
 end sub
 
@@ -1448,6 +1472,7 @@ function guessStreamFormat(path as Dynamic) as String
 end function
 
 sub bailToHome()
+    print "[player] bail to Home"
     stopTranscodeSession()
     getMainScene().callFunc("navigateTo", "HomeScene")
 end sub

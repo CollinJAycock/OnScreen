@@ -38,7 +38,7 @@ function Subtitles_StreamIndex(stream as Dynamic) as Integer
     return v
 end function
 
-' The plan for a pick. pos is the row's position in streams (-1 = Off);
+' The plan for a pick. rowPos is the row's position in streams (-1 = Off);
 ' ctx is { serverSession, stacked, burnIndex } — burnIndex the absolute
 ' index burned into the current session, -1 for none. Returns
 '   { kind: "firmware" }               hand the pick to the Video node
@@ -48,15 +48,15 @@ end function
 '   { kind: "none" }                   already showing; nothing to do
 '   { kind: "unsupported" }            an image track on a multi-part
 '                                      movie: the server can't burn it
-function Subtitles_PickPlan(streams as Dynamic, pos as Integer, ctx as Object) as Object
+function Subtitles_PickPlan(streams as Dynamic, rowPos as Integer, ctx as Object) as Object
     burned = -1
     if ctx.burnIndex <> invalid and ctx.burnIndex >= 0 then burned = ctx.burnIndex
-    if pos < 0
+    if rowPos < 0
         if burned >= 0 then return { kind: "reissue", burnIndex: -1 }
         return { kind: "firmware" }
     end if
     stream = invalid
-    if streams <> invalid and type(streams) = "roArray" and pos < streams.Count() then stream = streams[pos]
+    if streams <> invalid and type(streams) = "roArray" and rowPos < streams.Count() then stream = streams[rowPos]
     if stream = invalid then return { kind: "none" }
     if Subtitles_WillBurn(stream, ctx.serverSession = true)
         idx = Subtitles_StreamIndex(stream)

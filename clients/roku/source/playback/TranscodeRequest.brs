@@ -14,13 +14,13 @@
 ' into the picture, so it is always a full re-encode — video_copy false,
 ' whatever the play decision said.
 
-' The audio_stream_index for the track at position pos in audioStreams,
-' or -1 (server default) when pos addresses no track.
-function TranscodeRequest_AudioIndex(audioStreams as Dynamic, pos as Integer) as Integer
+' The audio_stream_index for the track at position rowPos in audioStreams,
+' or -1 (server default) when rowPos addresses no track.
+function TranscodeRequest_AudioIndex(audioStreams as Dynamic, rowPos as Integer) as Integer
     if audioStreams = invalid or type(audioStreams) <> "roArray" then return -1
-    if pos < 0 or pos >= audioStreams.Count() then return -1
-    if audioStreams[pos] = invalid then return -1
-    return pos
+    if rowPos < 0 or rowPos >= audioStreams.Count() then return -1
+    if audioStreams[rowPos] = invalid then return -1
+    return rowPos
 end function
 
 ' The request body. req is the cached start request:

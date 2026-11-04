@@ -9,6 +9,12 @@
     without losing what they typed.
 -->
 <component name="ServerSetupScene" extends="Group">
+    <interface>
+        <!-- The node MainScene focuses once this scene is attached (mountScene):
+             a setFocus in init() runs before the scene is in the tree. -->
+        <field id="initialFocus" type="node" />
+    </interface>
+
 
     <script type="text/brightscript" uri="ServerSetupScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
@@ -40,7 +46,9 @@
             <Button id="connectBtn"
                     text="Connect"
                     translation="[160, 720]"
-                    minWidth="320" />
+                    minWidth="320"
+                    iconUri=""
+                    focusedIconUri="" />
 
             <Label id="error"
                    translation="[160, 800]"

@@ -39,6 +39,7 @@ sub init()
     m.chipTrack.observeField("buttonSelected", "onChipTrack")
 
     m.queryField.setFocus(true)
+    m.top.initialFocus = m.queryField
 end sub
 
 ' ── Filter chips ───────────────────────────────────────────────────

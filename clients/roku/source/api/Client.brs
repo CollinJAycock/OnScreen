@@ -110,12 +110,13 @@ function Client_DeviceCaps() as Object
     caps = { hevc: false, hevc10: false, uhd: false, hdr10: false, hlg: false }
     info = CreateObject("roDeviceInfo")
     if info = invalid then return caps
-    if info.CanDecodeVideo <> invalid
-        r = info.CanDecodeVideo({ Codec: "hevc" })
-        if r <> invalid then caps.hevc = Client_IsTrue(r.Result)
-        r = info.CanDecodeVideo({ Codec: "hevc", Profile: "main 10" })
-        if r <> invalid then caps.hevc10 = Client_IsTrue(r.Result)
-    end if
+    ' Called directly: naming a method to test it (info.CanDecodeVideo <>
+    ' invalid) is a runtime error on a device, though brs accepts it.
+    ' Roku OS 11, the floor, has every method used here.
+    r = info.CanDecodeVideo({ Codec: "hevc" })
+    if r <> invalid then caps.hevc = Client_IsTrue(r.Result)
+    r = info.CanDecodeVideo({ Codec: "hevc", Profile: "main 10" })
+    if r <> invalid then caps.hevc10 = Client_IsTrue(r.Result)
     mode = info.GetVideoMode()
     caps.uhd = Prefs_IsString(mode) and Instr(1, mode, "2160") = 1
     props = info.GetDisplayProperties()
@@ -174,26 +175,15 @@ function Client_CapabilitiesHeaderFor(caps as Object) as String
 end function
 
 ' Synchronous GET. Returns the parsed JSON envelope unwrapped to
-' .data, or invalid on failure (network, non-200, parse error).
-' Avoid in any Task node — blocking calls there hang the UI.
+' .data, or invalid on failure (network, non-200, parse error). Task
+' threads only, like every call here. Built on Client_RequestSync (async
+' transfer + wait): a synchronous GetToString gives no status code, and
+' roUrlTransfer has no GetResponseCode, so the old version crashed on a
+' device. The 401 refresh + single replay is RequestSync's.
 function Client_GetSync(path as String, auth as Boolean) as Dynamic
-    transfer = Client_BuildTransfer(path, auth)
-    if transfer = invalid then return invalid
-
-    raw = transfer.GetToString()
-    code = transfer.GetResponseCode()
-    if code = HttpUnauthorized() and auth
-        if not Client_RefreshSync() then return invalid
-        ' Rebuild so the Authorization header picks up the new token,
-        ' then replay exactly once — a second 401 falls through to the
-        ' failure return below, never another refresh (no retry loop).
-        transfer = Client_BuildTransfer(path, auth)
-        if transfer = invalid then return invalid
-        raw = transfer.GetToString()
-        code = transfer.GetResponseCode()
-    end if
-    if code <> HttpOk() then return invalid
-    return Json_UnwrapData(Json_Parse(raw))
+    res = Client_RequestSync("GET", path, invalid, invalid, auth)
+    if res.code < 200 or res.code >= 300 then return invalid
+    return Json_UnwrapData(Json_Parse(res.raw))
 end function
 
 ' Synchronous POST with a JSON body. Same caveats as GetSync.
