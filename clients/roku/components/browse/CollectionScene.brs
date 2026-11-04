@@ -49,8 +49,13 @@ sub onTaskState()
     token = Prefs_GetAccessToken()
 
     root = createObject("roSGNode", "ContentNode")
-    row = root.createChild("ContentNode")
+    ' A grid: rows of six cards (the select handler reads the card
+    ' through its row).
+    row = invalid
+    n = 0
     for each it in items
+        if n mod 6 = 0 then row = root.createChild("ContentNode")
+        n = n + 1
         node = row.createChild("ContentNode")
         node.title = it.title
         node.id = it.id

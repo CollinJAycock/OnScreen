@@ -63,17 +63,25 @@
              playhead is inside an active marker window; the user
              presses * (the convention for Roku channel "options"
              actions) to skip. Stays hidden otherwise. -->
-        <Label id="skipMarker"
-               text=""
+        <!-- Skip Intro / Skip Credits: a violet pill (a Label has no
+             background of its own). PlayerScene sets the text on
+             skipMarkerText and shows or hides the group. -->
+        <Group id="skipMarker"
                translation="[1500, 940]"
-               width="380"
-               height="80"
-               horizAlign="center"
-               vertAlign="center"
-               color="0xffffffff"
-               backgroundColor="0x7c6af7ee"
-               backgroundUri=""
-               visible="false" />
+               visible="false">
+            <Poster uri="pkg:/images/pill.9.png"
+                    width="380"
+                    height="80"
+                    blendColor="0x7C6AF7EE" />
+            <Label id="skipMarkerText"
+                   text=""
+                   width="380"
+                   height="80"
+                   horizAlign="center"
+                   vertAlign="center"
+                   font="font:MediumBoldSystemFont"
+                   color="0xffffffff" />
+        </Group>
 
         <!-- Up Next overlay. Surfaces ~25 s before EOS for episodes
              and podcast episodes. Music tracks + audiobook chapters

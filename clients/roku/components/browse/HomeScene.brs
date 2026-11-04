@@ -123,12 +123,12 @@ sub renderRows()
             if addItemToRow(row, item) then hasSubtitle = true
         end for
         if hasSubtitle
-            heights.push(420)
+            heights.push(470)
         else
-            heights.push(380)
+            heights.push(430)
         end if
     end for
-    if heights.Count() = 0 then heights.push(380)
+    if heights.Count() = 0 then heights.push(430)
     m.rows.rowHeights = heights
     m.rows.content = root
     updateOptionsHint()

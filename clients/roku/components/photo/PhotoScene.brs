@@ -155,11 +155,11 @@ end sub
 
 sub refreshPositionLabel()
     if m.siblings.Count() < 2
-        m.position.visible = false
+        m.top.findNode("positionBox").visible = false
         return
     end if
     m.position.text = (m.currentIndex + 1).ToStr() + " / " + m.siblings.Count().ToStr()
-    m.position.visible = true
+    m.top.findNode("positionBox").visible = true
 end sub
 
 ' Roku delivers D-pad + back keys via onKeyEvent on the scene

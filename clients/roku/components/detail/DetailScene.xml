@@ -61,7 +61,7 @@
     <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
 
     <children>
-        <Group translation="[0,0]" width="1920" height="1080">
+        <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x07070dff" />
 
             <!-- Fanart fills the screen behind everything; dimmer
@@ -112,46 +112,34 @@
                  no gap), scaled down together when a full row would run
                  past the 1760 px content width (DetailMeta_FitWidths). -->
             <Group id="actions" translation="[80, 580]">
-                <Button id="playBtn"
+                <OsButton id="playBtn"
                         text="Play"
-                        showFocusFootprint="true"
                         minWidth="400"
-                        maxWidth="400"
-                        focusBitmapBlendColor="0x7c6af7ff" />
-                <Button id="versionBtn"
+                        maxWidth="400" />
+                <OsButton id="versionBtn"
                         text=""
-                        showFocusFootprint="true"
                         minWidth="480"
                         maxWidth="480"
-                        focusBitmapBlendColor="0x7c6af7ff"
                         visible="false" />
-                <Button id="mixBtn"
+                <OsButton id="mixBtn"
                         text="Instant mix"
-                        showFocusFootprint="true"
                         minWidth="360"
                         maxWidth="360"
-                        focusBitmapBlendColor="0x7c6af7ff"
                         visible="false" />
-                <Button id="markBtn"
+                <OsButton id="markBtn"
                         text=""
-                        showFocusFootprint="true"
                         minWidth="360"
                         maxWidth="360"
-                        focusBitmapBlendColor="0x7c6af7ff"
                         visible="false" />
-                <Button id="statusBtn"
+                <OsButton id="statusBtn"
                         text=""
-                        showFocusFootprint="true"
                         minWidth="440"
                         maxWidth="440"
-                        focusBitmapBlendColor="0x7c6af7ff"
                         visible="false" />
-                <Button id="reportBtn"
+                <OsButton id="reportBtn"
                         text="Report a problem"
-                        showFocusFootprint="true"
                         minWidth="360"
                         maxWidth="360"
-                        focusBitmapBlendColor="0x7c6af7ff"
                         visible="false" />
             </Group>
 
@@ -178,7 +166,6 @@
                      rowHeights="[300]"
                      numRows="1"
                      vertFocusAnimationStyle="floatingFocus"
-                     focusBitmapBlendColor="0xffffffff"
                      drawFocusFeedback="true"
                      visible="false" />
 

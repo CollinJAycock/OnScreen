@@ -15,6 +15,7 @@ sub init()
     m.task = m.top.findNode("searchTask")
 
     m.chipMovie = m.top.findNode("chipMovie")
+    m.chipIndex = 0
     m.chipShow = m.top.findNode("chipShow")
     m.chipEpisode = m.top.findNode("chipEpisode")
     m.chipTrack = m.top.findNode("chipTrack")
@@ -173,9 +174,13 @@ sub renderResults()
     serverUrl = Prefs_GetServerUrl()
     token = Prefs_GetAccessToken()
 
+    ' A grid beside the keyboard: rows of five.
     root = createObject("roSGNode", "ContentNode")
-    row = root.createChild("ContentNode")
+    row = invalid
+    n = 0
     for each r in visible
+        if n mod 5 = 0 then row = root.createChild("ContentNode")
+        n = n + 1
         node = row.createChild("ContentNode")
         node.title = r.title
         node.id = r.id
@@ -190,6 +195,47 @@ sub renderResults()
     end for
     m.results.content = root
 end sub
+
+' Moving between the three areas; each control keeps the keys it uses and
+' passes on presses off its edges. Keyboard: Up to the chips, Right to the
+' results. Chips: Left / Right between them, Down to the keyboard. Results:
+' Left off the first column or Up off the top row back to the keyboard.
+function onKeyEvent(key as String, press as Boolean) as Boolean
+    if not press then return false
+    chips = [m.chipMovie, m.chipShow, m.chipEpisode, m.chipTrack]
+    if m.queryField.isInFocusChain()
+        if key = "up"
+            chips[m.chipIndex].setFocus(true)
+            return true
+        end if
+        if key = "right" and m.results.visible
+            m.results.setFocus(true)
+            return true
+        end if
+        return false
+    end if
+    for i = 0 to chips.Count() - 1
+        if chips[i].hasFocus()
+            if key = "left" and i > 0 then i = i - 1
+            if key = "right" and i < chips.Count() - 1 then i = i + 1
+            if key = "left" or key = "right"
+                m.chipIndex = i
+                chips[i].setFocus(true)
+                return true
+            end if
+            if key = "down"
+                m.queryField.setFocus(true)
+                return true
+            end if
+            return false
+        end if
+    end for
+    if m.results.isInFocusChain() and (key = "left" or key = "up")
+        m.queryField.setFocus(true)
+        return true
+    end if
+    return false
+end function
 
 sub onResultSelected()
     selected = m.results.rowItemSelected

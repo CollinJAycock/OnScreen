@@ -27,38 +27,38 @@
                translation="[160, 100]"
                font="font:LargeBoldSystemFont"
                color="0xffffffff" />
-        <Button id="pairBtn"
+        <OsButton id="pairBtn"
                 text="Sign in with another device"
                 translation="[160, 200]"
-                minWidth="720" iconUri="" focusedIconUri="" />
+                minWidth="720" />
         <Label id="orLabel"
                text="or with your username and password"
                translation="[160, 290]"
                color="0xa0a0a0ff" />
-        <Button id="usernameBtn"
+        <OsButton id="usernameBtn"
                 translation="[160, 340]"
-                minWidth="720" iconUri="" focusedIconUri="" />
-        <Button id="passwordBtn"
+                minWidth="720" />
+        <OsButton id="passwordBtn"
                 translation="[160, 420]"
-                minWidth="720" iconUri="" focusedIconUri="" />
-        <Button id="signInBtn"
+                minWidth="720" />
+        <OsButton id="signInBtn"
                 text="Sign in"
                 translation="[160, 500]"
-                minWidth="720" iconUri="" focusedIconUri="" />
-        <Button id="changeServerBtn"
+                minWidth="720" />
+        <OsButton id="changeServerBtn"
                 text="Change server"
                 translation="[160, 580]"
-                minWidth="720" iconUri="" focusedIconUri="" />
+                minWidth="720" />
         <!-- Two-factor step: replaces the password rows once /auth/login
              reports totp_required. -->
-        <Button id="totpBtn"
+        <OsButton id="totpBtn"
                 translation="[160, 340]"
-                minWidth="720" iconUri="" focusedIconUri=""
+                minWidth="720"
                 visible="false" />
-        <Button id="verifyBtn"
+        <OsButton id="verifyBtn"
                 text="Verify"
                 translation="[160, 420]"
-                minWidth="720" iconUri="" focusedIconUri=""
+                minWidth="720"
                 visible="false" />
         <Label id="error"
                translation="[960, 340]"

@@ -75,6 +75,7 @@ sub init()
     m.childrenTask = m.top.findNode("childrenTask")
     m.prefsTask = m.top.findNode("prefsTask")
     m.skipMarker = m.top.findNode("skipMarker")
+    m.skipMarkerText = m.top.findNode("skipMarkerText")
     m.upNext = m.top.findNode("upNext")
     m.upNextTitle = m.top.findNode("upNextTitle")
     m.upNextHint = m.top.findNode("upNextHint")
@@ -729,9 +730,9 @@ sub updateActiveMarker(posMs as Integer)
     if m.activeMarker = invalid or m.activeMarker.start_ms <> found.start_ms
         m.activeMarker = found
         if found.kind = "credits"
-            m.skipMarker.text = "* Skip Credits"
+            m.skipMarkerText.text = "* Skip Credits"
         else
-            m.skipMarker.text = "* Skip Intro"
+            m.skipMarkerText.text = "* Skip Intro"
         end if
         m.skipMarker.visible = true
     end if

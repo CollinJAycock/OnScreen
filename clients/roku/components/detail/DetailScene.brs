@@ -86,11 +86,6 @@ sub init()
     m.statusMenu = []
     ' In-flight ApiCallTasks, held so they aren't collected mid-request.
     m.pendingCalls = []
-    ' Each button's XML width; layoutButtons scales from these.
-    m.baseWidths = {}
-    for each b in allButtons()
-        m.baseWidths[b.id] = b.minWidth
-    end for
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.childrenTask.observeField("state", "onChildrenTaskState")
@@ -344,9 +339,9 @@ function containerPlayLabel() as String
     return ""
 end function
 
-' Place the visible buttons left to right (fixed widths from the XML,
-' scaled down together when they'd overflow the content width) and keep
-' the focus index valid.
+' Place the visible buttons left to right, each at its label's natural width
+' (OsButton measures it), scaled down together when they'd overflow the
+' content width, and keep the focus index valid.
 sub layoutButtons()
     previous = invalid
     if m.btnIndex >= 0 and m.btnIndex < m.visibleButtons.Count() then previous = m.visibleButtons[m.btnIndex]
@@ -356,17 +351,18 @@ sub layoutButtons()
     for each b in allButtons()
         if b.visible
             m.visibleButtons.push(b)
-            widths.push(m.baseWidths[b.id])
+            ' Unpinned, the button sizes itself to its label.
+            b.minWidth = 0
+            b.maxWidth = 0
+            widths.push(b.width)
         end if
     end for
     widths = DetailMeta_FitWidths(widths, 24, 1760)
     x = 0
     for i = 0 to m.visibleButtons.Count() - 1
         b = m.visibleButtons[i]
-        if b.minWidth <> widths[i]
-            b.minWidth = widths[i]
-            b.maxWidth = widths[i]
-        end if
+        b.minWidth = widths[i]
+        b.maxWidth = widths[i]
         b.translation = [x, 0]
         x = x + widths[i] + 24
     end for

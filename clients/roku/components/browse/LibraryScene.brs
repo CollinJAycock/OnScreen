@@ -53,9 +53,14 @@ sub onTaskState()
     serverUrl = Prefs_GetServerUrl()
     token = Prefs_GetAccessToken()
 
+    ' A grid: rows of six cards (onCardSelected reads the card through its
+    ' row, so the split needs nothing else).
     root = createObject("roSGNode", "ContentNode")
-    row = root.createChild("ContentNode")
+    row = invalid
+    n = 0
     for each it in items
+        if n mod 6 = 0 then row = root.createChild("ContentNode")
+        n = n + 1
         node = row.createChild("ContentNode")
         node.title = it.title
         node.id = it.id
@@ -111,3 +116,8 @@ function getMainScene() as Object
     end while
     return node
 end function
+
+sub onHeading()
+    h = m.top.heading
+    if h <> invalid and h <> "" then m.top.findNode("title").text = h
+end sub
