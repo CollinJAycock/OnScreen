@@ -1,9 +1,10 @@
 <?xml version="1.0" encoding="utf-8" ?>
 <!--
-    Sign in. A column of buttons: Sign in with another device (a PIN
-    paired from a phone or computer, which also covers OIDC / SAML /
-    LDAP), then Username, Password, Sign in and Change server. One
-    Keyboard below them opens while a field is edited (LoginScene.brs).
+    Sign in. A column of buttons: Username, Password and Sign in first
+    (Roku certification 2.2 wants sign-in on the device), then Sign in
+    with another device (a PIN paired from a phone or computer, which
+    also covers OIDC / SAML / LDAP) and Change server. One keyboard
+    below them opens while a field is edited (LoginScene.brs).
     On success the tokens go to Prefs and the router moves to HomeScene.
 -->
 <component name="LoginScene" extends="Group">
@@ -27,22 +28,22 @@
                translation="[160, 100]"
                font="font:LargeBoldSystemFont"
                color="0xffffffff" />
-        <OsButton id="pairBtn"
-                text="Sign in with another device"
+        <OsButton id="usernameBtn"
                 translation="[160, 200]"
                 minWidth="720" />
-        <Label id="orLabel"
-               text="or with your username and password"
-               translation="[160, 290]"
-               color="0xa0a0a0ff" />
-        <OsButton id="usernameBtn"
-                translation="[160, 340]"
-                minWidth="720" />
         <OsButton id="passwordBtn"
-                translation="[160, 420]"
+                translation="[160, 280]"
                 minWidth="720" />
         <OsButton id="signInBtn"
                 text="Sign in"
+                translation="[160, 360]"
+                minWidth="720" />
+        <Label id="orLabel"
+               text="or from your phone or computer (also for single sign-on)"
+               translation="[160, 450]"
+               color="0xa0a0a0ff" />
+        <OsButton id="pairBtn"
+                text="Sign in with another device"
                 translation="[160, 500]"
                 minWidth="720" />
         <OsButton id="changeServerBtn"
@@ -52,16 +53,16 @@
         <!-- Two-factor step: replaces the password rows once /auth/login
              reports totp_required. -->
         <OsButton id="totpBtn"
-                translation="[160, 340]"
+                translation="[160, 200]"
                 minWidth="720"
                 visible="false" />
         <OsButton id="verifyBtn"
                 text="Verify"
-                translation="[160, 420]"
+                translation="[160, 280]"
                 minWidth="720"
                 visible="false" />
         <Label id="error"
-               translation="[960, 340]"
+               translation="[960, 200]"
                width="800"
                wrap="true"
                color="0xff5050ff"
