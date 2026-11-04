@@ -15,6 +15,7 @@ sub init()
     m.task = m.top.findNode("searchTask")
 
     m.chipMovie = m.top.findNode("chipMovie")
+    m.chipIndex = 0
     m.chipShow = m.top.findNode("chipShow")
     m.chipEpisode = m.top.findNode("chipEpisode")
     m.chipTrack = m.top.findNode("chipTrack")
@@ -39,6 +40,7 @@ sub init()
     m.chipTrack.observeField("buttonSelected", "onChipTrack")
 
     m.queryField.setFocus(true)
+    m.top.initialFocus = m.queryField
 end sub
 
 ' ── Filter chips ───────────────────────────────────────────────────
@@ -121,6 +123,7 @@ sub onQueryChange()
 end sub
 
 sub onDebounceFire()
+    m.task = renewTask(m.task, "SearchTask", "onSearchState")
     m.task.query = m.queryField.text
     m.task.control = "RUN"
     m.status.text = "Searching…"
@@ -172,9 +175,13 @@ sub renderResults()
     serverUrl = Prefs_GetServerUrl()
     token = Prefs_GetAccessToken()
 
+    ' A grid beside the keyboard: rows of five.
     root = createObject("roSGNode", "ContentNode")
-    row = root.createChild("ContentNode")
+    row = invalid
+    n = 0
     for each r in visible
+        if n mod 5 = 0 then row = root.createChild("ContentNode")
+        n = n + 1
         node = row.createChild("ContentNode")
         node.title = r.title
         node.id = r.id
@@ -189,6 +196,47 @@ sub renderResults()
     end for
     m.results.content = root
 end sub
+
+' Moving between the three areas; each control keeps the keys it uses and
+' passes on presses off its edges. Keyboard: Up to the chips, Right to the
+' results. Chips: Left / Right between them, Down to the keyboard. Results:
+' Left off the first column or Up off the top row back to the keyboard.
+function onKeyEvent(key as String, press as Boolean) as Boolean
+    if not press then return false
+    chips = [m.chipMovie, m.chipShow, m.chipEpisode, m.chipTrack]
+    if m.queryField.isInFocusChain()
+        if key = "up"
+            chips[m.chipIndex].setFocus(true)
+            return true
+        end if
+        if key = "right" and m.results.visible
+            m.results.setFocus(true)
+            return true
+        end if
+        return false
+    end if
+    for i = 0 to chips.Count() - 1
+        if chips[i].hasFocus()
+            if key = "left" and i > 0 then i = i - 1
+            if key = "right" and i < chips.Count() - 1 then i = i + 1
+            if key = "left" or key = "right"
+                m.chipIndex = i
+                chips[i].setFocus(true)
+                return true
+            end if
+            if key = "down"
+                m.queryField.setFocus(true)
+                return true
+            end if
+            return false
+        end if
+    end for
+    if m.results.isInFocusChain() and (key = "left" or key = "up")
+        m.queryField.setFocus(true)
+        return true
+    end if
+    return false
+end function
 
 sub onResultSelected()
     selected = m.results.rowItemSelected
@@ -215,7 +263,7 @@ sub routeBySearchType(itemType as String, itemId as String)
         getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
         return
     end if
-    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "movie"
+    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "book" or itemType = "movie"
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else
         getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)
@@ -228,4 +276,14 @@ function getMainScene() as Object
         node = node.getParent()
     end while
     return node
+end function
+
+' A fresh Task for every run: on a device a Task that has finished
+' ("done") never runs again when set to RUN (a second search hung on
+' "Searching..."; the library's second page never came).
+function renewTask(old as Dynamic, component as String, callback as String) as Object
+    if old <> invalid then old.unobserveField("state")
+    t = createObject("roSGNode", component)
+    t.observeField("state", callback)
+    return t
 end function

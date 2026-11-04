@@ -263,12 +263,13 @@ end function
 function Playback_SupportsHevc() as Boolean
     info = CreateObject("roDeviceInfo")
     if info = invalid then return false
-    if info.CanDecodeVideo <> invalid
-        result = info.CanDecodeVideo({ Codec: "hevc" })
-        if result <> invalid and result.Result = true then return true
-        return false
-    end if
-    return false
+    ' Called directly (see Client_DeviceCaps: testing a method by name is a
+    ' runtime error on a device).
+    result = info.CanDecodeVideo({ Codec: "hevc" })
+    if result = invalid then return false
+    t = type(result.Result)
+    if t <> "Boolean" and t <> "roBoolean" then return false
+    return result.Result
 end function
 
 function lcaseSafe(s as Dynamic) as String

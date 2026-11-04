@@ -29,8 +29,13 @@ sub onTaskState()
     token = Prefs_GetAccessToken()
 
     root = createObject("roSGNode", "ContentNode")
-    row = root.createChild("ContentNode")
+    ' A grid: rows of six cards (the select handler reads the card
+    ' through its row).
+    row = invalid
+    n = 0
     for each it in items
+        if n mod 6 = 0 then row = root.createChild("ContentNode")
+        n = n + 1
         ' History rows expose media_id for the playback target;
         ' .id on the server response is the watch_event PK and
         ' isn't what we want to route to. When the underlying media

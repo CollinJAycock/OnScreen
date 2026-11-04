@@ -39,9 +39,7 @@
              Sized to fill the screen — child scenes own their
              own layout. -->
         <Group id="content"
-               translation="[0,0]"
-               width="1920"
-               height="1080" />
+               translation="[0,0]" />
 
         <!-- Parent for runDetachedCall's ApiCallTasks, so a request a
              scene fires on its way out isn't torn down with it. -->

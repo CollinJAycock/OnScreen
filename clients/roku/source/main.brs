@@ -16,6 +16,11 @@ sub Main(args as Object)
     input = CreateObject("roInput")
     input.SetMessagePort(port)
 
+    ' What this Roku claims (X-Client-Capabilities), on the debug console
+    ' (port 8085): the first thing to compare with the server's play
+    ' decisions on a new device.
+    print "OnScreen capabilities: "; Client_CapabilitiesHeader()
+
     scene = screen.CreateScene("MainScene")
     screen.Show()
 

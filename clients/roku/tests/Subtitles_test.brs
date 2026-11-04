@@ -3,7 +3,31 @@
 ' Fixtures are parsed JSON, so absent fields are absent exactly as an
 ' older server omits them.
 
+sub testSideload()
+    file = {
+        id: "F1",
+        subtitle_streams: [
+            { index: 3, language: "eng", codec: "subrip", title: "Full" },
+            { index: 4, language: "eng", codec: "hdmv_pgs_subtitle", image_based: true },
+            { index: 5, language: "fre", codec: "ass" }
+        ],
+        external_subtitles: [{ id: "X", language: "spa", url: "/media/subtitles/F1/external/X", forced: true }]
+    }
+    sess = Subtitles_Sideload(file, "https://s", "T", true)
+    runStr("sideload: session tracks", sess.tracks.Count().ToStr(), "3")
+    runStr("sideload: embedded text url", sess.urlByRow["0"], "https://s/media/subtitles/F1/3?token=T")
+    runBool("sideload: an image track is never side-loaded", sess.urlByRow.DoesExist("1"), false)
+    runStr("sideload: second text track", sess.urlByRow["2"], "https://s/media/subtitles/F1/5?token=T")
+    runStr("sideload: external after the streams", sess.urlByRow["3"], "https://s/media/subtitles/F1/external/X?token=T")
+    direct = Subtitles_Sideload(file, "https://s", "T", false)
+    runStr("sideload: direct play loads externals only", direct.tracks.Count().ToStr(), "1")
+    runStr("sideload: direct external row", direct.urlByRow["3"], "https://s/media/subtitles/F1/external/X?token=T")
+    runStr("sideload: external label", Subtitles_ExternalLabel(file.external_subtitles[0]), "spa · external · forced")
+    runStr("sideload: no file", Subtitles_Sideload(invalid, "https://s", "T", true).tracks.Count().ToStr(), "0")
+end sub
+
 sub Main()
+    testSideload()
     testIsImage()
     testDirectPlay()
     testBurnIn()

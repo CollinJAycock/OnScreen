@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    OnScreen's button: a rounded pill (images/pill.9.png, tinted) with a
+    centred label. Roku's stock Button draws a default icon beside the text
+    and lays the label out at the far edge, which truncated labels such as
+    "Mark all watched" and put stray bullets on every button.
+
+    Same interface the scenes used with Button: text, minWidth, maxWidth,
+    and buttonSelected (set on OK). The width is the label plus padding,
+    held between minWidth and maxWidth (0 = no limit).
+-->
+<component name="OsButton" extends="Group">
+    <interface>
+        <field id="text" type="string" onChange="layout" />
+        <field id="minWidth" type="float" value="0" onChange="layout" />
+        <field id="maxWidth" type="float" value="0" onChange="layout" />
+        <field id="height" type="float" value="68" onChange="layout" />
+        <!-- "small" for the header bar, "medium" otherwise. -->
+        <field id="size" type="string" value="medium" onChange="layout" />
+        <field id="buttonSelected" type="boolean" alwaysNotify="true" />
+        <!-- The drawn width, for scenes that place buttons in a row. -->
+        <field id="width" type="float" />
+    </interface>
+    <script type="text/brightscript" uri="OsButton.brs" />
+    <children>
+        <Poster id="bg" uri="pkg:/images/pill.9.png" />
+        <Label id="label" horizAlign="center" vertAlign="center" />
+    </children>
+</component>

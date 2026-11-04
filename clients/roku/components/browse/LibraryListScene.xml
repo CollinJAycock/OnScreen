@@ -17,7 +17,7 @@
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
 
     <children>
-        <Group translation="[0,0]" width="1920" height="1080">
+        <Group translation="[0,0]">
             <Rectangle width="1920" height="1080" color="0x121212ff" />
 
             <Label id="title"
@@ -28,9 +28,15 @@
 
             <LabelList id="list"
                        translation="[80, 160]"
-                       itemSize="[1760, 80]"
+                       itemSize="[1000, 76]"
+                       itemSpacing="[0, 10]"
                        numRows="10"
-                       focusBitmapBlendColor="0xffffffff"
+                       color="0xE8E8EEFF"
+                       focusedColor="0xFFFFFFFF"
+                       font="font:MediumSystemFont"
+                       focusedFont="font:MediumBoldSystemFont"
+                       focusBitmapUri="pkg:/images/pill.9.png"
+                       focusBitmapBlendColor="0x7C6AF7FF"
                        drawFocusFeedback="true" />
 
             <Label id="empty"

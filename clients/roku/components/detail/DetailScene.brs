@@ -38,6 +38,11 @@ sub init()
     m.mixBtn = m.top.findNode("mixBtn")
     m.markBtn = m.top.findNode("markBtn")
     m.statusBtn = m.top.findNode("statusBtn")
+    m.favBtn = m.top.findNode("favBtn")
+    ' Favorite (from the item's is_favorite); flipped at once on a press and
+    ' flipped back with a message if the server refuses, as the TV web app.
+    m.isFavorite = false
+    m.favoriteBusy = false
     m.reportBtn = m.top.findNode("reportBtn")
     m.childrenHeader = m.top.findNode("childrenHeader")
     m.childrenList = m.top.findNode("children")
@@ -86,11 +91,6 @@ sub init()
     m.statusMenu = []
     ' In-flight ApiCallTasks, held so they aren't collected mid-request.
     m.pendingCalls = []
-    ' Each button's XML width; layoutButtons scales from these.
-    m.baseWidths = {}
-    for each b in allButtons()
-        m.baseWidths[b.id] = b.minWidth
-    end for
 
     m.itemTask.observeField("state", "onItemTaskState")
     m.childrenTask.observeField("state", "onChildrenTaskState")
@@ -99,6 +99,7 @@ sub init()
     m.mixBtn.observeField("buttonSelected", "onMixPressed")
     m.markBtn.observeField("buttonSelected", "onMarkPressed")
     m.statusBtn.observeField("buttonSelected", "onStatusPressed")
+    m.favBtn.observeField("buttonSelected", "onFavoritePressed")
     m.reportBtn.observeField("buttonSelected", "onReportPressed")
     m.childrenList.observeField("rowItemSelected", "onChildSelected")
     m.childrenList.observeField("rowItemFocused", "onChildFocused")
@@ -134,6 +135,10 @@ sub onItemTaskState()
     end if
     firstLoad = (m.item = invalid)
     m.item = item
+    if firstLoad
+        fav = item.is_favorite
+        m.isFavorite = (type(fav) = "Boolean" or type(fav) = "roBoolean") and fav
+    end if
     renderItem()
     ' Launched when this is a deep-linked title page (a no-op otherwise).
     if firstLoad then getMainScene().callFunc("reportReady")
@@ -282,7 +287,8 @@ sub renderButtons()
     ' play their first child. book_author + book_series are pure browse
     ' parents — the books grid is the only affordance there.
     playLabel = ""
-    if t = "book_author" or t = "book_series"
+    if t = "book_author" or t = "book_series" or t = "book"
+        ' A book can't be read on a TV (bookNote says where to read it).
         playLabel = ""
     else if WatchState_IsContainer(t)
         playLabel = containerPlayLabel()
@@ -295,6 +301,7 @@ sub renderButtons()
     end if
     m.playBtn.text = playLabel
     m.playBtn.visible = (playLabel <> "")
+    m.top.findNode("bookNote").visible = (t = "book")
 
     ' Version picker, for a playable item with a choice of versions.
     m.versions = []
@@ -323,6 +330,8 @@ sub renderButtons()
     m.mixBtn.visible = (t = "artist" or t = "album")
 
     ' Watchlist status, once its GET has landed.
+    m.favBtn.text = favoriteLabel()
+    m.favBtn.visible = true
     m.statusBtn.text = Watchlist_StatusButtonLabel(m.watchStatus)
     m.statusBtn.visible = (m.statusLoaded and Watchlist_SupportsStatus(t))
 
@@ -344,9 +353,9 @@ function containerPlayLabel() as String
     return ""
 end function
 
-' Place the visible buttons left to right (fixed widths from the XML,
-' scaled down together when they'd overflow the content width) and keep
-' the focus index valid.
+' Place the visible buttons left to right, each at its label's natural width
+' (OsButton measures it), scaled down together when they'd overflow the
+' content width, and keep the focus index valid.
 sub layoutButtons()
     previous = invalid
     if m.btnIndex >= 0 and m.btnIndex < m.visibleButtons.Count() then previous = m.visibleButtons[m.btnIndex]
@@ -356,17 +365,18 @@ sub layoutButtons()
     for each b in allButtons()
         if b.visible
             m.visibleButtons.push(b)
-            widths.push(m.baseWidths[b.id])
+            ' Unpinned, the button sizes itself to its label.
+            b.minWidth = 0
+            b.maxWidth = 0
+            widths.push(b.width)
         end if
     end for
     widths = DetailMeta_FitWidths(widths, 24, 1760)
     x = 0
     for i = 0 to m.visibleButtons.Count() - 1
         b = m.visibleButtons[i]
-        if b.minWidth <> widths[i]
-            b.minWidth = widths[i]
-            b.maxWidth = widths[i]
-        end if
+        b.minWidth = widths[i]
+        b.maxWidth = widths[i]
         b.translation = [x, 0]
         x = x + widths[i] + 24
     end for
@@ -389,7 +399,7 @@ end sub
 
 ' Every action button in row order.
 function allButtons() as Object
-    return [m.playBtn, m.versionBtn, m.mixBtn, m.markBtn, m.statusBtn, m.reportBtn]
+    return [m.playBtn, m.versionBtn, m.mixBtn, m.markBtn, m.favBtn, m.statusBtn, m.reportBtn]
 end function
 
 sub focusButtons()
@@ -532,6 +542,31 @@ end sub
 
 ' The button moves only once the server has the change; a failure keeps
 ' the old value and says so.
+function favoriteLabel() as String
+    ' No ♥: Roku's system font has no glyph for it (an empty box).
+    if m.isFavorite then return "✓ Favorited"
+    return "+ Favorite"
+end function
+
+sub onFavoritePressed()
+    if m.item = invalid or m.favoriteBusy then return
+    was = m.isFavorite
+    m.favoriteBusy = true
+    m.isFavorite = not was
+    m.favBtn.text = favoriteLabel()
+    verb = "POST"
+    if was then verb = "DELETE"
+    startCall(verb, ApiItemFavorite(m.item.id), invalid, { action: "favorite", was: was })
+end sub
+
+sub onFavoriteDone(res as Dynamic, ctx as Object)
+    m.favoriteBusy = false
+    if res <> invalid and res.ok = true then return
+    m.isFavorite = (ctx.was = true)
+    m.favBtn.text = favoriteLabel()
+    Menu_ShowMessage("favoriteFailed", "Favorites", WatchState_WriteErrorText(res, "Couldn't update Favorites. Try again later."))
+end sub
+
 sub onStatusSetDone(res as Dynamic, ctx as Object)
     m.statusSaving = false
     if res = invalid or res.ok <> true
@@ -1002,6 +1037,8 @@ sub onMarkDone(res as Dynamic, ctx as Object)
     end if
     ' Show / season / child card: badges, the Play label and the Mark
     ' options all move — re-read them.
+    m.childrenTask = renewTask(m.childrenTask, "ChildrenFetchTask", "onChildrenTaskState")
+    m.childrenTask.itemId = m.top.itemId
     m.childrenTask.control = "RUN"
     if WatchState_IsContainer(m.item.type) then fetchUpNext()
 end sub
@@ -1052,6 +1089,8 @@ sub onApiCallDone(evt as Object)
         onWatchStatusDone(res)
     else if ctx.action = "statusSet"
         onStatusSetDone(res, ctx)
+    else if ctx.action = "favorite"
+        onFavoriteDone(res, ctx)
     end if
 end sub
 
@@ -1065,4 +1104,14 @@ function getMainScene() as Object
         node = node.getParent()
     end while
     return node
+end function
+
+' A fresh Task for every run: on a device a Task that has finished
+' ("done") never runs again when set to RUN (a second search hung on
+' "Searching..."; the library's second page never came).
+function renewTask(old as Dynamic, component as String, callback as String) as Object
+    if old <> invalid then old.unobserveField("state")
+    t = createObject("roSGNode", component)
+    t.observeField("state", callback)
+    return t
 end function

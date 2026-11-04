@@ -92,8 +92,9 @@ sub navigateTo(name as String)
 end sub
 
 ' navigateToWithItem mounts a fresh `name` and sets `itemId` on it
-' before attaching, so the new scene's init() observes the field as
-' already populated. Item-aware sub-scenes (DetailScene, PlayerScene)
+' before attaching. The scene's init() has already run by then (it runs
+' inside createObject), so a scene observes itemId rather than reading it
+' in init(). Item-aware sub-scenes (DetailScene, PlayerScene)
 ' need the id available before mount; the previous pattern of "create
 ' a node here, set itemId, then call navigateTo (which then creates
 ' ANOTHER node and discards the first)" was both a leak AND broken
@@ -171,7 +172,16 @@ sub mountScene(name as String, itemId as String, params as Dynamic)
     end if
     m.currentChild = child
     m.content.appendChild(child)
-    child.setFocus(true)
+    ' A scene names the node it wants focused (initialFocus): its own
+    ' setFocus in init() ran before it was attached, and focusing the scene
+    ' Group itself would leave its keyboard or field without the keys.
+    target = invalid
+    if child.hasField("initialFocus") then target = child.initialFocus
+    if target <> invalid
+        target.setFocus(true)
+    else
+        child.setFocus(true)
+    end if
 end sub
 
 ' Fire-and-forget API call that must outlive the scene asking for it —

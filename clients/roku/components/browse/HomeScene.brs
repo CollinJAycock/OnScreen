@@ -15,6 +15,7 @@ sub init()
     m.optionsHint = m.top.findNode("optionsHint")
     m.hubTask = m.top.findNode("hubTask")
     m.searchBtn = m.top.findNode("searchBtn")
+    m.settingsBtn = m.top.findNode("settingsBtn")
     m.favoritesBtn = m.top.findNode("favoritesBtn")
     m.watchlistBtn = m.top.findNode("watchlistBtn")
     m.historyBtn = m.top.findNode("historyBtn")
@@ -32,7 +33,7 @@ sub init()
     m.pendingCalls = []
     ' Header buttons, left to right. Up from the top row reaches them;
     ' down comes back to the rows.
-    m.headerButtons = [m.librariesBtn, m.favoritesBtn, m.watchlistBtn, m.historyBtn, m.searchBtn]
+    m.headerButtons = [m.librariesBtn, m.favoritesBtn, m.watchlistBtn, m.historyBtn, m.searchBtn, m.settingsBtn]
     m.headerIdx = 0
     m.inHeader = false
 
@@ -40,6 +41,7 @@ sub init()
     m.rows.observeField("rowItemSelected", "onCardSelected")
     m.rows.observeField("rowItemFocused", "onRowItemFocused")
     m.searchBtn.observeField("buttonSelected", "onSearchPressed")
+    m.settingsBtn.observeField("buttonSelected", "onSettingsPressed")
     m.favoritesBtn.observeField("buttonSelected", "onFavoritesPressed")
     m.watchlistBtn.observeField("buttonSelected", "onWatchlistPressed")
     m.historyBtn.observeField("buttonSelected", "onHistoryPressed")
@@ -123,12 +125,12 @@ sub renderRows()
             if addItemToRow(row, item) then hasSubtitle = true
         end for
         if hasSubtitle
-            heights.push(420)
+            heights.push(470)
         else
-            heights.push(380)
+            heights.push(430)
         end if
     end for
-    if heights.Count() = 0 then heights.push(380)
+    if heights.Count() = 0 then heights.push(430)
     m.rows.rowHeights = heights
     m.rows.content = root
     updateOptionsHint()
@@ -316,7 +318,7 @@ sub routeForType(itemType as String, itemId as String)
         return
     end if
     detail = false
-    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "movie"
+    if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "book" or itemType = "movie"
         detail = true
     end if
     if detail
@@ -333,3 +335,7 @@ function getMainScene() as Object
     end while
     return node
 end function
+
+sub onSettingsPressed()
+    getMainScene().callFunc("navigateTo", "SettingsScene")
+end sub

@@ -12,7 +12,8 @@ sub runTranscodeStart()
         videoCopy: m.top.videoCopy,
         supportsHevc: m.top.supportsHevc,
         audioStreamIndex: m.top.audioStreamIndex,
-        burnSubtitleStreamIndex: m.top.burnSubtitleStreamIndex
+        burnSubtitleStreamIndex: m.top.burnSubtitleStreamIndex,
+        audioRate: m.top.audioRate
     }, m.top.positionMs)
     ' RequestSync rather than PostSync: a refused start carries its reason
     ' in the error envelope, and an admin stop (403 PLAYBACK_STOPPED) or
@@ -22,6 +23,7 @@ sub runTranscodeStart()
     r = ApiResult_From(res.code, res.raw)
     m.top.stopMessage = PlaybackStop_FromResult(r)
     m.top.limitMessage = PlaybackLimit_FromResult(r)
+    m.top.parentalMessage = PlaybackParental_FromResult(r)
     m.top.refusal = TranscodeRequest_RefusalText(r)
     if r.ok and r.data <> invalid and type(r.data) = "roAssociativeArray"
         m.top.result = r.data

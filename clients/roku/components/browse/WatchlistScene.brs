@@ -146,9 +146,9 @@ sub renderRows()
             end if
         end for
         if hasSubtitle
-            heights.push(420)
+            heights.push(470)
         else
-            heights.push(380)
+            heights.push(430)
         end if
     end for
     m.rows.rowHeights = heights

@@ -38,7 +38,7 @@ function Subtitles_StreamIndex(stream as Dynamic) as Integer
     return v
 end function
 
-' The plan for a pick. pos is the row's position in streams (-1 = Off);
+' The plan for a pick. rowPos is the row's position in streams (-1 = Off);
 ' ctx is { serverSession, stacked, burnIndex } — burnIndex the absolute
 ' index burned into the current session, -1 for none. Returns
 '   { kind: "firmware" }               hand the pick to the Video node
@@ -48,15 +48,15 @@ end function
 '   { kind: "none" }                   already showing; nothing to do
 '   { kind: "unsupported" }            an image track on a multi-part
 '                                      movie: the server can't burn it
-function Subtitles_PickPlan(streams as Dynamic, pos as Integer, ctx as Object) as Object
+function Subtitles_PickPlan(streams as Dynamic, rowPos as Integer, ctx as Object) as Object
     burned = -1
     if ctx.burnIndex <> invalid and ctx.burnIndex >= 0 then burned = ctx.burnIndex
-    if pos < 0
+    if rowPos < 0
         if burned >= 0 then return { kind: "reissue", burnIndex: -1 }
         return { kind: "firmware" }
     end if
     stream = invalid
-    if streams <> invalid and type(streams) = "roArray" and pos < streams.Count() then stream = streams[pos]
+    if streams <> invalid and type(streams) = "roArray" and rowPos < streams.Count() then stream = streams[rowPos]
     if stream = invalid then return { kind: "none" }
     if Subtitles_WillBurn(stream, ctx.serverSession = true)
         idx = Subtitles_StreamIndex(stream)
@@ -78,4 +78,67 @@ function Subtitles_LangLabel(stream as Dynamic, willBurn as Boolean) as String
     end if
     if willBurn then return lang + " (burned in)"
     return lang
+end function
+
+' ── Side-loaded subtitles ──────────────────────────────────────────
+'
+' The Video node fetches WebVTT itself from content.SubtitleTracks
+' ([{ TrackName: url, Language, Description }]); the server serves an
+' embedded text track as /media/subtitles/{fileId}/{index} and an external
+' file at its own url, both authenticated by ?token= (the asset token).
+' A session's HLS carries no subtitles, so there every text track is
+' side-loaded; a direct play's own tracks come from the container, so only
+' the external files are. Picker rows: the file's subtitle_streams, then
+' its external_subtitles.
+
+' { tracks, urlByRow } for file. urlByRow maps a picker row ("3") to the
+' side-loaded URL that row selects.
+function Subtitles_Sideload(file as Dynamic, serverUrl as String, token as String, serverSession as Boolean) as Object
+    out = { tracks: [], urlByRow: {} }
+    if file = invalid or type(file) <> "roAssociativeArray" or file.id = invalid then return out
+    streams = file.subtitle_streams
+    n = 0
+    if streams <> invalid and type(streams) = "roArray" then n = streams.Count()
+    if serverSession
+        for i = 0 to n - 1
+            s = streams[i]
+            idx = Subtitles_StreamIndex(s)
+            if idx >= 0 and not Subtitles_IsImage(s)
+                url = serverUrl + "/media/subtitles/" + file.id + "/" + idx.ToStr() + "?token=" + token
+                out.tracks.push({ TrackName: url, Language: Subtitles_LangLabel(s, false), Description: Subtitles_Str(s.title) })
+                out.urlByRow[i.ToStr()] = url
+            end if
+        end for
+    end if
+    ext = file.external_subtitles
+    if ext <> invalid and type(ext) = "roArray"
+        for j = 0 to ext.Count() - 1
+            e = ext[j]
+            path = Subtitles_Str(e.url)
+            if path <> ""
+                sep = "?"
+                if Instr(1, path, "?") > 0 then sep = "&"
+                url = serverUrl + path + sep + "token=" + token
+                out.tracks.push({ TrackName: url, Language: Subtitles_LangLabel(e, false), Description: Subtitles_Str(e.title) })
+                out.urlByRow[(n + j).ToStr()] = url
+            end if
+        end for
+    end if
+    return out
+end function
+
+' A picker row for an external file: "eng · external · forced · Title".
+function Subtitles_ExternalLabel(e as Dynamic) as String
+    parts = [Subtitles_LangLabel(e, false), "external"]
+    if e <> invalid and e.forced = true then parts.push("forced")
+    if e <> invalid and e.sdh = true then parts.push("sdh")
+    t = Subtitles_Str(e.title)
+    if t <> "" then parts.push(t)
+    return parts.Join(" · ")
+end function
+
+function Subtitles_Str(v as Dynamic) as String
+    if v = invalid then return ""
+    if type(v) <> "String" and type(v) <> "roString" then return ""
+    return v
 end function

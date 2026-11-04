@@ -19,6 +19,7 @@ sub init()
 
     m.task.control = "RUN"
     m.cancelBtn.setFocus(true)
+    m.top.initialFocus = m.cancelBtn
 end sub
 
 sub onPhaseChanged()

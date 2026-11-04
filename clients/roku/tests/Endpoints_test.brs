@@ -17,6 +17,8 @@ sub Main()
     runCase("watchlist counts", ApiWatchlistCounts(), "/api/v1/watchlist/counts")
     runCase("watch status", ApiItemWatchStatus(id), "/api/v1/items/" + id + "/watch-status")
 
+    runCase("library page", ApiLibraryItemsPage("L1", 400, 200), "/api/v1/libraries/L1/items?sort=title&sort_dir=asc&limit=200&offset=400")
+    runCase("library first page", ApiLibraryItems("L1"), "/api/v1/libraries/L1/items?sort=title&sort_dir=asc&limit=200&offset=0")
     print "DONE: Endpoints_test"
 end sub
 

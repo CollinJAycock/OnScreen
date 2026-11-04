@@ -107,15 +107,16 @@ end function
 '   hdr10  - the display takes HDR10
 '   hlg    - the display takes HLG
 function Client_DeviceCaps() as Object
-    caps = { hevc: false, hevc10: false, uhd: false, hdr10: false, hlg: false }
+    caps = { hevc: false, hevc10: false, uhd: false, hdr10: false, hlg: false, aacChannels: 2, passthrough: [] }
     info = CreateObject("roDeviceInfo")
     if info = invalid then return caps
-    if info.CanDecodeVideo <> invalid
-        r = info.CanDecodeVideo({ Codec: "hevc" })
-        if r <> invalid then caps.hevc = Client_IsTrue(r.Result)
-        r = info.CanDecodeVideo({ Codec: "hevc", Profile: "main 10" })
-        if r <> invalid then caps.hevc10 = Client_IsTrue(r.Result)
-    end if
+    ' Called directly: naming a method to test it (info.CanDecodeVideo <>
+    ' invalid) is a runtime error on a device, though brs accepts it.
+    ' Roku OS 11, the floor, has every method used here.
+    r = info.CanDecodeVideo({ Codec: "hevc" })
+    if r <> invalid then caps.hevc = Client_IsTrue(r.Result)
+    r = info.CanDecodeVideo({ Codec: "hevc", Profile: "main 10" })
+    if r <> invalid then caps.hevc10 = Client_IsTrue(r.Result)
     mode = info.GetVideoMode()
     caps.uhd = Prefs_IsString(mode) and Instr(1, mode, "2160") = 1
     props = info.GetDisplayProperties()
@@ -123,6 +124,21 @@ function Client_DeviceCaps() as Object
         caps.hdr10 = Client_IsTrue(props.Hdr10)
         caps.hlg = Client_IsTrue(props.HLG)
     end if
+    ' AAC's channel limit: "2:0:0:0:" on a Streaming Stick 4K, whose AAC
+    ' decoder is stereo. maxAudioChannels caps every codec but the
+    ' passthrough ones, so a 5.1 source is downmixed to a stereo AAC the
+    ' Roku can decode, while Dolby for a receiver keeps its channels.
+    decodeInfo = info.GetAudioDecodeInfo()
+    if decodeInfo <> invalid and Prefs_IsString(decodeInfo.AAC)
+        n = Val(decodeInfo.AAC.Split(":")[0])
+        if n >= 1 then caps.aacChannels = Int(n)
+    end if
+    ' What the HDMI sink takes as a bitstream (a receiver, or the TV):
+    ' AC-3 and E-AC-3 on that Roku, never TrueHD or DTS.
+    for each codec in ["ac3", "eac3"]
+        r = info.CanDecodeAudio({ Codec: codec, PassThru: 1 })
+        if r <> invalid and Client_IsTrue(r.result) then caps.passthrough.Push(codec)
+    end for
     return caps
 end function
 
@@ -151,7 +167,9 @@ function Client_CapabilitiesHeaderFor(caps as Object) as String
     else
         header = header + ",maxWidth=1920,maxHeight=1080"
     end if
-    header = header + ",maxAudioChannels=6"
+    aacCh = 2
+    if caps.aacChannels <> invalid and caps.aacChannels >= 1 then aacCh = caps.aacChannels
+    header = header + ",maxAudioChannels=" + aacCh.ToStr()
     if caps.hevc = true and caps.hevc10 = true
         header = header + ",maxbitdepth=10"
     else
@@ -169,31 +187,23 @@ function Client_CapabilitiesHeaderFor(caps as Object) as String
     else
         header = header + ",hdr=0"
     end if
+    if caps.passthrough <> invalid and caps.passthrough.Count() > 0
+        header = header + ",audioPassthrough=" + caps.passthrough.Join(":")
+    end if
     header = header + ",optimized=1"
     return header
 end function
 
 ' Synchronous GET. Returns the parsed JSON envelope unwrapped to
-' .data, or invalid on failure (network, non-200, parse error).
-' Avoid in any Task node — blocking calls there hang the UI.
+' .data, or invalid on failure (network, non-200, parse error). Task
+' threads only, like every call here. Built on Client_RequestSync (async
+' transfer + wait): a synchronous GetToString gives no status code, and
+' roUrlTransfer has no GetResponseCode, so the old version crashed on a
+' device. The 401 refresh + single replay is RequestSync's.
 function Client_GetSync(path as String, auth as Boolean) as Dynamic
-    transfer = Client_BuildTransfer(path, auth)
-    if transfer = invalid then return invalid
-
-    raw = transfer.GetToString()
-    code = transfer.GetResponseCode()
-    if code = HttpUnauthorized() and auth
-        if not Client_RefreshSync() then return invalid
-        ' Rebuild so the Authorization header picks up the new token,
-        ' then replay exactly once — a second 401 falls through to the
-        ' failure return below, never another refresh (no retry loop).
-        transfer = Client_BuildTransfer(path, auth)
-        if transfer = invalid then return invalid
-        raw = transfer.GetToString()
-        code = transfer.GetResponseCode()
-    end if
-    if code <> HttpOk() then return invalid
-    return Json_UnwrapData(Json_Parse(raw))
+    res = Client_RequestSync("GET", path, invalid, invalid, auth)
+    if res.code < 200 or res.code >= 300 then return invalid
+    return Json_UnwrapData(Json_Parse(res.raw))
 end function
 
 ' Synchronous POST with a JSON body. Same caveats as GetSync.

@@ -47,7 +47,22 @@ end function
 ' the focus-feedback render starts dropping frames on lower-tier
 ' Roku hardware. Bigger libraries page on scroll once that lands.
 function ApiLibraryItems(libraryId as String) as String
-    return "/api/v1/libraries/" + libraryId + "/items?limit=200"
+    return ApiLibraryItemsPage(libraryId, 0, 200)
+end function
+
+' One page of a library (the server caps limit at 200), by title.
+function ApiLibraryItemsPage(libraryId as String, offset as Integer, limit as Integer) as String
+    return "/api/v1/libraries/" + libraryId + "/items?sort=title&sort_dir=asc&limit=" + limit.ToStr() + "&offset=" + offset.ToStr()
+end function
+
+' An audiobook's saved speed (GET -> { rate, source }) and saving one (PUT { rate }).
+function ApiItemPlaybackRate(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/playback-rate"
+end function
+
+' Favorite (POST) / unfavorite (DELETE) an item.
+function ApiItemFavorite(itemId as String) as String
+    return "/api/v1/items/" + itemId + "/favorite"
 end function
 
 function ApiSearch() as String
@@ -261,6 +276,11 @@ end function
 ' subtitle track. Mirrors the web client's /users/me/preferences GET.
 function ApiPreferences() as String
     return "/api/v1/users/me/preferences"
+end function
+
+' The quality limits and forced-subtitles flag (PUT replaces them all).
+function ApiQualityProfile() as String
+    return "/api/v1/users/me/quality-profile"
 end function
 
 function AssetArtwork(serverUrl as String, path as String, width as Integer, accessToken as String) as String
