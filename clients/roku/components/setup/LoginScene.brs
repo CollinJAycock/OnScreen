@@ -64,7 +64,18 @@ end sub
 sub startEdit(field as String)
     m.editing = field
     m.keyboard.textEditBox.secureMode = (field = "password")
+    ' What voice entry listens for.
+    if field = "password"
+        m.keyboard.keyboardDomain = "password"
+    else if field = "totp"
+        m.keyboard.keyboardDomain = "numeric"
+    else
+        m.keyboard.keyboardDomain = "generic"
+    end if
     m.keyboard.text = m.values[field]
+    ' The keyboard (about 440 high) sits over Change server, which can't be
+    ' used while typing anyway.
+    m.changeServerBtn.visible = false
     m.keyboard.visible = true
     m.keyboard.setFocus(true)
 end sub
@@ -74,6 +85,7 @@ sub finishEdit()
     field = m.editing
     m.editing = ""
     m.keyboard.visible = false
+    m.changeServerBtn.visible = true
     btn = fieldButton(field)
     if btn <> invalid then btn.setFocus(true)
 end sub

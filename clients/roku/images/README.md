@@ -7,8 +7,10 @@ at the paths below before sideloading.
 
 | File | Dimensions | Format | Manifest key |
 |---|---|---|---|
+| `icon_focus_fhd.png` | 540 × 405 | PNG | `mm_icon_focus_fhd` (also the store's app poster) |
 | `icon_focus_hd.png` | 290 × 218 | PNG | `mm_icon_focus_hd` |
 | `icon_focus_sd.png` | 246 × 140 | PNG | `mm_icon_focus_sd` |
+| `splash_sd.jpg` | 720 × 480 | JPEG | `splash_screen_sd` (the FHD splash, letterboxed) |
 | `splash_hd.jpg` | 1280 × 720 | JPEG | `splash_screen_hd` |
 | `splash_fhd.jpg` | 1920 × 1080 | JPEG | `splash_screen_fhd` |
 
