@@ -46,6 +46,7 @@
          Tasks / MainScene.runDetachedCall. -->
     <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Decide.brs" />
+    <script type="text/brightscript" uri="pkg:/source/playback/Chapters.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Siblings.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/Versions.brs" />
     <script type="text/brightscript" uri="pkg:/source/playback/PlaybackStop.brs" />
@@ -105,31 +106,37 @@
                    wrap="true"
                    maxLines="2" />
             <Label id="upNextHint"
-                   text="OK to play now"
+                   text="Down to play now"
                    translation="[20, 124]"
                    color="0x9a9aaaff"
                    font="font:SmallSystemFont" />
         </Group>
 
         <!-- In-player Audio + Subtitle picker. The * (options) button
-             toggles the panel through three states: closed → audio
-             open → subtitle open → closed. up/down navigates the
-             list, OK selects, back closes. Hidden by default; the
-             Video node keeps focus during normal playback. -->
+             Down opens it during playback (the Video node keeps the
+             other keys); Left / Right move between Audio, Subtitles
+             and Chapters, up/down and OK pick, Back closes. Hidden by
+             default; the Video node keeps focus during playback. -->
         <Group id="trackPicker"
-               translation="[1380, 200]"
+               translation="[1080, 160]"
                visible="false">
-            <Rectangle width="500" height="640" color="0x07070dee" />
+            <Poster uri="pkg:/images/pill.9.png"
+                    width="800"
+                    height="800"
+                    blendColor="0x07070DEE" />
             <Label id="trackPickerTitle"
                    text=""
-                   translation="[24, 18]"
+                   translation="[32, 24]"
+                   width="736"
+                   wrap="true"
                    color="0x9a9aaaff"
                    font="font:SmallBoldSystemFont" />
             <LabelList id="trackPickerList"
-                       translation="[16, 56]"
-                       itemSize="[468, 52]"
+                       translation="[24, 140]"
+                       itemSize="[752, 56]"
                        numRows="11"
                        drawFocusFeedback="true"
+                       focusBitmapUri="pkg:/images/pill.9.png"
                        focusBitmapBlendColor="0x7c6af7ff" />
         </Group>
 

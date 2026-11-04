@@ -244,7 +244,7 @@ sub onItemTaskState()
     if m.itemTask.state <> "done" then return
     item = m.itemTask.result
     ' [player] lines on the debug console (8085) trace each step of a start.
-    if item = invalid then print "[player] item fetch failed: "; m.top.itemId else print "[player] item "; m.top.itemId; " files="; item.files.Count()
+    if item = invalid then print "[player] item fetch failed: "; m.top.itemId else print "[player] item "; m.top.itemId; " files="; item.files.Count(); " chapters="; chapterCount(item)
     if item = invalid or item.files = invalid or item.files.Count() = 0
         bailToHome()
         return
@@ -745,9 +745,9 @@ sub updateActiveMarker(posMs as Integer)
     if m.activeMarker = invalid or m.activeMarker.start_ms <> found.start_ms
         m.activeMarker = found
         if found.kind = "credits"
-            m.skipMarkerText.text = "* Skip Credits"
+            m.skipMarkerText.text = "Down: Skip Credits"
         else
-            m.skipMarkerText.text = "* Skip Intro"
+            m.skipMarkerText.text = "Down: Skip Intro"
         end if
         m.skipMarker.visible = true
     end if
@@ -1040,32 +1040,36 @@ end sub
 ' captures focus during playback).
 function onKeyEvent(key as String, press as Boolean) as Boolean
     if not press then return false
-    ' Track picker takes priority when open — back closes it (without
-    ' leaving the player), * cycles to the next mode (audio →
-    ' subtitle → closed), up/down/OK ride through to the LabelList.
+    ' During playback the focused Video node keeps OK, Left, Right, Up and
+    ' the * (options) key for its own controls and Roku's Options panel:
+    ' on a Streaming Stick 4K only Down (and Back) ever reached here. So
+    ' Down is the player's key: it skips the intro / credits while that
+    ' button shows, plays Up Next while that shows, and otherwise opens the
+    ' picker. In the picker (a LabelList with the focus) Left / Right move
+    ' between Audio, Subtitles and Chapters, Back closes it.
     if m.trackPickerMode <> ""
         if key = "back"
             closeTrackPicker()
             return true
         end if
-        if key = "options" or key = "*"
+        if key = "right" or key = "options" or key = "*"
             cycleTrackPicker()
+            return true
+        end if
+        if key = "left"
+            prev = prevPickerMode(m.trackPickerMode)
+            if prev <> "" then openTrackPicker(prev)
             return true
         end if
         ' Let LabelList swallow up/down/OK natively.
         return false
     end if
-    ' Skip-marker overlay: * (options key) skips, back dismisses
-    ' that marker for the rest of this play.
-    if m.activeMarker <> invalid
-        if key = "options" or key = "*"
-            skipActiveMarker()
-            return true
-        end if
+    if m.activeMarker <> invalid and (key = "down" or key = "options" or key = "*")
+        skipActiveMarker()
+        return true
     end if
-    ' Up Next overlay: OK accepts immediately, back dismisses.
     if m.upNextShown
-        if key = "OK"
+        if key = "down" or key = "OK"
             acceptUpNext()
             return true
         end if
@@ -1074,16 +1078,10 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
             return true
         end if
     end if
-    ' * (options) with no overlay open → opens the audio picker
-    ' (or subtitle picker if there's no audio choice but subtitles
-    ' exist). Same key cycles through the modes once open.
-    if key = "options" or key = "*"
-        if hasMultiAudio()
-            openTrackPicker("audio")
-            return true
-        end if
-        if hasSubtitles()
-            openTrackPicker("subtitle")
+    if key = "down" or key = "options" or key = "*"
+        modes = pickerModes()
+        if modes.Count() > 0
+            openTrackPicker(modes[0])
             return true
         end if
     end if
@@ -1120,14 +1118,73 @@ function hasSubtitles() as Boolean
     return m.file.subtitle_streams.Count() > 0
 end function
 
+' The picker's modes with something to offer, in * order.
+function pickerModes() as Object
+    modes = []
+    if hasMultiAudio() then modes.push("audio")
+    if hasSubtitles() then modes.push("subtitle")
+    if hasChapters() then modes.push("chapter")
+    return modes
+end function
+
+' The mode * moves to from mode ("" = close).
+function nextPickerMode(mode as String) as String
+    modes = pickerModes()
+    for i = 0 to modes.Count() - 1
+        if modes[i] = mode
+            if i + 1 < modes.Count() then return modes[i + 1]
+            return ""
+        end if
+    end for
+    return ""
+end function
+
+' The mode Left moves to from mode ("" = none).
+function prevPickerMode(mode as String) as String
+    modes = pickerModes()
+    for i = 0 to modes.Count() - 1
+        if modes[i] = mode
+            if i > 0 then return modes[i - 1]
+            return ""
+        end if
+    end for
+    return ""
+end function
+
+function pickerHint(mode as String) as String
+    modes = pickerModes()
+    if modes.Count() < 2 then return "Back to close"
+    names = { audio: "audio", subtitle: "subtitles", chapter: "chapters" }
+    listed = []
+    for each md in modes
+        listed.push(names[md])
+    end for
+    return "Left / Right: " + listed.Join(", ") + "  ·  Back to close"
+end function
+
+function hasChapters() as Boolean
+    if m.file = invalid or m.file.chapters = invalid or type(m.file.chapters) <> "roArray" then return false
+    return m.file.chapters.Count() > 1
+end function
+
 sub openTrackPicker(mode as String)
     m.trackPickerMode = mode
     if mode = "audio"
-        m.trackPickerTitle.text = "AUDIO  ·  * for subtitles  ·  back to close"
+        m.trackPickerTitle.text = "AUDIO  ·  " + pickerHint(mode)
         m.trackPickerList.content = buildAudioContent()
         m.trackPickerList.jumpToItem = m.activeAudioIndex
+    else if mode = "chapter"
+        m.trackPickerTitle.text = "CHAPTERS  ·  " + pickerHint(mode)
+        root = createObject("roSGNode", "ContentNode")
+        for each label in Chapters_Rows(m.file.chapters)
+            root.createChild("ContentNode").title = label
+        end for
+        m.trackPickerList.content = root
+        cur = Chapters_IndexAt(m.file.chapters, playheadMs())
+        if cur < 0 then cur = 0
+        m.trackPickerList.jumpToItem = cur
     else
-        m.trackPickerTitle.text = "SUBTITLES  ·  * to close  ·  back to close"
+        m.trackPickerTitle.text = "SUBTITLES  ·  " + pickerHint(mode)
         m.trackPickerList.content = buildSubtitleContent()
         ' +1 because index 0 in the LabelList is the synthetic "Off" row.
         cursor = 0
@@ -1138,17 +1195,14 @@ sub openTrackPicker(mode as String)
     m.trackPickerList.setFocus(true)
 end sub
 
+' * moves audio → subtitles → chapters → closed, skipping modes with
+' nothing to offer.
 sub cycleTrackPicker()
-    if m.trackPickerMode = "audio"
-        if hasSubtitles()
-            openTrackPicker("subtitle")
-        else
-            closeTrackPicker()
-        end if
-    else
-        ' From subtitle: close. The opening cycle is audio → subtitle
-        ' → closed; subtitle-only flows just open and close.
+    nxt = nextPickerMode(m.trackPickerMode)
+    if nxt = ""
         closeTrackPicker()
+    else
+        openTrackPicker(nxt)
     end if
 end sub
 
@@ -1228,6 +1282,24 @@ end function
 ' LabelList delivers itemSelected when the user presses OK on a row.
 sub onTrackPickerSelect()
     idx = m.trackPickerList.itemSelected
+    ' A chapter: jump to its start. Direct play seeks; a server session
+    ' (remux / transcode) restarts at the chapter, as a track switch
+    ' restarts at the playhead: its playlist holds only what the server
+    ' has written so far, so a seek minutes ahead has nothing to land on.
+    if m.trackPickerMode = "chapter"
+        if hasChapters() and idx >= 0 and idx < m.file.chapters.Count()
+            c = m.file.chapters[idx]
+            if c <> invalid and c.start_ms <> invalid
+                if inServerSession() and m.lastTranscodeRequest <> invalid and not m.reissuing
+                    reissueSessionAt(m.lastTranscodeRequest.audioStreamIndex, m.burnSubtitleIndex, c.start_ms)
+                else
+                    seekToMs(c.start_ms)
+                end if
+            end if
+        end if
+        closeTrackPicker()
+        return
+    end if
     ' One re-issue at a time: the start task is busy until the new
     ' session lands, and a second pick would race it.
     if m.reissuing
@@ -1330,6 +1402,12 @@ end function
 ' so there is always a live, deletable session for cleanup to tear
 ' down. The replaced session is DELETEd the moment its successor lands.
 sub reissueSession(audioStreamIndex as Integer, burnIndex as Integer)
+    reissueSessionAt(audioStreamIndex, burnIndex, playheadMs())
+end sub
+
+' Restart the session at positionMs with these tracks (a chapter jump, or
+' the playhead for a track switch).
+sub reissueSessionAt(audioStreamIndex as Integer, burnIndex as Integer, positionMs as Integer)
     if m.lastTranscodeRequest = invalid then return
     req = m.lastTranscodeRequest
     m.audioRequestBeforeReissue = req.audioStreamIndex
@@ -1337,7 +1415,7 @@ sub reissueSession(audioStreamIndex as Integer, burnIndex as Integer)
     req.audioStreamIndex = audioStreamIndex
     req.burnSubtitleStreamIndex = burnIndex
     m.burnSubtitleIndex = burnIndex
-    m.reissuePositionMs = playheadMs()
+    m.reissuePositionMs = positionMs
     ' Mark the current session as the one to retire once the new one
     ' arrives; leave m.session intact as the cleanup fallback.
     m.reissuing = true
@@ -1587,4 +1665,11 @@ function renewTask(old as Dynamic, component as String, callback as String) as O
     t = createObject("roSGNode", component)
     t.observeField("state", callback)
     return t
+end function
+
+function chapterCount(item as Object) as Integer
+    if item = invalid or item.files = invalid or item.files.Count() = 0 then return 0
+    f = item.files[0]
+    if f = invalid or f.chapters = invalid or type(f.chapters) <> "roArray" then return 0
+    return f.chapters.Count()
 end function

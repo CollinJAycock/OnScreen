@@ -84,6 +84,11 @@ const suites = [
     test: 'tests/DeepLink_test.brs',
   },
   {
+    name: 'Chapters',
+    sources: ['source/playback/Chapters.brs'],
+    test: 'tests/Chapters_test.brs',
+  },
+  {
     name: 'Capabilities',
     sources: ['source/api/Client.brs'],
     test: 'tests/Capabilities_test.brs',
