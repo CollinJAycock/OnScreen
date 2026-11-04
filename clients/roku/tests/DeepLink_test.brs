@@ -1,6 +1,7 @@
 ' Unit tests for source/util/DeepLink.brs.
 
 sub Main()
+    testTransfer()
     id = "3f2b8c1e-9a4d-4e5f-8b6a-1c2d3e4f5a6b"
 
     dl = DeepLink_Parse({ contentId: id, mediaType: "movie" })
@@ -44,4 +45,18 @@ sub runBool(name as String, actual as Boolean, expected as Boolean)
     else
         print "FAIL: " + name + " — expected=" + expected.ToStr() + " actual=" + actual.ToStr()
     end if
+end sub
+
+sub testTransfer()
+    id = "3f2b8c1e-9a4d-4e5f-8b6a-1c2d3e4f5a6b"
+    t = DeepLink_FromTransfer({ ok: true, code: 200, data: { item_id: UCase(id), position_ms: 61500, target_client_name: "Roku" } })
+    runStr("transfer: id", t.contentId, id)
+    runStr("transfer: position", t.positionMs.ToStr(), "61500")
+    runStr("transfer: no position", DeepLink_FromTransfer({ ok: true, data: { item_id: id } }).positionMs.ToStr(), "0")
+    runStr("transfer: negative position", DeepLink_FromTransfer({ ok: true, data: { item_id: id, position_ms: -5 } }).positionMs.ToStr(), "0")
+    runBool("transfer: nothing waiting (204)", DeepLink_FromTransfer({ ok: true, code: 204, data: invalid }) = invalid, true)
+    runBool("transfer: failed", DeepLink_FromTransfer({ ok: false, code: 500, data: { item_id: id } }) = invalid, true)
+    runBool("transfer: not an item id", DeepLink_FromTransfer({ ok: true, data: { item_id: "../admin" } }) = invalid, true)
+    runBool("transfer: invalid", DeepLink_FromTransfer(invalid) = invalid, true)
+    runStr("transfer: client name", DeepLink_ClientName(), "Roku")
 end sub

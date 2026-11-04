@@ -274,6 +274,12 @@ end function
 ' forced_subtitles_only, … }. PlayerScene reads preferred_subtitle_lang +
 ' forced_subtitles_only on playback start to auto-apply the matching
 ' subtitle track. Mirrors the web client's /users/me/preferences GET.
+' POST { client_name }: the "Play on this TV" transfer waiting for this
+' channel (200 { item_id, position_ms }), or 204.
+function ApiPlaybackTransferClaim() as String
+    return "/api/v1/playback/transfer/claim"
+end function
+
 function ApiPreferences() as String
     return "/api/v1/users/me/preferences"
 end function
