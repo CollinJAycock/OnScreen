@@ -1,0 +1,69 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!--
+    Settings, from Home's header. Account: who is signed in, the server,
+    Sign out (keeps the server) and Forget server (back to setup), both
+    confirmed first. About: version, the privacy policy address and the
+    source. Mirrors the TV web app's Account and About sections; playback
+    preferences and limits come later.
+-->
+<component name="SettingsScene" extends="Group">
+    <interface>
+        <field id="initialFocus" type="node" />
+    </interface>
+    <script type="text/brightscript" uri="SettingsScene.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/Strings.brs" />
+    <script type="text/brightscript" uri="pkg:/components/common/MenuDialog.brs" />
+    <children>
+        <Rectangle width="1920" height="1080" color="0x121212ff" />
+        <Label text="Settings"
+               translation="[80, 50]"
+               font="font:LargeBoldSystemFont"
+               color="0xffffffff" />
+
+        <Label text="Account"
+               translation="[80, 170]"
+               font="font:MediumBoldSystemFont"
+               color="0xE8E8EEFF" />
+        <Label id="userLine"
+               translation="[80, 225]"
+               color="0xC8C8D0FF" />
+        <Label id="serverLine"
+               translation="[80, 270]"
+               width="1700"
+               color="0xC8C8D0FF" />
+        <Label id="insecureLine"
+               translation="[80, 315]"
+               width="1700"
+               color="0xF0B860FF"
+               text="Not encrypted (http://): use https:// outside your home network."
+               visible="false" />
+        <LayoutGroup id="accountButtons"
+                     translation="[80, 370]"
+                     layoutDirection="horiz"
+                     itemSpacings="[20]">
+            <OsButton id="signOutBtn" text="Sign out" minWidth="260" />
+            <OsButton id="forgetBtn" text="Forget server" minWidth="260" />
+        </LayoutGroup>
+        <Label translation="[80, 460]"
+               width="1700"
+               wrap="true"
+               font="font:SmallSystemFont"
+               color="0x9A9AAAFF"
+               text="Sign out clears your session on this TV and keeps the server address. Forget server also removes the address, to connect to a different OnScreen server." />
+
+        <Label text="About"
+               translation="[80, 590]"
+               font="font:MediumBoldSystemFont"
+               color="0xE8E8EEFF" />
+        <Label id="versionLine"
+               translation="[80, 645]"
+               color="0xC8C8D0FF" />
+        <Label translation="[80, 690]"
+               color="0xC8C8D0FF"
+               text="Privacy policy: https://onscreen.wolverscreen.com/privacy" />
+        <Label translation="[80, 735]"
+               color="0xC8C8D0FF"
+               text="Open source: github.com/CollinJAycock/OnScreen" />
+    </children>
+</component>

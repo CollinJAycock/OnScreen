@@ -47,6 +47,7 @@
                 <OsButton id="watchlistBtn" text="Watchlist" size="small" height="56" />
                 <OsButton id="historyBtn" text="History" size="small" height="56" />
                 <OsButton id="searchBtn" text="Search" size="small" height="56" />
+                <OsButton id="settingsBtn" text="Settings" size="small" height="56" />
             </LayoutGroup>
             <RowList id="rows"
                      translation="[80, 170]"
