@@ -462,6 +462,7 @@ sub startDirectPlayback(serverUrl as String)
     m.directStreamPath = AssetStreamPath(m.file.id, streamToken)
     content.url = serverUrl + m.directStreamPath
     content.streamFormat = guessStreamFormat(m.file.path)
+    attachSideloadSubtitles(content, serverUrl, false)
     if m.item.view_offset_ms <> invalid and m.item.view_offset_ms > 0
         content.playStart = Int(m.item.view_offset_ms / 1000)
     end if
@@ -608,6 +609,7 @@ sub onTranscodeTaskState()
     content.title = m.item.title
     content.url = streamUrl
     content.streamFormat = streamFormat
+    attachSideloadSubtitles(content, serverUrl, true)
     ' Where the session was asked to start: the playhead for a re-issue,
     ' the resume position for a first start (startPlayback).
     wantMs = 0
@@ -1186,7 +1188,13 @@ function hasMultiAudio() as Boolean
     return m.file.audio_streams.Count() > 1
 end function
 
+function hasExternalSubtitles() as Boolean
+    if m.file = invalid or m.file.external_subtitles = invalid or type(m.file.external_subtitles) <> "roArray" then return false
+    return m.file.external_subtitles.Count() > 0
+end function
+
 function hasSubtitles() as Boolean
+    if hasExternalSubtitles() then return true
     if m.file = invalid or m.file.subtitle_streams = invalid then return false
     return m.file.subtitle_streams.Count() > 0
 end function
@@ -1347,6 +1355,16 @@ function buildSubtitleContent() as Object
         if s.title <> invalid and s.title <> "" then parts.push(s.title)
         node.title = prefix + buildJoin(parts, " · ")
     end for
+    ext = m.file.external_subtitles
+    if ext <> invalid and type(ext) = "roArray"
+        n = m.file.subtitle_streams.Count()
+        for j = 0 to ext.Count() - 1
+            node = root.createChild("ContentNode")
+            prefix = "  "
+            if n + j = m.activeSubtitleIndex then prefix = "● "
+            node.title = prefix + Subtitles_ExternalLabel(ext[j])
+        end for
+    end if
     return root
 end function
 
@@ -1440,6 +1458,21 @@ end sub
 sub pickSubtitle(rowPos as Integer)
     streams = invalid
     if m.file <> invalid then streams = m.file.subtitle_streams
+    nStreams = 0
+    if streams <> invalid then nStreams = streams.Count()
+    if rowPos >= nStreams
+        ' An external file: side-loaded; a burned-in track stops burning.
+        m.activeSubtitleIndex = rowPos
+        if m.burnSubtitleIndex >= 0 and inServerSession()
+            audioIdx = -1
+            if m.lastTranscodeRequest.audioStreamIndex <> invalid then audioIdx = m.lastTranscodeRequest.audioStreamIndex
+            m.pendingSideloadUrl = sideloadUrlForRow(rowPos)
+            reissueSession(audioIdx, -1)
+            return
+        end if
+        selectSideloaded(sideloadUrlForRow(rowPos))
+        return
+    end if
     plan = Subtitles_PickPlan(streams, rowPos, {
         serverSession: inServerSession(),
         stacked: m.stacked,
@@ -1471,7 +1504,12 @@ sub pickSubtitle(rowPos as Integer)
         m.pendingSubtitleIndex = -1
         m.video.subtitleTrack = ""
     else
-        applySubtitleSelection(rowPos)
+        url = sideloadUrlForRow(rowPos)
+        if url <> ""
+            selectSideloaded(url)
+        else
+            applySubtitleSelection(rowPos)
+        end if
     end if
 end sub
 
@@ -1863,4 +1901,35 @@ sub updateNowPlayingNext()
     txt = ""
     if m.nextSibling <> invalid then txt = "Up next: " + WatchState_Str(m.nextSibling.title)
     m.top.findNode("npNext").text = txt
+end sub
+
+' ── Side-loaded subtitles (Subtitles_Sideload) ─────────────────────
+
+sub attachSideloadSubtitles(content as Object, serverUrl as String, serverSession as Boolean)
+    m.sideloadUrlByRow = {}
+    if m.file = invalid then return
+    sl = Subtitles_Sideload(m.file, serverUrl, Prefs_GetAssetTokenStr(), serverSession)
+    m.sideloadUrlByRow = sl.urlByRow
+    if sl.tracks.Count() > 0 then content.SubtitleTracks = sl.tracks
+    ' A pick made before this stream (an external file chosen while a
+    ' burned-in track was being dropped) applies to it.
+    if m.pendingSideloadUrl <> invalid and m.pendingSideloadUrl <> ""
+        url = m.pendingSideloadUrl
+        m.pendingSideloadUrl = ""
+        selectSideloaded(url)
+    end if
+end sub
+
+function sideloadUrlForRow(rowPos as Integer) as String
+    if m.sideloadUrlByRow = invalid then return ""
+    url = m.sideloadUrlByRow[rowPos.ToStr()]
+    if url = invalid then return ""
+    return url
+end function
+
+sub selectSideloaded(url as String)
+    if url = "" then return
+    m.pendingSubtitleIndex = -1
+    m.video.globalCaptionMode = "On"
+    m.video.subtitleTrack = url
 end sub
