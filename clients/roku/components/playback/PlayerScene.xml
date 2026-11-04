@@ -37,12 +37,20 @@
              order, itemId among them. When set, auto-advance follows the
              queue instead of the item's album. -->
         <field id="queue" type="array" />
+        <!-- Where to start, in ms, instead of the saved resume point (a
+             transfer from another device); -1 = the saved point. Set
+             before itemId. -->
+        <field id="startPositionMs" type="integer" value="-1" />
+        <!-- MainScene, before it swaps this player out for another title
+             (a transfer, a deep link): stop as Back does. -->
+        <function name="stopForHandoff" />
     </interface>
 
     <script type="text/brightscript" uri="PlayerScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/WatchState.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/SettingsPrefs.brs" />
+    <script type="text/brightscript" uri="pkg:/source/util/DeepLink.brs" />
     <!-- No Client.brs: this scene runs on the render thread, which has no
          roUrlTransfer. Its requests go through ApiCallTask / the fetch
          Tasks / MainScene.runDetachedCall. -->

@@ -264,6 +264,7 @@ sub onItemTaskState()
         return
     end if
     m.item = item
+    if m.top.startPositionMs >= 0 then m.item.view_offset_ms = m.top.startPositionMs
     ' A book (EPUB / PDF / comic archive) can't go through the video
     ' pipeline: reached from Favorites, History, a collection or a deep
     ' link, say where to read it, as the TV web app does.
@@ -952,7 +953,7 @@ sub reportProgress(posMs as Integer, state as String)
         view_offset_ms: posMs
         duration_ms: durationMs
         state: state
-        client_name: "Roku"
+        client_name: DeepLink_ClientName()
     }
     if state = "stopped"
         getMainScene().callFunc("runDetachedCall", { method: "PUT", path: ApiItemProgress(m.top.itemId), body: body })
@@ -1195,19 +1196,25 @@ function onKeyEvent(key as String, press as Boolean) as Boolean
     ' under a deep-linked player). The player is never the root frame, so
     ' the press can't exit the channel.
     if key = "back"
-        ' Terminal progress report before teardown — the resume offset
-        ' the user expects on every other device. posMs = 0 means
-        ' playback never actually started (or the user backed out at
-        ' the head); skip the write so a stopped@0 doesn't clobber an
-        ' existing resume offset.
-        posMs = playheadMs()
-        if posMs > 0 then reportProgress(posMs, "stopped")
-        m.video.control = "stop"
-        stopTranscodeSession()
+        stopForHandoff()
         return false
     end if
     return false
 end function
+
+' Leaving: Back, or MainScene swapping in another title. Terminal progress
+' report before teardown — the resume offset the user expects on every
+' other device. posMs = 0 means playback never actually started (or the
+' user backed out at the head); skip the write so a stopped@0 doesn't
+' clobber an existing resume offset.
+sub stopForHandoff()
+    if m.handedOff = true then return
+    m.handedOff = true
+    posMs = playheadMs()
+    if posMs > 0 then reportProgress(posMs, "stopped")
+    m.video.control = "stop"
+    stopTranscodeSession()
+end sub
 
 ' ── Audio + subtitle picker ────────────────────────────────────────
 

@@ -33,6 +33,7 @@
     <script type="text/brightscript" uri="MainScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/DeepLink.brs" />
+    <script type="text/brightscript" uri="pkg:/source/api/Endpoints.brs" />
 
     <children>
         <!-- Container the .brs swaps fragment scenes in/out of.
@@ -44,6 +45,10 @@
         <!-- Parent for runDetachedCall's ApiCallTasks, so a request a
              scene fires on its way out isn't torn down with it. -->
         <Group id="detached" visible="false" />
+
+        <!-- "Play on this TV": asks the server every 5 s for a transfer
+             sent to this channel (claimTransfer). -->
+        <Timer id="transferTimer" duration="5" repeat="true" />
     </children>
 
 </component>
