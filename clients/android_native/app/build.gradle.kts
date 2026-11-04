@@ -96,6 +96,29 @@ android {
         }
     }
 
+    // Two builds of the same app. mobile: phones and tablets through Google
+    // Play (tv.onscreen.android), with Chromecast. quest: Meta Quest 3 / 3S
+    // (and Quest 2 / Pro) as a 2D panel app through the Meta Horizon Store.
+    // Horizon OS has no Google Mobile Services, so the quest build never
+    // starts the Cast SDK (CAST_ENABLED false: no Cast button or setting,
+    // and src/quest/AndroidManifest.xml removes Cast's options provider).
+    // Meta wants minSdk 29-34 for Quest apps.
+    flavorDimensions += "platform"
+    productFlavors {
+        create("mobile") {
+            dimension = "platform"
+            buildConfigField("boolean", "CAST_ENABLED", "true")
+            buildConfigField("boolean", "IS_QUEST", "false")
+        }
+        create("quest") {
+            dimension = "platform"
+            applicationId = "tv.onscreen.quest"
+            minSdk = 29
+            buildConfigField("boolean", "CAST_ENABLED", "false")
+            buildConfigField("boolean", "IS_QUEST", "true")
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true

@@ -30,6 +30,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.List
@@ -1431,6 +1433,21 @@ private fun PlayerHost(
                 .collectAsStateWithLifecycle()
             rgDb?.let { ReplayGainReadout(it) }
         }
+        // Meta's requirement for media apps on Quest: a mute that silences
+        // this app only (the panel has no volume keys of its own).
+        if (tv.onscreen.mobile.BuildConfig.IS_QUEST) {
+            var muted by remember { mutableStateOf(player.volume == 0f) }
+            IconButton(onClick = {
+                muted = !muted
+                player.volume = if (muted) 0f else 1f
+            }) {
+                Icon(
+                    if (muted) Icons.AutoMirrored.Filled.VolumeOff else Icons.AutoMirrored.Filled.VolumeUp,
+                    contentDescription = if (muted) "Unmute" else "Mute",
+                    tint = Color.White,
+                )
+            }
+        }
         if (ui.audioStreams.size > 1) {
             IconButton(onClick = { showAudioPicker = true }) {
                 Icon(Icons.Default.Audiotrack, contentDescription = "Audio", tint = Color.White)
@@ -1445,8 +1462,9 @@ private fun PlayerHost(
         // file as it is or an HLS session made for the receiver — so any
         // item casts, not only the files Google's Default Media Receiver
         // plays as they are.
+        // Not on a Quest: Horizon OS has no Google Play Services to cast with.
         val castItemFile = ui.item?.files?.firstOrNull()
-        if (castItemFile != null) {
+        if (castItemFile != null && tv.onscreen.mobile.BuildConfig.CAST_ENABLED) {
             // The route button itself — Cast SDK draws it. MediaRouteButton's
             // theme helper reads colorBackground from the inflating context
             // and crashes with `background can not be translucent: #0` when
