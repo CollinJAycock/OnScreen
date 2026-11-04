@@ -18,6 +18,10 @@
         <field id="itemId" type="string" />
         <!-- The library's name for the heading (from the Libraries list). -->
         <field id="heading" type="string" onChange="onHeading" />
+        <!-- Where the viewer is, saved by MainScene on leaving (focusState)
+             and handed back on Back (restoreState). -->
+        <field id="focusState" type="assocArray" />
+        <field id="restoreState" type="assocArray" />
     </interface>
 
     <script type="text/brightscript" uri="LibraryScene.brs" />

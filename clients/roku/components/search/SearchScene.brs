@@ -41,6 +41,8 @@ sub init()
 
     m.queryField.setFocus(true)
     m.top.initialFocus = m.queryField
+    m.restore = invalid
+    m.top.observeField("restoreState", "onRestoreState")
 end sub
 
 ' ── Filter chips ───────────────────────────────────────────────────
@@ -134,6 +136,7 @@ sub onSearchState()
     m.rawResults = m.task.result
     if m.rawResults = invalid then m.rawResults = []
     renderResults()
+    restoreResultFocus()
 end sub
 
 ' ── Result render ──────────────────────────────────────────────────
@@ -256,16 +259,20 @@ end sub
 ' go straight to playback.
 sub routeBySearchType(itemType as String, itemId as String)
     if itemType = "photo"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
         return
     end if
     if itemType = "collection" or itemType = "playlist"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
         return
     end if
     if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "book" or itemType = "movie"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)
     end if
 end sub
@@ -287,3 +294,40 @@ function renewTask(old as Dynamic, component as String, callback as String) as O
     t.observeField("state", callback)
     return t
 end function
+
+' ── Back to the query and the result the viewer opened ─────────────
+
+sub saveFocus()
+    st = { query: m.queryField.text }
+    f = m.results.rowItemSelected
+    if f <> invalid and f.Count() >= 2
+        st.row = f[0]
+        st.item = f[1]
+    end if
+    m.top.focusState = st
+end sub
+
+' The query goes back in the box (which searches again); the result is
+' focused when the answer lands.
+sub onRestoreState()
+    rs = m.top.restoreState
+    if rs = invalid or rs.query = invalid or rs.query = "" then return
+    m.restore = rs
+    m.queryField.text = rs.query
+end sub
+
+sub restoreResultFocus()
+    rs = m.restore
+    m.restore = invalid
+    if rs = invalid or rs.row = invalid or not m.results.visible or m.results.content = invalid then return
+    rows = m.results.content.getChildCount()
+    if rows = 0 then return
+    r = rs.row
+    if r >= rows then r = rows - 1
+    n = m.results.content.getChild(r).getChildCount()
+    i = rs.item
+    if i >= n then i = n - 1
+    if i < 0 then i = 0
+    m.results.jumpToRowItem = [r, i]
+    m.results.setFocus(true)
+end sub

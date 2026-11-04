@@ -24,6 +24,10 @@
         <!-- The node MainScene focuses once this scene is attached (mountScene):
              a setFocus in init() runs before the scene is in the tree. -->
         <field id="initialFocus" type="node" />
+        <!-- Where the viewer is, saved by MainScene on leaving (focusState)
+             and handed back on Back (restoreState). -->
+        <field id="focusState" type="assocArray" />
+        <field id="restoreState" type="assocArray" />
     </interface>
 
 

@@ -78,6 +78,7 @@ sub onTaskState()
     m.empty.visible = false
     appendCards(items)
     if first then m.rows.setFocus(true)
+    restoreFocus()
 end sub
 
 ' Add cards to the grid in rows of six (onCardSelected reads a card
@@ -131,16 +132,20 @@ end sub
 ' PlayerScene; photos and collections route to their own viewers.
 sub routeForType(itemType as String, itemId as String)
     if itemType = "photo"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PhotoScene", itemId)
         return
     end if
     if itemType = "collection" or itemType = "playlist"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "CollectionScene", itemId)
         return
     end if
     if itemType = "show" or itemType = "season" or itemType = "artist" or itemType = "album" or itemType = "podcast" or itemType = "audiobook" or itemType = "book_author" or itemType = "book_series" or itemType = "book" or itemType = "movie"
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "DetailScene", itemId)
     else
+        saveFocus()
         getMainScene().callFunc("navigateToWithItem", "PlayerScene", itemId)
     end if
 end sub
@@ -167,3 +172,31 @@ function renewTask(old as Dynamic, component as String, callback as String) as O
     t.observeField("state", callback)
     return t
 end function
+
+' ── Back to the card the viewer opened (MainScene's restoreState) ──
+
+sub saveFocus()
+    f = m.rows.rowItemSelected
+    if f <> invalid and f.Count() >= 2 then m.top.focusState = { row: f[0], item: f[1] }
+end sub
+
+' Pages load until the saved row is in, then the grid jumps to it.
+sub restoreFocus()
+    rs = m.top.restoreState
+    if m.restoreDone = true or rs = invalid or rs.row = invalid or m.rows.content = invalid then return
+    rows = m.rows.content.getChildCount()
+    if rs.row >= rows and m.hasMore
+        fetchPage()
+        return
+    end if
+    m.restoreDone = true
+    if rows = 0 then return
+    r = rs.row
+    if r >= rows then r = rows - 1
+    n = m.rows.content.getChild(r).getChildCount()
+    i = rs.item
+    if i >= n then i = n - 1
+    if i < 0 then i = 0
+    m.rows.jumpToRowItem = [r, i]
+    m.rows.setFocus(true)
+end sub

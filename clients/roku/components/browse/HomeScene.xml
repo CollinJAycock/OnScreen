@@ -13,6 +13,12 @@
     referenced via itemComponentName.
 -->
 <component name="HomeScene" extends="Group">
+    <interface>
+        <!-- Where the viewer is, saved by MainScene on leaving (focusState)
+             and handed back on Back (restoreState). -->
+        <field id="focusState" type="assocArray" />
+        <field id="restoreState" type="assocArray" />
+    </interface>
 
     <script type="text/brightscript" uri="HomeScene.brs" />
     <script type="text/brightscript" uri="pkg:/source/util/Prefs.brs" />
