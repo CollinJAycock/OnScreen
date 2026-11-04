@@ -2,8 +2,8 @@
 ' username + password; on a successful TokenPair, persist via Prefs
 ' and route to HomeScene. Errors render inline in red.
 '
-' Layout for a remote: a column of buttons (Sign in with another device
-' first, then Username, Password, Sign in, Change server) and one Keyboard
+' Layout for a remote: a column of buttons (Username, Password and Sign in
+' first, then Sign in with another device and Change server) and one Keyboard
 ' under them that shows only while a field is being edited. A field button
 ' shows its value (the password as dots). Up / Down move between buttons;
 ' Back or Down at the keyboard's bottom edge closes it; Back on the buttons
@@ -38,10 +38,11 @@ sub init()
     m.changeServerBtn.observeField("buttonSelected", "onChangeServerPressed")
     m.keyboard.observeField("text", "onKeyboardText")
 
-    m.rows = [m.pairBtn, m.usernameBtn, m.passwordBtn, m.signInBtn, m.changeServerBtn]
+    m.rows = [m.usernameBtn, m.passwordBtn, m.signInBtn, m.pairBtn, m.changeServerBtn]
     updateFieldLabels()
-    m.pairBtn.setFocus(true)
-    m.top.initialFocus = m.pairBtn
+    ' On-device sign-in first (certification 2.2); pairing is the second way.
+    m.usernameBtn.setFocus(true)
+    m.top.initialFocus = m.usernameBtn
 end sub
 
 sub onPairPressed()
