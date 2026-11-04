@@ -4,6 +4,7 @@
 sub Main()
     testText()
     testFromStoppedResponse()
+    testParental()
     testFromOtherResponses()
     testTooManyStreams()
 
@@ -25,6 +26,20 @@ sub testFromStoppedResponse()
 
     raw = "{""error"":{""code"":""PLAYBACK_STOPPED"",""message"":""""}}"
     runStr("stopped: empty message falls back", PlaybackStop_FromResult(ApiResult_From(403, raw)), "Playback was stopped by the server admin.")
+end sub
+
+sub testParental()
+    raw = "{""error"":{""code"":""PARENTAL_LIMIT"",""message"":""daily_limit_reached""}}"
+    runStr("parental: daily limit", PlaybackParental_FromResult(ApiResult_From(403, raw)), "Today's watch-time limit for this account has been reached. Check back tomorrow.")
+    raw = "{""error"":{""code"":""PARENTAL_LIMIT"",""message"":""outside_allowed_hours""}}"
+    runStr("parental: hours", PlaybackParental_FromResult(ApiResult_From(403, raw)), "Outside the allowed hours for this account. Try again during the permitted times.")
+    raw = "{""error"":{""code"":""PARENTAL_LIMIT"",""message"":""something_new""}}"
+    runStr("parental: unknown reason", PlaybackParental_FromResult(ApiResult_From(403, raw)), "Playback is blocked by a parental watch limit on this account.")
+    raw = "{""error"":{""code"":""PLAYBACK_STOPPED"",""message"":""x""}}"
+    runStr("parental: an admin stop is not one", PlaybackParental_FromResult(ApiResult_From(403, raw)), "")
+    raw = "{""error"":{""code"":""PARENTAL_LIMIT"",""message"":""daily_limit_reached""}}"
+    runStr("parental: not on a non-403", PlaybackParental_FromResult(ApiResult_From(500, raw)), "")
+    runStr("parental: invalid", PlaybackParental_FromResult(invalid), "")
 end sub
 
 sub testFromOtherResponses()

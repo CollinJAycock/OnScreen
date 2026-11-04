@@ -65,3 +65,27 @@ function PlaybackLimit_FromResult(result as Dynamic) as String
     if msg = "" then return "Your account is already playing as many streams as it can. Stop one to watch here."
     return msg
 end function
+
+' A parental watch limit on the account: outside its allowed hours or past
+' its daily cap. The play decision, transcode start and the progress
+' heartbeat refuse with 403 {"error":{"code":"PARENTAL_LIMIT","message":
+' <reason>}} (internal/api/v1/items.go); the reason is a code, so the
+' sentence is written here, as the TV web app does (parentalBlockMessage).
+function PlaybackParental_ErrorCode() as String
+    return "PARENTAL_LIMIT"
+end function
+
+function PlaybackParental_Title() as String
+    return "Watch limit"
+end function
+
+function PlaybackParental_FromResult(result as Dynamic) as String
+    if result = invalid or type(result) <> "roAssociativeArray" then return ""
+    if result.code = invalid or result.code <> 403 then return ""
+    if result.errorCode = invalid or result.errorCode <> PlaybackParental_ErrorCode() then return ""
+    reason = ""
+    if result.errorMessage <> invalid and (type(result.errorMessage) = "String" or type(result.errorMessage) = "roString") then reason = result.errorMessage.Trim()
+    if reason = "outside_allowed_hours" then return "Outside the allowed hours for this account. Try again during the permitted times."
+    if reason = "daily_limit_reached" then return "Today's watch-time limit for this account has been reached. Check back tomorrow."
+    return "Playback is blocked by a parental watch limit on this account."
+end function

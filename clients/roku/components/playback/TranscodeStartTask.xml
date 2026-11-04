@@ -43,6 +43,7 @@
              TOO_MANY_SESSIONS): the server's sentence. "" otherwise.
              Written before `result`. -->
         <field id="limitMessage" type="string" />
+        <field id="parentalMessage" type="string" />
         <!-- Set when the server refused the start with 400 (an audio
              track out of range, or a subtitle it can't burn in): a short
              sentence for the dialog. "" otherwise. Written before

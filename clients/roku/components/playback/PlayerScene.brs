@@ -496,6 +496,12 @@ sub onTranscodeTaskState()
         onAdminStop(stopMsg)
         return
     end if
+    parentalMsg = m.transcodeTask.parentalMessage
+    if parentalMsg <> invalid and parentalMsg <> ""
+        m.reissuing = false
+        onParentalLimit(parentalMsg)
+        return
+    end if
     ' Refused over the account's stream limit. A first start can't play at
     ' all; a refused track switch leaves the current session playing.
     limitMsg = m.transcodeTask.limitMessage
@@ -898,9 +904,18 @@ sub onPlayerCallDone(evt as Object)
     ctx = t.context
     if ctx = invalid then return
     stopMsg = PlaybackStop_FromResult(t.result)
+    parentalMsg = PlaybackParental_FromResult(t.result)
     if ctx.action = "progress"
-        if stopMsg <> "" then onAdminStop(stopMsg)
+        if stopMsg <> ""
+            onAdminStop(stopMsg)
+        else if parentalMsg <> ""
+            onParentalLimit(parentalMsg)
+        end if
     else if ctx.action = "decision"
+        if parentalMsg <> ""
+            onParentalLimit(parentalMsg)
+            return
+        end if
         onDecisionDone(t.result)
     else if ctx.action = "probe"
         m.probing = false
@@ -929,6 +944,21 @@ end sub
 ' where the viewer got to (the server still accepts a "stopped" report
 ' inside the stop window), tear down any session, and show the admin's
 ' message; OK / Back leaves the player. Latched: the first signal wins.
+' A parental watch limit refused the start or a heartbeat: end playback
+' with the reason, like an admin stop (no retry, no local fallback).
+sub onParentalLimit(message as String)
+    if m.adminStopped then return
+    m.adminStopped = true
+    m.syncTimer.control = "stop"
+    m.nextSibling = invalid
+    m.upNext.visible = false
+    m.skipMarker.visible = false
+    if m.trackPickerMode <> "" then closeTrackPicker()
+    m.video.control = "stop"
+    stopTranscodeSession()
+    showExitDialog(PlaybackParental_Title(), message)
+end sub
+
 sub onAdminStop(message as String)
     if m.adminStopped then return
     m.adminStopped = true
