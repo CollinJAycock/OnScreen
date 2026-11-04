@@ -14,12 +14,10 @@ at the paths below before sideloading.
 | `splash_hd.jpg` | 1280 × 720 | JPEG | `splash_screen_hd` |
 | `splash_fhd.jpg` | 1920 × 1080 | JPEG | `splash_screen_fhd` |
 
-Optional but recommended for the Roku Channel Store submission:
-
-| File | Dimensions | Format | Notes |
-|---|---|---|---|
-| `icon_side_hd.png` | 108 × 69 | PNG | Side-bar icon shown alongside other channel rows |
-| `splash_uhd.jpg` | 3840 × 2160 | JPEG | 4K splash for UHD Roku models |
+Nothing else goes in `images/` unless something references it: Static
+Analysis flags unreferenced files as extraneous (side icons are retired,
+and the manifest has no 4K splash key). `scripts/package.mjs` leaves this
+README out of the package.
 
 The art here is generated from `docs/store-assets/master/icon-1024.png`
 on black (the manifest's `splash_color` is `#000000`, so the splash has no

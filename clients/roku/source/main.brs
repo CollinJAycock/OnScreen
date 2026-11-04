@@ -21,6 +21,19 @@ sub Main(args as Object)
     ' decisions on a new device.
     print "OnScreen capabilities: "; Client_CapabilitiesHeader()
 
+    ' Memory: Roku stops an app that runs past its limit. Log the limit and
+    ' the warnings (roAppMemoryMonitor at 80% of it, roDeviceInfo when the
+    ' device itself runs low) on the debug console, where a leak shows.
+    memory = CreateObject("roAppMemoryMonitor")
+    if memory <> invalid
+        memory.SetMessagePort(port)
+        memory.EnableMemoryWarningEvent(true)
+        print "memory: limit "; FormatJson(memory.GetChannelMemoryLimit()); " available "; memory.GetChannelAvailableMemory(); " used "; memory.GetMemoryLimitPercent(); "%"
+    end if
+    device = CreateObject("roDeviceInfo")
+    device.SetMessagePort(port)
+    device.EnableLowGeneralMemoryEvent(true)
+
     scene = screen.CreateScene("MainScene")
     screen.Show()
 
@@ -39,6 +52,11 @@ sub Main(args as Object)
             return
         else if type(msg) = "roInputEvent" and msg.IsInput()
             scene.deepLink = msg.GetInfo()
+        else if type(msg) = "roAppMemoryMonitorEvent"
+            print "memory warning: "; msg.GetInfo(); " used "; memory.GetMemoryLimitPercent(); "%, available "; memory.GetChannelAvailableMemory()
+        else if type(msg) = "roDeviceInfoEvent"
+            mi = msg.GetInfo()
+            if mi <> invalid and mi.generalMemoryLevel <> invalid then print "device memory: "; mi.generalMemoryLevel
         end if
     end while
 end sub
