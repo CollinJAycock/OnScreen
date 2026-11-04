@@ -40,9 +40,11 @@ The channel has never run on a Roku. When one is in Developer Mode:
      A deep link while signed out opens after sign-in. A bad contentId
      (not a UUID, or an item that's gone) lands on Home or the page's
      error, never a crash.
-9. Dolby Vision: not claimed yet (no `dovi` key). Roku 4K models play DV
-   profiles 5 and 8; add the claim only after a DV file plays with the TV's
-   Dolby Vision badge.
+9. Dolby Vision: not claimed, by choice (2026-11-04). The Stick 4K decodes it
+   and the C1 takes it, but the server keeps DV only in fMP4 segments and
+   Dolby audio in fMP4 HLS is silent on a Roku (declared or not), while the
+   Roku needs TS for its Dolby audio. DV titles play from the HDR10 base.
+   See docs/dolby-vision.md.
 
 ## P0 — Closeable gaps that ship on android_native and matrix promises
 

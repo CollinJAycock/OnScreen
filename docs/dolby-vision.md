@@ -76,7 +76,16 @@ included; base layer bit-identical; no new decode errors.
   Dolby Vision low-latency mode. Checked 2026-11-03 on a Series X and an LG
   C1: the TV shows its Dolby Vision badge for a profile 7 Blu-ray remux
   converted to 8.1 (the console reads the track as `dvhe.08`).
-- Everyone else (web, Samsung, Roku, phone) gets the base layer.
+- **Roku:** not declared, though the Roku reports Dolby Vision for the display
+  and `CanDecodeVideo({Codec: "hevc", Profile: "main 10", DolbyVision: 1})`
+  is true on a Streaming Stick 4K. The server keeps Dolby Vision only in fMP4
+  segments, and on a Roku Dolby audio (AC-3 / E-AC-3) in fMP4 HLS plays
+  silent, with or without a master playlist declaring `ac-3` / `ec-3`
+  (checked 2026-11-04). The Roku asks for MPEG-TS segments instead, so its
+  Dolby audio reaches a receiver and Dolby Vision titles play from their
+  HDR10 base. Declaring Dolby Vision would need the session's audio forced
+  to AAC.
+- Everyone else (web, Samsung, phone) gets the base layer.
 
 **Profile 5 is never re-encoded.** A client that lists it but would need a
 re-encode (over its size, bitrate or quality limit) gets `unsupported`, and
