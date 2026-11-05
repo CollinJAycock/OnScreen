@@ -62,11 +62,18 @@ export function letterAt(letters: readonly LetterJump[], row: number): number {
 
 /** What a letter's OK does: focus its first item, when that row is already
  *  in the grid (`start` is the row the grid's first card is, `loaded` how
- *  many it has), or open the grid at its offset. */
-export type JumpPlan = { kind: 'focus'; index: number } | { kind: 'load'; offset: number };
+ *  many it has), or open the grid at the start of that item's grid row
+ *  (`columns` cards to a row) and focus it, `index` cards in. Opening at the
+ *  item itself left the cards before it in its row blank (a spacer kept it
+ *  in its column) until the user scrolled up: on a TV, a row of empty space
+ *  with one poster at the end. */
+export type JumpPlan =
+  | { kind: 'focus'; index: number }
+  | { kind: 'load'; offset: number; index: number };
 
-export function planJump(letter: LetterJump, start: number, loaded: number): JumpPlan {
+export function planJump(letter: LetterJump, start: number, loaded: number, columns: number): JumpPlan {
   const index = letter.offset - start;
   if (index >= 0 && index < loaded) return { kind: 'focus', index };
-  return { kind: 'load', offset: letter.offset };
+  const rowStart = letter.offset - (letter.offset % columns);
+  return { kind: 'load', offset: rowStart, index: letter.offset - rowStart };
 }
