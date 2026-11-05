@@ -41,10 +41,13 @@ title stayed over the grid after an A–Z jump.
 
 ## What's New — Google Play (Android TV / Google TV)
 
-The same text. Nothing is left out of this build. The googletv AAB for 26 has
-not been built yet: `gradlew :app:bundleGoogletvRelease`, then check it as in
-earlier releases (target 36, min 24, leanback required, 16 KB ELF, upload
-key).
+The same text. Nothing is left out of this build. The googletv AAB
+(`app/build/outputs/bundle/googletvRelease/app-googletv-release.aab`, built
+2026-11-05 from 9f948a14) was checked: 26 / 1.5.0, target 36, min 24,
+leanback required, touchscreen and fire_tv optional, the EPG permissions
+kept, the one native library (`libdatastore_shared_counter.so`, 4 ABIs)
+16 KB-aligned, upload key SHA-256 `579bd037…fa3cac75`. Not device-tested
+on Google TV; the Fire TV run covers the shared code.
 
 ---
 
