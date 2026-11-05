@@ -57,6 +57,10 @@ Verify before upload: `apksigner verify --verbose app-quest-release.apk` (v2: tr
 >
 > No ads, no analytics and no tracking. The app talks only to the server you choose.
 
+**Keywords** (most important first; no other companies' trademarks):
+
+> media server, home media, personal media library, video player, movies, TV shows, music player, audiobooks, photos, self-hosted, NAS, streaming
+
 ## Content rating (IARC)
 
 Answer the IARC questionnaire for a media player with no content of its
@@ -84,6 +88,14 @@ emulator screenshot. The screenshots are the `quest` build on a
 signed in to the review server as `reviewer`, so only open-licence demo
 media shows (Blender open movies, Kevin MacLeod music under CC BY 4.0,
 NASA photos). No trailer yet (requirement not stated for 2D apps).
+
+## Asset checks (VRC.Quest.Asset.*)
+
+- **Asset.2:** the covers carry only the title, "OnScreen", with the artwork: no taglines or banners.
+- **Asset.3:** the title stays out of the bleed areas, the top and bottom 20% and the left and right 10%. `render-art.py` checks this and fails if it doesn't.
+- **Asset.4:** the hero's title and artwork sit together in the middle 1600px, so a centre crop keeps them whole.
+- **Asset.5 / Asset.6:** the screenshots are the app's own screens: no added text, logos, headsets or controllers.
+- **Asset.7 / Asset.9:** there is no trailer and no 360° preview.
 
 ## Notes for Meta's review
 
