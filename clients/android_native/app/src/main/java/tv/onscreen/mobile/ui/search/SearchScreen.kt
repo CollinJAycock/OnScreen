@@ -32,17 +32,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -66,9 +73,21 @@ import javax.inject.Inject
 class SearchViewModel @Inject constructor(
     private val repo: ItemRepository,
     private val prefs: ServerPrefs,
+    savedState: SavedStateHandle,
 ) : ViewModel() {
 
-    private val _state = MutableStateFlow(SearchUi())
+    /** Set when opened from a library's search action
+     *  ([tv.onscreen.mobile.ui.nav.Routes.LIBRARY_SEARCH]): every query
+     *  carries `library_id` so results come from that library only. Null =
+     *  the global search across every library. */
+    private val libraryId: String? = savedState.get<String>("libraryId")?.takeIf { it.isNotBlank() }
+
+    private val _state = MutableStateFlow(
+        SearchUi(
+            libraryScoped = libraryId != null,
+            libraryName = savedState.get<String>("libraryName")?.takeIf { it.isNotBlank() },
+        ),
+    )
     private val raw: StateFlow<SearchUi> = _state.asStateFlow()
 
     init {
@@ -91,8 +110,11 @@ class SearchViewModel @Inject constructor(
 
     /** Filter-applied view of the result list. Unknown types fall
      *  through so a future server media type renders without a code
-     *  bump on the client. */
+     *  bump on the client. A library-scoped search shows everything the
+     *  library matched: the chips aren't shown there (in a music library
+     *  the default chips would hide every result). */
     val state: StateFlow<SearchUi> = combine(raw, filters) { ui, f ->
+        if (ui.libraryScoped) return@combine ui
         ui.copy(
             results = ui.results.filter { r ->
                 when (r.type) {
@@ -108,9 +130,16 @@ class SearchViewModel @Inject constructor(
 
     private var job: Job? = null
 
+    /** Bumped per search started (and per keystroke). A response for an
+     *  older query is dropped even if it lands after a newer one started:
+     *  cancelling the job alone doesn't stop a call that has already
+     *  returned and is resuming. */
+    private var seq = 0
+
     fun onQueryChange(q: String) {
         _state.value = _state.value.copy(query = q)
         job?.cancel()
+        seq++
         if (q.length < 2) {
             _state.value = _state.value.copy(results = emptyList(), loading = false, error = null)
             return
@@ -127,13 +156,19 @@ class SearchViewModel @Inject constructor(
     }
 
     private fun runSearch(q: String, debounce: Boolean) {
+        val mine = ++seq
         job = viewModelScope.launch {
             if (debounce) delay(300)
             _state.value = _state.value.copy(loading = true, error = null)
             try {
-                val r = repo.search(q)
+                val r = repo.search(q, libraryId = libraryId)
+                if (mine != seq) return@launch
                 _state.value = _state.value.copy(loading = false, results = r)
+            } catch (e: CancellationException) {
+                // Superseded by a newer keystroke: not an error to show.
+                throw e
             } catch (e: Exception) {
+                if (mine != seq) return@launch
                 _state.value = _state.value.copy(loading = false, error = e.message)
             }
         }
@@ -161,12 +196,26 @@ data class SearchUi(
     val results: List<SearchResult> = emptyList(),
     val serverUrl: String = "",
     val error: String? = null,
-)
+    /** Searching one library (from its screen) rather than all of them. */
+    val libraryScoped: Boolean = false,
+    /** That library's name, when the library screen knew it. */
+    val libraryName: String? = null,
+) {
+    /** "Search Films" when scoped to a named library. */
+    val title: String
+        get() = when {
+            !libraryScoped -> "Search"
+            libraryName != null -> "Search $libraryName"
+            else -> "Search this library"
+        }
+}
 
 /**
  * Library search. A single query field over the local library via
  * [SearchViewModel] (auto-debounced), with the persisted type-filter
- * chips beneath it.
+ * chips beneath it. Opened from a library's search action it searches
+ * that library only, without the chips; results open the same way
+ * either way.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -186,10 +235,18 @@ fun SearchScreen(
     // already stores every keystroke via onQueryChange.
     val query = ui.query
 
+    // From a library's search action the point of the tap is to type: put
+    // the cursor in the field. Not on a return from a result (the query is
+    // already there).
+    val focus = remember { FocusRequester() }
+    LaunchedEffect(Unit) {
+        if (ui.libraryScoped && ui.query.isEmpty()) focus.requestFocus()
+    }
+
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("Search") },
+                title = { Text(ui.title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
@@ -207,10 +264,18 @@ fun SearchScreen(
                 value = query,
                 onValueChange = vm::onQueryChange,
                 singleLine = true,
-                placeholder = { Text("Search movies, shows, music…") },
+                placeholder = {
+                    Text(
+                        if (ui.libraryScoped) "Titles in ${ui.libraryName ?: "this library"}…"
+                        else "Search movies, shows, music…",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .focusRequester(focus),
             )
 
             LibraryResults(
@@ -233,7 +298,7 @@ private fun LibraryResults(
     onOpenItem: (String) -> Unit,
     onRetry: () -> Unit,
 ) {
-    FlowRow(
+    if (!ui.libraryScoped) FlowRow(
         modifier = Modifier
             .fillMaxWidth()
             .padding(horizontal = 16.dp, vertical = 8.dp),
@@ -267,9 +332,18 @@ private fun LibraryResults(
             ui.error != null && ui.results.isEmpty() ->
                 ErrorState(ui.error, onRetry = onRetry)
             ui.results.isEmpty() && ui.query.length >= 2 && !ui.loading ->
-                EmptyState("No results for \"${ui.query}\"")
+                EmptyState(
+                    if (ui.libraryScoped && ui.libraryName != null) {
+                        "No results for \"${ui.query}\" in ${ui.libraryName}"
+                    } else {
+                        "No results for \"${ui.query}\""
+                    },
+                )
             ui.results.isEmpty() ->
-                EmptyState("Type to search your library.")
+                EmptyState(
+                    if (ui.libraryScoped) "Type to search ${ui.libraryName ?: "this library"}."
+                    else "Type to search your library.",
+                )
             else -> LazyColumn(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)) {
                 items(ui.results, key = { it.id }) { r ->
                     Row(

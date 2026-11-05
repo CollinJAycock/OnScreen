@@ -19,6 +19,7 @@ import org.junit.Test
 import retrofit2.HttpException
 import retrofit2.Response
 import tv.onscreen.mobile.data.model.Library
+import tv.onscreen.mobile.data.model.LibraryLetter
 import tv.onscreen.mobile.data.model.MediaItem
 import tv.onscreen.mobile.data.model.RandomLibraryItem
 import tv.onscreen.mobile.data.model.WatchFilter
@@ -81,7 +82,7 @@ class LibraryViewModelTest {
         vm.setWatchFilter(WatchFilter.UNWATCHED)
         advanceUntilIdle()
         assertThat(vm.state.value.watchFilter).isEqualTo(WatchFilter.UNWATCHED)
-        assertThat(vm.state.value.items.map { it.id }).containsExactly("u")
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("u")
 
         // Same filter again is a no-op (no extra fetch).
         vm.setWatchFilter(WatchFilter.UNWATCHED)
@@ -105,7 +106,7 @@ class LibraryViewModelTest {
         slowAll.complete(listOf(item("x"), item("y")) to 2)
         advanceUntilIdle()
 
-        assertThat(vm.state.value.items.map { it.id }).containsExactly("w")
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("w")
         assertThat(vm.state.value.total).isEqualTo(1)
     }
 
@@ -170,16 +171,16 @@ class LibraryViewModelTest {
         vm.load("L")
         advanceUntilIdle()
 
-        vm.setWatched(vm.state.value.items[0], true)
-        assertThat(vm.state.value.items[0].watch_state).isEqualTo("watched")
+        vm.setWatched(vm.state.value.pages.loadedItems[0], true)
+        assertThat(vm.state.value.pages.loadedItems[0].watch_state).isEqualTo("watched")
         advanceUntilIdle()
-        assertThat(vm.state.value.items[0].watch_state).isEqualTo("watched")
+        assertThat(vm.state.value.pages.loadedItems[0].watch_state).isEqualTo("watched")
         assertThat(vm.state.value.message).isEqualTo("Marked as watched")
         vm.consumeMessage()
 
-        vm.setWatched(vm.state.value.items[1], true)
+        vm.setWatched(vm.state.value.pages.loadedItems[1], true)
         advanceUntilIdle()
-        assertThat(vm.state.value.items[1].watch_state).isNull()
+        assertThat(vm.state.value.pages.loadedItems[1].watch_state).isNull()
         assertThat(vm.state.value.message).isEqualTo("Too many changes at once — try again in a minute")
     }
 
@@ -193,7 +194,7 @@ class LibraryViewModelTest {
         vm.load("L")
         advanceUntilIdle()
 
-        vm.setWatched(vm.state.value.items[0], true)
+        vm.setWatched(vm.state.value.pages.loadedItems[0], true)
         advanceUntilIdle()
         coVerify(exactly = 0) { items.setWatched(any(), any()) }
     }
@@ -214,25 +215,25 @@ class LibraryViewModelTest {
         vm.load("L")
         vm.setWatchFilter(WatchFilter.UNWATCHED)
         advanceUntilIdle()
-        assertThat(vm.state.value.items.map { it.id }).containsExactly("a", "b")
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("a", "b")
 
         // Re-entering the screen: load() keeps the stale items (by design)…
         vm.load("L")
         advanceUntilIdle()
-        assertThat(vm.state.value.items.map { it.id }).containsExactly("a", "b")
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("a", "b")
 
         // …and the ON_RESUME quiet refresh brings them up to date.
         vm.refreshQuietly()
         assertThat(vm.state.value.loading).isFalse() // no spinner / pull indicator
         advanceUntilIdle()
         assertThat(vm.state.value.watchFilter).isEqualTo(WatchFilter.UNWATCHED)
-        assertThat(vm.state.value.items.map { it.id }).containsExactly("b")
-        assertThat(vm.state.value.items.single().watch_state).isEqualTo("in_progress")
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("b")
+        assertThat(vm.state.value.pages.loadedItems.single().watch_state).isEqualTo("in_progress")
         assertThat(vm.state.value.total).isEqualTo(1)
     }
 
     @Test
-    fun `quiet refresh re-pulls the whole loaded window so a deep scroll survives`() = runTest(dispatcher) {
+    fun `quiet refresh re-pulls the pages on screen so a deep scroll survives`() = runTest(dispatcher) {
         val repo = mockk<LibraryRepository>()
         coEvery { repo.getLibraries() } returns listOf(lib("movie"))
         val page0 = (0 until 100).map { item("p0-$it") }
@@ -242,18 +243,28 @@ class LibraryViewModelTest {
         val vm = LibraryViewModel(repo, mockk(), prefs)
         vm.load("L")
         advanceUntilIdle()
-        vm.loadMore()
+        // The grid scrolled into the second page.
+        vm.onVisibleRows(150, 160)
         advanceUntilIdle()
-        assertThat(vm.state.value.items).hasSize(200)
+        assertThat(vm.state.value.pages.loadedItems).hasSize(200)
 
         vm.refreshQuietly()
         advanceUntilIdle()
-        // Both loaded pages again (not just page one), nothing past them.
-        assertThat(vm.state.value.items).hasSize(200)
-        assertThat(vm.state.value.items.last().id).isEqualTo("p1-99")
-        coVerify(exactly = 2) { repo.getItems("L", any(), 0, any(), any(), any(), null) }
+        // The page on screen again (not page one), nothing past it; the grid
+        // keeps its length so the scroll position holds.
+        assertThat(vm.state.value.total).isEqualTo(250)
+        assertThat(vm.state.value.pages[150]!!.id).isEqualTo("p1-50")
         coVerify(exactly = 2) { repo.getItems("L", any(), 100, any(), any(), any(), null) }
+        coVerify(exactly = 1) { repo.getItems("L", any(), 0, any(), any(), any(), null) }
         coVerify(exactly = 0) { repo.getItems("L", any(), 200, any(), any(), any(), null) }
+
+        // The page off screen went back to a placeholder and reloads, fresh,
+        // when the grid scrolls back to it.
+        assertThat(vm.state.value.pages[50]).isNull()
+        vm.onVisibleRows(40, 50)
+        advanceUntilIdle()
+        assertThat(vm.state.value.pages[50]!!.id).isEqualTo("p0-50")
+        coVerify(exactly = 2) { repo.getItems("L", any(), 0, any(), any(), any(), null) }
     }
 
     @Test
@@ -272,7 +283,7 @@ class LibraryViewModelTest {
         coEvery { repo.getItems("L", any(), any(), any(), any(), any(), any()) } throws http(502)
         vm.refreshQuietly()
         advanceUntilIdle()
-        assertThat(vm.state.value.items.map { it.id }).containsExactly("a")
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("a")
         assertThat(vm.state.value.error).isNull()
     }
 
@@ -296,7 +307,7 @@ class LibraryViewModelTest {
         advanceUntilIdle()
         slow.complete(listOf(item("x")) to 1)
         advanceUntilIdle()
-        assertThat(vm.state.value.items.map { it.id }).containsExactly("w")
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("w")
     }
 
     @Test
@@ -324,5 +335,213 @@ class LibraryViewModelTest {
         vm.setWatchFilter(WatchFilter.ALL)
         advanceUntilIdle()
         assertThat(vm.state.value.queryVersion).isEqualTo(start + 2)
+    }
+
+    // ── A-Z index + jumping ───────────────────────────────────────────────
+
+    /** A [total]-row listing where row n is item "r<n>", served a page at a
+     *  time like the server's limit/offset. */
+    private fun bigRepo(total: Int = 5000): LibraryRepository {
+        val repo = mockk<LibraryRepository>()
+        coEvery { repo.getLibraries() } returns listOf(lib("movie"))
+        coEvery { repo.getItems("L", any(), any(), any(), any(), any(), any()) } coAnswers {
+            val limit = secondArg<Int>()
+            val offset = thirdArg<Int>()
+            (offset until minOf(offset + limit, total)).map { item("r$it") } to total
+        }
+        coEvery { repo.getLetters("L", any(), any(), any(), any()) } returns listOf(
+            LibraryLetter("#", 12, 0),
+            LibraryLetter("A", 400, 12),
+            LibraryLetter("M", 300, 4350),
+        )
+        return repo
+    }
+
+    @Test
+    fun `load fetches the letter index with the listing's parameters`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        coEvery { repo.getLetters("L", any(), any(), any(), "unwatched") } returns listOf(LibraryLetter("B", 3, 0))
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        assertThat(vm.state.value.letters.map { it.letter }).containsExactly("#", "A", "M").inOrder()
+        coVerify { repo.getLetters("L", null, null, null, null) }
+
+        // A new filter is a new listing: its own index, same ?watch= as /items.
+        vm.setWatchFilter(WatchFilter.UNWATCHED)
+        assertThat(vm.state.value.letters).isEmpty() // old offsets never apply to it
+        advanceUntilIdle()
+        assertThat(vm.state.value.letters).containsExactly(LibraryLetter("B", 3, 0))
+    }
+
+    @Test
+    fun `no rail when the server sends an empty index - a non-title sort`() = runTest(dispatcher) {
+        // The server answers [] unless the listing is sorted by title.
+        val repo = bigRepo()
+        coEvery { repo.getLetters("L", any(), any(), any(), any()) } returns emptyList()
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        assertThat(vm.state.value.letters).isEmpty()
+        assertThat(vm.state.value.total).isEqualTo(5000) // the grid itself is unaffected
+    }
+
+    @Test
+    fun `no rail on a server without the endpoint - 404 - or when it fails`() = runTest(dispatcher) {
+        // 404 → empty in the repository (see LibraryRepositoryLettersTest);
+        // anything else it throws is swallowed here.
+        val repo = bigRepo()
+        coEvery { repo.getLetters("L", any(), any(), any(), any()) } throws http(500)
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        assertThat(vm.state.value.letters).isEmpty()
+        assertThat(vm.state.value.error).isNull()
+        assertThat(vm.state.value.total).isEqualTo(5000)
+    }
+
+    @Test
+    fun `the grid is the whole listing from page one - unloaded rows are null`() = runTest(dispatcher) {
+        val vm = LibraryViewModel(bigRepo(), mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        val pages = vm.state.value.pages
+        assertThat(pages.total).isEqualTo(5000)
+        assertThat(pages[0]!!.id).isEqualTo("r0")
+        assertThat(pages[99]!!.id).isEqualTo("r99")
+        assertThat(pages[100]).isNull()
+        assertThat(pages[4999]).isNull()
+    }
+
+    @Test
+    fun `jumping to a letter loads the page at its offset and nothing before it`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        vm.onVisibleRows(0, 11)
+        advanceUntilIdle()
+
+        vm.jumpTo(LibraryLetter("M", 300, 4350))
+        advanceUntilIdle()
+
+        // Row 4350 lives in page 43 (offset 4300); the 30-row margin above
+        // it stays inside that page.
+        coVerify(exactly = 1) { repo.getItems("L", 100, 4300, any(), any(), any(), null) }
+        assertThat(vm.state.value.pages[4350]!!.id).isEqualTo("r4350")
+        // Pages 1..42 were never requested.
+        for (offset in 100..4200 step 100) {
+            coVerify(exactly = 0) { repo.getItems("L", any(), offset, any(), any(), any(), any()) }
+        }
+    }
+
+    @Test
+    fun `scrolling up from a jump loads the earlier page`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        vm.jumpTo(LibraryLetter("M", 300, 4350))
+        advanceUntilIdle()
+        assertThat(vm.state.value.pages[4290]).isNull()
+
+        vm.onVisibleRows(4285, 4296)
+        advanceUntilIdle()
+        coVerify(exactly = 1) { repo.getItems("L", 100, 4200, any(), any(), any(), null) }
+        assertThat(vm.state.value.pages[4290]!!.id).isEqualTo("r4290")
+    }
+
+    @Test
+    fun `a page the grid has left is cancelled and never lands`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        val parked = CompletableDeferred<Pair<List<MediaItem>, Int>>()
+        coEvery { repo.getItems("L", any(), 4300, any(), any(), any(), any()) } coAnswers { parked.await() }
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+
+        vm.jumpTo(LibraryLetter("M", 300, 4350))
+        advanceUntilIdle() // page 43 in flight
+        vm.jumpTo(LibraryLetter("A", 400, 12))
+        advanceUntilIdle()
+        parked.complete(listOf(item("late")) to 5000)
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.pages.isLoaded(43)).isFalse()
+        assertThat(vm.state.value.pages[12]!!.id).isEqualTo("r12")
+    }
+
+    @Test
+    fun `a page from the previous filter is dropped`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        val parked = CompletableDeferred<Pair<List<MediaItem>, Int>>()
+        coEvery { repo.getItems("L", any(), 4300, any(), any(), any(), null) } coAnswers { parked.await() }
+        coEvery { repo.getItems("L", any(), any(), any(), any(), any(), "watched") } returns (listOf(item("w")) to 1)
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        vm.jumpTo(LibraryLetter("M", 300, 4350))
+        advanceUntilIdle()
+
+        vm.setWatchFilter(WatchFilter.WATCHED)
+        advanceUntilIdle()
+        parked.complete(listOf(item("late")) to 5000)
+        advanceUntilIdle()
+
+        assertThat(vm.state.value.total).isEqualTo(1)
+        assertThat(vm.state.value.pages.loadedItems.map { it.id }).containsExactly("w")
+    }
+
+    @Test
+    fun `a failed page is retried while it stays on screen`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        var calls = 0
+        coEvery { repo.getItems("L", any(), 4300, any(), any(), any(), any()) } coAnswers {
+            if (calls++ == 0) throw http(502)
+            (4300 until 4400).map { item("r$it") } to 5000
+        }
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        vm.jumpTo(LibraryLetter("M", 300, 4350))
+        advanceUntilIdle()
+
+        assertThat(calls).isEqualTo(2)
+        assertThat(vm.state.value.pages[4350]!!.id).isEqualTo("r4350")
+    }
+
+    @Test
+    fun `marking a jumped-to card updates it in place`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        val items = mockk<ItemRepository>()
+        coEvery { items.setWatched("r4350", true) } returns Unit
+        val vm = LibraryViewModel(repo, items, prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        vm.jumpTo(LibraryLetter("M", 300, 4350))
+        advanceUntilIdle()
+
+        vm.setWatched(vm.state.value.pages[4350]!!, true)
+        advanceUntilIdle()
+        assertThat(vm.state.value.pages[4350]!!.watch_state).isEqualTo("watched")
+    }
+
+    @Test
+    fun `quiet refresh re-pulls jumped-to pages and the letter index`() = runTest(dispatcher) {
+        val repo = bigRepo()
+        val vm = LibraryViewModel(repo, mockk(), prefs)
+        vm.load("L")
+        advanceUntilIdle()
+        vm.jumpTo(LibraryLetter("M", 300, 4350))
+        advanceUntilIdle()
+
+        vm.refreshQuietly()
+        advanceUntilIdle()
+        coVerify(exactly = 2) { repo.getItems("L", any(), 4300, any(), any(), any(), null) }
+        coVerify(exactly = 2) { repo.getLetters("L", any(), any(), any(), null) }
+        assertThat(vm.state.value.pages[4350]!!.id).isEqualTo("r4350")
+        // Page one is off screen: back to placeholders, not re-pulled.
+        coVerify(exactly = 1) { repo.getItems("L", any(), 0, any(), any(), any(), null) }
+        assertThat(vm.state.value.pages.isLoaded(0)).isFalse()
     }
 }
