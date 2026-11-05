@@ -20,7 +20,7 @@ before production opens.
 
 ## One-time setup (owner, in Play Console and Google Groups)
 
-1. **Create a Google Group** for testers, e.g. `onscreen-beta@googlegroups.com`
+1. **Create a Google Group** for testers: done 2026-11-05, `onscreenbetatesters@googlegroups.com`
    (groups.google.com > Create group). Set **Who can join** to *Anyone on the
    web can ask* or *Anyone can join*. An open group means people opt in
    without you adding each email by hand.
@@ -62,8 +62,8 @@ OnScreen is a free, open-source media server you run yourself (AGPL-3.0),
 and its Android apps need 12 beta testers to get onto Google Play. If you
 self-host and have an Android phone or Android TV / Google TV:
 
-1. Join the tester group: <GROUP LINK>
-2. Opt in: <OPT-IN LINK>
+1. Join the tester group: https://groups.google.com/g/onscreenbetatesters
+2. Opt in: https://play.google.com/apps/testing/tv.onscreen.android
 3. Install OnScreen from Play and point it at your OnScreen server.
 
 Please stay opted in for at least two weeks; that's Google's rule.
@@ -91,23 +91,23 @@ Android apps can go public, so I'm looking for testers:
 
 You need your own OnScreen server (Docker image and installers on the
 site). To join:
-1. Join the tester group: <GROUP LINK>
-2. Opt in on Google Play: <OPT-IN LINK>
+1. Join the tester group: https://groups.google.com/g/onscreenbetatesters
+2. Opt in on Google Play: https://play.google.com/apps/testing/tv.onscreen.android
 3. Install OnScreen from the Play Store on your phone and/or Android TV.
 
 Please stay in the program for at least 14 days. Bug reports welcome on
 GitHub: https://github.com/CollinJAycock/OnScreen/issues
 ```
 
-Fill in `<GROUP LINK>` (the group's page, e.g.
-`https://groups.google.com/g/onscreen-beta`) and `<OPT-IN LINK>` before
+Fill in `https://groups.google.com/g/onscreenbetatesters` (the group's page, e.g.
+`https://groups.google.com/g/onscreen-beta`) and `https://play.google.com/apps/testing/tv.onscreen.android` before
 posting.
 
 ## Steps to send testers
 
 1. Sign in to Google with the account your Android device uses.
-2. Join the group: <GROUP LINK>
-3. Open the opt-in link and choose **Become a tester**: <OPT-IN LINK>
+2. Join the group: https://groups.google.com/g/onscreenbetatesters
+3. Open the opt-in link and choose **Become a tester**: https://play.google.com/apps/testing/tv.onscreen.android
    The page should then say "You're a tester". If it says "internal
    tester", that's the wrong link.
 4. Install **OnScreen** from the Play Store link on that page, or search the
@@ -124,8 +124,8 @@ link to it.
 
 ```html
 <p class="note" id="android-beta">Android beta: join the tester group
-(<a href="GROUP_LINK">Google Group</a>), then
-<a href="OPT_IN_LINK">opt in on Google Play</a> and install OnScreen on your
+(<a href="https://groups.google.com/g/onscreenbetatesters">Google Group</a>), then
+<a href="https://play.google.com/apps/testing/tv.onscreen.android">opt in on Google Play</a> and install OnScreen on your
 phone or Android TV. Please stay in for at least 14 days; it's how the apps
 get onto the public store.</p>
 ```
