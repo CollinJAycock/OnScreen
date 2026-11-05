@@ -19,6 +19,9 @@ import androidx.leanback.widget.ArrayObjectAdapter
  *    library card whose watch state was refreshed after a detail round-trip
  *  - pure append (the current ids are a prefix of the new list) -> add only the
  *    new tail, so pagination streams in without disturbing the user's position
+ *  - pure prepend (the current ids are a suffix of the new list) -> insert only
+ *    the new head; Leanback's grid keeps the focused card focused and shifts its
+ *    position, e.g. the library grid paging upward after an A–Z jump
  *  - otherwise (reorder / removal / changed content) -> rebuild
  */
 fun <T : Any> ArrayObjectAdapter.syncItems(newItems: List<T>, updateChanged: Boolean = false, id: (T) -> Any?) {
@@ -37,6 +40,12 @@ fun <T : Any> ArrayObjectAdapter.syncItems(newItems: List<T>, updateChanged: Boo
     // Pure append (e.g. the next pagination page): keep existing rows + focus.
     if (incoming.size > current.size && incoming.subList(0, current.size) == current) {
         for (i in current.size until newItems.size) add(newItems[i])
+        return
+    }
+    // Pure prepend (the page before an A–Z jump's window): keep rows + focus.
+    val head = incoming.size - current.size
+    if (current.isNotEmpty() && head > 0 && incoming.subList(head, incoming.size) == current) {
+        addAll(0, newItems.subList(0, head))
         return
     }
     // Reset / reorder / removal: rebuild from scratch.

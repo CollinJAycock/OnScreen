@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -36,6 +37,11 @@ class SearchViewModel @Inject constructor(
     private val _results = MutableStateFlow<List<SearchResult>>(emptyList())
     val results: StateFlow<List<SearchResult>> = _results
 
+    /** True when Search was opened from a library screen ([lockScope]): the
+     *  scope is that library for good, and the type checkboxes don't apply. */
+    private val _scopeLocked = MutableStateFlow(false)
+    val scopeLocked: StateFlow<Boolean> = _scopeLocked
+
     /** Reactive filter state, persisted via DataStore. Defaults match
      *  the web client (movie + show on, episode + track off). */
     val filters: StateFlow<SearchFilters> = prefs.searchFilters.stateIn(
@@ -48,7 +54,11 @@ class SearchViewModel @Inject constructor(
      *  web /search rules: album + artist piggyback on the Track box,
      *  season piggybacks on Show. Unknown types pass through so a
      *  future media type renders the moment the API returns it. */
-    val visibleResults: StateFlow<List<SearchResult>> = combine(_results, filters) { rows, f ->
+    val visibleResults: StateFlow<List<SearchResult>> = combine(_results, filters, _scopeLocked) { rows, f, locked ->
+        // "Search this library" shows every match: the library already
+        // narrows the type, and the global checkboxes (Movies + Shows by
+        // default) would hide a music or photo library's results entirely.
+        if (locked) return@combine rows
         rows.filter { r ->
             when (r.type) {
                 "movie" -> f.movie
@@ -85,6 +95,7 @@ class SearchViewModel @Inject constructor(
 
     private var searchJob: Job? = null
     private var lastQuery: String = ""
+    private var searchToken = 0
 
     init {
         viewModelScope.launch {
@@ -93,6 +104,17 @@ class SearchViewModel @Inject constructor(
     }
 
     fun setScope(library: Library?) {
+        if (_scopeLocked.value) return
+        _scope.value = library
+        if (lastQuery.isNotEmpty()) search(lastQuery)
+    }
+
+    /** "Search this library": every search from here on sends [library]'s
+     *  id, and the scope can't be changed. Repeat calls for the same library
+     *  (the view is rebuilt after a detail round-trip) change nothing. */
+    fun lockScope(library: Library) {
+        if (_scopeLocked.value && _scope.value?.id == library.id) return
+        _scopeLocked.value = true
         _scope.value = library
         if (lastQuery.isNotEmpty()) search(lastQuery)
     }
@@ -134,6 +156,11 @@ class SearchViewModel @Inject constructor(
         lastQuery = query
         searchJob?.cancel()
         answeredQuery = null
+        // Only the newest search may publish. Cancelling the old job covers
+        // most of it, but a response that has already come back can still
+        // be on its way to the assignment below when the next keystroke
+        // lands; the token makes "older answer overwrites newer" impossible.
+        val token = ++searchToken
 
         if (query.length < 2) {
             _results.value = emptyList()
@@ -148,6 +175,8 @@ class SearchViewModel @Inject constructor(
             val libraryDeferred = async {
                 try {
                     LibraryResult(itemRepo.search(query, libraryId = libraryId), null)
+                } catch (e: CancellationException) {
+                    throw e // superseded, not failed: no error row
                 } catch (e: Exception) {
                     Log.w(TAG, "library search failed", e)
                     LibraryResult(emptyList(), explainSearchFailure(e))
@@ -165,6 +194,7 @@ class SearchViewModel @Inject constructor(
             // library. The request flow still exists on the web app, where
             // the operator (not a store reviewer) is the audience.
             val libResult = libraryDeferred.await()
+            if (token != searchToken) return@launch
             // On failure CLEAR the results. Keeping them was meant to survive a
             // transient blip mid-typing, but it left the previous query's hits
             // sitting under the "In your library" header while the error row

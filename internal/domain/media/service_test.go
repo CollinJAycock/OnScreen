@@ -470,6 +470,9 @@ func (m *mockQuerier) ListMissingFilesOlderThan(_ context.Context, _ time.Time) 
 func (m *mockQuerier) ListMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _, _ int32, _ FilterParams) ([]Item, error) {
 	return nil, nil
 }
+func (m *mockQuerier) ListMediaItemLetters(_ context.Context, _ uuid.UUID, _ string, _ FilterParams) ([]LetterIndex, error) {
+	return nil, nil
+}
 func (m *mockQuerier) CountMediaItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _ FilterParams) (int64, error) {
 	return 0, nil
 }

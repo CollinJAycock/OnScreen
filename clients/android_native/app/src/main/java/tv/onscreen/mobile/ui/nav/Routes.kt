@@ -6,6 +6,10 @@ object Routes {
     const val LIBRARY = "library/{id}"
     const val ITEM = "item/{id}"
     const val SEARCH = "search"
+    /** [SEARCH] scoped to one library (the library screen's search action):
+     *  results come from that library only. `libraryName` is just for the
+     *  screen's title / hint. */
+    const val LIBRARY_SEARCH = "search/library/{libraryId}?libraryName={libraryName}"
     /** [player]; `fromStart` = ignore the item's resume point (album / artist
      *  Play starts track 1 at 0:00); `startMs` = start exactly there (an
      *  audiobook bookmark; -1 = not given); `fileId` = play this version of
@@ -38,6 +42,10 @@ object Routes {
     const val PLAYBACK_QUALITY = "playback-quality"
 
     fun library(id: String) = "library/$id"
+    fun librarySearch(libraryId: String, libraryName: String? = null): String {
+        val base = "search/library/" + android.net.Uri.encode(libraryId)
+        return if (libraryName.isNullOrBlank()) base else "$base?libraryName=" + android.net.Uri.encode(libraryName)
+    }
     fun item(id: String) = "item/$id"
     fun player(id: String, fromStart: Boolean = false, startMs: Long? = null, fileId: String? = null): String {
         val base = when {

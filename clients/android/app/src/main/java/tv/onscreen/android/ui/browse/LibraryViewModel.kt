@@ -8,6 +8,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
+import tv.onscreen.android.data.model.LibraryLetter
 import tv.onscreen.android.data.model.MediaItem
 import tv.onscreen.android.data.repository.LibraryRepository
 import tv.onscreen.android.ui.common.WatchStateUi
@@ -69,11 +70,35 @@ class LibraryViewModel @Inject constructor(
     val events: SharedFlow<LibraryEvent> = _events
     private var picking = false
 
+    /** The A–Z jump index for the current sort + filters; empty hides the
+     *  rail. Only fetched while sorted by title (the server sends nothing
+     *  otherwise), and never again once the server turns out not to have
+     *  the endpoint. */
+    private val _letters = MutableStateFlow<List<LibraryLetter>>(emptyList())
+    val letters: StateFlow<List<LibraryLetter>> = _letters
+    private var lettersRequest = 0
+    private var lettersUnsupported = false
+
     private var libraryId: String? = null
+    // [items] is a window onto the listing, not always its start: a letter
+    // jump loads the page holding that letter and drops everything before it,
+    // so a 10k-item library never pages through every earlier item to reach
+    // "S". windowStart is the listing row of items[0], always a multiple of
+    // pageSize (pageSize is a multiple of the grid's 5 columns, so the
+    // pages loadPrevious prepends keep every card in its column).
+    private var windowStart = 0
     private var offset = 0
     private var total = Int.MAX_VALUE
     private var loading = false
-    private val pageSize = 50
+    private var loadingPrevious = false
+    // A jump's page is in flight: the window is about to move, so neither
+    // direction may page from the old one.
+    private var jumping = false
+    // Grid position the fragment should focus once the jump's page is
+    // shown. Set BEFORE the page is published, so the items collector that
+    // renders the page always finds it (see takeFocusTarget).
+    private var focusTarget: Int? = null
+    private val pageSize = PAGE_SIZE
 
     fun load(libraryId: String, libraryType: String = "") {
         // Re-entering this screen (detail → back) recreates the VIEW but not
@@ -94,11 +119,13 @@ class LibraryViewModel @Inject constructor(
         if (_items.value.isEmpty() && _sort.value == LibrarySort.DEFAULT) {
             _sort.value = LibrarySort.defaultFor(libraryType)
         }
+        windowStart = 0
         offset = 0
         total = Int.MAX_VALUE
         _items.value = emptyList()
         _loaded.value = false
         loadMore()
+        refreshLetters()
         if (_genres.value.isEmpty()) {
             viewModelScope.launch {
                 _genres.value = libraryRepo.getGenres(libraryId)
@@ -129,7 +156,7 @@ class LibraryViewModel @Inject constructor(
         val id = libraryId ?: return
         val index = _items.value.indexOfFirst { it.id == itemId }
         if (index < 0) return
-        val pageOffset = (index / pageSize) * pageSize
+        val pageOffset = ((windowStart + index) / pageSize) * pageSize
         val s = _sort.value
         val g = _genre.value
         val w = _watch.value
@@ -187,19 +214,129 @@ class LibraryViewModel @Inject constructor(
     private fun resetAndReload() {
         libraryId ?: return
         queryGeneration++
+        windowStart = 0
         offset = 0
         total = Int.MAX_VALUE
         _items.value = emptyList()
         _loaded.value = false
+        focusTarget = null
         // Unblock immediately: the in-flight request now belongs to a dead
         // generation and must not gate the fresh query.
         loading = false
+        loadingPrevious = false
+        jumping = false
         loadMore()
+        // The old index's offsets point into the old listing.
+        refreshLetters()
+    }
+
+    /** Re-fetch the A–Z index for the current sort + filters. The rail is
+     *  cleared first, so a jump can't use offsets from the previous query
+     *  while the new index is in flight. */
+    private fun refreshLetters() {
+        val id = libraryId ?: return
+        val request = ++lettersRequest
+        _letters.value = emptyList()
+        val s = _sort.value
+        if (s.sort != "title" || lettersUnsupported) return
+        val g = _genre.value
+        val w = _watch.value
+        viewModelScope.launch {
+            val result = try {
+                libraryRepo.getLetters(id, s.sort, s.sortDir, g, w)
+            } catch (_: Exception) {
+                // Best-effort, like genres: no rail, the grid still pages.
+                emptyList()
+            }
+            if (request != lettersRequest) return@launch // stale sort/filter
+            if (result == null) lettersUnsupported = true // older server: 404
+            _letters.value = result.orEmpty()
+        }
+    }
+
+    /** Listing row of grid position [index] (the window may not start at 0). */
+    fun listingPosition(index: Int): Int = windowStart + index
+
+    /**
+     * Jump to the first item of [entry]. Returns the grid position to focus
+     * when that item is already loaded; otherwise returns null, swaps the
+     * window for the page holding it (nothing before that page is fetched)
+     * and leaves the position for [takeFocusTarget] once that page shows.
+     */
+    fun jumpTo(entry: LibraryLetter): Int? {
+        val id = libraryId ?: return null
+        val target = entry.offset
+        if (target < 0 || target >= total) return null
+        val inWindow = target - windowStart
+        if (inWindow in _items.value.indices) return inWindow
+
+        val pageStart = (target / pageSize) * pageSize
+        // A new generation: page fetches still in flight for the old window
+        // (and a refreshAround) drop their results instead of landing in the
+        // new one.
+        val gen = ++queryGeneration
+        jumping = true
+        loading = true
+        loadingPrevious = false
+        val s = _sort.value
+        val g = _genre.value
+        val w = _watch.value
+        viewModelScope.launch {
+            try {
+                val (page, count) = libraryRepo.getItems(id, pageSize, pageStart, s.sort, s.sortDir, g, w)
+                if (gen != queryGeneration) return@launch
+                total = count
+                windowStart = pageStart
+                offset = pageStart + page.size
+                if (page.isNotEmpty()) focusTarget = (target - pageStart).coerceIn(0, page.size - 1)
+                _items.value = page
+                _error.value = null
+            } catch (_: Exception) {
+                // The old window stays on screen and pages as before.
+                if (gen == queryGeneration) _events.tryEmit(LibraryEvent.JumpFailed)
+            } finally {
+                if (gen == queryGeneration) {
+                    jumping = false
+                    loading = false
+                }
+            }
+        }
+        return null
+    }
+
+    /** The grid position a finished jump wants focused, once. */
+    fun takeFocusTarget(): Int? = focusTarget.also { focusTarget = null }
+
+    /** Prepend the page before the window, once the user scrolls up to its
+     *  top after a letter jump. A no-op while the window starts at row 0. */
+    fun loadPrevious() {
+        val id = libraryId ?: return
+        if (loadingPrevious || jumping || windowStart <= 0) return
+        loadingPrevious = true
+        val prevStart = (windowStart - pageSize).coerceAtLeast(0)
+        val limit = windowStart - prevStart
+        val s = _sort.value
+        val g = _genre.value
+        val w = _watch.value
+        val gen = queryGeneration
+        viewModelScope.launch {
+            try {
+                val (page, count) = libraryRepo.getItems(id, limit, prevStart, s.sort, s.sortDir, g, w)
+                if (gen != queryGeneration) return@launch
+                total = count
+                windowStart = prevStart
+                _items.value = page + _items.value
+            } catch (_: Exception) {
+                // Best-effort: the next scroll to the top tries again.
+            } finally {
+                if (gen == queryGeneration) loadingPrevious = false
+            }
+        }
     }
 
     fun loadMore() {
         val id = libraryId ?: return
-        if (loading || offset >= total) return
+        if (loading || jumping || offset >= total) return
         loading = true
 
         val s = _sort.value
@@ -226,6 +363,11 @@ class LibraryViewModel @Inject constructor(
             }
         }
     }
+
+    companion object {
+        /** Items per request. A multiple of the grid's 5 columns — see windowStart. */
+        const val PAGE_SIZE = 50
+    }
 }
 
 sealed interface LibraryEvent {
@@ -235,4 +377,6 @@ sealed interface LibraryEvent {
     data object NothingToPick : LibraryEvent
     /** The pick failed (network, or an older server without the endpoint). */
     data object PickFailed : LibraryEvent
+    /** The page for an A–Z jump didn't load; the grid stays where it was. */
+    data object JumpFailed : LibraryEvent
 }

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -101,6 +102,11 @@ type mockMediaLister struct {
 	listErr  error
 	count    int64
 	countErr error
+	// letters / lettersErr answer ListItemLetters; gotLettersFP captures
+	// the filters it was called with.
+	letters      []media.LetterIndex
+	lettersErr   error
+	gotLettersFP *media.FilterParams
 	// gotType captures the most recent item type passed to ListItems /
 	// ListItemsFiltered so tests can assert the handler's `?type=`
 	// override actually flowed through to the data layer.
@@ -133,6 +139,10 @@ func (m *mockMediaLister) ListItemsFiltered(_ context.Context, _ uuid.UUID, t st
 }
 func (m *mockMediaLister) CountItemsFiltered(_ context.Context, _ uuid.UUID, _ string, _ media.FilterParams) (int64, error) {
 	return m.count, m.countErr
+}
+func (m *mockMediaLister) ListItemLetters(_ context.Context, _ uuid.UUID, t string, fp media.FilterParams) ([]media.LetterIndex, error) {
+	m.gotType, m.gotLettersFP = t, &fp
+	return m.letters, m.lettersErr
 }
 func (m *mockMediaLister) ListDistinctGenres(_ context.Context, _ uuid.UUID) ([]string, error) {
 	return nil, nil
@@ -831,4 +841,80 @@ func TestLibrary_Items_SortByArtist(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestLibrary_ItemLetters covers the A-Z jump index: offsets follow the
+// listing's direction (descending lists Z first, at the offset its last
+// title-order row lands on), only a title sort has an index, and the
+// listing's filters and ?type= reach the query.
+func TestLibrary_ItemLetters(t *testing.T) {
+	// Title order: "#" rows 0-1, A rows 2-4, C rows 5-9 (10 items).
+	index := []media.LetterIndex{
+		{Letter: "#", FirstRow: 0, LastRow: 1, Count: 2},
+		{Letter: "A", FirstRow: 2, LastRow: 4, Count: 3},
+		{Letter: "C", FirstRow: 5, LastRow: 9, Count: 5},
+	}
+	type entry struct {
+		Letter string `json:"letter"`
+		Count  int64  `json:"count"`
+		Offset int64  `json:"offset"`
+	}
+	get := func(t *testing.T, query string) ([]entry, *mockMediaLister) {
+		t.Helper()
+		libID := uuid.New()
+		svc := &mockLibraryService{lib: &library.Library{ID: libID, Type: "music"}}
+		ml := &mockMediaLister{letters: index}
+		h := newLibHandler(svc).WithMedia(ml)
+		rec := httptest.NewRecorder()
+		h.ItemLetters(rec, withClaims(withChiParam(httptest.NewRequest("GET", "/"+query, nil), "id", libID.String())))
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status %d body=%s", query, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Data []entry `json:"data"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		return resp.Data, ml
+	}
+
+	t.Run("ascending", func(t *testing.T) {
+		got, _ := get(t, "")
+		want := []entry{{"#", 2, 0}, {"A", 3, 2}, {"C", 5, 5}}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+	t.Run("descending", func(t *testing.T) {
+		got, _ := get(t, "?sort=title&sort_dir=desc")
+		want := []entry{{"C", 5, 0}, {"A", 3, 5}, {"#", 2, 8}}
+		if fmt.Sprint(got) != fmt.Sprint(want) {
+			t.Errorf("got %v, want %v", got, want)
+		}
+	})
+	t.Run("not a title sort", func(t *testing.T) {
+		got, ml := get(t, "?sort=year")
+		if len(got) != 0 || ml.gotLettersFP != nil {
+			t.Errorf("sort=year: got %v (queried: %v), want an empty index", got, ml.gotLettersFP != nil)
+		}
+	})
+	t.Run("filters reach the query", func(t *testing.T) {
+		_, ml := get(t, "?type=album&genre=Jazz&watch=unwatched")
+		if ml.gotLettersFP == nil {
+			t.Fatal("ListItemLetters not called")
+		}
+		if ml.gotType != "album" || ml.gotLettersFP.Genre == nil || *ml.gotLettersFP.Genre != "Jazz" || ml.gotLettersFP.Watch != "unwatched" {
+			t.Errorf("got type %q, filters %+v", ml.gotType, *ml.gotLettersFP)
+		}
+	})
+	t.Run("bad type", func(t *testing.T) {
+		libID := uuid.New()
+		h := newLibHandler(&mockLibraryService{lib: &library.Library{ID: libID, Type: "music"}}).WithMedia(&mockMediaLister{})
+		rec := httptest.NewRecorder()
+		h.ItemLetters(rec, withClaims(withChiParam(httptest.NewRequest("GET", "/?type=movie", nil), "id", libID.String())))
+		if rec.Code != http.StatusBadRequest {
+			t.Errorf("type=movie on a music library: status %d, want 400", rec.Code)
+		}
+	})
 }

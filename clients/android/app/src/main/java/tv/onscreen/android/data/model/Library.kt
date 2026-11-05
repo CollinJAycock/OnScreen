@@ -24,6 +24,19 @@ data class Library(
     val auto_grant_new_users: Boolean = false,
 )
 
+/** One entry of GET /libraries/{id}/items/letters — the A–Z jump index.
+ *  [letter] is "#" (digits / symbols) or "A".."Z"; [offset] is the 0-based
+ *  row, in the `/items` listing under the same query, of the first item with
+ *  that letter, so a jump loads the page holding it instead of every page
+ *  before it. The server only lists letters that have items, in listing
+ *  order, and sends none unless the listing is sorted by title. */
+@JsonClass(generateAdapter = true)
+data class LibraryLetter(
+    val letter: String,
+    val count: Int = 0,
+    val offset: Int,
+)
+
 /** One entry of GET /libraries/{id}/genres. The server returns
  *  `[{"name":"Action","count":42}]`; decoding that into a plain
  *  List<String> threw, and LibraryRepository's catch-all turned the throw

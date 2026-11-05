@@ -17,9 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
-import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
-import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -28,9 +26,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Place
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Shuffle
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -57,6 +55,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -76,13 +75,19 @@ import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filterNotNull
+import kotlinx.coroutines.job
 import kotlinx.coroutines.launch
 import retrofit2.HttpException
 import tv.onscreen.mobile.data.artworkUrl
+import tv.onscreen.mobile.data.model.LibraryLetter
 import tv.onscreen.mobile.data.model.MediaItem
 import tv.onscreen.mobile.data.model.RandomLibraryItem
 import tv.onscreen.mobile.data.model.WatchFilter
@@ -122,11 +127,22 @@ class LibraryViewModel @Inject constructor(
 
     private var quietRefresh: Job? = null
 
+    /** Page fetches in flight, by page index. */
+    private val pageJobs = mutableMapOf<Int, Job>()
+
+    /** Automatic retries spent per page since it was last wanted afresh. */
+    private val pageRetries = mutableMapOf<Int, Int>()
+
+    /** The rows the grid last reported on screen ([onVisibleRows]). Kept so
+     *  a page that lands — or a listing that's replaced — can top up what the
+     *  grid is showing without waiting for the next scroll. */
+    private var visibleRows: IntRange = 0..0
+
     /** Initial load. Idempotent: re-entering a library that's already loaded
      *  keeps the existing items (and the grid's scroll position) rather than
      *  blanking back to a full-screen spinner on every drill-in/return. */
     fun load(libraryId: String) {
-        if (currentLibrary == libraryId && _state.value.items.isNotEmpty()) return
+        if (currentLibrary == libraryId && _state.value.total > 0) return
         currentLibrary = libraryId
         if (_state.value.libraryType == null) loadLibraryInfo(libraryId)
         fetchFirstPage(keepItems = false)
@@ -141,42 +157,45 @@ class LibraryViewModel @Inject constructor(
      * background): re-pull what's loaded so badges, the mark menu and the
      * filter's membership reflect what was just watched or marked — [load]
      * deliberately keeps the existing items. Quiet: no indicator, and a
-     * failure keeps the grid as it is. Re-fetches the whole loaded window,
-     * page by page, under the current filter — not just page one — so the
-     * grid keeps its length and the scroll position (the grid is keyed by id)
-     * survives. Skipped before the first load lands and while any load runs;
-     * a filter change or pull-to-refresh meanwhile supersedes it.
+     * failure keeps the grid as it is. Re-fetches the pages on screen (and
+     * the margin around them) under the current filter; the grid keeps its
+     * length and scroll position, and pages further away go back to
+     * placeholders that reload, fresh, when scrolled to — after jumping
+     * around a big library, re-pulling every page ever loaded would be dozens
+     * of requests per return. Skipped before the first load lands and while
+     * it runs; a filter change or pull-to-refresh meanwhile supersedes it.
+     * The letter index is re-pulled too: a membership change moves the
+     * offsets.
      */
     fun refreshQuietly() {
         val libraryId = currentLibrary ?: return
         val s = _state.value
-        if (s.loading || s.loadingMore || quietRefresh?.isActive == true) return
+        if (s.loading || s.total == 0 || quietRefresh?.isActive == true) return
         val gen = generation
         val watch = s.watchFilter.wire
-        val window = s.items.size
+        val before = s.pages.loadedPages
+        val onScreen = s.pages.pagesFor(visibleRows.first - PREFETCH_ROWS, visibleRows.last + PREFETCH_ROWS)
         quietRefresh = viewModelScope.launch {
             try {
-                val fresh = mutableListOf<MediaItem>()
-                var offset = 0
-                var total: Int
-                do {
-                    val (page, t) = repo.getItems(libraryId, limit = PAGE_SIZE, offset = offset, watch = watch)
-                    fresh += page
-                    offset += page.size
-                    total = t
-                } while (page.isNotEmpty() && offset < window && offset < total)
+                var fresh = LibraryPages(s.total, pageSize = PAGE_SIZE)
+                for (page in onScreen) {
+                    if (page * PAGE_SIZE >= fresh.total && page > 0) break
+                    val (rows, total) = repo.getItems(
+                        libraryId, limit = PAGE_SIZE, offset = page * PAGE_SIZE, watch = watch,
+                    )
+                    fresh = fresh.withPage(page, rows, total)
+                }
                 if (gen != generation) return@launch
-                val current = _state.value.items
+                val current = _state.value.pages
                 // A mark still in flight keeps its optimistic badge; a page
-                // loadMore appended while this ran sits past the window.
-                val merged = (fresh + current.drop(window))
-                    .map { item -> if (item.id in marking) current.firstOrNull { it.id == item.id } ?: item else item }
-                    .distinctBy { it.id }
-                _state.value = _state.value.copy(
-                    items = merged,
-                    total = maxOf(total, merged.size),
-                    error = null,
-                )
+                // the grid loaded while this ran is kept (it's as fresh).
+                val loadedMeanwhile = current.retainPages { it !in before }
+                val merged = fresh
+                    .mapItems { item -> if (item.id in marking) current.find(item.id) ?: item else item }
+                    .plusMissingFrom(loadedMeanwhile)
+                _state.value = _state.value.copy(pages = merged, error = null)
+                fetchLetters(libraryId, gen, watch)
+                ensurePages()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -215,26 +234,35 @@ class LibraryViewModel @Inject constructor(
     private fun fetchFirstPage(keepItems: Boolean) {
         val libraryId = currentLibrary ?: return
         val gen = ++generation
+        cancelPageFetches()
         val watch = _state.value.watchFilter.wire
+        if (!keepItems) {
+            // A new listing opens at the top (the screen scrolls there).
+            visibleRows = 0..(visibleRows.last - visibleRows.first).coerceAtLeast(0)
+        }
+        _state.value = _state.value.copy(
+            loading = true,
+            error = null,
+            pages = if (keepItems) _state.value.pages else LibraryPages(pageSize = PAGE_SIZE),
+            // The old listing's offsets don't describe a new one.
+            letters = if (keepItems) _state.value.letters else emptyList(),
+        )
+        fetchLetters(libraryId, gen, watch)
         viewModelScope.launch {
-            _state.value = _state.value.copy(
-                loading = true,
-                loadingMore = false,
-                loadMoreFailed = false,
-                error = null,
-                items = if (keepItems) _state.value.items else emptyList(),
-                total = if (keepItems) _state.value.total else 0,
-            )
             try {
                 val (items, total) = repo.getItems(libraryId, limit = PAGE_SIZE, offset = 0, watch = watch)
                 val serverUrl = prefs.getServerUrl().orEmpty()
                 if (gen != generation) return@launch
                 _state.value = _state.value.copy(
                     loading = false,
-                    items = items,
-                    total = total,
+                    // Only page one is known to belong to this listing; the
+                    // grid's other rows read as placeholders and re-load.
+                    pages = LibraryPages(pageSize = PAGE_SIZE).withPage(0, items, total),
                     serverUrl = serverUrl,
                 )
+                ensurePages()
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 if (gen != generation) return@launch
                 _state.value = _state.value.copy(loading = false, error = e.message)
@@ -242,46 +270,102 @@ class LibraryViewModel @Inject constructor(
         }
     }
 
-    /** Append the next page as the grid nears its end. No-ops while a page is
-     *  already loading or everything is loaded. */
-    fun loadMore() {
-        val s = _state.value
-        val libraryId = currentLibrary ?: return
-        if (s.loading || s.loadingMore || s.items.size >= s.total) return
-        val gen = generation
+    /** The A-Z index for the current listing. Any failure (404 on an older
+     *  server included) just means no rail. */
+    private fun fetchLetters(libraryId: String, gen: Int, watch: String?) {
         viewModelScope.launch {
-            // Clear loadMoreFailed on start so the screen's retry-arming
-            // LaunchedEffect (keyed on it) can fire again after a prior fail.
-            _state.value = _state.value.copy(loadingMore = true, loadMoreFailed = false)
-            try {
-                val (more, total) = repo.getItems(
-                    libraryId,
-                    limit = PAGE_SIZE,
-                    offset = s.items.size,
-                    watch = s.watchFilter.wire,
-                )
-                if (gen != generation) return@launch
-                // distinctBy: server pages can overlap when the sort column
-                // ties (LIMIT/OFFSET over a non-unique ORDER BY) — a repeated
-                // id would crash the grid's stable keys. If a page adds
-                // nothing new, treat the list as complete so the scroll
-                // trigger can't refetch the same offset forever.
-                val merged = (_state.value.items + more).distinctBy { it.id }
-                _state.value = _state.value.copy(
-                    loadingMore = false,
-                    items = merged,
-                    total = if (merged.size == s.items.size) merged.size else total,
-                )
+            val letters: List<LibraryLetter> = try {
+                repo.getLetters(libraryId, watch = watch)
+            } catch (e: CancellationException) {
+                throw e
             } catch (_: Exception) {
+                emptyList()
+            }
+            if (gen != generation) return@launch
+            _state.value = _state.value.copy(letters = letters)
+        }
+    }
+
+    /**
+     * The grid's visible rows changed (scroll, fling, rotation, a jump).
+     * Loads the pages holding them plus a margin either side, and cancels
+     * fetches for pages the grid has left — a fling or a rail drag across
+     * the whole library would otherwise fetch every page it passed.
+     */
+    fun onVisibleRows(first: Int, last: Int) {
+        if (last < first) return
+        val rows = first..last
+        if (rows != visibleRows) pageRetries.clear()
+        visibleRows = rows
+        ensurePages()
+    }
+
+    /**
+     * A-Z rail: the screen scrolls the grid to [letter]'s row; load the page
+     * that holds it now rather than after the grid's next layout. Nothing
+     * before it is fetched.
+     */
+    fun jumpTo(letter: LibraryLetter) {
+        val total = _state.value.total
+        if (total == 0) return
+        val first = letter.offset.coerceIn(0, total - 1)
+        onVisibleRows(first, first + (visibleRows.last - visibleRows.first))
+    }
+
+    private fun ensurePages() {
+        val s = _state.value
+        if (s.loading || s.total == 0) return
+        val wanted = s.pages.pagesFor(
+            visibleRows.first - PREFETCH_ROWS,
+            visibleRows.last + PREFETCH_ROWS,
+        )
+        val stale = pageJobs.keys.filter { it !in wanted }
+        stale.forEach { pageJobs.remove(it)?.cancel() }
+        for (page in wanted) {
+            if (!s.pages.isLoaded(page) && page !in pageJobs) fetchPage(page)
+        }
+    }
+
+    private fun fetchPage(page: Int) {
+        val libraryId = currentLibrary ?: return
+        val gen = generation
+        val watch = _state.value.watchFilter.wire
+        // Started after it's registered, so a fetch that finishes without
+        // suspending can't leave a dead entry behind.
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
+            var failed = false
+            try {
+                val (rows, total) = repo.getItems(
+                    libraryId, limit = PAGE_SIZE, offset = page * PAGE_SIZE, watch = watch,
+                )
                 if (gen != generation) return@launch
-                // Leave loaded items in place and flip loadMoreFailed so the
-                // screen re-arms. Without this signal, shouldLoadMore stayed
-                // true (items/total unchanged) but never transitioned, so its
-                // LaunchedEffect never re-fired and pagination stalled
-                // permanently after a single failed page.
-                _state.value = _state.value.copy(loadingMore = false, loadMoreFailed = true)
+                pageRetries.remove(page)
+                _state.value = _state.value.copy(pages = _state.value.pages.withPage(page, rows, total))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                // The row stays a placeholder; retried below, and on scroll.
+                failed = true
+            } finally {
+                if (pageJobs[page] == coroutineContext.job) pageJobs.remove(page)
+            }
+            if (failed && gen == generation) {
+                val tries = (pageRetries[page] ?: 0) + 1
+                pageRetries[page] = tries
+                if (tries <= PAGE_RETRIES) {
+                    delay(PAGE_RETRY_MS * tries)
+                    if (gen == generation) ensurePages()
+                }
             }
         }
+        pageJobs[page] = job
+        job.start()
+    }
+
+    private fun cancelPageFetches() {
+        pageJobs.values.forEach { it.cancel() }
+        pageJobs.clear()
+        pageRetries.clear()
     }
 
     /** "Surprise me": a random item under the current watch filter. On a
@@ -346,23 +430,30 @@ class LibraryViewModel @Inject constructor(
 
     private fun replaceItem(item: MediaItem) {
         _state.value = _state.value.copy(
-            items = _state.value.items.map { if (it.id == item.id) item else it },
+            pages = _state.value.pages.mapItems { if (it.id == item.id) item else it },
         )
     }
 
-    private companion object {
-        const val PAGE_SIZE = 100
+    internal companion object {
+        const val PAGE_SIZE = LibraryPages.DEFAULT_PAGE_SIZE
+
+        /** Rows loaded beyond each edge of the visible ones, so a normal
+         *  scroll meets loaded cards rather than placeholders. */
+        const val PREFETCH_ROWS = 30
+
+        /** A failed page is retried on its own this many times (with a
+         *  growing pause) while it stays on screen; scrolling retries too. */
+        const val PAGE_RETRIES = 3
+        const val PAGE_RETRY_MS = 2_000L
     }
 }
 
 data class LibraryUi(
+    /** Page one of a new listing (or a pull-to-refresh) is in flight. */
     val loading: Boolean = false,
-    val loadingMore: Boolean = false,
-    /** Set when the last loadMore() page threw. Purely a re-trigger signal
-     *  for the screen's LaunchedEffect — cleared the moment a load starts. */
-    val loadMoreFailed: Boolean = false,
-    val items: List<MediaItem> = emptyList(),
-    val total: Int = 0,
+    /** The listing, [LibraryPages.total] rows long; rows load as the grid
+     *  reaches them. */
+    val pages: LibraryPages = LibraryPages(),
     /** Server origin needed to build the per-item artwork URL — same pattern
      *  as HubScreen. */
     val serverUrl: String = "",
@@ -376,6 +467,9 @@ data class LibraryUi(
      *  pull-to-refresh, the quiet ON_RESUME re-pull — don't bump it: they
      *  re-list the same query and keep the scroll position. */
     val queryVersion: Int = 0,
+    /** The listing's A-Z index; empty = no rail (not sorted by title, a
+     *  pre-v2.7 server, or it failed to load). */
+    val letters: List<LibraryLetter> = emptyList(),
     /** A Surprise me pick is in flight. */
     val surprising: Boolean = false,
     /** One-shot: the Surprise me result the screen should open. */
@@ -383,6 +477,9 @@ data class LibraryUi(
     /** One-shot snackbar text. */
     val message: String? = null,
 ) {
+    /** Rows in the listing (the server's count). */
+    val total: Int get() = pages.total
+
     /** Watch filter, Surprise me and the mark menu only make sense for
      *  libraries whose items carry a watch state. */
     val watchControls: Boolean get() = supportsWatchState(libraryType)
@@ -395,6 +492,9 @@ fun LibraryScreen(
     onOpenItem: (String) -> Unit,
     onOpenPhoto: (String) -> Unit,
     onOpenPhotoExtras: ((String) -> Unit)? = null,
+    /** "Search this library": opens the search screen scoped to this
+     *  library, given its name when known (for the field's hint). */
+    onSearch: ((libraryName: String?) -> Unit)? = null,
     onBack: () -> Unit,
     vm: LibraryViewModel = hiltViewModel(),
 ) {
@@ -406,6 +506,7 @@ fun LibraryScreen(
     val ui by vm.state.collectAsStateWithLifecycle()
     val gridState = rememberLazyGridState()
     val snackbar = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
 
     // New query (filter chip) → back to the top. The grid state outlives the
     // listing (it's hoisted here while the spinner replaces the grid), so
@@ -420,18 +521,24 @@ fun LibraryScreen(
         }
     }
 
-    // Infinite scroll: when the last visible cell nears the end of the loaded
-    // set and the server has more, fetch the next page.
-    val shouldLoadMore by remember {
-        derivedStateOf {
-            val last = gridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: -1
-            ui.items.isNotEmpty() && ui.items.size < ui.total && last >= ui.items.size - 8
+    // The grid is the whole listing (placeholders where pages haven't
+    // loaded); tell the ViewModel which rows are on screen so it loads the
+    // pages there — scrolling down, back up after a letter jump, or after
+    // rotating.
+    LaunchedEffect(gridState) {
+        snapshotFlow {
+            val visible = gridState.layoutInfo.visibleItemsInfo
+            if (visible.isEmpty()) null else visible.first().index to visible.last().index
         }
+            .filterNotNull()
+            .distinctUntilChanged()
+            .collect { (first, last) -> vm.onVisibleRows(first, last) }
     }
-    // Key on loadMoreFailed too: after a failed page shouldLoadMore stays
-    // true without transitioning, so keying on it alone would never re-fire.
-    // The catch flips loadMoreFailed, which re-runs this effect and retries.
-    LaunchedEffect(shouldLoadMore, ui.loadMoreFailed) { if (shouldLoadMore) vm.loadMore() }
+
+    // The rail's highlighted letter: the section the top of the grid is in.
+    val currentLetter by remember {
+        derivedStateOf { letterAtRow(ui.letters, gridState.firstVisibleItemIndex) }
+    }
 
     // Surprise me landed: open the pick (photos go to the viewer, like a tap).
     LaunchedEffect(ui.randomPick) {
@@ -442,11 +549,10 @@ fun LibraryScreen(
     // Show from a composition-scoped coroutine, not inside the effect:
     // consuming the message changes this effect's key, which cancels it —
     // and a showSnackbar running in it — on the very next frame.
-    val snackScope = rememberCoroutineScope()
     LaunchedEffect(ui.message) {
         val msg = ui.message ?: return@LaunchedEffect
         vm.consumeMessage()
-        snackScope.launch { snackbar.showSnackbar(msg) }
+        scope.launch { snackbar.showSnackbar(msg) }
     }
 
     // Whole-show "unwatched" from the grid wipes every mark and resume point
@@ -470,6 +576,14 @@ fun LibraryScreen(
                     }
                 },
                 actions = {
+                    if (onSearch != null) {
+                        IconButton(onClick = { onSearch(ui.libraryName) }) {
+                            Icon(
+                                Icons.Default.Search,
+                                contentDescription = ui.libraryName?.let { "Search $it" } ?: "Search this library",
+                            )
+                        }
+                    }
                     if (ui.watchControls) {
                         IconButton(onClick = vm::surpriseMe, enabled = !ui.surprising) {
                             Icon(Icons.Default.Shuffle, contentDescription = "Surprise me")
@@ -502,60 +616,84 @@ fun LibraryScreen(
             PullToRefreshBox(
                 // Only show the pull indicator for an actual refresh (items already
                 // present); the initial load shows the centered spinner below.
-                isRefreshing = ui.loading && ui.items.isNotEmpty(),
+                isRefreshing = ui.loading && ui.total > 0,
                 onRefresh = { vm.refresh() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .weight(1f),
             ) {
                 when {
-                    ui.loading && ui.items.isEmpty() -> LoadingState()
-                    ui.error != null && ui.items.isEmpty() -> ErrorState(ui.error, onRetry = { vm.refresh() })
-                    ui.items.isEmpty() -> EmptyState(
+                    ui.loading && ui.total == 0 -> LoadingState()
+                    ui.error != null && ui.total == 0 -> ErrorState(ui.error, onRetry = { vm.refresh() })
+                    ui.total == 0 -> EmptyState(
                         if (ui.watchFilter == WatchFilter.ALL) "This library is empty."
                         else "Nothing here matches the ${ui.watchFilter.label} filter.",
                     )
-                    else -> LazyVerticalGrid(
-                        state = gridState,
-                        columns = GridCells.Adaptive(120.dp),
-                        contentPadding = PaddingValues(12.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        items(ui.items, key = { it.id }) { item ->
-                            LibraryGridItem(
-                                item = item,
-                                serverUrl = ui.serverUrl,
-                                // Photos open straight into the swipe-pager viewer;
-                                // routing them through ItemDetailScreen triggers a
-                                // redirect race.
-                                onClick = {
-                                    if (item.type == "photo") onOpenPhoto(item.id)
-                                    else onOpenItem(item.id)
-                                },
-                                markActions = if (ui.watchControls && canMarkWatched(item.type)) {
-                                    watchMenuActions(item)
+                    else -> Box(Modifier.fillMaxSize()) {
+                        // Shown when the listing has an A-Z index (sorted by
+                        // title, on a v2.7+ server). The grid leaves the
+                        // rail's width free at its end so no card sits
+                        // under it.
+                        val rail = ui.letters.isNotEmpty()
+                        val pages = ui.pages
+                        val placeholderAspect = if (ui.libraryType == "photo") 1f else 2f / 3f
+                        LazyVerticalGrid(
+                            state = gridState,
+                            columns = GridCells.Adaptive(120.dp),
+                            contentPadding = PaddingValues(
+                                start = 12.dp,
+                                top = 12.dp,
+                                bottom = 12.dp,
+                                end = if (rail) LetterRailWidth + 4.dp else 12.dp,
+                            ),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.fillMaxSize(),
+                        ) {
+                            // Positional keys: a row is a place in the
+                            // listing, filled in when its page lands.
+                            items(
+                                count = pages.total,
+                                contentType = { i -> if (pages[i] == null) "placeholder" else "item" },
+                            ) { i ->
+                                val item = pages[i]
+                                if (item == null) {
+                                    PlaceholderGridItem(aspect = placeholderAspect)
                                 } else {
-                                    emptyList()
-                                },
-                                onMark = { watched ->
-                                    if (!watched && item.type == "show") confirmUnwatch = item
-                                    else vm.setWatched(item, watched)
-                                },
-                            )
-                        }
-                        // Footer spinner while the next page loads.
-                        if (ui.loadingMore) {
-                            item(span = { GridItemSpan(maxLineSpan) }) {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .padding(16.dp),
-                                    contentAlignment = Alignment.Center,
-                                ) {
-                                    CircularProgressIndicator()
+                                    LibraryGridItem(
+                                        item = item,
+                                        serverUrl = ui.serverUrl,
+                                        // Photos open straight into the swipe-pager viewer;
+                                        // routing them through ItemDetailScreen triggers a
+                                        // redirect race.
+                                        onClick = {
+                                            if (item.type == "photo") onOpenPhoto(item.id)
+                                            else onOpenItem(item.id)
+                                        },
+                                        markActions = if (ui.watchControls && canMarkWatched(item.type)) {
+                                            watchMenuActions(item)
+                                        } else {
+                                            emptyList()
+                                        },
+                                        onMark = { watched ->
+                                            if (!watched && item.type == "show") confirmUnwatch = item
+                                            else vm.setWatched(item, watched)
+                                        },
+                                    )
                                 }
                             }
+                        }
+                        if (rail) {
+                            LetterRail(
+                                letters = ui.letters,
+                                current = currentLetter,
+                                onPick = { letter ->
+                                    vm.jumpTo(letter)
+                                    scope.launch {
+                                        gridState.scrollToItem(letter.offset.coerceIn(0, (ui.total - 1).coerceAtLeast(0)))
+                                    }
+                                },
+                            )
                         }
                     }
                 }
@@ -582,6 +720,29 @@ fun LibraryScreen(
             dismissButton = {
                 TextButton(onClick = { confirmUnwatch = null }) { Text("Cancel") }
             },
+        )
+    }
+}
+
+/** A grid row whose page hasn't loaded yet: the card's shape, no content. */
+@Composable
+private fun PlaceholderGridItem(aspect: Float) {
+    Column(modifier = Modifier.fillMaxWidth().clearAndSetSemantics { }) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .aspectRatio(aspect)
+                .clip(RoundedCornerShape(6.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
+        )
+        Spacer(Modifier.height(4.dp))
+        Box(
+            modifier = Modifier
+                .padding(horizontal = 4.dp)
+                .fillMaxWidth(0.7f)
+                .height(12.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)),
         )
     }
 }

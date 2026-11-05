@@ -10,6 +10,7 @@ import (
 	"github.com/onscreen/onscreen/internal/api/middleware"
 	"github.com/onscreen/onscreen/internal/api/respond"
 	"github.com/onscreen/onscreen/internal/db/gen"
+	"github.com/onscreen/onscreen/internal/domain/media"
 )
 
 // SearchDB defines the database queries the search handler needs.
@@ -136,12 +137,13 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows, qErr := h.db.SearchMediaItems(r.Context(), gen.SearchMediaItemsParams{
-			LibraryID:          uid,
-			WebsearchToTsquery: query,
-			Limit:              limit,
-			MaxRatingRank:      maxRank,
-			BlockedLabels:      ctxLabels(r.Context()).BlockedArg(),
-			AllowedLabels:      ctxLabels(r.Context()).AllowedArg(),
+			LibraryID:     uid,
+			Query:         query,
+			PrefixQuery:   media.PrefixTSQuery(query),
+			MaxResults:    limit,
+			MaxRatingRank: maxRank,
+			BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+			AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))
@@ -163,12 +165,13 @@ func (h *SearchHandler) Search(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		rows, qErr := h.db.SearchMediaItemsGlobal(r.Context(), gen.SearchMediaItemsGlobalParams{
-			WebsearchToTsquery: query,
-			Limit:              limit,
-			LibraryIds:         libIDs,
-			MaxRatingRank:      maxRank,
-			BlockedLabels:      ctxLabels(r.Context()).BlockedArg(),
-			AllowedLabels:      ctxLabels(r.Context()).AllowedArg(),
+			Query:         query,
+			PrefixQuery:   media.PrefixTSQuery(query),
+			MaxResults:    limit,
+			LibraryIds:    libIDs,
+			MaxRatingRank: maxRank,
+			BlockedLabels: ctxLabels(r.Context()).BlockedArg(),
+			AllowedLabels: ctxLabels(r.Context()).AllowedArg(),
 		})
 		err = qErr
 		results = make([]SearchResult, 0, len(rows))

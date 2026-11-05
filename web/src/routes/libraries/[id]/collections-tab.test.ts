@@ -60,12 +60,12 @@ describe('Library page — Collections tab', () => {
     expect(mockForLibrary).toHaveBeenCalledWith('lib-1');
     expect(tab.getAttribute('aria-selected')).toBe('true');
     // The grid controls are replaced by the tab content.
-    expect(screen.queryByPlaceholderText('Filter…')).toBeNull();
+    expect(screen.queryByPlaceholderText('Search this library…')).toBeNull();
     const url = mockReplaceState.mock.calls.at(-1)?.[0] as URL;
     expect(url.searchParams.get('tab')).toBe('collections');
 
     await fireEvent.click(screen.getByRole('tab', { name: 'Library' }));
-    expect(await screen.findByPlaceholderText('Filter…')).toBeTruthy();
+    expect(await screen.findByPlaceholderText('Search this library…')).toBeTruthy();
     expect((mockReplaceState.mock.calls.at(-1)?.[0] as URL).searchParams.has('tab')).toBe(false);
   });
 

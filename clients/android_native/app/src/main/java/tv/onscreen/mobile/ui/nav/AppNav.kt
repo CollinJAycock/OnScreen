@@ -263,6 +263,9 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onOpenPhoto = { id -> nav.navigateDebounced(Routes.photo(id)) },
                 onOpenPhotoExtras = { libId -> nav.navigateDebounced(Routes.photoExtras(libId)) },
+                onSearch = { name ->
+                    nav.navigateDebounced(Routes.librarySearch(entry.arguments!!.getString("id")!!, name))
+                },
                 onBack = { nav.popBackDebounced() },
             )
         }
@@ -302,6 +305,25 @@ private fun AppNavHost(nav: androidx.navigation.NavHostController, start: String
             )
         }
         composable(Routes.SEARCH) {
+            SearchScreen(
+                onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
+                onBack = { nav.popBackDebounced() },
+            )
+        }
+        // The same screen scoped to one library; SearchViewModel reads the
+        // arguments from its SavedStateHandle. Back returns to the library
+        // grid where it was.
+        composable(
+            Routes.LIBRARY_SEARCH,
+            arguments = listOf(
+                navArgument("libraryId") { type = NavType.StringType },
+                navArgument("libraryName") {
+                    type = NavType.StringType
+                    nullable = true
+                    defaultValue = null
+                },
+            ),
+        ) {
             SearchScreen(
                 onOpenItem = { id -> nav.navigateDebounced(Routes.item(id)) },
                 onBack = { nav.popBackDebounced() },

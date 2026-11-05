@@ -323,9 +323,10 @@ func (a *mediaAdapter) CountMediaItems(ctx context.Context, libraryID uuid.UUID,
 
 func (a *mediaAdapter) SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]media.Item, error) {
 	rows, err := a.q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:          libraryID,
-		WebsearchToTsquery: query,
-		Limit:              limit,
+		LibraryID:   libraryID,
+		Query:       query,
+		PrefixQuery: media.PrefixTSQuery(query),
+		MaxResults:  limit,
 	})
 	if err != nil {
 		return nil, err
@@ -840,6 +841,9 @@ func (a *mediaAdapter) ListMediaItemsFiltered(ctx context.Context, libraryID uui
 }
 func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
 	return a.CountMediaItems(ctx, libraryID, itemType)
+}
+func (a *mediaAdapter) ListMediaItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) ([]media.LetterIndex, error) {
+	return nil, nil
 }
 func (a *mediaAdapter) ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error) {
 	return nil, nil

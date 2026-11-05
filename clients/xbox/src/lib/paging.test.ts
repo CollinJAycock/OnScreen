@@ -125,6 +125,94 @@ describe('Pager', () => {
   });
 });
 
+describe('Pager opened part way down (the A–Z rail)', () => {
+  it('startAt fetches from that row on, and on down from there', async () => {
+    const pager = new Pager<Row>((r) => r.id, 3);
+    pager.startAt(437);
+    expect(pager.start).toBe(437);
+    expect(pager.hasBefore).toBe(true);
+    const fetch = vi.fn(async (offset: number, limit: number) => rows(offset, limit));
+    await pager.loadMore(fetch);
+    await pager.loadMore(fetch);
+    expect(fetch.mock.calls).toEqual([
+      [437, 3],
+      [440, 3],
+    ]);
+    expect(ids(pager.items)).toEqual(['r437', 'r438', 'r439', 'r440', 'r441', 'r442']);
+  });
+
+  it('startAt drops what was loaded and any page in flight', async () => {
+    const pager = new Pager<Row>((r) => r.id, 2);
+    await pager.loadMore(async (o, l) => rows(o, l));
+    const slow = deferred<Row[]>();
+    const old = pager.loadMore(() => slow.promise);
+    pager.startAt(10);
+    expect(pager.items).toEqual([]);
+    expect(await pager.loadMore(async (o, l) => rows(o, l))).toBe(true);
+    slow.resolve(rows(2, 2));
+    expect(await old).toBe(false);
+    expect(ids(pager.items)).toEqual(['r10', 'r11']);
+  });
+
+  it('loadBefore puts the page above in front, never past the top', async () => {
+    const pager = new Pager<Row>((r) => r.id, 3);
+    pager.startAt(4);
+    const fetch = vi.fn(async (offset: number, limit: number) => rows(offset, limit));
+    await pager.loadMore(fetch);
+    expect(await pager.loadBefore(fetch)).toBe(true);
+    expect(pager.start).toBe(1);
+    expect(await pager.loadBefore(fetch)).toBe(true);
+    expect(pager.start).toBe(0);
+    expect(pager.hasBefore).toBe(false);
+    // At the top: nothing more to ask for.
+    expect(await pager.loadBefore(fetch)).toBe(false);
+    expect(fetch.mock.calls).toEqual([
+      [4, 3],
+      [1, 3],
+      [0, 1],
+    ]);
+    expect(ids(pager.items)).toEqual(['r0', 'r1', 'r2', 'r3', 'r4', 'r5', 'r6']);
+  });
+
+  it('loadBefore keeps a row already loaded below where it is', async () => {
+    const pager = new Pager<Row>((r) => r.id, 3);
+    pager.startAt(3);
+    await pager.loadMore(async () => rows(3, 3));
+    // The list shifted: r3 comes back in the page above as well.
+    await pager.loadBefore(async () => [{ id: 'r1' }, { id: 'r2' }, { id: 'r3' }]);
+    expect(ids(pager.items)).toEqual(['r1', 'r2', 'r3', 'r4', 'r5']);
+  });
+
+  it('loadBefore runs one at a time, drops a superseded page, and retries after a failure', async () => {
+    const pager = new Pager<Row>((r) => r.id, 2);
+    pager.startAt(6);
+    await pager.loadMore(async (o, l) => rows(o, l));
+    const slow = deferred<Row[]>();
+    const first = pager.loadBefore(() => slow.promise);
+    expect(pager.loadingBefore).toBe(true);
+    expect(await pager.loadBefore(async (o, l) => rows(o, l))).toBe(false);
+    pager.startAt(20);
+    slow.resolve(rows(4, 2));
+    expect(await first).toBe(false);
+    expect(pager.start).toBe(20);
+    expect(pager.loadingBefore).toBe(false);
+
+    await pager.loadMore(async (o, l) => rows(o, l));
+    await expect(pager.loadBefore(async () => Promise.reject(new Error('offline')))).rejects.toThrow('offline');
+    expect(pager.start).toBe(20);
+    expect(await pager.loadBefore(async (o, l) => rows(o, l))).toBe(true);
+    expect(pager.start).toBe(18);
+  });
+
+  it('reset starts over at the top', () => {
+    const pager = new Pager<Row>((r) => r.id, 2);
+    pager.startAt(50);
+    pager.reset();
+    expect(pager.start).toBe(0);
+    expect(pager.hasBefore).toBe(false);
+  });
+});
+
 describe('Pager with a reported total (collection items)', () => {
   it('ends on the total, even when the last page is full', async () => {
     const pager = new Pager<Row>((r) => r.id, 3, false);

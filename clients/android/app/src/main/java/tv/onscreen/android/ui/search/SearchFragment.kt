@@ -19,6 +19,7 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import tv.onscreen.android.R
+import tv.onscreen.android.data.model.Library
 import tv.onscreen.android.data.model.SearchResult
 import tv.onscreen.android.data.prefs.ServerPrefs
 import tv.onscreen.android.ui.KeyEventHandler
@@ -41,6 +42,12 @@ import javax.inject.Inject
  *
  * Library-scoped searches (the Y / menu key opens a picker) narrow
  * the results to that one library.
+ *
+ * [forLibrary] opens it from a library screen ("Search this library"):
+ * the scope is that library and can't be changed, the search bar reads
+ * "Search <library>", and the scope and type-filter rows are left out —
+ * every match in the library shows, whatever its type. Results, their
+ * cards and where a click goes are the same as the global search.
  */
 @AndroidEntryPoint
 class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResultProvider, KeyEventHandler {
@@ -102,11 +109,26 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         if (old?.id == androidx.leanback.R.id.lb_search_text_editor) editorFocusLostAt = SystemClock.uptimeMillis()
     }
 
+    /** The library [forLibrary] fixed this search to, or null for the
+     *  global search. Read once, in onCreate. */
+    private var fixedLibrary: Library? = null
+
     private fun scopeLabel(): String =
         "${getString(R.string.search_in)}: ${viewModel.scope.value?.name ?: getString(R.string.all_libraries)}"
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        fixedLibrary = arguments?.getString(ARG_LIBRARY_ID)?.let { id ->
+            Library(
+                id = id,
+                name = arguments?.getString(ARG_LIBRARY_NAME).orEmpty(),
+                type = arguments?.getString(ARG_LIBRARY_TYPE).orEmpty(),
+                created_at = "",
+                updated_at = "",
+            )
+        }
+        // The search bar's hint becomes "Search <library>".
+        fixedLibrary?.name?.takeIf { it.isNotBlank() }?.let { title = it }
         setSearchResultProvider(this)
         voiceEnabled = !VoiceSearch.provenUnavailable &&
             VoiceSearch.recognizerInstalled(requireContext().packageManager)
@@ -238,8 +260,9 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         // MENU / Y opens the library picker from anywhere on the screen. It
         // used to be an OnKeyListener on the root view, which only hears keys
         // while the root itself has focus, and on Search a child always does.
+        // Not in "Search this library", whose scope is fixed.
         if ((event.keyCode == KeyEvent.KEYCODE_MENU || event.keyCode == KeyEvent.KEYCODE_BUTTON_Y) &&
-            event.repeatCount == 0) {
+            event.repeatCount == 0 && fixedLibrary == null) {
             showScopeMenu()
             return true
         }
@@ -268,7 +291,8 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         // every Search open leaked a listener (and this fragment with it).
         requireActivity().window.decorView.viewTreeObserver.addOnGlobalFocusChangeListener(editorFocusWatcher)
         viewModel = ViewModelProvider(this)[SearchViewModel::class.java]
-        rowsAdapter = ArrayObjectAdapter(ListRowPresenter(FocusHighlight.ZOOM_FACTOR_NONE).apply {
+        fixedLibrary?.let(viewModel::lockScope)
+        rowsAdapter =ArrayObjectAdapter(ListRowPresenter(FocusHighlight.ZOOM_FACTOR_NONE).apply {
             shadowEnabled = false
             selectEffectEnabled = false
         })
@@ -431,12 +455,16 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
         // past row 0: the field lost focus and the keyboard closed under the
         // viewer's typing, focus jumped to the Movies chip, and this row was
         // drawn under the bar.
-        if (scopeAdapter == null) {
+        // "Search this library" has neither row: its scope is fixed and its
+        // results aren't type-filtered (see SearchViewModel.lockScope), so
+        // the results are row 0 there.
+        val fixedScope = fixedLibrary != null
+        if (!fixedScope && scopeAdapter == null) {
             val a = ArrayObjectAdapter(ScopeChipPresenter(requireContext()))
             a.add(ScopeChipPresenter.ScopeChip(scopeLabel()))
             scopeAdapter = a
             rowsAdapter.add(0, ListRow(HeaderItem(SCOPE_HEADER_ID, getString(R.string.search_in)), a))
-        } else {
+        } else if (!fixedScope) {
             scopeAdapter?.replace(0, ScopeChipPresenter.ScopeChip(scopeLabel()))
         }
 
@@ -451,19 +479,19 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
                 getString(R.string.filter_tracks), filters.track),
         )
         val existingChips = chipAdapter
-        if (existingChips == null) {
+        if (!fixedScope && existingChips == null) {
             val a = ArrayObjectAdapter(FilterChipPresenter(requireContext()))
             chips.forEach { a.add(it) }
             chipAdapter = a
             rowsAdapter.add(ListRow(HeaderItem(FILTER_HEADER_ID, getString(R.string.filter_label)), a))
-        } else {
+        } else if (existingChips != null) {
             chips.forEachIndexed { i, c ->
                 if (existingChips.get(i) != c) existingChips.replace(i, c)
             }
         }
 
         // Rebuild only the rows below the persistent scope/chip rows.
-        val stableRows = (if (scopeAdapter != null) 1 else 0) + 1
+        val stableRows = (if (scopeAdapter != null) 1 else 0) + (if (chipAdapter != null) 1 else 0)
         if (rowsAdapter.size() > stableRows) {
             rowsAdapter.removeItems(stableRows, rowsAdapter.size() - stableRows)
         }
@@ -510,6 +538,21 @@ class SearchFragment : SearchSupportFragment(), SearchSupportFragment.SearchResu
     }
 
     companion object {
+        private const val ARG_LIBRARY_ID = "library_id"
+        private const val ARG_LIBRARY_NAME = "library_name"
+        private const val ARG_LIBRARY_TYPE = "library_type"
+
+        /** "Search this library": Search fixed to one library, opened from
+         *  its library screen. */
+        fun forLibrary(libraryId: String, libraryName: String, libraryType: String = ""): SearchFragment =
+            SearchFragment().apply {
+                arguments = Bundle().apply {
+                    putString(ARG_LIBRARY_ID, libraryId)
+                    putString(ARG_LIBRARY_NAME, libraryName)
+                    putString(ARG_LIBRARY_TYPE, libraryType)
+                }
+            }
+
         private const val REQUEST_SPEECH = 1001
         private const val RESTORE_WAIT_MS = 5_000L
         private const val SCOPE_HEADER_ID = 5L

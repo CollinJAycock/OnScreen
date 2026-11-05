@@ -131,6 +131,18 @@ interface OnScreenApi {
         @Query("watch") watch: String? = null,
     ): ApiListResponse<MediaItem>
 
+    /** A-Z jump index of the listing [getLibraryItems] returns for the same
+     *  parameters (v2.7). Empty unless the listing is sorted by title; older
+     *  servers answer 404. */
+    @GET("api/v1/libraries/{id}/items/letters")
+    suspend fun getLibraryItemLetters(
+        @Path("id") libraryId: String,
+        @Query("sort") sort: String? = null,
+        @Query("sort_dir") sortDir: String? = null,
+        @Query("genre") genre: String? = null,
+        @Query("watch") watch: String? = null,
+    ): ApiResponse<List<LibraryLetter>>
+
     /** "Surprise me": one random item the caller can see, under the same
      *  filters as the listing. 404 when nothing matches, 501 when the
      *  server's watch store isn't wired. */

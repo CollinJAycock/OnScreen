@@ -238,9 +238,10 @@ func (a *mediaAdapter) CountMediaItems(ctx context.Context, libraryID uuid.UUID,
 
 func (a *mediaAdapter) SearchMediaItems(ctx context.Context, libraryID uuid.UUID, query string, limit int32) ([]media.Item, error) {
 	rows, err := a.q.SearchMediaItems(ctx, gen.SearchMediaItemsParams{
-		LibraryID:          libraryID,
-		WebsearchToTsquery: query,
-		Limit:              limit,
+		LibraryID:   libraryID,
+		Query:       query,
+		PrefixQuery: media.PrefixTSQuery(query),
+		MaxResults:  limit,
 	})
 	if err != nil {
 		return nil, err
@@ -1221,7 +1222,25 @@ func genFilteredParentTitleDescRowToItem(r gen.ListMediaItemsByParentTitleDescRo
 }
 
 func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) (int64, error) {
-	return a.q.CountMediaItemsFiltered(ctx, gen.CountMediaItemsFilteredParams{
+	return a.q.CountMediaItemsFiltered(ctx, countFilteredParams(libraryID, itemType, f))
+}
+
+func (a *mediaAdapter) ListMediaItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f media.FilterParams) ([]media.LetterIndex, error) {
+	rows, err := a.q.ListMediaItemLetters(ctx, gen.ListMediaItemLettersParams(countFilteredParams(libraryID, itemType, f)))
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.LetterIndex, len(rows))
+	for i, r := range rows {
+		out[i] = media.LetterIndex{Letter: r.Letter, FirstRow: r.FirstRow, LastRow: r.LastRow, Count: r.Count}
+	}
+	return out, nil
+}
+
+// countFilteredParams is the filter set CountMediaItemsFiltered and
+// ListMediaItemLetters share (the listing's, without sort and page).
+func countFilteredParams(libraryID uuid.UUID, itemType string, f media.FilterParams) gen.CountMediaItemsFilteredParams {
+	return gen.CountMediaItemsFilteredParams{
 		LibraryID:     libraryID,
 		Type:          itemType,
 		Genre:         f.Genre,
@@ -1233,7 +1252,7 @@ func (a *mediaAdapter) CountMediaItemsFiltered(ctx context.Context, libraryID uu
 		AllowedLabels: f.Labels.AllowedArg(),
 		Watch:         watchFilterPtr(f.Watch),
 		WatchUserID:   f.WatchUserID,
-	})
+	}
 }
 
 // watchFilterPtr maps FilterParams.Watch ("" = no filter) onto the nullable

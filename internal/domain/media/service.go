@@ -284,6 +284,16 @@ type YearCount struct {
 	Count int64
 }
 
+// LetterIndex is one letter of a title-sorted listing's A-Z jump index:
+// the items whose sort title starts with Letter ("#" for anything but
+// A-Z) and the 0-based rows of the listing where they start and end.
+type LetterIndex struct {
+	Letter   string
+	FirstRow int64
+	LastRow  int64
+	Count    int64
+}
+
 // ArtPathsItem is the narrow projection the dangling-artwork verification
 // sweep walks: just enough to resolve each claimed artwork path on disk.
 // Deliberately not a full Item — the sweep touches every art-bearing
@@ -349,6 +359,7 @@ type Querier interface {
 	RestoreMediaItemAncestry(ctx context.Context, id uuid.UUID) error
 	CountMediaItems(ctx context.Context, libraryID uuid.UUID, itemType string) (int64, error)
 	CountMediaItemsFiltered(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) (int64, error)
+	ListMediaItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) ([]LetterIndex, error)
 	ListDistinctGenres(ctx context.Context, libraryID uuid.UUID) ([]string, error)
 	ListGenresWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]GenreCount, error)
 	ListYearsWithCounts(ctx context.Context, libraryID uuid.UUID, itemType string, maxRatingRank *int, labels itemlabel.Filter) ([]YearCount, error)
@@ -854,6 +865,16 @@ func (s *Service) CountItemsFiltered(ctx context.Context, libraryID uuid.UUID, i
 		return 0, fmt.Errorf("count media items filtered: %w", err)
 	}
 	return n, nil
+}
+
+// ListItemLetters returns the A-Z jump index of a library's listing under
+// the given filters, in title order (see LetterIndex).
+func (s *Service) ListItemLetters(ctx context.Context, libraryID uuid.UUID, itemType string, f FilterParams) ([]LetterIndex, error) {
+	rows, err := s.ro.ListMediaItemLetters(ctx, libraryID, itemType, f)
+	if err != nil {
+		return nil, fmt.Errorf("list media item letters: %w", err)
+	}
+	return rows, nil
 }
 
 // ListDistinctGenres returns unique genres for a library.

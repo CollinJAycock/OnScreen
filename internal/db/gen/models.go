@@ -467,6 +467,7 @@ type MediaItem struct {
 	LogoPath                  *string            `json:"logo_path"`
 	BannerPath                *string            `json:"banner_path"`
 	DiscArtPath               *string            `json:"disc_art_path"`
+	TitleFold                 *string            `json:"title_fold"`
 }
 
 type MediaItemStudio struct {
