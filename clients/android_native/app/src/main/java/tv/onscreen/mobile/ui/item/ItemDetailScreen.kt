@@ -962,7 +962,14 @@ fun ItemDetailScreen(
                                 ) {
                                     Spacer(Modifier.height(8.dp))
                                     Text(
-                                        "No playable files for this item.",
+                                        // An artist with no albums of its own (one that
+                                        // only appears on others') has nothing to play
+                                        // here, but "No playable files" read as broken.
+                                        if (d.type == "artist") {
+                                            "No albums by this artist in your library."
+                                        } else {
+                                            "No playable files for this item."
+                                        },
                                         style = MaterialTheme.typography.bodyMedium,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
